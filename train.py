@@ -1145,9 +1145,17 @@ def main():
         n_params = sum(p.numel() for p in raw_model.parameters())
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
-        print(
+        # Through runlog, not print: runs/<name>.log used to hold only step lines, so a throughput
+        # number from an old log could not be compared against anything -- 90 minutes were spent
+        # chasing a regression that turned out to be a batch-size difference nobody had recorded.
+        runlog(
             f"params {n_params / 1e6:.1f}M | tokens {len(data)} | seqs {len(X)} | "
             f"device {device} | world {world} | fa {HAS_FA} | fp8 {fp8}"
+        )
+        runlog(
+            f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
+            f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
+            f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} mix {Cfg.mix or 'flat'}"
         )
         # param-count assert removed: architecture now scales well beyond the original ~23M target (e.g. 200M)
 

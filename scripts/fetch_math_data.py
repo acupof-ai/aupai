@@ -8,6 +8,7 @@ Sources are downloaded in parallel (one process each). Run:
   python scripts/fetch_math_data.py                # all
   python scripts/fetch_math_data.py ape210k belle  # subset
 """
+
 import json
 import os
 import re
@@ -67,40 +68,55 @@ def ape210k(row):
         return None
     if abs(val - r) > 1e-4 * max(1.0, abs(r)):
         return None  # equation disagrees with the recorded answer
-    return {"instruction": q, "output": f"列式：{eq} = {fmt(r)}\n答案是：\\boxed{{{fmt(r)}}}", "src": "ape210k"}
+    return {
+        "instruction": q,
+        "output": f"列式：{eq} = {fmt(r)}\n答案是：\\boxed{{{fmt(r)}}}",
+        "src": "ape210k",
+    }
 
 
-ANS_TAILS = [
-    # Fraction forms first: \frac{10}{3} must not fall through to LAST_NUM, which
-    # would return the denominator (REVIEW_2026-08-26.md #2 — 3.6% of school_math rows).
-    re.compile(r"\\[dt]?frac\{(-?[\d.]+)\}\{(-?[\d.]+)\}"),
+# Two tiers, and the tier matters more than the position. An explicit answer marker always beats a
+# bare \frac buried in the derivation: math23k solutions typically end "因此，现在电视机卖1664元一台"
+# with no marker at all, and a single-tier rule that ranks every pattern by end offset returns the
+# \frac{1}{5} from the middle of the working (measured: it corrupts 18.6% of math23k this way).
+MARKERS = [
     re.compile(r"\\boxed\{([^{}]+)\}"),
     re.compile(r"####\s*(-?[\d,./%]+)"),
     re.compile(r"(?:答案|答)\s*(?:是|为)?\s*[:：]?\s*(-?[\d,./%]+)"),
 ]
-LAST_NUM = re.compile(r"(-?\d+(?:\.\d+)?)(?!.*\d)", re.S)
+# Only consulted when no marker is present. \frac{10}{3} must be read as a fraction rather than
+# falling through to LAST_NUM, which would return the denominator (REVIEW_2026-08-26.md #2).
+FALLBACKS = [re.compile(r"\\[dt]?frac\{(-?[\d.]+)\}\{(-?[\d.]+)\}")]
+# Thousands separators and scientific notation are part of the number: without them "40,000。"
+# reads as "000" and "1.763e+04" as "04".
+LAST_NUM = re.compile(r"(-?\d[\d,]*(?:\.\d+)?(?:[eE][+-]?\d+)?)(?!.*\d)", re.S)
 
 
-def tail_answer(text):
-    """Answer nearest the END of the text, across all marker patterns; else the last
-    number in the final two lines.
-
-    Selecting by end offset (not by pattern order) matters: '解答：\n\n1. ...' used to
-    match the 答 pattern and yield '1.' as the gold answer for 3.5% of mxode rows.
-    """
-    text = text.strip()
+def _best(text, patterns):
+    """The match nearest the END of the text, across the given patterns."""
     best = None
-    for rx in ANS_TAILS:
+    for rx in patterns:
         for m in rx.finditer(text):
             val = f"{m.group(1)}/{m.group(2)}" if m.re.groups == 2 else m.group(1)
             val = val.replace(",", "").strip().rstrip("。.,，")
             if num(val) is not None and (best is None or m.end() > best[0]):
                 best = (m.end(), val)
-    if best:
-        return best[1]
+    return best[1] if best else None
+
+
+def tail_answer(text):
+    """Gold answer: the last explicit answer marker; failing that a fraction or the last number in
+    the closing lines. Selecting by end offset within a tier matters too -- '解答：\n\n1. ...' used
+    to match the 答 pattern and yield '1.' as the answer for 3.5% of mxode rows."""
+    text = text.strip()
+    hit = _best(text, MARKERS)
+    if hit is not None:
+        return hit
     tail = "\n".join(text.split("\n")[-2:])
-    m = LAST_NUM.search(tail)
-    return m.group(1) if m else None
+    hit = _best(tail, FALLBACKS + [LAST_NUM])
+    if hit is not None:
+        return hit
+    return _best(text, FALLBACKS)
 
 
 def belle(row):
@@ -115,9 +131,10 @@ def belle(row):
 
 
 def gsm8k_zh(row):
-    q, a = (row.get("question_zh") or row.get("instruction") or "").strip(), (
-        row.get("answer_zh") or row.get("output") or ""
-    ).strip()
+    q, a = (
+        (row.get("question_zh") or row.get("instruction") or "").strip(),
+        (row.get("answer_zh") or row.get("output") or "").strip(),
+    )
     ans = tail_answer(a)
     if not q or not ans:
         return None
