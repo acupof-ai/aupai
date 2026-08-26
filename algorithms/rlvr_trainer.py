@@ -12,7 +12,7 @@ Why fp32 master weights: a 1e-6 AdamW update is far below bf16 ULP (~5e-4 at
 0.1), so bf16 params would absorb nothing. Optimizer steps on fp32 master;
 both bf16 copies (FP8 train, plain bf16 generation) are synced from it.
 
-Heavy deps (torch, train.py/fla) are imported lazily in main()/grpo_loss(),
+Heavy deps (torch, train.py/fla) are imported lazily in main()/gspo_loss(),
 so this module is importable without torch/GPU.
 
 Usage: torchrun --nproc_per_node=8 algorithms/rlvr.py --resume ckpt_sft.pt
@@ -47,36 +47,74 @@ except ImportError:
     from rlvr_data import load_problems
 
 
-def grpo_loss(model, prompt_ids, gen_ids_list, rewards, group_size, max_new, ddp, device, amp):
-    """One prompt group: group-relative advantage x length-normalized log-prob.
-    adv=0 when all rewards are equal (std=0), so the group contributes zero
-    loss — never skip a group in DDP (all ranks need identical forward counts)."""
+def seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp):
+    """Length-normalized sequence log-prob per response, plus the padded tensors.
+
+    Returns (seq_lp [G], gen_t [G,L], mask [G,L]). Only tokens the policy actually
+    emitted are unmasked — rows are already truncated at their own <eos>.
+    """
     import torch
     import torch.nn.functional as F
 
-    r = torch.tensor(rewards, device=device)
-    adv = (r - r.mean()) / (r.std() + 1e-8)  # 0 when all rewards equal
     plen = len(prompt_ids)
-    L = max_new if ddp else max(len(g) for g in gen_ids_list)
-    # FP8 _scaled_mm needs token count (group_size*T) divisible by 16
-    q = 16 // math.gcd(group_size, 16)  # T must be a multiple of q
+    lens = [len(g) for g in gen_ids_list]
+    L = max_new if ddp else max(lens)  # DDP: identical shapes across ranks
+    # FP8 _scaled_mm needs the token count (group_size * T) divisible by 16
+    q = 16 // math.gcd(group_size, 16)
     L += (-(plen + L)) % q
     gen_t = torch.zeros((group_size, L), dtype=torch.long, device=device)
     mask = torch.zeros((group_size, L), device=device)
     for i, g in enumerate(gen_ids_list):
-        gen_t[i, : len(g)] = torch.tensor(g, device=device)
-        mask[i, : len(g)] = 1.0
+        n = min(len(g), L)
+        gen_t[i, :n] = torch.tensor(g[:n], device=device)
+        mask[i, :n] = 1.0
     full = torch.cat(
         [torch.tensor(prompt_ids, device=device).repeat(group_size, 1), gen_t], dim=1
     )
-    # Right-padding is safe: the model is causal (KDA/MLA), so hidden[t]
-    # depends only on [:t+1]; pad positions after a response never feed back.
+    # Right-padding is safe: the model is causal (KDA/MLA), so hidden[t] depends
+    # only on [:t+1]; pad positions after a response never feed back.
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
         logits, _ = model(full)
     log_probs = F.log_softmax(logits[:, plen - 1 : -1, :].float(), dim=-1)
     token_lps = log_probs.gather(-1, gen_t.unsqueeze(-1)).squeeze(-1)
-    seq_lp = (token_lps * mask).sum(1) / mask.sum(1).clamp(min=1)  # length-normalized
-    return -(adv * seq_lp).mean()
+    # Per-row length normalization. The previous code divided by mask.sum(1), which
+    # was a group constant because every row shared the padded length.
+    seq_lp = (token_lps * mask).sum(1) / mask.sum(1).clamp(min=1)
+    return seq_lp, gen_t, mask
+
+
+def gspo_loss(
+    model, ref_model, prompt_ids, gen_ids_list, rewards, group_size, max_new,
+    ddp, device, amp, clip_eps=0.2, kl_beta=0.02,
+):
+    """GSPO (arXiv 2507.18071): sequence-level importance ratio + sequence-level clip.
+
+    The reward is granted to the whole sequence, so the off-policy correction is
+    applied at the same granularity. Token-level ratios (GRPO) accumulate variance
+    with response length and are amplified by clipping.
+
+    A KL anchor against the frozen SFT reference keeps 500 steps from drifting —
+    the previous run had no anchor and collapsed from 32% to 11%.
+    """
+    import torch
+
+    r = torch.tensor(rewards, device=device)
+    adv = (r - r.mean()) / (r.std() + 1e-8)  # 0 when every reward is equal
+    seq_lp, gen_t, mask = seq_logprob(
+        model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp
+    )
+    with torch.no_grad():
+        ref_lp, _, _ = seq_logprob(
+            ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp
+        )
+        old_lp = seq_lp.detach()  # one optimizer step per rollout, so old == current
+    ratio = torch.exp(seq_lp - old_lp)  # sequence-level, already length-normalized
+    surr = torch.min(ratio * adv, torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv)
+    # k3 estimator: unbiased, non-negative, and unlike (lp - ref_lp) it has a
+    # non-zero gradient at theta == theta_old, so the anchor actually pulls.
+    d = ref_lp - seq_lp
+    kl = torch.exp(d) - d - 1.0
+    return -(surr - kl_beta * kl).mean()
 
 
 def main():
@@ -86,9 +124,12 @@ def main():
     parser.add_argument("--batch", type=int, default=4, help="prompts per GPU per step")
     parser.add_argument("--group_size", type=int, default=8, help="responses per prompt (N)")
     parser.add_argument("--max_new", type=int, default=512)
-    parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--temperature", type=float, default=0.8,
+                        help="low T makes every sample in a group identical -> std=0 -> no gradient")
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--lr", type=float, default=1e-6)
+    parser.add_argument("--clip_eps", type=float, default=0.2, help="GSPO sequence-level clip")
+    parser.add_argument("--kl_beta", type=float, default=0.02, help="KL anchor to the SFT reference")
     parser.add_argument("--no_fp8", action="store_true")
     parser.add_argument("--data", default=RLVR_PATH, help="problem jsonl (default: rlvr_math.jsonl)")
     args = parser.parse_args()
@@ -140,6 +181,11 @@ def main():
     gen_model.eval()
     for p in gen_model.parameters():
         p.requires_grad = False
+    # Frozen SFT reference for the KL anchor — never synced from master.
+    ref_model = copy.deepcopy(raw_model)
+    ref_model.eval()
+    for p in ref_model.parameters():
+        p.requires_grad = False
     fp8 = not args.no_fp8 and amp
     if fp8:
         convert_to_fp8_compute(raw_model)
@@ -172,6 +218,7 @@ def main():
             flush=True,
         )
 
+    n_degenerate = 0
     log = {"reward": 0.0, "n": 0, "loss": 0.0, "n_loss": 0, "gnorm": 0.0, "gen": 0.0}
     for step in range(1, args.steps + 1):
         if ddp:
@@ -200,15 +247,33 @@ def main():
         if ddp:
             dist.barrier()
 
-        # --- 2. GRPO loss (fp32 master gets grads via bf16/FP8 model) ---
-        # DDP: all ranks must compute the same number of forward/backward
-        # passes. Never skip a group — adv=0 when std=0, so loss is 0.
+        # --- 2. Drop degenerate groups (all-correct or all-wrong) ---
+        # Those have std=0 -> adv=0 -> zero gradient, so a forward/backward on them
+        # is pure waste. Which groups are degenerate differs per rank (each samples
+        # its own responses), so the keep-decision is all-reduced with MAX: every
+        # rank runs the same forward count and DDP stays in lockstep.
+        keep = torch.tensor(
+            [1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r in groups], device=device
+        )
+        if ddp:
+            dist.all_reduce(keep, op=dist.ReduceOp.MAX)
+        kept = [g for g, k in zip(groups, keep.tolist()) if k > 0.5]
+        n_degenerate += len(groups) - len(kept)
+        if not kept:
+            # Every prompt this step was trivially solved or hopeless; skipping is
+            # safe because all ranks reached the same conclusion from the same tensor.
+            if is_main:
+                runlog(f"step {step}/{args.steps} all groups degenerate, skipped")
+            continue
+
+        # --- 3. GSPO loss (fp32 master gets grads via the bf16/FP8 model) ---
         losses = [
-            grpo_loss(
-                model, prompt_ids, gen_ids_list, rewards,
+            gspo_loss(
+                model, ref_model, prompt_ids, gen_ids_list, rewards,
                 args.group_size, args.max_new, ddp, device, amp,
+                clip_eps=args.clip_eps, kl_beta=args.kl_beta,
             )
-            for prompt_ids, gen_ids_list, rewards in groups
+            for prompt_ids, gen_ids_list, rewards in kept
         ]
         loss = torch.stack(losses).mean()
         loss_val = loss.item()
@@ -257,8 +322,9 @@ def main():
                 runlog(
                     f"step {step}/{args.steps} acc {t[0] / max(t[1], 1):.3f} "
                     f"loss {t[2] / max(t[3], 1):.4f} gnorm {t[4] / max(t[3], 1):.3f} "
-                    f"gen {t[5] / 10:.0f}s"
+                    f"gen {t[5] / 10:.0f}s degen {n_degenerate}"
                 )
+            n_degenerate = 0
             log = {"reward": 0.0, "n": 0, "loss": 0.0, "n_loss": 0, "gnorm": 0.0, "gen": 0.0}
 
         # --- 4. Save every 200 steps + final ---

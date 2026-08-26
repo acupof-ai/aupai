@@ -8,7 +8,7 @@ RL training loops and verifiable-reward utilities for the 200M Chinese LLM.
 |---|---|---|
 | `rlvr_reward.py` | `\boxed{}` extraction, answer normalization, 0/1 reward | No (stdlib only) |
 | `rlvr_generate.py` | Batched top-p autoregressive sampling | No (lazy on call) |
-| `rlvr_trainer.py` | RLVR GRPO loop: fp32 master weights, FP8 train + bf16 gen copies, DDP | No (lazy) |
+|  RLVR GRPO loop| RLVR GSPO loop: fp32 master weights, FP8 train + bf16 gen copies, DDP | No (lazy) |
 | `rlvr_data.py` | Build/load `data/rl/rlvr_math.jsonl` from raw math datasets | No (stdlib only) |
 | `rlvr.py` | Entry point -> `rlvr_trainer.main()` | — |
 | `prepare_rlvr.py` | Entry point -> `rlvr_data.main()` | — |
