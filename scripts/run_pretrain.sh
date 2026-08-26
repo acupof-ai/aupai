@@ -36,7 +36,7 @@ CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NGPU - 1))) torchrun --nproc_per_node="$NGPU
 RC=$?
 set -e
 
-TAIL=$(grep -E "^(ep |step )" "runs/$NAME.log" 2>/dev/null | tail -1)
+TAIL=$(grep -E "^(ep |step )" "runs/$NAME.log" 2>/dev/null | tail -1 || true)
 if [ $RC -ne 0 ]; then
   python3 scripts/exp.py done --name "$NAME" --status fail --result "train exited $RC | $TAIL" || true
   echo "$NAME FAILED rc=$RC"
