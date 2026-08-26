@@ -6,6 +6,7 @@ answer comes from the verified `answer` field and results are broken out by leve
 
 Usage: python eval/math_hard.py --ckpt ckpt_sft_v5.pt [--shards N --shard I]
 """
+
 import argparse
 import json
 import os
@@ -43,6 +44,8 @@ def main():
     p.add_argument("--device", default="cuda")
     p.add_argument("--shards", type=int, default=1)
     p.add_argument("--shard", type=int, default=0)
+    p.add_argument("--k", type=int, default=1, help="samples per problem; reports pass@1 (mean) and pass@k")
+    p.add_argument("--temperature", type=float, default=0.0, help="sampling temperature (k>1 needs >0)")
     a = p.parse_args()
 
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
@@ -54,33 +57,65 @@ def main():
     tok = Tokenizer.from_file(TOK_PATH)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")][a.shard :: a.shards]
-    preds = os.path.join(ROOT, "data", "eval", f"hard_{os.path.basename(a.ckpt)}"
-                         + (f".{a.shard}" if a.shards > 1 else "") + ".jsonl")
-    by = {}
+    preds = os.path.join(
+        ROOT,
+        "data",
+        "eval",
+        f"hard_{os.path.basename(a.ckpt)}" + (f".{a.shard}" if a.shards > 1 else "") + ".jsonl",
+    )
+    k = max(1, a.k)
+    temp = a.temperature if k > 1 or a.temperature > 0 else 0.0
+    by = {}  # level -> [sum of per-problem pass@1, any-correct count, n problems]
     n_eq = n_bad = tot_len = 0
+    per_batch = max(1, a.batch // k)  # k samples of one problem are laid out consecutively
     with open(preds, "w", encoding="utf-8") as f:
-        for s in range(0, len(rows), a.batch):
-            batch = rows[s : s + a.batch]
-            prompts = [tok.encode(f"问：{r['instruction']}\n答：").ids for r in batch]
+        for s in range(0, len(rows), per_batch):
+            batch = rows[s : s + per_batch]
+            prompts = [tok.encode(f"问：{r['instruction']}\n答：").ids for r in batch for _ in range(k)]
             with torch.no_grad():
-                outs = generate_batch(model, prompts, a.max_new, a.device)
-            for r, ids in zip(batch, outs):
-                gen = tok.decode(ids)
-                ok = score(gen, str(r["answer"]))
-                by.setdefault(r["level"], [0, 0])
-                by[r["level"]][0] += int(ok)
-                by[r["level"]][1] += 1
-                e, b = check_steps(gen)
-                n_eq += e
-                n_bad += b
-                tot_len += len(ids)
-                f.write(json.dumps({"q": r["instruction"], "answer": r["answer"], "level": r["level"],
-                                    "gen": gen[-300:], "ok": ok}, ensure_ascii=False) + "\n")
-    c = sum(v[0] for v in by.values())
-    n = sum(v[1] for v in by.values())
-    print(f"math-hard: {c}/{n} = {c / n:.1%}")
-    print("  " + ", ".join(f"{k}: {v[0]}/{v[1]}={v[0] / v[1]:.0%}" for k, v in sorted(by.items())))
-    print(f"  avg gen tokens {tot_len / n:.0f} | step-eq wrong {n_bad}/{n_eq}")
+                outs = generate_batch(model, prompts, a.max_new, a.device, temp)
+            for i, r in enumerate(batch):
+                oks = []
+                for ids in outs[i * k : (i + 1) * k]:
+                    gen = tok.decode(ids)
+                    ok = score(gen, str(r["answer"]))
+                    oks.append(ok)
+                    e, b = check_steps(gen)
+                    n_eq += e
+                    n_bad += b
+                    tot_len += len(ids)
+                    f.write(
+                        json.dumps(
+                            {
+                                "q": r["instruction"],
+                                "answer": r["answer"],
+                                "level": r["level"],
+                                "gen": gen[-300:],
+                                "ok": ok,
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
+                lv = by.setdefault(r["level"], [0.0, 0, 0])
+                lv[0] += sum(oks) / k
+                lv[1] += int(any(oks))
+                lv[2] += 1
+    n = sum(v[2] for v in by.values())
+    p1 = sum(v[0] for v in by.values())
+    pk = sum(v[1] for v in by.values())
+    print(
+        f"math-hard: pass@1 {p1 / n:.1%} ({p1:.1f}/{n})"
+        + (f" | pass@{k} {pk / n:.1%} ({pk}/{n})" if k > 1 else "")
+    )
+    print(
+        "  "
+        + ", ".join(
+            f"{lvl}: p@1 {v[0] / v[2]:.0%}" + (f" p@{k} {v[1] / v[2]:.0%}" if k > 1 else "") + f" (n={v[2]})"
+            for lvl, v in sorted(by.items())
+        )
+    )
+    print(f"  avg gen tokens {tot_len / (n * k):.0f} | step-eq wrong {n_bad}/{n_eq}")
 
 
 if __name__ == "__main__":

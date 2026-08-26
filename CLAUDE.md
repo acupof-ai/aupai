@@ -13,9 +13,14 @@
 - Eval: `scripts/eval_hard.sh <ckpt> [ngpu]` on `data/synthetic/math_hard_eval_1k.jsonl` — the metric of
   record. math-500 is saturated (32.2 / 26.8 / 32.0 / 31.0); never conclude from it.
 - AttnRes A/B: `NGPU=6 STEPS=500 scripts/run_ablation.sh` (base vs `--attn_res`, same seed).
+- Corpus: `python datagen/build_corpus.py --source fineweb2 --target_tokens 8e9` (clean/dedup/cap into
+  `data/corpus/primary/`; `--dry --limit N` prints the rejects histogram). Sources are interchangeable;
+  the filters are the product.
+- pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
 - FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
 
 ## Before committing model/optimizer changes
+- CI (.github/workflows/ci.yml) runs ruff E9/F, py_compile, test_arch_compat, eqcheck, holdout on every push.
 - `python scripts/test_arch_compat.py` (CPU, no GPU deps): AttnRes fwd/bwd, legacy-ckpt round-trip,
   optimizer grouping/schedule/snapshot, KDA decay init. Extend it when you touch those paths.
 - `ruff format && ruff check` on touched files (line length 110).

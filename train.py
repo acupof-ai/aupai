@@ -76,7 +76,7 @@ try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports t
 except ImportError:
     chunk_kda = LigerFusedLinearCrossEntropyLoss = None
 try:
-    from flash_attn import flash_attn_func
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
 
     HAS_FA = True
 except ImportError:
@@ -114,6 +114,11 @@ class Cfg:
     attn_res_blocks = 0
     attn_res_dyn_q = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
+    # Document boundaries: <eos> positions become cu_seqlens so KDA state and SWA attention reset per
+    # document instead of leaking across the ~10 docs packed into each 4K row (train/infer mismatch).
+    doc_mask = True
+    val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
+    val_batches = 20  # batches of the val split used for the periodic check
     # Muon (matrix params) — nanochat recipe
     muon_lr = 0.01
     muon_momentum = 0.95
@@ -163,7 +168,7 @@ class DeltaRecurrence(nn.Module):
         # K3: causal short convolution for local pattern before qkv
         self.short_conv = nn.Conv1d(cfg.d, cfg.d, kernel_size=4, padding=0, groups=cfg.d)
 
-    def forward(self, x):
+    def forward(self, x, cu=None):
         B, T, D = x.shape
         # ShortConv + Swish (K3), causal: left-pad only so output[t] sees only input[:t+1]
         h = F.pad(x.transpose(1, 2), (self.short_conv.kernel_size[0] - 1, 0))
@@ -176,12 +181,16 @@ class DeltaRecurrence(nn.Module):
         gb = self.gb(x)
         g = gb[..., :D].reshape(B, T, self.h, self.hd).contiguous()
         beta = gb[..., D : D + self.h].contiguous()  # raw logits, sigmoid in kernel
+        if cu is not None:  # varlen: fla wants a single flattened sequence + cu_seqlens
+            q, k, v, g = (t.reshape(1, B * T, self.h, self.hd) for t in (q, k, v, g))
+            beta = beta.reshape(1, B * T, self.h)
         out, _ = chunk_kda(
             q,
             k,
             v,
             g=g,
             beta=beta,
+            cu_seqlens=cu,
             A_log=self.A_log,
             dt_bias=self.dt_bias,
             use_qk_l2norm_in_kernel=True,
@@ -209,7 +218,7 @@ class SlidingWindowAttention(nn.Module):
         self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate (full-rank output gate, K3)
         self.o = nn.Linear(cfg.d, cfg.d, bias=False)
 
-    def forward(self, x):
+    def forward(self, x, cu=None):
         B, T, D = x.shape
         latent = self.kv_down(x)  # (B, T, latent)
         k, v = self.kv_up(latent).chunk(2, dim=-1)
@@ -219,10 +228,15 @@ class SlidingWindowAttention(nn.Module):
         q = q.view(B, T, self.h, self.hd)
         q = F.rms_norm(q, (self.hd,))
         k = F.rms_norm(k, (self.hd,))
-        if HAS_FA:
+        if HAS_FA and cu is not None:
+            q, k, v = (t.reshape(B * T, self.h, self.hd) for t in (q, k, v))
+            y = flash_attn_varlen_func(
+                q, k, v, cu, cu, T, T, causal=True, window_size=(self.attn_window - 1, 0)
+            )
+        elif HAS_FA:
             # flash_attn_func wants (B, T, h, hd); sliding window = (left, right)
             y = flash_attn_func(q, k, v, causal=True, window_size=(self.attn_window - 1, 0))
-        else:
+        else:  # CPU fallback: causal only, no document mask (ponytail: block-diag mask if ever needed)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
             y = y.transpose(1, 2)
@@ -394,12 +408,12 @@ class Block(nn.Module):
         self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-mixer depth attention
         self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-ffn depth attention
 
-    def forward(self, x):
-        x = x + self.mixer(self.n1(x))
+    def forward(self, x, cu=None):
+        x = x + self.mixer(self.n1(x), cu)
         return x + self.ffn(self.n2(x))
 
-    def sublayers(self):
-        return ((self.ar1, self.n1, self.mixer), (self.ar2, self.n2, self.ffn))
+    def sublayers(self, cu=None):
+        return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))
 
 
 def remap_legacy_state_dict(sd):
@@ -465,18 +479,18 @@ class HybridLM(nn.Module):
         if isinstance(m, (nn.Linear, nn.Embedding)):
             nn.init.normal_(m.weight, std=0.02)
 
-    def _body(self, x):
+    def _body(self, x, cu=None):
         ckpt = self.grad_ckpt and self.training
         if not self.attn_res:
             for b in self.blocks:
                 # Gradient checkpointing: recompute block activations in backward, trading compute for memory
-                x = torch.utils.checkpoint.checkpoint(b, x, use_reentrant=False) if ckpt else b(x)
+                x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
             return x
         # Block AttnRes (Fig. 2 of the paper): `blocks` = completed block reps (embedding first),
         # `partial` = intra-block running sum. Block size 1 sublayer == Full AttnRes.
         blocks, partial, n = [x], None, 0
         for b in self.blocks:
-            for ar, norm, f in b.sublayers():
+            for ar, norm, f in b.sublayers(cu):
                 h = ar(blocks + ([partial] if partial is not None else []))
                 fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
                 out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
@@ -487,8 +501,9 @@ class HybridLM(nn.Module):
                     partial = None
         return self.final_ar(blocks + ([partial] if partial is not None else []))
 
-    def forward(self, idx, targets=None):
-        hidden = self.norm(self._body(self.tok(idx)))
+    def forward(self, idx, targets=None, cu=None):
+        """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask."""
+        hidden = self.norm(self._body(self.tok(idx), cu))
         if targets is None:
             # Inference: compute logits with softcap
             logits = self.head(hidden)[..., : self.cfg.vocab].float()
@@ -633,6 +648,41 @@ class Muon(torch.optim.Optimizer):
                 for i, p in enumerate(sg["params"]):
                     p.data.copy_(W[i])
                     sg["mbs"][i].copy_(M[i])
+
+
+def doc_cu_seqlens(idx, eos_id):
+    """cu_seqlens for a (B, T) batch: every row start and every position after an <eos> opens a new
+    document; returned over the flattened B*T stream as int32 [n_docs + 1]. Length varies per batch,
+    so it is marked dynamic for torch.compile."""
+    B, T = idx.shape
+    flat = idx.reshape(-1)
+    starts = torch.nonzero(flat == eos_id).squeeze(1) + 1
+    starts = torch.cat([torch.arange(0, B * T, T, device=idx.device), starts])
+    starts = starts[starts < B * T]
+    cu = torch.cat([starts.unique(), torch.tensor([B * T], device=idx.device)]).to(torch.int32)
+    torch._dynamo.mark_dynamic(cu, 0)
+    return cu
+
+
+def validate(model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, max_batches=None):
+    """Mean FLCE loss over the (fixed, disjoint) validation split. All DDP ranks call it in lockstep."""
+    model.eval()
+    flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+    weight = raw_model.head.weight[: raw_model.cfg.vocab]
+    vl = []
+    with torch.no_grad():
+        for j in range(0, len(Xva), batch):
+            if max_batches is not None and len(vl) >= max_batches:
+                break
+            xva = Xva[j : j + batch].to(device)
+            yva = Yva[j : j + batch].to(device)
+            cu = doc_cu_seqlens(xva, eos_id) if eos_id is not None else None
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=device.startswith("cuda")):
+                hidden, _ = model(xva, yva, cu)
+            D = hidden.shape[-1]
+            vl.append(flce(weight, hidden.to(weight.dtype).reshape(-1, D), yva.reshape(-1)).item())
+    model.train()
+    return sum(vl) / len(vl)
 
 
 def build_optimizers(model, cfg, lr_scale=1.0):
@@ -828,6 +878,8 @@ def main():
         "accum": "gradient accumulation steps",
         "vocab": "vocab size (e.g. 32000 for a 32K tokenizer)",
         "attn_res_blocks": "Block AttnRes with N blocks (0 = Full)",
+        "val_every": "steps between fixed-subset validations (0 = epoch end only)",
+        "val_batches": "val batches per periodic check",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -839,6 +891,7 @@ def main():
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
+    parser.add_argument("--no_doc_mask", action="store_true", help="let KDA state / attention cross <eos>")
     parser.add_argument("--resume", type=str, default=None, help="checkpoint to resume from")
     parser.add_argument(
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
@@ -848,6 +901,8 @@ def main():
     for k, v in vars(args).items():
         if hasattr(Cfg, k) and v:  # int override or store_true flag; unset/False keeps the Cfg default
             setattr(Cfg, k, v)
+    if args.no_doc_mask:
+        Cfg.doc_mask = False
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
@@ -866,6 +921,7 @@ def main():
     if ddp:
         dist.barrier()  # all ranks wait for tokenizer to exist
     tok = build_tokenizer(texts)
+    eos_id = tok.token_to_id("<eos>")
     # Rank-0-only tokenization + NVMe cache (avoids 8x redundant work)
     if is_main and not os.path.exists(TOKEN_CACHE):
         data = encode(texts, tok)
@@ -977,8 +1033,9 @@ def main():
             yb = yb_pin.to(device, non_blocking=True)
             if ev is not None:
                 ev.record()
+            cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
-                hidden, _ = model(xb, yb)  # pass targets so compile traces hidden branch
+                hidden, _ = model(xb, yb, cu)  # pass targets so compile traces hidden branch
             B, T, D = hidden.shape
             weight = raw_model.head.weight[: raw_model.cfg.vocab]
             loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
@@ -1034,6 +1091,20 @@ def main():
                             },
                             ckpt_path + f".step{step}",
                         )
+                if Cfg.val_every and step % Cfg.val_every == 0:
+                    v = validate(
+                        model,
+                        raw_model,
+                        Xva,
+                        Yva,
+                        Cfg.batch,
+                        device,
+                        amp_dtype,
+                        eos_id if Cfg.doc_mask else None,
+                        Cfg.val_batches,
+                    )
+                    if is_main:
+                        runlog(f"step {step}/{total_steps} val {v:.3f}")
                 if is_main and step % 10 == 0:
                     now = time.time()
                     tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / (now - t_log)  # tokens/s per GPU
@@ -1053,24 +1124,11 @@ def main():
             raw_model.zero_grad(set_to_none=True)  # clear bf16 model grads too
 
         # All ranks run validation to keep DDP in lockstep; only rank 0 prints
-        model.eval()
-        with torch.no_grad():
-            vl = []
-            for j in range(0, len(Xva), Cfg.batch):
-                yva = Yva[j : j + Cfg.batch].to(device)
-                with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):  # fp8 -> torch.float8
-                    hidden, _ = model(Xva[j : j + Cfg.batch].to(device), yva)
-                B, T, D = hidden.shape
-                weight = raw_model.head.weight[: raw_model.cfg.vocab]
-                vloss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
-                    weight, hidden.to(weight.dtype).reshape(-1, D), yva.reshape(-1)
-                )
-                vl.append(vloss.item())
+        v = validate(
+            model, raw_model, Xva, Yva, Cfg.batch, device, amp_dtype, eos_id if Cfg.doc_mask else None
+        )
         if is_main:
-            runlog(
-                f"ep {ep + 1}/{Cfg.epochs} train {last:.3f} val {sum(vl) / len(vl):.3f} "
-                f"{time.time() - t0:.0f}s"
-            )
+            runlog(f"ep {ep + 1}/{Cfg.epochs} train {last:.3f} val {v:.3f} {time.time() - t0:.0f}s")
             torch.save(
                 {
                     "model": raw_model.state_dict(),

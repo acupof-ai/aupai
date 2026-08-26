@@ -29,6 +29,7 @@ from train import (
     build_optimizers,
     convert_to_fp8_compute,
     ddp_even_len,
+    doc_cu_seqlens,
     opt_snapshot,
     set_schedule,
     setup_ddp,
@@ -37,6 +38,7 @@ from train import (
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SFT_DATA = os.path.join(ROOT, "data", "sft", "sft_all.pt")
 CKPT_SFT = os.path.join(ROOT, "ckpt_sft.pt")
+EOS_ID = 1  # <eos> id in data/tokenizer.json; packed SFT rows carry ~10 samples each
 SAVE_INTERVAL = 200
 LOG_INTERVAL = 10
 
@@ -136,7 +138,7 @@ def main():
             xb = X[idx].to(device, non_blocking=True)
             yb = Y[idx].to(device, non_blocking=True)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-                hidden, _ = model(xb, yb)
+                hidden, _ = model(xb, yb, doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None)
             B, T, D = hidden.shape
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             loss.backward()

@@ -95,4 +95,10 @@ assert torch.equal(before, after), "snapshot must not alias live optimizer state
 dt_bias = m.blocks[0].mixer.dt_bias
 ret = torch.exp(-torch.nn.functional.softplus(dt_bias)).mean().item()
 assert 0.85 < ret < 0.99, ret
+# doc boundaries: row starts + positions after <eos>, over the flattened stream
+idx = torch.tensor([[5, 1, 7, 7], [1, 1, 3, 3]])
+cu = train.doc_cu_seqlens(idx, eos_id=1)
+assert cu.tolist() == [0, 2, 4, 5, 6, 8] and cu.dtype == torch.int32, cu
+m = HybridLM(Cfg)
+assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")

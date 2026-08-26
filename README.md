@@ -15,6 +15,8 @@ torchrun --nproc_per_node=6 train.py --fp8 --attn_res --name attnres_2b
 # 任何 --flag 覆盖 Cfg.<flag>（--seq/--batch/--accum/--attn_res_blocks/--attn_res_dyn_q/--grad_ckpt ...）
 # AttnRes 开/关 500 步对照：NGPU=6 STEPS=500 scripts/run_ablation.sh
 # 架构改动 CPU 自检：python scripts/test_arch_compat.py
+# 语料构建（选择/清洗/去重）：python datagen/build_corpus.py --source fineweb2 --target_tokens 8e9
+# 文档边界默认开（--no_doc_mask 关闭），每 500 步固定子集 val（--val_every）
 
 # SFT
 torchrun --nproc_per_node=8 sft.py --sft_path data/sft_mix.jsonl --epochs 2

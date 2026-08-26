@@ -6,6 +6,7 @@ Batched generation (batch of 8); prompts are right-padded, which is safe
 because pad tokens always sit right of real content and causal attention
 never looks right.
 """
+
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 def load_dataset():
     from datasets import load_dataset
+
     return load_dataset("openai/gsm8k", "main", split="test")
 
 
@@ -34,21 +36,25 @@ def extract_number(text):
 
 
 @torch.no_grad()
-def generate_batch(model, prompts, max_new, device):
-    """Greedy decoding for a list of token-id lists. Returns generated ids."""
+def generate_batch(model, prompts, max_new, device, temperature=0.0):
+    """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids."""
     B = len(prompts)
-    prompts = [p[-(MAX_CTX - max_new):] for p in prompts]
+    prompts = [p[-(MAX_CTX - max_new) :] for p in prompts]
     lengths = [len(p) for p in prompts]
     x = torch.full((B, max(lengths)), EOS_ID, dtype=torch.long, device=device)
     for i, p in enumerate(prompts):
-        x[i, :lengths[i]] = torch.tensor(p, device=device)
+        x[i, : lengths[i]] = torch.tensor(p, device=device)
     ends = torch.tensor(lengths, device=device)  # next write position per row
     done = torch.zeros(B, dtype=torch.bool, device=device)
     ar = torch.arange(B, device=device)
 
     for _ in range(max_new):
         logits, _ = model(x[:, -MAX_CTX:])
-        nxt = logits[ar, ends - 1].argmax(dim=-1)
+        step_logits = logits[ar, ends - 1]
+        if temperature > 0:
+            nxt = torch.multinomial(torch.softmax(step_logits.float() / temperature, dim=-1), 1).squeeze(1)
+        else:
+            nxt = step_logits.argmax(dim=-1)
         if x.size(1) <= int(ends.max()):
             x = torch.cat([x, torch.full((B, 1), EOS_ID, dtype=torch.long, device=device)], dim=1)
         x[ar, ends] = torch.where(done, torch.full_like(nxt, EOS_ID), nxt)
@@ -56,7 +62,7 @@ def generate_batch(model, prompts, max_new, device):
         done |= nxt == EOS_ID
         if bool(done.all()):
             break
-    return [x[i, lengths[i]:ends[i]].tolist() for i in range(B)]
+    return [x[i, lengths[i] : ends[i]].tolist() for i in range(B)]
 
 
 @torch.no_grad()
@@ -65,7 +71,7 @@ def evaluate(model, tok, device, batch_size=8):
     correct = total = 0
 
     for s in range(0, len(rows), batch_size):
-        batch = rows[s:s + batch_size]
+        batch = rows[s : s + batch_size]
         p_ids = [tok.encode(f"问：{r['question']}\n答：").ids for r in batch]
         golds = [float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in batch]
 

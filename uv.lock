@@ -35,6 +35,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "flash-linear-attention", marker = "sys_platform == 'linux'" },
     { name = "flask" },
+    { name = "huggingface-hub" },
     { name = "liger-kernel", marker = "sys_platform == 'linux'" },
     { name = "pyarrow" },
     { name = "tokenizers" },
@@ -55,6 +56,7 @@ mac = [
 requires-dist = [
     { name = "flash-linear-attention", marker = "sys_platform == 'linux'" },
     { name = "flask" },
+    { name = "huggingface-hub" },
     { name = "liger-kernel", marker = "sys_platform == 'linux'" },
     { name = "mlx-lm", marker = "extra == 'mac'" },
     { name = "pyarrow" },

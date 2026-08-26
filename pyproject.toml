@@ -11,6 +11,7 @@ dependencies = [
     "flash-linear-attention; sys_platform == 'linux'",
     "liger-kernel; sys_platform == 'linux'",
     "torchao; sys_platform == 'linux'",
+    "huggingface_hub",
     "triton; sys_platform == 'linux'",
 ]
 

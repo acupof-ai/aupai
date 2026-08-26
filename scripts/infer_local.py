@@ -203,6 +203,27 @@ class SwiGLU(nn.Module):
         return up
 
 
+class AttnRes(nn.Module):
+    """Attention Residuals (mirrors train.AttnRes): softmax over previous sublayer outputs of the same
+    token, so incremental decoding needs no extra cache."""
+
+    def __init__(self, d, dyn_q=False, rank=64):
+        super().__init__()
+        self.norm = RMSNorm(d)
+        self.q = nn.Parameter(torch.zeros(d))
+        self.dyn = (
+            nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
+        )
+
+    def forward(self, srcs):
+        q = self.q
+        if self.dyn is not None:
+            q = q + self.dyn(self.norm(srcs[-1]))
+        logits = torch.stack([(self.norm(v) * q).sum(-1) for v in srcs])
+        a = logits.float().softmax(0).to(srcs[0].dtype)
+        return sum(a[i].unsqueeze(-1) * v for i, v in enumerate(srcs))
+
+
 class Block(nn.Module):
     def __init__(self, cfg, is_attn=False):
         super().__init__()
@@ -210,6 +231,10 @@ class Block(nn.Module):
         self.mixer = SlidingWindowAttention(cfg) if is_attn else DeltaRecurrence(cfg)
         self.n2 = RMSNorm(cfg.d)
         self.ffn = SwiGLU(cfg)
+        attn_res = getattr(cfg, "attn_res", False)
+        dyn_q = getattr(cfg, "attn_res_dyn_q", False)
+        self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None
+        self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None
 
     def forward(self, x, cache=None):
         mixer_out, new_cache = self.mixer(self.n1(x), cache=cache)
@@ -229,14 +254,38 @@ class HybridLM(nn.Module):
         self.norm = RMSNorm(cfg.d)
         self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
         self.head.weight = self.tok.weight  # tied
+        self.attn_res = getattr(cfg, "attn_res", False)
+        n_sub = 2 * cfg.layers
+        n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)
+        self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
+        self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
+
+    def _body(self, x, cache):
+        """Same as train.HybridLM._body (plain residual or Block AttnRes), threading the KV/state cache."""
+        new_caches = []
+        if not self.attn_res:
+            for i, b in enumerate(self.blocks):
+                x, c = b(x, cache=cache[i] if cache is not None else None)
+                new_caches.append(c)
+            return x, new_caches
+        blocks, partial, n = [x], None, 0
+        for i, b in enumerate(self.blocks):
+            for j, (ar, norm, f) in enumerate(((b.ar1, b.n1, b.mixer), (b.ar2, b.n2, b.ffn))):
+                h = ar(blocks + ([partial] if partial is not None else []))
+                if j == 0:
+                    out, c = f(norm(h), cache=cache[i] if cache is not None else None)
+                    new_caches.append(c)
+                else:
+                    out = f(norm(h))
+                partial = out if partial is None else partial + out
+                n += 1
+                if n in self.ar_block_ends:
+                    blocks.append(partial)
+                    partial = None
+        return self.final_ar(blocks + ([partial] if partial is not None else [])), new_caches
 
     def forward(self, idx, cache=None):
-        x = self.tok(idx)
-        new_caches = []
-        for i, b in enumerate(self.blocks):
-            layer_cache = cache[i] if cache is not None else None
-            x, new_cache = b(x, cache=layer_cache)
-            new_caches.append(new_cache)
+        x, new_caches = self._body(self.tok(idx), cache)
         hidden = self.norm(x)
         logits = self.head(hidden)[..., : self.cfg.vocab].float()
         logits = 15.0 * torch.tanh(logits / 15.0)  # logit softcap
