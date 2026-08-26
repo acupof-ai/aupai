@@ -1,11 +1,11 @@
 {
-  "_comment": "Sized to the corpus that actually exists (measured 2026-08-26, scripts/build_domains.sh): web ~9B from 4 fineweb-2 cmn_Hani shards + data/pretrain_full.jsonl, math 0.27B, en 0.24B, code 0.14B, chat 0.05B. `book` was removed: nothing on the pod is a book corpus, and build_mix asserts on an empty domain. weight = share of the first 90% of tokens, anneal = share of the last 10% (Cfg.anneal_frac), epochs = hard cap on repeats of that domain across both phases.",
+  "_comment": "Sized to the token caches actually built (scripts/check_mix.py, 2026-08-26): web 8.31B, en 0.20B, math 0.16B, code 0.08B, chat 0.04B. The main-phase weights are deliberately LOW for the small domains: the epoch cap is shared across both phases, so a main weight large enough to exhaust it leaves the anneal with nothing -- the first version of this file gave math 8% of the main phase and 28% of the anneal, and check_mix showed math/anneal capped to 0 rows, which is the whole point of the anneal defeated. Each small domain now spends about half its epoch budget in the main phase and keeps the rest for the anneal.",
   "total_tokens": 11.5e9,
   "domains": {
-    "web":  {"weight": 0.83, "epochs": 2, "anneal": 0.42},
-    "math": {"weight": 0.08, "epochs": 5, "anneal": 0.28},
-    "en":   {"weight": 0.05, "epochs": 3, "anneal": 0.10},
-    "code": {"weight": 0.03, "epochs": 4, "anneal": 0.08},
-    "chat": {"weight": 0.01, "epochs": 6, "anneal": 0.12}
+    "web":  {"weight": 0.88, "epochs": 2, "anneal": 0.44},
+    "en":   {"weight": 0.05, "epochs": 4, "anneal": 0.10},
+    "math": {"weight": 0.04, "epochs": 5, "anneal": 0.28},
+    "code": {"weight": 0.02, "epochs": 4, "anneal": 0.08},
+    "chat": {"weight": 0.01, "epochs": 6, "anneal": 0.10}
   }
 }
