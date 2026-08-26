@@ -37,7 +37,7 @@
 - The only valid pretrain base today is `ckpt_k3-mla_2b_step2000.pt` (K3, no AttnRes).
 
 ## Pod
-- 8×H20; use GPUs 0–5, 6/7 are reserved. `/work/aupai` on the pod is not a git repo — push files.
+- 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
 - `uv sync` after dependency changes (torch, fla, liger-kernel, torchao are linux-only markers).
 
 ## Coordination

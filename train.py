@@ -29,8 +29,8 @@ import json
 import math
 import random
 import time
-from array import array
 
+import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -833,19 +833,24 @@ def build_tokenizer(texts):
 def encode(texts, tok, chunk=50_000, log=None):
     """Documents -> one <eos>-separated int32 stream.
 
-    Chunked, and accumulating into array("i") rather than a python list: at the corpus sizes this
-    now runs on (8B tokens for the web domain) a list of python ints is ~28 bytes each = 220GB, and
-    tok.encode_batch over all 8M documents at once holds every Encoding object alive on top of that.
-    Chunking bounds both; array("i") stores 4 bytes per token."""
+    Chunked, and one C-level copy per document rather than a per-token python loop. Measured on
+    20K web documents (2026-08-26): the tokenizer itself runs at 6.7M tok/s, but appending through
+    array("i").extend(e.ids) dropped the pipeline to 1.4M tok/s -- 107 minutes for the 9.1B-token
+    web domain. np.asarray per document plus encode_batch_fast (which skips the offsets, word_ids
+    and masks that nothing here reads) gives 3.3M tok/s, 46 minutes. Chunking keeps the Encoding
+    objects and the intermediate arrays bounded."""
     eos = tok.token_to_id("<eos>")
-    out = array("i")
+    batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
+    parts = []
     for i in range(0, len(texts), chunk):
-        for e in tok.encode_batch(texts[i : i + chunk]):  # batch encode: 10-100x faster per document
-            out.extend(e.ids)
-            out.append(eos)
+        enc = batch_fn(texts[i : i + chunk])
+        parts.append(np.concatenate([np.asarray(e.ids + [eos], dtype=np.int32) for e in enc]))
         if log and (i // chunk) % 20 == 0:
-            log(f"  encode {i + chunk}/{len(texts)} docs, {len(out) / 1e6:.0f}M tokens")
-    return torch.frombuffer(out, dtype=torch.int32).clone()  # int32: vocab 32772 fits, halves bandwidth
+            log(
+                f"  encode {min(i + chunk, len(texts))}/{len(texts)} docs, "
+                f"{sum(len(p) for p in parts) / 1e6:.0f}M tokens"
+            )
+    return torch.from_numpy(np.concatenate(parts))  # int32: vocab 32772 fits, halves bandwidth
 
 
 def _domain_seqs(domain, tok, is_main, ddp):

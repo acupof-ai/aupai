@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 
 NAME=$1; RESUME=$2; DATA=$3; shift 3
 OUT="ckpt_${NAME}.pt"
-NGPU=${NGPU:-6}
+NGPU=${NGPU:-8}
 CMD="torchrun --nproc_per_node=$NGPU sft_math.py --resume $RESUME --sft_path $DATA --out $OUT $*"
 
 python3 scripts/exp.py start --name "$NAME" --cmd "$CMD" --notes "$(python3 - "$DATA" <<'PY'
