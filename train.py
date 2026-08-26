@@ -30,6 +30,7 @@ import json
 import math
 import random
 import time
+from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -151,10 +152,20 @@ class RMSNorm(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.g
 
 
+def rms_scale(x, eps=1e-6):
+    """The [B,T,1] factor of a gain-free RMSNorm, without applying it.
+
+    rms_hat(x) . gq == rsqrt(mean(x^2)) * (x . gq), because the rsqrt is a per-position scalar and
+    factors straight out of the dot product. So AttnRes never needs the normalized tensor at all --
+    only this scale. Storing scales instead of normalized copies is 1024x less memory per source
+    (d=1024), and the raw source is already alive as a block representation, so the backward tape
+    grows by nothing."""
+    return torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+
+
 def rms_hat(x, eps=1e-6):
-    """RMS normalization with no learned gain -- the gain lives on the AttnRes query instead, so this
-    is one tensor per source rather than one per (consumer, source) pair."""
-    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+    """The normalized tensor itself; only the dyn_q path needs it materialized."""
+    return x * rms_scale(x, eps)
 
 
 class DeltaRecurrence(nn.Module):
@@ -382,17 +393,31 @@ class SwiGLU(nn.Module):
         return up
 
 
+class Source(NamedTuple):
+    """A source of the depth attention: the raw layer output, and its gain-free RMS factor."""
+
+    v: torch.Tensor
+    scale: torch.Tensor
+
+    @staticmethod
+    def of(v):
+        return Source(v, rms_scale(v))
+
+    def normed(self):
+        return self.v * self.scale
+
+
 class AttnRes(nn.Module):
     """Attention Residuals (Kimi, arXiv 2603.15031): h_l = sum_i softmax_i(q_l . RMSNorm(v_i)) v_i over
     previous layer outputs (v_0 = embedding). One zero-init pseudo-query per layer -> starts as uniform mean.
     Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form.
 
-    The RMSNorm gain is folded into the query, which is an exact rewrite, not an approximation:
-    (v_hat * g) . q == v_hat . (g * q). That leaves v_hat parameter-free, so it is the SAME tensor for
-    every consumer of that source and is computed once per source instead of once per (consumer,
-    source) pair. At L=12 that is 25 normalizations instead of 325 for Full, and the backward tape
-    holds 25 shared [B,T,D] tensors instead of 325 per-pair products -- 6.7GB rather than 87GB at
-    batch 32, which is what makes Full affordable at all."""
+    Two exact rewrites make it affordable. The RMSNorm gain folds into the query, since
+    (v_hat * g) . q == v_hat . (g * q), which leaves the normalization parameter-free and therefore
+    shared by every consumer of a source. And the normalization never has to be applied at all:
+    rsqrt(mean(v^2)) is a per-position scalar, so v_hat . gq == rsqrt(...) * (v . gq). A source
+    carries a [B,T,1] scale rather than a [B,T,D] normalized copy -- 1024x less at d=1024, and the
+    raw source is already alive as a block representation, so the backward tape grows by nothing."""
 
     def __init__(self, d, dyn_q=False, rank=64):
         super().__init__()
@@ -404,17 +429,15 @@ class AttnRes(nn.Module):
             nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
         )
 
-    def forward(self, srcs, hats):
-        """srcs: raw sources (mixed by the softmax weights). hats: the same sources under a
-        parameter-free RMS normalization, shared across every AttnRes in the model."""
-        q = self.q if self.dyn is None else self.q + self.dyn(hats[-1] * self.g)
+    def forward(self, srcs):
+        q = self.q if self.dyn is None else self.q + self.dyn(srcs[-1].normed() * self.g)
         gq = self.g * q
-        # logits [n,B,T] only; no torch.stack of the [n,B,T,D] values (that copy dominates at L=24)
-        logits = torch.stack([(vh * gq).sum(-1) for vh in hats])
-        a = logits.float().softmax(0).to(srcs[0].dtype)
-        out = a[0].unsqueeze(-1) * srcs[0]
+        # logits [n,B,T] only; never an [n,B,T,D] stack of the values (that copy dominates at L=24)
+        logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])
+        a = logits.float().softmax(0).to(srcs[0].v.dtype)
+        out = a[0].unsqueeze(-1) * srcs[0].v
         for i in range(1, len(srcs)):
-            out = out + a[i].unsqueeze(-1) * srcs[i]
+            out = out + a[i].unsqueeze(-1) * srcs[i].v
         return out
 
 
@@ -512,31 +535,20 @@ class HybridLM(nn.Module):
             return x
         # Block AttnRes (Fig. 2 of the paper): `blocks` = completed block reps (embedding first),
         # `partial` = intra-block running sum. Block size 1 sublayer == Full AttnRes.
-        blocks, hats, partial, partial_hat, n = [x], [rms_hat(x)], None, None, 0
+        done, partial, n = [Source.of(x)], [], 0
         for b in self.blocks:
             for ar, norm, f in b.sublayers(cu):
-                srcs = blocks if partial is None else blocks + [partial]
-                hs = hats if partial_hat is None else hats + [partial_hat]
-                h = ar(srcs, hs)
+                h = ar(done + partial)
                 # The AttnRes call sits outside the checkpoint, so its per-source products stay on
-                # the tape: one [B,T,D] per (consumer, source) pair, which at L=12 is 325 pairs for
-                # Full (196GB/GPU at batch 72), 85 for blocks=4, 61 for blocks=2. Folding ar() into
-                # the checkpointed function would leave only the block reps alive and make Full
-                # affordable; not done here because it changes what gets recomputed in backward and
-                # this run is not the place to validate that.
+                # the tape: one [B,T] logit per (consumer, source) pair, which at L=12 is 325 pairs
+                # for Full, 85 for blocks=4, 61 for blocks=2. The [B,T,D] values are not duplicated.
                 fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
                 out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
-                partial = out if partial is None else partial + out
-                partial_hat = rms_hat(partial)
+                partial = [Source.of(partial[0].v + out if partial else out)]
                 n += 1
                 if n in self.ar_block_ends:
-                    blocks.append(partial)
-                    hats.append(partial_hat)
-                    partial = partial_hat = None
-        return self.final_ar(
-            blocks + ([partial] if partial is not None else []),
-            hats + ([partial_hat] if partial_hat is not None else []),
-        )
+                    done, partial = done + partial, []
+        return self.final_ar(done + partial)
 
     def forward(self, idx, targets=None, cu=None):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask."""
@@ -1047,6 +1059,11 @@ def main():
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    # The Muon/AdamW learning rates are nanochat's, tuned for a large batch. Cfg.batch is chosen for
+    # what fits in HBM, so the two have to be reconciled by hand: at batch 24 x 8 (786K tokens/step,
+    # 2.25x smaller than the 1.77M these rates came from) the unscaled rates made the loss bottom out
+    # at step 610 and then climb, 3.45 -> 4.36 by step 1060, with val 3.03 -> 3.56.
+    parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
     args = parser.parse_args()
     for k, v in vars(args).items():
         if hasattr(Cfg, k) and v:  # int override or store_true flag; unset/False keeps the Cfg default
@@ -1155,11 +1172,12 @@ def main():
         runlog(
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
-            f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} mix {Cfg.mix or 'flat'}"
+            f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
+            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'}"
         )
         # param-count assert removed: architecture now scales well beyond the original ~23M target (e.g. 200M)
 
-    optimizers = build_optimizers(raw_model, Cfg)
+    optimizers = build_optimizers(raw_model, Cfg, lr_scale=args.lr_scale)
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
             opt.load_state_dict(sd)  # Muon momentum + Adam moments continue instead of restarting from 0
