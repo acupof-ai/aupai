@@ -1,11 +1,11 @@
 {
-  "total_tokens": 8e9,
+  "_comment": "Sized to the corpus that actually exists (measured 2026-08-26, scripts/build_domains.sh): web ~9B from 4 fineweb-2 cmn_Hani shards + data/pretrain_full.jsonl, math 0.27B, en 0.24B, code 0.14B, chat 0.05B. `book` was removed: nothing on the pod is a book corpus, and build_mix asserts on an empty domain. weight = share of the first 90% of tokens, anneal = share of the last 10% (Cfg.anneal_frac), epochs = hard cap on repeats of that domain across both phases.",
+  "total_tokens": 11.5e9,
   "domains": {
-    "web":  {"weight": 0.60, "epochs": 1, "anneal": 0.30},
-    "book": {"weight": 0.15, "epochs": 3, "anneal": 0.25},
-    "math": {"weight": 0.10, "epochs": 3, "anneal": 0.25},
-    "code": {"weight": 0.08, "epochs": 2, "anneal": 0.10},
-    "en":   {"weight": 0.05, "epochs": 1, "anneal": 0.05},
-    "chat": {"weight": 0.02, "epochs": 3, "anneal": 0.05}
+    "web":  {"weight": 0.83, "epochs": 2, "anneal": 0.42},
+    "math": {"weight": 0.08, "epochs": 5, "anneal": 0.28},
+    "en":   {"weight": 0.05, "epochs": 3, "anneal": 0.10},
+    "code": {"weight": 0.03, "epochs": 4, "anneal": 0.08},
+    "chat": {"weight": 0.01, "epochs": 6, "anneal": 0.12}
   }
 }

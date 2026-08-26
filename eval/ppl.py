@@ -2,6 +2,7 @@
 """PPL evaluation: computes perplexity on held-out validation set."""
 
 import math
+import os
 import sys
 from types import SimpleNamespace
 
@@ -59,7 +60,7 @@ with torch.no_grad():
 
 avg_loss = total_loss / total_tokens
 ppl = math.exp(avg_loss)
-print(f"\n=== PPL Results ===")
+print("\n=== PPL Results ===")
 print(f"checkpoint: {CKPT}")
 print(f"val tokens: {total_tokens:,}")
 print(f"avg loss: {avg_loss:.4f}")

@@ -29,6 +29,7 @@ import json
 import math
 import random
 import time
+from array import array
 
 import torch
 import torch.distributed as dist
@@ -121,6 +122,7 @@ class Cfg:
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
     val_batches = 20  # batches of the val split used for the periodic check
+    val_batches_full = 100  # batches used for the epoch-end validation (fixed prefix, comparable)
     # Muon (matrix params) — nanochat recipe
     muon_lr = 0.01
     muon_momentum = 0.95
@@ -827,15 +829,22 @@ def build_tokenizer(texts):
     return tok
 
 
-def encode(texts, tok):
+def encode(texts, tok, chunk=50_000, log=None):
+    """Documents -> one <eos>-separated int32 stream.
+
+    Chunked, and accumulating into array("i") rather than a python list: at the corpus sizes this
+    now runs on (8B tokens for the web domain) a list of python ints is ~28 bytes each = 220GB, and
+    tok.encode_batch over all 8M documents at once holds every Encoding object alive on top of that.
+    Chunking bounds both; array("i") stores 4 bytes per token."""
     eos = tok.token_to_id("<eos>")
-    # Batch encode: 10-100x faster than per-document
-    encoded = tok.encode_batch(texts)
-    ids = []
-    for e in encoded:
-        ids.extend(e.ids)
-        ids.append(eos)
-    return torch.tensor(ids, dtype=torch.int32)  # int32: vocab 32772 fits, halves bandwidth
+    out = array("i")
+    for i in range(0, len(texts), chunk):
+        for e in tok.encode_batch(texts[i : i + chunk]):  # batch encode: 10-100x faster per document
+            out.extend(e.ids)
+            out.append(eos)
+        if log and (i // chunk) % 20 == 0:
+            log(f"  encode {i + chunk}/{len(texts)} docs, {len(out) / 1e6:.0f}M tokens")
+    return torch.frombuffer(out, dtype=torch.int32).clone()  # int32: vocab 32772 fits, halves bandwidth
 
 
 def _domain_seqs(domain, tok, is_main, ddp):
@@ -849,7 +858,12 @@ def _domain_seqs(domain, tok, is_main, ddp):
                     texts.append(json.loads(line)["content"])
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
         random.Random(Cfg.seed).shuffle(texts)
-        torch.save(encode(texts, tok), cache)
+        print(f"mix: tokenizing {domain} ({len(texts)} docs) -> {cache}", flush=True)
+        data = encode(texts, tok, log=lambda m: print(m, flush=True))
+        del texts
+        torch.save(data, cache)
+        print(f"mix: {domain} cached {len(data) / 1e6:.0f}M tokens", flush=True)
+        del data
     if ddp:
         dist.barrier()
     data = torch.load(cache, map_location="cpu", weights_only=True).long()
@@ -1197,9 +1211,20 @@ def main():
         if fp8:
             raw_model.zero_grad(set_to_none=True)  # clear bf16 model grads too
 
-        # All ranks run validation to keep DDP in lockstep; only rank 0 prints
+        # All ranks run validation to keep DDP in lockstep; only rank 0 prints. Capped at a fixed
+        # prefix of the split: uncapped it is 27.6K sequences (113M tokens) recomputed identically on
+        # every rank, which on a --max_steps ablation costs more wall-clock than the training it is
+        # measuring. A fixed prefix keeps the number comparable across runs.
         v = validate(
-            model, raw_model, Xva, Yva, Cfg.batch, device, amp_dtype, eos_id if Cfg.doc_mask else None
+            model,
+            raw_model,
+            Xva,
+            Yva,
+            Cfg.batch,
+            device,
+            amp_dtype,
+            eos_id if Cfg.doc_mask else None,
+            max_batches=Cfg.val_batches_full,
         )
         if is_main:
             runlog(f"ep {ep + 1}/{Cfg.epochs} train {last:.3f} val {v:.3f} {time.time() - t0:.0f}s")

@@ -9,7 +9,7 @@ Sources:
 Usage: python3 prepare_sft.py [--max_samples 5000]
 Output: data/sft/sft_merged.jsonl.gz
 """
-import gzip, json, os, random, re, sys
+import json, os, random, re, sys
 
 random.seed(42)
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "sft")

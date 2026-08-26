@@ -37,10 +37,15 @@ SHARD_BYTES = 100 * 2**20
 CHARS_PER_TOKEN = 1.5
 
 SOURCES = {
-    "fineweb2": ("HuggingFaceFW/fineweb-2", "data/zho_Hans/train/", "text", "url"),
+    "fineweb2": ("HuggingFaceFW/fineweb-2", "data/cmn_Hani/train/", "text", "url"),
     "skypile": ("Skywork/SkyPile-150B", "data/", "text", None),
 }
 
+# ChatML / GPT control tokens leaked in from distilled corpora. Left in place they are junk the
+# tokenizer has no id for, and their trailing position made the "unfinished" rule reject 38% of
+# data/pretrain_full.jsonl -- complete documents whose real sentence-final punctuation sat one
+# token earlier (measured 2026-08-26: 7641/20000 sampled docs).
+SPECIAL_TOKEN = re.compile(r"<\|[A-Za-z0-9_]+\|>")
 CJK = re.compile(r"[一-鿿㐀-䶿]")
 BAD = re.compile(r"[�\x00-\x08\x0b\x0c\x0e-\x1f]")
 SYMBOL = re.compile(r"[\d\W]", re.UNICODE)
@@ -64,6 +69,27 @@ def load_garbage_patterns():
 
 
 GARBAGE = load_garbage_patterns()
+
+
+def reject_holdout(text):
+    for ln in (ln.strip() for ln in text.split("\n")):
+        if 15 <= len(ln) <= 200 and is_holdout(ln):
+            return "eval_contaminated"
+    return None
+
+
+def reject_light(text):
+    """Pre-cleaned sources (code, English, math, chat): only the checks that are domain-neutral.
+    The web filters below reject on CJK ratio, symbol ratio and digit ratio, which would delete
+    essentially all of a code or English corpus."""
+    n = len(text)
+    if n < 100:
+        return "short"
+    if n > 200_000:
+        return "long"
+    if len(BAD.findall(text)) > 0.001 * n:
+        return "bad_bytes"
+    return reject_holdout(text)
 
 
 def reject_reason(text):
@@ -92,14 +118,14 @@ def reject_reason(text):
             return "nav_menu"
         if len(set(lines)) / len(lines) < 0.7:
             return "dup_lines"
-    if n < 2000 and not END_OK.search(text):
+    # 500, not 2000: measured on 8000 fineweb-2 cmn_Hani docs (2026-08-26), everything rejected above
+    # 500 chars was a complete article whose last line is a source credit, tag list, email or URL, while
+    # below 500 it really is forum signatures, changelogs and copyright footers. 2000 cost 15pt of yield.
+    if n < 500 and not END_OK.search(text):
         return "unfinished"
     if GARBAGE is not None and GARBAGE.search(text[:600]):
         return "garbage_topic"
-    for ln in lines:
-        if 15 <= len(ln) <= 200 and is_holdout(ln):
-            return "eval_contaminated"
-    return None
+    return reject_holdout(text)
 
 
 # ---- dedup -------------------------------------------------------------------------------------
@@ -155,11 +181,33 @@ def iter_jsonl(path):
             line = line.strip()
             if line:
                 d = json.loads(line)
-                yield d.get("content") or d.get("text") or "", d.get("url")
+                text = d.get("content") or d.get("text")
+                if not text and d.get("instruction"):
+                    # QA corpora (coig, school_math_r1_zh, ...) in the same "问：/答：" shape the SFT
+                    # data uses, so pretraining already sees the format it will be fine-tuned on.
+                    text = f"问：{d['instruction']}\n答：{d.get('output', '')}"
+                yield text or "", d.get("url")
+
+
+def iter_parquet(path, text_col="text", url_col="url"):
+    import pyarrow.parquet as pq
+
+    f = pq.ParquetFile(path)
+    cols = [c for c in (text_col, url_col) if c in f.schema_arrow.names]
+    for batch in f.iter_batches(batch_size=4096, columns=cols):
+        d = batch.to_pydict()
+        for i in range(len(d[text_col])):
+            yield d[text_col][i] or "", (d[url_col][i] if url_col in d else None)
 
 
 def iter_source(spec, cache_dir):
     """Yield (text, url, source_name)."""
+    if spec.startswith("parquet:"):
+        for p in sorted(glob.glob(spec[8:])):
+            name = os.path.basename(p).split(".")[0]
+            for text, url in iter_parquet(p):
+                yield text, url, name
+        return
     if spec.startswith("jsonl:"):
         for p in sorted(glob.glob(spec[6:])):
             for text, url in iter_jsonl(p):
@@ -220,6 +268,24 @@ def main():
     ap.add_argument("--host_cap", type=int, default=20_000, help="max docs per URL host")
     ap.add_argument("--limit", type=int, default=None, help="stop after N input docs (dry runs)")
     ap.add_argument("--dry", action="store_true", help="no output files, print the rejects histogram")
+    ap.add_argument(
+        "--filters",
+        choices=("web", "light"),
+        default="web",
+        help="web = the full Chinese-web filter chain; light = length/bytes/holdout only",
+    )
+    ap.add_argument(
+        "--no_near_dedup",
+        action="store_true",
+        help="skip MinHash near-dedup (~30ms/doc, pure python) for already-deduped sources",
+    )
+    ap.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        help="jsonl glob whose documents are pre-seeded into the dedup set, so a domain "
+        "built earlier is not repeated inside this one",
+    )
     ap.add_argument("--cache_dir", default=os.path.join(ROOT, "data", "raw"))
     a = ap.parse_args()
     a.out = a.out or os.path.join(OUT_DIR, a.domain)
@@ -227,14 +293,22 @@ def main():
     target_chars = a.target_tokens * CHARS_PER_TOKEN
     reasons, hosts = Counter(), Counter()
     exact, near = set(), MinHashLSH()
+    reject = reject_light if a.filters == "light" else reject_reason
+    for pat in a.exclude:
+        n0 = len(exact)
+        for path in sorted(glob.glob(pat)):
+            for text, _ in iter_jsonl(path):
+                exact.add(exact_key(text))
+        print(f"exclude {pat}: dedup set +{len(exact) - n0} docs", flush=True)
     kept_chars = seen = 0
     writers = {}
     for spec in a.source:
         for text, url, src in iter_source(spec, a.cache_dir):
+            text = SPECIAL_TOKEN.sub("", text).strip()
             seen += 1
             if a.limit and seen > a.limit:
                 break
-            why = reject_reason(text)
+            why = reject(text)
             if why is None:
                 host = urlsplit(url).netloc if url else ""
                 if host and hosts[host] >= a.host_cap:
@@ -243,7 +317,7 @@ def main():
                     k = exact_key(text)
                     if k in exact:
                         why = "exact_dup"
-                    elif near.seen(text):
+                    elif not a.no_near_dedup and near.seen(text):
                         why = "near_dup"
                     else:
                         exact.add(k)
