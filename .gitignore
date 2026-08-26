@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+ckpt*.pt
+data/tokenizer.json
+data/*.jsonl
+data/sft/*.jsonl
+data/sft/*.jsonl.gz
+data/mix/
+data/**/*.pt
+data/rl/
+data/synthetic/
+data/augmented/
+data/outbatch/
+data/workbatch/
+.ruff_cache/
+.DS_Store

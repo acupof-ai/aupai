@@ -1,0 +1,31 @@
+[project]
+name = "aupai"
+version = "0.1.0"
+description = "200M Chinese LLM: KDA + Gated MLA hybrid architecture"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.11",
+    "tokenizers",
+    "pyarrow",
+    "flask",
+    "flash-linear-attention; sys_platform == 'linux'",
+    "liger-kernel; sys_platform == 'linux'",
+    "torchao; sys_platform == 'linux'",
+    "triton; sys_platform == 'linux'",
+]
+
+[project.optional-dependencies]
+dev = ["ruff"]
+mac = ["mlx-lm"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E741", "E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
