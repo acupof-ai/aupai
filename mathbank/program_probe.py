@@ -4,10 +4,14 @@
 Pipeline (no checkpoint needed for step 1):
   1. sample: draw K verified instances per program -> data/rl/program_probe.jsonl
      rows: {program_id, level, instruction, answer}  (RL format, no reference solution)
-  2. on a GPU box: generate K answers per row with any harness, append as
-     `gens: [str, ...]` (or write one row per generation as {program_id, gen}),
+  2. on a GPU box: generate one greedy + k sampled answers per row, write
+     jsonl {instruction, greedy: str, gens: [str, ...]} (or one row per
+     generation with greedy_gen on the greedy row),
   3. score: aggregate per program -> data/rl/program_rates.jsonl
-     rows: {program_id, level, n, pass_at_1, pass_at_k}  (k = gens per instance)
+     rows: {program_id, level, n, pass_at_1, pass_at_k, inst_var, all_or_none}
+     pass_at_1 uses the greedy gen (falls back to first sampled with a warning);
+     inst_var is the variance of per-instance pass@k — programs where instances
+     are all-right/all-wrong (high var, all_or_none==n) carry ~no RL gradient.
 
 The 20-80% solve-rate band (LFM-1.3B-Math / DAPO) is the RL-usable range;
 programs at 0% or 100% carry ~no gradient.
@@ -30,14 +34,17 @@ RATES_PATH = os.path.join(ROOT, "data", "rl", "program_rates.jsonl")
 
 
 def sample(k, seed):
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from holdout import is_holdout  # noqa: E402
+
     bank = load_programs()
-    seen, n_out = set(), 0
+    seen, n_out, n_held = set(), 0, 0
     os.makedirs(os.path.dirname(PROBE_PATH), exist_ok=True)
     with open(PROBE_PATH, "w", encoding="utf-8") as f:
         for lev in sorted(bank):
             for name, fn in bank[lev]:
                 got = 0
-                for i in range(k * 4):  # 4x headroom for rejects/dups
+                for i in range(k * 20):  # headroom for rejects/dups/holdout
                     if got >= k:
                         break
                     rng = random.Random(f"probe-{seed}-{name}-{i}")
@@ -47,13 +54,17 @@ def sample(k, seed):
                         continue
                     if not verify(ins, lines, ans)[1] or ins in seen:
                         continue
+                    if is_holdout(ins):
+                        n_held += 1
+                        continue
                     seen.add(ins)
                     f.write(json.dumps({"program_id": name, "level": lev,
                                         "instruction": ins, "answer": num(ans)},
                                        ensure_ascii=False) + "\n")
                     got += 1
                     n_out += 1
-    print(f"sampled {n_out} instances from {sum(len(v) for v in bank.values())} programs -> {PROBE_PATH}")
+    print(f"sampled {n_out} instances from {sum(len(v) for v in bank.values())} programs "
+          f"({n_held} holdout hits filtered) -> {PROBE_PATH}")
 
 
 def score(gen_path):
@@ -67,36 +78,54 @@ def score(gen_path):
         m = ANS_RE.search(gen)
         return reward_fn(f"\\boxed{{{m.group(1).strip()}}}", gold) if m else 0.0
 
-    gold, gens = {}, defaultdict(list)
+    gold, gens, greedy = {}, defaultdict(list), {}
     for line in open(PROBE_PATH, encoding="utf-8"):
         r = json.loads(line)
         gold[r["instruction"]] = (r["program_id"], r["level"], str(r["answer"]))
+    n_warn = 0
     for line in open(gen_path, encoding="utf-8"):
         r = json.loads(line)
         if r["instruction"] not in gold:
             continue
-        gens[r["instruction"]].extend(r.get("gens") or [r["gen"]])
+        if r.get("greedy") is not None:
+            greedy[r["instruction"]] = r["greedy"]
+        elif r.get("greedy_gen"):
+            greedy[r["instruction"]] = r["greedy_gen"]
+        gs = r.get("gens")
+        if gs:
+            gens[r["instruction"]].extend(gs)
+        elif "gen" in r:
+            gens[r["instruction"]].append(r["gen"])
+        if r["instruction"] not in greedy:
+            n_warn += 1  # pass@1 falls back to first sampled gen (noise, see 7d34ac4)
 
-    agg = defaultdict(lambda: [0, 0, 0, 0])  # program -> [p1, pk, n, ksum]
+    # per program: [greedy_correct, n_inst, rates(list of per-instance pass@k)]
+    agg = defaultdict(lambda: [0, 0, []])
     for ins, (pid, lev, ans) in gold.items():
         gs = gens.get(ins, [])
         if not gs:
             continue
         oks = [is_ok(g, ans) for g in gs]
+        g = greedy.get(ins)
         a = agg[(pid, lev)]
-        a[0] += oks[0]
-        a[1] += int(any(oks))
-        a[2] += 1
-        a[3] += len(oks)
+        a[0] += is_ok(g, ans) if g is not None else oks[0]
+        a[1] += 1
+        a[2].append(sum(oks) / len(oks))
     with open(RATES_PATH, "w", encoding="utf-8") as f:
-        for (pid, lev), (p1, pk, n, ksum) in sorted(agg.items()):
-            f.write(json.dumps({"program_id": pid, "level": lev, "n": n,
-                                "k": round(ksum / n, 1),
-                                "pass_at_1": round(p1 / n, 4),
-                                "pass_at_k": round(pk / n, 4)},
-                               ensure_ascii=False) + "\n")
-    scored = sum(1 for a in agg.values() if a[2])
+        for (pid, lev), (p1, n, rates) in sorted(agg.items()):
+            mean = sum(rates) / len(rates)
+            var = sum((r - mean) ** 2 for r in rates) / len(rates)
+            f.write(json.dumps({
+                "program_id": pid, "level": lev, "n": n,
+                "pass_at_1": round(p1 / n, 4),
+                "pass_at_k": round(mean, 4),
+                "inst_var": round(var, 4),
+                "all_or_none": sum(1 for r in rates if r in (0.0, 1.0)),
+            }, ensure_ascii=False) + "\n")
+    scored = sum(1 for a in agg.values() if a[1])
     print(f"scored {scored} programs -> {RATES_PATH}")
+    if n_warn:
+        print(f"[warn] {n_warn} instances lack a greedy gen; pass@1 used first sampled gen")
 
 
 if __name__ == "__main__":
