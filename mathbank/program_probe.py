@@ -7,11 +7,13 @@ Pipeline (no checkpoint needed for step 1):
   2. on a GPU box: generate one greedy + k sampled answers per row, write
      jsonl {instruction, greedy: str, gens: [str, ...]} (or one row per
      generation with greedy_gen on the greedy row),
-  3. score: aggregate per program -> data/rl/program_rates.jsonl
-     rows: {program_id, level, n, pass_at_1, pass_at_k, inst_var, all_or_none}
-     pass_at_1 uses the greedy gen (falls back to first sampled with a warning);
-     inst_var is the variance of per-instance pass@k — programs where instances
-     are all-right/all-wrong (high var, all_or_none==n) carry ~no RL gradient.
+  3. score: -> data/rl/program_rates.jsonl (per-program diagnostics) plus
+     data/rl/instance_rates.jsonl (per-instance pass@k — the SELECTION file:
+     RL keeps instances in the 20-80% band, never whole programs).
+     program_rates rows: {program_id, level, n, pass_at_1, pass_at_k,
+     inst_var, all_or_none}; pass_at_1 uses the greedy gen (falls back to
+     first sampled with a warning); inst_var flags programs whose parameter
+     range is too wide (all_or_none==n => every instance degenerate).
 
 The 20-80% solve-rate band (LFM-1.3B-Math / DAPO) is the RL-usable range;
 programs at 0% or 100% carry ~no gradient.
@@ -31,6 +33,7 @@ from run_math_short import load_programs, num, verify  # noqa: E402
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROBE_PATH = os.path.join(ROOT, "data", "rl", "program_probe.jsonl")
 RATES_PATH = os.path.join(ROOT, "data", "rl", "program_rates.jsonl")
+INST_PATH = os.path.join(ROOT, "data", "rl", "instance_rates.jsonl")
 
 
 def sample(k, seed):
@@ -100,17 +103,25 @@ def score(gen_path):
             n_warn += 1  # pass@1 falls back to first sampled gen (noise, see 7d34ac4)
 
     # per program: [greedy_correct, n_inst, rates(list of per-instance pass@k)]
+    # per instance rows are the SELECTION quantity (RL filters instances, not
+    # programs — a wide-range program can have some instances in-band and some
+    # degenerate); program-level aggregates are diagnostics only.
     agg = defaultdict(lambda: [0, 0, []])
+    inst_rows = []
     for ins, (pid, lev, ans) in gold.items():
         gs = gens.get(ins, [])
         if not gs:
             continue
         oks = [is_ok(g, ans) for g in gs]
         g = greedy.get(ins)
+        g_ok = is_ok(g, ans) if g is not None else oks[0]
         a = agg[(pid, lev)]
-        a[0] += is_ok(g, ans) if g is not None else oks[0]
+        a[0] += g_ok
         a[1] += 1
         a[2].append(sum(oks) / len(oks))
+        inst_rows.append({"program_id": pid, "level": lev, "instruction": ins,
+                          "answer": ans, "greedy_ok": g_ok,
+                          "pass_at_k": round(sum(oks) / len(oks), 4)})
     with open(RATES_PATH, "w", encoding="utf-8") as f:
         for (pid, lev), (p1, n, rates) in sorted(agg.items()):
             mean = sum(rates) / len(rates)
@@ -122,8 +133,12 @@ def score(gen_path):
                 "inst_var": round(var, 4),
                 "all_or_none": sum(1 for r in rates if r in (0.0, 1.0)),
             }, ensure_ascii=False) + "\n")
+    with open(INST_PATH, "w", encoding="utf-8") as f:
+        for r in inst_rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
     scored = sum(1 for a in agg.values() if a[1])
-    print(f"scored {scored} programs -> {RATES_PATH}")
+    print(f"scored {scored} programs, {len(inst_rows)} instances "
+          f"-> {RATES_PATH} + {INST_PATH}")
     if n_warn:
         print(f"[warn] {n_warn} instances lack a greedy gen; pass@1 used first sampled gen")
 
