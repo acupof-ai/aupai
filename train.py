@@ -123,6 +123,7 @@ class Cfg:
     val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
     val_batches = 20  # batches of the val split used for the periodic check
     val_batches_full = 100  # batches used for the epoch-end validation (fixed prefix, comparable)
+    val_rows_max = 5000  # cap on val rows kept per mix domain (validation only ever reads a prefix)
     # Muon (matrix params) — nanochat recipe
     muon_lr = 0.01
     muon_momentum = 0.95
@@ -866,32 +867,41 @@ def _domain_seqs(domain, tok, is_main, ddp):
         del data
     if ddp:
         dist.barrier()
-    data = torch.load(cache, map_location="cpu", weights_only=True).long()
+    data = torch.load(cache, map_location="cpu", weights_only=True)  # int32; .long() once, per rank
     n = len(data) // (Cfg.seq + 1)
     return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
 
 
-def build_mix(cfg_path, tok, is_main, ddp):
-    """Domain mix -> (train_seqs in schedule order, val_seqs). mix.json:
-    {"total_tokens": 8e9, "domains": {"web": {"weight": .6, "epochs": 1, "anneal": .3}, ...}}
+def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
+    """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
+    {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}}
     weight = share of the main phase; anneal = share of the last Cfg.anneal_frac tokens (default = weight);
     epochs = max repeats of that domain's data (the schedule is capped, never the filter thresholds).
-    Train rows are pre-shuffled per phase and consumed sequentially, so main -> anneal order is exact."""
+
+    The schedule is built as an index plan -- (domain, row) pairs, ~22MB -- and only this rank's
+    1/world slice of it is turned back into token rows. Materializing the whole schedule on every
+    rank the way the obvious version does costs ~2.3TB of host RAM at 11.5B tokens x 8 ranks, which
+    is more than the box has; it would have died after the 40 minutes spent tokenizing. Rows are
+    pre-shuffled per phase and consumed sequentially, so main -> anneal order is exact."""
     mix = json.load(open(cfg_path, encoding="utf-8"))
     rows = mix["total_tokens"] / Cfg.seq
     phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
     g = torch.Generator().manual_seed(Cfg.seed)
-    train, val, used = [], [], {}
-    pools = {}
-    for name in mix["domains"]:
+    names = list(mix["domains"])
+    pools, val, used = {}, [], {}
+    for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
-        n_val = max(1, int(len(seqs) * Cfg.val_frac))
+        # Capped: validation reads at most Cfg.val_batches_full batches, so a 5% split of a 1.9M-row
+        # domain would keep 95K rows alive to look at 4.8K of them.
+        n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), Cfg.val_rows_max)
         val.append(seqs[:n_val])
         pools[name] = seqs[n_val:]
         used[name] = 0
+    plan = []
     for frac, key in phases:
         parts = []
-        for name, d in mix["domains"].items():
+        for di, name in enumerate(names):
+            d = mix["domains"][name]
             want = int(rows * frac * d.get(key, d["weight"]))
             pool = pools[name]
             cap = int(len(pool) * d.get("epochs", 1)) - used[name]
@@ -901,15 +911,35 @@ def build_mix(cfg_path, tok, is_main, ddp):
                         f"mix: {name} {key} wants {want} rows, epoch cap leaves {cap} -> capped", flush=True
                     )
                 want = max(0, cap)
-            idx = (torch.arange(used[name], used[name] + want) % len(pool)) if want else torch.empty(0).long()
+            if want:
+                idx = torch.arange(used[name], used[name] + want) % len(pool)
+                parts.append(torch.stack([torch.full_like(idx, di), idx]))
             used[name] += want
-            parts.append(pool[idx])
-        phase = torch.cat(parts)
-        train.append(phase[torch.randperm(len(phase), generator=g)])
+        if parts:
+            ph = torch.cat(parts, dim=1)
+            plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+    plan = torch.cat(plan, dim=1)
     if is_main:
-        for name in mix["domains"]:
-            print(f"mix: {name} {used[name]} rows = {used[name] / len(pools[name]):.2f} epochs", flush=True)
-    return torch.cat(train), torch.cat(val)
+        for name in names:
+            print(
+                f"mix: {name} {used[name]} rows = {used[name] / max(len(pools[name]), 1):.2f} epochs",
+                flush=True,
+            )
+        print(
+            f"mix: {plan.shape[1]} rows = {plan.shape[1] * Cfg.seq / 1e9:.2f}B tokens scheduled", flush=True
+        )
+    # Truncate to a multiple of world so every rank takes the same number of steps: a strided shard
+    # that leaves one rank a row short gives that rank a different lr and then hangs the all-reduce.
+    n = (plan.shape[1] // world) * world
+    mine = plan[:, :n][:, rank::world]
+    out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
+    for di, name in enumerate(names):
+        m = mine[0] == di
+        if m.any():
+            out[m] = pools[name][mine[1][m]]
+    del pools
+    vcat = torch.cat(val)
+    return out, vcat[torch.randperm(len(vcat), generator=torch.Generator().manual_seed(Cfg.seed))]
 
 
 # --- LR schedule: linear warmup, constant, cosine warmdown ---
@@ -1000,7 +1030,8 @@ def main():
         assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
         tok = build_tokenizer([])
         eos_id = tok.token_to_id("<eos>")
-        seqs, vseqs = build_mix(mix_path, tok, is_main, ddp)
+        seqs, vseqs = build_mix(mix_path, tok, is_main, ddp, rank, world)
+        seqs, vseqs = seqs.long(), vseqs.long()  # int32 on disk and in the pools; long for embedding
         Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
         data, X = seqs, seqs  # for the params print below
         Cfg.epochs = 1  # repeats are encoded in the schedule
@@ -1034,8 +1065,9 @@ def main():
         n_val = max(1, int(len(X) * Cfg.val_frac))
         Xtr, Ytr, Xva, Yva = X[n_val:], Y[n_val:], X[:n_val], Y[:n_val]
 
-    if ddp:
-        Xtr, Ytr = Xtr[rank::world], Ytr[rank::world]  # strided: every rank sees the same phase at once
+    if ddp and not use_mix:  # the mix path already handed this rank its own slice, in schedule order
+        n_even = ddp_even_len(len(Xtr[rank::world]), Cfg.batch, ddp)
+        Xtr, Ytr = Xtr[rank::world][:n_even], Ytr[rank::world][:n_even]  # strided: same phase per rank
     Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()  # nanochat: async H2D
     # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage through two
     # pinned buffers; each is reused only after the event recorded behind its previous H2D copy completes.

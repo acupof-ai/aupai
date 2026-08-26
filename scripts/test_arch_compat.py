@@ -102,3 +102,55 @@ assert cu.tolist() == [0, 2, 4, 5, 6, 8] and cu.dtype == torch.int32, cu
 m = HybridLM(Cfg)
 assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")
+
+# --- mix schedule: the plan is sharded per rank, so what one rank holds is 1/world of it ---
+import json  # noqa: E402
+import tempfile  # noqa: E402
+
+_POOL = {"web": 400, "math": 40, "chat": 10}
+_orig_domain_seqs = train._domain_seqs
+try:
+    train.Cfg.seq, train.Cfg.val_frac, train.Cfg.val_rows_max = 8, 0.05, 3
+    train.Cfg.anneal_frac = 0.10
+    train._domain_seqs = lambda domain, tok, is_main, ddp: (
+        torch.arange(_POOL[domain], dtype=torch.int32)
+        .repeat_interleave(train.Cfg.seq + 1)
+        .view(_POOL[domain], -1)
+        + list(_POOL).index(domain) * 1000
+    )
+    mix = {
+        "total_tokens": 400 * 8,
+        "domains": {
+            "web": {"weight": 0.80, "epochs": 2, "anneal": 0.40},
+            "math": {"weight": 0.15, "epochs": 5, "anneal": 0.40},
+            "chat": {"weight": 0.05, "epochs": 6, "anneal": 0.20},
+        },
+    }
+    mp = os.path.join(tempfile.mkdtemp(), "mix.json")
+    json.dump(mix, open(mp, "w"))
+    W = 4
+    shards = [train.build_mix(mp, None, False, False, rank=i, world=W) for i in range(W)]
+    tr = [s[0] for s in shards]
+    assert len({len(t) for t in tr}) == 1, f"ranks got different row counts: {[len(t) for t in tr]}"
+    glob = torch.empty((len(tr[0]) * W, train.Cfg.seq + 1), dtype=torch.int32)
+    for i, t in enumerate(tr):
+        glob[i::W] = t  # rank i holds rows i, i+W, i+2W, ...
+    assert (glob == glob[:, :1]).all(), "a scheduled row was assembled from two different pool rows"
+    dom = glob[:, 0] // 1000
+    main_n = int(len(dom) * (1 - train.Cfg.anneal_frac))
+    main_math = (dom[:main_n] == 1).float().mean().item()
+    ann_math = (dom[main_n:] == 1).float().mean().item()
+    assert ann_math > main_math * 1.5, (
+        f"anneal must upweight math: main {main_math:.2f} anneal {ann_math:.2f}"
+    )
+    for di, name in enumerate(_POOL):
+        n_val = min(max(1, int(_POOL[name] * train.Cfg.val_frac)), train.Cfg.val_rows_max)
+        used = int((dom == di).sum())
+        assert used <= (_POOL[name] - n_val) * mix["domains"][name]["epochs"], f"{name} exceeded its cap"
+        va = shards[0][1]
+        vrows = {int(r[0]) % 1000 for r in va if int(r[0]) // 1000 == di}
+        trows = {int(r[0]) % 1000 for r in glob if int(r[0]) // 1000 == di}
+        assert not (vrows & trows), f"{name}: val and train share rows {sorted(vrows & trows)[:5]}"
+finally:
+    train._domain_seqs = _orig_domain_seqs
+print("test_mix_schedule OK")
