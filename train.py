@@ -24,6 +24,7 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import copy
+import datetime
 import glob
 import json
 import math
@@ -968,7 +969,9 @@ def lr_mult(step, total, cfg):
 def setup_ddp():
     if "RANK" not in os.environ:
         return False, 0, 1, 0
-    dist.init_process_group("nccl")
+    # 2h, not NCCL's default 10min: rank 0 does the per-domain tokenization alone while the other
+    # ranks sit on the barrier in _domain_seqs, and the web domain takes ~45 minutes on its own.
+    dist.init_process_group("nccl", timeout=datetime.timedelta(hours=2))
     rank = dist.get_rank()
     world = dist.get_world_size()
     local = int(os.environ["LOCAL_RANK"])
@@ -1139,7 +1142,8 @@ def main():
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
-    GOOD_SAVE_INTERVAL = 500
+    n_skip = 0  # consecutive skipped optimizer steps (non-finite gradients)
+    GOOD_SAVE_INTERVAL = 200
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr)) if use_mix else torch.randperm(len(Xtr))  # mix: schedule order
@@ -1184,19 +1188,35 @@ def main():
                 if step % 10 == 9:
                     last = loss.item() * Cfg.accum  # only sync the loss value on log steps
                 if not healthy:
-                    if good_state is not None:
+                    # This check runs BEFORE opt.step(), so the parameters are still the last
+                    # healthy ones and only the gradients are non-finite: dropping the gradients
+                    # is the entire fix. Restoring the snapshot here was strictly worse -- for the
+                    # first GOOD_SAVE_INTERVAL steps it is the pre-training random init, good_opt
+                    # is still empty so the optimizer moments are NOT rolled back with it, and
+                    # `step` is not rewound, so a single non-finite grad at step 300 silently put
+                    # the run back at initialization while the log read "restored last good state".
+                    n_skip += 1
+                    for opt in optimizers:
+                        opt.zero_grad(set_to_none=True)
+                    if fp8:
+                        raw_model.zero_grad(set_to_none=True)
+                    if is_main:
+                        runlog(f"step {step}/{total_steps} non-finite grad — step skipped ({n_skip})")
+                    if n_skip >= 20 and good_state is not None:
+                        # 20 in a row is not a transient spike; the parameters themselves are
+                        # suspect, so fall back to the last snapshot and its optimizer state.
                         raw_model.load_state_dict(good_state)
                         for j, opt in enumerate(optimizers):
                             if good_opt[j] is not None:
                                 opt.load_state_dict(good_opt[j])
+                        n_skip = 0
                         if is_main:
-                            runlog(f"step {step}/{total_steps} NaN — restored last good state")
-                    for opt in optimizers:
-                        opt.zero_grad(set_to_none=True)
+                            runlog(f"step {step}/{total_steps} 20 skips in a row — rolled back to snapshot")
                     step += 1
                     if step >= total_steps:
                         break
                     continue
+                n_skip = 0
                 set_schedule(optimizers, step, total_steps, Cfg)
                 for opt in optimizers:
                     opt.step()

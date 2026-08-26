@@ -71,10 +71,18 @@ def load_garbage_patterns():
 GARBAGE = load_garbage_patterns()
 
 
+# iter_jsonl renders instruction/output rows as "问：{q}\n答：{a}". holdout.norm() strips punctuation
+# but not that marker, so the hash of "问：{q}" never matches the stored hash of "{q}" and the guard
+# silently passed every QA source: measured 496 of the 500 math_test_500 questions, with their full
+# solutions, straight into data/corpus/math/ (2026-08-26). Both forms are tested now.
+QA_PREFIX = re.compile(r"^\s*(?:问题?|答案?|Q|A|Question|Answer)\s*[：:]\s*")
+
+
 def reject_holdout(text):
     for ln in (ln.strip() for ln in text.split("\n")):
-        if 15 <= len(ln) <= 200 and is_holdout(ln):
-            return "eval_contaminated"
+        for cand in {ln, QA_PREFIX.sub("", ln)}:
+            if 15 <= len(cand) <= 200 and is_holdout(cand):
+                return "eval_contaminated"
     return None
 
 
