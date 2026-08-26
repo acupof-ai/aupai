@@ -65,18 +65,25 @@ def main():
     )
     k = max(1, a.k)
     temp = a.temperature if k > 1 or a.temperature > 0 else 0.0
-    by = {}  # level -> [sum of per-problem pass@1, any-correct count, n problems]
-    n_eq = n_bad = tot_len = 0
-    per_batch = max(1, a.batch // k)  # k samples of one problem are laid out consecutively
+    # pass@1 is always the greedy answer; the k sampled answers only feed pass@k and the sampled mean,
+    # so pass@k - pass@1 is not inflated by sampling noise on the pass@1 side.
+    by = {}  # level -> [greedy correct, sum of sampled acc, any-correct, n]
+    n_eq = n_bad = tot_len = n_gen = 0
+    per_batch = max(1, a.batch // k)
     with open(preds, "w", encoding="utf-8") as f:
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
-            prompts = [tok.encode(f"问：{r['instruction']}\n答：").ids for r in batch for _ in range(k)]
+            base = [tok.encode(f"问：{r['instruction']}\n答：").ids for r in batch]
             with torch.no_grad():
-                outs = generate_batch(model, prompts, a.max_new, a.device, temp)
+                greedy = generate_batch(model, base, a.max_new, a.device, 0.0)
+                sampled = []
+                if k > 1:
+                    sampled = generate_batch(
+                        model, [p for p in base for _ in range(k)], a.max_new, a.device, temp
+                    )
             for i, r in enumerate(batch):
                 oks = []
-                for ids in outs[i * k : (i + 1) * k]:
+                for ids in [greedy[i]] + sampled[i * k : (i + 1) * k]:
                     gen = tok.decode(ids)
                     ok = score(gen, str(r["answer"]))
                     oks.append(ok)
@@ -84,6 +91,7 @@ def main():
                     n_eq += e
                     n_bad += b
                     tot_len += len(ids)
+                    n_gen += 1
                     f.write(
                         json.dumps(
                             {
@@ -92,30 +100,33 @@ def main():
                                 "level": r["level"],
                                 "gen": gen[-300:],
                                 "ok": ok,
+                                "greedy": len(oks) == 1,
                             },
                             ensure_ascii=False,
                         )
                         + "\n"
                     )
-                lv = by.setdefault(r["level"], [0.0, 0, 0])
-                lv[0] += sum(oks) / k
-                lv[1] += int(any(oks))
-                lv[2] += 1
-    n = sum(v[2] for v in by.values())
+                lv = by.setdefault(r["level"], [0, 0.0, 0, 0])
+                lv[0] += int(oks[0])
+                lv[1] += sum(oks[1:]) / k if k > 1 else 0.0
+                lv[2] += int(any(oks))
+                lv[3] += 1
+    n = sum(v[3] for v in by.values())
     p1 = sum(v[0] for v in by.values())
-    pk = sum(v[1] for v in by.values())
-    print(
-        f"math-hard: pass@1 {p1 / n:.1%} ({p1:.1f}/{n})"
-        + (f" | pass@{k} {pk / n:.1%} ({pk}/{n})" if k > 1 else "")
-    )
+    ps = sum(v[1] for v in by.values())
+    pk = sum(v[2] for v in by.values())
+    line = f"math-hard: pass@1(greedy) {p1 / n:.1%} ({p1}/{n})"
+    if k > 1:
+        line += f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k} {pk / n:.1%} ({pk}/{n}) | gap {(pk - p1) / n:+.1%}"
+    print(line)
     print(
         "  "
         + ", ".join(
-            f"{lvl}: p@1 {v[0] / v[2]:.0%}" + (f" p@{k} {v[1] / v[2]:.0%}" if k > 1 else "") + f" (n={v[2]})"
+            f"{lvl}: p@1 {v[0] / v[3]:.0%}" + (f" p@{k} {v[2] / v[3]:.0%}" if k > 1 else "") + f" (n={v[3]})"
             for lvl, v in sorted(by.items())
         )
     )
-    print(f"  avg gen tokens {tot_len / (n * k):.0f} | step-eq wrong {n_bad}/{n_eq}")
+    print(f"  avg gen tokens {tot_len / n_gen:.0f} | step-eq wrong {n_bad}/{n_eq}")
 
 
 if __name__ == "__main__":
