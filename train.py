@@ -498,6 +498,12 @@ class HybridLM(nn.Module):
         for b in self.blocks:
             for ar, norm, f in b.sublayers(cu):
                 h = ar(blocks + ([partial] if partial is not None else []))
+                # The AttnRes call sits outside the checkpoint, so its per-source products stay on
+                # the tape: one [B,T,D] per (consumer, source) pair, which at L=12 is 325 pairs for
+                # Full (196GB/GPU at batch 72), 85 for blocks=4, 61 for blocks=2. Folding ar() into
+                # the checkpointed function would leave only the block reps alive and make Full
+                # affordable; not done here because it changes what gets recomputed in backward and
+                # this run is not the place to validate that.
                 fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
                 out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
                 partial = out if partial is None else partial + out
