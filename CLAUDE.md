@@ -13,9 +13,13 @@
 - Eval: `scripts/eval_hard.sh <ckpt> [ngpu]` on `data/synthetic/math_hard_eval_1k.jsonl` — the metric of
   record. math-500 is saturated (32.2 / 26.8 / 32.0 / 31.0); never conclude from it.
 - AttnRes A/B: `NGPU=6 STEPS=500 scripts/run_ablation.sh` (base vs `--attn_res`, same seed).
-- Corpus: `python datagen/build_corpus.py --source fineweb2 --target_tokens 8e9` (clean/dedup/cap into
-  `data/corpus/primary/`; `--dry --limit N` prints the rejects histogram). Sources are interchangeable;
-  the filters are the product.
+- Corpus: `python datagen/build_corpus.py --domain web --source fineweb2 --target_tokens 6e9` (clean/dedup/
+  cap into `data/corpus/<domain>/`; `--dry --limit N` prints the rejects histogram). Sources are
+  interchangeable; the filters are the product. Run every domain (incl. mathbank/synthetic via
+  `--source jsonl:<glob>`) through it so the eval holdout filter covers all of them.
+- Mix: `data/mix.json` = per-domain weight / epoch cap / anneal weight; when present train.py builds the
+  schedule (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in
+  order, so `Cfg.epochs` is forced to 1. Delete or `--mix ""` to fall back to the flat corpus.
 - pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
 - FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
 

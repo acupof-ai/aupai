@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build the pretraining corpus: select, clean, dedup, cap — the source is interchangeable.
 
-    python datagen/build_corpus.py --source fineweb2 --target_tokens 8e9
+    python datagen/build_corpus.py --domain web  --source fineweb2 --target_tokens 6e9
+    python datagen/build_corpus.py --domain math --source jsonl:data/synthetic/math_*.jsonl --target_tokens 1e9
     python datagen/build_corpus.py --source jsonl:data/raw/*.jsonl --dry --limit 2000   # inspect rejects
 
 Sources (any mix, repeatable): fineweb2 (HuggingFaceFW/fineweb-2, zho_Hans), skypile
@@ -31,7 +32,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from holdout import is_holdout  # noqa: E402
 
-OUT_DIR = os.path.join(ROOT, "data", "corpus", "primary")
+OUT_DIR = os.path.join(ROOT, "data", "corpus")
 SHARD_BYTES = 100 * 2**20
 CHARS_PER_TOKEN = 1.5
 
@@ -214,12 +215,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", action="append", required=True, help="fineweb2 | skypile | jsonl:<glob>")
     ap.add_argument("--target_tokens", type=float, default=8e9)
-    ap.add_argument("--out", default=OUT_DIR)
+    ap.add_argument("--domain", default="primary", help="data/mix.json domain -> data/corpus/<domain>/")
+    ap.add_argument("--out", default=None, help="output dir (default data/corpus/<domain>)")
     ap.add_argument("--host_cap", type=int, default=20_000, help="max docs per URL host")
     ap.add_argument("--limit", type=int, default=None, help="stop after N input docs (dry runs)")
     ap.add_argument("--dry", action="store_true", help="no output files, print the rejects histogram")
     ap.add_argument("--cache_dir", default=os.path.join(ROOT, "data", "raw"))
     a = ap.parse_args()
+    a.out = a.out or os.path.join(OUT_DIR, a.domain)
 
     target_chars = a.target_tokens * CHARS_PER_TOKEN
     reasons, hosts = Counter(), Counter()

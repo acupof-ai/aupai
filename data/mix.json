@@ -1,0 +1,11 @@
+{
+  "total_tokens": 8e9,
+  "domains": {
+    "web":  {"weight": 0.60, "epochs": 1, "anneal": 0.30},
+    "book": {"weight": 0.15, "epochs": 3, "anneal": 0.25},
+    "math": {"weight": 0.10, "epochs": 3, "anneal": 0.25},
+    "code": {"weight": 0.08, "epochs": 2, "anneal": 0.10},
+    "en":   {"weight": 0.05, "epochs": 1, "anneal": 0.05},
+    "chat": {"weight": 0.02, "epochs": 3, "anneal": 0.05}
+  }
+}

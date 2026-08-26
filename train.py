@@ -117,6 +117,8 @@ class Cfg:
     # Document boundaries: <eos> positions become cu_seqlens so KDA state and SWA attention reset per
     # document instead of leaking across the ~10 docs packed into each 4K row (train/infer mismatch).
     doc_mask = True
+    mix = "data/mix.json"  # domain mix (weights / epoch caps / anneal); absent -> legacy flat corpus
+    anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
     val_batches = 20  # batches of the val split used for the periodic check
     # Muon (matrix params) — nanochat recipe
@@ -836,6 +838,66 @@ def encode(texts, tok):
     return torch.tensor(ids, dtype=torch.int32)  # int32: vocab 32772 fits, halves bandwidth
 
 
+def _domain_seqs(domain, tok, is_main, ddp):
+    """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1]."""
+    cache = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
+    if is_main and not os.path.exists(cache):
+        texts = []
+        for p in sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))):
+            for line in open(p, encoding="utf-8"):
+                if line.strip():
+                    texts.append(json.loads(line)["content"])
+        assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
+        random.Random(Cfg.seed).shuffle(texts)
+        torch.save(encode(texts, tok), cache)
+    if ddp:
+        dist.barrier()
+    data = torch.load(cache, map_location="cpu", weights_only=True).long()
+    n = len(data) // (Cfg.seq + 1)
+    return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
+
+
+def build_mix(cfg_path, tok, is_main, ddp):
+    """Domain mix -> (train_seqs in schedule order, val_seqs). mix.json:
+    {"total_tokens": 8e9, "domains": {"web": {"weight": .6, "epochs": 1, "anneal": .3}, ...}}
+    weight = share of the main phase; anneal = share of the last Cfg.anneal_frac tokens (default = weight);
+    epochs = max repeats of that domain's data (the schedule is capped, never the filter thresholds).
+    Train rows are pre-shuffled per phase and consumed sequentially, so main -> anneal order is exact."""
+    mix = json.load(open(cfg_path, encoding="utf-8"))
+    rows = mix["total_tokens"] / Cfg.seq
+    phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
+    g = torch.Generator().manual_seed(Cfg.seed)
+    train, val, used = [], [], {}
+    pools = {}
+    for name in mix["domains"]:
+        seqs = _domain_seqs(name, tok, is_main, ddp)
+        n_val = max(1, int(len(seqs) * Cfg.val_frac))
+        val.append(seqs[:n_val])
+        pools[name] = seqs[n_val:]
+        used[name] = 0
+    for frac, key in phases:
+        parts = []
+        for name, d in mix["domains"].items():
+            want = int(rows * frac * d.get(key, d["weight"]))
+            pool = pools[name]
+            cap = int(len(pool) * d.get("epochs", 1)) - used[name]
+            if want > cap:
+                if is_main:
+                    print(
+                        f"mix: {name} {key} wants {want} rows, epoch cap leaves {cap} -> capped", flush=True
+                    )
+                want = max(0, cap)
+            idx = (torch.arange(used[name], used[name] + want) % len(pool)) if want else torch.empty(0).long()
+            used[name] += want
+            parts.append(pool[idx])
+        phase = torch.cat(parts)
+        train.append(phase[torch.randperm(len(phase), generator=g)])
+    if is_main:
+        for name in mix["domains"]:
+            print(f"mix: {name} {used[name]} rows = {used[name] / len(pools[name]):.2f} epochs", flush=True)
+    return torch.cat(train), torch.cat(val)
+
+
 # --- LR schedule: linear warmup, constant, cosine warmdown ---
 
 
@@ -892,6 +954,9 @@ def main():
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
     parser.add_argument("--no_doc_mask", action="store_true", help="let KDA state / attention cross <eos>")
+    parser.add_argument(
+        "--mix", type=str, default=None, help='domain mix json (default Cfg.mix; "" = flat corpus)'
+    )
     parser.add_argument("--resume", type=str, default=None, help="checkpoint to resume from")
     parser.add_argument(
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
@@ -910,41 +975,54 @@ def main():
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0
     runlog = RunLog(args.name) if is_main else print
+    if args.mix is not None:
+        Cfg.mix = args.mix
     ckpt_path = CKPT if args.name == "pretrain" else os.path.join(ROOT, f"ckpt_{args.name}.pt")
     amp = device.startswith("cuda")
 
-    texts = load_texts()
-    random.seed(Cfg.seed)
-    random.shuffle(texts)  # document-level shuffle so sources are well mixed
-    if ddp and rank == 0 and not os.path.exists(TOK_PATH):
-        build_tokenizer(texts)  # rank 0 trains and saves
-    if ddp:
-        dist.barrier()  # all ranks wait for tokenizer to exist
-    tok = build_tokenizer(texts)
-    eos_id = tok.token_to_id("<eos>")
-    # Rank-0-only tokenization + NVMe cache (avoids 8x redundant work)
-    if is_main and not os.path.exists(TOKEN_CACHE):
-        data = encode(texts, tok)
-        torch.save(data, TOKEN_CACHE)
-        print(f"Saved token cache ({len(data) / 1e6:.0f}M tokens) to {TOKEN_CACHE}", flush=True)
-        data = data.long()  # int32 -> long for embedding lookup
-    if ddp:
-        dist.barrier()  # all ranks wait for rank 0
-    if not is_main or (is_main and os.path.exists(TOKEN_CACHE) and "data" not in dir()):
-        data = torch.load(TOKEN_CACHE, map_location="cpu", weights_only=True)
-        data = data.long()  # int32 -> long for embedding lookup
-        if is_main:
-            print(f"Loaded cached tokens from {TOKEN_CACHE} ({len(data) / 1e6:.0f}M)", flush=True)
-    n_seq = len(data) // (Cfg.seq + 1)
-    data = data[: n_seq * (Cfg.seq + 1)]
-    seqs = data.view(-1, Cfg.seq + 1)
-    X, Y = seqs[:, :-1], seqs[:, 1:]
-    n_val = max(1, int(len(X) * Cfg.val_frac))
-    Xtr, Ytr, Xva, Yva = X[n_val:], Y[n_val:], X[:n_val], Y[:n_val]
+    mix_path = os.path.join(ROOT, Cfg.mix) if Cfg.mix else None
+    use_mix = bool(mix_path and os.path.exists(mix_path))
+    if use_mix:
+        assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
+        tok = build_tokenizer([])
+        eos_id = tok.token_to_id("<eos>")
+        seqs, vseqs = build_mix(mix_path, tok, is_main, ddp)
+        Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
+        data, X = seqs, seqs  # for the params print below
+        Cfg.epochs = 1  # repeats are encoded in the schedule
+    else:
+        texts = load_texts()
+        random.seed(Cfg.seed)
+        random.shuffle(texts)  # document-level shuffle so sources are well mixed
+        if ddp and rank == 0 and not os.path.exists(TOK_PATH):
+            build_tokenizer(texts)  # rank 0 trains and saves
+        if ddp:
+            dist.barrier()  # all ranks wait for tokenizer to exist
+        tok = build_tokenizer(texts)
+        eos_id = tok.token_to_id("<eos>")
+        # Rank-0-only tokenization + NVMe cache (avoids 8x redundant work)
+        if is_main and not os.path.exists(TOKEN_CACHE):
+            data = encode(texts, tok)
+            torch.save(data, TOKEN_CACHE)
+            print(f"Saved token cache ({len(data) / 1e6:.0f}M tokens) to {TOKEN_CACHE}", flush=True)
+            data = data.long()  # int32 -> long for embedding lookup
+        if ddp:
+            dist.barrier()  # all ranks wait for rank 0
+        if not is_main or (is_main and os.path.exists(TOKEN_CACHE) and "data" not in dir()):
+            data = torch.load(TOKEN_CACHE, map_location="cpu", weights_only=True)
+            data = data.long()  # int32 -> long for embedding lookup
+            if is_main:
+                print(f"Loaded cached tokens from {TOKEN_CACHE} ({len(data) / 1e6:.0f}M)", flush=True)
+        n_seq = len(data) // (Cfg.seq + 1)
+        data = data[: n_seq * (Cfg.seq + 1)]
+        seqs = data.view(-1, Cfg.seq + 1)
+        X, Y = seqs[:, :-1], seqs[:, 1:]
+        n_val = max(1, int(len(X) * Cfg.val_frac))
+        Xtr, Ytr, Xva, Yva = X[n_val:], Y[n_val:], X[:n_val], Y[:n_val]
 
-    # nanochat: pinned memory for async H2D
-    Xtr = Xtr.pin_memory()
-    Ytr = Ytr.pin_memory()
+    if ddp:
+        Xtr, Ytr = Xtr[rank::world], Ytr[rank::world]  # strided: every rank sees the same phase at once
+    Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()  # nanochat: async H2D
     # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage through two
     # pinned buffers; each is reused only after the event recorded behind its previous H2D copy completes.
     pin = [
@@ -955,11 +1033,6 @@ def main():
         )
         for _ in range(2)
     ]
-    if ddp:
-        chunk = len(Xtr) // world
-        Xtr = Xtr[rank * chunk : (rank + 1) * chunk]
-        Ytr = Ytr[rank * chunk : (rank + 1) * chunk]
-
     raw_model = HybridLM(Cfg).to(device)
     resume_step = 0
     if args.resume:
@@ -1018,11 +1091,12 @@ def main():
     GOOD_SAVE_INTERVAL = 500
     for ep in range(Cfg.epochs):
         model.train()
-        perm = torch.randperm(len(Xtr))
+        perm = torch.arange(len(Xtr)) if use_mix else torch.randperm(len(Xtr))  # mix: schedule order
+        i0 = step * Cfg.batch * Cfg.accum if use_mix else 0  # resume continues where the schedule stopped
         t0 = time.time()
         last = 0.0
         t_log = time.time()
-        for i in range(0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
+        for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
             idx = perm[i : i + Cfg.batch]
             xb_pin, yb_pin, ev = pin[(i // Cfg.batch) % 2]
             if ev is not None:
