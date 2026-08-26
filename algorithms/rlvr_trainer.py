@@ -68,9 +68,7 @@ def seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, devic
         n = min(len(g), L)
         gen_t[i, :n] = torch.tensor(g[:n], device=device)
         mask[i, :n] = 1.0
-    full = torch.cat(
-        [torch.tensor(prompt_ids, device=device).repeat(group_size, 1), gen_t], dim=1
-    )
+    full = torch.cat([torch.tensor(prompt_ids, device=device).repeat(group_size, 1), gen_t], dim=1)
     # Right-padding is safe: the model is causal (KDA/MLA), so hidden[t] depends
     # only on [:t+1]; pad positions after a response never feed back.
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
@@ -84,8 +82,18 @@ def seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, devic
 
 
 def gspo_loss(
-    model, ref_model, prompt_ids, gen_ids_list, rewards, group_size, max_new,
-    ddp, device, amp, clip_eps=0.2, kl_beta=0.02,
+    model,
+    ref_model,
+    prompt_ids,
+    gen_ids_list,
+    rewards,
+    group_size,
+    max_new,
+    ddp,
+    device,
+    amp,
+    clip_eps=0.2,
+    kl_beta=0.02,
 ):
     """GSPO (arXiv 2507.18071): sequence-level importance ratio + sequence-level clip.
 
@@ -100,13 +108,9 @@ def gspo_loss(
 
     r = torch.tensor(rewards, device=device)
     adv = (r - r.mean()) / (r.std() + 1e-8)  # 0 when every reward is equal
-    seq_lp, gen_t, mask = seq_logprob(
-        model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp
-    )
+    seq_lp, gen_t, mask = seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
     with torch.no_grad():
-        ref_lp, _, _ = seq_logprob(
-            ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp
-        )
+        ref_lp, _, _ = seq_logprob(ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
         old_lp = seq_lp.detach()  # one optimizer step per rollout, so old == current
     ratio = torch.exp(seq_lp - old_lp)  # sequence-level, already length-normalized
     surr = torch.min(ratio * adv, torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv)
@@ -124,14 +128,19 @@ def main():
     parser.add_argument("--batch", type=int, default=4, help="prompts per GPU per step")
     parser.add_argument("--group_size", type=int, default=8, help="responses per prompt (N)")
     parser.add_argument("--max_new", type=int, default=512)
-    parser.add_argument("--temperature", type=float, default=0.8,
-                        help="low T makes every sample in a group identical -> std=0 -> no gradient")
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.8,
+        help="low T makes every sample in a group identical -> std=0 -> no gradient",
+    )
     parser.add_argument("--top_p", type=float, default=0.95)
     parser.add_argument("--lr", type=float, default=1e-6)
     parser.add_argument("--clip_eps", type=float, default=0.2, help="GSPO sequence-level clip")
     parser.add_argument("--kl_beta", type=float, default=0.02, help="KL anchor to the SFT reference")
     parser.add_argument("--no_fp8", action="store_true")
     parser.add_argument("--data", default=RLVR_PATH, help="problem jsonl (default: rlvr_math.jsonl)")
+    parser.add_argument("--out", default=CKPT_RLVR, help="checkpoint to write")
     args = parser.parse_args()
 
     os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
@@ -201,9 +210,7 @@ def main():
     model = raw_model
     if ddp:
         # static_graph=False: graph shape varies per step (variable gen lengths)
-        model = DDP(
-            raw_model, device_ids=[local], bucket_cap_mb=100, gradient_as_bucket_view=True
-        )
+        model = DDP(raw_model, device_ids=[local], bucket_cap_mb=100, gradient_as_bucket_view=True)
     raw_model.train()  # grad_ckpt only active in train mode; gen_model stays eval
 
     tok = Tokenizer.from_file(TOK_PATH)
@@ -232,12 +239,16 @@ def main():
             for item in batch:
                 prompt_ids = tok.encode(f"问：{item['prompt']}\n答：").ids[-MAX_PROMPT:]
                 gen_ids_list = generate(
-                    gen_model, prompt_ids, args.group_size,
-                    args.max_new, args.temperature, args.top_p, device,
+                    gen_model,
+                    prompt_ids,
+                    args.group_size,
+                    args.max_new,
+                    args.temperature,
+                    args.top_p,
+                    device,
                 )
                 rewards = [
-                    reward_fn(tok.decode(g, skip_special_tokens=True), item["answer"])
-                    for g in gen_ids_list
+                    reward_fn(tok.decode(g, skip_special_tokens=True), item["answer"]) for g in gen_ids_list
                 ]
                 groups.append((prompt_ids, gen_ids_list, rewards))
         gen_time = time.time() - t0
@@ -252,9 +263,7 @@ def main():
         # is pure waste. Which groups are degenerate differs per rank (each samples
         # its own responses), so the keep-decision is all-reduced with MAX: every
         # rank runs the same forward count and DDP stays in lockstep.
-        keep = torch.tensor(
-            [1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r in groups], device=device
-        )
+        keep = torch.tensor([1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r in groups], device=device)
         if ddp:
             dist.all_reduce(keep, op=dist.ReduceOp.MAX)
         kept = [g for g, k in zip(groups, keep.tolist()) if k > 0.5]
@@ -269,9 +278,18 @@ def main():
         # --- 3. GSPO loss (fp32 master gets grads via the bf16/FP8 model) ---
         losses = [
             gspo_loss(
-                model, ref_model, prompt_ids, gen_ids_list, rewards,
-                args.group_size, args.max_new, ddp, device, amp,
-                clip_eps=args.clip_eps, kl_beta=args.kl_beta,
+                model,
+                ref_model,
+                prompt_ids,
+                gen_ids_list,
+                rewards,
+                args.group_size,
+                args.max_new,
+                ddp,
+                device,
+                amp,
+                clip_eps=args.clip_eps,
+                kl_beta=args.kl_beta,
             )
             for prompt_ids, gen_ids_list, rewards in kept
         ]
@@ -340,7 +358,7 @@ def main():
                         "cfg": {k: v for k, v in vars(cfg).items() if not k.startswith("_")},
                         "step": step,
                     },
-                    CKPT_RLVR,
+                    args.out,
                 )
                 # bf16 inference copy: half the size, zero quality loss (inference runs bf16 anyway)
                 sd_bf16 = {
@@ -353,9 +371,9 @@ def main():
                         "cfg": {k: v for k, v in vars(cfg).items() if not k.startswith("_")},
                         "step": step,
                     },
-                    CKPT_RLVR.replace(".pt", "_bf16.pt"),
+                    args.out.replace(".pt", "_bf16.pt"),
                 )
-                print(f"saved {CKPT_RLVR} (step {step}) + bf16 copy", flush=True)
+                print(f"saved {args.out} (step {step}) + bf16 copy", flush=True)
             if ddp:
                 dist.barrier()
 

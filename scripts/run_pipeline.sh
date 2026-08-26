@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Pretrain -> SFT -> RL -> benchmark, unattended, one stage at a time.
+#
+#   PRETRAIN=k4_11b_lr05 bash scripts/run_pipeline.sh          # wait for a running pretrain, then go
+#   FROM=sft bash scripts/run_pipeline.sh                      # resume the chain at a later stage
+#
+# Every stage writes runs/pipeline.log, records itself with scripts/exp.py, and stops the chain on
+# failure rather than feeding a broken artefact to the next one. Stage outputs are the checkpoints,
+# so a stage that already produced its checkpoint is skipped on a rerun.
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+PRETRAIN=${PRETRAIN:-k4_11b_lr05}
+SFT=${SFT:-sft_k4}
+RL=${RL:-rl_k4}
+NGPU=${NGPU:-8}
+FROM=${FROM:-pretrain}
+LOG=runs/pipeline.log
+mkdir -p runs data/rl
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TOKENIZERS_PARALLELISM=true
+
+say() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
+die() { say "PIPELINE FAILED at $1"; exit 1; }
+declare -A STAGE=([pretrain]=1 [sft]=2 [probe]=3 [rl]=4 [bench]=5)
+want() { [ "${STAGE[$1]}" -ge "${STAGE[$FROM]}" ]; }
+
+# ---- 1. pretrain: adopt a run already in flight rather than starting a second one --------------
+if want pretrain; then
+  say "stage pretrain: waiting for ckpt_$PRETRAIN.pt"
+  while pgrep -f "train\.py .*--name $PRETRAIN" > /dev/null; do sleep 120; done
+  [ -f "ckpt_$PRETRAIN.pt" ] || die "pretrain (no ckpt_$PRETRAIN.pt)"
+  say "stage pretrain: done — $(grep -E '^(ep |step )' "runs/$PRETRAIN.log" | tail -1)"
+fi
+
+# ---- 2. SFT ------------------------------------------------------------------------------------
+if want sft && [ ! -f "ckpt_$SFT.pt" ]; then
+  say "stage sft: packing"
+  python3 prepare_sft_math.py --out data/sft/sft_k4.pt \
+    --sources "data/math/math_all_v7.jsonl,data/synthetic/math_short_sol_v1.jsonl" >> "$LOG" 2>&1 \
+    || die "sft packing"
+  say "stage sft: training on ckpt_$PRETRAIN.pt"
+  NGPU=$NGPU PORT=29660 bash scripts/run_sft.sh "$SFT" "ckpt_$PRETRAIN.pt" data/sft/sft_k4.pt \
+    --batch 24 --epochs 2 --lr_scale 0.1 >> "$LOG" 2>&1 || die "sft"
+  say "stage sft: $(python3 scripts/exp.py list 2>/dev/null | grep " $SFT " | tail -1)"
+fi
+
+# ---- 3. difficulty probe: keep only the problems this model gets right 20-80% of the time -------
+if want probe && [ ! -f data/rl/rl_band.jsonl ]; then
+  say "stage probe: generating 8 samples per problem"
+  python3 eval/math_hard.py --ckpt "ckpt_$SFT.pt" --data data/rl/program_probe.jsonl --k 8 \
+    --temperature 0.8 --dump data/rl/probe_gens.jsonl >> "$LOG" 2>&1 || die "probe generation"
+  python3 mathbank/program_probe.py score data/rl/probe_gens.jsonl >> "$LOG" 2>&1 \
+    || die "probe scoring"
+  python3 - <<'PY' >> "$LOG" 2>&1 || die "probe band"
+import json
+rows = [json.loads(l) for l in open("data/rl/instance_rates.jsonl", encoding="utf-8")]
+band = [r for r in rows if 0.2 <= r["pass_at_k"] <= 0.8]
+with open("data/rl/rl_band.jsonl", "w", encoding="utf-8") as f:
+    for r in band:
+        f.write(json.dumps({"instruction": r["instruction"], "answer": r["answer"]}, ensure_ascii=False) + "\n")
+print(f"probe: {len(band)}/{len(rows)} instances in the 20-80% band")
+PY
+  say "stage probe: $(tail -1 "$LOG")"
+fi
+
+# ---- 4. RL, run to completion ------------------------------------------------------------------
+if want rl && [ ! -f "ckpt_$RL.pt" ]; then
+  DATA=data/rl/rl_band.jsonl
+  [ -s "$DATA" ] || DATA=data/rl/rlvr_clean.jsonl
+  say "stage rl: GSPO on $DATA ($(wc -l < "$DATA") problems)"
+  python3 scripts/exp.py start --name "$RL" --cmd "torchrun --nproc_per_node=$NGPU algorithms/rlvr.py --resume ckpt_$SFT.pt --data $DATA --steps 500" \
+    --notes "GSPO, group 8, T=0.9, KL 0.02, prompts filtered to the 20-80% solve-rate band" \
+    --hypothesis "The previous RL run had nothing to amplify: 30-55% of groups were all-right or all-wrong, so half the compute produced no gradient. With prompts restricted to the band this model actually solves 20-80% of the time, does accuracy move at all?" >> "$LOG" 2>&1
+  CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NGPU - 1))) torchrun --nproc_per_node="$NGPU" \
+    --master_port=29662 algorithms/rlvr.py --resume "ckpt_$SFT.pt" --data "$DATA" \
+    --steps 500 --temperature 0.9 --top_p 0.95 --max_new 320 --kl_beta 0.02 \
+    --out "ckpt_$RL.pt" >> "$LOG" 2>&1
+  RC=$?
+  LAST=$(grep -E "^step " runs/rlvr.log 2>/dev/null | tail -1)
+  python3 scripts/exp.py done --name "$RL" --status $([ $RC -eq 0 ] && echo ok || echo fail) \
+    --result "rc=$RC | $LAST" >> "$LOG" 2>&1
+  [ $RC -eq 0 ] || die "rl"
+  say "stage rl: done — $LAST"
+fi
+
+# ---- 5. benchmark every checkpoint the chain produced -------------------------------------------
+if want bench; then
+  say "stage bench"
+  for CK in "ckpt_$PRETRAIN.pt" "ckpt_$SFT.pt" "ckpt_$RL.pt"; do
+    [ -f "$CK" ] || continue
+    M5=$(bash scripts/eval_math.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
+    MH=$(bash scripts/eval_hard.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
+    PK=$(python3 eval/math_hard.py --ckpt "$CK" --k 8 --temperature 0.8 2>>"$LOG" | tail -1)
+    say "bench $CK | $M5 | $MH | pass@8 $PK"
+  done
+fi
+
+say "PIPELINE DONE"

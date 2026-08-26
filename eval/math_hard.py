@@ -46,6 +46,12 @@ def main():
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--k", type=int, default=1, help="samples per problem; reports pass@1 (mean) and pass@k")
     p.add_argument("--temperature", type=float, default=0.0, help="sampling temperature (k>1 needs >0)")
+    p.add_argument("--data", default=None, help="problem jsonl (default: the math-hard holdout)")
+    p.add_argument(
+        "--dump",
+        default=None,
+        help="write {instruction, greedy, gens} per problem here, for the solve-rate probe",
+    )
     a = p.parse_args()
 
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
@@ -56,7 +62,7 @@ def main():
     model = model.to(torch.bfloat16).eval()
     tok = Tokenizer.from_file(TOK_PATH)
 
-    rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")][a.shard :: a.shards]
+    rows = [json.loads(l) for l in open(a.data or TEST_PATH, encoding="utf-8")][a.shard :: a.shards]
     preds = os.path.join(
         ROOT,
         "data",
@@ -70,6 +76,7 @@ def main():
     by = {}  # level -> [greedy correct, sum of sampled acc, any-correct, n]
     n_eq = n_bad = tot_len = n_gen = 0
     per_batch = max(1, a.batch // k)
+    dump = open(a.dump, "w", encoding="utf-8") if a.dump else None
     with open(preds, "w", encoding="utf-8") as f:
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
@@ -82,11 +89,12 @@ def main():
                         model, [p for p in base for _ in range(k)], a.max_new, a.device, temp
                     )
             for i, r in enumerate(batch):
-                oks = []
+                oks, texts = [], []
                 for ids in [greedy[i]] + sampled[i * k : (i + 1) * k]:
                     gen = tok.decode(ids)
                     ok = score(gen, str(r["answer"]))
                     oks.append(ok)
+                    texts.append(gen)
                     e, b = check_steps(gen)
                     n_eq += e
                     n_bad += b
@@ -106,11 +114,22 @@ def main():
                         )
                         + "\n"
                     )
+                if dump:  # grouped per problem: greedy separate from the sampled ones
+                    dump.write(
+                        json.dumps(
+                            {k2: r[k2] for k2 in ("program_id", "level", "answer") if k2 in r}
+                            | {"instruction": r["instruction"], "greedy": texts[0], "gens": texts[1:]},
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
                 lv = by.setdefault(r["level"], [0, 0.0, 0, 0])
                 lv[0] += int(oks[0])
                 lv[1] += sum(oks[1:]) / k if k > 1 else 0.0
                 lv[2] += int(any(oks))
                 lv[3] += 1
+    if dump:
+        dump.close()
     n = sum(v[3] for v in by.values())
     p1 = sum(v[0] for v in by.values())
     ps = sum(v[1] for v in by.values())
