@@ -44,16 +44,4 @@ print(f"probe: {n} instances generated")
 PY
 
 python3 mathbank/program_probe.py score "$GENS"
-python3 - "$BAND" <<'PY'
-import json, sys
-from collections import Counter
-rows = [json.loads(l) for l in open("data/rl/instance_rates.jsonl", encoding="utf-8")]
-band = [r for r in rows if 0.2 <= r["pass_at_k"] <= 0.8]
-hist = Counter(min(int(r["pass_at_k"] * 10), 9) for r in rows)
-print("solve-rate histogram (deciles): " + " ".join(f"{d / 10:.1f}:{hist[d]}" for d in range(10)))
-with open(sys.argv[1], "w", encoding="utf-8") as f:
-    for r in band:
-        f.write(json.dumps({"instruction": r["instruction"], "answer": r["answer"]},
-                           ensure_ascii=False) + "\n")
-print(f"band: {len(band)}/{len(rows)} instances at 20-80% solve rate -> {sys.argv[1]}")
-PY
+python3 scripts/select_band.py "$BAND" --min "${MIN_BAND:-800}"
