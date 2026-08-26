@@ -154,3 +154,43 @@ try:
 finally:
     train._domain_seqs = _orig_domain_seqs
 print("test_mix_schedule OK")
+
+# --- AttnRes: the paper's form, and the activation cost of each block setting ---
+_ar = train.AttnRes(16)
+_srcs = [torch.randn(2, 3, 16) for _ in range(4)]
+# zero-init pseudo-query -> uniform softmax -> plain mean of the RAW sources (not the normed ones)
+assert torch.allclose(_ar(_srcs), torch.stack(_srcs).mean(0), atol=1e-6), "AttnRes must start as the mean"
+with torch.no_grad():
+    _ar.q.copy_(_srcs[1].mean((0, 1)) * 10)
+_w = torch.stack([(_ar.norm(v) * _ar.q).sum(-1) for v in _srcs]).softmax(0)
+assert torch.allclose(_ar(_srcs), sum(_w[i].unsqueeze(-1) * _srcs[i] for i in range(4)), atol=1e-5), (
+    "AttnRes must weight by similarity to RMSNorm(v_i) but mix the raw v_i"
+)
+# ar() sits outside the checkpoint, so one [B,T,D] stays on the tape per (consumer, source) pair.
+# At L=12 that is 325 pairs for Full -- 196GB/GPU at batch 72 -- which is why blocks is set.
+for _nb, _want in ((0, 325), (2, 61), (4, 85)):
+    _cfg = type(
+        "C",
+        (train.Cfg,),
+        {
+            "layers": 12,
+            "attn_res": True,
+            "attn_res_blocks": _nb,
+            "vocab": 128,
+            "d": 32,
+            "heads": 2,
+            "ffn_hidden": 64,
+            "seq": 8,
+        },
+    )
+    _m = train.HybridLM(_cfg)
+    _pairs, _blocks, _partial = 0, 1, 0
+    for _n in range(1, 2 * _cfg.layers + 1):
+        _pairs += _blocks + _partial
+        _partial = 1
+        if _n in _m.ar_block_ends:
+            _blocks += 1
+            _partial = 0
+    _pairs += _blocks + _partial
+    assert _pairs == _want, f"attn_res_blocks={_nb}: {_pairs} pairs, expected {_want}"
+print("test_attn_res OK")
