@@ -47,21 +47,9 @@ fi
 
 # ---- 3. difficulty probe: keep only the problems this model gets right 20-80% of the time -------
 if want probe && [ ! -f data/rl/rl_band.jsonl ]; then
-  say "stage probe: generating 8 samples per problem"
-  python3 eval/math_hard.py --ckpt "ckpt_$SFT.pt" --data data/rl/program_probe.jsonl --k 8 \
-    --temperature 0.8 --dump data/rl/probe_gens.jsonl >> "$LOG" 2>&1 || die "probe generation"
-  python3 mathbank/program_probe.py score data/rl/probe_gens.jsonl >> "$LOG" 2>&1 \
-    || die "probe scoring"
-  python3 - <<'PY' >> "$LOG" 2>&1 || die "probe band"
-import json
-rows = [json.loads(l) for l in open("data/rl/instance_rates.jsonl", encoding="utf-8")]
-band = [r for r in rows if 0.2 <= r["pass_at_k"] <= 0.8]
-with open("data/rl/rl_band.jsonl", "w", encoding="utf-8") as f:
-    for r in band:
-        f.write(json.dumps({"instruction": r["instruction"], "answer": r["answer"]}, ensure_ascii=False) + "\n")
-print(f"probe: {len(band)}/{len(rows)} instances in the 20-80% band")
-PY
-  say "stage probe: $(tail -1 "$LOG")"
+  say "stage probe: 10,382 instances x (1 greedy + 8 sampled), sharded over $NGPU GPUs"
+  bash scripts/probe_band.sh "ckpt_$SFT.pt" "$NGPU" >> "$LOG" 2>&1 || die "probe"
+  say "stage probe: $(grep -m1 '^band:' "$LOG" | tail -1)"
 fi
 
 # ---- 4. RL, run to completion ------------------------------------------------------------------
