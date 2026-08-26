@@ -85,7 +85,9 @@ except ImportError:
     HAS_FA = False
 
 
-SOFTCAP = 15.0  # logit softcap, applied identically in training (Liger FLCE) and inference
+# Logit softcap, applied identically in training (Liger FLCE) and inference. SOFTCAP=0 in the
+# environment disables it, which is only there to bisect throughput regressions.
+SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 
 
 class Cfg:
@@ -147,6 +149,12 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.g
+
+
+def rms_hat(x, eps=1e-6):
+    """RMS normalization with no learned gain -- the gain lives on the AttnRes query instead, so this
+    is one tensor per source rather than one per (consumer, source) pair."""
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
 class DeltaRecurrence(nn.Module):
@@ -377,11 +385,18 @@ class SwiGLU(nn.Module):
 class AttnRes(nn.Module):
     """Attention Residuals (Kimi, arXiv 2603.15031): h_l = sum_i softmax_i(q_l . RMSNorm(v_i)) v_i over
     previous layer outputs (v_0 = embedding). One zero-init pseudo-query per layer -> starts as uniform mean.
-    Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form."""
+    Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form.
+
+    The RMSNorm gain is folded into the query, which is an exact rewrite, not an approximation:
+    (v_hat * g) . q == v_hat . (g * q). That leaves v_hat parameter-free, so it is the SAME tensor for
+    every consumer of that source and is computed once per source instead of once per (consumer,
+    source) pair. At L=12 that is 25 normalizations instead of 325 for Full, and the backward tape
+    holds 25 shared [B,T,D] tensors instead of 325 per-pair products -- 6.7GB rather than 87GB at
+    batch 32, which is what makes Full affordable at all."""
 
     def __init__(self, d, dyn_q=False, rank=64):
         super().__init__()
-        self.norm = RMSNorm(d)
+        self.g = nn.Parameter(torch.ones(d))  # the RMSNorm gain, applied to the query side
         self.q = nn.Parameter(torch.zeros(d))
         # Input-dependent query (paper Table 4: 1.731 vs 1.737 Full): q = w + B(A norm(latest source)),
         # low-rank d->rank->d, B zero-init so training still starts from the uniform mean.
@@ -389,12 +404,13 @@ class AttnRes(nn.Module):
             nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
         )
 
-    def forward(self, srcs):
-        q = self.q
-        if self.dyn is not None:
-            q = q + self.dyn(self.norm(srcs[-1]))  # [B,T,D], broadcasts against each normed source
+    def forward(self, srcs, hats):
+        """srcs: raw sources (mixed by the softmax weights). hats: the same sources under a
+        parameter-free RMS normalization, shared across every AttnRes in the model."""
+        q = self.q if self.dyn is None else self.q + self.dyn(hats[-1] * self.g)
+        gq = self.g * q
         # logits [n,B,T] only; no torch.stack of the [n,B,T,D] values (that copy dominates at L=24)
-        logits = torch.stack([(self.norm(v) * q).sum(-1) for v in srcs])
+        logits = torch.stack([(vh * gq).sum(-1) for vh in hats])
         a = logits.float().softmax(0).to(srcs[0].dtype)
         out = a[0].unsqueeze(-1) * srcs[0]
         for i in range(1, len(srcs)):
@@ -437,6 +453,8 @@ def remap_legacy_state_dict(sd):
             beta = sd.pop(p + "beta_proj.weight")
             pad = torch.zeros((-beta.shape[0]) % 16, beta.shape[1], dtype=beta.dtype)
             sd[p + "gb.weight"] = torch.cat([sd.pop(k), beta, pad])
+        elif k.endswith("ar1.norm.g") or k.endswith("ar2.norm.g") or k.endswith("final_ar.norm.g"):
+            sd[k[: -len("norm.g")] + "g"] = sd.pop(k)  # AttnRes gain moved onto the query side
         elif k.endswith("mixer.q.weight"):
             p = k[: -len("q.weight")]
             sd[p + "qg.weight"] = torch.cat([sd.pop(k), sd.pop(p + "gate.weight")])
@@ -494,10 +512,12 @@ class HybridLM(nn.Module):
             return x
         # Block AttnRes (Fig. 2 of the paper): `blocks` = completed block reps (embedding first),
         # `partial` = intra-block running sum. Block size 1 sublayer == Full AttnRes.
-        blocks, partial, n = [x], None, 0
+        blocks, hats, partial, partial_hat, n = [x], [rms_hat(x)], None, None, 0
         for b in self.blocks:
             for ar, norm, f in b.sublayers(cu):
-                h = ar(blocks + ([partial] if partial is not None else []))
+                srcs = blocks if partial is None else blocks + [partial]
+                hs = hats if partial_hat is None else hats + [partial_hat]
+                h = ar(srcs, hs)
                 # The AttnRes call sits outside the checkpoint, so its per-source products stay on
                 # the tape: one [B,T,D] per (consumer, source) pair, which at L=12 is 325 pairs for
                 # Full (196GB/GPU at batch 72), 85 for blocks=4, 61 for blocks=2. Folding ar() into
@@ -507,11 +527,16 @@ class HybridLM(nn.Module):
                 fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
                 out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
                 partial = out if partial is None else partial + out
+                partial_hat = rms_hat(partial)
                 n += 1
                 if n in self.ar_block_ends:
                     blocks.append(partial)
-                    partial = None
-        return self.final_ar(blocks + ([partial] if partial is not None else []))
+                    hats.append(partial_hat)
+                    partial = partial_hat = None
+        return self.final_ar(
+            blocks + ([partial] if partial is not None else []),
+            hats + ([partial_hat] if partial_hat is not None else []),
+        )
 
     def forward(self, idx, targets=None, cu=None):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask."""
@@ -519,7 +544,8 @@ class HybridLM(nn.Module):
         if targets is None:
             # Inference: compute logits with softcap
             logits = self.head(hidden)[..., : self.cfg.vocab].float()
-            logits = SOFTCAP * torch.tanh(logits / SOFTCAP)  # same cap as training (Liger softcap=SOFTCAP)
+            if SOFTCAP:
+                logits = SOFTCAP * torch.tanh(logits / SOFTCAP)  # same cap as training
             return logits, None
         # Training: return hidden states; loss computed eagerly in the loop
         # (Liger FLCE is compile-incompatible, must stay outside torch.compile)
@@ -1000,6 +1026,7 @@ def main():
         "attn_res_blocks": "Block AttnRes with N blocks (0 = Full)",
         "val_every": "steps between fixed-subset validations (0 = epoch end only)",
         "val_batches": "val batches per periodic check",
+        "warmup": "linear warmup steps (scale with total steps; 20 is a rounding error at 20K steps)",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {

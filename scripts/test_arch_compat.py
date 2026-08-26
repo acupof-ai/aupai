@@ -38,10 +38,13 @@ for blocks, ckpt, dyn in [
     assert len(build_optimizers(m, Cfg)) == 4
 
 srcs = [torch.randn(1, 3, 8) for _ in range(5)]
-assert torch.allclose(train.AttnRes(8)(srcs), sum(srcs) / 5, atol=1e-6), "zero-init must equal uniform mean"
+hats = [train.rms_hat(v) for v in srcs]
+assert torch.allclose(train.AttnRes(8)(srcs, hats), sum(srcs) / 5, atol=1e-6), (
+    "zero-init must equal uniform mean"
+)
 dq = train.AttnRes(8, dyn_q=True)
 nn.init.zeros_(dq.dyn[1].weight)
-assert torch.allclose(dq(srcs), sum(srcs) / 5, atol=1e-6), "dyn_q zero-init must equal uniform mean"
+assert torch.allclose(dq(srcs, hats), sum(srcs) / 5, atol=1e-6), "dyn_q zero-init must equal uniform mean"
 Cfg.attn_res_dyn_q = False
 
 # legacy checkpoint: split fused weights back into old keys
@@ -155,20 +158,52 @@ finally:
     train._domain_seqs = _orig_domain_seqs
 print("test_mix_schedule OK")
 
-# --- AttnRes: the paper's form, and the activation cost of each block setting ---
+# --- AttnRes: the paper's form, the gain folding, and the activation cost of each block setting ---
 _ar = train.AttnRes(16)
 _srcs = [torch.randn(2, 3, 16) for _ in range(4)]
+_hats = [train.rms_hat(v) for v in _srcs]
 # zero-init pseudo-query -> uniform softmax -> plain mean of the RAW sources (not the normed ones)
-assert torch.allclose(_ar(_srcs), torch.stack(_srcs).mean(0), atol=1e-6), "AttnRes must start as the mean"
-with torch.no_grad():
-    _ar.q.copy_(_srcs[1].mean((0, 1)) * 10)
-_w = torch.stack([(_ar.norm(v) * _ar.q).sum(-1) for v in _srcs]).softmax(0)
-assert torch.allclose(_ar(_srcs), sum(_w[i].unsqueeze(-1) * _srcs[i] for i in range(4)), atol=1e-5), (
-    "AttnRes must weight by similarity to RMSNorm(v_i) but mix the raw v_i"
+assert torch.allclose(_ar(_srcs, _hats), torch.stack(_srcs).mean(0), atol=1e-6), (
+    "AttnRes must start as the mean of its sources"
 )
-# ar() sits outside the checkpoint, so one [B,T,D] stays on the tape per (consumer, source) pair.
-# At L=12 that is 325 pairs for Full -- 196GB/GPU at batch 72 -- which is why blocks is set.
-for _nb, _want in ((0, 325), (2, 61), (4, 85)):
+
+
+def _ref(ar, srcs):
+    """The paper's form before the gain was folded into the query: RMSNorm(v_i) . q_l."""
+
+    def rmsnorm(v, g):
+        return v * torch.rsqrt(v.pow(2).mean(-1, keepdim=True) + 1e-6) * g
+
+    q = ar.q if ar.dyn is None else ar.q + ar.dyn(rmsnorm(srcs[-1], ar.g))
+    a = torch.stack([(rmsnorm(v, ar.g) * q).sum(-1) for v in srcs]).float().softmax(0).to(srcs[0].dtype)
+    return sum(a[i].unsqueeze(-1) * srcs[i] for i in range(len(srcs)))
+
+
+# (v_hat * g) . q == v_hat . (g * q): the rewrite must be exact, forward and backward
+for _dyn in (False, True):
+    _ar = train.AttnRes(16, dyn_q=_dyn)
+    with torch.no_grad():
+        _ar.g.normal_(1.0, 0.3)
+        _ar.q.normal_(0, 0.5)
+        if _dyn:
+            _ar.dyn[1].weight.normal_(0, 0.1)
+    _srcs = [torch.randn(2, 3, 16, requires_grad=True) for _ in range(5)]
+    assert torch.allclose(_ar(_srcs, [train.rms_hat(v) for v in _srcs]), _ref(_ar, _srcs), atol=1e-5), (
+        f"gain folding changed the forward (dyn_q={_dyn})"
+    )
+    _ar(_srcs, [train.rms_hat(v) for v in _srcs]).square().sum().backward()
+    _gq, _gg = _ar.q.grad.clone(), _ar.g.grad.clone()
+    _ar.zero_grad()
+    for _v in _srcs:
+        _v.grad = None
+    _ref(_ar, _srcs).square().sum().backward()
+    assert (_gq - _ar.q.grad).abs().max() < 1e-4 and (_gg - _ar.g.grad).abs().max() < 1e-4, (
+        f"gain folding changed the backward (dyn_q={_dyn})"
+    )
+
+# Sources are now normalized once each rather than once per consumer, so the backward tape holds one
+# [B,T,D] per source (25 at L=12) instead of one per (consumer, source) pair (325 for Full).
+for _nb, _pairs, _srcs_n in ((0, 325, 25), (2, 61, 4), (4, 85, 6)):
     _cfg = type(
         "C",
         (train.Cfg,),
@@ -184,13 +219,14 @@ for _nb, _want in ((0, 325), (2, 61), (4, 85)):
         },
     )
     _m = train.HybridLM(_cfg)
-    _pairs, _blocks, _partial = 0, 1, 0
+    _p, _blocks, _partial, _live = 0, 1, 0, 1
     for _n in range(1, 2 * _cfg.layers + 1):
-        _pairs += _blocks + _partial
+        _p += _blocks + _partial
         _partial = 1
         if _n in _m.ar_block_ends:
             _blocks += 1
             _partial = 0
-    _pairs += _blocks + _partial
-    assert _pairs == _want, f"attn_res_blocks={_nb}: {_pairs} pairs, expected {_want}"
+    _p += _blocks + _partial
+    assert _p == _pairs, f"attn_res_blocks={_nb}: {_p} pairs, expected {_pairs}"
+    assert _blocks + _partial <= _srcs_n, f"attn_res_blocks={_nb}: {_blocks + _partial} live sources"
 print("test_attn_res OK")
