@@ -1147,9 +1147,9 @@ _reg("ratio_circle_area", ratio_circle_area)
 
 # 38. edge ratio a:b, big cube volume V -> small cube volume
 def ratio_cube_volume(rng):
-    a = rng.randint(3, 5)
+    a = rng.randint(3, 6)
     b = rng.randint(2, a - 1)
-    k = rng.randint(1, 5)
+    k = rng.randint(1, 8)
     V = a ** 3 * k
     small = b ** 3 * k
     ins = rng.choice([
@@ -1432,7 +1432,7 @@ _reg("plane_train_time_diff", plane_train_time_diff)
 
 # 48. circular track: same direction lap time, opposite direction meet time
 def circle_track(rng):
-    pairs = [(6, 4), (7, 3), (5, 3), (6, 2), (9, 1), (8, 2)]
+    pairs = [(a, b) for a in range(5, 13) for b in range(1, a)]
     v1, v2 = rng.choice(pairs)
     t1 = Fraction(400, v1 - v2)
     t2 = Fraction(400, v1 + v2)
@@ -1520,9 +1520,8 @@ _reg("work_wage_split", work_wage_split)
 
 # 51. fill pipe a hours, with drain open t hours to empty full pool -> drain alone
 def pipe_drain_find_rate(rng):
-    pairs = [(3, 6), (4, 12), (6, 3), (6, 12), (8, 8), (12, 6), (5, 20),
-              (10, 10), (12, 4), (15, 10), (20, 5), (8, 24), (9, 18), (10, 15),
-              (12, 24), (15, 30), (20, 30)]
+    pairs = [(a, t) for a in (3, 4, 5, 6, 8, 10, 12)
+             for t in (4, 5, 6, 8, 10, 12, 15, 20, 24, 30)]
     a, t = rng.choice(pairs)
     rd = Fraction(1, a) + Fraction(1, t)
     x = Fraction(1, rd)
@@ -1576,7 +1575,7 @@ _reg("fence_wall_area", fence_wall_area)
 
 # 53. square side a, largest inscribed circle -> leftover area
 def square_inscribed_circle(rng):
-    a = rng.choice([4, 6, 8, 10, 12])
+    a = rng.choice([4, 6, 8, 10, 12, 14, 16, 20])
     r = a // 2
     circle = Fraction(314, 100) * r * r
     square = a * a
@@ -1587,6 +1586,8 @@ def square_inscribed_circle(rng):
         f"一块边长{a}米的{obj}，剪下一个最大的圆，边角料的面积是多少平方米？",
         f"边长{a}米的{obj}中画一个最大的圆，圆以外的面积是多少平方米？",
         f"从边长{a}米的{obj}上截下最大的圆，剩余部分面积多少平方米？",
+        f"{obj}边长{a}米，剪去最大的圆后，剩下多少平方米？",
+        f"边长{a}米的{obj}剪出最大圆，余下面积多少平方米？",
     ])
     lines = [
         f"{a} ÷ 2 = {r}米",
@@ -1603,8 +1604,8 @@ _reg("square_inscribed_circle", square_inscribed_circle)
 
 # 54. sector: radius r, angle n degrees -> area
 def sector_area(rng):
-    pairs = [(10, 180), (10, 90), (20, 90), (20, 180), (20, 270), (30, 60),
-             (30, 90), (30, 120), (30, 180), (30, 240)]
+    pairs = [(r, n) for r in (6, 10, 12, 15, 20, 30, 40)
+             for n in (45, 60, 90, 120, 180, 240, 270)]
     r, n = rng.choice(pairs)
     circle = Fraction(314, 100) * r * r
     frac = Fraction(n, 360)
@@ -1689,13 +1690,9 @@ _reg("l_shape_harvest", l_shape_harvest)
 
 # 57. map scale: d cm on map, scale 1:n -> actual km, car speed v -> hours
 def map_scale_distance(rng):
-    triples = [(4, 1000000, 40), (5, 1000000, 50), (6, 1000000, 60),
-               (8, 1000000, 80), (10, 1000000, 100), (8, 1000000, 40),
-               (10, 1000000, 50), (4, 2000000, 40), (5, 2000000, 50),
-               (6, 2000000, 60), (8, 2000000, 80), (10, 2000000, 100),
-               (8, 2000000, 40), (10, 2000000, 50), (4, 5000000, 40),
-               (5, 5000000, 50), (6, 5000000, 60), (8, 5000000, 80),
-               (10, 5000000, 100), (8, 5000000, 40), (10, 5000000, 50)]
+    triples = [(d, n, v) for d in (4, 5, 6, 8, 10, 12)
+               for n in (500000, 1000000, 2000000, 4000000)
+               for v in (40, 50, 60, 80, 100)]
     d, n, v = rng.choice(triples)
     cm = d * n
     km = Fraction(cm, 100000)
@@ -1746,7 +1743,7 @@ _reg("square_diagonal_area", square_diagonal_area)
 
 # 59. clock angle at H:30
 def clock_angle(rng):
-    H = rng.randint(1, 7)
+    H = rng.randint(1, 11)
     hour = 30 * H + 15
     minute = 180
     diff = abs(hour - minute)
@@ -1757,6 +1754,10 @@ def clock_angle(rng):
         f"钟面上{H}时30分，时针与分针所成的较小角是多少度？",
         f"{who}看到钟面显示{H}:30，这时时针和分针的夹角是多少度？",
         f"下午{H}点30分，钟面上时针与分针的夹角是多少度？",
+        f"{who}问：{H}点30分的时候，时针和分针的夹角是多少度？",
+        f"晚上{H}点30分，钟面上时针与分针所成的较小角是多少度？",
+        f"{who}在{H}点30分看钟，时针和分针的夹角是多少度？",
+        f"{who}想知道{H}时30分时针与分针的夹角是多少度？",
     ])
     lines = [
         f"360 ÷ 12 = 30度",
@@ -1780,11 +1781,16 @@ def clock_overlap(rng):
     speed_diff = Fraction(11, 12)
     t_hours = gap / speed_diff
     t_min = t_hours * 60
+    who = rng.choice(["小明", "小红", "小华", "小丽", "小军"])
     ins = rng.choice([
         f"{H}点整以后，时针和分针第一次重合是几点几分？（结果用分数表示）",
         f"钟面上{H}时整，再过多少分钟时针与分针第一次重合？",
         f"{H}点后，分针和时针第一次重合在什么时刻？（分钟用分数表示）",
         f"从{H}点整开始，经过多少分钟时针与分针第一次重合？",
+        f"{who}问：{H}点整以后，时针和分针第一次重合是几点几分？",
+        f"{who}看到钟面上{H}时整，再过多少分钟时针与分针第一次重合？",
+        f"{who}想知道{H}点后分针和时针第一次重合在什么时刻？",
+        f"{who}从{H}点整开始计时，经过多少分钟时针与分针第一次重合？",
     ])
     lines = [
         f"1 ÷ 12 = 1/12",
@@ -1806,12 +1812,19 @@ def calendar_five_weekdays(rng):
     S = 5 * mid
     first = mid - 14
     last = mid + 14
-    day = rng.choice(["星期三", "星期二", "星期四", "星期五", "星期六"])
+    day = rng.choice(["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"])
     ins = rng.choice([
         f"某月有5个{day}，它们的日期数相加的和是{S}，这个月第一个{day}是几号？",
         f"一个月里有5个{day}，这5个日期的和是{S}，第一个{day}是几号？",
         f"某月的日历上有5个{day}，日期之和为{S}，问第一个{day}是几号？",
         f"已知某月有5个{day}，且它们的日期和是{S}，这个月第一个{day}是几号？",
+        f"某月有5个{day}，5个日期数之和是{S}，第一个{day}是几号？",
+        f"一个月中出现了5次{day}，日期和为{S}，第一个{day}是几号？",
+        f"某月的5个{day}日期相加得{S}，这个月第一个{day}是几号？",
+        f"日历上某月有5个{day}，它们的日期和是{S}，第一个{day}是几号？",
+        f"某月里共有5个{day}，日期数之和为{S}，第一个{day}是几号？",
+        f"查日历发现某月有5个{day}，日期相加得{S}，第一个{day}是几号？",
+        f"某月的5个{day}分别是哪几号？它们的和是{S}，第一个{day}是几号？",
     ])
     lines = [
         f"{S} ÷ 5 = {mid}号",
@@ -2017,8 +2030,8 @@ _reg("quiz_scoring", quiz_scoring)
 
 # 69. rope measure well depth: fold in half surplus x, fold in thirds shortage y -> depth
 def rope_measure_well(rng):
-    x = rng.randint(1, 6)
-    y = rng.randint(1, 6)
+    x = rng.randint(1, 8)
+    y = rng.randint(1, 8)
     L = 6 * (x + y)
     half = L // 2
     depth = half - x
@@ -2058,7 +2071,7 @@ def rope_folded(rng):
         f"一根{obj}对折{n}次后每段{x}米，原来长多少米？剪掉{p}%后还剩多少米？",
     ])
     lines = [
-        f"对折{n}次后的段数 = 2{' × 2' * n} = {seg}段",
+        f"对折{n}次后的段数 = 2{' × 2' * (n - 1)} = {seg}段",
         f"{seg} × {x} = {L}米",
         f"{L} × {p}/100 = {num(cut)}米",
         f"{L} - {num(cut)} = {num(left)}米",
@@ -2071,18 +2084,22 @@ _reg("rope_folded", rope_folded)
 
 # 71. paper 0.1mm thick, folded n times -> thickness in cm
 def paper_fold_thickness(rng):
-    n = rng.choice([3, 4, 5, 6])
-    thick = Fraction(1, 10) * (2 ** n)
+    n = rng.choice([3, 4, 5, 6, 7, 8])
+    t = rng.choice([Fraction(1, 10), Fraction(1, 5), Fraction(1, 20)])
+    obj = rng.choice(["纸", "卡纸", "纸片", "彩纸"])
+    thick = t * (2 ** n)
     cm = thick / 10
     ins = rng.choice([
-        f"一张纸厚0.1毫米，把它对折{n}次后，厚度是多少毫米？合多少厘米？",
-        f"一张厚度0.1毫米的纸，对折{n}次后有多厚？折合多少厘米？",
-        f"纸厚0.1毫米，对折{n}次后，厚度达到多少毫米？是多少厘米？",
-        f"把一张0.1毫米厚的纸对折{n}次，厚多少毫米？合多少厘米？",
+        f"一张厚{_d(t)}毫米的{obj}，把它对折{n}次后，厚度是多少毫米？合多少厘米？",
+        f"一张厚度{_d(t)}毫米的{obj}，对折{n}次后有多厚？折合多少厘米？",
+        f"{obj}厚{_d(t)}毫米，对折{n}次后，厚度达到多少毫米？是多少厘米？",
+        f"把一张{_d(t)}毫米厚的{obj}对折{n}次，厚多少毫米？合多少厘米？",
+        f"一张{obj}的厚度是{_d(t)}毫米，对折{n}次后厚多少毫米？合多少厘米？",
+        f"厚度{_d(t)}毫米的{obj}对折{n}次，厚度变为多少毫米？是多少厘米？",
     ])
     lines = [
-        f"对折{n}次后的层数 = 2{' × 2' * n} = {2 ** n}层",
-        f"0.1 × {2 ** n} = {_d(thick)}毫米",
+        f"对折{n}次后的层数 = 2{' × 2' * (n - 1)} = {2 ** n}层",
+        f"{_d(t)} × {2 ** n} = {_d(thick)}毫米",
         f"{_d(thick)} ÷ 10 = {_d(cm)}厘米",
     ]
     return ins, lines, cm
@@ -2093,8 +2110,8 @@ _reg("paper_fold_thickness", paper_fold_thickness)
 
 # 72. bacteria double every hour, after n hours x -> original count
 def bacteria_double(rng):
-    n = rng.choice([3, 4, 5])
-    k = rng.randint(1, 10)
+    n = rng.choice([3, 4, 5, 6])
+    k = rng.randint(1, 12)
     x = (2 ** n) * 100 * k
     orig = 100 * k
     ins = rng.choice([
@@ -2104,7 +2121,7 @@ def bacteria_double(rng):
         f"一种细菌每小时数量变为原来的2倍，{n}小时后达到{x}个，原来有多少个？",
     ])
     lines = [
-        f"{n}小时后的倍数 = 2{' × 2' * n} = {2 ** n}倍",
+        f"{n}小时后的倍数 = 2{' × 2' * (n - 1)} = {2 ** n}倍",
         f"{x} ÷ {2 ** n} = {orig}个",
     ]
     return ins, lines, orig

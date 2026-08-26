@@ -1426,6 +1426,442 @@ def postage(rng):
 _reg("postage", postage)
 
 
+# 46. 工资纳税
+def income_tax(rng):
+    r = rng.choice([5, 10, 20])
+    b = rng.choice([3000, 3500, 4000, 5000])
+    a = b + rng.randint(2, 20) * 100
+    tax = (a - b) * r // 100
+    after = a - tax
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"国家规定：个人月收入超过{b}元的部分按{r}%缴纳个人所得税。{name}的爸爸月工资{a}元，他税后实际收入多少元？",
+        f"税法规定，月收入超过{b}元的部分应缴纳{r}%的个人所得税。{name}的妈妈月工资{a}元，税后可得多少元？",
+        f"按规定，工资超过{b}元的部分要按{r}%纳税。某人月工资{a}元，他应缴纳多少元税？税后收入多少元？（求税后收入）",
+        f"个人所得税规定：月收入超过{b}元的部分按{r}%纳税。{name}月工资{a}元，纳税后实得多少元？",
+    ])
+    lines = [
+        f"超过起征点的部分 = {a} - {b} = {a - b}元",
+        f"应缴纳的税款 = {a - b} × {r / 100} = {tax}元",
+        f"税后的实际收入 = {a} - {tax} = {after}元",
+    ]
+    return ins, lines, after
+
+
+_reg("income_tax", income_tax)
+
+
+# 47. 满减
+def full_reduction(rng):
+    a = rng.choice([100, 200, 300, 500])
+    b = rng.choice([20, 30, 50, 80])
+    k = rng.randint(2, 9)
+    m = a * k
+    ans = m - k * b
+    name = rng.choice(NAMES)
+    goods = rng.choice(GOODS)
+    ins = rng.choice([
+        f"商场促销：每满{a}元减{b}元。{name}买了一台原价{m}元的{goods}，实际要付多少元？",
+        f"超市店庆，所有商品满{a}元减{b}元。{name}选购了{m}元的商品，实际应付多少元？",
+        f"书店活动：满{a}元减{b}元，不满不减。{name}买了{m}元的书，实际花了多少元？",
+        f"网上商城促销，每满{a}元减{b}元。一台{goods}标价{m}元，{name}买下它实际付了多少元？",
+    ])
+    lines = [
+        f"满减的次数 = {m} ÷ {a} = {k}次",
+        f"一共减去的钱 = {k} × {b} = {k * b}元",
+        f"实际付款 = {m} - {k * b} = {ans}元",
+    ]
+    return ins, lines, ans
+
+
+_reg("full_reduction", full_reduction)
+
+
+# 48. 先打折再满减
+def vip_discount(rng):
+    d = rng.choice([6, 7, 8, 9])
+    m = rng.randint(10, 300) * 10
+    a = rng.choice([100, 200, 300])
+    b = rng.choice([20, 30, 50])
+    disc = m * d // 10
+    for _ in range(50):
+        if disc >= a and disc % a == 0:
+            break
+        m = rng.randint(10, 300) * 10
+        disc = m * d // 10
+    else:
+        d, a, m = 8, 100, 250
+        disc = 200
+    k = disc // a
+    ans = disc - k * b
+    name = rng.choice(NAMES)
+    goods = rng.choice(GOODS)
+    ins = rng.choice([
+        f"商场活动：所有商品先打{d}折，会员还可参加每满{a}元减{b}元。{name}买一件标价{m}元的{goods}，实际付多少元？",
+        f"专卖店促销：先打{d}折，再满{a}元减{b}元。{name}买了{m}元的商品，实际应付多少元？",
+        f"电器城优惠：全部商品先打{d}折，折后每满{a}元减{b}元。一台{goods}原价{m}元，{name}实际花多少元？",
+        f"商店搞活动，先按原价的{d}折出售，再每满{a}元减{b}元。{name}买{m}元的东西，实际付多少元？",
+    ])
+    lines = [
+        f"打折后的价格 = {m} × {d} ÷ 10 = {disc}元",
+        f"满减的次数 = {disc} ÷ {a} = {k}次",
+        f"一共减去的钱 = {k} × {b} = {k * b}元",
+        f"实际付款 = {disc} - {k * b} = {ans}元",
+    ]
+    return ins, lines, ans
+
+
+_reg("vip_discount", vip_discount)
+
+
+# 49. 相遇后甲再行t1小时到B → 相遇时间
+def meet_then_arrive(rng):
+    for _ in range(50):
+        v1 = rng.randint(40, 90)
+        v2 = rng.randint(30, 80)
+        t1 = rng.randint(1, 5)
+        if (v1 * t1) % v2 == 0:
+            break
+    else:
+        v1, v2, t1 = 60, 40, 2
+    ans = v1 * t1 // v2
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"甲、乙两车同时从A、B两地相向而行，甲车每小时行{v1}千米，乙车每小时行{v2}千米。两车相遇后，甲车又行了{t1}小时到达B地。两车出发后几小时相遇？",
+        f"甲、乙两人分别从A、B两地同时出发相向而行，甲每小时走{v1}千米，乙每小时走{v2}千米。相遇后甲再走{t1}小时到达B地。{name}想知道两人出发后几小时相遇，请你算一算。",
+        f"快车和慢车同时从甲、乙两地相向开出，快车每小时行{v1}千米，慢车每小时行{v2}千米。相遇后快车又行{t1}小时到达乙地。两车几小时后相遇？",
+        f"甲、乙两车同时从两地相向而行，甲速{v1}千米/时，乙速{v2}千米/时。相遇后甲车继续行驶{t1}小时到达对方出发地。两车出发后多少小时相遇？",
+    ])
+    lines = [
+        f"相遇点到B地的路程 = {v1} × {t1} = {v1 * t1}千米",
+        f"两人的相遇时间 = {v1 * t1} ÷ {v2} = {ans}小时",
+    ]
+    return ins, lines, ans
+
+
+_reg("meet_then_arrive", meet_then_arrive)
+
+
+# 50. 往返都坐车t1分，去车回步t2分 → 往返步行
+def round_trip_modes(rng):
+    t1 = rng.randint(10, 60) * 2
+    t2 = t1 // 2 + rng.randint(5, 40)
+    ans = 2 * t2 - t1
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"{name}上班往返都坐车，路上共需{t1}分钟；如果去时坐车、回来步行，共需{t2}分钟。{name}往返都步行需要多少分钟？",
+        f"小红上学往返都乘车要{t1}分钟，去时乘车、回时步行要{t2}分钟。她往返都步行要多少分钟？",
+        f"从家到学校，往返都骑车需{t1}分钟，去时骑车、回时步行需{t2}分钟。往返都步行需多少分钟？",
+        f"{name}从家到公司，往返都坐地铁要{t1}分钟，去坐地铁、回步行要{t2}分钟。往返都步行要多少分钟？",
+    ])
+    lines = [
+        f"单程坐车的时间 = {t1} ÷ 2 = {t1 // 2}分钟",
+        f"单程步行的时间 = {t2} - {t1 // 2} = {t2 - t1 // 2}分钟",
+        f"往返步行的时间 = {t2 - t1 // 2} × 2 = {ans}分钟",
+    ]
+    return ins, lines, ans
+
+
+_reg("round_trip_modes", round_trip_modes)
+
+
+# 51. 2师傅=3徒弟，m师傅做a天 → n徒弟做几天
+def worker_equivalence(rng):
+    for _ in range(50):
+        m = rng.choice([2, 3, 4])
+        n = rng.choice([2, 3, 4, 6])
+        a = rng.randint(2, 12)
+        if (3 * m * a) % (2 * n) == 0:
+            break
+    else:
+        m, n, a = 2, 3, 6
+    total = 3 * m * a // 2
+    ans = total // n
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"一批零件，2个师傅的效率等于3个徒弟的效率。{m}个师傅合做{a}天可以完成。如果由{n}个徒弟来做，需要多少天完成？",
+        f"加工一批零件，2名师傅和3名徒弟的工作效率相同。{m}名师傅做{a}天完成，{n}名徒弟做需要多少天？",
+        f"修一条路，2个师傅一天的工作量等于3个徒弟一天的工作量。{m}个师傅修{a}天完成，换成{n}个徒弟要几天？",
+        f"{name}的工厂里，2个师傅的效率相当于3个徒弟。一批活{m}个师傅做{a}天完成，{n}个徒弟做要多少天？",
+    ])
+    lines = [
+        f"1个师傅相当于徒弟 = 3 ÷ 2 = 3/2个",
+        f"工作总量折合徒弟工 = {m} × {a} × 3 ÷ 2 = {total}个",
+        f"{n}个徒弟需要的天数 = {total} ÷ {n} = {ans}天",
+    ]
+    return ins, lines, ans
+
+
+_reg("worker_equivalence", worker_equivalence)
+
+
+# 52. 布做上衣a件或裤子b条 → 成套套数
+def cloth_suits(rng):
+    pair = rng.choice([
+        (3, 6), (6, 3), (4, 12), (12, 4), (6, 6), (12, 6), (6, 12),
+        (20, 5), (5, 20), (30, 6), (6, 30), (15, 10), (10, 15),
+        (10, 10), (20, 20), (30, 15), (15, 30), (60, 12), (12, 60),
+    ])
+    a, b = pair
+    ans = a * b // (a + b)
+    name = rng.choice(NAMES)
+    scene = rng.choice(["一批布", "一批布料", "一批面料", "一块布"])
+    ins = rng.choice([
+        f"{scene}单独做上衣正好做{a}件，单独做裤子正好做{b}条。一件上衣和一条裤子配成一套，这批布最多能做多少套？",
+        f"服装厂用{scene}做上衣可做{a}件，做裤子可做{b}条。{name}想把上衣和裤子配套生产，最多能做多少套？",
+        f"一块布全部做上衣能做{a}件，全部做裤子能做{b}条。现在要求上衣和裤子配套，最多可做多少套？",
+        f"{scene}，做上衣每件用布相同，做裤子每条用布相同，正好可做上衣{a}件或裤子{b}条。配套做最多能做多少套？",
+    ])
+    lines = [
+        f"布料的总量 = {a} × {b} = {a * b}份",
+        f"一套衣服用布 = {a} + {b} = {a + b}份",
+        f"可以做的套数 = {a * b} ÷ {a + b} = {ans}套",
+    ]
+    return ins, lines, ans
+
+
+_reg("cloth_suits", cloth_suits)
+
+
+# 53. 一进两排三管齐开 → 注满时间
+def pipes_one_in_two_out(rng):
+    a, b, c = rng.choice([
+        (5, 20, 30), (6, 20, 15), (6, 30, 15), (5, 30, 15),
+        (10, 20, 30), (10, 40, 20), (12, 40, 24), (8, 24, 16),
+        (10, 60, 15), (5, 15, 10), (10, 25, 50), (6, 30, 20),
+        (14, 35, 70), (15, 25, 75), (10, 24, 40), (25, 40, 100),
+    ])
+    net = Fraction(1, a) - Fraction(1, b) - Fraction(1, c)
+    ans = Fraction(1, 1) / net
+    scene = rng.choice(["水池", "水箱", "游泳池", "蓄水池"])
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"一个{scene}装有三根水管：单开进水管{a}小时注满，单开两根排水管分别{b}小时、{c}小时排空。三管齐开，多少小时能把空{scene}注满？",
+        f"{scene}有一个进水管和两个排水管。进水管{a}小时注满，两管分别{b}小时、{c}小时排空满池水。{name}同时打开三管，几小时注满？",
+        f"空{scene}上有三根水管，甲管{a}小时注满，乙管{b}小时排空，丙管{c}小时排空。三管同开，几小时后{scene}注满？",
+        f"某{scene}进水管{a}小时可注满，两个排水管分别{b}小时和{c}小时可排空。三管齐开，注满空{scene}要多少小时？",
+    ])
+    lines = [
+        f"进水管每小时进水 = 1 ÷ {a} = {num(Fraction(1, a))}池",
+        f"每小时净进水 = 1 ÷ {a} - 1 ÷ {b} - 1 ÷ {c} = {num(net)}池",
+        f"三管齐开注满的时间 = 1 ÷ ({num(net)}) = {num(ans)}小时",
+    ]
+    return ins, lines, ans
+
+
+_reg("pipes_one_in_two_out", pipes_one_in_two_out)
+
+
+# 54. 草每天减少，a头牛吃t1周b头牛吃t2周 → c头牛吃几周
+def ox_grazing_shrink(rng):
+    a, t1, b, t2, c = rng.choice([
+        (20, 5, 15, 6, 5), (20, 5, 15, 6, 20), (30, 5, 20, 6, 30),
+        (30, 5, 20, 6, 20), (24, 5, 18, 6, 6), (24, 5, 18, 6, 18),
+        (20, 6, 16, 7, 16), (15, 8, 10, 10, 10), (15, 8, 10, 10, 40),
+        (18, 6, 14, 7, 14), (18, 6, 14, 7, 2), (25, 6, 20, 7, 20),
+        (25, 6, 20, 7, 5), (16, 9, 12, 10, 12), (20, 8, 14, 10, 14),
+        (20, 8, 14, 10, 30),
+    ])
+    r = (a * t1 - b * t2) // (t2 - t1)
+    G = a * t1 + r * t1
+    ans = Fraction(G, c + r)
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"牧场的草每天均匀减少。{a}头牛吃{t1}周吃完，{b}头牛吃{t2}周吃完。照这样计算，{c}头牛可以吃多少周？",
+        f"天气变冷，牧场上的草每天均匀减少。{a}头牛{t1}周吃完，{b}头牛{t2}周吃完。{name}想知道{c}头牛能吃多少周，请你算一算。",
+        f"一片牧场，草每天匀速减少。{a}头牛可吃{t1}周，{b}头牛可吃{t2}周。那么{c}头牛可吃多少周？",
+        f"由于天气转冷，牧场的草每天均匀减少。{a}头牛吃{t1}周，{b}头牛吃{t2}周。{c}头牛能吃多少周？",
+    ])
+    lines = [
+        f"每周减少的草量 = ({a} × {t1} - {b} × {t2}) ÷ ({t2} - {t1}) = {r}份",
+        f"牧场原有的草量 = {a} × {t1} + {r} × {t1} = {G}份",
+        f"{c}头牛每周总消耗 = {c} + {r} = {c + r}份",
+        f"可以吃的周数 = {G} ÷ {c + r} = {num(ans)}周",
+    ]
+    return ins, lines, ans
+
+
+_reg("ox_grazing_shrink", ox_grazing_shrink)
+
+
+# 55. 粗蜡烛a小时细蜡烛b小时，粗先点t小时 → 细点燃后几小时相等
+def candles_delayed(rng):
+    a, b, t = rng.choice([
+        (5, 3, 2), (6, 4, 1), (6, 4, 2), (7, 5, 2), (8, 6, 1),
+        (8, 4, 1), (9, 6, 2), (10, 6, 2), (10, 5, 1), (10, 8, 1),
+        (12, 8, 3), (12, 9, 2), (12, 6, 2), (5, 4, 1), (8, 7, 1),
+        (10, 9, 1),
+    ])
+    x = b * t // (a - b)
+    burnt = Fraction(t, a)
+    diff = Fraction(1, b) - Fraction(1, a)
+    obj = rng.choice(["蜡烛", "线香", "蚊香"])
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"两支粗细不同的{obj}，粗的{a}小时燃尽，细的{b}小时燃尽。粗的先点燃{t}小时后细的才点燃，细的点燃后多少小时两支剩下的一样长？",
+        f"一根粗{obj}燃尽要{a}小时，一根细{obj}燃尽要{b}小时。{name}先点粗的，{t}小时后再点细的，细的点燃后几小时两根剩下的一样长？",
+        f"粗{obj}可烧{a}小时，细{obj}可烧{b}小时。粗的先烧{t}小时，然后同时烧，细的点燃后多少小时两根剩余长度相等？",
+        f"停电了，{name}点起两根{obj}：粗的能烧{a}小时，细的能烧{b}小时。粗的先点{t}小时后细的才点，细的点燃后几小时两根一样长？",
+    ])
+    lines = [
+        f"粗{obj}先点{t}小时燃去 = {t} ÷ {a} = {num(burnt)}",
+        f"两支每小时燃烧的差 = 1 ÷ {b} - 1 ÷ {a} = {num(diff)}",
+        f"细的点燃后到相等 = {num(burnt)} ÷ ({num(diff)}) = {x}小时",
+    ]
+    return ins, lines, x
+
+
+_reg("candles_delayed", candles_delayed)
+
+
+# 56. 环形跑道起点相遇时乙跑的路程
+def circular_start_distance(rng):
+    a = rng.choice([3, 4, 5, 6])
+    b = rng.choice([4, 5, 6, 8])
+    if a == b:
+        b = a + 1
+    lcm = a * b // math.gcd(a, b)
+    L = rng.choice([200, 250, 300, 400, 500, 600])
+    laps = lcm // b
+    dist = laps * L
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"甲、乙两人在周长{L}米的环形跑道上跑步，甲跑一圈要{a}分钟，乙跑一圈要{b}分钟。两人同时从起点出发，多少分钟后在起点第一次相遇？相遇时乙跑了多少米？（求乙跑的路程）",
+        f"环形跑道一圈{L}米，甲{a}分钟跑一圈，乙{b}分钟跑一圈。{name}和同学同时从起点同向出发，第一次在起点相遇时乙跑了多少米？",
+        f"甲、乙沿周长{L}米的环形跑道跑步，甲每圈{a}分钟，乙每圈{b}分钟。两人同时同地出发，第一次在起点相遇时，乙一共跑了多少米？",
+        f"在{L}米的环形跑道上，甲跑一圈用{a}分钟，乙跑一圈用{b}分钟。两人同时从起点出发，第一次在起点相遇时乙跑了多少米？",
+    ])
+    lines = [
+        f"起点相遇经过的时间 = {a} × {lcm // a} = {lcm}分钟",
+        f"乙跑的圈数 = {lcm} ÷ {b} = {laps}圈",
+        f"乙跑的路程 = {laps} × {L} = {dist}米",
+    ]
+    return ins, lines, dist
+
+
+_reg("circular_start_distance", circular_start_distance)
+
+
+# 57. 快车上的人看慢车驶过t秒 → 慢车上的人看快车几秒
+def trains_observers(rng):
+    L1, L2, t = rng.choice([
+        (100, 150, 6), (120, 200, 5), (80, 120, 6), (120, 180, 6),
+        (160, 240, 6), (200, 300, 6), (120, 160, 4), (150, 250, 5),
+        (100, 140, 7), (140, 210, 6),
+    ])
+    v = L2 // t
+    ans = L1 // v
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"快车车长{L1}米，慢车车长{L2}米，两车相向而行。坐在快车上的人看到慢车驶过用了{t}秒。坐在慢车上的人看到快车驶过要用多少秒？",
+        f"两列火车相向而行，快车长{L1}米，慢车长{L2}米。快车上的乘客看到慢车完全驶过用了{t}秒。{name}想知道慢车上的乘客看快车驶过要几秒，请你算一算。",
+        f"快车长{L1}米、慢车长{L2}米，相向而行。快车上的人看慢车驶过需{t}秒，慢车上的人看快车驶过需多少秒？",
+        f"两列火车相向开出，快车车长{L1}米，慢车车长{L2}米。坐在快车上的人看见慢车驶过用了{t}秒，坐在慢车上的人看见快车驶过用多少秒？",
+    ])
+    lines = [
+        f"慢车的长度 = {L2} = {L2}米",
+        f"两车的速度和 = {L2} ÷ {t} = {v}米/秒",
+        f"慢车上看快车驶过时间 = {L1} ÷ {v} = {ans}秒",
+    ]
+    return ins, lines, ans
+
+
+_reg("trains_observers", trains_observers)
+
+
+# 58. 扶梯向上每秒b级，人向下每秒a级 → 下楼时间
+def escalator_against(rng):
+    a = rng.randint(3, 6)
+    b = rng.randint(1, a - 2)
+    d = a - b
+    N = d * rng.randint(10, 40)
+    ans = N // d
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"商场的自动扶梯以每秒{b}级的速度向上运行，扶梯共有{N}级可见。{name}在扶梯上以每秒{a}级的速度向下走，他从楼上走到楼下需要多少秒？",
+        f"自动扶梯向上每秒移动{b}级，可见部分共{N}级。小明在扶梯上每秒向下走{a}级，多少秒能从楼上走到楼下？",
+        f"地铁站的扶梯每秒向上{b}级，共{N}级。{name}着急赶车，在向上的扶梯上以每秒{a}级向下走，需要多少秒？",
+        f"一部向上运行的扶梯，每秒上升{b}级，可见{N}级。人在扶梯上每秒向下走{a}级，从顶到底要多少秒？",
+    ])
+    lines = [
+        f"人相对于地面每秒向下 = {a} - {b} = {d}级",
+        f"扶梯的可见级数 = {N} = {N}级",
+        f"走下扶梯的时间 = {N} ÷ {d} = {ans}秒",
+    ]
+    return ins, lines, ans
+
+
+_reg("escalator_against", escalator_against)
+
+
+# 59. 正方体熔铸成长方体 → 高
+def iron_melt(rng):
+    a = rng.choice([4, 6, 8, 9, 10, 12])
+    if a == 4:
+        b, c = rng.choice([(4, 4), (2, 4), (4, 2), (8, 2), (2, 8), (2, 2)])
+    elif a == 6:
+        b, c = rng.choice([(8, 9), (9, 8), (12, 6), (6, 12), (4, 9), (9, 4), (3, 8), (8, 3), (4, 6), (6, 4), (3, 6), (6, 3), (2, 9), (9, 2), (3, 4), (4, 3), (2, 6), (6, 2)])
+    elif a == 8:
+        b, c = rng.choice([(8, 8), (4, 8), (8, 4), (2, 8), (8, 2), (4, 4), (16, 4), (4, 16), (32, 2), (2, 32)])
+    elif a == 9:
+        b, c = rng.choice([(9, 9), (3, 9), (9, 3), (27, 3), (3, 27)])
+    elif a == 10:
+        b, c = rng.choice([(10, 10), (5, 10), (10, 5), (4, 10), (10, 4), (20, 5), (5, 20), (25, 4), (4, 25)])
+    else:
+        b, c = rng.choice([(12, 12), (8, 9), (9, 8), (6, 12), (12, 6), (16, 9), (9, 16), (18, 8), (8, 18), (24, 6), (6, 24)])
+    a3 = a ** 3
+    ans = a3 // (b * c)
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"把一个棱长{a}厘米的正方体铁块熔铸成一个长{b}厘米、宽{c}厘米的长方体，长方体的高是多少厘米？",
+        f"一块棱长{a}厘米的正方体钢坯，锻造成长{b}厘米、宽{c}厘米的长方体钢材。{name}想知道钢材的高是多少厘米，请你算一算。",
+        f"棱长{a}厘米的正方体橡皮泥，捏成长{b}厘米、宽{c}厘米的长方体，高是多少厘米？",
+        f"把棱长{a}厘米的正方体铁块熔化后浇铸成长{b}厘米、宽{c}厘米的长方体铁板，铁板厚多少厘米？",
+    ])
+    lines = [
+        f"正方体的体积 = {a} × {a} × {a} = {a3}立方厘米",
+        f"长方体的底面积 = {b} × {c} = {b * c}平方厘米",
+        f"长方体的高 = {a3} ÷ {b * c} = {ans}厘米",
+    ]
+    return ins, lines, ans
+
+
+_reg("iron_melt", iron_melt)
+
+
+# 60. 甲容器的水倒入乙容器 → 水深
+def pour_water_depth(rng):
+    for _ in range(50):
+        a = rng.randint(2, 8)
+        b = rng.randint(2, 8)
+        h = rng.randint(3, 10)
+        V = a * b * h
+        c = rng.randint(2, 9)
+        d = rng.randint(2, 9)
+        if V % (c * d) == 0 and V // (c * d) <= h + 20:
+            break
+    else:
+        a, b, h, c, d = 4, 3, 5, 3, 4
+        V = a * b * h
+    ans = V // (c * d)
+    name = rng.choice(NAMES)
+    ins = rng.choice([
+        f"一个长{a}厘米、宽{b}厘米的长方体容器，水深{h}厘米。把水全部倒入一个长{c}厘米、宽{d}厘米的空容器中，水深多少厘米？",
+        f"甲容器长{a}厘米、宽{b}厘米，里面水深{h}厘米。{name}把水全部倒入长{c}厘米、宽{d}厘米的乙容器，乙容器中水深多少厘米？",
+        f"长方体水箱长{a}厘米、宽{b}厘米，装了{h}厘米深的水。把这些水倒进另一个长{c}厘米、宽{d}厘米的水箱，水深多少厘米？",
+        f"一个长{a}厘米、宽{b}厘米的容器盛有{h}厘米深的水，将水全部倒入长{c}厘米、宽{d}厘米的长方体容器中，水面高多少厘米？",
+    ])
+    lines = [
+        f"甲容器中水的体积 = {a} × {b} × {h} = {V}立方厘米",
+        f"乙容器的底面积 = {c} × {d} = {c * d}平方厘米",
+        f"乙容器中的水深 = {V} ÷ {c * d} = {ans}厘米",
+    ]
+    return ins, lines, ans
+
+
+_reg("pour_water_depth", pour_water_depth)
+
+
 if __name__ == "__main__":
     rng = random.Random(4)
     from run_math_short import verify
