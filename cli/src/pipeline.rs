@@ -43,9 +43,9 @@ pub struct Args {
     /// GPUs for pretrain/eval/rl
     #[arg(long, default_value_t = 8)]
     ngpu: u8,
-    /// Log pretraining to Weights & Biases
+    /// Log pretraining to trackio
     #[arg(long)]
-    wandb: bool,
+    track: bool,
     /// SFT: packed data (.pt) the sft stage trains on
     #[arg(long)]
     sft_pt: Option<String>,
@@ -106,7 +106,7 @@ fn steps_for(stage: &str, a: &Args) -> Result<Vec<Step>, String> {
         "pretrain" => {
             let mut args = vec!["--name".into(), a.name.clone()];
             args.extend(a.passthrough.clone());
-            vec![train_step(a.wandb, None, args)]
+            vec![train_step(a.track, None, args)]
         }
         "eval" => vec![Step::bash(
             "scripts/eval_hard.sh",

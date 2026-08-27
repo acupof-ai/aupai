@@ -49,7 +49,7 @@ aupai --dry-run eval ckpt_k4.pt 8
 | `sft`, `rl` | `scripts/run_sft.sh`, `torchrun algorithms/rlvr.py` |
 | `prep-sft`, `prep-sft-math`, `prep-rl` | the packing scripts |
 | `eval`, `eval-math`, `band`, `select-band` | the eval/analysis scripts |
-| `plot`, `dashboard` | `scripts/plot_curves.py` / open the W&B run |
+| `plot`, `dashboard` | `scripts/plot_curves.py` / launch trackio's local UI |
 | `nan-probe`, `ckpt-diff`, `exp` | the ops scripts |
 | `infer`, `chat`, `serve` | the inference entry points |
 
@@ -77,21 +77,23 @@ aupai pipeline --stages data,pretrain,eval --name mybase          # an explicit 
 - The default slice (`--from`/`--to` unset) is `tokenizer … eval` — the core pretraining path;
   add `sft`/`rl` with `--to rl` or `--stages`.
 
-## W&B
+## trackio
 
-`aupai train --wandb` (or `pipeline --wandb`) turns on Weights & Biases logging. The CLI's
-contract with `train.py`:
+`aupai train --track` (or `pipeline --track`) turns on trackio logging (local-first,
+wandb-API-compatible, SQLite-backed — no login, no server). The CLI's contract with `train.py`:
 
-- env `WANDB_PROJECT=<name>` (default `aupai`; override with `--wandb-project <name>`)
-- flag `--wandb` appended to the `train.py` argv
+- env `TRACKIO_PROJECT=<name>` (default `aupai`; override with `--track-project <name>`)
+- flag `--track` appended to the `train.py` argv
 
-`train.py`'s `RunLog` reads that flag to init a run and log each step's metrics. `aupai dashboard
---wandb` opens the project at `https://wandb.ai/$WANDB_PROJECT`; `aupai dashboard <name>` (no
-`--wandb`) plots `runs/<name>.log` with `scripts/plot_curves.py` and opens the PNG.
+`train.py`'s `RunLog` reads that flag to init a run and mirror each step's metrics. `aupai
+dashboard` launches trackio's local web UI (`uv run python -m trackio show [--project <name>]`);
+`aupai dashboard <name> --plot` plots `runs/<name>.log` with `scripts/plot_curves.py` and opens
+the PNG.
 
 ## Environment
 
 - `AUPAI_CACHE_DIR` — where the pretokenized token caches live (`tokens_<domain>.pt`); consumed
   by the Python side (`train.py`, `pretokenize.py`), not the CLI. Defaults to `/data00`.
-- `WANDB_PROJECT` — read by `aupai dashboard --wandb` when `--project` is not given.
+- `TRACKIO_PROJECT` — set by `aupai train --track` and read by `aupai dashboard` when `--project`
+  is not given.
 - `NGPU`, `PORT`, `CUDA_VISIBLE_DEVICES` — honored by the underlying `run_ddp.sh` / eval scripts.

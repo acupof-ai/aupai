@@ -53,14 +53,14 @@ enum Cmd {
     },
 
     // ---- training ----
-    /// DDP pretraining (run_ddp.sh; flags pass through to train.py). --wandb enables W&B logging
+    /// DDP pretraining (run_ddp.sh; flags pass through to train.py). --track enables trackio logging
     Train {
-        /// Log to Weights & Biases (sets WANDB env + passes --wandb to train.py)
+        /// Log to trackio (sets TRACKIO_PROJECT env + passes --track to train.py)
         #[arg(long)]
-        wandb: bool,
-        /// W&B project name (implies --wandb; default: aupai)
+        track: bool,
+        /// trackio project name (implies --track; default: aupai)
         #[arg(long)]
-        wandb_project: Option<String>,
+        track_project: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -128,16 +128,16 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Open a training dashboard: the W&B run in the browser, or plot the run's curves
+    /// Open a training dashboard: trackio's local web UI, or plot the run's curves (--plot)
     Dashboard {
-        /// Run name (runs/<name>.log, plots/<name>.png)
+        /// Run name (runs/<name>.log, plots/<name>.png) — used by --plot
         name: Option<String>,
-        /// Open this W&B project/run URL instead of plotting locally
-        #[arg(long)]
-        wandb: bool,
-        /// W&B entity/project (default: the WANDB_PROJECT env, else aupai)
+        /// trackio project to show (default: the TRACKIO_PROJECT env, else all)
         #[arg(long)]
         project: Option<String>,
+        /// Plot the run's curves to a PNG instead of launching the trackio UI
+        #[arg(long)]
+        plot: bool,
     },
     /// FP8 NaN probe (scripts/nan_probe.py; env like COMPILE/BS/MUON/STEPS pass through)
     NanProbe {
@@ -200,7 +200,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "Warm every mix domain's token cache (scripts/pretokenize.py)",
     ),
     (
-        "train [--wandb] [train.py flags]",
+        "train [--track] [train.py flags]",
         "DDP pretraining (run_ddp.sh -> train.py)",
     ),
     (
@@ -248,8 +248,8 @@ const COMMANDS: &[(&str, &str)] = &[
         "Plot training curves -> plots/<name>.png (scripts/plot_curves.py)",
     ),
     (
-        "dashboard [name] [--wandb]",
-        "Open the W&B run, or plot the run's curves",
+        "dashboard [name] [--project N] [--plot]",
+        "Launch trackio's local UI, or plot the run's curves (--plot)",
     ),
     ("nan-probe [args]", "FP8 NaN probe (scripts/nan_probe.py)"),
     (
@@ -280,10 +280,10 @@ fn main() {
         Cmd::Pretokenize { args } => run(&root, dry, &Step::uv_py("scripts/pretokenize.py", &args)),
 
         Cmd::Train {
-            wandb,
-            wandb_project,
+            track,
+            track_project,
             args,
-        } => run(&root, dry, &train_step(wandb, wandb_project, args)),
+        } => run(&root, dry, &train_step(track, track_project, args)),
         Cmd::Pipeline(args) => pipeline::run(&root, dry, args),
         Cmd::Sft {
             name,
@@ -316,9 +316,9 @@ fn main() {
         Cmd::Plot { args } => run(&root, dry, &Step::uv_py("scripts/plot_curves.py", &args)),
         Cmd::Dashboard {
             name,
-            wandb,
             project,
-        } => dashboard(&root, dry, name, wandb, project),
+            plot,
+        } => dashboard(&root, dry, name, project, plot),
         Cmd::NanProbe { args } => run(&root, dry, &Step::uv_py("scripts/nan_probe.py", &args)),
         Cmd::CkptDiff { args } => run(&root, dry, &Step::uv_py("scripts/ckpt_diff.py", &args)),
 
@@ -354,16 +354,16 @@ fn main() {
     std::process::exit(code);
 }
 
-/// `bash run_ddp.sh [--wandb] <flags>`, with WANDB env when enabled.
-pub fn train_step(wandb: bool, project: Option<String>, mut args: Vec<String>) -> Step {
-    let on = wandb || project.is_some();
+/// `bash run_ddp.sh [--track] <flags>`, with TRACKIO_PROJECT env when enabled.
+pub fn train_step(track: bool, project: Option<String>, mut args: Vec<String>) -> Step {
+    let on = track || project.is_some();
     let mut env = Vec::new();
     if on {
-        if !args.iter().any(|a| a == "--wandb") {
-            args.push("--wandb".into());
+        if !args.iter().any(|a| a == "--track") {
+            args.push("--track".into());
         }
         env.push((
-            "WANDB_PROJECT".into(),
+            "TRACKIO_PROJECT".into(),
             project.unwrap_or_else(|| "aupai".into()),
         ));
     }
@@ -391,27 +391,31 @@ fn eval_step(script: &str, ckpt: String, ngpu: Option<u8>) -> Step {
     Step::bash(script, &args)
 }
 
-/// Open the W&B run in the browser, or fall back to plotting the run's curves locally.
+/// Launch trackio's local web UI, or fall back to plotting the run's curves locally (--plot).
 fn dashboard(
     root: &Path,
     dry: bool,
     name: Option<String>,
-    wandb: bool,
     project: Option<String>,
+    plot: bool,
 ) -> i32 {
-    if wandb {
-        let proj = project
-            .or_else(|| std::env::var("WANDB_PROJECT").ok())
-            .unwrap_or_else(|| "aupai".into());
-        let url = format!("https://wandb.ai/{proj}");
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        return run(root, dry, &Step::new(opener, vec![url]));
+    if !plot {
+        // trackio is local: `uv run python -m trackio show [--project <name>]` starts its Gradio UI.
+        let mut args = vec![
+            "run".into(),
+            "python".into(),
+            "-m".into(),
+            "trackio".into(),
+            "show".into(),
+        ];
+        let proj = project.or_else(|| std::env::var("TRACKIO_PROJECT").ok());
+        if let Some(p) = proj {
+            args.push("--project".into());
+            args.push(p);
+        }
+        return run(root, dry, &Step::new("uv", args));
     }
-    // Local: plot the run's curves, then open the PNG.
+    // --plot: plot the run's curves, then open the PNG.
     let name = name.unwrap_or_else(|| "pretrain".into());
     let log = format!("runs/{name}.log");
     let code = run(root, dry, &Step::uv_py("scripts/plot_curves.py", &[log]));
