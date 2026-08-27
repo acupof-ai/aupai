@@ -12,9 +12,6 @@ RL training loops and verifiable-reward utilities for the 200M Chinese LLM.
 | `rlvr_data.py` | Build/load `data/rl/rlvr_math.jsonl` from raw math datasets | No (stdlib only) |
 | `rlvr.py` | Entry point -> `rlvr_trainer.main()` | — |
 | `prepare_rlvr.py` | Entry point -> `rlvr_data.main()` | — |
-| `rl.py` | GRPO on GSM8K-zh (stored log-probs, clipped surrogate + KL) | No (lazy) |
-| `rl_arc.py` | GRPO on ARC-Easy multiple-choice | No (lazy) |
-| `rl_ceval.py` | GRPO on C-Eval multiple-choice | No (lazy) |
 
 All paths resolve from the project root (`os.path.dirname` of this directory),
 so scripts run from anywhere. Heavy deps (torch, tokenizers, `train`/`sft`
@@ -29,15 +26,7 @@ python algorithms/prepare_rlvr.py
 
 # RLVR training (single GPU or DDP)
 torchrun --nproc_per_node=8 algorithms/rlvr.py --resume ckpt_sft.pt
-
-# Other GRPO loops
-torchrun --nproc_per_node=N algorithms/rl.py        # GSM8K-zh -> ckpt_rl.pt
-torchrun --nproc_per_node=N algorithms/rl_arc.py    # ARC-Easy -> ckpt_rl.pt
-torchrun --nproc_per_node=N algorithms/rl_ceval.py  # C-Eval -> ckpt_rl.pt
 ```
-
-Note: `rl_arc.py` and `rl_ceval.py` both write `ckpt_rl.pt` — run them in
-separate checkpoints/workdirs if both matter.
 
 ## Importing as a library
 

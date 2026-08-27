@@ -11,9 +11,6 @@ Submodules:
   rlvr_trainer   — RLVR GRPO training loop: fp32 master weights, FP8 train +
                    bf16 generation copies, DDP (lazy torch/train)
   rlvr_data      — build/load data/rl/rlvr_math.jsonl (stdlib only)
-  rl             — GRPO on GSM8K-zh (stored log-probs, clipped surrogate + KL)
-  rl_arc         — GRPO on ARC-Easy multiple-choice
-  rl_ceval       — GRPO on C-Eval multiple-choice
 """
 
 __all__ = [
