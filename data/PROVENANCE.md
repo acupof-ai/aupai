@@ -13,15 +13,17 @@ These five have NO reproduction script (git history has no producer; they were
 one-time transfers). Provenance is unknown/partial — the user was asked to
 confirm origins. Files live on the pod at /work/aupai/data/.
 
-| file | domain | size (pod) | provenance |
-|---|---|---|---|
-| pretrain_full.jsonl | web | 9.3 GB | unknown (superset of skypile etc. per build_corpus.py comment; measured 2026-08-26) |
-| cosmopedia_extra.jsonl | en | 685 MB | likely ModelScope OpenCSG/Chinese-Cosmopedia extra shards (unconfirmed) |
-| en_textbook.jsonl | en | 122 MB | unknown |
-| code_filtered.jsonl | code | 225 MB | unknown ("filtered" step unrecorded; upstream gen: datagen/gen_code.py → data/synthetic/code_python_zh.jsonl) |
-| en_math_text.jsonl | math | 307 MB | unknown |
+| file | domain | size (pod) | sha256 (pod, 2026-08-27) | provenance |
+|---|---|---|---|---|
+| pretrain_full.jsonl | web | 9.3 GB | 230525ecda660c238c3401b36b53295002f3fb5ce7a01aacb626ce3eebeedc76 | unknown (superset of skypile etc. per build_corpus.py comment; measured 2026-08-26) |
+| cosmopedia_extra.jsonl | en | 685 MB | 77aabceceb9f323346b6aa21c9502745e1e1693bb542dd58603f14d6e026a145 | likely ModelScope OpenCSG/Chinese-Cosmopedia extra shards (unconfirmed) |
+| en_textbook.jsonl | en | 122 MB | 6a85bfeebfa59b772afa0a2d7584abb8d0d847f7c197697d6b8f917330ecd73f | unknown |
+| code_filtered.jsonl | code | 225 MB | 76dc76cf94858f1846cadb98bbef9b201232b7aba0d66c6fa465043c530a1948 | unknown ("filtered" step unrecorded; upstream gen: datagen/gen_code.py → data/synthetic/code_python_zh.jsonl) |
+| en_math_text.jsonl | math | 307 MB | fa21ac063d8aa96347b508ddce3b6506d6706761504d768254142feb025c3ac7 | unknown |
 
-sha256 TODO: compute on pod and record here (`shasum -a 256` / `sha256sum`).
+These are the pod files' current content hashes — the verify-not-refetch anchor. A
+re-derived file must match one of these (or the divergence be explained) before it
+replaces the frozen copy.
 
 ## Present locally + reproducible (fetchers exist or being added)
 
