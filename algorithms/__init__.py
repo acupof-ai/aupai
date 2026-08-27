@@ -1,4 +1,4 @@
-"""RL algorithms for the 200M Chinese LLM: GRPO/RLVR training loops and
+"""RL algorithms for the 200M Chinese LLM: GSPO/RLVR training loops and
 verifiable-reward utilities.
 
 All heavy deps (torch, tokenizers, train.py/fla) are lazy: `import algorithms`
@@ -8,7 +8,7 @@ imported when a training/generation function is actually called.
 Submodules:
   rlvr_reward    — \\boxed{} extraction, answer normalization, 0/1 reward (stdlib only)
   rlvr_generate  — batched top-p autoregressive sampling (lazy torch)
-  rlvr_trainer   — RLVR GRPO training loop: fp32 master weights, FP8 train +
+  rlvr_trainer   — RLVR GSPO training loop: fp32 master weights, FP8 train +
                    bf16 generation copies, DDP (lazy torch/train)
   rlvr_data      — build/load data/rl/rlvr_math.jsonl (stdlib only)
 """
@@ -18,7 +18,7 @@ __all__ = [
     "normalize_answer",
     "to_number",
     "generate",
-    "grpo_loss",
+    "gspo_loss",
     "load_problems",
     "prepare_rlvr_data",
     "train_rlvr",
@@ -31,7 +31,7 @@ _LAZY = {
     "normalize_answer": "rlvr_reward",
     "to_number": "rlvr_reward",
     "generate": "rlvr_generate",
-    "grpo_loss": "rlvr_trainer",
+    "gspo_loss": "rlvr_trainer",
     "load_problems": "rlvr_data",
     "prepare_rlvr_data": ("rlvr_data", "prepare"),
     "train_rlvr": ("rlvr_trainer", "main"),

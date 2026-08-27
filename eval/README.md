@@ -22,10 +22,12 @@ First run downloads datasets from HuggingFace; subsequent runs use the cache.
 ## How scoring works
 
 **Multiple-choice (8 benchmarks):** for each option, score the sum of
-log-prob of the option tokens given the prompt; pick argmax. Prompt and option
-are tokenized separately and concatenated (matching the standalone modules).
-MMLU and OpenBookQA score bare letter tokens (`"A"`), the others score the
-full option text with a leading space.
+log-prob of the option tokens given the prompt; pick argmax. In `run_eval.py`
+prompt and option are tokenized separately and concatenated; the standalone
+`boolq.py`/`openbookqa.py` now use joint tokenization via
+`eval.log_likelihood_joint`, the other five still tokenize separately.
+MMLU scores bare letter tokens (`"A"`); OpenBookQA scores the letter with a
+leading space (`" A"`); the rest score the full option text with a leading space.
 
 **GSM8K:** autoregressive greedy generation (up to 256 new tokens), take the
 last number in the output, compare against `#### N`.

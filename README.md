@@ -7,7 +7,7 @@
 ## 特性
 
 - **推理省显存**：KDA 是 O(1) 状态的线性循环（每层 262 KiB，与上下文长度无关），MLA 只缓存 256 维潜在（窗口封顶 512 KiB/层）。同规模全注意力 @ctx4096 是 62×。
-- **训练快**：FP8（torchao e4m3_tensorwise）+ Muon + WSD + Liger FLCE，batch 32 无 grad_ckpt，8×H20 上 ~85K tok/s/gpu、MFU 36%。
+- **训练快**：FP8（torchao e4m3_tensorwise）+ Muon + WSD + Liger FLCE，batch 32 无 grad_ckpt，8×H20 上 ~90K tok/s/gpu、MFU 38%。
 - **数据干净**：语料构建自带 holdout 过滤（整文档 + QA body + 逐行，防 eval 污染）、跨域去重、math 近重去重。
 
 ## aupai CLI — 训练全流程中控

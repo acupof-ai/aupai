@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""RLVR trainer: GRPO on 218K Chinese math problems with verifiable \\boxed{} rewards.
+"""RLVR trainer: GSPO on Chinese math problems with verifiable \\boxed{} rewards.
 
 Per step:
   1. Sample 4 prompts/GPU; generate N=8 responses each (bf16, T=0.8, top-p=0.95)
