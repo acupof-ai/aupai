@@ -957,11 +957,16 @@ def encode(texts, tok, chunk=50_000, log=None):
 
 
 def _domain_seqs(domain, tok, is_main, ddp):
-    """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1]."""
+    """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1].
+
+    The cache is reused across runs, but only while it is newer than every corpus shard it was built
+    from -- rebuild the corpus and the stale cache is silently ignored, not silently reused."""
     cache = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
-    if is_main and not os.path.exists(cache):
+    shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
+    fresh = os.path.exists(cache) and shards and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
+    if is_main and not fresh:
         texts = []
-        for p in sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))):
+        for p in shards:
             texts += _jsonl_content(p)
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
         random.Random(Cfg.seed).shuffle(texts)
