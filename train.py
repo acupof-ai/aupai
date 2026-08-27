@@ -955,13 +955,16 @@ def encode(texts, tok, chunk=50_000, log=None):
     eos = tok.token_to_id("<eos>")
     batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
     parts = []
+    t0 = time.time()
     for i in range(0, len(texts), chunk):
         enc = batch_fn(texts[i : i + chunk])
         parts.append(np.concatenate([np.asarray(e.ids + [eos], dtype=np.int32) for e in enc]))
-        if log and (i // chunk) % 20 == 0:
+        if log and (i // chunk) % 4 == 0:  # every ~200K docs: sparse enough to be cheap, dense enough to not look hung
+            ntok = sum(len(p) for p in parts)
+            dt = time.time() - t0
             log(
                 f"  encode {min(i + chunk, len(texts))}/{len(texts)} docs, "
-                f"{sum(len(p) for p in parts) / 1e6:.0f}M tokens"
+                f"{ntok / 1e6:.0f}M tokens ({ntok / dt / 1e6:.1f}M tok/s)"
             )
     return torch.from_numpy(np.concatenate(parts))  # int32: vocab 32772 fits, halves bandwidth
 
