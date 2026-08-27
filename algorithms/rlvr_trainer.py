@@ -227,6 +227,22 @@ def main():
 
     n_degenerate = 0
     log = {"reward": 0.0, "n": 0, "loss": 0.0, "n_loss": 0, "gnorm": 0.0, "gen": 0.0}
+
+    def save_ckpt(path, step):
+        sd = {n: m.detach().cpu() for n, m in master.items()}
+        sd["head.weight"] = sd["tok.weight"]  # tied embedding alias
+        cfg_clean = {k: v for k, v in vars(cfg).items() if not k.startswith("_")}
+        torch.save({"model": sd, "cfg": cfg_clean, "step": step}, path)
+        # bf16 inference copy: half the size, zero quality loss (inference runs bf16 anyway)
+        sd_bf16 = {n: (t.to(torch.bfloat16) if torch.is_tensor(t) and t.is_floating_point() else t) for n, t in sd.items()}
+        torch.save({"model": sd_bf16, "cfg": cfg_clean, "step": step}, path.replace(".pt", "_bf16.pt"))
+
+    # Best-ckpt: keep the peak-smoothed-acc state, not just the latest. The 2026-08-27 direct-RL
+    # run peaked at step 280, collapsed to 0.339 by step 390, and the step-400 periodic save
+    # overwrote the good state -- the peak was unrecoverable.
+    best_path = args.out.replace(".pt", "_best.pt")
+    best_acc, acc_hist = -1.0, []
+
     for step in range(1, args.steps + 1):
         if ddp:
             random.seed(1337 + step)  # all ranks sample same prompts
@@ -337,11 +353,20 @@ def main():
             if ddp:
                 dist.all_reduce(t)
             if is_main:
+                acc = t[0] / max(t[1], 1)
                 runlog(
-                    f"step {step}/{args.steps} acc {t[0] / max(t[1], 1):.3f} "
+                    f"step {step}/{args.steps} acc {acc:.3f} "
                     f"loss {t[2] / max(t[3], 1):.4f} gnorm {t[4] / max(t[3], 1):.3f} "
                     f"gen {t[5] / 10:.0f}s degen {n_degenerate}"
                 )
+                # 30-step smoothing: a 10-step window is noise (0.34-0.77 swings), and a collapsing
+                # run can still print one good window. Save when the smoothed mean makes a new peak.
+                acc_hist.append(acc)
+                acc_hist[:] = acc_hist[-3:]
+                smoothed = sum(acc_hist) / len(acc_hist)
+                if smoothed > best_acc:
+                    best_acc = smoothed
+                    save_ckpt(best_path, step)
             n_degenerate = 0
             log = {"reward": 0.0, "n": 0, "loss": 0.0, "n_loss": 0, "gnorm": 0.0, "gen": 0.0}
 
@@ -350,29 +375,7 @@ def main():
             if ddp:
                 dist.barrier()
             if is_main:
-                sd = {n: m.detach().cpu() for n, m in master.items()}
-                sd["head.weight"] = sd["tok.weight"]  # tied embedding alias
-                torch.save(
-                    {
-                        "model": sd,
-                        "cfg": {k: v for k, v in vars(cfg).items() if not k.startswith("_")},
-                        "step": step,
-                    },
-                    args.out,
-                )
-                # bf16 inference copy: half the size, zero quality loss (inference runs bf16 anyway)
-                sd_bf16 = {
-                    n: (t.to(torch.bfloat16) if torch.is_tensor(t) and t.is_floating_point() else t)
-                    for n, t in sd.items()
-                }
-                torch.save(
-                    {
-                        "model": sd_bf16,
-                        "cfg": {k: v for k, v in vars(cfg).items() if not k.startswith("_")},
-                        "step": step,
-                    },
-                    args.out.replace(".pt", "_bf16.pt"),
-                )
+                save_ckpt(args.out, step)
                 print(f"saved {args.out} (step {step}) + bf16 copy", flush=True)
             if ddp:
                 dist.barrier()
