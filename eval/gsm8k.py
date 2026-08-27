@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from train import HybridLM
 
 EOS_ID = 1
-MAX_CTX = 1024
+MAX_CTX = 4096  # the model's trained seq len; smaller truncates the model's own long reasoning away
 NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 
@@ -39,7 +39,8 @@ def extract_number(text):
 def generate_batch(model, prompts, max_new, device, temperature=0.0):
     """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids."""
     B = len(prompts)
-    prompts = [p[-(MAX_CTX - max_new) :] for p in prompts]
+    keep = max(0, MAX_CTX - max_new)  # prompt budget; 0 means "keep all" (p[-0:] == p[0:])
+    prompts = [p[-keep:] for p in prompts]
     lengths = [len(p) for p in prompts]
     x = torch.full((B, max(lengths)), EOS_ID, dtype=torch.long, device=device)
     for i, p in enumerate(prompts):
@@ -50,7 +51,9 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0):
 
     for _ in range(max_new):
         logits, _ = model(x[:, -MAX_CTX:])
-        step_logits = logits[ar, ends - 1]
+        # logits only covers the last MAX_CTX positions; index relative to that slice
+        off = max(0, x.size(1) - MAX_CTX)
+        step_logits = logits[ar, ends - off - 1]
         if temperature > 0:
             nxt = torch.multinomial(torch.softmax(step_logits.float() / temperature, dim=-1), 1).squeeze(1)
         else:
@@ -75,7 +78,7 @@ def evaluate(model, tok, device, batch_size=8):
         p_ids = [tok.encode(f"问：{r['question']}\n答：").ids for r in batch]
         golds = [float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in batch]
 
-        for out_ids, gold in zip(generate_batch(model, p_ids, 256, device), golds):
+        for out_ids, gold in zip(generate_batch(model, p_ids, 256, device), golds, strict=True):
             pred = extract_number(tok.decode(out_ids))
             total += 1
             if pred is not None and abs(pred - gold) < 1e-4:
