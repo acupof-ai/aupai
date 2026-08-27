@@ -24,36 +24,34 @@ mkdir -p "$LOGS"
 
 has() { [[ " $DOMAINS " == *" $1 "* ]]; }
 
-# Small domains, sequential + cross-excluding. SMALL_EX accumulates every small domain already built,
-# so each new one dedups against the earlier ones (a code row present in en's source is dropped from en).
-SMALL_EX=()
-build_small() {  # <domain> <extra build_corpus args...>
-  local d=$1; shift
-  "${BC[@]}" --domain "$d" --filters light --target_tokens 1e9 "${SMALL_EX[@]}" "$@" > "$LOGS/$d.log" 2>&1
-  [ -d "data/corpus/$d" ] && SMALL_EX+=(--exclude "data/corpus/$d/*.jsonl")
-  tail -1 "$LOGS/$d.log"
-}
+# Small domains run in PARALLEL (they have no cross-domain overlap -- coig/school_math/gsm8k measured
+# disjoint 2026-08-27 -- so independent exact-dedup sets are safe; the web build still --excludes them
+# all). near-dedup is the slow part (pure-python MinHash ~30ms/doc), so it is applied ONLY where template
+# overlap actually exists: the synthetic math_short_v* files. Everything else, incl. the big publisher
+# math files (school_math_r1 214MB, en_math 307MB), runs exact-dedup only.
 
-has code && build_small code --no_near_dedup --source jsonl:data/code_filtered.jsonl
-has en && build_small en --no_near_dedup \
+has code && "${BC[@]}" --domain code --filters light --target_tokens 1e9 --no_near_dedup \
+  --source jsonl:data/code_filtered.jsonl > "$LOGS/code.log" 2>&1 &
+has en && "${BC[@]}" --domain en --filters light --target_tokens 1e9 --no_near_dedup \
   --source jsonl:data/cosmopedia_extra.jsonl \
-  --source jsonl:data/en_textbook.jsonl
-if has math; then
-  # Only sources whose answers are the publisher's own. The data/math/*.jsonl files were written
-  # by an answer extractor that has since been fixed, so they are left out until re-fetched.
-  # gsm8k_zh (meta-math/GSM8K_zh = the GSM8K *train* split machine-translated to Chinese) is excluded:
-  # eval/gsm8k.py scores the GSM8K *test* split, and keeping that benchmark's train distribution out of
-  # pretrain is what lets us call the score clean. ~7.5K rows, negligible for a 1e9-token domain.
-  # near-dedup (default on) collapses the ~68% template overlap across math_short_v2/v4.
-  build_small math \
-    --source jsonl:data/school_math_r1_zh.jsonl \
-    --source jsonl:data/en_math_text.jsonl \
-    --source "jsonl:data/synthetic/math_short_v*.jsonl"
-fi
-has chat && build_small chat --no_near_dedup \
+  --source jsonl:data/en_textbook.jsonl > "$LOGS/en.log" 2>&1 &
+has chat && "${BC[@]}" --domain chat --filters light --target_tokens 1e9 --no_near_dedup \
   --source jsonl:data/coig.jsonl \
-  --source jsonl:data/alpaca_gpt4_zh.jsonl
+  --source jsonl:data/alpaca_gpt4_zh.jsonl > "$LOGS/chat.log" 2>&1 &
+if has math; then
+  # math in two passes into the same domain dir: the big publisher files exact-dedup only (fast), then
+  # the small synthetic templates with near-dedup ON (collapses math_short_v2/v4's ~68% overlap), excluding
+  # the first pass. gsm8k_zh (GSM8K train, MT'd zh) stays out -- eval/gsm8k.py scores the GSM8K test split.
+  ( "${BC[@]}" --domain math --filters light --target_tokens 8e8 --no_near_dedup \
+      --source jsonl:data/school_math_r1_zh.jsonl \
+      --source jsonl:data/en_math_text.jsonl > "$LOGS/math.log" 2>&1
+    "${BC[@]}" --domain math --filters light --target_tokens 2e8 \
+      --exclude "data/corpus/math/*.jsonl" \
+      --source "jsonl:data/synthetic/math_short_v*.jsonl" >> "$LOGS/math.log" 2>&1 ) &
+fi
+wait
 echo "--- small domains done ---"
+for d in code en math chat; do has "$d" && echo "[$d] $(grep -h 'docs in' "$LOGS/$d.log" 2>/dev/null | tail -1)"; done
 
 if has web; then
   # An array, and the pattern stays quoted: build_corpus.py globs it itself. Unquoted, the shell
