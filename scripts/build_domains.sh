@@ -15,8 +15,8 @@
 # cost is trivial and template-heavy synthetic math benefits from near-dup removal across versions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-BC="python3 datagen/build_corpus.py"
-BCW="python3 datagen/build_corpus.py --no_near_dedup"   # web: near-dedup off (too slow at 11M docs)
+BC=(python3 datagen/build_corpus.py)
+BCW=(python3 datagen/build_corpus.py --no_near_dedup)   # web: near-dedup off (too slow at 11M docs)
 FW2=${FW2:-/data00/fw2raw}
 DOMAINS=${DOMAINS:-"code en math chat web"}
 LOGS=${LOGS:-/tmp/corpus}
@@ -29,7 +29,7 @@ has() { [[ " $DOMAINS " == *" $1 "* ]]; }
 SMALL_EX=()
 build_small() {  # <domain> <extra build_corpus args...>
   local d=$1; shift
-  "$BC" --domain "$d" --filters light --target_tokens 1e9 "${SMALL_EX[@]}" "$@" > "$LOGS/$d.log" 2>&1
+  "${BC[@]}" --domain "$d" --filters light --target_tokens 1e9 "${SMALL_EX[@]}" "$@" > "$LOGS/$d.log" 2>&1
   [ -d "data/corpus/$d" ] && SMALL_EX+=(--exclude "data/corpus/$d/*.jsonl")
   tail -1 "$LOGS/$d.log"
 }
@@ -68,10 +68,9 @@ if has web; then
   # shellcheck disable=SC2086
   for p in "$FW2"/*.parquet; do
     n=$(basename "$p" .parquet)
-    $BCW --domain web --target_tokens 3e9 --source "parquet:$p" "${EX[@]}" > "$LOGS/web_$n.log" 2>&1 &
+    "${BCW[@]}" --domain web --target_tokens 3e9 --source "parquet:$p" "${EX[@]}" > "$LOGS/web_$n.log" 2>&1 &
   done
-  # shellcheck disable=SC2086
-  $BCW --domain web --target_tokens 3e9 --source jsonl:data/pretrain_full.jsonl "${EX[@]}" \
+  "${BCW[@]}" --domain web --target_tokens 3e9 --source jsonl:data/pretrain_full.jsonl "${EX[@]}" \
     > "$LOGS/web_pretrain_full.log" 2>&1 &
   wait
   echo "--- web done ---"
