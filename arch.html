@@ -43,16 +43,6 @@ h1 .dim { color: var(--muted); font-weight: 500; font-size: 15px; margin-left: 1
 .theme-btn:hover { color: var(--text); border-color: var(--line2); }
 .sub-intro { color: var(--muted); margin-bottom: 22px; max-width: 78ch; }
 
-/* ---------- tabs ---------- */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
-.tab {
-  background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
-  font: inherit; font-weight: 600; font-size: 13.5px; padding: 8px 16px; cursor: pointer; margin-bottom: -1px;
-}
-.tab:hover { color: var(--text); }
-.tab.on { color: var(--accent); border-bottom-color: var(--accent); }
-.view { display: none; } .view.on { display: block; }
-
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
 .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: var(--muted); }
 .chip b { color: var(--text); font-weight: 600; } .chip b.mono { font-family: "IBM Plex Mono", monospace; }
@@ -99,10 +89,13 @@ input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 
 .blockwrap { display: flex; gap: 8px; align-items: stretch; }
 .nmult { display: flex; align-items: center; justify-content: center; min-width: 44px; border-radius: 6px; background: var(--accent); color: #0b1018; font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 15px; }
 .blockbox { flex: 1; border: 1.5px solid var(--kda); border-radius: 6px; padding: 6px; }
-.blockbox .brow { display: flex; gap: 5px; }
-.blk { flex: 1; border-radius: 4px; padding: 6px 4px; text-align: center; font-size: 10.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
+.blockbox .brow { display: flex; gap: 5px; align-items: stretch; }
+.bcol { display: flex; flex-direction: column; gap: 5px; }
+.bcol.kda3 { flex: 3; } /* the 3 KDA layers, shown fused */
+.bcol.mla { flex: 1; } /* the 1 MLA layer */
+.blk { border-radius: 4px; padding: 6px 4px; text-align: center; font-size: 10.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
 .blk.kda { background: var(--kda); } .blk.mla { background: var(--mla); }
-.blk.kda3 { flex: 3; } /* the 3 KDA share, shown fused */
+.blk.ffn { background: var(--ffn); color: #fff; padding: 15px 4px; } /* taller: FFN is the bulk (51% of params) */
 .repeat-tag { font-size: 11px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
 .flowdot { text-align: center; color: var(--faint); font-size: 11px; line-height: 1; }
 
@@ -122,38 +115,13 @@ svg.chart { display: block; width: 100%; height: 200px; }
 .crosshint { font-size: 12px; color: var(--muted); margin-top: 8px; }
 .crosshint b { color: var(--text); }
 
-/* ================= ARCHITECTURE EXPLORER ================= */
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-bottom: 18px; }
-.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
-.main { display: grid; grid-template-columns: minmax(400px, 540px) 1fr; gap: 26px; align-items: start; }
-@media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
-.diagram { display: flex; flex-direction: column; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; cursor: pointer; transition: border-color .12s, background .12s; }
-.card:hover, .card:focus-visible { border-color: var(--line2); outline: none; }
-.card.sel { border-color: var(--accent); background: var(--panel2); }
-.card .row1 { display: flex; align-items: center; gap: 10px; }
-.card .name { font-weight: 600; font-size: 13.5px; }
-.card .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-family: "IBM Plex Mono", monospace; }
-.badge { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px; color: #0b1018; }
-.badge.kda { background: var(--kda); } .badge.mla { background: var(--mla); } .badge.ar { background: var(--ar); }
-.badge.gray { background: var(--ffn); color: #fff; }
-.flow { height: 12px; width: 2px; background: var(--line2); margin: 0 auto; }
-.dgrid { display: grid; grid-template-columns: 44px 1fr; gap: 8px 12px; align-items: stretch; }
-.ar-band { border: 1px solid var(--ar); border-radius: 6px; opacity: .5; cursor: pointer; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; letter-spacing: .22em; font-size: 10px; font-weight: 600; color: var(--ar); font-family: "IBM Plex Mono", monospace; transition: opacity .12s, background .12s; }
-.ar-band:hover, .ar-band:focus-visible, .ar-band.sel { opacity: 1; outline: none; background: color-mix(in srgb, var(--ar) 12%, transparent); }
-.layer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center; }
-.layer .idx { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--faint); text-align: center; }
-.subs { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; }
-.subcell { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; background: var(--bg); font-size: 12px; transition: border-color .12s; }
-.subcell:hover, .subcell:focus-visible, .subcell.sel { border-color: var(--accent); outline: none; }
-.subcell .t { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
-.subcell .d { color: var(--muted); font-size: 11px; font-family: "IBM Plex Mono", monospace; margin-top: 1px; }
-.subcell.arc { display: flex; align-items: center; justify-content: center; padding: 6px 2px; }
-.subcell.arc .t { font-size: 11px; color: var(--muted); }
-.subcell.arc:hover .t, .subcell.arc.sel .t { color: var(--text); }
-.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.dot.kda { background: var(--kda); } .dot.mla { background: var(--mla); } .dot.ffn { background: var(--ffn); } .dot.ar { background: var(--ar); }
-.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; position: sticky; top: 18px; min-height: 400px; }
+/* ================= ARCHITECTURE DETAIL (inline, clickable block) ================= */
+.structgrid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 18px; align-items: start; }
+@media (max-width: 760px) { .structgrid { grid-template-columns: 1fr; } }
+.pick { cursor: pointer; transition: box-shadow .12s, filter .12s; }
+.pick:hover, .pick:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--accent); }
+.pick.sel { box-shadow: 0 0 0 2px var(--accent); }
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; min-height: 320px; }
 .detail h2 { font-size: 16px; font-weight: 700; margin-bottom: 2px; display: flex; align-items: center; gap: 10px; }
 .detail .kind { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
 .detail p { color: var(--text); margin-bottom: 12px; max-width: 62ch; }
@@ -180,13 +148,8 @@ footer b { color: var(--muted); font-weight: 600; }
 
   <div class="chips" id="chips"></div>
 
-  <div class="tabs">
-    <button class="tab on" data-view="calc" type="button">交互计算器</button>
-    <button class="tab" data-view="arch" type="button">架构逐层浏览</button>
-  </div>
-
-  <!-- ================= CALCULATOR VIEW ================= -->
-  <div class="view on" id="view-calc">
+  <!-- ================= UNIFIED CALCULATOR + ARCHITECTURE VIEW ================= -->
+  <div id="view-calc">
     <div class="calc">
       <div class="controls">
         <h3>参数（拖动）</h3>
@@ -243,7 +206,11 @@ footer b { color: var(--muted); font-weight: 600; }
       <div class="out">
         <div class="panel">
           <h3>模型结构 <span class="repeat-tag" id="struct-tag"></span></h3>
-          <div class="modelmap" id="blockstrip"></div>
+          <p class="sub2" style="margin:0 0 12px">点击任意组件查看形状与公式。每层是 mixer→FFN；FFN 占全部参数的 51%。</p>
+          <div class="structgrid">
+            <div class="modelmap" id="blockstrip"></div>
+            <div class="detail" id="detail"></div>
+          </div>
         </div>
 
         <div class="grid2">
@@ -290,20 +257,6 @@ footer b { color: var(--muted); font-weight: 600; }
         <p class="sub2" style="padding:0 2px">公式经三路独立推导 + 对抗式交叉验证（KDA 循环常量 c≈7 ±30%，属激活对激活、不占参数）。
         显存用二进制 KiB/MiB，dtype 字节数随精度切换。全注意力对照 = 同层数同 d 的标准 MHA，缓存随 ctx 线性无界增长。</p>
       </div>
-    </div>
-  </div>
-
-  <!-- ================= ARCHITECTURE VIEW ================= -->
-  <div class="view" id="view-arch">
-    <div class="legend">
-      <span><i style="background:var(--kda)"></i>KDA 层</span>
-      <span><i style="background:var(--mla)"></i>Gated MLA 层</span>
-      <span><i style="background:var(--ar)"></i>Attention Residuals 组</span>
-      <span><i style="background:var(--ffn)"></i>FFN / Norm / Embedding</span>
-    </div>
-    <div class="main">
-      <div class="diagram" id="diagram"></div>
-      <div class="detail" id="detail"></div>
     </div>
   </div>
 
@@ -439,24 +392,33 @@ function compute() {
 function buildBlockstrip(m) {
   const el = $('blockstrip'); el.innerHTML = '';
   const ar = S.attnRes; // AttnRes toggle
-  const stage = (cls, txt) => `<div class="stage ${cls}">${txt}</div>`;
+  const stage = (cls, txt, id) => `<div class="stage ${cls}${id?' pick':''}"${id?` data-id="${id}" tabindex="0"`:''}>${txt}</div>`;
   const dot = '<div class="flowdot">↓</div>';
-  const arNode = txt => ar ? stage('ar', txt) : '';
+  const ffnBlk = '<div class="blk ffn pick" data-id="ffn0" tabindex="0">FFN<br><span style="font-weight:400">9.44M</span></div>';
   el.innerHTML =
-    stage('embed', `Token Embedding · ${fmtP(m.E)}`) + dot +
-    (ar ? arNode('⟿ Attention Residuals（深度 softmax，源=embedding+各组）') + dot : '') +
+    stage('embed', `Token Embedding · ${fmtP(m.E)}`, 'tok') + dot +
+    (ar ? stage('ar', '⟿ Attention Residuals（深度 softmax，源=embedding+各组）', 'ar1') + dot : '') +
     `<div class="blockwrap">
        <div class="nmult" title="block 重复次数">×${S.n}</div>
        <div class="blockbox">
          <div class="brow">
-           <div class="blk kda kda3">3 × KDA<br><span style="font-weight:400">delta 循环 · 5.27M</span></div>
-           <div class="blk mla">MLA<br><span style="font-weight:400">窗口 · 3.93M</span></div>
+           <div class="bcol kda3">
+             <div class="blk kda pick" data-id="kda0" tabindex="0">3 × KDA<br><span style="font-weight:400">delta 循环 · 5.27M</span></div>
+             ${ffnBlk}
+           </div>
+           <div class="bcol mla">
+             <div class="blk mla pick" data-id="mla3" tabindex="0">MLA<br><span style="font-weight:400">窗口 · 3.93M</span></div>
+             ${ffnBlk}
+           </div>
          </div>
        </div>
      </div>` + dot +
-    (ar ? stage('ar', 'final_ar（末端深度注意力）') + dot : '') +
-    stage('norm', 'RMSNorm') + dot +
-    stage('head', 'LM Head (tied) + softcap 15');
+    (ar ? stage('ar', 'final_ar（末端深度注意力）', 'final_ar') + dot : '') +
+    stage('norm', 'RMSNorm', 'norm') + dot +
+    stage('head', 'LM Head (tied) + softcap 15', 'head');
+  el.querySelectorAll('.pick').forEach(p => bindSelect(p, p.dataset.id));
+  const cur = el.querySelector(`.pick[data-id="${CSS.escape(selId)}"]`);
+  if (cur) cur.classList.add('sel');
 }
 
 function paramBar(m) {
@@ -522,22 +484,13 @@ $('reset').addEventListener('click', () => {
   compute();
 });
 
-// ---------- tabs ----------
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on')); t.classList.add('on');
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
-  $('view-'+t.dataset.view).classList.add('on');
-  try { localStorage.setItem('arch-tab', t.dataset.view); } catch {}
-}));
-
 // ---------- header chips ----------
 $('chips').innerHTML = [
   ['真实基座', '206.08M'], ['层数', '12 (9 KDA + 3 MLA)'], ['d / heads', '1024 / 8'],
   ['窗口', '1024'], ['词表', '32,772'], ['最优 base', 'ckpt_k4_11b_lr05'],
 ].map(([k,v]) => `<span class="chip">${k} <b class="mono">${v}</b></span>`).join('');
 
-// ================= ARCHITECTURE EXPLORER (per-layer) =================
-const MIXER = {0:'KDA',1:'KDA',2:'KDA',3:'MLA',4:'KDA',5:'KDA',6:'KDA',7:'MLA',8:'KDA',9:'KDA',10:'KDA',11:'MLA'};
+// ================= ARCHITECTURE DETAIL (inline, driven by the block diagram) =================
 const AR_GROUPS = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
 
 const DETAIL = {
@@ -581,43 +534,12 @@ const DETAIL = {
     shapes:[['head.weight','= tok.weight'],['softcap','15·tanh(x/15)'],['参数量','0（共享）']] },
 };
 
-const diagram = document.getElementById('diagram');
-function makeCard({id, badge, badgeCls, name, meta}) {
-  const d = document.createElement('div'); d.className='card'; d.dataset.id=id; d.tabIndex=0;
-  d.innerHTML = `<div class="row1">${badge?`<span class="badge ${badgeCls}">${badge}</span>`:''}<span class="name">${name}</span><span class="meta">${meta||''}</span></div>`;
-  bindSelect(d, id); return d;
-}
-function flow(){ const f=document.createElement('div'); f.className='flow'; return f; }
+const detail = document.getElementById('detail');
+let selId = 'overview';
 function bindSelect(el, id){
   el.addEventListener('click', e=>{ e.stopPropagation(); select(id); });
   el.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); select(id); } });
 }
-function buildDiagram(){
-  diagram.appendChild(makeCard({id:'tok', badge:'EMBED', badgeCls:'gray', name:'Token Embedding', meta:'32832×1024'}));
-  diagram.appendChild(flow());
-  const grid = document.createElement('div'); grid.className='dgrid';
-  AR_GROUPS.forEach((layers,g)=>{
-    const band=document.createElement('div'); band.className='ar-band'; band.dataset.id='ar'+(g+1); band.tabIndex=0;
-    band.textContent=`AR-${g+1}`; band.style.gridRow=`span ${layers.length}`; bindSelect(band,'ar'+(g+1)); grid.appendChild(band);
-    layers.forEach(i=>{
-      const kind=MIXER[i], row=document.createElement('div'); row.className='layer';
-      row.innerHTML=`<div class="idx">L${i}</div><div class="subs">
-        <div class="subcell" data-id="${kind.toLowerCase()}${i}" tabindex="0"><div class="t"><span class="dot ${kind.toLowerCase()}"></span>${kind}</div><div class="d">${kind==='KDA'?'5.27M · delta 循环':'3.93M · 窗口 1024'}</div></div>
-        <div class="subcell" data-id="ffn${i}" tabindex="0"><div class="t"><span class="dot ffn"></span>FFN</div><div class="d">9.44M · SiTU-GLU</div></div>
-        <div class="subcell arc" data-id="ar${g+1}" tabindex="0" title="Attention Residuals 组 ${g+1}"><div class="t">ar</div></div></div>`;
-      row.querySelectorAll('.subcell').forEach(s=>bindSelect(s, s.dataset.id));
-      grid.appendChild(row);
-    });
-  });
-  diagram.appendChild(grid);
-  diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id:'final_ar', badge:'AR', badgeCls:'ar', name:'final_ar', meta:'深度注意力'}));
-  diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id:'norm', badge:'NORM', badgeCls:'gray', name:'RMSNorm', meta:'1024'}));
-  diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id:'head', badge:'HEAD', badgeCls:'gray', name:'LM Head (tied) + softcap 15', meta:'32832'}));
-}
-const detail = document.getElementById('detail');
 function detailFor(id){
   if (DETAIL[id]) return DETAIL[id];
   if (/^kda\d+$/.test(id)) return DETAIL.kda(+id.replace('kda',''));
@@ -634,8 +556,9 @@ function renderDetail(id){
   detail.innerHTML = html;
 }
 function select(id){
-  document.querySelectorAll('.card.sel, .subcell.sel, .ar-band.sel').forEach(e=>e.classList.remove('sel'));
-  document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach(el=>el.classList.add('sel'));
+  selId = id;
+  document.querySelectorAll('.pick.sel').forEach(e=>e.classList.remove('sel'));
+  document.querySelectorAll(`.pick[data-id="${CSS.escape(id)}"]`).forEach(el=>el.classList.add('sel'));
   renderDetail(id);
 }
 
@@ -649,10 +572,8 @@ themeBtn.onclick = () => {
   try { localStorage.setItem('arch-theme', next); } catch {}
 };
 try { const t = localStorage.getItem('arch-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
-try { const tab = localStorage.getItem('arch-tab'); if (tab === 'arch') { document.querySelector('.tab[data-view="arch"]').click(); } } catch {}
 
 // ---------- init ----------
-buildDiagram();
 renderDetail('overview');
 compute();
 </script>
