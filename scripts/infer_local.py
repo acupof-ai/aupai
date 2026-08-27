@@ -29,7 +29,7 @@ from tokenizers import Tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from train import remap_legacy_state_dict  # noqa: E402
+from train import AttnRes, Source, remap_legacy_state_dict  # noqa: E402
 
 
 def find_latest_ckpt():
@@ -203,27 +203,6 @@ class SwiGLU(nn.Module):
         return up
 
 
-class AttnRes(nn.Module):
-    """Attention Residuals (mirrors train.AttnRes): softmax over previous sublayer outputs of the same
-    token, so incremental decoding needs no extra cache."""
-
-    def __init__(self, d, dyn_q=False, rank=64):
-        super().__init__()
-        self.norm = RMSNorm(d)
-        self.q = nn.Parameter(torch.zeros(d))
-        self.dyn = (
-            nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
-        )
-
-    def forward(self, srcs):
-        q = self.q
-        if self.dyn is not None:
-            q = q + self.dyn(self.norm(srcs[-1]))
-        logits = torch.stack([(self.norm(v) * q).sum(-1) for v in srcs])
-        a = logits.float().softmax(0).to(srcs[0].dtype)
-        return sum(a[i].unsqueeze(-1) * v for i, v in enumerate(srcs))
-
-
 class Block(nn.Module):
     def __init__(self, cfg, is_attn=False):
         super().__init__()
@@ -268,21 +247,20 @@ class HybridLM(nn.Module):
                 x, c = b(x, cache=cache[i] if cache is not None else None)
                 new_caches.append(c)
             return x, new_caches
-        blocks, partial, n = [x], None, 0
+        blocks, partial, n = [Source.of(x)], [], 0
         for i, b in enumerate(self.blocks):
             for j, (ar, norm, f) in enumerate(((b.ar1, b.n1, b.mixer), (b.ar2, b.n2, b.ffn))):
-                h = ar(blocks + ([partial] if partial is not None else []))
+                h = ar(blocks + partial)
                 if j == 0:
                     out, c = f(norm(h), cache=cache[i] if cache is not None else None)
                     new_caches.append(c)
                 else:
                     out = f(norm(h))
-                partial = out if partial is None else partial + out
+                partial = [Source.of(partial[0].v + out if partial else out)]
                 n += 1
                 if n in self.ar_block_ends:
-                    blocks.append(partial)
-                    partial = None
-        return self.final_ar(blocks + ([partial] if partial is not None else [])), new_caches
+                    blocks, partial = blocks + partial, []
+        return self.final_ar(blocks + partial), new_caches
 
     def forward(self, idx, cache=None):
         x, new_caches = self._body(self.tok(idx), cache)
@@ -384,10 +362,7 @@ def main():
         print(f"auto-detected latest checkpoint: {args.ckpt}", file=sys.stderr)
 
     torch.manual_seed(args.seed)
-    if args.cpu or not torch.backends.mps.is_available():
-        device = "cpu"
-    else:
-        device = "mps"
+    device = "cpu" if args.cpu or not torch.backends.mps.is_available() else "mps"
     dtype = args.dtype or ("bf16" if device == "mps" else "fp32")
 
     model, _ = load_model(args.ckpt, device, dtype)
