@@ -5,7 +5,7 @@
     python datagen/build_corpus.py --domain math --source jsonl:data/synthetic/math_*.jsonl --target_tokens 1e9
     python datagen/build_corpus.py --source jsonl:data/raw/*.jsonl --dry --limit 2000   # inspect rejects
 
-Sources (any mix, repeatable): fineweb2 (HuggingFaceFW/fineweb-2, zho_Hans), skypile
+Sources (any mix, repeatable): fineweb2 (HuggingFaceFW/fineweb-2, cmn_Hani), skypile
 (Skywork/SkyPile-150B), jsonl:<glob> (rows with "content"/"text" [+ "url"]). Shards are streamed one at a
 time, so disk holds one parquet at once. Output: data/corpus/primary/<source>_NNN.jsonl (100MB shards,
 {"content","source","url"}) which train.load_texts() already reads, plus a rejects histogram.
@@ -366,6 +366,14 @@ def main():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n / total:.1%}")
     if not a.dry:
+        # A domain that kept nothing means a bad --source glob / unresolved HF prefix (fineweb-2's
+        # source once silently resolved to zero files). Fail loud instead of writing an empty domain
+        # that check_mix later reports as a MISSING cache with no hint why.
+        if reasons["kept"] == 0:
+            raise SystemExit(
+                f"ERROR: domain '{a.domain}' kept 0 documents from {a.source} -- "
+                f"check the --source glob / HF prefix (nothing written to {a.out})"
+            )
         with open(os.path.join(a.out, "build_corpus_stats.json"), "w") as f:
             json.dump(
                 {"reasons": reasons, "top_hosts": hosts.most_common(50)}, f, ensure_ascii=False, indent=1
