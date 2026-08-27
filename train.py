@@ -101,7 +101,6 @@ class RunLog:
 
 
 DATA = os.path.join(ROOT, "data")
-CKPT = os.path.join(ROOT, "ckpt.pt")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
 TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"  # NVMe for fast loading
 
@@ -1151,7 +1150,7 @@ def main():
     runlog = RunLog(args.name, track=args.track) if is_main else print
     if args.mix is not None:
         Cfg.mix = args.mix
-    ckpt_path = CKPT if args.name == "pretrain" else os.path.join(ROOT, f"ckpt_{args.name}.pt")
+    ckpt_path = os.path.join(ROOT, f"ckpt_{args.name}.pt")  # always name-derived; pipeline evals ckpt_<name>.pt
     amp = device.startswith("cuda")
 
     mix_path = os.path.join(ROOT, Cfg.mix) if Cfg.mix else None
