@@ -196,11 +196,6 @@ def rms_scale(x, eps=1e-6):
     return torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
-def rms_hat(x, eps=1e-6):
-    """The normalized tensor itself; only the dyn_q path needs it materialized."""
-    return x * rms_scale(x, eps)
-
-
 class DeltaRecurrence(nn.Module):
     """Kimi Delta Attention (KDA): bounded decay + ShortConv + QK-norm.
 
@@ -895,6 +890,11 @@ def ddp_even_len(n, batch, ddp):
 # --- Data ---
 
 
+def _jsonl_content(path):
+    """The "content" field of every non-blank line in a jsonl file."""
+    return [json.loads(ln)["content"] for ln in open(path, encoding="utf-8") if ln.strip()]
+
+
 def load_texts():
     texts = []
     for name in ("core.txt", "framework.md", "method.txt"):
@@ -902,28 +902,15 @@ def load_texts():
         if os.path.exists(p):
             texts.append(open(p, encoding="utf-8").read())
     for p in sorted(glob.glob(os.path.join(DATA, "corpus", "*.jsonl"))):
-        for line in open(p, encoding="utf-8"):
-            line = line.strip()
-            if line:
-                texts.append(json.loads(line)["content"])
+        texts += _jsonl_content(p)
     for p in sorted(glob.glob(os.path.join(DATA, "corpus", "primary", "*.jsonl"))):
-        for line in open(p, encoding="utf-8"):
-            line = line.strip()
-            if line:
-                texts.append(json.loads(line)["content"])
+        texts += _jsonl_content(p)
     mix = os.path.join(DATA, "mix", "mixed.jsonl")
     if os.path.exists(mix):
-        for line in open(mix, encoding="utf-8"):
-            line = line.strip()
-            if line:
-                texts.append(json.loads(line)["content"])
-    for name in ("pretrain_full.jsonl",):
-        p = os.path.join(DATA, name)
-        if os.path.exists(p):
-            for line in open(p, encoding="utf-8"):
-                line = line.strip()
-                if line:
-                    texts.append(json.loads(line)["content"])
+        texts += _jsonl_content(mix)
+    p = os.path.join(DATA, "pretrain_full.jsonl")
+    if os.path.exists(p):
+        texts += _jsonl_content(p)
     return texts
 
 
@@ -975,9 +962,7 @@ def _domain_seqs(domain, tok, is_main, ddp):
     if is_main and not os.path.exists(cache):
         texts = []
         for p in sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))):
-            for line in open(p, encoding="utf-8"):
-                if line.strip():
-                    texts.append(json.loads(line)["content"])
+            texts += _jsonl_content(p)
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
         random.Random(Cfg.seed).shuffle(texts)
         print(f"mix: tokenizing {domain} ({len(texts)} docs) -> {cache}", flush=True)
