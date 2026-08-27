@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aupai 200M 架构</title>
+<title>aupai 架构工作台</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
 :root {
-  --bg: #0e1420; --panel: #151d2c; --panel2: #1a2436; --line: #26314a;
-  --text: #e9eef7; --muted: #8c99b0; --faint: #5b6880;
-  --kda: #3ecfb8; --mla: #8b9cf9; --ar: #f2a93b; --ffn: #64748f;
-  --accent: #f2a93b;
+  --bg: #f4f1ea; --panel: #ffffff; --panel2: #f7f5f0; --line: #ddd7c9; --line2: #cabfa6;
+  --text: #1b2433; --muted: #5c6a82; --faint: #98a2b5;
+  --kda: #0d9c86; --mla: #5a6ce0; --ar: #c07f10; --ffn: #6b7688; --embed: #b45c9c;
+  --accent: #c07f10; --track: #e7e1d3;
 }
-@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
-  --bg: #f4f1ea; --panel: #ffffff; --panel2: #f7f5f0; --line: #ddd7c9;
-  --text: #1b2433; --muted: #5c6a82; --faint: #98a2b5;
-  --kda: #0d9c86; --mla: #5a6ce0; --ar: #c07f10; --ffn: #64748f;
-  --accent: #c07f10;
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0d1117; --panel: #151d2c; --panel2: #1a2436; --line: #26314a; --line2: #35446a;
+  --text: #e9eef7; --muted: #8c99b0; --faint: #5b6880;
+  --kda: #3ecfb8; --mla: #8b9cf9; --ar: #f2a93b; --ffn: #7c89a3; --embed: #e07cc0;
+  --accent: #f2a93b; --track: #202b40;
 }}
-:root[data-theme="light"] {
-  --bg: #f4f1ea; --panel: #ffffff; --panel2: #f7f5f0; --line: #ddd7c9;
-  --text: #1b2433; --muted: #5c6a82; --faint: #98a2b5;
-  --kda: #0d9c86; --mla: #5a6ce0; --ar: #c07f10; --ffn: #64748f;
-  --accent: #c07f10;
+:root[data-theme="dark"] {
+  --bg: #0d1117; --panel: #151d2c; --panel2: #1a2436; --line: #26314a; --line2: #35446a;
+  --text: #e9eef7; --muted: #8c99b0; --faint: #5b6880;
+  --kda: #3ecfb8; --mla: #8b9cf9; --ar: #f2a93b; --ffn: #7c89a3; --embed: #e07cc0;
+  --accent: #f2a93b; --track: #202b40;
 }
 * { box-sizing: border-box; margin: 0; }
 body {
@@ -30,345 +30,596 @@ body {
   font-family: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
   font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
 }
-.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
-.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px; }
+.mono { font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 26px 24px 72px; }
 
-header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
 h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 h1 .dim { color: var(--muted); font-weight: 500; font-size: 15px; margin-left: 10px; }
 .theme-btn {
   margin-left: auto; background: var(--panel); border: 1px solid var(--line); color: var(--muted);
   border-radius: 6px; padding: 5px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
 }
-.theme-btn:hover { color: var(--text); border-color: var(--faint); }
-.sub { color: var(--muted); margin-bottom: 20px; max-width: 72ch; }
+.theme-btn:hover { color: var(--text); border-color: var(--line2); }
+.sub-intro { color: var(--muted); margin-bottom: 22px; max-width: 78ch; }
 
-.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 26px; }
-.chip {
-  border: 1px solid var(--line); background: var(--panel); border-radius: 999px;
-  padding: 4px 13px; font-size: 12.5px; color: var(--muted);
+/* ---------- tabs ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
+  font: inherit; font-weight: 600; font-size: 13.5px; padding: 8px 16px; cursor: pointer; margin-bottom: -1px;
 }
-.chip b { color: var(--text); font-weight: 600; }
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--accent); border-bottom-color: var(--accent); }
+.view { display: none; } .view.on { display: block; }
 
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px; }
+.chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 4px 13px; font-size: 12.5px; color: var(--muted); }
+.chip b { color: var(--text); font-weight: 600; } .chip b.mono { font-family: "IBM Plex Mono", monospace; }
+
+/* ================= CALCULATOR ================= */
+.calc { display: grid; grid-template-columns: 340px 1fr; gap: 24px; align-items: start; }
+@media (max-width: 940px) { .calc { grid-template-columns: 1fr; } }
+
+.controls { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; position: sticky; top: 18px; }
+.controls h3 { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin: 4px 0 14px; }
+.ctl { margin-bottom: 16px; }
+.ctl .lab { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 5px; }
+.ctl .lab .k { font-size: 12.5px; color: var(--muted); }
+.ctl .lab .v { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--accent); font-weight: 600; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 5px; border-radius: 3px; background: var(--track); outline: none; cursor: grab; }
+input[type=range]:active { cursor: grabbing; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 17px; height: 17px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--accent); cursor: grab; }
+input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--accent); cursor: grab; }
+.seg { display: flex; gap: 4px; }
+.seg button { flex: 1; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); font: inherit; font-size: 12px; padding: 5px 0; border-radius: 6px; cursor: pointer; }
+.seg button.on { background: var(--accent); color: #0b1018; border-color: var(--accent); font-weight: 600; }
+.reset { width: 100%; margin-top: 6px; background: none; border: 1px dashed var(--line2); color: var(--muted); font: inherit; font-size: 12px; padding: 6px; border-radius: 6px; cursor: pointer; }
+.reset:hover { color: var(--text); border-color: var(--accent); }
+
+.out { display: flex; flex-direction: column; gap: 18px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+.panel h3 { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 12px; }
+.big { font-family: "IBM Plex Mono", monospace; font-size: 30px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; }
+.big .u { font-size: 15px; color: var(--muted); font-weight: 400; margin-left: 4px; }
+.sub2 { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.kv { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.kv:last-child { border-bottom: none; }
+.kv .k { color: var(--muted); } .kv .v { font-family: "IBM Plex Mono", monospace; }
+
+/* block diagram that grows with n */
+.blockstrip { display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.blockrow { display: flex; gap: 6px; align-items: stretch; width: 100%; }
+.blk { flex: 1; border-radius: 6px; padding: 7px 4px; text-align: center; font-size: 11px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
+.blk.kda { background: var(--kda); } .blk.mla { background: var(--mla); }
+.repeat-tag { font-size: 11px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+
+/* stacked param bar */
+.parambar { display: flex; height: 20px; border-radius: 5px; overflow: hidden; margin: 4px 0 12px; border: 1px solid var(--line); }
+.parambar div { height: 100%; transition: width .18s ease; }
+.legend2 { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.legend2 i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+.legend2 .mono { color: var(--text); }
+
+/* memory sweep chart */
+.chartwrap { overflow-x: auto; }
+svg.chart { display: block; width: 100%; height: 200px; }
+.chart .grid line { stroke: var(--line); stroke-width: 1; }
+.chart text { fill: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 10px; }
+.chart .axlab { fill: var(--faint); }
+.crosshint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.crosshint b { color: var(--text); }
+
+/* ================= ARCHITECTURE EXPLORER ================= */
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-bottom: 18px; }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
-
-.main { display: grid; grid-template-columns: minmax(420px, 560px) 1fr; gap: 28px; align-items: start; }
+.main { display: grid; grid-template-columns: minmax(400px, 540px) 1fr; gap: 26px; align-items: start; }
 @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
-
-/* ---- diagram ---- */
 .diagram { display: flex; flex-direction: column; }
-.card {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  padding: 10px 14px; cursor: pointer; transition: border-color .12s, background .12s;
-}
-.card:hover, .card:focus-visible { border-color: var(--faint); outline: none; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; cursor: pointer; transition: border-color .12s, background .12s; }
+.card:hover, .card:focus-visible { border-color: var(--line2); outline: none; }
 .card.sel { border-color: var(--accent); background: var(--panel2); }
 .card .row1 { display: flex; align-items: center; gap: 10px; }
 .card .name { font-weight: 600; font-size: 13.5px; }
 .card .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-family: "IBM Plex Mono", monospace; }
-.badge {
-  font-size: 10.5px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px; color: #0b1018;
-}
-.badge.kda { background: var(--kda); } .badge.mla { background: var(--mla); }
-.badge.ar { background: var(--ar); } .badge.gray { background: var(--ffn); color: #fff; }
-.flow { height: 12px; width: 2px; background: var(--line); margin: 0 auto; }
-
-/* grid: AR rail (44px) + layer column; each AR band spans its 3 layer rows */
+.badge { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px; color: #0b1018; }
+.badge.kda { background: var(--kda); } .badge.mla { background: var(--mla); } .badge.ar { background: var(--ar); }
+.badge.gray { background: var(--ffn); color: #fff; }
+.flow { height: 12px; width: 2px; background: var(--line2); margin: 0 auto; }
 .dgrid { display: grid; grid-template-columns: 44px 1fr; gap: 8px 12px; align-items: stretch; }
-.ar-band {
-  border: 1px solid var(--ar); border-radius: 6px; opacity: .45; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  writing-mode: vertical-rl; letter-spacing: .22em; font-size: 10px; font-weight: 600;
-  color: var(--ar); font-family: "IBM Plex Mono", monospace;
-  transition: opacity .12s, background .12s, border-color .12s;
-}
-.ar-band:hover, .ar-band:focus-visible, .ar-band.sel {
-  opacity: 1; outline: none; background: color-mix(in srgb, var(--ar) 12%, transparent);
-}
-.layer {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
-  display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
-}
-.layer .idx {
-  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--faint); text-align: center;
-}
+.ar-band { border: 1px solid var(--ar); border-radius: 6px; opacity: .5; cursor: pointer; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; letter-spacing: .22em; font-size: 10px; font-weight: 600; color: var(--ar); font-family: "IBM Plex Mono", monospace; transition: opacity .12s, background .12s; }
+.ar-band:hover, .ar-band:focus-visible, .ar-band.sel { opacity: 1; outline: none; background: color-mix(in srgb, var(--ar) 12%, transparent); }
+.layer { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center; }
+.layer .idx { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--faint); text-align: center; }
 .subs { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; }
-.sub {
-  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer;
-  background: var(--bg); font-size: 12px; transition: border-color .12s;
-}
-.sub:hover, .sub:focus-visible, .sub.sel { border-color: var(--accent); outline: none; }
-.sub .t { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
-.sub .d { color: var(--muted); font-size: 11px; font-family: "IBM Plex Mono", monospace; margin-top: 1px; }
-.sub.ar { display: flex; align-items: center; justify-content: center; padding: 6px 2px; }
-.sub.ar .t { font-size: 11px; color: var(--muted); }
-.sub.ar:hover .t, .sub.ar.sel .t { color: var(--text); }
+.subcell { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer; background: var(--bg); font-size: 12px; transition: border-color .12s; }
+.subcell:hover, .subcell:focus-visible, .subcell.sel { border-color: var(--accent); outline: none; }
+.subcell .t { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.subcell .d { color: var(--muted); font-size: 11px; font-family: "IBM Plex Mono", monospace; margin-top: 1px; }
+.subcell.arc { display: flex; align-items: center; justify-content: center; padding: 6px 2px; }
+.subcell.arc .t { font-size: 11px; color: var(--muted); }
+.subcell.arc:hover .t, .subcell.arc.sel .t { color: var(--text); }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-.dot.kda { background: var(--kda); } .dot.mla { background: var(--mla); }
-.dot.ffn { background: var(--ffn); } .dot.ar { background: var(--ar); }
-
-/* ---- detail panel ---- */
-.detail {
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-  padding: 20px 22px; position: sticky; top: 20px; min-height: 420px;
-}
+.dot.kda { background: var(--kda); } .dot.mla { background: var(--mla); } .dot.ffn { background: var(--ffn); } .dot.ar { background: var(--ar); }
+.detail { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px; position: sticky; top: 18px; min-height: 400px; }
 .detail h2 { font-size: 16px; font-weight: 700; margin-bottom: 2px; display: flex; align-items: center; gap: 10px; }
 .detail .kind { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
 .detail p { color: var(--text); margin-bottom: 12px; max-width: 62ch; }
 .detail p.dim { color: var(--muted); }
-h3.sec {
-  font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint);
-  margin: 18px 0 8px; font-weight: 600;
-}
+h3.sec { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--faint); margin: 18px 0 8px; font-weight: 600; }
 table.shapes { width: 100%; border-collapse: collapse; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
 table.shapes td { padding: 4px 0; border-bottom: 1px solid var(--line); }
 table.shapes td:last-child { text-align: right; color: var(--muted); }
-.formula {
-  background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
-  font-family: "IBM Plex Mono", monospace; font-size: 12px; overflow-x: auto;
-  color: var(--text); line-height: 1.8; white-space: pre;
-}
-.parambar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 8px 0 10px; border: 1px solid var(--line); }
-.parambar div { height: 100%; }
-.legend2 { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
-.legend2 i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
-.legend2 .mono { color: var(--text); }
+.formula { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; font-family: "IBM Plex Mono", monospace; font-size: 12px; overflow-x: auto; color: var(--text); line-height: 1.8; white-space: pre; }
 
-footer { margin-top: 40px; color: var(--faint); font-size: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
+footer { margin-top: 44px; color: var(--faint); font-size: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
+footer b { color: var(--muted); font-weight: 600; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <h1>aupai 200M<span class="dim">KDA + Gated MLA 混合架构 · Attention Residuals</span></h1>
+    <h1>aupai 架构工作台<span class="dim">KDA + Gated MLA 混合 · 可拖拽计算训练/推理开销</span></h1>
     <button class="theme-btn" id="themeBtn" type="button">切换主题</button>
   </header>
-  <p class="sub">9 层 Kimi Delta Attention（线性衰减循环）+ 3 层 Gated MLA（滑动窗口注意力）交替堆叠，
-  深度方向由 Attention Residuals 把每个子层输出接回后续所有层。点击任意组件查看细节。</p>
+  <p class="sub-intro">200M 级中文模型：<b>(3 层 KDA + 1 层 Gated MLA) × n</b> 堆叠。KDA 是 O(1) 状态的线性衰减循环，
+  MLA 是潜在 KV 压缩的滑动窗口注意力。拖动下方滑块改变深度/宽度/上下文，实时算出参数分布、训练开销、以及
+  KDA 常量显存 vs MLA 窗口缓存的对比。</p>
+
   <div class="chips" id="chips"></div>
-  <div class="legend">
-    <span><i style="background:var(--kda)"></i>KDA 层 ×9</span>
-    <span><i style="background:var(--mla)"></i>Gated MLA 层 ×3</span>
-    <span><i style="background:var(--ar)"></i>Attention Residuals 组 ×4</span>
-    <span><i style="background:var(--ffn)"></i>FFN / Norm / Embedding</span>
+
+  <div class="tabs">
+    <button class="tab on" data-view="calc" type="button">交互计算器</button>
+    <button class="tab" data-view="arch" type="button">架构逐层浏览</button>
   </div>
-  <div class="main">
-    <div class="diagram" id="diagram"></div>
-    <div class="detail" id="detail"></div>
+
+  <!-- ================= CALCULATOR VIEW ================= -->
+  <div class="view on" id="view-calc">
+    <div class="calc">
+      <div class="controls">
+        <h3>参数（拖动）</h3>
+        <div class="ctl">
+          <div class="lab"><span class="k">block 重复 n <span class="mono">(3 KDA + 1 MLA)</span></span><span class="v" id="v-n">3</span></div>
+          <input type="range" id="s-n" min="1" max="12" step="1" value="3">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">隐藏维 d</span><span class="v" id="v-d">1024</span></div>
+          <input type="range" id="s-d" min="256" max="2048" step="128" value="1024">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">FFN 隐藏维</span><span class="v" id="v-ffn">3072</span></div>
+          <input type="range" id="s-ffn" min="1024" max="8192" step="256" value="3072">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">词表 vocab</span><span class="v" id="v-vocab">32772</span></div>
+          <input type="range" id="s-vocab" min="8192" max="131072" step="4096" value="32772">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">推理上下文 ctx</span><span class="v" id="v-ctx">4096</span></div>
+          <input type="range" id="s-ctx" min="256" max="131072" step="256" value="4096">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">训练 token 总量 T</span><span class="v" id="v-T">11.5B</span></div>
+          <input type="range" id="s-T" min="1" max="200" step="1" value="23">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">批大小 batch</span><span class="v" id="v-batch">32</span></div>
+          <input type="range" id="s-batch" min="1" max="256" step="1" value="32">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">GPU 数 × MFU</span><span class="v" id="v-gpu">8 · 34%</span></div>
+          <input type="range" id="s-gpu" min="1" max="64" step="1" value="8">
+          <input type="range" id="s-mfu" min="10" max="70" step="1" value="34" style="margin-top:8px">
+        </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">精度</span></div>
+          <div class="seg" id="seg-dtype">
+            <button data-b="1" data-tf="296">FP8</button>
+            <button data-b="2" data-tf="148" class="on">bf16</button>
+          </div>
+        </div>
+        <button class="reset" id="reset" type="button">↺ 恢复真实配置</button>
+      </div>
+
+      <div class="out">
+        <div class="panel">
+          <h3>模型结构 <span class="repeat-tag" id="struct-tag"></span></h3>
+          <div class="blockstrip" id="blockstrip"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="panel">
+            <h3>总参数量</h3>
+            <div class="big" id="o-params">206.1<span class="u">M</span></div>
+            <div class="sub2" id="o-params-sub"></div>
+          </div>
+          <div class="panel">
+            <h3>训练墙钟（一次 epoch）</h3>
+            <div class="big" id="o-time">4.1<span class="u">h</span></div>
+            <div class="sub2" id="o-time-sub"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>参数分布</h3>
+          <div class="parambar" id="parambar"></div>
+          <div class="legend2" id="parambar-legend"></div>
+        </div>
+
+        <div class="panel">
+          <h3>推理显存：KDA 常量状态 vs MLA 窗口缓存 vs 全注意力</h3>
+          <div class="chartwrap"><svg class="chart" id="memchart" viewBox="0 0 640 200" preserveAspectRatio="none"></svg></div>
+          <div class="crosshint" id="memhint"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="panel">
+            <h3>推理显存 @ 当前 ctx</h3>
+            <div class="kv"><span class="k">KDA 状态（× <span id="mk-nk">9</span> 层，与 ctx 无关）</span><span class="v" id="o-kda-mem">—</span></div>
+            <div class="kv"><span class="k">MLA 缓存（× <span id="mk-nm">3</span> 层，窗口封顶）</span><span class="v" id="o-mla-mem">—</span></div>
+            <div class="kv"><span class="k">混合总计 × batch</span><span class="v" id="o-hyb-mem">—</span></div>
+            <div class="kv"><span class="k">同规模全注意力（对照）</span><span class="v" id="o-full-mem">—</span></div>
+          </div>
+          <div class="panel">
+            <h3>计算量 / token</h3>
+            <div class="kv"><span class="k">训练（6N 近似）</span><span class="v" id="o-6n">—</span></div>
+            <div class="kv"><span class="k">训练（精确，含 logit+attn）</span><span class="v" id="o-exact">—</span></div>
+            <div class="kv"><span class="k">解码 / token（几乎与 ctx 无关）</span><span class="v" id="o-decode">—</span></div>
+            <div class="kv"><span class="k">全注意力训练额外开销 @ ctx</span><span class="v" id="o-fullover">—</span></div>
+          </div>
+        </div>
+        <p class="sub2" style="padding:0 2px">公式经三路独立推导 + 对抗式交叉验证（KDA 循环常量 c≈7 ±30%，属激活对激活、不占参数）。
+        显存用二进制 KiB/MiB，dtype 字节数随精度切换。全注意力对照 = 同层数同 d 的标准 MHA，缓存随 ctx 线性无界增长。</p>
+      </div>
+    </div>
   </div>
-  <footer>数据来自 ckpt_rl_direct_bf16.pt 实测（239.75M 参数）。KDA 为 fla flash_kda 内核的纯 PyTorch 等价表述。</footer>
+
+  <!-- ================= ARCHITECTURE VIEW ================= -->
+  <div class="view" id="view-arch">
+    <div class="legend">
+      <span><i style="background:var(--kda)"></i>KDA 层</span>
+      <span><i style="background:var(--mla)"></i>Gated MLA 层</span>
+      <span><i style="background:var(--ar)"></i>Attention Residuals 组</span>
+      <span><i style="background:var(--ffn)"></i>FFN / Norm / Embedding</span>
+    </div>
+    <div class="main">
+      <div class="diagram" id="diagram"></div>
+      <div class="detail" id="detail"></div>
+    </div>
+  </div>
+
+  <footer>参数量取自 <b>train.py HybridLM 实例化</b>（真实配置 206.08M：9×KDA 14.705M + 3×MLA 13.371M + tied embed 33.62M）。
+  开销公式经多智能体推导与对抗验证。KDA 为 fla flash_kda 内核的等价表述。</footer>
 </div>
 
 <script>
+"use strict";
+// ---------- ground-truth constants ----------
+const HEADS = 8, KERNEL = 4, WINDOW = 1024, SEQ = 4096;
+const C_KDA = 7; // KDA recurrence op-constant (readout + gated update), ±30%, activation-only
+const padVocab = v => Math.ceil(v / 64) * 64;
+const fmtP = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(Math.round(n));
+const fmtBytes = b => {
+  const KiB = 1024, MiB = KiB*1024, GiB = MiB*1024;
+  if (b >= GiB) return (b/GiB).toFixed(2)+' GiB';
+  if (b >= MiB) return (b/MiB).toFixed(2)+' MiB';
+  if (b >= KiB) return (b/KiB).toFixed(1)+' KiB';
+  return b+' B';
+};
+const fmtFlop = f => f >= 1e12 ? (f/1e12).toFixed(2)+' TF' : f >= 1e9 ? (f/1e9).toFixed(2)+' GF' : (f/1e6).toFixed(0)+' MF';
+
+// ---------- the verified model (all formulas from the workflow) ----------
+function model(p) {
+  const { d, ffn, n, vocab, dtypeBytes } = p;
+  const hd = d / HEADS, latent = Math.round(d / 4), beta_pad = ((-HEADS) % 16 + 16) % 16;
+  const L_kda = 3 * n, L_mla = n, layers = L_kda + L_mla;
+  const vpad = padVocab(vocab);
+  // (A) params
+  const F = 3 * d * ffn;                                       // FFN per layer
+  const M_kda = 5*d*d + d*(HEADS+beta_pad) + HEADS + HEADS*hd + 5*d;
+  const M_mla = 3*latent*d + 3*d*d;
+  const P_kda = M_kda + F + 2*d, P_mla = M_mla + F + 2*d;
+  const E = vpad*d + d;                                        // tied embed table + final norm
+  const total = E + L_kda*P_kda + L_mla*P_mla;
+  const N = total - E;                                         // non-embedding
+  const ffnTot = layers*F, mixTot = L_kda*M_kda + L_mla*M_mla;
+  return { d, hd, latent, L_kda, L_mla, layers, vpad, F, M_kda, M_mla, P_kda, P_mla, E, total, N, ffnTot, mixTot, dtypeBytes };
+}
+
+// (B) training compute per token
+function trainCost(m, p) {
+  const W_avg = WINDOW * (1 - WINDOW/(2*SEQ));                 // 896 at seq 4096
+  const F_logit = 2*m.d*m.vpad;
+  const F_attn = m.L_kda*C_KDA*HEADS*m.hd*m.hd + m.L_mla*4*m.d*W_avg;
+  const F_fwd = 2*m.N + F_logit + F_attn;
+  return { sixN: 6*m.N, exact: 3*F_fwd, F_logit, F_attn };
+}
+
+// (C) inference memory
+function infMem(m, ctx) {
+  const kdaLayer = (HEADS*m.hd*m.hd + (KERNEL-1)*m.d) * m.dtypeBytes;  // context-independent
+  const mlaLayer = Math.min(ctx, WINDOW) * m.latent * m.dtypeBytes;    // window-capped
+  const fullLayer = ctx * 2*m.d * m.dtypeBytes;                        // MHA baseline, unbounded
+  return {
+    kdaLayer, mlaLayer, fullLayer,
+    kdaTot: m.L_kda*kdaLayer, mlaTot: m.L_mla*mlaLayer,
+    hybrid: m.L_kda*kdaLayer + m.L_mla*mlaLayer,
+    full: m.layers*fullLayer,
+  };
+}
+
+// (D) decode flops per token (context-capped => flat)
+function decodeCost(m, ctx) {
+  const kda = 2*m.d*(3*m.d) + 2*m.d*(m.d+HEADS) + 2*m.d*m.d + 2*m.d*KERNEL + C_KDA*HEADS*m.hd*m.hd;
+  const mla = 2*m.d*m.latent + 2*m.latent*2*m.d + 2*m.d*2*m.d + 2*m.d*m.d + 4*m.d*Math.min(ctx,WINDOW);
+  const ffn = 6*m.d*m.F/(3*m.d); // = 2*F per layer... keep explicit:
+  const ffnPer = 2*m.F;
+  return m.L_kda*kda + m.L_mla*mla + m.layers*ffnPer + 2*m.d*m.vpad;
+}
+
+// ---------- state ----------
+const DEFAULTS = { n:3, d:1024, ffn:3072, vocab:32772, ctx:4096, T:11.5e9, batch:32, gpu:8, mfu:34, dtypeBytes:2, peakTF:148 };
+const S = { ...DEFAULTS };
+
+const $ = id => document.getElementById(id);
+function readControls() {
+  S.n = +$('s-n').value; S.d = +$('s-d').value; S.ffn = +$('s-ffn').value;
+  S.vocab = +$('s-vocab').value; S.ctx = +$('s-ctx').value;
+  S.T = +$('s-T').value * 0.5e9; // slider unit = 0.5B
+  S.batch = +$('s-batch').value; S.gpu = +$('s-gpu').value; S.mfu = +$('s-mfu').value;
+}
+
+function compute() {
+  readControls();
+  const m = model({ d:S.d, ffn:S.ffn, n:S.n, vocab:S.vocab, dtypeBytes:S.dtypeBytes });
+  // labels
+  $('v-n').textContent = S.n; $('v-d').textContent = S.d; $('v-ffn').textContent = S.ffn;
+  $('v-vocab').textContent = S.vocab.toLocaleString(); $('v-ctx').textContent = S.ctx.toLocaleString();
+  $('v-T').textContent = (S.T/1e9).toFixed(1)+'B'; $('v-batch').textContent = S.batch;
+  $('v-gpu').textContent = `${S.gpu} · ${S.mfu}%`;
+
+  // structure strip
+  buildBlockstrip(m);
+  $('struct-tag').textContent = `${m.layers} 层 = (3 KDA + 1 MLA) × ${S.n}`;
+
+  // params
+  $('o-params').innerHTML = `${fmtP(m.total).replace(/[MBK]/,'')}<span class="u">${fmtP(m.total).slice(-1)}</span>`;
+  const embPct = (m.E/m.total*100);
+  $('o-params-sub').innerHTML = `非嵌入 <span class="mono">${fmtP(m.N)}</span> · 嵌入 <span class="mono">${embPct.toFixed(1)}%</span> · 每 block <span class="mono">${fmtP(3*m.P_kda+m.P_mla)}</span>`;
+
+  // param bar
+  paramBar(m);
+
+  // training time
+  const tc = trainCost(m, S);
+  const denom = S.mfu/100 * S.peakTF*1e12 * S.gpu;
+  const tSec = tc.sixN * S.T / denom;
+  const h = tSec/3600;
+  $('o-time').innerHTML = h >= 1 ? `${h.toFixed(1)}<span class="u">h</span>` : `${(tSec/60).toFixed(0)}<span class="u">min</span>`;
+  const tput = denom / tc.sixN;
+  $('o-time-sub').innerHTML = `${fmtP(tput)}/s · ${(S.peakTF)===296?'FP8':'bf16'} peak · 6N 基准`;
+
+  // per-token flops
+  $('o-6n').textContent = fmtFlop(tc.sixN);
+  $('o-exact').textContent = `${fmtFlop(tc.exact)} (+${((tc.exact/tc.sixN-1)*100).toFixed(0)}%)`;
+  $('o-decode').textContent = fmtFlop(decodeCost(m, S.ctx));
+
+  // memory
+  const mem = infMem(m, S.ctx);
+  $('mk-nk').textContent = m.L_kda; $('mk-nm').textContent = m.L_mla;
+  $('o-kda-mem').textContent = fmtBytes(mem.kdaTot);
+  $('o-mla-mem').textContent = fmtBytes(mem.mlaTot);
+  $('o-hyb-mem').textContent = fmtBytes(mem.hybrid * S.batch);
+  $('o-full-mem').textContent = fmtBytes(mem.full * S.batch);
+  const ratio = mem.full / mem.hybrid;
+  $('o-fullover').textContent = `${(2*S.d*S.ctx*m.layers/tc.sixN*100).toFixed(0)}% of 6N`;
+
+  memChart(m);
+}
+
+function buildBlockstrip(m) {
+  const el = $('blockstrip'); el.innerHTML = '';
+  const maxRows = Math.min(S.n, 12);
+  for (let b = 0; b < maxRows; b++) {
+    const row = document.createElement('div'); row.className = 'blockrow';
+    for (let k = 0; k < 3; k++) { const d = document.createElement('div'); d.className = 'blk kda'; d.textContent = 'KDA'; row.appendChild(d); }
+    const mla = document.createElement('div'); mla.className = 'blk mla'; mla.textContent = 'MLA'; row.appendChild(mla);
+    el.appendChild(row);
+  }
+}
+
+function paramBar(m) {
+  const rows = [
+    ['FFN', m.ffnTot, 'var(--ffn)'],
+    ['Mixer', m.mixTot, 'var(--kda)'],
+    ['Embedding (tied)', m.E, 'var(--embed)'],
+  ];
+  $('parambar').innerHTML = rows.map(([n,v,c]) =>
+    `<div style="width:${(v/m.total*100).toFixed(2)}%;background:${c}" title="${n} ${fmtP(v)}"></div>`).join('');
+  $('parambar-legend').innerHTML = rows.map(([n,v,c]) =>
+    `<span><i style="background:${c}"></i>${n} <span class="mono">${(v/m.total*100).toFixed(1)}%</span></span>`).join('');
+}
+
+// memory sweep: hybrid (flat past window) vs full-attention (linear) across ctx
+function memChart(m) {
+  const svg = $('memchart'); const W = 640, H = 200, padL = 46, padB = 22, padT = 10, padR = 8;
+  const ctxMax = 32768;
+  const xs = [];
+  for (let c = 256; c <= ctxMax; c *= 2) xs.push(c);
+  const hyb = c => infMem(m, c).hybrid * S.batch;
+  const full = c => infMem(m, c).full * S.batch;
+  const yMax = full(ctxMax);
+  const X = c => padL + (Math.log2(c/256)/Math.log2(ctxMax/256)) * (W-padL-padR);
+  const Y = v => H-padB - (v/yMax) * (H-padB-padT);
+  const path = fn => xs.map((c,i) => (i?'L':'M') + X(c).toFixed(1) + ' ' + Y(fn(c)).toFixed(1)).join(' ');
+  let g = `<g class="grid">`;
+  [0,0.25,0.5,0.75,1].forEach(f => { const y = padT + f*(H-padB-padT); g += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}"/>`; });
+  g += `</g>`;
+  // axis labels
+  let lab = `<text class="axlab" x="2" y="${padT+6}">${fmtBytes(yMax)}</text><text class="axlab" x="2" y="${H-padB}">0</text>`;
+  [256,1024,4096,32768].forEach(c => { lab += `<text x="${X(c)}" y="${H-6}" text-anchor="middle">${c>=1024?(c/1024)+'K':c}</text>`; });
+  const full_p = `<path d="${path(full)}" fill="none" stroke="var(--ffn)" stroke-width="2" stroke-dasharray="4 3"/>`;
+  const hyb_p = `<path d="${path(hyb)}" fill="none" stroke="var(--kda)" stroke-width="2.5"/>`;
+  // current ctx marker
+  const cx = X(Math.max(256, Math.min(ctxMax, S.ctx)));
+  const marker = `<line x1="${cx}" y1="${padT}" x2="${cx}" y2="${H-padB}" stroke="var(--accent)" stroke-width="1" stroke-dasharray="2 2"/>`;
+  const legend = `<text x="${W-padR}" y="${padT+14}" text-anchor="end" fill="var(--kda)">— 混合(KDA+MLA)</text>` +
+                 `<text x="${W-padR}" y="${padT+30}" text-anchor="end" fill="var(--ffn)">--- 全注意力</text>`;
+  svg.innerHTML = g + marker + full_p + hyb_p + lab + legend;
+  const mem = infMem(m, S.ctx);
+  $('memhint').innerHTML = `@ ctx <b>${S.ctx.toLocaleString()}</b>：混合 <b>${fmtBytes(mem.hybrid*S.batch)}</b> vs 全注意力 <b>${fmtBytes(mem.full*S.batch)}</b> — <b>${(mem.full/mem.hybrid).toFixed(0)}×</b> 差距，且混合在 ctx≥${WINDOW} 后完全不再增长。`;
+}
+
+// ---------- wire controls ----------
+['s-n','s-d','s-ffn','s-vocab','s-ctx','s-T','s-batch','s-gpu','s-mfu'].forEach(id => $(id).addEventListener('input', compute));
+$('seg-dtype').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('seg-dtype').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); S.dtypeBytes = +b.dataset.b; S.peakTF = +b.dataset.tf; compute();
+});
+$('reset').addEventListener('click', () => {
+  $('s-n').value=3; $('s-d').value=1024; $('s-ffn').value=3072; $('s-vocab').value=32772;
+  $('s-ctx').value=4096; $('s-T').value=23; $('s-batch').value=32; $('s-gpu').value=8; $('s-mfu').value=34;
+  S.dtypeBytes=2; S.peakTF=148;
+  $('seg-dtype').querySelectorAll('button').forEach(x=>x.classList.toggle('on', x.dataset.b==='2'));
+  compute();
+});
+
+// ---------- tabs ----------
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on')); t.classList.add('on');
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('on'));
+  $('view-'+t.dataset.view).classList.add('on');
+  try { localStorage.setItem('arch-tab', t.dataset.view); } catch {}
+}));
+
+// ---------- header chips ----------
+$('chips').innerHTML = [
+  ['真实基座', '206.08M'], ['层数', '12 (9 KDA + 3 MLA)'], ['d / heads', '1024 / 8'],
+  ['窗口', '1024'], ['词表', '32,772'], ['最优 base', 'ckpt_k4_11b_lr05'],
+].map(([k,v]) => `<span class="chip">${k} <b class="mono">${v}</b></span>`).join('');
+
+// ================= ARCHITECTURE EXPLORER (per-layer) =================
 const MIXER = {0:'KDA',1:'KDA',2:'KDA',3:'MLA',4:'KDA',5:'KDA',6:'KDA',7:'MLA',8:'KDA',9:'KDA',10:'KDA',11:'MLA'};
 const AR_GROUPS = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
-const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
 
 const DETAIL = {
-  overview: {
-    title: '模型总览', kind: 'HybridLM · 239.75M params',
-    body: `<p>12 层混合架构：每 4 层中前 3 层是 KDA（带界衰减的 delta 循环，O(T) 序列建模），第 4 层是 Gated MLA
-      （潜在 KV 压缩 + 1024 滑动窗口注意力，NoPE——位置信息由 KDA 的衰减携带）。每个子层的输出不只用一次，
-      而是通过 Attention Residuals 按软权重接回后续所有子层。</p>
-      <p class="dim">训练侧：FP8 计算（torchao）、Muon 优化器、WSD 调度、logit softcap 15、tied embedding/head。</p>`,
-    sec: '参数分布', paramBar: true,
-  },
-  tok: {
-    title: 'Embedding', kind: 'tok.weight · 与输出头共享权重',
-    body: `<p>词表 32,772（pad 到 64 的倍数 32,768），嵌入维 1024。token id → 向量，同时作为整个网络的输入表示
-      和深度注意力的第 0 个源。</p>`,
-    shapes: [['tok.weight', '32768 × 1024'], ['参数量', '33.62M（14.0%）'], ['共享', 'head.weight = tok.weight']],
-  },
-  kda: (i) => ({
-    title: `KDA 混合器 · 第 ${i} 层`, kind: 'Kimi Delta Attention · 线性循环',
-    body: `<p>带界衰减 + delta 规则的循环注意力。每个时间步：遗忘门按 <span class="mono">exp(A_log)</span> 控制的速率
-      对键维做衰减，delta 规则先从状态中减去已被解释的部分再写入，输出为状态对查询的响应。
-      卷积分支（kernel=4）提供局部上下文，QK 做 L2 归一化。</p>`,
-    shapes: [['qkv', '1024 → 3072'], ['gb (gate+beta)', '1024 → 1032'], ['short_conv', 'depthwise k=4'],
-      ['A_log / dt_bias', '8 / 1024'], ['heads × head_dim', '8 × 128'], ['参数量', '5.27M']],
-    formula: `decay = exp(-5 · σ(e^{A_log}·(g + dt_bias)))
-v  ←  β · (v − S @ k)        # delta：减去已解释部分
-S  ←  S * decay + v ⊗ k      # 秩1写入
-out = S @ q                  # q,k 已 L2 归一化`,
-  }),
-  mla: (i) => ({
-    title: `Gated MLA · 第 ${i} 层`, kind: '潜在 KV 压缩 + 滑动窗口注意力',
-    body: `<p>KV 先压到 256 维潜在空间再升回 2048（k|v），注意力只在 1024 token 窗口内进行（NoPE）。
-      输出经 sigmoid 门控——和 KDA 层交替，为长序列提供精确的局部检索能力。</p>`,
-    shapes: [['kv_down', '1024 → 256'], ['kv_up', '256 → 2048 (k|v)'], ['qg', '1024 → 2048 (q|gate)'],
-      ['o', '1024 → 1024'], ['窗口 / 位置', '1024 / NoPE'], ['参数量', '3.93M']],
-    formula: `z = kv_down(x)              # 压缩 4×
-k,v = kv_up(z).chunk(2)
-q   = rms_norm(qg(x).q)
-y   = softmax(q·k / √d)·v   # 窗口 1024，因果
-out = o(y · σ(qg(x).gate))`,
-  }),
-  ffn: (i) => ({
-    title: `FFN · 第 ${i} 层`, kind: 'SiTU-GLU · 有界激活',
-    body: `<p>SwiGLU 的有界变体：门控用 <span class="mono">4·tanh(a/4)</span> 替代 SiLU（近零处等价），
-      输出经 <span class="mono">25·tanh(·/25)</span> 截断，防止激活值无界增长。</p>`,
-    shapes: [['w13', '1024 → 6144 (a|b)'], ['w2', '3072 → 1024'], ['参数量', '9.44M']],
-    formula: `gate = 4·tanh(a/4) · σ(b)
-out  = 25·tanh(w2(gate)/25)`,
-  }),
-  ar: (g, layers) => ({
-    title: `Attention Residuals · 组 ${g}`, kind: `深度注意力 · 覆盖第 ${layers[0]}–${layers[layers.length-1]} 层`,
-    body: `<p>每个子层（mixer / FFN 各算一个）输出时，不只用残差连接，而是由一个零初始化的"伪查询"对
-      <b>此前所有子层输出</b>做 softmax 加权求和。训练开始时是均匀平均，之后模型自行学习该回头看哪些层。
-      24 个子层被分成 4 组（每组 6 个 = 3 个 transformer 层），组内求和后作为一个源。
-      计算上用 RMSNorm 增益折叠进查询 + 逐位置缩放，从不物化归一化副本。</p>`,
-    shapes: [['每组子层数', '6（3 层 × 2）'], ['ar1.q / ar1.g', '1024 / 1024（每层）'], ['零初始化', 'q 从 0 开始 = 均匀平均'],
-      ['全模型 AR 参数', '~50K（0.02%）']],
-    formula: `h = Σ_i softmax_i( (g·q) · v_i · rms(v_i) ) · v_i
-         i ∈ {embedding, 组1..组4 的输出}`,
-  }),
-  ar1: (i) => ({
-    title: `ar1 · 第 ${i} 层 mixer 后`, kind: 'Attention Residual（子层级）',
-    body: `<p>mixer 子层的深度注意力节点：对 embedding 及之前所有组的输出做软加权，结果再过 n1 归一化进 mixer。
-      q 零初始化，g 为 RMSNorm 增益（折叠到查询侧）。全模型仅 2K 参数。</p>`,
-    shapes: [['q / g', '1024 / 1024'], ['参数量', '2.0K']],
-  }),
-  final_ar: {
-    title: 'final_ar', kind: '最终深度注意力',
-    body: `<p>网络末端再做一次深度注意力：对 embedding 和 4 个组的输出加权求和，替代传统的"最后一层隐藏态"。
-      这是模型决定"用哪些深度的表示来回答"的地方。</p>`,
-    shapes: [['q / g', '1024 / 1024'], ['参数量', '2.0K']],
-  },
-  norm: {
-    title: 'Final RMSNorm', kind: '最终归一化',
-    body: `<p>标准 RMSNorm（eps 1e-6），之后接 tied head 投影到词表，再做 logit softcap。</p>`,
-    shapes: [['g', '1024'], ['参数量', '1.0K']],
-  },
-  head: {
-    title: 'LM Head + Softcap', kind: 'tied embedding · logits 截断',
-    body: `<p>与 embedding 共享权重（33.62M）。投影后用 <span class="mono">15·tanh(logits/15)</span> 截断，
-      限制 logit 动态范围，稳定 FP8 训练。</p>`,
-    shapes: [['head.weight', '= tok.weight'], ['softcap', '15·tanh(x/15)'], ['参数量', '0（共享）']],
-  },
+  overview: { title:'模型总览', kind:'HybridLM · 206.08M params',
+    body:`<p>12 层混合：每 4 层中前 3 层是 KDA（带界衰减的 delta 循环，O(1) 推理状态），第 4 层是 Gated MLA
+      （潜在 KV 压缩 256 维 + 1024 滑动窗口，NoPE——位置由 KDA 衰减携带）。子层输出经 Attention Residuals
+      按软权重接回后续所有层。</p>
+      <p class="dim">训练：FP8 计算（torchao，e4m3_tensorwise）、Muon、WSD、logit softcap 15、tied embed/head。</p>` },
+  tok: { title:'Embedding', kind:'tok.weight · 与输出头共享',
+    body:`<p>词表 32,772（pad 到 32,832），维 1024。既是输入表示，也是深度注意力的第 0 个源。</p>`,
+    shapes:[['tok.weight','32832 × 1024'],['参数量','33.62M（16.3%）'],['共享','head = tok']] },
+  kda: i => ({ title:`KDA 混合器 · 第 ${i} 层`, kind:'Kimi Delta Attention · 线性循环',
+    body:`<p>带界衰减 + delta 规则的循环注意力。遗忘门按 <span class="mono">exp(A_log)</span> 速率衰减，
+      delta 先减去已解释部分再写入，输出为状态对查询的响应。卷积（k=4）提供局部上下文，QK 做 L2 归一化。
+      <b>推理状态与上下文长度无关</b>——全历史折进固定的 hd×hd 矩阵。</p>`,
+    shapes:[['qkv','1024 → 3072'],['gb (gate+beta)','1024 → 1032'],['short_conv','depthwise k=4'],
+      ['heads × hd','8 × 128'],['推理状态/层','262 KiB (bf16, 恒定)'],['参数量','5.27M']],
+    formula:`decay = exp(-5·σ(e^A_log·(g+dt_bias)))\nv ← β·(v − S@k)      # delta\nS ← S·decay + v⊗k    # 秩1写入\nout = S@q             # q,k 已 L2 归一化` }),
+  mla: i => ({ title:`Gated MLA · 第 ${i} 层`, kind:'潜在 KV 压缩 + 滑动窗口',
+    body:`<p>KV 压到 256 维潜在再升回（k|v），注意力只在 1024 窗口内（NoPE），sigmoid 门控输出。
+      <b>只缓存 256 维潜在</b>，k/v 由 kv_up 现场重建——比缓存 k,v 小 8×。</p>`,
+    shapes:[['kv_down','1024 → 256'],['kv_up','256 → 2048 (k|v)'],['qg','1024 → 2048 (q|gate)'],
+      ['窗口 / 位置','1024 / NoPE'],['推理缓存/层','512 KiB (bf16, ctx≥1024 封顶)'],['参数量','3.93M']],
+    formula:`z = kv_down(x)           # 压缩 4×\nk,v = kv_up(z).chunk(2)\nq = rms_norm(qg(x).q)\ny = softmax(q·kᵀ/√d)·v   # 窗口 1024\nout = o(y · σ(gate))` }),
+  ffn: i => ({ title:`FFN · 第 ${i} 层`, kind:'SiTU-GLU · 有界激活',
+    body:`<p>SwiGLU 有界变体：门控 <span class="mono">4·tanh(a/4)·σ(b)</span>，输出 <span class="mono">25·tanh(·/25)</span> 截断。
+      每层 9.44M——占单层参数 64%(KDA)/71%(MLA)，是模型的主要参数所在。</p>`,
+    shapes:[['w13','1024 → 6144 (a|b)'],['w2','3072 → 1024'],['参数量','9.44M']],
+    formula:`gate = 4·tanh(a/4)·σ(b)\nout  = 25·tanh(w2(gate)/25)` }),
+  ar: (g, layers) => ({ title:`Attention Residuals · 组 ${g}`, kind:`深度注意力 · 第 ${layers[0]}–${layers[layers.length-1]} 层`,
+    body:`<p>每个子层输出时，由零初始化"伪查询"对<b>此前所有子层输出</b>做 softmax 加权。训练初是均匀平均，
+      之后学习该回头看哪些层。24 子层分 4 组。RMSNorm 增益折进查询 + 逐位置缩放，从不物化归一化副本。</p>`,
+    shapes:[['每组子层','6（3 层 × 2）'],['零初始化','q=0 → 均匀平均'],['全模型 AR','~50K（0.02%）']] }),
+  final_ar: { title:'final_ar', kind:'最终深度注意力',
+    body:`<p>网络末端对 embedding 和 4 组输出加权求和，替代传统"最后一层隐藏态"——模型决定用哪些深度的表示来回答。</p>`,
+    shapes:[['q / g','1024 / 1024'],['参数量','2.0K']] },
+  norm: { title:'Final RMSNorm', kind:'最终归一化',
+    body:`<p>RMSNorm (eps 1e-6)，之后 tied head 投影 + logit softcap。</p>`, shapes:[['g','1024'],['参数量','1.0K']] },
+  head: { title:'LM Head + Softcap', kind:'tied embedding · logits 截断',
+    body:`<p>与 embedding 共享权重。投影后 <span class="mono">15·tanh(logits/15)</span> 截断，稳定 FP8 训练。</p>`,
+    shapes:[['head.weight','= tok.weight'],['softcap','15·tanh(x/15)'],['参数量','0（共享）']] },
 };
 
-// ---------- diagram ----------
 const diagram = document.getElementById('diagram');
-
 function makeCard({id, badge, badgeCls, name, meta}) {
-  const d = document.createElement('div');
-  d.className = 'card'; d.dataset.id = id; d.tabIndex = 0;
-  d.innerHTML = `<div class="row1">${badge ? `<span class="badge ${badgeCls}">${badge}</span>` : ''}
-    <span class="name">${name}</span><span class="meta">${meta || ''}</span></div>`;
-  bindSelect(d, id);
-  return d;
+  const d = document.createElement('div'); d.className='card'; d.dataset.id=id; d.tabIndex=0;
+  d.innerHTML = `<div class="row1">${badge?`<span class="badge ${badgeCls}">${badge}</span>`:''}<span class="name">${name}</span><span class="meta">${meta||''}</span></div>`;
+  bindSelect(d, id); return d;
 }
-function flow() { const f = document.createElement('div'); f.className = 'flow'; return f; }
-function bindSelect(el, id) {
-  el.addEventListener('click', e => { e.stopPropagation(); select(id); });
-  el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } });
+function flow(){ const f=document.createElement('div'); f.className='flow'; return f; }
+function bindSelect(el, id){
+  el.addEventListener('click', e=>{ e.stopPropagation(); select(id); });
+  el.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); select(id); } });
 }
-
-function buildDiagram() {
-  diagram.appendChild(makeCard({id: 'tok', badge: 'EMBED', badgeCls: 'gray', name: 'Token Embedding', meta: '32768×1024'}));
+function buildDiagram(){
+  diagram.appendChild(makeCard({id:'tok', badge:'EMBED', badgeCls:'gray', name:'Token Embedding', meta:'32832×1024'}));
   diagram.appendChild(flow());
-
-  const grid = document.createElement('div');
-  grid.className = 'dgrid';
-  AR_GROUPS.forEach((layers, g) => {
-    const band = document.createElement('div');
-    band.className = 'ar-band'; band.dataset.id = 'ar' + (g + 1); band.tabIndex = 0;
-    band.textContent = `AR-${g + 1}`;
-    band.style.gridRow = `span ${layers.length}`;
-    bindSelect(band, 'ar' + (g + 1));
-    grid.appendChild(band);
-    layers.forEach(i => {
-      const kind = MIXER[i];
-      const row = document.createElement('div');
-      row.className = 'layer';
-      row.innerHTML = `
-        <div class="idx">L${i}</div>
-        <div class="subs">
-          <div class="sub" data-id="${kind.toLowerCase()}${i}" tabindex="0">
-            <div class="t"><span class="dot ${kind.toLowerCase()}"></span>${kind}</div>
-            <div class="d">${kind === 'KDA' ? '5.27M · delta 循环' : '3.93M · 窗口 1024'}</div>
-          </div>
-          <div class="sub" data-id="ffn${i}" tabindex="0">
-            <div class="t"><span class="dot ffn"></span>FFN</div>
-            <div class="d">9.44M · SiTU-GLU</div>
-          </div>
-          <div class="sub ar" data-id="ar1${i}" tabindex="0" title="ar1（mixer 后）/ ar2（FFN 后）"><div class="t">ar</div></div>
-        </div>`;
-      row.querySelectorAll('.sub').forEach(s => bindSelect(s, s.dataset.id));
+  const grid = document.createElement('div'); grid.className='dgrid';
+  AR_GROUPS.forEach((layers,g)=>{
+    const band=document.createElement('div'); band.className='ar-band'; band.dataset.id='ar'+(g+1); band.tabIndex=0;
+    band.textContent=`AR-${g+1}`; band.style.gridRow=`span ${layers.length}`; bindSelect(band,'ar'+(g+1)); grid.appendChild(band);
+    layers.forEach(i=>{
+      const kind=MIXER[i], row=document.createElement('div'); row.className='layer';
+      row.innerHTML=`<div class="idx">L${i}</div><div class="subs">
+        <div class="subcell" data-id="${kind.toLowerCase()}${i}" tabindex="0"><div class="t"><span class="dot ${kind.toLowerCase()}"></span>${kind}</div><div class="d">${kind==='KDA'?'5.27M · delta 循环':'3.93M · 窗口 1024'}</div></div>
+        <div class="subcell" data-id="ffn${i}" tabindex="0"><div class="t"><span class="dot ffn"></span>FFN</div><div class="d">9.44M · SiTU-GLU</div></div>
+        <div class="subcell arc" data-id="ar${g+1}" tabindex="0" title="Attention Residuals 组 ${g+1}"><div class="t">ar</div></div></div>`;
+      row.querySelectorAll('.subcell').forEach(s=>bindSelect(s, s.dataset.id));
       grid.appendChild(row);
     });
   });
   diagram.appendChild(grid);
-
   diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id: 'final_ar', badge: 'AR', badgeCls: 'ar', name: 'final_ar', meta: '深度注意力'}));
+  diagram.appendChild(makeCard({id:'final_ar', badge:'AR', badgeCls:'ar', name:'final_ar', meta:'深度注意力'}));
   diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id: 'norm', badge: 'NORM', badgeCls: 'gray', name: 'RMSNorm', meta: '1024'}));
+  diagram.appendChild(makeCard({id:'norm', badge:'NORM', badgeCls:'gray', name:'RMSNorm', meta:'1024'}));
   diagram.appendChild(flow());
-  diagram.appendChild(makeCard({id: 'head', badge: 'HEAD', badgeCls: 'gray', name: 'LM Head (tied) + softcap 15', meta: '32768'}));
+  diagram.appendChild(makeCard({id:'head', badge:'HEAD', badgeCls:'gray', name:'LM Head (tied) + softcap 15', meta:'32832'}));
 }
-
-// ---------- detail ----------
 const detail = document.getElementById('detail');
-function detailFor(id) {
+function detailFor(id){
   if (DETAIL[id]) return DETAIL[id];
-  if (/^kda\d+$/.test(id)) return DETAIL.kda(+id.replace('kda', ''));
-  if (/^mla\d+$/.test(id)) return DETAIL.mla(+id.replace('mla', ''));
-  if (/^ffn\d+$/.test(id)) return DETAIL.ffn(+id.replace('ffn', ''));
-  if (/^ar\d+$/.test(id)) return DETAIL.ar(+id.replace('ar', ''), AR_GROUPS[+id.replace('ar', '') - 1]);
-  if (/^ar1\d+$/.test(id)) return DETAIL.ar1(+id.replace('ar1', ''));
+  if (/^kda\d+$/.test(id)) return DETAIL.kda(+id.replace('kda',''));
+  if (/^mla\d+$/.test(id)) return DETAIL.mla(+id.replace('mla',''));
+  if (/^ffn\d+$/.test(id)) return DETAIL.ffn(+id.replace('ffn',''));
+  if (/^ar\d+$/.test(id)) return DETAIL.ar(+id.replace('ar',''), AR_GROUPS[+id.replace('ar','')-1]);
   return DETAIL.overview;
 }
-function renderDetail(id) {
+function renderDetail(id){
   const d = detailFor(id);
-  let html = `<h2>${d.title}</h2><div class="kind">${d.kind}</div>${d.body || ''}`;
-  if (d.shapes) {
-    html += `<h3 class="sec">张量 / 形状</h3><table class="shapes">` +
-      d.shapes.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + `</table>`;
-  }
+  let html = `<h2>${d.title}</h2><div class="kind">${d.kind}</div>${d.body||''}`;
+  if (d.shapes) html += `<h3 class="sec">张量 / 形状</h3><table class="shapes">`+d.shapes.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')+`</table>`;
   if (d.formula) html += `<h3 class="sec">公式</h3><div class="formula">${d.formula}</div>`;
-  if (d.paramBar) {
-    const rows = [
-      ['FFN ×12', 113.25e6, 'var(--ffn)'], ['Mixer ×12', 59.19e6, 'var(--mla)'],
-      ['Embedding', 33.62e6, 'var(--faint)'], ['Head（共享）', 33.62e6, 'var(--faint)'],
-      ['AttnRes 全部', 0.05e6, 'var(--ar)'],
-    ];
-    const total = 239.75e6;
-    html += `<div class="parambar">` + rows.map(([n, v, c]) =>
-      `<div style="width:${(v / total * 100).toFixed(2)}%;background:${c}" title="${n} ${fmt(v)}"></div>`).join('') + `</div>
-      <div class="legend2">` + rows.map(([n, v, c]) =>
-      `<span><i style="background:${c}"></i>${n} <span class="mono">${(v / total * 100).toFixed(1)}%</span></span>`).join('') + `</div>
-      <p class="dim" style="margin-top:12px">Mixer 内部：9 层 KDA × 5.27M + 3 层 MLA × 3.93M。
-      AttnRes 全模型仅 ~50K 参数（0.02%），却在 SFT 中吸收了绝大部分权重变化。</p>`;
-  }
   detail.innerHTML = html;
 }
-function select(id) {
-  document.querySelectorAll('.card.sel, .sub.sel, .ar-band.sel').forEach(e => e.classList.remove('sel'));
-  const el = document.querySelector(`[data-id="${CSS.escape(id)}"]`);
-  if (el) el.classList.add('sel');
+function select(id){
+  document.querySelectorAll('.card.sel, .subcell.sel, .ar-band.sel').forEach(e=>e.classList.remove('sel'));
+  document.querySelectorAll(`[data-id="${CSS.escape(id)}"]`).forEach(el=>el.classList.add('sel'));
   renderDetail(id);
 }
 
-// ---------- header chips ----------
-document.getElementById('chips').innerHTML = [
-  ['参数量', '239.75M'], ['层数', '12（9 KDA + 3 MLA）'], ['d / heads', '1024 / 8'],
-  ['序列', '4096'], ['词表', '32,772'], ['精度', 'FP8'], ['AttnRes', 'blocks=4'],
-].map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join('');
-
 // ---------- theme ----------
 const themeBtn = document.getElementById('themeBtn');
+function sysDark(){ return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; }
 themeBtn.onclick = () => {
-  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  if (next === 'dark') delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = next;
+  const cur = document.documentElement.dataset.theme || (sysDark()?'dark':'light');
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
   try { localStorage.setItem('arch-theme', next); } catch {}
 };
-try { if (localStorage.getItem('arch-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch {}
+try { const t = localStorage.getItem('arch-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+try { const tab = localStorage.getItem('arch-tab'); if (tab === 'arch') { document.querySelector('.tab[data-view="arch"]').click(); } } catch {}
 
+// ---------- init ----------
 buildDiagram();
 renderDetail('overview');
+compute();
 </script>
 </body>
 </html>
