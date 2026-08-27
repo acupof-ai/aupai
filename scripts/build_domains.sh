@@ -34,8 +34,8 @@ build_small() {  # <domain> <extra build_corpus args...>
   tail -1 "$LOGS/$d.log"
 }
 
-has code && build_small code --source jsonl:data/code_filtered.jsonl
-has en && build_small en \
+has code && build_small code --no_near_dedup --source jsonl:data/code_filtered.jsonl
+has en && build_small en --no_near_dedup \
   --source jsonl:data/cosmopedia_extra.jsonl \
   --source jsonl:data/en_textbook.jsonl
 if has math; then
@@ -50,7 +50,7 @@ if has math; then
     --source jsonl:data/en_math_text.jsonl \
     --source "jsonl:data/synthetic/math_short_v*.jsonl"
 fi
-has chat && build_small chat \
+has chat && build_small chat --no_near_dedup \
   --source jsonl:data/coig.jsonl \
   --source jsonl:data/alpaca_gpt4_zh.jsonl
 echo "--- small domains done ---"
