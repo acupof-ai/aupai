@@ -351,19 +351,41 @@ def _fp8_ok(mod, name):
 def convert_to_fp8_compute(model):
     """FP8 linears. Prefers torchao Float8Linear (compile-friendly: no graph break per linear, fused casts);
     falls back to the hand-rolled FP8Linear (dynamo-disabled -> ~200 graph breaks) if torchao is missing.
-    FP8_RECIPE=rowwise|tensorwise selects the torchao scaling recipe (default rowwise: e4m3 on all three
-    operands); FP8_RECIPE=legacy forces the old path."""
+
+    Default recipe is tensorwise scaling but with grad_output cast to e4m3, NOT the stock `tensorwise`
+    recipe's e5m2: e5m2's 2-bit mantissa is the exact unstable backward the legacy path abandoned
+    (line 273). The stock `rowwise` recipe also keeps e4m3 on grad_output, but its axiswise scaling
+    hits `aten.clone.default with axiswise scaling is not supported yet` under torch.compile on the
+    AttnRes .chunk() path -- so we get rowwise's stability with tensorwise's compile-compatibility.
+    FP8_RECIPE=rowwise|tensorwise forces a stock recipe; FP8_RECIPE=legacy forces the hand-rolled path."""
     try:
-        from torchao.float8 import Float8LinearConfig, convert_to_float8_training
+        from torchao.float8 import (
+            CastConfig,
+            Float8LinearConfig,
+            ScalingGranularity,
+            ScalingType,
+            convert_to_float8_training,
+        )
     except ImportError:
         print("torchao not found: using legacy FP8Linear (slow path, graph breaks)", flush=True)
         return _convert_to_fp8_legacy(model)
-    # rowwise, not tensorwise: the latter's e5m2 grad_output is the exact backward config the
-    # legacy path abandoned as unstable (line 273), and axiswise scaling is more accurate too.
-    recipe = os.environ.get("FP8_RECIPE", "rowwise")
+    recipe = os.environ.get("FP8_RECIPE", "e4m3_tensorwise")
     if recipe == "legacy":
         return _convert_to_fp8_legacy(model)
-    cfg = Float8LinearConfig.from_recipe_name(recipe)
+    if recipe in ("rowwise", "tensorwise"):
+        cfg = Float8LinearConfig.from_recipe_name(recipe)
+    else:  # e4m3_tensorwise: tensorwise (compile-safe) + e4m3 grad_output (stable backward)
+
+        def cc():
+            return CastConfig(
+                scaling_type=ScalingType.DYNAMIC,
+                scaling_granularity=ScalingGranularity.TENSORWISE,
+                target_dtype=torch.float8_e4m3fn,
+            )
+
+        cfg = Float8LinearConfig(
+            cast_config_input=cc(), cast_config_weight=cc(), cast_config_grad_output=cc()
+        )
     convert_to_float8_training(
         model, config=cfg, module_filter_fn=lambda m, fqn: _fp8_ok(m, fqn.rsplit(".", 1)[-1])
     )
