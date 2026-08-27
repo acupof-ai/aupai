@@ -89,12 +89,22 @@ input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 
 .kv:last-child { border-bottom: none; }
 .kv .k { color: var(--muted); } .kv .v { font-family: "IBM Plex Mono", monospace; }
 
-/* block diagram that grows with n */
-.blockstrip { display: flex; flex-direction: column; gap: 6px; align-items: center; }
-.blockrow { display: flex; gap: 6px; align-items: stretch; width: 100%; }
-.blk { flex: 1; border-radius: 6px; padding: 7px 4px; text-align: center; font-size: 11px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
+/* block diagram: one representative block with a ×n multiplier, plus the shared components */
+.modelmap { display: flex; flex-direction: column; gap: 5px; align-items: stretch; }
+.stage { border-radius: 6px; padding: 6px 10px; font-size: 11.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; text-align: center; }
+.stage.embed { background: var(--embed); color: #0b1018; }
+.stage.norm { background: var(--ffn); color: #fff; }
+.stage.head { background: var(--ffn); color: #fff; }
+.stage.ar { background: none; border: 1px dashed var(--ar); color: var(--ar); font-weight: 500; }
+.blockwrap { display: flex; gap: 8px; align-items: stretch; }
+.nmult { display: flex; align-items: center; justify-content: center; min-width: 44px; border-radius: 6px; background: var(--accent); color: #0b1018; font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 15px; }
+.blockbox { flex: 1; border: 1.5px solid var(--kda); border-radius: 6px; padding: 6px; }
+.blockbox .brow { display: flex; gap: 5px; }
+.blk { flex: 1; border-radius: 4px; padding: 6px 4px; text-align: center; font-size: 10.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
 .blk.kda { background: var(--kda); } .blk.mla { background: var(--mla); }
+.blk.kda3 { flex: 3; } /* the 3 KDA share, shown fused */
 .repeat-tag { font-size: 11px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
+.flowdot { text-align: center; color: var(--faint); font-size: 11px; line-height: 1; }
 
 /* stacked param bar */
 .parambar { display: flex; height: 20px; border-radius: 5px; overflow: hidden; margin: 4px 0 12px; border: 1px solid var(--line); }
@@ -220,13 +230,20 @@ footer b { color: var(--muted); font-weight: 600; }
             <button data-b="2" data-tf="148" class="on">bf16</button>
           </div>
         </div>
+        <div class="ctl">
+          <div class="lab"><span class="k">Attention Residuals</span></div>
+          <div class="seg" id="seg-ar">
+            <button data-ar="1" class="on">开</button>
+            <button data-ar="0">关</button>
+          </div>
+        </div>
         <button class="reset" id="reset" type="button">↺ 恢复真实配置</button>
       </div>
 
       <div class="out">
         <div class="panel">
           <h3>模型结构 <span class="repeat-tag" id="struct-tag"></span></h3>
-          <div class="blockstrip" id="blockstrip"></div>
+          <div class="modelmap" id="blockstrip"></div>
         </div>
 
         <div class="grid2">
@@ -360,7 +377,7 @@ function decodeCost(m, ctx) {
 }
 
 // ---------- state ----------
-const DEFAULTS = { n:3, d:1024, ffn:3072, vocab:32772, ctx:4096, T:11.5e9, batch:32, gpu:8, mfu:34, dtypeBytes:2, peakTF:148 };
+const DEFAULTS = { n:3, d:1024, ffn:3072, vocab:32772, ctx:4096, T:11.5e9, batch:32, gpu:8, mfu:34, dtypeBytes:2, peakTF:148, attnRes:true };
 const S = { ...DEFAULTS };
 
 const $ = id => document.getElementById(id);
@@ -421,13 +438,25 @@ function compute() {
 
 function buildBlockstrip(m) {
   const el = $('blockstrip'); el.innerHTML = '';
-  const maxRows = Math.min(S.n, 12);
-  for (let b = 0; b < maxRows; b++) {
-    const row = document.createElement('div'); row.className = 'blockrow';
-    for (let k = 0; k < 3; k++) { const d = document.createElement('div'); d.className = 'blk kda'; d.textContent = 'KDA'; row.appendChild(d); }
-    const mla = document.createElement('div'); mla.className = 'blk mla'; mla.textContent = 'MLA'; row.appendChild(mla);
-    el.appendChild(row);
-  }
+  const ar = S.attnRes; // AttnRes toggle
+  const stage = (cls, txt) => `<div class="stage ${cls}">${txt}</div>`;
+  const dot = '<div class="flowdot">↓</div>';
+  const arNode = txt => ar ? stage('ar', txt) : '';
+  el.innerHTML =
+    stage('embed', `Token Embedding · ${fmtP(m.E)}`) + dot +
+    (ar ? arNode('⟿ Attention Residuals（深度 softmax，源=embedding+各组）') + dot : '') +
+    `<div class="blockwrap">
+       <div class="nmult" title="block 重复次数">×${S.n}</div>
+       <div class="blockbox">
+         <div class="brow">
+           <div class="blk kda kda3">3 × KDA<br><span style="font-weight:400">delta 循环 · 5.27M</span></div>
+           <div class="blk mla">MLA<br><span style="font-weight:400">窗口 · 3.93M</span></div>
+         </div>
+       </div>
+     </div>` + dot +
+    (ar ? stage('ar', 'final_ar（末端深度注意力）') + dot : '') +
+    stage('norm', 'RMSNorm') + dot +
+    stage('head', 'LM Head (tied) + softcap 15');
 }
 
 function paramBar(m) {
@@ -479,11 +508,17 @@ $('seg-dtype').addEventListener('click', e => {
   $('seg-dtype').querySelectorAll('button').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); S.dtypeBytes = +b.dataset.b; S.peakTF = +b.dataset.tf; compute();
 });
+$('seg-ar').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('seg-ar').querySelectorAll('button').forEach(x => x.classList.remove('on'));
+  b.classList.add('on'); S.attnRes = b.dataset.ar === '1'; compute();
+});
 $('reset').addEventListener('click', () => {
   $('s-n').value=3; $('s-d').value=1024; $('s-ffn').value=3072; $('s-vocab').value=32772;
   $('s-ctx').value=4096; $('s-T').value=23; $('s-batch').value=32; $('s-gpu').value=8; $('s-mfu').value=34;
-  S.dtypeBytes=2; S.peakTF=148;
+  S.dtypeBytes=2; S.peakTF=148; S.attnRes=true;
   $('seg-dtype').querySelectorAll('button').forEach(x=>x.classList.toggle('on', x.dataset.b==='2'));
+  $('seg-ar').querySelectorAll('button').forEach(x=>x.classList.toggle('on', x.dataset.ar==='1'));
   compute();
 });
 
