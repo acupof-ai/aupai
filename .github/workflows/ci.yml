@@ -7,7 +7,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install ruff torch --index-url https://download.pytorch.org/whl/cpu && pip install tokenizers
+      - run: pip install ruff tokenizers
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: ruff check --select E9,F train.py sft.py sft_math.py eval scripts mathbank datagen algorithms filters
       - run: python -m py_compile train.py sft.py sft_math.py serve.py chat.py infer.py prepare_sft_math.py eval/*.py scripts/*.py mathbank/*.py datagen/*.py algorithms/*.py filters/*.py
       - run: python scripts/test_arch_compat.py
