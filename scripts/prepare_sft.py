@@ -2,9 +2,12 @@
 """Prepare SFT data: 问：{instruction}\n答：{output}<eos>, prompt-masked, packed.
 
 Reads all SFT sources, tokenizes with data/tokenizer.json, masks instruction
-tokens (labels=-100), packs into (seq+1)-token rows, and saves
+tokens (labels=-100), greedily packs whole examples (never split across a row,
+over-length dropped) into (seq+1)-token rows right-padded with <eos>, and saves
 data/sft/sft_all.pt as {"input_ids": int32 (N, seq+1), "labels": int32 (N, seq+1)}.
-labels[t] = input_ids[t] for output/eos tokens, -100 for prompt tokens.
+labels[t] = input_ids[t] for output/eos tokens, -100 for prompt/pad tokens.
+sft.py resets KDA state + SWA attention at every <eos> (Cfg.doc_mask), so the
+clean per-document <eos> boundary this produces is what the doc mask keys on.
 Training slices x=[:, :-1], y=labels[:, 1:].
 """
 
@@ -83,11 +86,34 @@ def main():
         examples = examples[:MAX_EXAMPLES]
     print(f"total examples: {len(examples)}", flush=True)
 
-    ids_stream = []
-    lab_stream = []
-    n_trunc = 0
+    # Greedy packing, one example never split across rows.
+    #
+    # The old scheme concatenated a flat token stream, cut it every row_len tokens,
+    # and tail-truncated over-length examples (which deletes the prompt and leaves
+    # plen=0). sft.py doc-masks by <eos> (doc_cu_seqlens, Cfg.doc_mask) so within-row
+    # cross-example attention is already blocked -- but the mask cannot supply a
+    # missing question: truncation left 3.9% of loss tokens as headless answer
+    # fragments at full weight, and the flat cut orphaned 16.4% of answer tails
+    # across a row boundary (18.9% of rows opened mid-answer). Dropping over-length
+    # examples and never splitting one across a row removes both, and every row now
+    # opens with a real (masked) prompt.
+    rows_ids, rows_lab = [], []
+    cur_ids, cur_lab = [], []
+    n_drop = 0
     n_mismatch = 0
+    n_pad = 0
     row_len = SEQ + 1
+
+    def flush():
+        """Emit the current row, right-padded with <eos> that carry no loss."""
+        nonlocal cur_ids, cur_lab, n_pad
+        if not cur_ids:
+            return
+        pad = row_len - len(cur_ids)
+        n_pad += pad
+        rows_ids.append(cur_ids + [eos] * pad)
+        rows_lab.append(cur_lab + [-100] * pad)
+        cur_ids, cur_lab = [], []
 
     for i in range(0, len(examples), ENC_BATCH):
         batch = examples[i : i + ENC_BATCH]
@@ -107,20 +133,19 @@ def main():
                         break
                     plen += 1
             if len(ids_f) > row_len:
-                # keep the tail (answer end + eos); adjust mask boundary
-                plen = max(0, plen - (len(ids_f) - row_len))
-                ids_f = ids_f[-row_len:]
-                n_trunc += 1
-            ids_stream.extend(ids_f)
-            lab_stream.extend([-100] * plen + ids_f[plen:])
+                n_drop += 1  # drop rather than truncate: a truncated head has no question
+                continue
+            if len(cur_ids) + len(ids_f) > row_len:
+                flush()
+            cur_ids.extend(ids_f)
+            cur_lab.extend([-100] * plen + ids_f[plen:])
         if (i // ENC_BATCH) % 10 == 0:
             print(f"  tokenized {min(i + ENC_BATCH, len(examples))}/{len(examples)}", flush=True)
+    flush()
 
-    n_rows = len(ids_stream) // row_len
-    ids_stream = ids_stream[: n_rows * row_len]
-    lab_stream = lab_stream[: n_rows * row_len]
-    input_ids = torch.tensor(ids_stream, dtype=torch.int32).view(n_rows, row_len)
-    labels = torch.tensor(lab_stream, dtype=torch.int32).view(n_rows, row_len)
+    n_rows = len(rows_ids)
+    input_ids = torch.tensor(rows_ids, dtype=torch.int32)
+    labels = torch.tensor(rows_lab, dtype=torch.int32)
 
     os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
     tmp = OUT_PATH + ".tmp"
@@ -130,7 +155,11 @@ def main():
     total_tokens = input_ids.numel()
     loss_tokens = (labels != -100).sum().item()
     print(f"kept examples: {len(examples)}", flush=True)
-    print(f"truncated (> {row_len} tokens): {n_trunc}", flush=True)
+    print(f"dropped (> {row_len} tokens): {n_drop}", flush=True)
+    print(
+        f"padding tokens: {n_pad / 1e6:.2f}M ({100 * n_pad / max(input_ids.numel(), 1):.1f}% of the pack)",
+        flush=True,
+    )
     print(f"prefix mismatches: {n_mismatch}", flush=True)
     print(f"packed rows: {n_rows} ({row_len} tokens each)", flush=True)
     print(f"total tokens: {total_tokens / 1e6:.2f}M", flush=True)

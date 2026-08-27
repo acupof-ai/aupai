@@ -71,17 +71,24 @@ def load_garbage_patterns():
 GARBAGE = load_garbage_patterns()
 
 
-# iter_jsonl renders instruction/output rows as "问：{q}\n答：{a}". holdout.norm() strips punctuation
-# but not that marker, so the hash of "问：{q}" never matches the stored hash of "{q}" and the guard
-# silently passed every QA source: measured 496 of the 500 math_test_500 questions, with their full
-# solutions, straight into data/corpus/math/ (2026-08-26). Both forms are tested now.
+# iter_jsonl renders instruction/output rows as "问：{q}\n答：{a}". Three ways an eval question slipped
+# past a naive per-line hash: (1) the "问：" marker means norm("问：{q}") != norm("{q}"); (2) a multi-line
+# question equals no single line; (3) a <15-char question fell outside the old length window (measured
+# 2026-08-26: 496/500 math_test_500 questions reached data/corpus/math/). We now test the whole document,
+# the QA body (leading "问：" prefix and trailing "答：" tail stripped), and every line.
 QA_PREFIX = re.compile(r"^\s*(?:问题?|答案?|Q|A|Question|Answer)\s*[：:]\s*")
+ANSWER_TAIL = re.compile(r"\n\s*(?:答案?|A|Answer)\s*[：:]")
 
 
 def reject_holdout(text):
-    for ln in (ln.strip() for ln in text.split("\n")):
+    if is_holdout(text):  # whole document == an eval question (bare, multi-line, or short)
+        return "eval_contaminated"
+    body = QA_PREFIX.sub("", ANSWER_TAIL.split(text, 1)[0]).strip()  # "问：{q}\n答：{a}" -> "{q}"
+    if body != text and is_holdout(body):
+        return "eval_contaminated"
+    for ln in (ln.strip() for ln in text.split("\n")):  # a question on its own line inside a longer doc
         for cand in {ln, QA_PREFIX.sub("", ln)}:
-            if 15 <= len(cand) <= 200 and is_holdout(cand):
+            if cand and len(cand) <= 500 and is_holdout(cand):
                 return "eval_contaminated"
     return None
 

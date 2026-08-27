@@ -25,6 +25,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)  # so `datagen.build_corpus` (reject_holdout) imports inside dedup_domain
 TABLE_PATH = os.path.join(ROOT, "data", "t2s_table.json")
 _NORM = re.compile(r"[\s\W_]+", re.UNICODE)
 _TABLE = None
@@ -71,14 +72,21 @@ def convert_file(path):
 
 
 def dedup_domain(d):
-    """Converting Traditional to Simplified makes two copies of the same article identical.
-    One sequential pass per domain, replacing each .t2s shard with its deduplicated form."""
+    """Converting Traditional to Simplified makes two copies of the same article identical, and can
+    turn a Traditional copy of an eval question into an exact match that reject_holdout could not see at
+    build time (it ran before conversion). One sequential pass per domain: drop eval matches, then drop
+    content duplicates, replacing each .t2s shard with its cleaned form."""
+    from datagen.build_corpus import reject_holdout
+
     seen = set()
-    kept = dropped = 0
+    kept = dropped = contaminated = 0
     for p in sorted(glob.glob(os.path.join(d, "*.jsonl.t2s"))):
         rows = []
         for line in open(p, encoding="utf-8"):
             r = json.loads(line)
+            if reject_holdout(r["content"]):  # conversion may have created an exact eval match
+                contaminated += 1
+                continue
             k = hashlib.sha1(_NORM.sub("", r["content"]).encode("utf-8")).digest()[:12]
             if k in seen:
                 dropped += 1
@@ -89,7 +97,7 @@ def dedup_domain(d):
         with open(p[: -len(".t2s")], "w", encoding="utf-8") as out:
             out.writelines(rows)
         os.remove(p)
-    return kept, dropped
+    return kept, dropped, contaminated
 
 
 def main():
@@ -116,10 +124,11 @@ def main():
         docs = sum(r[0] for r in res)
         chars = sum(r[1] for r in res)
         changed = sum(r[2] for r in res)
-        kept, dropped = dedup_domain(d)
+        kept, dropped, contaminated = dedup_domain(d)
         print(
             f"{name:<6} {docs:>9} docs  {chars / 1e9:>6.2f}B chars  {changed / max(chars, 1):>6.2%} converted"
-            f"  |  dedup after conversion: dropped {dropped} ({dropped / max(docs, 1):.2%}), kept {kept}",
+            f"  |  post-conversion: dropped {dropped} dup ({dropped / max(docs, 1):.2%}), "
+            f"{contaminated} eval-contaminated, kept {kept}",
             flush=True,
         )
     print("T2S_DONE")

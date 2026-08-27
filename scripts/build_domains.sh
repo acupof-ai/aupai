@@ -35,10 +35,12 @@ fi
 if has math; then
   # Only sources whose answers are the publisher's own. The data/math/*.jsonl files were written
   # by an answer extractor that has since been fixed, so they are left out until re-fetched.
+  # gsm8k_zh (meta-math/GSM8K_zh = the GSM8K *train* split machine-translated to Chinese) is excluded:
+  # eval/gsm8k.py scores the GSM8K *test* split, and keeping that benchmark's train distribution out of
+  # pretrain is what lets us call the score clean. ~7.5K rows, negligible for a 1e9-token domain.
   $BC --domain math --filters light --target_tokens 1e9 \
     --source jsonl:data/school_math_r1_zh.jsonl \
     --source jsonl:data/en_math_text.jsonl \
-    --source jsonl:data/gsm8k_zh.jsonl \
     --source "jsonl:data/synthetic/math_short_v*.jsonl" > "$LOGS/math.log" 2>&1 &
 fi
 if has chat; then
