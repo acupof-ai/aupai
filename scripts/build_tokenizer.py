@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Build data/tokenizer.json: the fixed tokenizer-training pipeline.
+
+train.py's build_tokenizer rebuild path registers only <unk>/<eos>, so a freshly retrained
+tokenizer drops the 4 chat/think specials the model relies on (a known bug). This script is the
+single source of truth for the rebuild: ByteLevel BPE, vocab 32768, THEN the specials at their fixed
+ids -> vocab 32772, matching the existing data/tokenizer.json exactly.
+
+    python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix.json]
+
+Trains on the content field of every data/corpus/<domain>/*.jsonl (stratified: an equal per-domain
+byte budget so math/code symbols earn merges instead of drowning in web). Prints a coverage report.
+"""
+
+import argparse
+import glob
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+import train  # noqa: E402  (TOK_PATH, Cfg.vocab, DATA)
+
+# The 4 specials build_tokenizer forgets. ids follow the 32768 base vocab.
+CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]
+BYTES_PER_TOKEN_EST = 4  # only to turn --sample-tokens into a per-domain byte budget
+
+
+def domain_texts(corpus, domain, max_bytes):
+    """content strings from corpus/<domain>/*.jsonl, capped at max_bytes."""
+    out, nbytes = [], 0
+    for p in sorted(glob.glob(os.path.join(corpus, domain, "*.jsonl"))):
+        with open(p, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                c = r.get("content") or r.get("text")
+                if not c:
+                    continue
+                out.append(c)
+                nbytes += len(c.encode("utf-8"))
+                if nbytes >= max_bytes:
+                    return out
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--force", action="store_true", help="overwrite an existing data/tokenizer.json")
+    ap.add_argument("--sample-tokens", type=int, default=None, help="cap the training sample (tokens)")
+    ap.add_argument("--mix", default=os.path.join(train.DATA, "mix.json"))
+    a = ap.parse_args()
+
+    if os.path.exists(train.TOK_PATH) and not a.force:
+        print(f"{train.TOK_PATH} exists; pass --force to retrain", file=sys.stderr)
+        return 1
+
+    corpus = os.path.join(train.DATA, "corpus")
+    mix_names = []
+    if os.path.exists(a.mix):
+        with open(a.mix, encoding="utf-8") as f:
+            mix_names = list(json.load(f)["domains"])
+    domains = [d for d in mix_names if os.path.isdir(os.path.join(corpus, d))]
+    for d in sorted(os.listdir(corpus)) if os.path.isdir(corpus) else []:
+        if os.path.isdir(os.path.join(corpus, d)) and d not in domains:
+            domains.append(d)
+    if not domains:
+        print("no data/corpus/<domain>/ to train on", file=sys.stderr)
+        return 1
+
+    budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")
+    per_domain = budget / len(domains)
+    print(f"sampling {len(domains)} domains ({', '.join(domains)})", file=sys.stderr)
+    samples = {d: domain_texts(corpus, d, per_domain) for d in domains}
+    texts = [t for docs in samples.values() for t in docs]
+    print(f"{len(texts)} docs", file=sys.stderr)
+
+    from tokenizers import Tokenizer
+    from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+    from tokenizers.models import BPE
+    from tokenizers.pre_tokenizers import ByteLevel
+    from tokenizers.trainers import BpeTrainer
+
+    tok = Tokenizer(BPE(unk_token="<unk>"))
+    tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
+    tok.decoder = ByteLevelDecoder()
+    # BPE base holds <unk>/<eos> and merges; the 4 chat specials sit on top. Cfg.vocab (32772) is the
+    # FINAL total, so the trainer targets Cfg.vocab - 4 = 32768 to land at 32772 after adding them.
+    base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
+    trainer = BpeTrainer(vocab_size=base_vocab, special_tokens=["<unk>", "<eos>"])
+    tok.train_from_iterator(texts, trainer)
+    # THE FIX: register the chat/think specials build_tokenizer drops.
+    tok.add_special_tokens(CHAT_SPECIALS)
+
+    vsize = tok.get_vocab_size()
+    expected = train.Cfg.vocab
+    if vsize != expected:
+        print(
+            f"WARNING vocab {vsize} != {expected} (corpus too small to fill {base_vocab} merges?)",
+            file=sys.stderr,
+        )
+    tok.save(train.TOK_PATH)
+    print(f"saved {train.TOK_PATH} (vocab {vsize})")
+
+    print(f"\n{'domain':<8}{'tokens':>10}{'chars/tok':>12}{'unk_rate':>10}")
+    unk_id = tok.token_to_id("<unk>")
+    for d, docs in samples.items():
+        if not docs:
+            continue
+        chars = sum(len(t) for t in docs)
+        ids = [i for t in docs for i in tok.encode(t).ids]
+        unks = sum(1 for i in ids if i == unk_id)
+        ntok = len(ids)
+        cpt = chars / ntok if ntok else 0.0
+        unk = unks / ntok if ntok else 0.0
+        print(f"{d:<8}{ntok:>10}{cpt:>12.3f}{unk * 100:>9.3f}%")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
