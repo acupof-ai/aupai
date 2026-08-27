@@ -1357,6 +1357,14 @@ def main():
                             },
                             ckpt_path + f".step{step}",
                         )
+                        # ponytail: cap intermediate sprawl at source — keep newest 3, drop older.
+                        # Resume only needs the latest; `ckpt clean` is the manual override.
+                        stale = sorted(
+                            glob.glob(ckpt_path + ".step*"),
+                            key=lambda p: int(p.rsplit(".step", 1)[1]),
+                        )[:-3]
+                        for p in stale:
+                            os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
                     v = validate(
                         model,
