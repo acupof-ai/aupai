@@ -11,9 +11,13 @@ Training slices x=[:, :-1], y=labels[:, 1:].
 import json
 import os
 import random
+import sys
 
 import torch
 from tokenizers import Tokenizer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from holdout import is_holdout  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
@@ -40,7 +44,8 @@ SOURCES = [
 
 
 def read_examples():
-    """Yield (prompt, output) text pairs from all sources."""
+    """Yield (prompt, output) text pairs from all sources, excluding eval-holdout questions."""
+    n_holdout = 0
     for path, qk, ak in SOURCES:
         n = 0
         with open(path, encoding="utf-8") as f:
@@ -56,9 +61,14 @@ def read_examples():
                     q = f"{q}\n{inp}"
                 if not q or not a:
                     continue
+                if is_holdout(q):  # never train on a question the eval holds out
+                    n_holdout += 1
+                    continue
                 yield f"问：{q}\n答：", a
                 n += 1
         print(f"  {os.path.basename(path)}: {n}", flush=True)
+    if n_holdout:
+        print(f"  excluded {n_holdout} eval-holdout questions", flush=True)
 
 
 def main():

@@ -5,7 +5,7 @@ Reads the size of each tokens_<domain>.pt (from its file size, not by loading 36
 build_mix will actually do: rows per phase, epochs per domain, which domains get capped, the anneal
 composition, and the resulting step count. Run this after scripts/pretokenize.py and before launching.
 
-    python scripts/check_mix.py [--mix data/mix.json] [--batch 72] [--world 8]
+    python scripts/check_mix.py [--mix data/mix.json] [--batch 32] [--world 8]
 """
 
 import argparse
