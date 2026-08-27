@@ -60,7 +60,7 @@ def corpus_tokens(domain, corpus_dir, tok, sidecar):
         dirty = True
     if dirty:
         print(f"  counted {domain}: {total / 1e6:.1f}M tokens", file=sys.stderr)
-    return total, dirty
+    return total
 
 
 def fmt_tokens(n):
@@ -102,8 +102,7 @@ def main():
                 from tokenizers import Tokenizer
 
                 tok = Tokenizer.from_file(TOK_PATH)
-            res = corpus_tokens(d, a.corpus, tok, sidecar)
-            n = res[0] if res else None
+            n = corpus_tokens(d, a.corpus, tok, sidecar)
         counts[d] = n
     with open(sidecar_path, "w", encoding="utf-8") as f:
         json.dump(sidecar, f)
@@ -145,7 +144,7 @@ def main():
                 f"{d:<8}{fmt_tokens(counts[d]):>9}{share:>7.1%}  {bar:<{bar_w}}  {'—':>6}{'—':>8}{'—':>7}{'—':>8}"
             )
 
-    ann = mix["domains"] and {d: c["anneal"] for d, c in mix["domains"].items()}
+    ann = {d: c["anneal"] for d, c in mix["domains"].items()}
     print("\nmain phase: " + " ".join(f"{d} {c['weight']:.0%}" for d, c in mix["domains"].items()))
     print("anneal:     " + " ".join(f"{d} {w:.0%}" for d, w in ann.items()))
     print("schedule dry-run (rows/phase, epoch caps, step count): python scripts/check_mix.py")

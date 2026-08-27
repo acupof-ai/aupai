@@ -13,18 +13,13 @@ import json
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+sys.path.insert(0, HERE)
 
 import train  # noqa: E402
-
-
-def cache_tokens(domain):
-    """Token count from the cache file size: int32, so 4 bytes each, plus torch.save's small header."""
-    p = os.path.join(os.path.dirname(train.TOKEN_CACHE), f"tokens_{domain}.pt")
-    if not os.path.exists(p):
-        return None
-    return os.path.getsize(p) // 4
+from data_overview import cache_tokens  # noqa: E402
 
 
 def main():

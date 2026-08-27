@@ -74,20 +74,13 @@ def read_examples():
         print(f"  excluded {n_holdout} eval-holdout questions", flush=True)
 
 
-def main():
-    random.seed(42)
-    tok = Tokenizer.from_file(TOK_PATH)
-    eos = tok.token_to_id("<eos>")
-    assert eos is not None, "tokenizer has no <eos>"
+def pack_and_save(examples, tok, eos, out_path, seq):
+    """Greedily pack (prompt, output) text pairs into (seq+1)-token rows and save.
 
-    examples = list(read_examples())
-    random.shuffle(examples)
-    if len(examples) > MAX_EXAMPLES:
-        examples = examples[:MAX_EXAMPLES]
-    print(f"total examples: {len(examples)}", flush=True)
-
-    # Greedy packing, one example never split across rows.
-    #
+    One example never split across rows; over-length examples dropped; rows are
+    prompt-masked (labels=-100) and right-padded with <eos>. Saves out_path as
+    {"input_ids": int32 (N, seq+1), "labels": int32 (N, seq+1)}.
+    """
     # The old scheme concatenated a flat token stream, cut it every row_len tokens,
     # and tail-truncated over-length examples (which deletes the prompt and leaves
     # plen=0). sft.py doc-masks by <eos> (doc_cu_seqlens, Cfg.doc_mask) so within-row
@@ -102,7 +95,7 @@ def main():
     n_drop = 0
     n_mismatch = 0
     n_pad = 0
-    row_len = SEQ + 1
+    row_len = seq + 1
 
     def flush():
         """Emit the current row, right-padded with <eos> that carry no loss."""
@@ -147,10 +140,10 @@ def main():
     input_ids = torch.tensor(rows_ids, dtype=torch.int32)
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
-    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    tmp = OUT_PATH + ".tmp"
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    tmp = out_path + ".tmp"
     torch.save({"input_ids": input_ids, "labels": labels}, tmp)
-    os.replace(tmp, OUT_PATH)
+    os.replace(tmp, out_path)
 
     total_tokens = input_ids.numel()
     loss_tokens = (labels != -100).sum().item()
@@ -164,7 +157,22 @@ def main():
     print(f"packed rows: {n_rows} ({row_len} tokens each)", flush=True)
     print(f"total tokens: {total_tokens / 1e6:.2f}M", flush=True)
     print(f"loss tokens: {loss_tokens / 1e6:.2f}M ({100 * loss_tokens / total_tokens:.1f}%)", flush=True)
-    print(f"saved {OUT_PATH} ({os.path.getsize(OUT_PATH) / 1e9:.2f} GB)", flush=True)
+    print(f"saved {out_path} ({os.path.getsize(out_path) / 1e9:.2f} GB)", flush=True)
+
+
+def main():
+    random.seed(42)
+    tok = Tokenizer.from_file(TOK_PATH)
+    eos = tok.token_to_id("<eos>")
+    assert eos is not None, "tokenizer has no <eos>"
+
+    examples = list(read_examples())
+    random.shuffle(examples)
+    if len(examples) > MAX_EXAMPLES:
+        examples = examples[:MAX_EXAMPLES]
+    print(f"total examples: {len(examples)}", flush=True)
+
+    pack_and_save(examples, tok, eos, OUT_PATH, SEQ)
 
 
 if __name__ == "__main__":

@@ -10,11 +10,11 @@ import sys
 from types import SimpleNamespace
 
 import torch
-import torch.nn.functional as F
 from tokenizers import Tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+from eval import log_likelihood_joint
 from train import HybridLM
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -32,24 +32,6 @@ def load_model(ckpt_path, device="cuda"):
         if tok.token_to_id(t) is None:
             tok.add_special_tokens([t])
     return model, tok, cfg
-
-
-def log_likelihood(model, tok, prompt, choice, device="cuda"):
-    """Log-likelihood of choice tokens given prompt."""
-    ids_p = tok.encode(prompt).ids
-    ids_f = tok.encode(prompt + choice).ids
-    if len(ids_f) <= len(ids_p):
-        return -1e9
-    x = torch.tensor([ids_f], device=device)
-    with torch.no_grad():
-        out = model(x)
-        logits = out[0] if isinstance(out, tuple) else out
-        log_probs = F.log_softmax(logits[0], dim=-1)
-    return sum(
-        log_probs[len(ids_p) + i - 1, tid].item()
-        for i, tid in enumerate(ids_f[len(ids_p):])
-        if len(ids_p) + i - 1 >= 0
-    )
 
 
 def load_dataset():
@@ -72,7 +54,7 @@ def evaluate(model, tok, device="cuda", n=None):
             + "\n".join(f"{l}. {t}" for l, t in zip(labels, texts))
             + "\nAnswer:"
         )
-        scores = [log_likelihood(model, tok, prompt, f" {l}", device) for l in labels]
+        scores = [log_likelihood_joint(model, tok, prompt, f" {l}", device) for l in labels]
         pred = labels[scores.index(max(scores))]
         if pred == d["answerKey"]:
             correct += 1

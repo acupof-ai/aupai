@@ -10,6 +10,7 @@ import torch
 from flask import Flask, Response, jsonify, request
 from tokenizers import Tokenizer
 
+from sampling import top_p_sample
 from train import (
     HybridLM,  # noqa: E402  (real architecture; the old inline GDN copy could not load current ckpts)
 )
@@ -37,7 +38,8 @@ print(f"model loaded, vocab={tok.get_vocab_size()}, seq={cfg.seq}", flush=True)
 
 def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
     eos = tok.token_to_id("<|im_end|>")
-    x = torch.tensor([tok.encode(prompt).ids], device=device)
+    prompt_ids = tok.encode(prompt).ids
+    x = torch.tensor([prompt_ids], device=device)
     seen = {}  # token -> count, for repetition penalty
     for _ in range(max_new):
         with torch.no_grad():
@@ -51,18 +53,12 @@ def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
                     logits[0, tid] /= rep_penalty
                 elif cnt > 0:
                     logits[0, tid] *= rep_penalty
-        probs = torch.softmax(logits, dim=-1)
-        sp, si = torch.sort(probs, descending=True, dim=-1)
-        keep = torch.cumsum(sp, dim=-1) - sp <= top_p
-        sp[~keep] = 0
-        sp /= sp.sum(dim=-1, keepdim=True)
-        nxt = si.gather(-1, torch.multinomial(sp, 1))
+        nxt = top_p_sample(logits, top_p)
         x = torch.cat([x, nxt], dim=1)
         tid = nxt.item()
         seen[tid] = seen.get(tid, 0) + 1
         if tid == eos:
             break
-    prompt_ids = tok.encode(prompt).ids
     generated = x[0].tolist()[len(prompt_ids) :]
     return tok.decode(generated, skip_special_tokens=True).strip()
 
