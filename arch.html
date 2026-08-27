@@ -28,8 +28,7 @@
 body {
   background: var(--bg); color: var(--text);
   font-family: "IBM Plex Sans", "PingFang SC", "Noto Sans SC", sans-serif;
-  font-size: 14px; line-height: 1.6;
-  -webkit-font-smoothing: antialiased;
+  font-size: 14px; line-height: 1.6; -webkit-font-smoothing: antialiased;
 }
 .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
 .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 24px 64px; }
@@ -51,67 +50,63 @@ h1 .dim { color: var(--muted); font-weight: 500; font-size: 15px; margin-left: 1
 }
 .chip b { color: var(--text); font-weight: 600; }
 
-.main { display: grid; grid-template-columns: minmax(380px, 520px) 1fr; gap: 28px; align-items: start; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); margin-bottom: 18px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+
+.main { display: grid; grid-template-columns: minmax(420px, 560px) 1fr; gap: 28px; align-items: start; }
 @media (max-width: 900px) { .main { grid-template-columns: 1fr; } }
 
 /* ---- diagram ---- */
-.stack { display: flex; flex-direction: column; gap: 0; }
-.node {
+.diagram { display: flex; flex-direction: column; }
+.card {
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  padding: 9px 14px; cursor: pointer; position: relative;
-  transition: border-color .12s, background .12s;
+  padding: 10px 14px; cursor: pointer; transition: border-color .12s, background .12s;
 }
-.node:hover, .node:focus-visible { border-color: var(--faint); outline: none; }
-.node.sel { border-color: var(--accent); background: var(--panel2); }
-.node .row1 { display: flex; align-items: center; gap: 10px; }
-.node .name { font-weight: 600; font-size: 13.5px; }
-.node .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-family: "IBM Plex Mono", monospace; }
+.card:hover, .card:focus-visible { border-color: var(--faint); outline: none; }
+.card.sel { border-color: var(--accent); background: var(--panel2); }
+.card .row1 { display: flex; align-items: center; gap: 10px; }
+.card .name { font-weight: 600; font-size: 13.5px; }
+.card .meta { color: var(--muted); font-size: 12px; margin-left: auto; font-family: "IBM Plex Mono", monospace; }
 .badge {
-  font-size: 10.5px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px;
-  color: #0b1018;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .06em; padding: 2px 8px; border-radius: 4px; color: #0b1018;
 }
-.badge.kda { background: var(--kda); }
-.badge.mla { background: var(--mla); }
-.badge.ar { background: var(--ar); }
-.badge.gray { background: var(--ffn); color: #fff; }
-.flow { height: 14px; width: 2px; background: var(--line); margin: 0 auto; }
+.badge.kda { background: var(--kda); } .badge.mla { background: var(--mla); }
+.badge.ar { background: var(--ar); } .badge.gray { background: var(--ffn); color: #fff; }
+.flow { height: 12px; width: 2px; background: var(--line); margin: 0 auto; }
 
-.layer-grid { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: stretch; }
-.layer-idx {
-  writing-mode: vertical-rl; transform: rotate(180deg); text-align: center; color: var(--faint);
-  font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: .12em;
-  display: flex; align-items: center; justify-content: center; border-right: 1px solid var(--line);
+/* grid: AR rail (44px) + layer column; each AR band spans its 3 layer rows */
+.dgrid { display: grid; grid-template-columns: 44px 1fr; gap: 8px 12px; align-items: stretch; }
+.ar-band {
+  border: 1px solid var(--ar); border-radius: 6px; opacity: .45; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  writing-mode: vertical-rl; letter-spacing: .22em; font-size: 10px; font-weight: 600;
+  color: var(--ar); font-family: "IBM Plex Mono", monospace;
+  transition: opacity .12s, background .12s, border-color .12s;
 }
-.layer-body { display: flex; flex-direction: column; gap: 6px; }
-.layer-row { display: grid; grid-template-columns: 1fr 1fr 52px; gap: 6px; align-items: stretch; }
+.ar-band:hover, .ar-band:focus-visible, .ar-band.sel {
+  opacity: 1; outline: none; background: color-mix(in srgb, var(--ar) 12%, transparent);
+}
+.layer {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  display: grid; grid-template-columns: 30px 1fr; gap: 10px; align-items: center;
+}
+.layer .idx {
+  font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--faint); text-align: center;
+}
+.subs { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; }
 .sub {
   border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; cursor: pointer;
-  background: var(--panel); font-size: 12px; transition: border-color .12s;
+  background: var(--bg); font-size: 12px; transition: border-color .12s;
 }
-.sub:hover, .sub:focus-visible { border-color: var(--faint); outline: none; }
-.sub.sel { border-color: var(--accent); background: var(--panel2); }
+.sub:hover, .sub:focus-visible, .sub.sel { border-color: var(--accent); outline: none; }
 .sub .t { font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
 .sub .d { color: var(--muted); font-size: 11px; font-family: "IBM Plex Mono", monospace; margin-top: 1px; }
+.sub.ar { display: flex; align-items: center; justify-content: center; padding: 6px 2px; }
+.sub.ar .t { font-size: 11px; color: var(--muted); }
+.sub.ar:hover .t, .sub.ar.sel .t { color: var(--text); }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .dot.kda { background: var(--kda); } .dot.mla { background: var(--mla); }
 .dot.ffn { background: var(--ffn); } .dot.ar { background: var(--ar); }
-.sub.ar { display: flex; align-items: center; justify-content: center; padding: 6px 4px; }
-.sub.ar .t { font-size: 11px; color: var(--muted); }
-.sub.ar.sel .t, .sub.ar:hover .t { color: var(--text); }
-
-/* AR group rail */
-.rail-wrap { display: grid; grid-template-columns: 46px 28px 1fr; gap: 10px; align-items: stretch; }
-.rail { position: relative; }
-.ar-band {
-  position: absolute; left: 8px; right: 6px; border: 1px solid var(--ar); border-radius: 6px;
-  opacity: .55; cursor: pointer; display: flex; align-items: center;
-}
-.ar-band:hover, .ar-band.sel { opacity: 1; background: color-mix(in srgb, var(--ar) 10%, transparent); }
-.ar-band span {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) rotate(-90deg);
-  font-family: "IBM Plex Mono", monospace; font-size: 10px; color: var(--ar); letter-spacing: .14em;
-  white-space: nowrap;
-}
 
 /* ---- detail panel ---- */
 .detail {
@@ -129,21 +124,16 @@ h3.sec {
 table.shapes { width: 100%; border-collapse: collapse; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
 table.shapes td { padding: 4px 0; border-bottom: 1px solid var(--line); }
 table.shapes td:last-child { text-align: right; color: var(--muted); }
-table.shapes td:first-child { color: var(--text); }
 .formula {
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px;
   font-family: "IBM Plex Mono", monospace; font-size: 12px; overflow-x: auto;
   color: var(--text); line-height: 1.8; white-space: pre;
 }
-.pcount { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--muted); }
-.pcount b { color: var(--text); }
-
-/* param bar */
 .parambar { display: flex; height: 14px; border-radius: 4px; overflow: hidden; margin: 8px 0 10px; border: 1px solid var(--line); }
 .parambar div { height: 100%; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
-.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
-.legend .mono { color: var(--text); }
+.legend2 { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); }
+.legend2 i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
+.legend2 .mono { color: var(--text); }
 
 footer { margin-top: 40px; color: var(--faint); font-size: 12px; border-top: 1px solid var(--line); padding-top: 14px; }
 </style>
@@ -155,10 +145,16 @@ footer { margin-top: 40px; color: var(--faint); font-size: 12px; border-top: 1px
     <button class="theme-btn" id="themeBtn" type="button">切换主题</button>
   </header>
   <p class="sub">9 层 Kimi Delta Attention（线性衰减循环）+ 3 层 Gated MLA（滑动窗口注意力）交替堆叠，
-  深度方向由 Attention Residuals 把每个子层输出接回后续所有层。点击左侧任意组件查看细节。</p>
+  深度方向由 Attention Residuals 把每个子层输出接回后续所有层。点击任意组件查看细节。</p>
   <div class="chips" id="chips"></div>
+  <div class="legend">
+    <span><i style="background:var(--kda)"></i>KDA 层 ×9</span>
+    <span><i style="background:var(--mla)"></i>Gated MLA 层 ×3</span>
+    <span><i style="background:var(--ar)"></i>Attention Residuals 组 ×4</span>
+    <span><i style="background:var(--ffn)"></i>FFN / Norm / Embedding</span>
+  </div>
   <div class="main">
-    <div class="stack" id="diagram"></div>
+    <div class="diagram" id="diagram"></div>
     <div class="detail" id="detail"></div>
   </div>
   <footer>数据来自 ckpt_rl_direct_bf16.pt 实测（239.75M 参数）。KDA 为 fla flash_kda 内核的纯 PyTorch 等价表述。</footer>
@@ -166,10 +162,7 @@ footer { margin-top: 40px; color: var(--faint); font-size: 12px; border-top: 1px
 
 <script>
 const MIXER = {0:'KDA',1:'KDA',2:'KDA',3:'MLA',4:'KDA',5:'KDA',6:'KDA',7:'MLA',8:'KDA',9:'KDA',10:'KDA',11:'MLA'};
-const P = {
-  kdaMixer: 5.265e6, mlaMixer: 3.932e6, ffn: 9.437e6, arLayer: 4.096e3,
-  tok: 33.62e6, finalAr: 2.048e3, norm: 1.024e3,
-};
+const AR_GROUPS = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
 const fmt = n => n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'K' : String(n);
 
 const DETAIL = {
@@ -178,9 +171,8 @@ const DETAIL = {
     body: `<p>12 层混合架构：每 4 层中前 3 层是 KDA（带界衰减的 delta 循环，O(T) 序列建模），第 4 层是 Gated MLA
       （潜在 KV 压缩 + 1024 滑动窗口注意力，NoPE——位置信息由 KDA 的衰减携带）。每个子层的输出不只用一次，
       而是通过 Attention Residuals 按软权重接回后续所有子层。</p>
-      <p class="dim">训练侧：FP8 计算（torchao）、Muon 优化器、WSD 调度、logit softcap 15、 tied embedding/head。</p>`,
-    sec: '参数分布',
-    paramBar: true,
+      <p class="dim">训练侧：FP8 计算（torchao）、Muon 优化器、WSD 调度、logit softcap 15、tied embedding/head。</p>`,
+    sec: '参数分布', paramBar: true,
   },
   tok: {
     title: 'Embedding', kind: 'tok.weight · 与输出头共享权重',
@@ -224,7 +216,7 @@ out  = 25·tanh(w2(gate)/25)`,
     title: `Attention Residuals · 组 ${g}`, kind: `深度注意力 · 覆盖第 ${layers[0]}–${layers[layers.length-1]} 层`,
     body: `<p>每个子层（mixer / FFN 各算一个）输出时，不只用残差连接，而是由一个零初始化的"伪查询"对
       <b>此前所有子层输出</b>做 softmax 加权求和。训练开始时是均匀平均，之后模型自行学习该回头看哪些层。
-      24 个子层被分成 4 组（每组 6 个 = 3 个 transformer 层），组内求和后作为一个源，
+      24 个子层被分成 4 组（每组 6 个 = 3 个 transformer 层），组内求和后作为一个源。
       计算上用 RMSNorm 增益折叠进查询 + 逐位置缩放，从不物化归一化副本。</p>`,
     shapes: [['每组子层数', '6（3 层 × 2）'], ['ar1.q / ar1.g', '1024 / 1024（每层）'], ['零初始化', 'q 从 0 开始 = 均匀平均'],
       ['全模型 AR 参数', '~50K（0.02%）']],
@@ -235,11 +227,6 @@ out  = 25·tanh(w2(gate)/25)`,
     title: `ar1 · 第 ${i} 层 mixer 后`, kind: 'Attention Residual（子层级）',
     body: `<p>mixer 子层的深度注意力节点：对 embedding 及之前所有组的输出做软加权，结果再过 n1 归一化进 mixer。
       q 零初始化，g 为 RMSNorm 增益（折叠到查询侧）。全模型仅 2K 参数。</p>`,
-    shapes: [['q / g', '1024 / 1024'], ['参数量', '2.0K']],
-  }),
-  ar2: (i) => ({
-    title: `ar2 · 第 ${i} 层 FFN 后`, kind: 'Attention Residual（子层级）',
-    body: `<p>FFN 子层的深度注意力节点，与 ar1 结构相同。ar1/ar2 交替覆盖全部 24 个子层。</p>`,
     shapes: [['q / g', '1024 / 1024'], ['参数量', '2.0K']],
   }),
   final_ar: {
@@ -254,7 +241,7 @@ out  = 25·tanh(w2(gate)/25)`,
     shapes: [['g', '1024'], ['参数量', '1.0K']],
   },
   head: {
-    title: 'LM Head + Softcap', kind: 'tied embedding · 对数its 截断',
+    title: 'LM Head + Softcap', kind: 'tied embedding · logits 截断',
     body: `<p>与 embedding 共享权重（33.62M）。投影后用 <span class="mono">15·tanh(logits/15)</span> 截断，
       限制 logit 动态范围，稳定 FP8 训练。</p>`,
     shapes: [['head.weight', '= tok.weight'], ['softcap', '15·tanh(x/15)'], ['参数量', '0（共享）']],
@@ -263,127 +250,82 @@ out  = 25·tanh(w2(gate)/25)`,
 
 // ---------- diagram ----------
 const diagram = document.getElementById('diagram');
-const arGroups = [[0,1,2],[3,4,5],[6,7,8],[9,10,11]];
 
-function node({id, badge, badgeCls, name, meta, html}) {
+function makeCard({id, badge, badgeCls, name, meta}) {
   const d = document.createElement('div');
-  d.className = 'node'; d.dataset.id = id; d.tabIndex = 0;
-  d.innerHTML = `<div class="row1">${badge?`<span class="badge ${badgeCls}">${badge}</span>`:''}
-    <span class="name">${name}</span><span class="meta">${meta||''}</span></div>${html||''}`;
-  d.onclick = () => select(id);
-  d.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } };
+  d.className = 'card'; d.dataset.id = id; d.tabIndex = 0;
+  d.innerHTML = `<div class="row1">${badge ? `<span class="badge ${badgeCls}">${badge}</span>` : ''}
+    <span class="name">${name}</span><span class="meta">${meta || ''}</span></div>`;
+  bindSelect(d, id);
   return d;
 }
 function flow() { const f = document.createElement('div'); f.className = 'flow'; return f; }
-
-function arBand(g, layers, topPc, hPc) {
-  const d = document.createElement('div');
-  d.className = 'ar-band'; d.dataset.id = 'ar'+g; d.tabIndex = 0;
-  d.style.top = topPc + '%'; d.style.height = hPc + '%';
-  d.innerHTML = `<span>AR-${g}</span>`;
-  d.onclick = e => { e.stopPropagation(); select('ar'+g); };
-  return d;
-}
-
-let sel = 'overview';
-function select(id) {
-  sel = id;
-  document.querySelectorAll('.node.sel, .sub.sel, .ar-band.sel').forEach(e => e.classList.remove('sel'));
-  const el = document.querySelector(`[data-id="${CSS.escape(id)}"]`);
-  if (el) el.classList.add('sel');
-  renderDetail(id);
+function bindSelect(el, id) {
+  el.addEventListener('click', e => { e.stopPropagation(); select(id); });
+  el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(id); } });
 }
 
 function buildDiagram() {
-  diagram.appendChild(node({id:'tok', badge:'EMBED', badgeCls:'gray', name:'Token Embedding', meta:'32768×1024'}));
+  diagram.appendChild(makeCard({id: 'tok', badge: 'EMBED', badgeCls: 'gray', name: 'Token Embedding', meta: '32768×1024'}));
   diagram.appendChild(flow());
 
-  // AR rail + layers: one grid containing rail column and layer rows
-  const railWrap = document.createElement('div');
-  railWrap.style.display = 'grid';
-  railWrap.style.gridTemplateColumns = '46px 28px 1fr';
-  railWrap.style.gap = '10px';
-  const rail = document.createElement('div'); rail.className = 'rail';
-  rail.style.position = 'relative';
-  const idxCol = document.createElement('div');
-  const layersCol = document.createElement('div');
-  layersCol.style.display = 'flex'; layersCol.style.flexDirection = 'column'; layersCol.style.gap = '10px';
-
-  arGroups.forEach((layers, g) => {
+  const grid = document.createElement('div');
+  grid.className = 'dgrid';
+  AR_GROUPS.forEach((layers, g) => {
+    const band = document.createElement('div');
+    band.className = 'ar-band'; band.dataset.id = 'ar' + (g + 1); band.tabIndex = 0;
+    band.textContent = `AR-${g + 1}`;
+    band.style.gridRow = `span ${layers.length}`;
+    bindSelect(band, 'ar' + (g + 1));
+    grid.appendChild(band);
     layers.forEach(i => {
-      const row = document.createElement('div');
-      row.className = 'layer-row';
       const kind = MIXER[i];
+      const row = document.createElement('div');
+      row.className = 'layer';
       row.innerHTML = `
-        <div class="sub" data-id="${kind.toLowerCase()}${i}" tabindex="0">
-          <div class="t"><span class="dot ${kind.toLowerCase()}"></span>${kind}</div>
-          <div class="d">${kind==='KDA' ? '5.27M' : '3.93M'} · ${kind==='KDA' ? 'delta 循环' : '窗口 1024'}</div>
-        </div>
-        <div class="sub" data-id="ffn${i}" tabindex="0">
-          <div class="t"><span class="dot ffn"></span>FFN</div>
-          <div class="d">9.44M · SiTU-GLU</div>
-        </div>
-        <div class="sub ar" data-id="ar1${i}" tabindex="0" title="ar1（mixer 后）/ ar2（FFN 后）"><div class="t">ar</div></div>`;
-      row.querySelectorAll('.sub').forEach(s => {
-        s.onclick = e => { e.stopPropagation(); select(s.dataset.id); };
-        s.onkeydown = e => { if (e.key==='Enter'||e.key===' ') { e.preventDefault(); select(s.dataset.id); } };
-      });
-      const card = document.createElement('div');
-      card.style.cssText = 'background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px;';
-      card.appendChild(row);
-      const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:grid;grid-template-columns:28px 1fr;gap:10px;align-items:stretch;';
-      wrap.innerHTML = `<div class="layer-idx">L${i}</div>`;
-      wrap.appendChild(card);
-      layersCol.appendChild(wrap);
+        <div class="idx">L${i}</div>
+        <div class="subs">
+          <div class="sub" data-id="${kind.toLowerCase()}${i}" tabindex="0">
+            <div class="t"><span class="dot ${kind.toLowerCase()}"></span>${kind}</div>
+            <div class="d">${kind === 'KDA' ? '5.27M · delta 循环' : '3.93M · 窗口 1024'}</div>
+          </div>
+          <div class="sub" data-id="ffn${i}" tabindex="0">
+            <div class="t"><span class="dot ffn"></span>FFN</div>
+            <div class="d">9.44M · SiTU-GLU</div>
+          </div>
+          <div class="sub ar" data-id="ar1${i}" tabindex="0" title="ar1（mixer 后）/ ar2（FFN 后）"><div class="t">ar</div></div>
+        </div>`;
+      row.querySelectorAll('.sub').forEach(s => bindSelect(s, s.dataset.id));
+      grid.appendChild(row);
     });
   });
-
-  // bands positioned over 3 layer cards each (with 10px gaps): compute after layout
-  requestAnimationFrame(() => {
-    const cards = layersCol.children;
-    arGroups.forEach((layers, g) => {
-      const first = cards[layers[0]].getBoundingClientRect();
-      const last = cards[layers[layers.length-1]].getBoundingClientRect();
-      const railRect = rail.getBoundingClientRect();
-      const top = first.top - railRect.top;
-      const h = last.bottom - first.top;
-      rail.appendChild(arBand(g+1, layers, top, h));
-    });
-  });
-
-  railWrap.appendChild(rail);
-  railWrap.appendChild(idxCol); // unused spacer column kept for grid alignment
-  idxCol.style.display = 'none';
-  railWrap.appendChild(layersCol);
-  diagram.appendChild(railWrap);
+  diagram.appendChild(grid);
 
   diagram.appendChild(flow());
-  diagram.appendChild(node({id:'final_ar', badge:'AR', badgeCls:'ar', name:'final_ar', meta:'深度注意力'}));
+  diagram.appendChild(makeCard({id: 'final_ar', badge: 'AR', badgeCls: 'ar', name: 'final_ar', meta: '深度注意力'}));
   diagram.appendChild(flow());
-  diagram.appendChild(node({id:'norm', badge:'NORM', badgeCls:'gray', name:'RMSNorm', meta:'1024'}));
+  diagram.appendChild(makeCard({id: 'norm', badge: 'NORM', badgeCls: 'gray', name: 'RMSNorm', meta: '1024'}));
   diagram.appendChild(flow());
-  diagram.appendChild(node({id:'head', badge:'HEAD', badgeCls:'gray', name:'LM Head (tied) + softcap 15', meta:'32768'}));
+  diagram.appendChild(makeCard({id: 'head', badge: 'HEAD', badgeCls: 'gray', name: 'LM Head (tied) + softcap 15', meta: '32768'}));
 }
 
 // ---------- detail ----------
 const detail = document.getElementById('detail');
+function detailFor(id) {
+  if (DETAIL[id]) return DETAIL[id];
+  if (/^kda\d+$/.test(id)) return DETAIL.kda(+id.replace('kda', ''));
+  if (/^mla\d+$/.test(id)) return DETAIL.mla(+id.replace('mla', ''));
+  if (/^ffn\d+$/.test(id)) return DETAIL.ffn(+id.replace('ffn', ''));
+  if (/^ar\d+$/.test(id)) return DETAIL.ar(+id.replace('ar', ''), AR_GROUPS[+id.replace('ar', '') - 1]);
+  if (/^ar1\d+$/.test(id)) return DETAIL.ar1(+id.replace('ar1', ''));
+  return DETAIL.overview;
+}
 function renderDetail(id) {
-  let d;
-  if (id === 'overview') d = DETAIL.overview;
-  else if (DETAIL[id]) d = DETAIL[id];
-  else if (/^kda\d+$/.test(id)) d = DETAIL.kda(+id.replace('kda',''));
-  else if (/^mla\d+$/.test(id)) d = DETAIL.mla(+id.replace('mla',''));
-  else if (/^ffn\d+$/.test(id)) d = DETAIL.ffn(+id.replace('ffn',''));
-  else if (/^ar\d+$/.test(id)) d = DETAIL.ar(+id.replace('ar',''), arGroups[+id.replace('ar','')-1]);
-  else if (/^ar1\d+$/.test(id)) d = DETAIL.ar1(+id.replace('ar1',''));
-  else if (/^ar2\d+$/.test(id)) d = DETAIL.ar2(+id.replace('ar2',''));
-  else d = DETAIL.overview;
-
-  let html = `<h2>${d.title}</h2><div class="kind">${d.kind}</div>${d.body||''}`;
+  const d = detailFor(id);
+  let html = `<h2>${d.title}</h2><div class="kind">${d.kind}</div>${d.body || ''}`;
   if (d.shapes) {
     html += `<h3 class="sec">张量 / 形状</h3><table class="shapes">` +
-      d.shapes.map(([k,v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + `</table>`;
+      d.shapes.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('') + `</table>`;
   }
   if (d.formula) html += `<h3 class="sec">公式</h3><div class="formula">${d.formula}</div>`;
   if (d.paramBar) {
@@ -393,35 +335,37 @@ function renderDetail(id) {
       ['AttnRes 全部', 0.05e6, 'var(--ar)'],
     ];
     const total = 239.75e6;
-    html += `<div class="parambar">` + rows.map(([n,v,c]) =>
-      `<div style="width:${(v/total*100).toFixed(2)}%;background:${c}" title="${n} ${fmt(v)}"></div>`).join('') + `</div>
-      <div class="legend">` + rows.map(([n,v,c]) =>
-      `<span><i style="background:${c}"></i>${n} <span class="mono">${(v/total*100).toFixed(1)}%</span></span>`).join('') + `</div>
+    html += `<div class="parambar">` + rows.map(([n, v, c]) =>
+      `<div style="width:${(v / total * 100).toFixed(2)}%;background:${c}" title="${n} ${fmt(v)}"></div>`).join('') + `</div>
+      <div class="legend2">` + rows.map(([n, v, c]) =>
+      `<span><i style="background:${c}"></i>${n} <span class="mono">${(v / total * 100).toFixed(1)}%</span></span>`).join('') + `</div>
       <p class="dim" style="margin-top:12px">Mixer 内部：9 层 KDA × 5.27M + 3 层 MLA × 3.93M。
       AttnRes 全模型仅 ~50K 参数（0.02%），却在 SFT 中吸收了绝大部分权重变化。</p>`;
   }
   detail.innerHTML = html;
+}
+function select(id) {
+  document.querySelectorAll('.card.sel, .sub.sel, .ar-band.sel').forEach(e => e.classList.remove('sel'));
+  const el = document.querySelector(`[data-id="${CSS.escape(id)}"]`);
+  if (el) el.classList.add('sel');
+  renderDetail(id);
 }
 
 // ---------- header chips ----------
 document.getElementById('chips').innerHTML = [
   ['参数量', '239.75M'], ['层数', '12（9 KDA + 3 MLA）'], ['d / heads', '1024 / 8'],
   ['序列', '4096'], ['词表', '32,772'], ['精度', 'FP8'], ['AttnRes', 'blocks=4'],
-].map(([k,v]) => `<span class="chip">${k} <b>${v}</b></span>`).join('');
+].map(([k, v]) => `<span class="chip">${k} <b>${v}</b></span>`).join('');
 
 // ---------- theme ----------
 const themeBtn = document.getElementById('themeBtn');
 themeBtn.onclick = () => {
-  const cur = document.documentElement.dataset.theme;
-  const next = cur === 'light' ? 'dark' : 'light';
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
   if (next === 'dark') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = next;
   try { localStorage.setItem('arch-theme', next); } catch {}
 };
-try {
-  const saved = localStorage.getItem('arch-theme');
-  if (saved === 'light') document.documentElement.dataset.theme = 'light';
-} catch {}
+try { if (localStorage.getItem('arch-theme') === 'light') document.documentElement.dataset.theme = 'light'; } catch {}
 
 buildDiagram();
 renderDetail('overview');
