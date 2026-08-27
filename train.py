@@ -29,6 +29,7 @@ import glob
 import json
 import math
 import random
+import re
 import time
 from typing import NamedTuple
 
@@ -49,17 +50,46 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 class RunLog:
-    """Tee training prints to runs/<name>.log and plot curves at the end (scripts/plot_curves.py)."""
+    """Tee training prints to runs/<name>.log and plot curves at the end (scripts/plot_curves.py).
+    With wandb=True, parse the per-step log line and mirror its metrics to Weights & Biases."""
 
-    def __init__(self, name):
+    _STEP_RE = re.compile(
+        r"step (\d+)/\d+.*?loss ([\d.]+).*?lr ([\d.eE+-]+).*?gnorm ([\d.]+).*?"
+        r"([\d.]+)K tok/s/gpu \| MFU (\d+)%"
+    )
+    _VAL_RE = re.compile(r"step (\d+)/\d+ val ([\d.]+)")
+
+    def __init__(self, name, wandb=False):
         os.makedirs(os.path.join(ROOT, "runs"), exist_ok=True)
         self.path = os.path.join(ROOT, "runs", f"{name}.log")
         self.f = open(self.path, "a", encoding="utf-8")
+        self.wandb = None
+        if wandb:
+            import wandb as _wandb
+
+            _wandb.init(project=os.environ.get("WANDB_PROJECT", "aupai"), name=name)
+            self.wandb = _wandb
 
     def __call__(self, msg):
         print(msg, flush=True)
         self.f.write(msg + "\n")
         self.f.flush()
+        if self.wandb:
+            m = self._STEP_RE.search(msg)
+            if m:
+                s, loss, lr, gnorm, tps, mfu = m.groups()
+                self.wandb.log(
+                    {
+                        "loss": float(loss),
+                        "lr": float(lr),
+                        "gnorm": float(gnorm),
+                        "tok_s_per_gpu_k": float(tps),
+                        "mfu": int(mfu),
+                    },
+                    step=int(s),
+                )
+            elif v := self._VAL_RE.search(msg):
+                self.wandb.log({"val_loss": float(v.group(2))}, step=int(v.group(1)))
 
     def plot(self):
         import subprocess
@@ -1096,6 +1126,9 @@ def main():
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    parser.add_argument(
+        "--wandb", action="store_true", help="mirror step metrics to Weights & Biases (WANDB_PROJECT)"
+    )
     # The Muon/AdamW learning rates are nanochat's, tuned for a large batch. Cfg.batch is chosen for
     # what fits in HBM, so the two have to be reconciled by hand: at batch 24 x 8 (786K tokens/step,
     # 2.25x smaller than the 1.77M these rates came from) the unscaled rates made the loss bottom out
@@ -1113,7 +1146,7 @@ def main():
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0
-    runlog = RunLog(args.name) if is_main else print
+    runlog = RunLog(args.name, wandb=args.wandb) if is_main else print
     if args.mix is not None:
         Cfg.mix = args.mix
     ckpt_path = CKPT if args.name == "pretrain" else os.path.join(ROOT, f"ckpt_{args.name}.pt")
@@ -1180,8 +1213,6 @@ def main():
         ck = torch.load(args.resume, map_location="cpu", weights_only=False)
         raw_model.load_state_dict(ck["model"])
         # parse step from filename like ckpt.pt.step2000
-        import re
-
         m = re.search(r"step(\d+)", args.resume)
         if m:
             resume_step = int(m.group(1))
