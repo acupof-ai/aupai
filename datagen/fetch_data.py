@@ -71,16 +71,12 @@ for name in ("core.txt", "framework.md", "method.txt"):
     p = os.path.join(DATA, name)
     if os.path.exists(p):
         existing.append(open(p, encoding="utf-8").read())
-for p in sorted(glob.glob(os.path.join(DATA, "corpus", "*.jsonl"))):
-    for line in open(p, encoding="utf-8"):
-        line = line.strip()
-        if line:
-            existing.append(json.loads(line)["content"])
-for p in sorted(glob.glob(os.path.join(DATA, "corpus", "primary", "*.jsonl"))):
-    for line in open(p, encoding="utf-8"):
-        line = line.strip()
-        if line:
-            existing.append(json.loads(line)["content"])
+for pat in ("corpus/*.jsonl", "corpus/primary/*.jsonl"):
+    for p in sorted(glob.glob(os.path.join(DATA, pat))):
+        for line in open(p, encoding="utf-8"):
+            line = line.strip()
+            if line:
+                existing.append(json.loads(line)["content"])
 
 existing_chars = sum(len(t) for t in existing)
 print(

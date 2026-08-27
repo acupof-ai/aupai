@@ -18,7 +18,6 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "runs", "experiments.jsonl")
 MD = os.path.join(ROOT, "EXPERIMENTS.md")
-COLS = ["started", "name", "status", "cmd", "notes", "hypothesis", "result", "finding", "decision", "ended", "commit"]
 
 
 def rows():

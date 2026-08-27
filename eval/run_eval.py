@@ -46,16 +46,8 @@ def _load_module(name):
     return import_module(f"eval.{name}")
 
 
-def load_hellaswag():
-    m = _load_module("hellaswag")
-    return [
-        {"prompt": d["context"], "options": d["options"], "label": d["label"]}
-        for d in m.load_dataset()
-    ]
-
-
-def load_winogrande():
-    m = _load_module("winogrande")
+def _load_context_mc(name):
+    m = _load_module(name)
     return [
         {"prompt": d["context"], "options": d["options"], "label": d["label"]}
         for d in m.load_dataset()
@@ -140,11 +132,11 @@ def load_mmlu():
 
 
 MC_BENCHMARKS = {
-    "hellaswag": ("HellaSwag", load_hellaswag),
+    "hellaswag": ("HellaSwag", lambda: _load_context_mc("hellaswag")),
     "piqa": ("PIQA", load_piqa),
     "arc-easy": ("ARC-Easy", lambda: _load_arc("ARC-Easy")),
     "arc-challenge": ("ARC-Challenge", lambda: _load_arc("ARC-Challenge")),
-    "winogrande": ("WinoGrande", load_winogrande),
+    "winogrande": ("WinoGrande", lambda: _load_context_mc("winogrande")),
     "boolq": ("BoolQ", load_boolq),
     "openbookqa": ("OpenBookQA", load_openbookqa),
     "mmlu": ("MMLU", load_mmlu),
@@ -189,7 +181,7 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH):
         max_len = max(len(p) + len(o) for p, o, _, _ in chunk)
         B = len(chunk)
         x = torch.zeros((B, max_len), dtype=torch.long, device=device)
-        rows, positions, targets, job_ids = [], [], [], []
+        rows, positions, targets = [], [], []
         for b, (p_ids, o_ids, _, _) in enumerate(chunk):
             full = p_ids + o_ids
             x[b, : len(full)] = torch.tensor(full, dtype=torch.long, device=device)
@@ -198,18 +190,16 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH):
                 rows.append(b)
                 positions.append(max(pl - 1 + k, 0))  # logit predicting token k of the option
                 targets.append(t)
-                job_ids.append(b)
 
         logits = model(x)[0]  # (B, T, V) float32, softcapped
         rows_t = torch.tensor(rows, device=device)
         pos_t = torch.tensor(positions, device=device)
         tgt_t = torch.tensor(targets, device=device)
-        job_t = torch.tensor(job_ids, device=device)
 
         token_lp = logits[rows_t, pos_t].log_softmax(-1)  # (N_tokens, V)
         token_lp = token_lp[torch.arange(len(tgt_t), device=device), tgt_t]
         job_scores = torch.zeros(B, dtype=torch.float32, device=device)
-        job_scores.scatter_add_(0, job_t, token_lp)  # sum token log-probs per job
+        job_scores.scatter_add_(0, rows_t, token_lp)  # sum token log-probs per job
         for b, (_, _, ii, jj) in enumerate(chunk):
             scores[ii, jj] = job_scores[b]
 

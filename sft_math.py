@@ -37,7 +37,6 @@ from train import (
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SFT_DATA = os.path.join(ROOT, "data", "sft", "sft_all.pt")
-CKPT_SFT = os.path.join(ROOT, "ckpt_sft.pt")
 EOS_ID = 1  # <eos> id in data/tokenizer.json; packed SFT rows carry ~10 samples each
 SAVE_INTERVAL = 200
 LOG_INTERVAL = 10

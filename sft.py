@@ -133,7 +133,7 @@ def main():
                 hidden, _ = model(
                     xb, yb, doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None
                 )  # targets passed so compile traces hidden branch
-            B, T, D = hidden.shape
+            D = hidden.shape[-1]
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             loss.backward()
             last = loss.item()

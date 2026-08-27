@@ -65,7 +65,7 @@ def check_answer(generated, reference):
         if "####" in generated or "答案是" in generated:
             return 0.3
         return 0.1
-    except (ValueError, IndexError):
+    except ValueError:
         return 0.0
 
 

@@ -23,7 +23,6 @@ seen_q = set()
 
 
 def add(d, q, a, e):
-    global bank, seen_q
     if q in seen_q:
         return
     seen_q.add(q)

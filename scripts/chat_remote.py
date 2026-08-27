@@ -6,8 +6,6 @@ Usage: uv run python3 chat_remote.py [prompt]
 import json
 import subprocess
 import sys
-import tempfile
-import os
 
 from tokenizers import Tokenizer
 
@@ -16,31 +14,24 @@ TOK_PATH = "data/tokenizer.json"
 
 def infer_remote(ids):
     """Run inference on pod, return output token IDs."""
-    # Write IDs to a temp file, push to pod, run inference, read result
     ids_json = json.dumps(ids)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write(ids_json)
-        tmp_local = f.name
     tmp_remote = "/tmp/infer_ids.json"
 
-    try:
-        # Push via base64 to avoid stdin issues
-        import base64
-        b64 = base64.b64encode(ids_json.encode()).decode()
-        subprocess.run(
-            ["bash", "-c", f"~/bin/pod 'echo {b64} | base64 -d > {tmp_remote}'"],
-            capture_output=True, timeout=30,
-        )
-        # Run inference
-        result = subprocess.run(
-            ["bash", "-c", f"~/bin/pod 'cd /work/aupai && CUDA_VISIBLE_DEVICES=0 python3 infer.py {tmp_remote}'"],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr[-300:])
-        return json.loads(result.stdout.strip().splitlines()[-1])
-    finally:
-        os.unlink(tmp_local)
+    # Push via base64 to avoid stdin issues
+    import base64
+    b64 = base64.b64encode(ids_json.encode()).decode()
+    subprocess.run(
+        ["bash", "-c", f"~/bin/pod 'echo {b64} | base64 -d > {tmp_remote}'"],
+        capture_output=True, timeout=30,
+    )
+    # Run inference
+    result = subprocess.run(
+        ["bash", "-c", f"~/bin/pod 'cd /work/aupai && CUDA_VISIBLE_DEVICES=0 python3 infer.py {tmp_remote}'"],
+        capture_output=True, text=True, timeout=120,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[-300:])
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 
 def main():

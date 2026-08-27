@@ -12,8 +12,6 @@ from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
 from train import Cfg, HybridLM, Muon, convert_to_fp8_compute, FP8Linear
 
 GC = os.environ.get("GC", "0") == "1"
-Cfg.batch = int(os.environ.get("BS", "2")); Cfg.grad_ckpt = GC
-Cfg.compile = os.environ.get("COMPILE", "0") == "1"
 USE_MUON = os.environ.get("MUON", "0") == "1"
 STEPS = int(os.environ.get("STEPS", "40"))
 dev = "cuda:0"

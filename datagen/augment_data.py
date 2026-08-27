@@ -87,7 +87,7 @@ def to_summary(doc):
     ]
     for i, s in enumerate(sentences):
         if i > 0 and i % 3 == 0 and i < len(transitions) * 3:
-            t = transitions[i // 3 - 1] if i // 3 - 1 < len(transitions) else ""
+            t = transitions[i // 3 - 1]
             parts.append(f"\n{t}{s}")
         else:
             parts.append(s)

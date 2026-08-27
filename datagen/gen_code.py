@@ -17,8 +17,8 @@ import sys
 rng = random.Random(2024)
 
 
-def code_for(name, r):
-    """return (prompt, code) for a given template name + params r"""
+def code_for(name):
+    """return (prompt, code) for a given template name"""
     n = lambda lo, hi: rng.randint(lo, hi)  # noqa
     if name == "print":
         w = rng.choice(["你好,Python!", "欢迎学习编程", "1 + 1 = ?", "坚持就是胜利"])
@@ -282,7 +282,7 @@ def main():
     stat = {}
     while len(rows) < N:
         nm = rng.choice(NAMES)
-        pr, code, exp = code_for(nm, None)
+        pr, code, exp = code_for(nm)
         if code in seen:
             continue
         out, err = run(code)

@@ -23,7 +23,6 @@ os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "data", "math")
-OPS = {"+": lambda a, b: a + b, "-": lambda a, b: a - b, "*": lambda a, b: a * b, "/": lambda a, b: a / b}
 
 
 def num(s):

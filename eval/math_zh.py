@@ -26,7 +26,7 @@ from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-from scripts.eqcheck import check_steps, iter_equations  # noqa: E402,F401
+from scripts.eqcheck import check_steps  # noqa: E402
 
 ANS_RE = re.compile(r"答案是[:：]\s*(.+?)(?:[。\n]|$)")
 

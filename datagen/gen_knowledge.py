@@ -544,7 +544,7 @@ DEFS = [
 
 def main():
     N = int(sys.argv[1])
-    bank = [(d, q, a, e) for d, q, a, e in CURATED]
+    bank = list(CURATED)
     bank.extend(("数学",) + t for t in DEFS)
     for fc, tc, ratio, dom in CONV:
         bank.append(
