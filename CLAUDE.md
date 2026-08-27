@@ -34,7 +34,8 @@
 ## Experiment records
 - Every GPU run: `scripts/exp.py start/done` → `runs/experiments.jsonl` → `EXPERIMENTS.md` (hypothesis,
   finding, decision — not just numbers). Checkpoints: `ckpt_{arch}_{tokens}_{date}.pt`, gitignored.
-- The only valid pretrain base today is `ckpt_k3-mla_2b_step2000.pt` (K3, no AttnRes).
+- Best base to date is `ckpt_k4_11b_lr05.pt` (fp8 + attn_res blocks4 + warmup 150 + lr_scale 0.5).
+  A fresh clean-corpus pretrain is in progress; `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
 
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
