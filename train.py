@@ -1311,12 +1311,19 @@ def main():
                         runlog(f"step {step}/{total_steps} val {v:.3f}")
                 if is_main and step % 10 == 0:
                     now = time.time()
-                    tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / (now - t_log)  # tokens/s per GPU
+                    dt = now - t_log
+                    tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / dt  # tokens/s per GPU
                     mfu = 6 * n_params * tps / (peak_tflops * 1e12)
                     t_log = now
+                    phase = ""
+                    if use_mix:
+                        phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
+                    eta = (total_steps - step) * dt / 10
                     runlog(
-                        f"step {step}/{total_steps} loss {last:.3f} | {tps / 1e3:.0f}K tok/s/gpu "
-                        f"| MFU {mfu * 100:.0f}%"
+                        f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "
+                        f"| lr {optimizers[0].param_groups[0]['lr']:.2e} | gnorm {grad_norm.item():.2f} "
+                        f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
+                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% | ETA {eta / 3600:.1f}h"
                     )
                 if step >= total_steps:
                     break
