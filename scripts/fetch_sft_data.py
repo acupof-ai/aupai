@@ -41,7 +41,8 @@ def fetch_missing():
             if fname.endswith(".parquet"):
                 ds.to_parquet(path)
             elif fname.endswith(".json"):
-                ds.to_json(path, orient="records", lines=False, force_ascii=False)
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump([dict(r) for r in ds], f, ensure_ascii=False)
             else:
                 with open(path, "w", encoding="utf-8") as f:
                     for row in ds:
