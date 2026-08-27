@@ -27,7 +27,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from tokenizers import Tokenizer
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.abspath(__file__))
+if os.path.basename(ROOT) == "scripts":  # tolerate a copy under scripts/
+    ROOT = os.path.dirname(ROOT)
 sys.path.insert(0, ROOT)
 from train import AttnRes, Source, remap_legacy_state_dict  # noqa: E402
 
