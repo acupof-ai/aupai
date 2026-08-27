@@ -147,14 +147,14 @@ def math23k(row):
     """math23k-reborn: chat messages + metadata['reference'] as the verified answer."""
     msgs = row.get("messages") or []
     if isinstance(msgs, str):
-        msgs = eval(msgs, {"__builtins__": {}})  # noqa: S307 — dataset field, literal list
+        msgs = json.loads(msgs)  # dataset field, literal list
     q = next((m["content"] for m in msgs if m.get("role") == "user"), "").strip()
     a = next((m["content"] for m in msgs if m.get("role") == "assistant"), "").strip()
     meta = row.get("metadata") or {}
     if isinstance(meta, str):
         try:
-            meta = eval(meta, {"__builtins__": {}})  # noqa: S307
-        except (SyntaxError, NameError):
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, ValueError):
             meta = {}
     ans = str(meta.get("reference") or "").strip() or tail_answer(a)
     if not q or not ans or num(ans) is None or len(a) > 800:

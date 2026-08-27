@@ -1,18 +1,57 @@
 #!/usr/bin/env python3
-"""Download and process SFT datasets for Chinese reasoning.
-Sources:
-  - jiemaluo/chinese-reasoning-v1 (10K math/logic)
-  - meta-math/GSM8K_zh (7.5K math word problems)
-  - zake7749/QwQ-mmlu-reasoning-chinese (9.7K MMLU CoT, Traditional→Simplified)
-  - TheFusionCube/Fable-5-CoT-Traces (467 Fable 5 traces, decoys filtered)
+"""Fetch missing SFT raw sources, then merge them into the SFT mix.
 
-Usage: python3 prepare_sft.py [--max_samples 5000]
-Output: data/sft/sft_merged.jsonl.gz
+Fetch mode (`fetch`): download the 3 raw sources that have no other producer.
+  - jiemaluo/chinese-reasoning-v1        -> data/sft/reasoning.jsonl
+  - meta-math/GSM8K_zh                   -> data/sft/gsm8k_zh.json  (train split)
+  - zake7749/QwQ-mmlu-reasoning-chinese  -> data/sft/qwq_mmlu.parquet
+(TheFusionCube/Fable-5-CoT-Traces was a one-time export already present as
+fable5_cot.jsonl; re-fetch it manually if lost.)
+
+Merge mode (default): combine the 4 local files -> data/sft/sft_all_v2.jsonl,
+schema {instruction, output}, shuffled with seed 42.
+
+Usage:
+  python3 scripts/fetch_sft_data.py fetch
+  python3 scripts/fetch_sft_data.py [--max_samples 20000] [--output data/sft/sft_all_v2.jsonl]
 """
 import json, os, random, re, sys
 
 random.seed(42)
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "sft")
+
+SFT_SOURCES = {
+    "reasoning": ("jiemaluo/chinese-reasoning-v1", "train", "reasoning.jsonl"),
+    "gsm8k": ("meta-math/GSM8K_zh", "train", "gsm8k_zh.json"),
+    "qwq": ("zake7749/QwQ-mmlu-reasoning-chinese", "train", "qwq_mmlu.parquet"),
+}
+
+
+def fetch_missing():
+    from datasets import load_dataset
+    os.makedirs(OUT, exist_ok=True)
+    failed = []
+    for name, (repo, split, fname) in SFT_SOURCES.items():
+        path = os.path.join(OUT, fname)
+        if os.path.exists(path):
+            print(f"{name}: already present -> {path}")
+            continue
+        try:
+            ds = load_dataset(repo, split=split)
+            if fname.endswith(".parquet"):
+                ds.to_parquet(path)
+            elif fname.endswith(".json"):
+                ds.to_json(path, orient="records", lines=False, force_ascii=False)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    for row in ds:
+                        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            print(f"{name}: {len(ds)} rows -> {path}")
+        except Exception as e:  # noqa: BLE001 — report and continue
+            failed.append(name)
+            print(f"{name}: FAILED {type(e).__name__}: {str(e)[:120]}")
+    if failed:
+        sys.exit(f"failed to fetch: {failed}")
 
 
 def load_reasoning(path):
@@ -73,9 +112,13 @@ def load_fable5(path):
 def main():
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument("cmd", nargs="?", choices=["fetch"], help="'fetch' downloads missing raw sources; omit to merge")
     parser.add_argument("--max_samples", type=int, default=20000)
     parser.add_argument("--output", default=os.path.join(OUT, "sft_all_v2.jsonl"))
     args = parser.parse_args()
+    if args.cmd == "fetch":
+        fetch_missing()
+        return
 
     # Check input files exist
     inputs = {
