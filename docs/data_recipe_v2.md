@@ -1,4 +1,10 @@
-# Pretraining Data Recipe v2 (1.27B tokens)
+> **SUPERSEDED (2026-08-27).** This 1.27B-token recipe is historical. The live
+> mix is **11.5B tokens** (`data/mix.json`: web 8.31B / en 0.20B / math 0.16B /
+> code 0.08B / chat 0.04B; main phase + anneal, 1 epoch forced by mix mode).
+> For the current pipeline see `data/mix.json` and `CLAUDE.md` ("Mix"). Kept only
+> for the design rationale below.
+
+# Pretraining Data Recipe v2 (1.27B tokens — superseded)
 
 ## Sources
 

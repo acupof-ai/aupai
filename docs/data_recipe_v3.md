@@ -1,4 +1,12 @@
-# Pretraining Data Recipe v3 — 4B Tokens (Chinchilla Optimal for 200M)
+> **SUPERSEDED (2026-08-27).** This 4B-token target was never built as written.
+> The live mix is **11.5B tokens** (`data/mix.json`: web 8.31B / en 0.20B / math
+> 0.16B / code 0.08B / chat 0.04B; main phase + anneal, 1 epoch forced by mix
+> mode). The KenLM-perplexity / OpenWebMath / SkyPile / The-Stack pipeline below
+> was **never implemented** in `datagen/build_corpus.py` — the filters there are
+> the actual product. For the current pipeline see `data/mix.json` and `CLAUDE.md`
+> ("Corpus", "Mix"). Kept only for the design rationale below.
+
+# Pretraining Data Recipe v3 — 4B Tokens (Chinchilla Optimal for 200M — superseded)
 
 ## Target
 - **4B tokens** (20 tok/param × 200M params = Chinchilla optimal)
