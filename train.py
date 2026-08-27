@@ -51,7 +51,9 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 class RunLog:
     """Tee training prints to runs/<name>.log and plot curves at the end (scripts/plot_curves.py).
-    With wandb=True, parse the per-step log line and mirror its metrics to Weights & Biases."""
+    With track=True, parse the per-step log line and mirror its metrics to trackio (local-first,
+    wandb-API-compatible, SQLite-backed under ~/.cache/huggingface/trackio -- no login, no server).
+    View with `trackio show` or `aupai dashboard`."""
 
     _STEP_RE = re.compile(
         r"step (\d+)/\d+.*?loss ([\d.]+).*?lr ([\d.eE+-]+).*?gnorm ([\d.]+).*?"
@@ -59,26 +61,26 @@ class RunLog:
     )
     _VAL_RE = re.compile(r"step (\d+)/\d+ val ([\d.]+)")
 
-    def __init__(self, name, wandb=False):
+    def __init__(self, name, track=False):
         os.makedirs(os.path.join(ROOT, "runs"), exist_ok=True)
         self.path = os.path.join(ROOT, "runs", f"{name}.log")
         self.f = open(self.path, "a", encoding="utf-8")
-        self.wandb = None
-        if wandb:
-            import wandb as _wandb
+        self.track = None
+        if track:
+            import trackio
 
-            _wandb.init(project=os.environ.get("WANDB_PROJECT", "aupai"), name=name)
-            self.wandb = _wandb
+            trackio.init(project=os.environ.get("TRACKIO_PROJECT", "aupai"), name=name)
+            self.track = trackio
 
     def __call__(self, msg):
         print(msg, flush=True)
         self.f.write(msg + "\n")
         self.f.flush()
-        if self.wandb:
+        if self.track:
             m = self._STEP_RE.search(msg)
             if m:
                 s, loss, lr, gnorm, tps, mfu = m.groups()
-                self.wandb.log(
+                self.track.log(
                     {
                         "loss": float(loss),
                         "lr": float(lr),
@@ -89,7 +91,7 @@ class RunLog:
                     step=int(s),
                 )
             elif v := self._VAL_RE.search(msg):
-                self.wandb.log({"val_loss": float(v.group(2))}, step=int(v.group(1)))
+                self.track.log({"val_loss": float(v.group(2))}, step=int(v.group(1)))
 
     def plot(self):
         import subprocess
@@ -1127,7 +1129,7 @@ def main():
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
     parser.add_argument(
-        "--wandb", action="store_true", help="mirror step metrics to Weights & Biases (WANDB_PROJECT)"
+        "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )
     # The Muon/AdamW learning rates are nanochat's, tuned for a large batch. Cfg.batch is chosen for
     # what fits in HBM, so the two have to be reconciled by hand: at batch 24 x 8 (786K tokens/step,
@@ -1146,7 +1148,7 @@ def main():
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0
-    runlog = RunLog(args.name, wandb=args.wandb) if is_main else print
+    runlog = RunLog(args.name, track=args.track) if is_main else print
     if args.mix is not None:
         Cfg.mix = args.mix
     ckpt_path = CKPT if args.name == "pretrain" else os.path.join(ROOT, f"ckpt_{args.name}.pt")
