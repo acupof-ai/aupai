@@ -63,7 +63,7 @@ def main():
                     if d and d["instruction"] and d["output"]:
                         f.write(json.dumps(d, ensure_ascii=False) + "\n")
                         n += 1
-        print(f"{fname}: {len(ds)} rows from {repo} -> {path}")
+            print(f"{fname}: {n}/{len(ds)} rows kept from {repo} -> {path}")
     print("post-check: sha256 the new files against data/PROVENANCE.md before wiring into build_domains")
 
 
