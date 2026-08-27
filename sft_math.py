@@ -108,7 +108,7 @@ def main():
             flush=True,
         )
 
-    optimizers = build_optimizers(raw_model, Cfg, lr_scale=args.lr_scale)
+    optimizers = build_optimizers(raw_model, Cfg)
 
     model = raw_model
     if ddp:
@@ -165,7 +165,7 @@ def main():
                     break
                 continue
 
-            set_schedule(optimizers, step, total_steps, Cfg)
+            set_schedule(optimizers, step, total_steps, Cfg, args.lr_scale)
             for opt in optimizers:
                 opt.step()
                 opt.zero_grad(set_to_none=True)

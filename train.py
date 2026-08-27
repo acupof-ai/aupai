@@ -3,14 +3,14 @@
 
 Acceleration techniques (from karpathy/nanochat):
 - bf16 autocast + TF32 matmuls
-- FP8 weight storage (--fp8, Hopper): fp8 weights, fp32 master weights, bf16 compute
+- FP8 compute (--fp8, Hopper): fp8 GEMMs, bf16 params, bf16 autocast compute
 - Muon optimizer (Newton-Schulz orthogonalized updates) for 2D params
 - AdamW for embeddings and 1D params, with separate LRs
 - Flash Attention for sliding window (SDPA fallback)
 - torch.compile(dynamic=False)
 - DDP multi-GPU via torchrun --nproc_per_node=N
 - Gradient accumulation
-- Linear warmup + linear warmdown LR schedule
+- Linear warmup + cosine warmdown LR schedule (warmdown 0.65, final 0.05x)
 - Logit softcap + QK-norm (fused into fla kernel)
 - PYTORCH_ALLOC_CONF=expandable_segments
 - nanochat recipe: momentum ramp, WD decay, no gradient checkpointing (97GB H20)
@@ -99,10 +99,12 @@ class Cfg:
     attn_window = 1024
     ffn_hidden = 3072
     vocab = 32772
-    seq = 4096  # start 4K, curriculum to 10K; recurrent arch handles arbitrary length at inference
-    batch = 72  # was 60; H20 97GB, FP8 compute allows larger batch
+    seq = 4096  # recurrent arch handles arbitrary length at inference
+    batch = (
+        32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
+    )
     accum = 1  # was 3; no_sync makes accumulation cheap
-    epochs = 3  # 3 epochs on 2.26B tokens, FP8 for speed
+    epochs = 3  # mix mode (data/mix.json) forces epochs=1; this only governs the flat-corpus fallback
     warmup = 20
     warmdown = 0.65
     final_lr_frac = 0.05
@@ -110,7 +112,7 @@ class Cfg:
     val_frac = 0.05
     seed = 42
     compile = True  # model body only; FLCE loss kept outside (Liger compile-incompatible)
-    grad_ckpt = False  # was True; costs 25% wall-clock for ~15GB savings, not needed on 97GB H20
+    grad_ckpt = False  # costs 25% wall-clock for ~15GB savings; batch 32 fits without it on H20
     # Attention Residuals (arXiv 2603.15031): softmax over depth replaces the residual sum. Off by default
     # so SFT/eval stay comparable. blocks=0 -> Full (every sublayer a source; ~+10% HBM traffic at L=24;
     # layer outputs are already kept for backward, the per-source norms are recomputed under compile);
@@ -349,13 +351,16 @@ def _fp8_ok(mod, name):
 def convert_to_fp8_compute(model):
     """FP8 linears. Prefers torchao Float8Linear (compile-friendly: no graph break per linear, fused casts);
     falls back to the hand-rolled FP8Linear (dynamo-disabled -> ~200 graph breaks) if torchao is missing.
-    FP8_RECIPE=tensorwise|rowwise selects the torchao scaling recipe; FP8_RECIPE=legacy forces the old path."""
+    FP8_RECIPE=rowwise|tensorwise selects the torchao scaling recipe (default rowwise: e4m3 on all three
+    operands); FP8_RECIPE=legacy forces the old path."""
     try:
         from torchao.float8 import Float8LinearConfig, convert_to_float8_training
     except ImportError:
         print("torchao not found: using legacy FP8Linear (slow path, graph breaks)", flush=True)
         return _convert_to_fp8_legacy(model)
-    recipe = os.environ.get("FP8_RECIPE", "tensorwise")
+    # rowwise, not tensorwise: the latter's e5m2 grad_output is the exact backward config the
+    # legacy path abandoned as unstable (line 273), and axiswise scaling is more accurate too.
+    recipe = os.environ.get("FP8_RECIPE", "rowwise")
     if recipe == "legacy":
         return _convert_to_fp8_legacy(model)
     cfg = Float8LinearConfig.from_recipe_name(recipe)
@@ -524,6 +529,9 @@ class HybridLM(nn.Module):
     @staticmethod
     def _init(m):
         if isinstance(m, (nn.Linear, nn.Embedding)):
+            nn.init.normal_(m.weight, std=0.02)
+        elif isinstance(m, nn.Conv1d):
+            # depthwise short_conv: PyTorch's kaiming default is not what the rest of the model uses
             nn.init.normal_(m.weight, std=0.02)
 
     def _body(self, x, cu=None):
@@ -735,33 +743,40 @@ def validate(model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, 
     return sum(vl) / len(vl)
 
 
-def build_optimizers(model, cfg, lr_scale=1.0):
+def build_optimizers(model, cfg):
     """Muon for 2D matrices; AdamW for embeddings, for 1D norm gains/biases, and (low lr, wd=0) for the
-    short-conv kernels (3D, were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries."""
+    short-conv kernels (3D, were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries.
+    Base LRs only -- lr_scale is applied in set_schedule so a resumed run can't keep a stale scale."""
     muon, embed, scalar, arq = [], [], [], []
     for n, p in model.named_parameters():
         if "tok" in n or "head" in n:
             embed.append(p)
         elif p.ndim == 2:
             muon.append(p)
-        elif p.ndim == 3 or n.endswith("ar1.q") or n.endswith("ar2.q") or n.endswith("final_ar.q"):
+        elif (
+            p.ndim == 3
+            or ".dyn." in n
+            or n.endswith("ar1.q")
+            or n.endswith("ar2.q")
+            or n.endswith("final_ar.q")
+        ):
             arq.append(p)
         else:
             scalar.append(p)
     opts = [
         Muon(
             muon,
-            lr=cfg.muon_lr * lr_scale,
+            lr=cfg.muon_lr,
             momentum=cfg.muon_momentum,
             ns_steps=cfg.muon_ns_steps,
             weight_decay=cfg.muon_wd,
         ),
         torch.optim.AdamW(
-            embed, lr=cfg.embed_lr * lr_scale, betas=cfg.embed_betas, weight_decay=cfg.embed_wd, fused=True
+            embed, lr=cfg.embed_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd, fused=True
         ),
         torch.optim.AdamW(
             scalar,
-            lr=cfg.scalar_lr * lr_scale,
+            lr=cfg.scalar_lr,
             betas=cfg.scalar_betas,
             weight_decay=cfg.scalar_wd,
             fused=True,
@@ -771,7 +786,7 @@ def build_optimizers(model, cfg, lr_scale=1.0):
         opts.append(
             torch.optim.AdamW(
                 arq,
-                lr=getattr(cfg, "attn_res_lr", 0.01) * lr_scale,
+                lr=getattr(cfg, "attn_res_lr", 0.01),
                 betas=cfg.scalar_betas,
                 weight_decay=0.0,
                 fused=True,
@@ -784,13 +799,13 @@ def build_optimizers(model, cfg, lr_scale=1.0):
     return opts
 
 
-def set_schedule(optimizers, step, total, cfg):
+def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
     """LR warmup/warmdown for every group; nanochat momentum ramp and WD decay-to-zero for Muon only
     (the old loop also overwrote the embedding group's wd 0.001 with muon_wd)."""
     m = lr_mult(step, total, cfg)
     for opt in optimizers:
         for g in opt.param_groups:
-            g["lr"] = g["initial_lr"] * m
+            g["lr"] = g["initial_lr"] * lr_scale * m
             if isinstance(opt, Muon):
                 g["momentum"] = 0.85 + 0.10 * min(1.0, step / 150)
                 g["weight_decay"] = g["initial_wd"] * max(0.0, 1.0 - step / total)
@@ -1177,7 +1192,7 @@ def main():
         )
         # param-count assert removed: architecture now scales well beyond the original ~23M target (e.g. 200M)
 
-    optimizers = build_optimizers(raw_model, Cfg, lr_scale=args.lr_scale)
+    optimizers = build_optimizers(raw_model, Cfg)
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
             opt.load_state_dict(sd)  # Muon momentum + Adam moments continue instead of restarting from 0
@@ -1276,7 +1291,7 @@ def main():
                         break
                     continue
                 n_skip = 0
-                set_schedule(optimizers, step, total_steps, Cfg)
+                set_schedule(optimizers, step, total_steps, Cfg, args.lr_scale)
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
@@ -1354,6 +1369,8 @@ def main():
             torch.save(
                 {
                     "model": raw_model.state_dict(),
+                    "opt": opt_snapshot(optimizers),
+                    "step": step,
                     "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
                 },
                 ckpt_path + f".ep{ep + 1}",
