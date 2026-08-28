@@ -33,10 +33,18 @@ fi
 
 # set -e would abort before exp.py done and strand the row as status="running"
 set +e
-RESULT=$(bash scripts/eval_math.sh "$OUT" "$NGPU" | tail -1)
-EVAL_RC=$?
-HARD=$(bash scripts/eval_hard.sh "$OUT" "$NGPU" | tail -1)
-HARD_RC=$?
+# One evaluation path, not two. eval_all.sh runs math-hard, math-500, the MC suite
+# and (for a --fone checkpoint) the digit head, and writes runs/evalall_<ckpt>.log.
+# TOKENIZER travels with the checkpoint: ids do not survive a rebuild of
+# data/tokenizer.json, and scoring against the wrong file yields noise, not an error.
+TOKENIZER=${TOKENIZER:-data/tokenizer.json}
+NGPU=$NGPU bash scripts/eval_all.sh "$OUT" "$TOKENIZER"
+ALL_RC=$?
+ALL_LOG=runs/evalall_$(basename "$OUT" .pt).log
+RESULT=$(grep "TOTAL math-500" "$ALL_LOG" | tail -1)
+HARD=$(grep "TOTAL math-hard" "$ALL_LOG" | tail -1)
+EVAL_RC=$([ -n "$RESULT" ] && echo 0 || echo 1)
+HARD_RC=$([ -n "$HARD" ] && echo 0 || echo 1)
 set -e
 if [ $EVAL_RC -ne 0 ] || [ $HARD_RC -ne 0 ]; then
   python3 scripts/exp.py done --name "$NAME" --status fail \
