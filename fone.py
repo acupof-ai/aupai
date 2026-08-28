@@ -57,11 +57,19 @@ def encode_tensor(x, m=INT_DIGITS, n=FRAC_DIGITS):
     differentiable-shaped. Values are data, not parameters, so no gradient flows
     back through the digit extraction -- the learnable part is num_proj downstream.
     """
+    # float64 throughout: the scaled integer reaches 10^(m+n) = 10^8, past float32's
+    # exact range of 2^24, so a float32 path would return wrong digits for large
+    # numbers. MPS has no float64 at all, so that device computes on CPU and comes
+    # back -- correctness first, and the tensor is one row per [NUM].
+    dev = x.device
+    if dev.type == "mps":
+        x = x.cpu()
     scaled = torch.round(x.double().abs() * (10.0**n))
     place = 10.0 ** torch.arange(m + n, dtype=torch.float64, device=x.device)
     d = torch.remainder(torch.div(scaled.unsqueeze(-1), place, rounding_mode="floor"), 10)
     ang = 2 * math.pi * d / 10.0
-    return torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten(-2).to(x.dtype)
+    out = torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten(-2)
+    return out.to(x.dtype).to(dev)  # cast first: float64 cannot cross to MPS
 
 
 def digit_targets(x, m=INT_DIGITS, n=FRAC_DIGITS):
@@ -70,9 +78,13 @@ def digit_targets(x, m=INT_DIGITS, n=FRAC_DIGITS):
     The tensor-side twin of digits_of(), for building cross-entropy targets inside
     the training loop without a round trip through python lists.
     """
+    dev = x.device
+    if dev.type == "mps":  # no float64 on MPS; see encode_tensor
+        x = x.cpu()
     scaled = torch.round(x.double().abs() * (10.0**n))
     place = 10.0 ** torch.arange(m + n, dtype=torch.float64, device=x.device)
-    return torch.remainder(torch.div(scaled.unsqueeze(-1), place, rounding_mode="floor"), 10).long()
+    out = torch.remainder(torch.div(scaled.unsqueeze(-1), place, rounding_mode="floor"), 10).long()
+    return out.to(dev)
 
 
 def digit_basis(dtype=torch.float32):
@@ -111,8 +123,11 @@ def digits_of(values, m=INT_DIGITS, n=FRAC_DIGITS):
 def decode(logits, n=FRAC_DIGITS):
     """Per-digit logits -> the numbers they encode."""
     d = logits.argmax(-1)  # (..., m+n)
+    dev = d.device
+    if dev.type == "mps":  # no float64 on MPS; see encode_tensor
+        d = d.cpu()
     place = 10.0 ** torch.arange(d.shape[-1], dtype=torch.float64, device=d.device)
-    return (d.double() * place).sum(-1) / (10.0**n)
+    return ((d.double() * place).sum(-1) / (10.0**n)).float().to(dev)
 
 
 def encode_prompts(texts, tok, num_id):

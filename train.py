@@ -1081,14 +1081,21 @@ def _domain_seqs(domain, tok, is_main, ddp):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1].
 
     The cache is reused across runs, but only while it is newer than every corpus shard it was built
-    from -- rebuild the corpus and the stale cache is silently ignored, not silently reused."""
+    from AND was built by the same vocabulary. Comparing shard mtimes alone was not enough: ids do
+    not survive a vocabulary rebuild, and rebuilding data/tokenizer.json without touching the corpus
+    left every cache looking fresh while holding the old vocabulary's ids."""
     cache = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
+    stamp = cache + ".vocab"
     shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
+    same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     fresh = (
         os.path.exists(cache)
         and shards
+        and same_vocab
         and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
     )
+    if is_main and not fresh and os.path.exists(cache) and not same_vocab:
+        print(f"mix: {domain} cache was built by another vocabulary, retokenizing", flush=True)
     if is_main and not fresh:
         texts = []
         for p in shards:
@@ -1099,6 +1106,8 @@ def _domain_seqs(domain, tok, is_main, ddp):
         data = encode(texts, tok, log=lambda m: print(m, flush=True))
         del texts
         torch.save(data, cache)
+        with open(stamp, "w") as f:
+            f.write(VOCAB_ID or "")
         n_tok = len(data[0] if Cfg.fone else data)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data

@@ -31,6 +31,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if os.path.basename(ROOT) == "scripts":  # tolerate a copy under scripts/
     ROOT = os.path.dirname(ROOT)
 sys.path.insert(0, ROOT)
+import fone  # noqa: E402
 from train import AttnRes, Source, remap_legacy_state_dict  # noqa: E402
 
 
@@ -240,6 +241,14 @@ class HybridLM(nn.Module):
         n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)
         self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
         self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
+        # This class is a Mac-side reimplementation of train.HybridLM (fla's KDA kernel is
+        # CUDA-only), which means every architecture change has to be mirrored here. It was
+        # not, and a --fone checkpoint failed to load at all: "Unexpected key num_proj.weight".
+        # The FoNE pieces themselves come from fone.py, which is pure PyTorch.
+        self.fone = getattr(cfg, "fone", False)
+        if self.fone:
+            self.num_proj = nn.Linear(fone.NUM_DIMS, cfg.d, bias=False)
+            self.num_head = nn.Linear(cfg.d, fone.NUM_DIMS, bias=False)
 
     def _body(self, x, cache):
         """Same as train.HybridLM._body (plain residual or Block AttnRes), threading the KV/state cache."""
@@ -264,12 +273,21 @@ class HybridLM(nn.Module):
                     blocks, partial = blocks + partial, []
         return self.final_ar(blocks + partial), new_caches
 
-    def forward(self, idx, cache=None):
-        x, new_caches = self._body(self.tok(idx), cache)
+    def num_logits(self, hidden):
+        """Per-digit logits at a position, for reading the number a [NUM] stands for."""
+        return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
+
+    def forward(self, idx, cache=None, num_vals=None):
+        emb = self.tok(idx)
+        if self.fone and num_vals is not None:
+            mask = (idx == self.cfg.num_id).unsqueeze(-1)
+            feat = fone.encode_tensor(num_vals.masked_fill(~mask.squeeze(-1), 0.0)).to(emb.dtype)
+            emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
+        x, new_caches = self._body(emb, cache)
         hidden = self.norm(x)
         logits = self.head(hidden)[..., : self.cfg.vocab].float()
         logits = 15.0 * torch.tanh(logits / 15.0)  # logit softcap
-        return logits, new_caches
+        return logits, new_caches, hidden
 
 
 # ---------------------------------------------------------------- Inference
@@ -322,10 +340,18 @@ def sample_next(logits, prev_ids, temperature, top_k, repeat_penalty):
 @torch.no_grad()
 def generate(model, tok, prompt, args, device):
     eos = tok.token_to_id("<eos>")
-    ids = tok.encode(prompt).ids
+    # A [NUM] token carries no number of its own: the digit head reads it off the same
+    # hidden state that predicted the token, and fone.decode_text writes it back into
+    # the text. Without this a --fone checkpoint prints the literal [NUM].
+    num_id = model.cfg.num_id if model.fone else None
+    if model.fone:
+        (ids,), (vals,) = fone.encode_prompts([prompt], tok, num_id)
+    else:
+        ids, vals = tok.encode(prompt).ids, []
     x = torch.tensor([ids], dtype=torch.long, device=device)
-    logits, cache = model(x)
-    out = list(ids)
+    v = torch.tensor([vals], device=device) if model.fone else None
+    logits, cache, hidden = model(x, num_vals=v)
+    out, out_vals = list(ids), list(vals)
 
     t0 = time.time()
     for _ in range(args.max_new_tokens):
@@ -334,10 +360,20 @@ def generate(model, tok, prompt, args, device):
         if nid == eos:
             break
         out.append(nid)
-        logits, cache = model(torch.tensor([[nid]], dtype=torch.long, device=device), cache=cache)
+        val = 0.0
+        if model.fone and nid == num_id:
+            val = float(fone.decode(model.num_logits(hidden[0, -1].float())))
+        out_vals.append(val)
+        nv = torch.tensor([[val]], device=device) if model.fone else None
+        logits, cache, hidden = model(
+            torch.tensor([[nid]], dtype=torch.long, device=device), cache=cache, num_vals=nv
+        )
     dt = time.time() - t0
     n_new = len(out) - len(ids)
-    print(tok.decode(out))
+    if model.fone:
+        print(fone.decode_text(out, [x for t, x in zip(out, out_vals) if t == num_id], tok, num_id))
+    else:
+        print(tok.decode(out))
     print(f"\n[{n_new} tokens in {dt:.1f}s ({n_new / max(dt, 1e-9):.1f} tok/s)]", file=sys.stderr)
 
 
