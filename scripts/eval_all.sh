@@ -63,7 +63,29 @@ if [ "$IS_FONE" = "True" ]; then
     2>&1 | tee -a "$LOG" | tail -4 || say "  FAILED"
 fi
 
+# 5. Arithmetic accuracy inside the generated steps. This is the one axis where a
+#    change showed up when math-hard did not: FoNE cut it from 43.3% to 32.7% at
+#    base (p~1e-12) while end-to-end solving stayed flat. Score and arithmetic are
+#    different questions and this repo needs both.
+say "--- arithmetic in generated steps (eqcheck)"
+python3 - "$CKPT" <<'PYEOF' 2>&1 | tee -a "$LOG"
+import glob, json, os, sys
+sys.path.insert(0, "scripts")
+from eqcheck import check_steps
+tag = os.path.basename(sys.argv[1])
+files = sorted(glob.glob(f"data/eval/hard_{tag}.[0-9].jsonl")) or glob.glob(f"data/eval/hard_{tag}.jsonl")
+rows = [json.loads(l) for f in files for l in open(f, encoding="utf-8")]
+rows = [r for r in rows if r.get("greedy", True)]
+if not rows:
+    print("  no predictions on disk"); raise SystemExit
+n = bad = has = 0
+for r in rows:
+    e, b = check_steps(r["gen"]); n += e; bad += b; has += bool(e)
+print(f"  {len(rows)} generations | {n} verifiable equations | {100*bad/max(1,n):.1f}% wrong "
+      f"| {100*has/len(rows):.0f}% of generations show an equation")
+PYEOF
+
 say ""
 say "summary for $CKPT"
-grep -E "TOTAL|whole-number exact|^Average" "$LOG" | sed 's/^/  /'
+grep -E "TOTAL|whole-number exact|^Average|% wrong" "$LOG" | sed 's/^/  /'
 say "log: $LOG"

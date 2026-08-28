@@ -35,6 +35,11 @@
   `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`, and a
   checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores
   the digit head against its two baselines.
+  **It does improve arithmetic, sharply.** Wrong-equation rate in the generated steps:
+  k6 32.7% against k5 43.3% at base (p~1e-12), 30.2% against 37.7% after the same SFT
+  (p~2e-8), while emitting MORE equations (77% of generations against 66%). That is the
+  largest effect measured on this project and it moves the score not at all. Score and
+  arithmetic are different questions; `eval_all.sh` reports both.
 - **Every checkpoint is scored with the vocabulary it was trained on.** `data/tokenizer.json` is
   rebuilt in place and ids do not survive a rebuild; size does not identify a vocabulary either.
   Checkpoints carry `vocab_id` (a hash of the id→token map), packs carry the same, and `sft_math.py`
