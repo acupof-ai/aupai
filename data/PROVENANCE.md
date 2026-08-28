@@ -309,3 +309,36 @@ positives; only hand sampling of the real distribution bounds false negatives.
 
 General replay is alpaca_gpt4_zh 52,049 in all three, and the base is the same, so
 a gap between them is attributable to the math source.
+
+### 8. What failure looks like at 3.6% (hand-read, 2026-08-28)
+
+Reading ckpt_sft_k5_ctrl's generations rather than its score. The correct ones are
+correct for real -- three-step 工程 and 最大公因数 problems with sound derivations,
+not lucky guesses:
+
+    甲乙合作10天，甲乙效率比2:3，甲单独几天？
+    合作效率 = 1 ÷ 10 = 1/10 → 份数和 = 2 + 3 = 5 → 每份 = 1/50
+    甲的效率 = 2 × 1/50 = 1/25 → 1 ÷ (1/25) = 25   ✓
+
+Two failure clusters, and neither is what the FoNE work assumed:
+
+**Arithmetic slips inside a correct structure.** 1/10 − 1/15 = 1/15 (it is 1/30);
+1/8 + 1/6 + 1/12 = 1/3 (it is 3/8); 120 × 30/100 = 72 (it is 36). The setup is
+right and the number is wrong.
+
+**Template over-generalization.** Every failure reaches for 效率 = 1 ÷ n, including
+問題 about trains, boats and circular tracks where it means nothing. The model
+produces well-formed lines with no semantic content -- one invented 罚款 (a fine)
+in a river-current problem.
+
+The obvious mechanism -- FoNE cannot represent a fraction, since 1/15 splits into
+two separate numbers -- **is not supported**. Fractions appear in 20.2% of gold
+solutions and 51.1% of the model's generations, but accuracy barely differs:
+4.2% with a fraction against 3.5% without. Fractions are over-produced, not
+selectively fatal.
+
+So the constraint is problem-type generalization, not arithmetic. That is
+consistent with FoNE's null result and it points somewhere else: the training mix
+teaches a few templates well and the eval asks for many. `mathbank` has 943 L3/L4
+programs; a model that has memorized 943 shapes and meets a 944th has nothing to
+fall back on.
