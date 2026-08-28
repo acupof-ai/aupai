@@ -78,10 +78,33 @@ numeric check passed them; see commit ebd731a.
 - pretrain/text sources: `{"content": ...}` (or `{"text": ...}`)
 - QA/chat/math sources: `{"instruction": ..., "output": ...}` → rendered as 问：/答：
 
+## Cleanup 2026-08-28
+
+The vocabulary was rebuilt on 2026-08-28, so every packed `.pt` from before that
+date holds token ids that no longer mean anything. All 8 (7.1 GB) were deleted and
+`data/sft/sft_v8_fone.pt` was packed against the new vocab. Text jsonl is unaffected:
+it carries no ids.
+
+Deleted with it, 708 MB of `data/sft/*.jsonl` intermediates — sft_dedup, sft_mixed,
+sft_mixed_v2, sft_clean, sft_mixed_clean, sft_tagged, sft_expanded, short_all. They
+were stages of the pipeline that produced sft_k4.pt, which measured HARMFUL (k5 base
+51.2% → sft_k5 44.8% on math-500, p=0.043), and every one is regenerable from
+scripts/fetch_sft_data.py plus scripts/make_mixed.py. Kept: the network-sourced
+downloads (fable5_cot, gsm8k_zh, qwq_mmlu, reasoning, sft_all, sft_all_v2).
+
+In data/rl: rlvr_math_clean.jsonl (a second clean pass differing from rlvr_clean by
+21 rows) and probe_gens.jsonl (21 MB of raw band-probe generations whose distilled
+result is instance_rates + program_rates + rl_band). Kept rlvr_math.jsonl, which the
+trainer reads, and rlvr_clean.jsonl, which run_pipeline.sh reads.
+
+NOT reproducible, therefore not deleted: math_short_v1 / v2 / v4 predate this file
+and no generator command or seed was recorded for them. Only v8 below has one. Any
+future batch must be logged here at generation time or it becomes undeletable too.
+
 ## Related
 
-- Synthetic math: data/synthetic/math_short_v*.jsonl — fully reproducible via
-  mathbank/ (seeded), see mathbank/README or mathbank/run_math_short.py.
+- Synthetic math: data/synthetic/math_short_v*.jsonl — v8 is reproducible from the
+  seeded command above; v1/v2/v4 are not (see Cleanup 2026-08-28).
 - Synthetic code/knowledge: data/synthetic/{code_python_zh,knowledge_qa_zh}.jsonl
   via datagen/gen_code.py + gen_knowledge2.py (seeded, zero external deps).
 - Eval holdout filter: scripts/holdout.py — every fetcher must exclude it.
