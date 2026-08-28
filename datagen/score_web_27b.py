@@ -70,7 +70,7 @@ def ask(url, model, prompt, timeout=120):
         {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 4,
+            "max_tokens": 24,
             "temperature": 0.0,
         }
     ).encode()
@@ -79,7 +79,13 @@ def ask(url, model, prompt, timeout=120):
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         d = json.loads(r.read())
-    return d["choices"][0]["message"]["content"].strip()
+    return strip_think(d["choices"][0]["message"]["content"])
+
+
+def strip_think(txt):
+    """Qwen3 emits a <think> block even with nothing to think about; an empty one
+    costs nothing (0.2s per document measured). The answer is what follows it."""
+    return txt.split("</think>", 1)[-1].strip()
 
 
 def to_score(raw, rubric):
@@ -101,13 +107,36 @@ def to_score(raw, rubric):
     return None
 
 
-def score_many(texts, url, model, rubric, workers=16, chars=1200):
+def pad_to_shape(prompt, tok, n_tokens):
+    """Truncate or newline-pad so every prompt is EXACTLY n_tokens long.
+
+    tileLang JIT-compiles a kernel per sequence shape (~15s for the three kernels,
+    then cached on disk). 180 documents of 180 different lengths means 180 compiles
+    and a server pinned at 0% GPU while it builds them. One shape means one compile.
+    Padding is newlines, which are one token each and which the model ignores at the
+    tail of a document.
+    """
+    if tok is None:
+        return prompt
+    ids = tok.encode(prompt).ids if hasattr(tok, "encode") else tok(prompt)["input_ids"]
+    if len(ids) > n_tokens:
+        # cut the document, never the instructions: the tail of the prompt is the question
+        head, tail = prompt.rsplit("\n\n", 1)
+        over = len(ids) - n_tokens
+        return head[: max(0, len(head) - over * 2)] + "\n\n" + tail
+    return prompt + "\n" * (n_tokens - len(ids))
+
+
+def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=0):
     tpl = BINARY if rubric == "binary" else FIVE
     out = [None] * len(texts)
 
     def one(i):
         try:
-            return i, to_score(ask(url, model, tpl.format(t=texts[i][:chars])), rubric)
+            p = tpl.format(t=texts[i][:chars])
+            if pad:
+                p = pad_to_shape(p, tok, pad)
+            return i, to_score(ask(url, model, p), rubric)
         except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError):
             return i, None
 
@@ -136,16 +165,31 @@ def main():
     ap.add_argument("--model", default="qwen38-27b")
     ap.add_argument("--rubric", choices=["binary", "five"], default="binary")
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument(
+        "--pad",
+        type=int,
+        default=1024,
+        help="pad/truncate every prompt to exactly this many tokens. tileLang compiles a "
+        "kernel per sequence shape; without this the server spends all its time in the JIT "
+        "and sits at 0%% GPU. 0 disables.",
+    )
+    ap.add_argument("--tokenizer", default="/work/Qwen3.8-27B-NVFP4/tokenizer.json")
     ap.add_argument("--check", help="hand-labelled jsonl ({t,y}); report AUC and stop")
     ap.add_argument("--glob", default="data/corpus/web/*.jsonl")
     ap.add_argument("--n", type=int, default=100000)
     ap.add_argument("--out", default="data/web_27b_labels.jsonl")
     a = ap.parse_args()
 
+    tok = None
+    if a.pad:
+        from tokenizers import Tokenizer
+
+        tok = Tokenizer.from_file(a.tokenizer)
+
     if a.check:
         with open(a.check, encoding="utf-8") as fh:
             rows = [json.loads(x) for x in fh if x.strip()]
-        s = score_many([r["t"] for r in rows], a.url, a.model, a.rubric, a.workers)
+        s = score_many([r["t"] for r in rows], a.url, a.model, a.rubric, a.workers, tok=tok, pad=a.pad)
         ok = [(r["y"], v) for r, v in zip(rows, s, strict=True) if v is not None]
         print(f"{len(rows)} hand labels, {len(ok)} answered ({len(ok) / len(rows):.0%})")
         if len(ok) < 20:
@@ -181,7 +225,8 @@ def main():
     with open(a.out, "w", encoding="utf-8") as o:
         for i in range(0, len(docs), 512):
             b = docs[i : i + 512]
-            for t, s in zip(b, score_many(b, a.url, a.model, a.rubric, a.workers), strict=True):
+            scored = score_many(b, a.url, a.model, a.rubric, a.workers, tok=tok, pad=a.pad)
+            for t, s in zip(b, scored, strict=True):
                 if s is not None:
                     o.write(json.dumps({"t": t[:1200], "s": s}, ensure_ascii=False) + "\n")
             print(f"  {i + len(b)}/{len(docs)}", flush=True)
@@ -197,6 +242,8 @@ def _demo():
     assert to_score("评分：3 分", "five") == 3.0
     assert to_score("无法判断", "five") is None
     assert to_score("9", "five") is None, "an out-of-range digit became a label"
+    assert to_score(strip_think("<think>\n\n</think>\n\n是"), "binary") == 1.0
+    assert to_score(strip_think("否"), "binary") == 0.0, "an answer with no think block was lost"
     print("score_web_27b self-test OK")
 
 
