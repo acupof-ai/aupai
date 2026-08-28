@@ -61,6 +61,20 @@ def verify(instruction, lines, ans):
     for n in inst_nums:
         if str(n) not in line_tokens:
             return None, False  # prose number absent from any equation -> suspect
+    # Derived values a step may cite: the question's own numbers, plus whatever
+    # earlier steps produced. A step citing a large value that exists nowhere yet
+    # is a forward reference -- every equation still checks out arithmetically, so
+    # the numeric pass above waves it through, but the chain reads out of order
+    # ("84 × 73 = 6132 / 6142 - 6132 = 10 / 83 × 74 = 6142") and teaches the model
+    # it may use a quantity before deriving it. Only values >= FWD_MIN are judged;
+    # below that a number is as likely a rate or a small constant as a derived one.
+    FWD_MIN = 100
+    known = set()
+    for t in TOK.findall(instruction):
+        try:
+            known.add(Fraction(t))
+        except (ValueError, ZeroDivisionError):
+            pass
     last_numeric = None
     for ln in lines:
         if "=" not in ln:
@@ -72,6 +86,13 @@ def verify(instruction, lines, ans):
             lhs, rhs = parts[1], parts[2]
         else:
             return None, False
+        for t in TOK.findall(lhs):
+            try:
+                v = Fraction(t)
+            except (ValueError, ZeroDivisionError):
+                continue
+            if abs(v) >= FWD_MIN and v not in known:
+                return None, False  # forward reference: cited before it was derived
         m = TOK.search(rhs.replace(" ", ""))
         if not m:
             return None, False
@@ -82,6 +103,7 @@ def verify(instruction, lines, ans):
             return None, False
         if abs(lhs_val - rhs_val) > 1e-6 * max(1, abs(lhs_val)):
             return None, False
+        known.add(Fraction(m.group(0)))
         last_numeric = m.group(0)
     if Fraction(last_numeric) != Fraction(ans):
         return None, False
@@ -94,7 +116,17 @@ def main():
     ap.add_argument("out", nargs="?")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--list", action="store_true")
+    ap.add_argument(
+        "--ratios",
+        help="override the L1:L2:L3:L4 mix, e.g. '0,0,0.6,0.4' to match math-hard "
+        "(which is 100%% L3/L4). Default is 0.15,0.35,0.35,0.15.",
+    )
     args = ap.parse_args()
+    if args.ratios:
+        vals = [float(x) for x in args.ratios.split(",")]
+        if len(vals) != 4 or abs(sum(vals) - 1.0) > 1e-6:
+            ap.error("--ratios needs 4 comma-separated fractions summing to 1")
+        RATIOS.update(zip(("L1", "L2", "L3", "L4"), vals))
 
     bank = load_programs()
     if args.list:
