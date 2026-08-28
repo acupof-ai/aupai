@@ -100,13 +100,18 @@ def run(use_fone, steps, device, seed=0):
 
     torch.manual_seed(seed)
     m = train.HybridLM(cfg).to(device)
+    # FlashAttention (the MLA layers) takes fp16/bf16 only, so the GPU path runs
+    # under autocast; on CPU it is a no-op.
+    cast = torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.startswith("cuda"))
     opt = torch.optim.AdamW(m.parameters(), lr=3e-4)
     B = 64
     for s in range(steps):
         i = torch.randint(0, len(Xtr) - B, (1,)).item()
         x, a = Xtr[i : i + B].to(device), Atr[i : i + B].to(device)
         v = Vtr[i : i + B].to(device) if use_fone else None
-        h, _ = m(x[:, :-1], torch.zeros(1), None, v[:, :-1] if use_fone else None)
+        with cast:
+            h, _ = m(x[:, :-1], torch.zeros(1), None, v[:, :-1] if use_fone else None)
+        h = h.float()
         y = x[:, 1:].clone()
         y[~a[:, :-1]] = -100
         logits = m.head(h)[..., : cfg.vocab].float()
@@ -129,7 +134,9 @@ def run(use_fone, steps, device, seed=0):
         for j in range(0, len(Xte), 128):
             x, a = Xte[j : j + 128].to(device), Ate[j : j + 128].to(device)
             v = Vte[j : j + 128].to(device) if use_fone else None
-            h, _ = m(x[:, :-1], torch.zeros(1), None, v[:, :-1] if use_fone else None)
+            with cast:
+                h, _ = m(x[:, :-1], torch.zeros(1), None, v[:, :-1] if use_fone else None)
+            h = h.float()
             y = x[:, 1:]
             mask = a[:, :-1]
             if use_fone:
