@@ -23,8 +23,11 @@ sys.path.insert(0, ROOT)
 
 import train  # noqa: E402  (TOK_PATH, Cfg.vocab, DATA)
 
-# The 4 specials build_tokenizer forgets. ids follow the 32768 base vocab.
-CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]
+# The 4 specials build_tokenizer forgets, plus [NUM]. ids follow the 32768 base vocab.
+# [NUM] is last (32772) and always present: --fone gives it a value embedding, and
+# without --fone it simply never appears in the data, so the vocab is one id wider
+# either way and no checkpoint needs resizing to switch.
+CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>", "[NUM]"]
 BYTES_PER_TOKEN_EST = 4  # only to turn --sample-tokens into a per-domain byte budget
 
 
@@ -91,8 +94,8 @@ def main():
     tok = Tokenizer(BPE(unk_token="<unk>"))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    # BPE base holds <unk>/<eos> and merges; the 4 chat specials sit on top. Cfg.vocab (32772) is the
-    # FINAL total, so the trainer targets Cfg.vocab - 4 = 32768 to land at 32772 after adding them.
+    # BPE base holds <unk>/<eos> and merges; the specials sit on top. Cfg.vocab (32773) is the
+    # FINAL total, so the trainer targets Cfg.vocab - 5 = 32768 to land at 32773 after adding them.
     base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
     trainer = BpeTrainer(vocab_size=base_vocab, special_tokens=["<unk>", "<eos>"])
     tok.train_from_iterator(texts, trainer)

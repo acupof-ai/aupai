@@ -134,43 +134,52 @@ def encode_text(texts, tok, num_id):
     Magnitudes at or above 10^INT_DIGITS cannot be represented; those numbers keep
     their ordinary BPE tokens instead of becoming a [NUM] that would silently mean
     something else.
+
+    Every segment of every document goes through ONE encode_batch call. Tokenizing
+    per document instead costs a python-level call per document, which at corpus
+    scale is the difference between minutes and hours.
     """
     import numpy as np
 
     batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
     limit = 10**INT_DIGITS
-    pieces, vals = [], []
+    flat, bounds, vals = [], [], []
     for text in texts:
-        segs, nums = split_numbers(text)
-        keep = [v for v in nums if abs(v) < limit]
-        if len(keep) != len(nums):  # rebuild with the oversized ones left as text
-            segs, nums = _split_bounded(text, limit)
-        else:
-            nums = keep
-        enc = batch_fn(segs)
-        row = []
-        for j, e in enumerate(enc):
-            row.extend(e.ids)
-            if j < len(nums):
-                row.append(num_id)
-        pieces.append(np.asarray(row, dtype=np.int32))
+        segs, nums = _split_bounded(text, limit)
+        flat.extend(segs)
+        bounds.append(len(segs))
         vals.extend(nums)
+    enc = batch_fn(flat)
+
+    pieces, at = [], 0
+    for k in bounds:
+        row = []
+        for j in range(k):
+            row.extend(enc[at + j].ids)
+            if j < k - 1:  # one [NUM] between consecutive segments
+                row.append(num_id)
+        at += k
+        pieces.append(np.asarray(row, dtype=np.int32))
     return pieces, np.asarray(vals, dtype=np.float32)
 
 
 def _split_bounded(text, limit):
-    """split_numbers, but numbers too large to encode stay inside the text segments."""
+    """split_numbers, but numbers too large to encode stay inside the text segments.
+
+    A number at or above the limit has no representable Fourier code, so it is left
+    where it is and keeps its ordinary BPE tokens; only the representable ones become
+    [NUM]. len(segments) == len(values) + 1 still holds, which is what lets the caller
+    put exactly one [NUM] between consecutive segments.
+    """
     segs, vals, last = [], [], 0
-    buf = ""
     for mo in NUM_RE.finditer(text):
         v = float(mo.group(0))
         if abs(v) >= limit:
             continue  # leave it in the surrounding segment
-        segs.append(buf + text[last : mo.start()])
-        buf = ""
+        segs.append(text[last : mo.start()])
         vals.append(v)
         last = mo.end()
-    segs.append(buf + text[last:])
+    segs.append(text[last:])
     return segs, vals
 
 

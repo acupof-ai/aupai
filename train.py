@@ -130,9 +130,9 @@ class Cfg:
     attn_every = 4
     attn_window = 1024
     ffn_hidden = 3072
-    vocab = 32772
-    fone = False  # --fone: numbers as one [NUM] token with a Fourier value embedding
-    num_id = 32772  # the [NUM] token id; == vocab, so enabling fone makes it 32773
+    vocab = 32773  # 32768 BPE merges + <unk>/<eos> inside them, 4 chat specials, [NUM]
+    fone = False  # --fone: numbers as one [NUM] token carrying a Fourier value embedding
+    num_id = 32772  # [NUM], the last id; always in the vocab so --fone needs no resize
     seq = 4096  # recurrent arch handles arbitrary length at inference
     batch = (
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
@@ -1167,11 +1167,6 @@ def main():
             setattr(Cfg, k, v)
     if args.no_doc_mask:
         Cfg.doc_mask = False
-    if Cfg.fone:
-        # [NUM] sits one past the base vocab, and forward() slices logits to
-        # Cfg.vocab -- without this the model could never predict the token it is
-        # supposed to emit for every number.
-        Cfg.vocab = Cfg.num_id + 1
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
