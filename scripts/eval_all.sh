@@ -51,8 +51,9 @@ NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -
 # 3. English MC suite -- this is a 200M Chinese model and it sits at the 25% chance
 #    line, so treat it as a regression tripwire rather than a capability measure.
 say "--- MC suite (regression tripwire; chance is 25%)"
+say "    ceval is the only Chinese one; the rest are English and this is a Chinese model."
 CUDA_VISIBLE_DEVICES=0 python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK" \
-  --benchmarks mmlu arc-easy hellaswag piqa 2>&1 | tee -a "$LOG" | tail -8 || say "  FAILED"
+  --benchmarks ceval mmlu arc-easy hellaswag piqa 2>&1 | tee -a "$LOG" | tail -10 || say "  FAILED"
 
 # 4. FoNE digit head -- only meaningful for a --fone checkpoint. Scored against two
 #    baselines because raw accuracy is unreadable without them: always-0 is 84.8%

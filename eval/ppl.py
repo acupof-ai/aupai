@@ -1,61 +1,93 @@
 #!/usr/bin/env python3
-"""PPL evaluation: computes perplexity on held-out validation set."""
+"""Held-out perplexity, reported PER DOMAIN.
 
+Why this is the metric with resolution. Every multiple-choice benchmark in this
+repo sits at the 25% chance line for a 200M model -- MMLU, ARC, HellaSwag, PIQA
+and C-Eval alike -- so none of them can see a change. math-hard resolves to about
++/-1.1pt at a 3% pass rate. Perplexity always moves, and it moves in a direction
+that means something.
+
+What was wrong before: train.py holds out the first `val_frac` of every domain,
+shuffles them TOGETHER, and reports one number. A blended figure is dominated by
+whichever domain contributes the most rows, so a real change in math or chat
+cannot show up in it. The old version of this file made it worse -- it read a
+single stale token cache and took its first 5%, which for a domain-ordered file
+is one domain, not a sample.
+
+This rebuilds exactly the rows train.py holds out (same caches, same val_frac,
+same val_rows_max) and scores each domain on its own.
+
+    python eval/ppl.py --ckpt ckpt_k5_clean_0827.pt --tokenizer data/tokenizer_k5.json
+"""
+
+import argparse
 import math
 import os
 import sys
 
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scripts.loader import load_checkpoint
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-CKPT = sys.argv[1] if len(sys.argv) > 1 else "/work/aupai/ckpt.pt.step4000"
-TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"
-VAL_FRAC = 0.05
-BATCH = 8
-SEQ = 4096
+from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
-device = "cuda:0"
-model, cfg = load_checkpoint(CKPT, device=device)
-for p in model.parameters():
-    p.data = p.data.contiguous()
 
-# Load validation data (same split as training: first 5%)
-data = torch.load(TOKEN_CACHE, map_location="cpu", weights_only=True).long()
-n_seq = len(data) // (SEQ + 1)
-data = data[: n_seq * (SEQ + 1)]
-seqs = data.view(-1, SEQ + 1)
-X, Y = seqs[:, :-1], seqs[:, 1:]
-n_val = max(1, int(len(X) * VAL_FRAC))
-Xva, Yva = X[:n_val], Y[:n_val]
-print(f"val seqs: {len(Xva):,} ({len(Xva) * SEQ:,} tokens)")
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", required=True)
+    ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
+    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix.json"))
+    ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--rows", type=int, default=512, help="val rows scored per domain")
+    ap.add_argument("--device", default="cuda:0")
+    a = ap.parse_args()
 
-total_loss = 0.0
-total_tokens = 0
-n_batches = 0
+    import json
 
-with torch.no_grad():
-    for i in range(0, len(Xva) - BATCH + 1, BATCH):
-        xb = Xva[i : i + BATCH].to(device)
-        yb = Yva[i : i + BATCH].to(device)
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            logits, _ = model(xb)
-            loss = torch.nn.functional.cross_entropy(
-                logits.reshape(-1, logits.shape[-1]).float(), yb.reshape(-1), ignore_index=-100
-            )
-        ntok = (yb != -100).sum().item()
-        total_loss += loss.item() * ntok
-        total_tokens += ntok
-        n_batches += 1
-        if n_batches % 20 == 0:
-            avg = total_loss / total_tokens
-            print(f"batch {n_batches}: running ppl = {math.exp(avg):.2f}", flush=True)
+    import train
 
-avg_loss = total_loss / total_tokens
-ppl = math.exp(avg_loss)
-print("\n=== PPL Results ===")
-print(f"checkpoint: {CKPT}")
-print(f"val tokens: {total_tokens:,}")
-print(f"avg loss: {avg_loss:.4f}")
-print(f"perplexity: {ppl:.2f}")
+    model, cfg = load_checkpoint(a.ckpt, device=a.device)
+    tok = load_tokenizer(a.tokenizer, cfg)
+    for p in model.parameters():
+        p.data = p.data.contiguous()
+    # _domain_seqs reads Cfg for seq/fone/num_id, so the checkpoint's own config drives it.
+    for k, v in vars(cfg).items():
+        if not k.startswith("_"):
+            setattr(train.Cfg, k, v)
+
+    mix = json.load(open(a.mix, encoding="utf-8"))
+    out = {}
+    for name in mix["domains"]:
+        seqs = train._domain_seqs(name, tok, True, False)
+        seqs = seqs[0] if train.Cfg.fone else seqs
+        n_val = min(max(1, int(len(seqs) * train.Cfg.val_frac)), train.Cfg.val_rows_max)
+        rows = seqs[:n_val][: a.rows].long()
+        if not len(rows):
+            continue
+        X, Y = rows[:, :-1], rows[:, 1:]
+        tot = ntok = 0.0
+        with torch.no_grad():
+            for i in range(0, len(X), a.batch):
+                xb, yb = X[i : i + a.batch].to(a.device), Y[i : i + a.batch].to(a.device)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits, _ = model(xb)
+                    loss = torch.nn.functional.cross_entropy(
+                        logits.reshape(-1, logits.shape[-1]).float(), yb.reshape(-1)
+                    )
+                n = yb.numel()
+                tot += loss.item() * n
+                ntok += n
+        out[name] = tot / ntok
+        print(f"  {name:<6} loss {out[name]:.4f}  ppl {math.exp(out[name]):7.2f}  ({len(X)} rows)", flush=True)
+
+    if out:
+        # Unweighted mean across domains, NOT the row-weighted blend train.py prints:
+        # a blend hides a small domain moving, which is the whole reason this is per domain.
+        m = sum(out.values()) / len(out)
+        print(f"  {'MEAN':<6} loss {m:.4f}  ppl {math.exp(m):7.2f}  (unweighted across domains)")
+
+
+if __name__ == "__main__":
+    main()

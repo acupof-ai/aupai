@@ -339,6 +339,11 @@ def sample_next(logits, prev_ids, temperature, top_k, repeat_penalty):
 
 @torch.no_grad()
 def generate(model, tok, prompt, args, device):
+    # The SFT data is 问：{q}\n答：{a}<eos> and nothing else, so a bare question is
+    # a continuation prompt, not an instruction: the model writes whatever text
+    # plausibly follows it. --raw keeps the old behaviour for probing a base model.
+    if not args.raw:
+        prompt = f"问：{prompt}\n答："
     eos = tok.token_to_id("<eos>")
     # A [NUM] token carries no number of its own: the digit head reads it off the same
     # hidden state that predicted the token, and fone.decode_text writes it back into
@@ -390,6 +395,19 @@ def main():
         "--dtype", choices=["bf16", "fp32"], default=None, help="default: bf16 on MPS, fp32 on CPU"
     )
     parser.add_argument("--cpu", action="store_true", help="force CPU")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="feed the prompt verbatim instead of wrapping it as 问：.../答：. Use this to probe "
+        "a base checkpoint, which has never seen the chat format and only continues text.",
+    )
+    parser.add_argument(
+        "--tokenizer",
+        default=None,
+        help="the vocabulary the checkpoint was trained on. data/tokenizer.json is rebuilt in place "
+        "and ids do not survive a rebuild, so the wrong file decodes to fluent-looking nonsense "
+        "without raising. Defaults to data/tokenizer.json and is checked against cfg.vocab.",
+    )
     args = parser.parse_args()
 
     if args.ckpt is None:
@@ -404,7 +422,13 @@ def main():
     dtype = args.dtype or ("bf16" if device == "mps" else "fp32")
 
     model, _ = load_model(args.ckpt, device, dtype)
-    tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+    tok_path = args.tokenizer or os.path.join(ROOT, "data", "tokenizer.json")
+    tok = Tokenizer.from_file(tok_path)
+    assert tok.get_vocab_size() == model.cfg.vocab, (
+        f"{tok_path} has vocab {tok.get_vocab_size()} but {args.ckpt} was trained at "
+        f"{model.cfg.vocab}. Pass --tokenizer with the matching file; decoding against the "
+        "wrong vocabulary produces plausible-looking garbage and raises nothing."
+    )
 
     if args.prompt is not None:
         generate(model, tok, args.prompt, args, device)

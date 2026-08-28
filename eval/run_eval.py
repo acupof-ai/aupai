@@ -138,6 +138,9 @@ MC_BENCHMARKS = {
     "boolq": ("BoolQ", load_boolq),
     "openbookqa": ("OpenBookQA", load_openbookqa),
     "mmlu": ("MMLU", load_mmlu),
+    # The only Chinese benchmark here. Every other entry is English, so before this
+    # the repo had no way to measure the language the model is actually trained in.
+    "ceval": ("C-Eval (zh)", lambda: _load_module("ceval").load_items()),
 }
 ALL_BENCHMARKS = list(MC_BENCHMARKS) + ["gsm8k"]
 

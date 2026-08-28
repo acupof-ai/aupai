@@ -174,6 +174,10 @@ def _demo_keys():
 
     names = {}
     for f in ("train.py", "infer_local.py"):
+        if not os.path.exists(os.path.join(ROOT, f)):
+            # infer_local.py is the local-Mac copy and is not shipped to the pod.
+            print(f"HybridLM key check SKIP ({f} not present here)")
+            return
         with open(os.path.join(ROOT, f), encoding="utf-8") as fh:
             src = fh.read()
         cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "HybridLM")
