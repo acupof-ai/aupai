@@ -251,3 +251,61 @@ replay are identical, so an eval gap between them is attributable.
 
 Both packed with `prepare_sft_math.py --fone`, which a FoNE base requires: it has
 only ever seen a number as one [NUM] carrying a Fourier value.
+
+### 6. Hand sampling: Belle is 38.7% defective, and every automated check passed it
+
+Five independent random samples of `real_math_clean_scrubbed`, read row by row.
+
+| source | sampled | defective | share of the set |
+|---|---|---|---|
+| belle | 31 | **12 = 38.7%** (95% CI 22-56%) | 83.5% (96,000 rows) |
+| mxode | 17 | 0 | 13.3% |
+| gsm8k | 18 | 0 (95% upper bound 8%) | 3.5% |
+
+Fisher exact p = 2.87e-05. That puts 21,000-54,000 defective rows inside Belle.
+
+Every defect class leaves the arithmetic *inside the equations* correct, so
+`eqcheck.py` and the four format detectors of section 3 pass all of them:
+
+- **`\boxed` contradicts the solution's own conclusion** (5 of 32): "8 × 6 = 48,
+  so the answer checks out" → `\boxed{48}` where the answer is 8; "10 × 5 = 50,
+  the school has 50 basketballs" → `\boxed{10}`; "10-7=3, 3 are left" →
+  `\boxed{10}`. The distinct-boxed detector cannot see these — there is only one
+  `\boxed`, and the contradiction is between the prose and it.
+- **the solution answers a different question** (3 of 32): with 4 yuan for a
+  2-yuan purchase, asked how much more is needed, it answers 2 — the change, not
+  the shortfall.
+- **the problem itself is broken** (3 of 32): "150 yuan of savings earning 2 yuan
+  a month, how many months" is unanswerable; the solution invents an equation with
+  an undefined variable and asserts x=25.
+- **the answer is in the wrong form** (1 of 32): asked for a fraction, `\boxed{20}`.
+
+A string-level prose-vs-boxed detector, calibrated against 12 hand labels (2 true
+positives, 0 false positives, 1 false negative), finds only **1.1%** at scale.
+The gap to 38.7% is real, not a threshold artifact: in most contradictions the
+prose's last number equals the boxed value and the boxed value is still the wrong
+answer to the question. Only a semantic comparison catches those.
+
+**This re-attributes the harmful-SFT finding.** sft_k4's damage (k5 base 51.2% →
+44.8% on math-500, p=0.043) was recorded above as answer-length mismatch, 156
+against the eval's 85. sft_k4 was built from Belle, so its defect rate is the more
+likely cause and the length is correlated with it. Section "math_short_v8" keeps
+the length table because matching the eval's length is still right; it is no
+longer the explanation.
+
+**Method note.** Section 3's detectors were self-validated on hand-built positive
+and negative cases, which is what caught their 93% false-positive rate. The same
+validation gave a 38.7% false-negative rate here, because the constructed cases
+were format-level and Belle's defects are semantic. Self-validation bounds false
+positives; only hand sampling of the real distribution bounds false negatives.
+
+### 7. Three SFT arms for k6
+
+| | math source | packed rows | loss tokens |
+|---|---|---|---|
+| sft_v8_fone.pt | 97,771 synthetic, program-verified | 4,342 | 12.21M |
+| sft_real_fone.pt | 114,908 real, Belle included | 4,676 | 13.80M |
+| sft_mix_fone.pt | v8 + 19,336 real without Belle | 4,834 | 13.57M |
+
+General replay is alpaca_gpt4_zh 52,049 in all three, and the base is the same, so
+a gap between them is attributable to the math source.
