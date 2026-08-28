@@ -88,14 +88,20 @@ input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 
 .stage.ar { background: none; border: 1px dashed var(--ar); color: var(--ar); font-weight: 500; }
 .blockwrap { display: flex; gap: 8px; align-items: stretch; }
 .nmult { display: flex; align-items: center; justify-content: center; min-width: 44px; border-radius: 6px; background: var(--accent); color: #0b1018; font-family: "IBM Plex Mono", monospace; font-weight: 700; font-size: 15px; }
-.blockbox { flex: 1; border: 1.5px solid var(--kda); border-radius: 6px; padding: 6px; }
-.blockbox .brow { display: flex; gap: 5px; align-items: stretch; }
-.bcol { display: flex; flex-direction: column; gap: 5px; }
-.bcol.kda3 { flex: 3; } /* the 3 KDA layers, shown fused */
-.bcol.mla { flex: 1; } /* the 1 MLA layer */
-.blk { border-radius: 4px; padding: 6px 4px; text-align: center; font-size: 10.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
+.blockbox { flex: 1; border: 1.5px solid var(--line); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+/* One layer per row, stacked in execution order: layers 1-3 are KDA, layer 4 is MLA.
+   Side by side they read as parallel heads, which is the wrong mental model. */
+.layer { display: flex; gap: 8px; align-items: stretch; }
+.layer + .layer { border-top: 1px dashed var(--line); padding-top: 6px; }
+.lnum { min-width: 42px; display: flex; align-items: center; justify-content: center; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--muted); border-right: 1px solid var(--line); }
+.lbody { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.subdot { text-align: center; color: var(--faint); font-size: 9.5px; line-height: 1.1; font-family: "IBM Plex Mono", monospace; }
+.blk { border-radius: 4px; padding: 6px 8px; text-align: center; font-size: 10.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: #0b1018; }
 .blk.kda { background: var(--kda); } .blk.mla { background: var(--mla); }
-.blk.ffn { background: var(--ffn); color: #fff; padding: 15px 4px; } /* taller: FFN is the bulk (51% of params) */
+.blk.ffn { background: var(--ffn); color: #fff; }
+.bsub { display: block; font-weight: 400; font-size: 9.5px; opacity: .85; }
+/* Tensor shape at every step: the point of the diagram is what happens to d. */
+.shape { display: block; font-weight: 400; font-size: 9.5px; opacity: .72; margin-top: 2px; letter-spacing: .02em; }
 .repeat-tag { font-size: 11px; color: var(--muted); font-family: "IBM Plex Mono", monospace; }
 .flowdot { text-align: center; color: var(--faint); font-size: 11px; line-height: 1; }
 
@@ -275,7 +281,7 @@ const fmtBytes = b => {
   const KiB = 1024, MiB = KiB*1024, GiB = MiB*1024;
   if (b >= GiB) return (b/GiB).toFixed(2)+' GiB';
   if (b >= MiB) return (b/MiB).toFixed(2)+' MiB';
-  if (b >= KiB) return (b/KiB).toFixed(1)+' KiB';
+  if (b >= KiB) { const v=b/KiB; return (Number.isInteger(v)?v:v.toFixed(1))+' KiB'; }
   return b+' B';
 };
 const fmtFlop = f => f >= 1e12 ? (f/1e12).toFixed(2)+' TF' : f >= 1e9 ? (f/1e9).toFixed(2)+' GF' : (f/1e6).toFixed(0)+' MF';
@@ -391,31 +397,51 @@ function compute() {
 
 function buildBlockstrip(m) {
   const el = $('blockstrip'); el.innerHTML = '';
-  const ar = S.attnRes; // AttnRes toggle
-  const stage = (cls, txt, id) => `<div class="stage ${cls}${id?' pick':''}"${id?` data-id="${id}" tabindex="0"`:''}>${txt}</div>`;
+  const ar = S.attnRes;
+  const d = S.d, ffn = S.ffn, hd = m.hd, lat = m.latent;
+  const shape = s => `<span class="shape">${s}</span>`;
+  const stage = (cls, txt, id, sh) =>
+    `<div class="stage ${cls}${id?' pick':''}"${id?` data-id="${id}" tabindex="0"`:''}>${txt}${sh?shape(sh):''}</div>`;
   const dot = '<div class="flowdot">↓</div>';
-  const ffnBlk = '<div class="blk ffn pick" data-id="ffn0" tabindex="0">FFN<br><span style="font-weight:400">9.44M</span></div>';
+
+  // One layer = mixer sublayer + FFN sublayer, drawn top to bottom because that is
+  // the order the tensor passes through them. The previous version put the 3 KDA
+  // layers beside the MLA layer, which reads as parallel heads -- they are layers
+  // 1-3 and layer 4 of one stack.
+  const layer = (i, kind) => {
+    const isK = kind === 'kda';
+    const mixName = isK ? 'KDA' : 'MLA';
+    const mixSub  = isK
+      ? `delta 循环 · ${HEADS} 头 × ${hd} · 状态 ${(HEADS*hd*hd*m.dtypeBytes/1024).toFixed(0)} KiB`
+      : `潜在 KV ${lat} · 窗口 ${WINDOW}`;
+    return `<div class="layer ${kind}">
+      <div class="lnum">层 ${i}</div>
+      <div class="lbody">
+        <div class="blk ${kind} pick" data-id="${kind}${i}" tabindex="0">
+          ${mixName}<span class="bsub">${mixSub}</span>
+          ${shape(`${d} → ${d}`)}
+        </div>
+        <div class="subdot">+ 残差 ↓</div>
+        <div class="blk ffn pick" data-id="ffn${i}" tabindex="0">
+          FFN<span class="bsub">SwiGLU</span>
+          ${shape(`${d} → ${ffn} → ${d}`)}
+        </div>
+      </div>
+    </div>`;
+  };
+
   el.innerHTML =
-    stage('embed', `Token Embedding · ${fmtP(m.E)}`, 'tok') + dot +
+    stage('embed', `Token Embedding`, 'tok', `${m.vpad} → ${d}`) + dot +
     (ar ? stage('ar', '⟿ Attention Residuals（深度 softmax，源=embedding+各组）', 'ar1') + dot : '') +
     `<div class="blockwrap">
-       <div class="nmult" title="block 重复次数">×${S.n}</div>
+       <div class="nmult" title="这 4 层重复 ${S.n} 次">×${S.n}</div>
        <div class="blockbox">
-         <div class="brow">
-           <div class="bcol kda3">
-             <div class="blk kda pick" data-id="kda0" tabindex="0">3 × KDA<br><span style="font-weight:400">delta 循环 · 5.27M</span></div>
-             ${ffnBlk}
-           </div>
-           <div class="bcol mla">
-             <div class="blk mla pick" data-id="mla3" tabindex="0">MLA<br><span style="font-weight:400">窗口 · 3.93M</span></div>
-             ${ffnBlk}
-           </div>
-         </div>
+         ${layer(1,'kda')}${layer(2,'kda')}${layer(3,'kda')}${layer(4,'mla')}
        </div>
      </div>` + dot +
     (ar ? stage('ar', 'final_ar（末端深度注意力）', 'final_ar') + dot : '') +
-    stage('norm', 'RMSNorm', 'norm') + dot +
-    stage('head', 'LM Head (tied) + softcap 15', 'head');
+    stage('norm', 'RMSNorm', 'norm', `${d} → ${d}`) + dot +
+    stage('head', 'LM Head (tied) + softcap 15', 'head', `${d} → ${m.vpad}`);
   el.querySelectorAll('.pick').forEach(p => bindSelect(p, p.dataset.id));
   const cur = el.querySelector(`.pick[data-id="${CSS.escape(selId)}"]`);
   if (cur) cur.classList.add('sel');
@@ -507,13 +533,17 @@ const DETAIL = {
       delta 先减去已解释部分再写入，输出为状态对查询的响应。卷积（k=4）提供局部上下文，QK 做 L2 归一化。
       <b>推理状态与上下文长度无关</b>——全历史折进固定的 hd×hd 矩阵。</p>`,
     shapes:[['qkv','1024 → 3072'],['gb (gate+beta)','1024 → 1032'],['short_conv','depthwise k=4'],
-      ['heads × hd','8 × 128'],['推理状态/层','262 KiB (bf16, 恒定)'],['参数量','5.27M']],
+      ['heads × hd',`${HEADS} × ${model(S).hd}`],
+      ['推理状态/层',`${fmtBytes(HEADS*model(S).hd*model(S).hd*S.dtypeBytes)} (恒定，与 ctx 无关)`],
+      ['参数量','5.27M']],
     formula:`decay = exp(-5·σ(e^A_log·(g+dt_bias)))\nv ← β·(v − S@k)      # delta\nS ← S·decay + v⊗k    # 秩1写入\nout = S@q             # q,k 已 L2 归一化` }),
   mla: i => ({ title:`Gated MLA · 第 ${i} 层`, kind:'潜在 KV 压缩 + 滑动窗口',
     body:`<p>KV 压到 256 维潜在再升回（k|v），注意力只在 1024 窗口内（NoPE），sigmoid 门控输出。
       <b>只缓存 256 维潜在</b>，k/v 由 kv_up 现场重建——比缓存 k,v 小 8×。</p>`,
     shapes:[['kv_down','1024 → 256'],['kv_up','256 → 2048 (k|v)'],['qg','1024 → 2048 (q|gate)'],
-      ['窗口 / 位置','1024 / NoPE'],['推理缓存/层','512 KiB (bf16, ctx≥1024 封顶)'],['参数量','3.93M']],
+      ['窗口 / 位置',`${WINDOW} / NoPE`],
+      ['推理缓存/层',`${fmtBytes(model(S).latent*WINDOW*S.dtypeBytes)} (ctx≥${WINDOW} 封顶)`],
+      ['参数量','3.93M']],
     formula:`z = kv_down(x)           # 压缩 4×\nk,v = kv_up(z).chunk(2)\nq = rms_norm(qg(x).q)\ny = softmax(q·kᵀ/√d)·v   # 窗口 1024\nout = o(y · σ(gate))` }),
   ffn: i => ({ title:`FFN · 第 ${i} 层`, kind:'SiTU-GLU · 有界激活',
     body:`<p>SwiGLU 有界变体：门控 <span class="mono">4·tanh(a/4)·σ(b)</span>，输出 <span class="mono">25·tanh(·/25)</span> 截断。
