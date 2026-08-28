@@ -128,11 +128,16 @@ def format_prompt(question, system=None):
 
 
 def format_example(question, answer, system=None):
-    """One complete training example. Returns (prompt, full) so the packer can mask
-    the prompt: `full` starts with exactly `prompt`, which is what pack_and_save
-    relies on to find the boundary."""
-    p = format_prompt(question, system)
-    return p, f"{p}{answer}{IM_END}"
+    """One training example as (prompt, completion), where prompt + completion is the
+    whole thing. The split is the loss boundary: pack_and_save masks `prompt` and
+    supervises `completion`, and it builds the full text as `prompt + completion`,
+    so returning the already-joined text here double-writes the prompt into every
+    row (found by scripts/packsmoke on 2026-08-29 -- the supervised span decoded as
+    the entire example a second time).
+
+    The completion ends with <|im_end|>: the model has to be supervised on its own
+    stop token or it never learns to stop."""
+    return format_prompt(question, system), f"{answer}{IM_END}"
 
 
 def format_history(messages):
@@ -183,9 +188,11 @@ def _demo():
         assert w and "vocab_id" in str(w[0].message), "old-format checkpoint did not warn"
 
     assert format_prompt("x") == "<|im_start|>user\nx<|im_end|>\n<|im_start|>assistant\n"
-    pr, full = format_example("x", "y")
-    assert full.startswith(pr), "the packer masks by prefix; full must start with prompt"
-    assert full == pr + "y<|im_end|>"
+    pr, comp = format_example("x", "y")
+    assert pr == format_prompt("x") and comp == "y<|im_end|>"
+    # pack_and_save builds the row as prompt + completion and masks len(prompt).
+    # If completion repeated the prompt, every row would carry it twice.
+    assert (pr + comp).count("<|im_start|>user") == 1, "the prompt appears twice in one example"
     assert format_prompt("x", system="s").startswith("<|im_start|>system\ns<|im_end|>")
     assert format_history([{"role": "user", "content": "a"}]) == format_prompt("a")
     # every ChatML special must be ONE token, or the format costs 8 tokens a turn

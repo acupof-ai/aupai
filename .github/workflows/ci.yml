@@ -13,5 +13,6 @@ jobs:
       - run: python -m py_compile train.py sft.py sft_math.py serve.py chat.py infer.py prepare_sft_math.py eval/*.py scripts/*.py mathbank/*.py datagen/*.py algorithms/*.py filters/*.py
       - run: python scripts/test_arch_compat.py
       - run: python scripts/loader.py selftest
+      - run: python scripts/test_sft_pack.py
       - run: python scripts/eqcheck.py
       - run: python scripts/holdout.py

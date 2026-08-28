@@ -210,7 +210,7 @@ def iter_jsonl(path):
                     # QA corpora (coig, school_math_r1_zh, ...) rendered in the SAME ChatML
                     # the SFT pack uses, so pretraining already sees the format it will be
                     # fine-tuned in. Before 2026-08-29 this was a homemade 问：/答：.
-                    text = format_example(d["instruction"], d.get("output", ""))[1]
+                    text = "".join(format_example(d["instruction"], d.get("output", "")))
                 yield text or "", d.get("url")
 
 
