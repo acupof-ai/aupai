@@ -40,6 +40,15 @@
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
 - `uv sync` after dependency changes (torch, fla, liger-kernel, torchao are linux-only markers).
+- Faster tokenizer libraries do NOT drop in (evaluated 2026-08-28, tokenizing 9.49B tokens at
+  2.3M tok/s, ~66 min). `gigatoken` refuses this vocab outright ("no single-byte vocab entry for
+  byte 0x00" -- it needs a complete 256-byte base that a Chinese-corpus BPE does not have);
+  `fastokens` loads it and matches ids on short strings but raises "character not in vocabulary"
+  on real corpus text instead of falling back to `<unk>`; `tiktoken` uses a different regex
+  pretokenizer and cannot reproduce ByteLevel BPE ids at all. Adopting any of them means retraining
+  the vocab with full byte coverage, which changes every token id. The profile also caps the prize:
+  75% of the time is already in the Rust tokenizer running on 90-143 cores, 25% in python. The real
+  win is incremental tokenization (only new shards), not a faster library.
 - Long jobs need `setsid`, not `nohup`: `pod` runs through `crictl exec`, and when that session ends
   (a dropped tunnel, a tool timeout) the kernel kills the whole process group — `nohup` only blocks
   SIGHUP and does not save it. Launch as
