@@ -157,3 +157,97 @@ records the arithmetic; it is deliberately not applied.
 
 **What actually buys resolution:** eval-only programs, roughly 312 for ±1.03%,
 517 for ±0.80%, and 1,178 for ±0.53%. The whole L3/L4 bank is 943.
+
+## SFT real-math data work — 2026-08-28 (aupai-3b)
+
+### 1. Eval contamination
+Bigram-Jaccard scan (self-validated; methods verified to recall hand-built
+near-dups and reject unrelated pairs) of `real_math_filtered` (132,205 rows)
+against both eval sets at Jaccard-thresholded similarity:
+
+- `math_hard_eval_1k` is **clean**: top-1 Jaccard median 0.156 / p90 0.263 /
+  max 0.538; no true duplicate. Consistent with its prior program-disjointness.
+- `math_test_500` carries near-duplicates of Belle/mxode training rows. Under the
+  operational definition (top-1 Jaccard ≥ 0.8 AND gold answer equal), 51/500 =
+  10.2% memorizable; the same-answer share falls sharply across thresholds
+  (87% at ≥0.9, 63% at 0.8-0.9, 40% at 0.5-0.8, ~12% baseline below 0.5), so
+  0.8 is a real knee. Consequence: math-500's absolute value is inflated ~10pt,
+  but cross-checkpoint comparison holds for equal Belle exposure. Pair examples:
+  EVAL「小明有5本书，小华有3本书，一共有几本？」≈ TRAIN「小明有3本书，小华有5本
+  书…」(Jaccard≈1.0) — same problem, operands swapped. Full pair file:
+  pod `data/sft/contam_out/near_{test,hard}.jsonl`.
+  Once measured, contamination was also *removed*: the 540 training rows within
+  Jaccard 0.5 of any eval question were deleted from the training set (0.47% of
+  clean), using **no same-answer constraint** — for contamination the conservative
+  direction is the opposite of the one dedup needs (dedup avoids deleting useful
+  re-numbered practice questions, so it adds the same-answer constraint; scrubbing
+  prefers to over-remove rather than leave anything memorizable, so it drops the
+  constraint and takes Jaccard 0.5). Result: `real_math_clean_scrubbed.jsonl`,
+  114,908 rows, which is the file packed for SFT. math_hard had 0 such rows.
+
+### 2. mxode 91% drop + near-dup dedup
+Reproduced from raw jsonl locally (four-step, exact): length band 60-132 cuts
+mxode 211,988→38,700 (**81.7%** — mxode solutions are verbose, median 188 chars);
+eqcheck removes only ~50 more; global cross-source md5 dedup cuts 38,700→18,494
+(**-52%**). So mxode survives at 8.7% because it is long-solution AND heavily
+framing-overlapping with belle, not because it is broken.
+
+Near-dup dedup, global at Jaccard ≥ 0.8 **with a same-answer hard constraint**
+(numpy MinHash 96/16/6 LSH ~99% recall for ≥0.8 pairs; exact Jaccard confirm;
+greedy keep-first; `source` preserved). The answer constraint is essential:
+bare 0.8 also deletes same-topic *rephrased-number* pairs with DIFFERENT answers
+(763/2,589 cross-source ≥0.8 candidates are belle↔mxode re-numbered variants of
+a different problem, e.g. belle "4 candies + 2" vs mxode "6 candies + 4", ans
+6≠10) — deleting those loses difficulty diversity. Chained: intra-source + cross
+-source at 0.8 same-answer. Results: 132,205 → 118,567 (intra-source) → 117,098
+(cross, -1,469 all same-answer) → **115,448** after dropping 1,650 stem-restated
+rows (belle 96,000 / mxode 15,388 / gsm8k 4,060). Dropped rows verified genuine
+near-dups (100% have a ≥0.8 same-answer same-source partner). Files on pod:
+`real_math_dedup.jsonl`, `real_math_dedup_x.jsonl`, `real_math_clean.jsonl`.
+
+### 3. Quality screening beyond arithmetic
+Four detectors were built and hand-self-validated, then measured on the real
+distribution — and the real-data misclassification rates DO NOT support using
+them to delete data:
+
+- answer-markers (checker1/2): flags 42% of rows but **93% are false**
+  (the prevalent "prose restates the answer, then a same-valued \boxed" is a
+  normal training pattern, not a defect). Only a *different* second \boxed is
+  harmful, and that is rare.
+- stem-restatement (checker3, 1.5%): ~2/3 genuine whole-question parroting —
+  the one defensible deletion, in line with the short-CoT direction.
+- inline equation (checker4, 3.9%): real but a formatting style, not an error
+  (eqcheck already verifies the arithmetic); deleting it discards diversity.
+
+Recommendation: do NOT bulk-delete on checker1/2/4; drop checker3 restatements
+(~1.5%) only — applied to reach the 115,448 final clean. The "distinct boxed
+answers" check self-validated 5/5 and fired on just 15 rows (0.013%), all of
+which manual review showed to be mid-working \boxed emphasis on multi-part
+questions (extract_boxed still resolves the last one correctly), i.e. **zero
+genuine answer-conflict rows** — not a real failure mode to filter here.
+
+### 4. External data (survey, no download)
+Surveyed the public Chinese-instruction landscape (datasets-server metadata +
+≤400-row samples each, no full download). No clean native-zh quality source
+exists: the high-volume zh instruction corpora (BelleGroup/train_{0.5M,1M,2M}_CN,
+shibing624/alpaca-zh) are all English-instruction machine translations — more
+breadth/volume, not better quality; the native-zh ones (BAAI/COIG already local,
+evol-instruct-zh, moss-003) are long-CoT, matching the already-rejected pattern.
+Only worthwhile download if the goal is volume: **BelleGroup/train_2M_CN** (or
+1M), ~19-24% of answers in the 60-132 band, standard instruction/input/output
+columns. GB-scale, needs sha after download, requires aupai-fb/user approval.
+### 5. Packed for the k6 A/B
+
+Two SFT packs differing only in where the math comes from; base and general
+replay are identical, so an eval gap between them is attributable.
+
+| | sft_v8_fone.pt | sft_real_fone.pt |
+|---|---|---|
+| math | math_short_v8, 97,771 synthetic rows over 24,452 templates | real_math_clean_scrubbed, 114,908 human-written rows |
+| general replay | alpaca_gpt4_zh 52,049 | alpaca_gpt4_zh 52,049 |
+| packed rows | 4,342 | 4,676 |
+| loss tokens | 12.21M (68.7%) | 13.80M (72.0%) |
+| [NUM] share | 11.32% | 7.54% |
+
+Both packed with `prepare_sft_math.py --fone`, which a FoNE base requires: it has
+only ever seen a number as one [NUM] carrying a Fourier value.
