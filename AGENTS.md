@@ -20,6 +20,13 @@
 - Mix: `data/mix.json` = per-domain weight / epoch cap / anneal weight; when present train.py builds the
   schedule (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in
   order, so `Cfg.epochs` is forced to 1. Delete or `--mix ""` to fall back to the flat corpus.
+- Numbers (`--fone`): BPE splits numbers by corpus frequency, not place value (1640 → `16|40`), so a
+  carry rule cannot transfer. `--fone` collapses each number to one `[NUM]` carrying a Fourier value
+  and scores ten ways per digit. A GPU A/B at equal params and steps: BPE 1.4%, FoNE 100% on held-out
+  two-digit arithmetic (`scripts/fone_probe.py`). It costs ~14% throughput. **`--fone` changes the
+  data format everywhere**: pack SFT with `prepare_sft_math.py --fone`, and a checkpoint whose `fone`
+  flag disagrees with the pack raises rather than silently reading every number as zero.
+  `scripts/fone_digit_acc.py --ckpt X` scores the digit head against chance and copy-previous.
 - pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
 - FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
 
@@ -34,8 +41,10 @@
 ## Experiment records
 - Every GPU run: `scripts/exp.py start/done` → `runs/experiments.jsonl` → `EXPERIMENTS.md` (hypothesis,
   finding, decision — not just numbers). Checkpoints: `ckpt_{arch}_{tokens}_{date}.pt`, gitignored.
-- Best base to date is `ckpt_k4_11b_lr05.pt` (fp8 + attn_res blocks4 + warmup 150 + lr_scale 0.5).
-  A fresh clean-corpus pretrain is in progress; `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
+- Bases: `ckpt_k4_11b_lr05.pt` and `ckpt_k5_clean_0827.pt` are indistinguishable on math
+  (math-500 51.6 vs 51.2, p=0.899; math-hard 2.9 vs 1.9, p=0.152) with k5 holding the better val
+  (2.020 vs 2.086). k6_fone adds `--fone`. Recipe: `--fp8 --attn_res --attn_res_blocks 4
+  --warmup 150 --lr_scale 0.5`. `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
 
 ## Tokenizer / vocabulary
 - vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
