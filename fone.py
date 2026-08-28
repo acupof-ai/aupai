@@ -7,13 +7,12 @@ digits is frequency-driven and carries no place value: this vocab splits 1640 as
 to the next. FoNE sidesteps the tokenizer: every number becomes a single [NUM]
 token whose embedding is computed from the *value*, two dimensions per digit.
 
-    phi(x, T)      = (cos(2*pi*x/T), sin(2*pi*x/T))          # Definition 3.1
-    FoNE(x, m, n)  = [phi(x, 10^-n+1); ...; phi(x, 10^m)]     # Definition 3.2
+    phi(x, T) = (cos(2*pi*x/T), sin(2*pi*x/T))               # Definition 3.1
 
-phi(x, 10^(i+1)) depends on x only through x mod 10^(i+1), and its angle advances
-by exactly 2*pi/10 per unit of the i-th digit — so the pair (cos, sin) at period
-10^(i+1) *is* that digit on a circle, and reading it back is a nearest-angle
-lookup over the ten digit points (Definition 3.7).
+Digit i occupies dims [2i, 2i+1] as phi(d_i, 10): the pair sits on a circle where
+one step of the digit is one tenth of a turn, so reading it back is a nearest-angle
+lookup over the ten points phi(0..9, 10) (Definition 3.7). See encode() for why
+this is written per-digit rather than as the paper's phi(x, 10^i).
 
 Digits are recovered from the hidden state the same way, which makes the number
 head ten-way per digit instead of vocab-wide (Definition 3.6).
@@ -32,11 +31,6 @@ NUM_RE = re.compile(r"-?\d+(?:\.\d+)?")
 INT_DIGITS = 6  # 10^0 .. 10^5   -> values up to 999999
 FRAC_DIGITS = 2  # 10^-1, 10^-2  -> two decimal places
 NUM_DIMS = 2 * (INT_DIGITS + FRAC_DIGITS)
-
-
-def periods(m=INT_DIGITS, n=FRAC_DIGITS):
-    """The periods T_i = 10^i, ordered least significant digit first."""
-    return [10.0 ** (i + 1) for i in range(-n, m)]
 
 
 def encode(values, m=INT_DIGITS, n=FRAC_DIGITS, dtype=torch.float32):
