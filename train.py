@@ -1211,6 +1211,7 @@ def main():
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
+        "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
     }.items():
         parser.add_argument(f"--{name}", action="store_true", help=help_)
     parser.add_argument(
