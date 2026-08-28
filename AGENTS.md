@@ -40,6 +40,13 @@
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
 - `uv sync` after dependency changes (torch, fla, liger-kernel, torchao are linux-only markers).
+- Long jobs need `setsid`, not `nohup`: `pod` runs through `crictl exec`, and when that session ends
+  (a dropped tunnel, a tool timeout) the kernel kills the whole process group — `nohup` only blocks
+  SIGHUP and does not save it. Launch as
+  `pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null >/dev/null 2>&1 &"`,
+  then poll the log in a separate call. A run_sft.sh launched with plain nohup died between the train
+  and eval stages this way (2026-08-28): the checkpoint was saved, the eval never ran, and the
+  experiments row stayed status="running".
 
 ## Coordination
 - Several Claude sessions share this working tree. Announce before editing `train.py`/`sft*.py`, commit
