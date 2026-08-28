@@ -105,6 +105,61 @@ def split_numbers(text):
     return segs, vals
 
 
+NUM_TOKEN = "[NUM]"
+
+
+def encode_text(texts, tok, num_id):
+    """Texts -> (ids int32, values float32), numbers replaced by one [NUM] token each.
+
+    Values are stored compactly, in stream order: the k-th [NUM] in ids takes the
+    k-th value. Positions need no index of their own -- `ids == num_id` recovers
+    them, and a cumsum over that mask maps any slice of the stream back into this
+    array. At web-text number density that is a few percent of the id stream,
+    against the 100% a value-per-position array would cost.
+
+    Magnitudes at or above 10^INT_DIGITS cannot be represented; those numbers keep
+    their ordinary BPE tokens instead of becoming a [NUM] that would silently mean
+    something else.
+    """
+    import numpy as np
+
+    batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
+    limit = 10**INT_DIGITS
+    pieces, vals = [], []
+    for text in texts:
+        segs, nums = split_numbers(text)
+        keep = [v for v in nums if abs(v) < limit]
+        if len(keep) != len(nums):  # rebuild with the oversized ones left as text
+            segs, nums = _split_bounded(text, limit)
+        else:
+            nums = keep
+        enc = batch_fn(segs)
+        row = []
+        for j, e in enumerate(enc):
+            row.extend(e.ids)
+            if j < len(nums):
+                row.append(num_id)
+        pieces.append(np.asarray(row, dtype=np.int32))
+        vals.extend(nums)
+    return pieces, np.asarray(vals, dtype=np.float32)
+
+
+def _split_bounded(text, limit):
+    """split_numbers, but numbers too large to encode stay inside the text segments."""
+    segs, vals, last = [], [], 0
+    buf = ""
+    for mo in NUM_RE.finditer(text):
+        v = float(mo.group(0))
+        if abs(v) >= limit:
+            continue  # leave it in the surrounding segment
+        segs.append(buf + text[last : mo.start()])
+        buf = ""
+        vals.append(v)
+        last = mo.end()
+    segs.append(buf + text[last:])
+    return segs, vals
+
+
 def _selftest():
     """Round-trip and boundary checks. Run: python fone.py"""
     vals = [0, 7, 42, 152, 1640, 3200, 6142, 999999, 3.14, 0.75, 12.5, -8]
@@ -132,9 +187,30 @@ def _selftest():
     rebuilt = segs[0] + "".join(f"{v:g}{s}" for v, s in zip(nums, segs[1:]))
     assert rebuilt == t, rebuilt
 
-    # Values beyond the representable range wrap rather than crash; the caller is
-    # responsible for keeping magnitudes under 10^INT_DIGITS.
+    # Values beyond the representable range wrap rather than crash; encode_text
+    # keeps them out by leaving oversized numbers as ordinary text.
     assert encode([10**INT_DIGITS]).shape == (1, NUM_DIMS)
+
+    # Text -> (ids, values) against the real tokenizer, if it is available.
+    import os
+
+    tok_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tokenizer.json")
+    if os.path.exists(tok_path):
+        from tokenizers import Tokenizer
+
+        tk = Tokenizer.from_file(tok_path)
+        nid = tk.token_to_id(NUM_TOKEN)
+        if nid is None:  # tokenizer not upgraded yet: stand in with a free id
+            nid = tk.get_vocab_size()
+        ids, v = encode_text([t, "没有数字的一句话", "超大数 12345678 保持原样"], tk, nid)
+        assert (ids[0] == nid).sum() == 6, (ids[0] == nid).sum()
+        assert list(v[:6]) == [200, 8, 10, 160, 20, 140], v[:6]
+        assert (ids[1] == nid).sum() == 0, "no numbers -> no [NUM]"
+        assert (ids[2] == nid).sum() == 0, "oversized number must stay as text"
+        # the k-th [NUM] takes the k-th value: cumsum over the mask is the index
+        mask = ids[0] == nid
+        assert mask.sum() == len(v) - 0, "value count matches [NUM] count"
+        print(f"  encode_text OK — {len(v)} values across 3 docs, [NUM] id {nid}")
 
     print(
         f"fone selftest OK — {NUM_DIMS} dims "
