@@ -133,6 +133,7 @@ class Cfg:
     vocab = 32773  # 32768 BPE merges + <unk>/<eos> inside them, 4 chat specials, [NUM]
     fone = False  # --fone: numbers as one [NUM] token carrying a Fourier value embedding
     num_id = 32772  # [NUM], the last id; always in the vocab so --fone needs no resize
+    fone_loss_w = 1.0  # weight of the per-digit loss relative to the token loss
     seq = 4096  # recurrent arch handles arbitrary length at inference
     batch = (
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
@@ -797,8 +798,13 @@ def doc_cu_seqlens(idx, eos_id):
     return cu
 
 
-def validate(model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, max_batches=None):
-    """Mean FLCE loss over the (fixed, disjoint) validation split. All DDP ranks call it in lockstep."""
+def validate(
+    model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, max_batches=None, Vva=None, Wva=None
+):
+    """Mean FLCE loss over the (fixed, disjoint) validation split. All DDP ranks call it in lockstep.
+
+    Under --fone the number values must ride along, or validation feeds every [NUM]
+    a value of zero and reports a loss the training loop never saw."""
     model.eval()
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
@@ -809,11 +815,21 @@ def validate(model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, 
                 break
             xva = Xva[j : j + batch].to(device)
             yva = Yva[j : j + batch].to(device)
+            vva = Vva[j : j + batch].to(device) if Vva is not None else None
             cu = doc_cu_seqlens(xva, eos_id) if eos_id is not None else None
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=device.startswith("cuda")):
-                hidden, _ = model(xva, yva, cu)
+                hidden, _ = model(xva, yva, cu, vva)
             D = hidden.shape[-1]
-            vl.append(flce(weight, hidden.to(weight.dtype).reshape(-1, D), yva.reshape(-1)).item())
+            v = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yva.reshape(-1))
+            if Wva is not None:
+                nm = yva == raw_model.cfg.num_id
+                if nm.any():
+                    wva = Wva[j : j + batch].to(device)
+                    v = v + raw_model.cfg.fone_loss_w * F.cross_entropy(
+                        raw_model.num_logits(hidden[nm].float()).reshape(-1, 10),
+                        fone.digit_targets(wva[nm]).reshape(-1),
+                    )
+            vl.append(v.item())
     model.train()
     return sum(vl) / len(vl)
 
@@ -1077,13 +1093,18 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
     pools, val, used = {}, [], {}
+    vpools, vval = {}, []  # --fone: the per-position number values, shadowing pools/val exactly
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
+        seqs, vseq = seqs if Cfg.fone else (seqs, None)
         # Capped: validation reads at most Cfg.val_batches_full batches, so a 5% split of a 1.9M-row
         # domain would keep 95K rows alive to look at 4.8K of them.
         n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), Cfg.val_rows_max)
         val.append(seqs[:n_val])
         pools[name] = seqs[n_val:]
+        if Cfg.fone:
+            vval.append(vseq[:n_val])
+            vpools[name] = vseq[n_val:]
         used[name] = 0
     plan = []
     for frac, key in phases:
@@ -1121,13 +1142,20 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
+    vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
     for di, name in enumerate(names):
         m = mine[0] == di
         if m.any():
             out[m] = pools[name][mine[1][m]]
-    del pools
-    vcat = torch.cat(val)
-    return out, vcat[torch.randperm(len(vcat), generator=torch.Generator().manual_seed(Cfg.seed))]
+            if Cfg.fone:
+                vout[m] = vpools[name][mine[1][m]]
+    del pools, vpools
+    # One permutation for both, so a validation row keeps its own numbers.
+    vperm = torch.randperm(sum(len(v) for v in val), generator=torch.Generator().manual_seed(Cfg.seed))
+    vcat = torch.cat(val)[vperm]
+    if Cfg.fone:
+        return (out, vout), (vcat, torch.cat(vval)[vperm])
+    return out, vcat
 
 
 # --- LR schedule: linear warmup, constant, cosine warmdown ---
@@ -1231,9 +1259,17 @@ def main():
         assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
         tok = build_tokenizer([])
         eos_id = tok.token_to_id("<eos>")
-        seqs, vseqs = build_mix(mix_path, tok, is_main, ddp, rank, world)
+        tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
+        # `vseqs` is the VALIDATION rows; under --fone each half also carries its
+        # per-position number values, which follow the same [:, :-1] input slice.
+        (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
         seqs, vseqs = seqs.long(), vseqs.long()  # int32 on disk and in the pools; long for embedding
         Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
+        # V* feeds the embedding (aligned with X); W* is the digit target (aligned with Y).
+        Vtr = num_tr[:, :-1].contiguous() if Cfg.fone else None
+        Wtr = num_tr[:, 1:].contiguous() if Cfg.fone else None
+        Vva = num_va[:, :-1].contiguous() if Cfg.fone else None
+        Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
         data, X = seqs, seqs  # for the params print below
         Cfg.epochs = 1  # repeats are encoded in the schedule
     else:
@@ -1265,11 +1301,17 @@ def main():
         X, Y = seqs[:, :-1], seqs[:, 1:]
         n_val = max(1, int(len(X) * Cfg.val_frac))
         Xtr, Ytr, Xva, Yva = X[n_val:], Y[n_val:], X[:n_val], Y[:n_val]
+        # The flat path exists as the no-mix fallback; rather than carry a second
+        # value pipeline that nothing runs, --fone requires the mix schedule.
+        assert not Cfg.fone, "--fone needs data/mix.json (the flat corpus path carries no values)"
+        Vtr = Wtr = Vva = Wva = None
 
     if ddp and not use_mix:  # the mix path already handed this rank its own slice, in schedule order
         n_even = ddp_even_len(len(Xtr[rank::world]), Cfg.batch, ddp)
         Xtr, Ytr = Xtr[rank::world][:n_even], Ytr[rank::world][:n_even]  # strided: same phase per rank
     Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()  # nanochat: async H2D
+    if Cfg.fone:
+        Vtr, Wtr = Vtr.contiguous().pin_memory(), Wtr.contiguous().pin_memory()
     # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage through two
     # pinned buffers; each is reused only after the event recorded behind its previous H2D copy completes.
     pin = [
@@ -1277,6 +1319,8 @@ def main():
             torch.empty((Cfg.batch, Cfg.seq), dtype=Xtr.dtype).pin_memory(),
             torch.empty((Cfg.batch, Cfg.seq), dtype=Ytr.dtype).pin_memory(),
             torch.cuda.Event() if amp else None,
+            torch.empty((Cfg.batch, Cfg.seq), dtype=torch.float32).pin_memory() if Cfg.fone else None,
+            torch.empty((Cfg.batch, Cfg.seq), dtype=torch.float32).pin_memory() if Cfg.fone else None,
         )
         for _ in range(2)
     ]
@@ -1353,23 +1397,39 @@ def main():
         t_log = time.time()
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
             idx = perm[i : i + Cfg.batch]
-            xb_pin, yb_pin, ev = pin[(i // Cfg.batch) % 2]
+            xb_pin, yb_pin, ev, vb_pin, wb_pin = pin[(i // Cfg.batch) % 2]
             if ev is not None:
                 ev.synchronize()
             torch.index_select(Xtr, 0, idx, out=xb_pin)
             torch.index_select(Ytr, 0, idx, out=yb_pin)
             xb = xb_pin.to(device, non_blocking=True)
             yb = yb_pin.to(device, non_blocking=True)
+            vb = wb = None
+            if Cfg.fone:
+                torch.index_select(Vtr, 0, idx, out=vb_pin)
+                torch.index_select(Wtr, 0, idx, out=wb_pin)
+                vb = vb_pin.to(device, non_blocking=True)
+                wb = wb_pin.to(device, non_blocking=True)
             if ev is not None:
                 ev.record()
             cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
-                hidden, _ = model(xb, yb, cu)  # pass targets so compile traces hidden branch
+                hidden, _ = model(xb, yb, cu, vb)  # pass targets so compile traces hidden branch
             B, T, D = hidden.shape
             weight = raw_model.head.weight[: raw_model.cfg.vocab]
             loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
                 weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1)
             )
+            if Cfg.fone:
+                # Predicting [NUM] says a number comes next but not which one; the
+                # digits are supervised separately, ten-way per place. The target is
+                # the value at the position yb points at, so it comes from the shifted
+                # value slice, not the one fed to the embedding.
+                nmask = yb == Cfg.num_id
+                if nmask.any():
+                    nlog = raw_model.num_logits(hidden[nmask].float())
+                    ntgt = fone.digit_targets(wb[nmask])
+                    loss = loss + Cfg.fone_loss_w * F.cross_entropy(nlog.reshape(-1, 10), ntgt.reshape(-1))
             loss = loss / Cfg.accum
             # nanochat: skip DDP all-reduce on non-final microbatches
             if ddp and Cfg.accum > 1 and (i // Cfg.batch + 1) % Cfg.accum != 0:
@@ -1455,6 +1515,8 @@ def main():
                         amp_dtype,
                         eos_id if Cfg.doc_mask else None,
                         Cfg.val_batches,
+                        Vva,
+                        Wva,
                     )
                     if is_main:
                         runlog(f"step {step}/{total_steps} val {v:.3f}")
@@ -1497,6 +1559,8 @@ def main():
             amp_dtype,
             eos_id if Cfg.doc_mask else None,
             max_batches=Cfg.val_batches_full,
+            Vva=Vva,
+            Wva=Wva,
         )
         if is_main:
             runlog(f"ep {ep + 1}/{Cfg.epochs} train {last:.3f} val {v:.3f} {time.time() - t0:.0f}s")

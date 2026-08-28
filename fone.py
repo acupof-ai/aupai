@@ -64,6 +64,17 @@ def encode_tensor(x, m=INT_DIGITS, n=FRAC_DIGITS):
     return torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten(-2).to(x.dtype)
 
 
+def digit_targets(x, m=INT_DIGITS, n=FRAC_DIGITS):
+    """Values -> (..., m+n) integer digit labels, on the input's own device.
+
+    The tensor-side twin of digits_of(), for building cross-entropy targets inside
+    the training loop without a round trip through python lists.
+    """
+    scaled = torch.round(x.double().abs() * (10.0**n))
+    place = 10.0 ** torch.arange(m + n, dtype=torch.float64, device=x.device)
+    return torch.remainder(torch.div(scaled.unsqueeze(-1), place, rounding_mode="floor"), 10).long()
+
+
 def digit_basis(dtype=torch.float32):
     """The ten reference points phi(j, 10) for j = 0..9 — the decoding dictionary."""
     j = torch.arange(10, dtype=torch.float64)
