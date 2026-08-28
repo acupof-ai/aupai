@@ -39,7 +39,6 @@ def selfcheck():
     three files (good/missing/tampered) + a matching manifest and asserts the
     verifier classifies each correctly. Prints PASS/FAIL lines."""
     import shutil
-    import textwrap
     tmp = tempfile.mkdtemp(prefix="dataverify_")
     try:
         # a known-good file
