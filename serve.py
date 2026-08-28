@@ -28,16 +28,23 @@ cfg = SimpleNamespace(**ck["cfg"])
 model = HybridLM(cfg).to(device)
 model.load_state_dict(ck["model"])
 model.eval()
-tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
-# ensure ChatML + think special tokens exist
-for t in ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]:
-    if tok.token_to_id(t) is None:
-        tok.add_special_tokens([t])
+# The vocabulary the checkpoint was trained on. Adding missing specials at load time,
+# which this used to do, changes the vocab size and hides the one signal that the wrong
+# file is loaded -- so assert instead.
+TOK_PATH = os.environ.get("TOKENIZER", os.path.join(ROOT, "data", "tokenizer.json"))
+tok = Tokenizer.from_file(TOK_PATH)
+assert tok.get_vocab_size() == cfg.vocab, (
+    f"{TOK_PATH} has vocab {tok.get_vocab_size()} but the checkpoint was trained at {cfg.vocab}; "
+    "set TOKENIZER= to the matching file"
+)
 print(f"model loaded, vocab={tok.get_vocab_size()}, seq={cfg.seq}", flush=True)
 
 
 def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
-    eos = tok.token_to_id("<|im_end|>")
+    # <eos>, not <|im_end|>: the SFT data ends every answer with <eos> and contains no
+    # ChatML token at all, so stopping on <|im_end|> never fired and generation ran to
+    # max_new every time.
+    eos = tok.token_to_id("<eos>")
     prompt_ids = tok.encode(prompt).ids
     x = torch.tensor([prompt_ids], device=device)
     seen = {}  # token -> count, for repetition penalty
@@ -64,13 +71,27 @@ def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
 
 
 def format_history(history):
+    """The format the SFT data is actually in: 问：/答：, one turn at a time.
+
+    This used to emit ChatML -- <|im_start|>role\n...<|im_end|> -- and those four
+    tokens appear ZERO times in any SFT pack, so the model was being served a format
+    it had never seen while chat.py, which uses 问：/答：, worked. The specials hold
+    vocabulary slots 32768-32771 against a multi-turn SFT that has not been built.
+
+    Prior turns are kept as context in the same shape; the model was trained on
+    single-turn examples separated by <eos>, so this is a mild extrapolation rather
+    than a format it cannot read.
+    """
     parts = []
     for msg in history:
-        role = msg["role"]
-        content = msg["content"]
-        parts.append(f"<|im_start|>{role}\n{content}<|im_end|>\n")
-    parts.append("<|im_start|>assistant\n")
+        if msg["role"] == "user":
+            parts.append(f"问：{msg['content']}\n答：")
+        else:
+            parts.append(f"{msg['content']}\n")
     text = "".join(parts)
+    if not text.endswith("答："):
+        parts.append("答：")
+        text = "".join(parts)
     if len(text) > 800:
         text = text[-800:]
     return text
