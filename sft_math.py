@@ -18,9 +18,11 @@ import time
 import torch
 import torch.distributed as dist
 import torch.nn as nn
+import torch.nn.functional as F
 from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
 from torch.nn.parallel import DistributedDataParallel as DDP
 
+import fone
 from train import (
     SOFTCAP,
     Cfg,
@@ -84,14 +86,25 @@ def main():
     d = torch.load(args.sft_path, map_location="cpu", weights_only=True)
     X = d["input_ids"][:, :-1].long().contiguous()
     Y = d["labels"][:, 1:].long().contiguous()
+    # V feeds the embedding, W is the digit target one position later -- the same
+    # split train.py uses. A FoNE base on a pack without values would read every
+    # number as zero, so the mismatch is an error rather than a silent fallback.
+    assert Cfg.fone == ("values" in d), (
+        f"checkpoint fone={Cfg.fone} but {args.sft_path} "
+        f"{'has' if 'values' in d else 'has no'} values; repack with prepare_sft_math.py --fone"
+    )
+    V = d["values"][:, :-1].contiguous() if Cfg.fone else None
+    W = d["values"][:, 1:].contiguous() if Cfg.fone else None
     del d
     if ddp:
         X = X[rank::world].contiguous()
         Y = Y[rank::world].contiguous()
+        if Cfg.fone:
+            V, W = V[rank::world].contiguous(), W[rank::world].contiguous()
     n_even = ddp_even_len(len(X), Cfg.batch, ddp)  # identical step count on every rank
-    X, Y = X[:n_even], Y[:n_even]
-    X = X.pin_memory()
-    Y = Y.pin_memory()
+    X, Y = X[:n_even].pin_memory(), Y[:n_even].pin_memory()
+    if Cfg.fone:
+        V, W = V[:n_even].pin_memory(), W[:n_even].pin_memory()
     if is_main:
         print(f"sft rows {len(X)} per rank (world {world})", flush=True)
 
@@ -136,10 +149,21 @@ def main():
             idx = perm[i : i + Cfg.batch]
             xb = X[idx].to(device, non_blocking=True)
             yb = Y[idx].to(device, non_blocking=True)
+            vb = V[idx].to(device, non_blocking=True) if Cfg.fone else None
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-                hidden, _ = model(xb, yb, doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None)
+                hidden, _ = model(xb, yb, doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None, vb)
             B, T, D = hidden.shape
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
+            if Cfg.fone:
+                # Only supervised [NUM] positions: a prompt-masked one carries no loss here
+                # either, or the model would be scored on digits it was told to ignore.
+                nmask = yb == Cfg.num_id
+                if nmask.any():
+                    wb = W[idx].to(device, non_blocking=True)
+                    loss = loss + Cfg.fone_loss_w * F.cross_entropy(
+                        raw_model.num_logits(hidden[nmask].float()).reshape(-1, 10),
+                        fone.digit_targets(wb[nmask]).reshape(-1),
+                    )
             loss.backward()
             last = loss.item()
             grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)

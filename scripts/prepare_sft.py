@@ -20,9 +20,11 @@ import torch
 from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+import fone  # noqa: E402
 from holdout import is_holdout  # noqa: E402
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
 OUT_PATH = os.path.join(DATA, "sft", "sft_all.pt")
@@ -74,12 +76,41 @@ def read_examples():
         print(f"  excluded {n_holdout} eval-holdout questions", flush=True)
 
 
-def pack_and_save(examples, tok, eos, out_path, seq):
+def _encode_pairs(batch, tok, num_id):
+    """(prompt, answer) pairs -> [(prompt_ids, full_ids, full_values)], one per pair.
+
+    num_id None is plain BPE and the values come back empty. Otherwise numbers
+    collapse to one [NUM] each and carry a value per position, exactly as train.py
+    encodes the pretraining corpus -- a FoNE model has never seen a number written
+    any other way, so packing SFT data the old way would fine-tune it out of its
+    own input distribution.
+    """
+    prompts = [p for p, _ in batch]
+    fulls = [p + a for p, a in batch]
+    if num_id is None:
+        return [(ep.ids, ef.ids, ()) for ep, ef in zip(tok.encode_batch(prompts), tok.encode_batch(fulls))]
+    # Only the full text's values are kept. A prompt ending mid-number reads a
+    # different value there than the full text does, and the full text is the one
+    # the row actually contains.
+    pp, _ = fone.encode_text(prompts, tok, num_id)
+    fp, fv = fone.encode_text(fulls, tok, num_id)
+    out, fi = [], 0
+    for p_ids, f_ids in zip(pp, fp):
+        k = int((f_ids == num_id).sum())
+        out.append((p_ids.tolist(), f_ids.tolist(), fv[fi : fi + k].tolist()))
+        fi += k
+    return out
+
+
+def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     """Greedily pack (prompt, output) text pairs into (seq+1)-token rows and save.
 
     One example never split across rows; over-length examples dropped; rows are
     prompt-masked (labels=-100) and right-padded with <eos>. Saves out_path as
     {"input_ids": int32 (N, seq+1), "labels": int32 (N, seq+1)}.
+
+    num_id set adds "values": float32 (N, seq+1), the number at every [NUM]
+    position and 0 elsewhere, which sft_math.py feeds to the FoNE embedding.
     """
     # The old scheme concatenated a flat token stream, cut it every row_len tokens,
     # and tail-truncated over-length examples (which deletes the prompt and leaves
@@ -90,8 +121,8 @@ def pack_and_save(examples, tok, eos, out_path, seq):
     # across a row boundary (18.9% of rows opened mid-answer). Dropping over-length
     # examples and never splitting one across a row removes both, and every row now
     # opens with a real (masked) prompt.
-    rows_ids, rows_lab = [], []
-    cur_ids, cur_lab = [], []
+    rows_ids, rows_lab, rows_val = [], [], []
+    cur_ids, cur_lab, cur_val = [], [], []
     n_drop = 0
     n_mismatch = 0
     n_pad = 0
@@ -99,23 +130,20 @@ def pack_and_save(examples, tok, eos, out_path, seq):
 
     def flush():
         """Emit the current row, right-padded with <eos> that carry no loss."""
-        nonlocal cur_ids, cur_lab, n_pad
+        nonlocal cur_ids, cur_lab, cur_val, n_pad
         if not cur_ids:
             return
         pad = row_len - len(cur_ids)
         n_pad += pad
         rows_ids.append(cur_ids + [eos] * pad)
         rows_lab.append(cur_lab + [-100] * pad)
-        cur_ids, cur_lab = [], []
+        rows_val.append(cur_val + [0.0] * pad)
+        cur_ids, cur_lab, cur_val = [], [], []
 
     for i in range(0, len(examples), ENC_BATCH):
         batch = examples[i : i + ENC_BATCH]
-        prompts = [p for p, _ in batch]
-        fulls = [p + a for p, a in batch]
-        enc_p = tok.encode_batch(prompts)
-        enc_f = tok.encode_batch(fulls)
-        for ep, ef in zip(enc_p, enc_f):
-            ids_p, ids_f = ep.ids, ef.ids + [eos]
+        for ids_p, ids_f, vals_f in _encode_pairs(batch, tok, num_id):
+            ids_f = ids_f + [eos]
             # byte-level BPE without prefix space: prompt is an exact prefix of full
             plen = len(ids_p)
             if ids_f[:plen] != ids_p:
@@ -132,6 +160,14 @@ def pack_and_save(examples, tok, eos, out_path, seq):
                 flush()
             cur_ids.extend(ids_f)
             cur_lab.extend([-100] * plen + ids_f[plen:])
+            if num_id is not None:
+                # values back onto their own positions: the k-th [NUM] takes the k-th value
+                dense, k = [], 0
+                for t in ids_f:
+                    dense.append(vals_f[k] if t == num_id else 0.0)
+                    k += t == num_id
+                assert k == len(vals_f), f"{k} [NUM] but {len(vals_f)} values"
+                cur_val.extend(dense)
         if (i // ENC_BATCH) % 10 == 0:
             print(f"  tokenized {min(i + ENC_BATCH, len(examples))}/{len(examples)}", flush=True)
     flush()
@@ -140,9 +176,15 @@ def pack_and_save(examples, tok, eos, out_path, seq):
     input_ids = torch.tensor(rows_ids, dtype=torch.int32)
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
+    blob = {"input_ids": input_ids, "labels": labels}
+    if num_id is not None:
+        blob["values"] = torch.tensor(rows_val, dtype=torch.float32)
+        n_num = int((input_ids == num_id).sum())
+        print(f"[NUM] tokens: {n_num / 1e6:.2f}M ({100 * n_num / input_ids.numel():.2f}% of the pack)")
+
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     tmp = out_path + ".tmp"
-    torch.save({"input_ids": input_ids, "labels": labels}, tmp)
+    torch.save(blob, tmp)
     os.replace(tmp, out_path)
 
     total_tokens = input_ids.numel()

@@ -300,6 +300,26 @@ if os.path.exists(_tok_path):
         assert not (_vals >= 10**fone.INT_DIGITS).any(), "oversized value entered the stream"
         train.Cfg.fone, train.Cfg.seq = False, 16
         print("test_fone_data OK")
+
+        # --- SFT packing carries the same values -------------------------------
+        import tempfile
+
+        from prepare_sft import pack_and_save
+
+        _num_id = _tk.token_to_id(fone.NUM_TOKEN)
+        _pairs = [("问：原价200元打8折？\n答：", "160元") for _ in range(8)]
+        with tempfile.TemporaryDirectory() as _td:
+            _out = os.path.join(_td, "p.pt")
+            pack_and_save(_pairs, _tk, _tk.token_to_id("<eos>"), _out, 63, num_id=_num_id)
+            _d = torch.load(_out, weights_only=True)
+        _m = _d["input_ids"] == _num_id
+        assert _m.any(), "packer produced no [NUM]"
+        assert (_d["values"][~_m] == 0).all(), "packed value outside a [NUM] position"
+        # 200, 8 and 160 are the numbers in every example, so those are the values.
+        assert set(_d["values"][_m].tolist()) <= {200.0, 8.0, 160.0}, _d["values"][_m].unique()
+        # Prompt positions stay masked; the answer's 160 must still be a loss target.
+        assert (_d["labels"][_m] == _num_id).any(), "no [NUM] survived as a loss target"
+        print("test_fone_sft_pack OK")
     else:
         print("test_fone_data SKIP (tokenizer has no [NUM]; run scripts/build_tokenizer.py)")
 else:

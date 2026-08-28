@@ -56,15 +56,21 @@ def read_examples(sources=SOURCES):
 
 def main():
     import argparse
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--sources", help="comma-separated jsonl paths (instruction/output keys)")
     ap.add_argument("--out", default=OUT_PATH)
+    ap.add_argument("--fone", action="store_true", help="pack [NUM] + values for a --fone base")
     args = ap.parse_args()
     sources = [(p, "instruction", "output") for p in args.sources.split(",")] if args.sources else SOURCES
     random.seed(42)
     tok = Tokenizer.from_file(TOK_PATH)
     eos = tok.token_to_id("<eos>")
     assert eos is not None, "tokenizer has no <eos>"
+    num_id = None
+    if args.fone:
+        num_id = tok.token_to_id("[NUM]")
+        assert num_id is not None, "tokenizer has no [NUM]; run scripts/build_tokenizer.py"
 
     examples = list(read_examples(sources))
     random.shuffle(examples)
@@ -72,7 +78,7 @@ def main():
         examples = examples[:MAX_EXAMPLES]
     print(f"total examples: {len(examples)}", flush=True)
 
-    pack_and_save(examples, tok, eos, args.out, SEQ)
+    pack_and_save(examples, tok, eos, args.out, SEQ, num_id=num_id)
 
 
 if __name__ == "__main__":
