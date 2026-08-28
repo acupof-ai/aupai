@@ -64,13 +64,23 @@ FIVE = """给下面这段网页文本的教育价值打分，0 到 5 分。
 只输出一个 0 到 5 的数字。"""
 
 
-def ask(url, model, prompt, timeout=120):
-    """One completion, one token. Returns the raw string the model emitted."""
+def ask(url, model, prompt, timeout=300, max_tokens=400):
+    """One completion. Returns the string after the model's think block.
+
+    max_tokens has to cover the WHOLE think block, not just the answer. The first
+    version asked for 24 and measured a short toy prompt where <think> came back
+    empty; on real documents the model thinks for a few hundred tokens, 24 cut it
+    off mid-reasoning, and the parser then picked a stray digit out of the
+    reasoning text. That produced an inverted five-point score (AUC 0.407) and,
+    worse, a BIASED sample: long high-quality documents make it think longer, so
+    they were the ones that failed. Measured on the 180 hand labels -- answered
+    documents were 13.7% hand-keep, unanswered ones 28.6%.
+    """
     body = json.dumps(
         {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 24,
+            "max_tokens": max_tokens,
             "temperature": 0.0,
         }
     ).encode()
@@ -83,8 +93,11 @@ def ask(url, model, prompt, timeout=120):
 
 
 def strip_think(txt):
-    """Qwen3 emits a <think> block even with nothing to think about; an empty one
-    costs nothing (0.2s per document measured). The answer is what follows it."""
+    """The answer is what follows the think block. Returns None when the block never
+    closed, which means the generation was truncated mid-reasoning -- that is a
+    failure to answer, not an answer, and must never fall through to the parser."""
+    if txt.lstrip().startswith("<think>") and "</think>" not in txt:
+        return None
     return txt.split("</think>", 1)[-1].strip()
 
 
@@ -95,6 +108,8 @@ def to_score(raw, rubric):
     turns 'the model refused' into a real-looking label, which is how a bad
     annotation set gets built without anyone noticing.
     """
+    if raw is None:  # truncated mid-think
+        return None
     if rubric == "binary":
         if raw.startswith("是"):
             return 1.0
@@ -127,7 +142,7 @@ def pad_to_shape(prompt, tok, n_tokens):
     return prompt + "\n" * (n_tokens - len(ids))
 
 
-def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=0):
+def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=0, max_tokens=400):
     tpl = BINARY if rubric == "binary" else FIVE
     out = [None] * len(texts)
 
@@ -136,7 +151,7 @@ def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=
             p = tpl.format(t=texts[i][:chars])
             if pad:
                 p = pad_to_shape(p, tok, pad)
-            return i, to_score(ask(url, model, p), rubric)
+            return i, to_score(ask(url, model, p, max_tokens=max_tokens), rubric)
         except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError):
             return i, None
 
@@ -174,6 +189,7 @@ def main():
         "and sits at 0%% GPU. 0 disables.",
     )
     ap.add_argument("--tokenizer", default="/work/Qwen3.8-27B-NVFP4/tokenizer.json")
+    ap.add_argument("--max_tokens", type=int, default=400, help="must cover the whole think block")
     ap.add_argument("--check", help="hand-labelled jsonl ({t,y}); report AUC and stop")
     ap.add_argument("--glob", default="data/corpus/web/*.jsonl")
     ap.add_argument("--n", type=int, default=100000)
@@ -189,16 +205,40 @@ def main():
     if a.check:
         with open(a.check, encoding="utf-8") as fh:
             rows = [json.loads(x) for x in fh if x.strip()]
-        s = score_many([r["t"] for r in rows], a.url, a.model, a.rubric, a.workers, tok=tok, pad=a.pad)
+        s = score_many(
+            [r["t"] for r in rows],
+            a.url,
+            a.model,
+            a.rubric,
+            a.workers,
+            tok=tok,
+            pad=a.pad,
+            max_tokens=a.max_tokens,
+        )
+        import numpy as np
+
         ok = [(r["y"], v) for r, v in zip(rows, s, strict=True) if v is not None]
         print(f"{len(rows)} hand labels, {len(ok)} answered ({len(ok) / len(rows):.0%})")
+        # An unanswered document is not a neutral loss. Truncated thinking correlates
+        # with length and length correlates with quality, so a low answer rate silently
+        # biases the sample toward the documents we are trying to REMOVE -- measured
+        # 13.7% hand-keep among answered against 28.6% among failed. Always report it.
+        got = np.array([v is not None for v in s])
+        yy = np.array([r["y"] for r in rows], float)
+        ll = np.array([len(r["t"]) for r in rows], float)
+        if (~got).any():
+            print(
+                f"  UNANSWERED BIAS: hand-keep {yy[got].mean():.1%} among answered vs "
+                f"{yy[~got].mean():.1%} among failed (overall {yy.mean():.1%}); "
+                f"median chars {np.median(ll[got]):.0f} vs {np.median(ll[~got]):.0f}"
+            )
+            if got.mean() < 0.9:
+                print("  answer rate below 90%; raise --max_tokens before trusting any number below")
         if len(ok) < 20:
             print("  too few parseable answers to judge; check the prompt or the server")
             return
         y, v = zip(*ok, strict=True)
         print(f"  rubric={a.rubric}  AUC {auc(y, v):.3f}   (cheap features reached 0.62)")
-        import numpy as np
-
         y, v = np.array(y, float), np.array(v, float)
         print(f"  mean score: hand-keep {v[y == 1].mean():.2f}, hand-drop {v[y == 0].mean():.2f}")
         for t in sorted(set(v)):
@@ -225,7 +265,9 @@ def main():
     with open(a.out, "w", encoding="utf-8") as o:
         for i in range(0, len(docs), 512):
             b = docs[i : i + 512]
-            scored = score_many(b, a.url, a.model, a.rubric, a.workers, tok=tok, pad=a.pad)
+            scored = score_many(
+                b, a.url, a.model, a.rubric, a.workers, tok=tok, pad=a.pad, max_tokens=a.max_tokens
+            )
             for t, s in zip(b, scored, strict=True):
                 if s is not None:
                     o.write(json.dumps({"t": t[:1200], "s": s}, ensure_ascii=False) + "\n")
@@ -238,6 +280,12 @@ def _demo():
     assert to_score("是", "binary") == 1.0
     assert to_score("否。", "binary") == 0.0
     assert to_score("我认为这段文本", "binary") is None, "a refusal became a label"
+    assert strip_think("<think>\n分析中，这段文本讲的是 3 个要点") is None, (
+        "a think block truncated mid-reasoning was treated as an answer"
+    )
+    assert to_score(strip_think("<think>\n讲了 3 点"), "five") is None, (
+        "a digit inside truncated reasoning became a score -- this produced AUC 0.407"
+    )
     assert to_score("4", "five") == 4.0
     assert to_score("评分：3 分", "five") == 3.0
     assert to_score("无法判断", "five") is None
