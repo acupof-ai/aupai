@@ -29,6 +29,15 @@ import train  # noqa: E402  (TOK_PATH, Cfg.vocab, DATA)
 # either way and no checkpoint needs resizing to switch.
 CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>", "[NUM]"]
 BYTES_PER_TOKEN_EST = 4  # only to turn --sample-tokens into a per-domain byte budget
+# Default sample. Feeding the whole corpus took 45+ minutes and bought nothing: the
+# BPE merge loop is inherently sequential (~5 of the box's 180 cores), and a sweep on
+# this corpus showed sample size barely moves the result. 25K docs vs 395K (16x the
+# data, 6x the time): chars/token 2.6093 -> 2.6296, hanzi occurrence-coverage
+# 99.51% -> 99.62%, and the 5K-10K frequency tier stays at 0% either way. The binding
+# constraint is the 32K vocab budget, not the sample -- the vocab spends itself on
+# frequent word pieces and rare hanzi never fit, however much corpus it sees.
+# Override with --sample-tokens when retuning vocab size, where the tradeoff may differ.
+DEFAULT_SAMPLE_TOKENS = 250_000 * 250  # ~250K docs at the measured ~250 tokens/doc
 
 
 def domain_texts(corpus, domain, max_bytes):
@@ -57,7 +66,8 @@ def domain_texts(corpus, domain, max_bytes):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="overwrite an existing data/tokenizer.json")
-    ap.add_argument("--sample-tokens", type=int, default=None, help="cap the training sample (tokens)")
+    ap.add_argument("--sample-tokens", type=int, default=DEFAULT_SAMPLE_TOKENS,
+                    help=f"cap the training sample (tokens; default {DEFAULT_SAMPLE_TOKENS:,}, 0 = whole corpus)")
     ap.add_argument("--mix", default=os.path.join(train.DATA, "mix.json"))
     a = ap.parse_args()
 
@@ -78,7 +88,7 @@ def main():
         print("no data/corpus/<domain>/ to train on", file=sys.stderr)
         return 1
 
-    budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")
+    budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")  # 0 -> whole corpus
     per_domain = budget / len(domains)
     print(f"sampling {len(domains)} domains ({', '.join(domains)})", file=sys.stderr)
     samples = {d: domain_texts(corpus, d, per_domain) for d in domains}

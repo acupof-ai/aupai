@@ -47,6 +47,19 @@
   is already ~17% of FLOPs). Big multilingual vocabs (Qwen3 151,936 / GLM-4 151,552 / DeepSeek-V3
   129,280) buy English + code + 50 languages, not Chinese. Measured head to head on this corpus, ours
   emits FEWER tokens than Qwen3-0.6B: 1.61 vs 1.45 chars/token.
+- Train from a STRATIFIED sample, which `scripts/build_tokenizer.py` does (equal per-domain byte
+  budget), not from the raw corpus. Feeding all 9.4M docs let web drown everything else: the old
+  vocab had no whole-token for common traditional characters and split them into byte pieces, so web
+  scored 1.04 chars/token — worse than one token per character. Rebuilding from a 112K-doc stratified
+  sample took 5 minutes instead of 45+ and emits **12.5% fewer tokens** on held-out corpus text
+  (1.484 vs 1.299 chars/token), better on every domain. Slot spend shifted where you would want it:
+  single-character tokens 3,175 -> 4,706 and 5+-character tokens 4,312 -> 7,817. Every pretrain
+  before 2026-08-28, k5 included, used the weaker vocab.
+- Sample SIZE barely matters; sample BALANCE does. 25K docs vs 395K (16x data, 6x time) moved
+  chars/token 2.6093 -> 2.6296 and hanzi occurrence-coverage 99.51% -> 99.62%, and the 5K-10K
+  frequency tier stayed at 0% either way — the binding constraint is the 32K vocab budget, not the
+  corpus. Of 7,825 distinct hanzi only the top ~1K get whole tokens, which still covers 99.6% of
+  occurrences.
 - Always train with `initial_alphabet=ByteLevel.alphabet()`. Without it only the byte-alphabet chars
   present in the corpus survive (measured 193/256), which silently drops NUL bytes on the round trip
   and breaks every fast tokenizer library.
