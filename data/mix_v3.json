@@ -1,0 +1,16 @@
+{
+  "_comment": "Corpus v3, 2026-08-29. See docs/data_recipe_v3.md for the measurement behind every number here. Three changes from v2: web drops from 88% because the 82% of it that hand-reading found unusable is filtered out rather than repeated; textbook (opencsg chinese-cosmopedia) and wiki are new domains; the total falls 11.5B -> 4.5B because FineWeb-Edu's result is that filtering to their threshold reaches the same MMLU with 10x fewer tokens. Weights are set so that no domain repeats more than about once -- v2 ran the small domains 4-6 times over, which is not more data, it is the same data again.",
+
+  "_synthetic_cap": "textbook is model-generated. It could supply the whole corpus (4.69B tokens available from 8 of 62 parquets) and deliberately does not: SmolLM2 uses Cosmopedia at ~11% against real web, and we have no instrument that could see the damage from overdosing it -- every multiple-choice benchmark we own sits at the 25% chance line. Real human text stays the plurality.",
+
+  "total_tokens": 4.5e9,
+  "domains": {
+    "web":      {"weight": 0.40, "epochs": 1, "anneal": 0.20},
+    "textbook": {"weight": 0.31, "epochs": 1, "anneal": 0.34},
+    "wiki":     {"weight": 0.08, "epochs": 1, "anneal": 0.10},
+    "math":     {"weight": 0.07, "epochs": 3, "anneal": 0.18},
+    "chat":     {"weight": 0.06, "epochs": 3, "anneal": 0.10},
+    "en":       {"weight": 0.05, "epochs": 2, "anneal": 0.05},
+    "code":     {"weight": 0.03, "epochs": 2, "anneal": 0.03}
+  }
+}
