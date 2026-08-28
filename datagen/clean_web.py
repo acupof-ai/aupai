@@ -78,15 +78,26 @@ def main():
 
     t2s = table()
 
+    files = sorted(glob.glob(a.glob))
+
     cut = None
     if a.scores and a.keep < 1.0:
         import numpy as np
 
         s = np.load(a.scores)
+        # score[i] must be the score OF document i in this same glob order. The
+        # scorer walks the identical sorted glob and its parallel workers take
+        # contiguous blocks concatenated in worker order for exactly this reason.
+        # A silent misalignment here attaches every score to a different document
+        # and still produces a perfectly ordinary-looking distribution, so the
+        # count is checked rather than assumed.
+        n_docs = sum(1 for f in files for line in open(f, encoding="utf-8") if line.strip())
+        assert len(s) == n_docs, (
+            f"{a.scores} holds {len(s)} scores but {len(files)} shards hold {n_docs} documents. "
+            "Scores and documents are matched by position; rescore with the same glob."
+        )
         cut = float(np.quantile(s, 1 - a.keep))
         print(f"classifier cut at {cut:.3f} keeps the top {a.keep:.0%} of {len(s)} scored documents")
-
-    files = sorted(glob.glob(a.glob))
     if not a.dry:
         os.makedirs(a.out, exist_ok=True)
     rej = {"spam": 0, "short": 0, "repetitive": 0, "fragmented": 0, "low score": 0}
