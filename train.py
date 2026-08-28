@@ -966,6 +966,24 @@ def load_texts():
     return texts
 
 
+VOCAB_ID = None  # fingerprint of the id->token map the run trained against; see below
+
+
+def vocab_fingerprint(tok):
+    """Hash of the id->token map, so a checkpoint records WHICH vocabulary it saw.
+
+    Size does not identify a vocabulary: two 32,772-token files can disagree on
+    every id, and a pack built against the wrong one trains at four times the loss
+    without raising (measured 2026-08-28). Consumers compare this instead.
+    """
+    import hashlib
+
+    h = hashlib.sha256()
+    for t, i in sorted(tok.get_vocab().items(), key=lambda kv: kv[1]):
+        h.update(t.encode())
+    return h.hexdigest()[:16]
+
+
 def build_tokenizer(texts):
     """Load data/tokenizer.json. Never build one here.
 
@@ -981,10 +999,12 @@ def build_tokenizer(texts):
         "which is the only supported path -- it registers the chat specials and [NUM] that "
         "an inline BPE would silently drop."
     )
+    global VOCAB_ID
     tok = Tokenizer.from_file(TOK_PATH)
     assert tok.get_vocab_size() == Cfg.vocab, (
         f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab {Cfg.vocab}"
     )
+    VOCAB_ID = vocab_fingerprint(tok)
     return tok
 
 
@@ -1512,6 +1532,7 @@ def main():
                                 "opt": good_opt,
                                 "step": step,
                                 "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
+                                "vocab_id": VOCAB_ID,
                             },
                             ckpt_path + f".step{step}",
                         )
@@ -1589,6 +1610,7 @@ def main():
                     "opt": opt_snapshot(optimizers),
                     "step": step,
                     "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
+                                "vocab_id": VOCAB_ID,
                 },
                 ckpt_path + f".ep{ep + 1}",
             )
@@ -1600,6 +1622,7 @@ def main():
             {
                 "model": raw_model.state_dict(),
                 "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
+                                "vocab_id": VOCAB_ID,
             },
             ckpt_path,
         )

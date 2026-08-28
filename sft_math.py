@@ -63,6 +63,12 @@ def main():
         default=os.path.join(ROOT, "ckpt_sft_math.pt"),
         help="output checkpoint path (default: ckpt_sft_math.pt)",
     )
+    parser.add_argument(
+        "--vocab",
+        default=None,
+        help="override the base's vocabulary fingerprint, for a checkpoint saved before "
+        "train.py started recording it (print it with scripts/ckpt_info.py)",
+    )
     args = parser.parse_args()
 
     ck = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -89,6 +95,22 @@ def main():
     # V feeds the embedding, W is the digit target one position later -- the same
     # split train.py uses. A FoNE base on a pack without values would read every
     # number as zero, so the mismatch is an error rather than a silent fallback.
+    # A pack built against a different vocabulary trains happily at four times the
+    # loss: every id is wrong and every id is still in range, so nothing raises.
+    # Measured 2026-08-28 -- k5 on a k6-vocab pack sat at loss 4.77 where the matched
+    # run was at 1.28. Vocab SIZE does not catch it either (the two differ by one id
+    # that a non-FoNE pack never emits), so the pack carries a fingerprint of the
+    # id->token map and --vocab is checked against it.
+    ck_vocab = args.vocab or ck.get("vocab_id")
+    if ck_vocab and "vocab" in d:
+        assert d["vocab"] == ck_vocab, (
+            f"{args.sft_path} was packed against vocabulary {d['vocab']} but "
+            f"{args.resume} was trained on {ck_vocab}; repack with "
+            "`prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
+        )
+    elif is_main:
+        missing = "the checkpoint" if not ck_vocab else "the pack"
+        print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
     assert Cfg.fone == ("values" in d), (
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
         f"{'has' if 'values' in d else 'has no'} values; repack with prepare_sft_math.py --fone"

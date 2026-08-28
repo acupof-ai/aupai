@@ -61,10 +61,18 @@ def main():
     ap.add_argument("--sources", help="comma-separated jsonl paths (instruction/output keys)")
     ap.add_argument("--out", default=OUT_PATH)
     ap.add_argument("--fone", action="store_true", help="pack [NUM] + values for a --fone base")
+    ap.add_argument(
+        "--tokenizer",
+        default=TOK_PATH,
+        help="the vocabulary of the base this pack will train. data/tokenizer.json is rebuilt in "
+        "place and ids do not survive a rebuild, so packing for an older base against today's file "
+        "produces a pack whose every id is wrong -- it trains, at a loss four times too high.",
+    )
     args = ap.parse_args()
     sources = [(p, "instruction", "output") for p in args.sources.split(",")] if args.sources else SOURCES
     random.seed(42)
-    tok = Tokenizer.from_file(TOK_PATH)
+    tok = Tokenizer.from_file(args.tokenizer)
+    print(f"tokenizer {args.tokenizer} (vocab {tok.get_vocab_size()})", flush=True)
     eos = tok.token_to_id("<eos>")
     assert eos is not None, "tokenizer has no <eos>"
     num_id = None

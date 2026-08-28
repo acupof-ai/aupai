@@ -102,6 +102,20 @@ def _encode_pairs(batch, tok, num_id):
     return out
 
 
+def _vocab_fingerprint(tok):
+    """A hash of the id->token map. Two vocabularies of the same size are not the
+    same vocabulary, and nothing else in a pack reveals which one built it."""
+    import hashlib
+
+    v = tok.get_vocab()
+    h = hashlib.sha256()
+    for tid in range(tok.get_vocab_size()):
+        h.update(str(tid).encode())
+    for t, i in sorted(v.items(), key=lambda kv: kv[1]):
+        h.update(t.encode())
+    return h.hexdigest()[:16]
+
+
 def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     """Greedily pack (prompt, output) text pairs into (seq+1)-token rows and save.
 
@@ -176,7 +190,7 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     input_ids = torch.tensor(rows_ids, dtype=torch.int32)
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
-    blob = {"input_ids": input_ids, "labels": labels}
+    blob = {"input_ids": input_ids, "labels": labels, "vocab": _vocab_fingerprint(tok)}
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)
         n_num = int((input_ids == num_id).sum())
