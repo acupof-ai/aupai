@@ -103,8 +103,18 @@ def main():
         w = torch.load(a.head, map_location="cpu", weights_only=True)
         import numpy as np
 
+        # "@file" is a newline-separated shard list, so a parallel run can hand each
+        # worker a contiguous block of the sorted shard order. The blocks must be
+        # contiguous and concatenated in worker order: clean_web.py walks the same
+        # glob and lines score[i] up with document i, so any other split silently
+        # attaches every score to the wrong document.
+        if a.score.startswith("@"):
+            with open(a.score[1:], encoding="utf-8") as fh:
+                files = [x.strip() for x in fh if x.strip()]
+        else:
+            files = sorted(glob.glob(a.score))
         scores, n = [], 0
-        for f in sorted(glob.glob(a.score)):
+        for f in files:
             with open(f, encoding="utf-8") as fh:
                 texts = [json.loads(x).get("content", "") for x in fh if x.strip()]
             for i in range(0, len(texts), 512):
