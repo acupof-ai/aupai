@@ -144,6 +144,7 @@ def pad_to_shape(prompt, tok, n_tokens):
 
 def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=0, max_tokens=400):
     tpl = BINARY if rubric == "binary" else FIVE
+    urls = [u.strip() for u in url.split(",") if u.strip()]
     out = [None] * len(texts)
 
     def one(i):
@@ -151,7 +152,9 @@ def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=
             p = tpl.format(t=texts[i][:chars])
             if pad:
                 p = pad_to_shape(p, tok, pad)
-            return i, to_score(ask(url, model, p, max_tokens=max_tokens), rubric)
+            # round-robin by index: each endpoint sees workers/len(urls) concurrent
+            # requests, which is what keeps every KV pool inside its 4096 tokens.
+            return i, to_score(ask(urls[i % len(urls)], model, p, max_tokens=max_tokens), rubric)
         except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError):
             return i, None
 
@@ -176,7 +179,13 @@ def auc(y, s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8077")
+    ap.add_argument(
+        "--url",
+        default="http://127.0.0.1:8077",
+        help="comma-separated endpoints. One 27B on one H20 answers 0.76 documents a second "
+        "and its KV pool caps useful concurrency at 4, so scoring 100K documents means "
+        "running one server per card and spreading requests across them.",
+    )
     ap.add_argument("--model", default="qwen38-27b")
     ap.add_argument("--rubric", choices=["binary", "five"], default="binary")
     ap.add_argument("--workers", type=int, default=16)
