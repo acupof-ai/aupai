@@ -67,6 +67,46 @@
   (2.020 vs 2.086). k6_fone adds `--fone`. Recipe: `--fp8 --attn_res --attn_res_blocks 4
   --warmup 150 --lr_scale 0.5`. `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
 
+## Corpus v3 (2026-08-29) — the rebuild
+- Recipe and every measurement behind it: `docs/data_recipe_v3.md`; mix: `data/mix_v3.json`.
+- **Hand-reading 180 random web documents found 18% worth training on.** The other 82% is
+  gambling/adult SEO (brand names injected mid-sentence), product sheets, hospital ads, web novels,
+  machine translation, spliced forum fragments, and synonym-substituted plagiarism (`曩昔五年`).
+  v2 gave that corpus 88% of an 11.5B-token pretrain while chat got 1%.
+- **Traditional -> Simplified was never applied.** 59.4% of the fineweb2 Chinese slice was
+  traditional; converting it moved web from 1.04 to **1.45 chars/token**. The opencc table is
+  single-codepoint 1:1 only (3,553 entries) -- vocabulary-level differences (軟體/软件) are not
+  covered and never were.
+- New domains: `textbook` (opencsg/chinese-cosmopedia, 1.74B tok, 100% pass through our own
+  filters against web's 18% by hand) and `wiki` (zh, 0.23B). Both scanned by
+  `scripts/scan_contamination.py`: zero eval questions in 60,000 documents each. **Run that scan on
+  every new source** -- skipping it is finding #1 of docs/review_2026-08-26.md happening again.
+- **textbook is synthetic and is capped below web on purpose** (31% against 40%). It could supply
+  the whole corpus; SmolLM2 uses Cosmopedia at ~11% against real web, and no benchmark we own could
+  detect an overdose -- every MC sits at the 25% chance line.
+- Quality filter, two stages (FineWeb-Edu's architecture): the 27B annotates a stratified sample,
+  a logistic head on the frozen 200M's mean hidden state learns it and scores all 1.97M documents.
+  Student AUC **0.823** against the hand labels, above the 27B teacher's own 0.739 -- the teacher's
+  hard yes/no ties cap its AUC, the student's continuous score recovers the ordering.
+  Everything cheaper was measured first and failed: spam regex 0.50, char n-grams 0.60, structural
+  features 0.62, Qwen3-0.6B 0.539. **Character n-grams rank by topic; the labels split on register.**
+- Traps that cost hours, all silent: `--host_cap` is a web-crawl filter and discarded 83.4% of
+  Wikipedia (one host) -- pass `--host_cap 0` for any single-source corpus. Sampling a corpus by
+  reading shards in sorted order until the quota is met read 8.5% positive where a shard-stratified
+  draw read 18.9%. `cuda:1` + fla/Triton raises an illegal memory access (kernels launch on the
+  current device) -- use `CUDA_VISIBLE_DEVICES`. Non-contiguous parameters fail cublasGemmEx.
+
+## Chat format
+- **ChatML**, owned by `scripts/loader.format_prompt / format_example / format_history`. The old
+  homemade `问：/答：` is gone from producers but the eval-contamination regexes in
+  `datagen/build_corpus.py` still match it, because the corpus holds documents written that way.
+- `datagen/build_corpus.py` renders the pretraining chat domain in ChatML too, so SFT does not have
+  to teach the format from nothing in a few hundred steps.
+- `scripts/test_sft_pack.py` (CI) checks the loss mask directly: every masked span ends at
+  `assistant\n`, no supervised span contains a role marker, the turn terminator IS supervised.
+  It exists because the first ChatML commit wrote the prompt into every row twice with the second
+  copy supervised -- 40 examples packed into 8 rows instead of 5, and nothing would have reported it.
+
 ## Tokenizer / vocabulary
 - vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
   `padded_vocab` is 32,832 either way, so adding `[NUM]` resized nothing.
