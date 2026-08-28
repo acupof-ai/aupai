@@ -4,16 +4,12 @@ Usage: python serve.py [--port 8080]"""
 
 import argparse
 import os
-from types import SimpleNamespace
 
 import torch
 from flask import Flask, Response, jsonify, request
-from tokenizers import Tokenizer
 
 from sampling import top_p_sample
-from train import (
-    HybridLM,  # noqa: E402  (real architecture; the old inline GDN copy could not load current ckpts)
-)
+from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
 
 # ── load model ──
 
@@ -23,20 +19,12 @@ device = "cpu"
 _ckpt_path = os.path.join(ROOT, "ckpt_sft.pt")
 if not os.path.exists(_ckpt_path):
     _ckpt_path = os.path.join(ROOT, "ckpt.pt")
-ck = torch.load(_ckpt_path, map_location=device, weights_only=False)
-cfg = SimpleNamespace(**ck["cfg"])
-model = HybridLM(cfg).to(device)
-model.load_state_dict(ck["model"])
-model.eval()
+model, cfg = load_checkpoint(_ckpt_path, device=device)
 # The vocabulary the checkpoint was trained on. Adding missing specials at load time,
 # which this used to do, changes the vocab size and hides the one signal that the wrong
-# file is loaded -- so assert instead.
+# file is loaded -- so assert instead (load_tokenizer asserts size + vocab_id).
 TOK_PATH = os.environ.get("TOKENIZER", os.path.join(ROOT, "data", "tokenizer.json"))
-tok = Tokenizer.from_file(TOK_PATH)
-assert tok.get_vocab_size() == cfg.vocab, (
-    f"{TOK_PATH} has vocab {tok.get_vocab_size()} but the checkpoint was trained at {cfg.vocab}; "
-    "set TOKENIZER= to the matching file"
-)
+tok = load_tokenizer(TOK_PATH, cfg)
 print(f"model loaded, vocab={tok.get_vocab_size()}, seq={cfg.seq}", flush=True)
 
 
@@ -85,7 +73,7 @@ def format_history(history):
     parts = []
     for msg in history:
         if msg["role"] == "user":
-            parts.append(f"问：{msg['content']}\n答：")
+            parts.append(format_prompt(msg["content"]))
         else:
             parts.append(f"{msg['content']}\n")
     text = "".join(parts)

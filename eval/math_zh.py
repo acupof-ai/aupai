@@ -11,19 +11,17 @@ import json
 import os
 import re
 import sys
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
 import fone  # noqa: E402
-from train import HybridLM  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
+from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -56,18 +54,9 @@ def main():
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     args = parser.parse_args()
 
-    ck = torch.load(args.ckpt, map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    cfg.grad_ckpt = False
-    model = HybridLM(cfg).to(args.device)
-    model.load_state_dict(ck["model"])
+    model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model = model.to(torch.bfloat16)
-    model.eval()
-    tok = Tokenizer.from_file(args.tokenizer)
-    assert tok.get_vocab_size() == cfg.vocab, (
-        f"{args.tokenizer} has vocab {tok.get_vocab_size()} but the checkpoint was trained at "
-        f"{cfg.vocab}; pass --tokenizer with the matching file"
-    )
+    tok = load_tokenizer(args.tokenizer, cfg)
     # Without this a FoNE checkpoint scores near zero for a reason that has nothing to
     # do with the model: tok.decode emits the [NUM] token itself instead of the number
     # it stands for, so no answer parses. Measured 2026-08-28: 0.4% against a real 1.8%.
@@ -87,7 +76,7 @@ def main():
     with open(preds_path, "w", encoding="utf-8") as fout:
         for s in range(0, len(rows), args.batch):
             batch = rows[s : s + args.batch]
-            texts_in = [f"问：{r['instruction']}\n答：" for r in batch]
+            texts_in = [format_prompt(r["instruction"]) for r in batch]
             if fone_on:
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:

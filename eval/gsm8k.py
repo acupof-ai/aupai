@@ -10,14 +10,12 @@ never looks right.
 import os
 import re
 import sys
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import fone
-from train import HybridLM
+from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
 
 EOS_ID = 1
 MAX_CTX = 4096  # the model's trained seq len; smaller truncates the model's own long reasoning away
@@ -100,7 +98,7 @@ def evaluate(model, tok, device, batch_size=8):
 
     for s in range(0, len(rows), batch_size):
         batch = rows[s : s + batch_size]
-        p_ids = [tok.encode(f"问：{r['question']}\n答：").ids for r in batch]
+        p_ids = [tok.encode(format_prompt(r["question"])).ids for r in batch]
         golds = [float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in batch]
 
         for out_ids, gold in zip(generate_batch(model, p_ids, 256, device), golds, strict=True):
@@ -118,13 +116,7 @@ def evaluate(model, tok, device, batch_size=8):
 
 
 if __name__ == "__main__":
-    ck = torch.load("ckpt_sft.pt", map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    model = HybridLM(cfg).cuda().bfloat16()
-    model.load_state_dict(ck["model"])
-    model.eval()
-    tok = Tokenizer.from_file("data/tokenizer.json")
-    for t in ["<|im_start|>", "<|im_end|>"]:
-        if tok.token_to_id(t) is None:
-            tok.add_special_tokens([t])
+    model, cfg = load_checkpoint("ckpt_sft.pt", device="cuda")
+    model = model.to(torch.bfloat16)
+    tok = load_tokenizer("data/tokenizer.json", cfg)
     evaluate(model, tok, "cuda")

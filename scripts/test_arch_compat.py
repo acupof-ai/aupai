@@ -340,3 +340,18 @@ if os.path.exists(_tok_path):
         print("test_fone_data SKIP (tokenizer has no [NUM]; run scripts/build_tokenizer.py)")
 else:
     print("test_fone_data SKIP (no data/tokenizer.json)")
+
+# infer_local.py keeps a Mac-local (no-fla) HybridLM copy so local inference runs without
+# Triton/GPU. A future architecture change that touches train.HybridLM but forgets the copy
+# turns on-the-Mac saves/loads into silent tensor-header scrambles. Pin them to the SAME
+# state_dict key set here, so the mismatch fails in CI instead of on a laptop.
+_base = train.Cfg
+_base.attn_res, _base.attn_res_blocks, _base.grad_ckpt, _base.attn_res_dyn_q = False, 0, False, False
+import infer_local  # noqa: E402  (Mac: pure-PyTorch stand-in, no fla import)
+_keys_real = set(train.HybridLM(_base).state_dict())
+_keys_local = set(infer_local.HybridLM(_base).state_dict())
+assert _keys_local == _keys_real, (
+    "infer_local.HybridLM state_dict diverged from train.HybridLM — a shared-key regression. "
+    f"only-in-train={sorted(_keys_real - _keys_local)[:6]} only-in-local={sorted(_keys_local - _keys_real)[:6]}"
+)
+print("infer_local keys == train keys: OK")

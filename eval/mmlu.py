@@ -5,13 +5,11 @@ score the log-likelihood of each continuation letter, pick argmax.
 """
 import sys
 from collections import defaultdict
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 sys.path.insert(0, "/work/aupai")
-from train import HybridLM
+from scripts.loader import load_checkpoint, load_tokenizer
 
 LETTERS = ["A", "B", "C", "D"]
 
@@ -63,13 +61,7 @@ def evaluate(model, tok, device):
 
 
 if __name__ == "__main__":
-    ck = torch.load("ckpt_sft.pt", map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    model = HybridLM(cfg).cuda().bfloat16()
-    model.load_state_dict(ck["model"])
-    model.eval()
-    tok = Tokenizer.from_file("data/tokenizer.json")
-    for t in ["<|im_start|>", "<|im_end|>"]:
-        if tok.token_to_id(t) is None:
-            tok.add_special_tokens([t])
+    model, cfg = load_checkpoint("ckpt_sft.pt", device="cuda")
+    model = model.to(torch.bfloat16)
+    tok = load_tokenizer("data/tokenizer.json", cfg)
     evaluate(model, tok, "cuda")

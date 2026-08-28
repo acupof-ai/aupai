@@ -7,32 +7,22 @@ Usage: python eval/arc.py [--limit N] [--device cuda]
 import argparse
 import os
 import sys
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from train import HybridLM
+from scripts.loader import load_checkpoint, load_tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CKPT = os.path.join(ROOT, "ckpt.pt")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-SPECIAL_TOKENS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]
 
 CONFIGS = {"ARC-E": "ARC-Easy", "ARC-C": "ARC-Challenge"}
 
 
 def load_model(device="cuda"):
-    ck = torch.load(CKPT, map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    model = HybridLM(cfg).to(device)
-    model.load_state_dict(ck["model"])
-    model.eval()
-    tok = Tokenizer.from_file(TOK_PATH)
-    for t in SPECIAL_TOKENS:
-        if tok.token_to_id(t) is None:
-            tok.add_special_tokens([t])
+    model, cfg = load_checkpoint(CKPT, device=device)
+    tok = load_tokenizer(TOK_PATH, cfg)
     return model, tok
 
 

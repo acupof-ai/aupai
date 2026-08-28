@@ -26,7 +26,6 @@ import os
 import random
 import sys
 import time
-from types import SimpleNamespace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -150,10 +149,10 @@ def main():
     import torch
     import torch.distributed as dist
     from torch.nn.parallel import DistributedDataParallel as DDP
-    from tokenizers import Tokenizer
 
     sys.path.insert(0, ROOT)
-    from train import HybridLM, RunLog, convert_to_fp8_compute
+    from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
+    from train import RunLog, convert_to_fp8_compute
 
     torch.manual_seed(1337)
     random.seed(1337)
@@ -180,12 +179,13 @@ def main():
 
     # Model: SFT weights -> bf16. Two copies: FP8 for training, plain bf16 for
     # generation (FP8 quantization noise would degrade sampling).
-    ck = torch.load(args.resume, map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
+    # load_checkpoint builds {cfg, weight} strict from ck["cfg"] with grad_ckpt
+    # False and the model in eval(); this trainer needs grad_ckpt ON, which train.py
+    # reads into self.grad_ckpt at construction - restore it here.
+    model, cfg = load_checkpoint(args.resume, device=device)
     cfg.grad_ckpt = True  # required for stability
-    raw_model = HybridLM(cfg).to(device)
-    raw_model.load_state_dict(ck["model"])
-    raw_model = raw_model.to(torch.bfloat16)
+    model.grad_ckpt = True
+    raw_model = model.to(torch.bfloat16)
     gen_model = copy.deepcopy(raw_model)
     gen_model.eval()
     for p in gen_model.parameters():
@@ -213,7 +213,7 @@ def main():
         model = DDP(raw_model, device_ids=[local], bucket_cap_mb=100, gradient_as_bucket_view=True)
     raw_model.train()  # grad_ckpt only active in train mode; gen_model stays eval
 
-    tok = Tokenizer.from_file(TOK_PATH)
+    tok = load_tokenizer(TOK_PATH, cfg)
     problems = load_problems(args.data)
     # DDP: all ranks sample same prompts (same random seed per step),
     # generate different responses (different torch seed per rank).
@@ -253,7 +253,7 @@ def main():
         groups = []  # (prompt_ids, gen_ids_list, rewards)
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
             for item in batch:
-                prompt_ids = tok.encode(f"问：{item['prompt']}\n答：").ids[-MAX_PROMPT:]
+                prompt_ids = tok.encode(format_prompt(item["prompt"])).ids[-MAX_PROMPT:]
                 gen_ids_list = generate(
                     gen_model,
                     prompt_ids,

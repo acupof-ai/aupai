@@ -7,30 +7,18 @@ Usage: python eval/boolq.py [--n 1000] [--device cuda]
 import argparse
 import os
 import sys
-from types import SimpleNamespace
-
-import torch
-from tokenizers import Tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from eval import log_likelihood_joint
-from train import HybridLM
+from scripts.loader import load_checkpoint, load_tokenizer
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-SPECIAL_TOKENS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]
 
 
 def load_model(ckpt_path, device="cuda"):
-    ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    model = HybridLM(cfg).to(device)
-    model.load_state_dict(ck["model"])
-    model.eval()
-    tok = Tokenizer.from_file(TOK_PATH)
-    for t in SPECIAL_TOKENS:
-        if tok.token_to_id(t) is None:
-            tok.add_special_tokens([t])
+    model, cfg = load_checkpoint(ckpt_path, device=device)
+    tok = load_tokenizer(TOK_PATH, cfg)
     return model, tok, cfg
 
 

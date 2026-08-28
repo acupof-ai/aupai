@@ -16,10 +16,8 @@ import os
 import sys
 import time
 from importlib import import_module
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -29,10 +27,9 @@ os.environ["FLA_FLASH_KDA"] = "0"
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 import fone
-from train import HybridLM  # noqa: E402
+from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-SPECIAL_TOKENS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>"]
 LETTERS = ["A", "B", "C", "D"]
 MC_BATCH = 32       # sequences per forward pass for log-likelihood scoring
 GEN_BATCH = 16      # prompts per batch for GSM8K greedy generation
@@ -235,7 +232,7 @@ def run_gsm8k(model, tok, device, batch_size=GEN_BATCH):
     generator/extractor; prompts are pre-tokenized here before decoding."""
     m = _load_module("gsm8k")
     rows = list(m.load_dataset())
-    prompts = [tok.encode(f"问：{r['question']}\n答：").ids for r in rows]
+    prompts = [tok.encode(format_prompt(r["question"])).ids for r in rows]
     golds = [
         float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in rows
     ]
@@ -254,29 +251,8 @@ def run_gsm8k(model, tok, device, batch_size=GEN_BATCH):
 # --- Model / tokenizer loading ---
 
 def load_model(ckpt_path, device):
-    ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])
-    cfg.grad_ckpt = False
-    model = HybridLM(cfg).to(device)
-    model.load_state_dict(ck["model"])
-    model = model.to(torch.bfloat16)
-    model.eval()
-    return model, cfg
-
-
-def load_tokenizer(path, cfg):
-    """The vocabulary a checkpoint was trained on, not whatever is on disk today.
-
-    This used to add any missing special token at load time, which changes the vocab
-    size and papers over the one signal that a wrong tokenizer is in play. Ids do not
-    survive a vocabulary rebuild, and data/tokenizer.json is rebuilt in place.
-    """
-    tok = Tokenizer.from_file(path)
-    assert tok.get_vocab_size() == cfg.vocab, (
-        f"{path} has vocab {tok.get_vocab_size()} but the checkpoint was trained at "
-        f"{cfg.vocab}; pass --tokenizer with the matching file"
-    )
-    return tok
+    model, cfg = load_checkpoint(ckpt_path, device=device)
+    return model.to(torch.bfloat16), cfg
 
 
 def main():

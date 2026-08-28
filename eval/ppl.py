@@ -4,12 +4,11 @@
 import math
 import os
 import sys
-from types import SimpleNamespace
 
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from train import HybridLM
+from scripts.loader import load_checkpoint
 
 CKPT = sys.argv[1] if len(sys.argv) > 1 else "/work/aupai/ckpt.pt.step4000"
 TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"
@@ -18,14 +17,9 @@ BATCH = 8
 SEQ = 4096
 
 device = "cuda:0"
-ck = torch.load(CKPT, map_location="cpu", weights_only=False)
-cfg = SimpleNamespace(**ck["cfg"])
-cfg.grad_ckpt = False
-model = HybridLM(cfg).to(device)
-model.load_state_dict(ck["model"])
+model, cfg = load_checkpoint(CKPT, device=device)
 for p in model.parameters():
     p.data = p.data.contiguous()
-model.eval()
 
 # Load validation data (same split as training: first 5%)
 data = torch.load(TOKEN_CACHE, map_location="cpu", weights_only=True).long()
