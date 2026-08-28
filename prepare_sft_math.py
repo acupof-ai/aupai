@@ -17,6 +17,7 @@ from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 from holdout import is_holdout  # noqa: E402
+from loader import format_example  # noqa: E402
 from prepare_sft import pack_and_save  # noqa: E402
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -49,7 +50,7 @@ def read_examples(sources=SOURCES):
                 a = (d.get(ak) or "").strip()
                 if not q or not a or is_holdout(q):
                     continue
-                yield f"问：{q}\n答：", a
+                yield format_example(q, a)
                 n += 1
         print(f"  {os.path.basename(path)}: {n}", flush=True)
 

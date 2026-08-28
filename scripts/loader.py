@@ -111,9 +111,35 @@ def load_tokenizer(path, cfg):
     return tok
 
 
-def format_prompt(question):
-    """The exact prompt format the SFT data is trained with — single source of truth."""
-    return f"问：{question}\n答："
+#: ChatML, the format Qwen, Yi and most fine-tunes use. This repo used a homemade
+#: 问：/答： instead, which nothing else in the world reads, and which cannot carry a
+#: system message or a multi-turn conversation. The four ChatML specials were
+#: already in the vocabulary and appeared ZERO times in 160,414 chat documents --
+#: the slots were reserved and never used. Switching costs a repack; it happens
+#: alongside a corpus rebuild so the pretraining data carries the format too, and
+#: SFT no longer has to teach it from nothing.
+IM_START, IM_END = "<|im_start|>", "<|im_end|>"
+
+
+def format_prompt(question, system=None):
+    """The prompt the model is trained to answer — single source of truth."""
+    s = f"{IM_START}system\n{system}{IM_END}\n" if system else ""
+    return f"{s}{IM_START}user\n{question}{IM_END}\n{IM_START}assistant\n"
+
+
+def format_example(question, answer, system=None):
+    """One complete training example. Returns (prompt, full) so the packer can mask
+    the prompt: `full` starts with exactly `prompt`, which is what pack_and_save
+    relies on to find the boundary."""
+    p = format_prompt(question, system)
+    return p, f"{p}{answer}{IM_END}"
+
+
+def format_history(messages):
+    """Multi-turn. `messages` is [{"role", "content"}]; a trailing assistant turn is
+    left open for the model to continue."""
+    out = "".join(f"{IM_START}{m['role']}\n{m['content']}{IM_END}\n" for m in messages)
+    return out + f"{IM_START}assistant\n"
 
 
 # -- self-test: the loader must agree on a real checkpoint-tokenizer pair ----------
@@ -156,7 +182,17 @@ def _demo():
         load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id=None))
         assert w and "vocab_id" in str(w[0].message), "old-format checkpoint did not warn"
 
-    assert format_prompt("x") == "问：x\n答："
+    assert format_prompt("x") == "<|im_start|>user\nx<|im_end|>\n<|im_start|>assistant\n"
+    pr, full = format_example("x", "y")
+    assert full.startswith(pr), "the packer masks by prefix; full must start with prompt"
+    assert full == pr + "y<|im_end|>"
+    assert format_prompt("x", system="s").startswith("<|im_start|>system\ns<|im_end|>")
+    assert format_history([{"role": "user", "content": "a"}]) == format_prompt("a")
+    # every ChatML special must be ONE token, or the format costs 8 tokens a turn
+    for sp in (IM_START, IM_END):
+        assert len(tok.encode(sp, add_special_tokens=False).ids) == 1, (
+            f"{sp} is not a single token in this vocabulary; add it in scripts/build_tokenizer.py"
+        )
 
     # 5. the ids four files hardcode really are these ids.
     assert tok.token_to_id("<eos>") == EOS_ID, f"<eos> moved to {tok.token_to_id('<eos>')}"

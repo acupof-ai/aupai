@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare SFT data: 问：{instruction}\n答：{output}<eos>, prompt-masked, packed.
+"""Prepare SFT data: ChatML (scripts/loader.format_example), prompt-masked, packed.
 
 Reads all SFT sources, tokenizes with data/tokenizer.json, masks instruction
 tokens (labels=-100), greedily packs whole examples (never split across a row,
@@ -22,8 +22,10 @@ from tokenizers import Tokenizer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-import fone  # noqa: E402
 from holdout import is_holdout  # noqa: E402
+from loader import format_example  # noqa: E402
+
+import fone  # noqa: E402
 
 DATA = os.path.join(ROOT, "data")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
@@ -69,7 +71,7 @@ def read_examples():
                 if is_holdout(q):  # never train on a question the eval holds out
                     n_holdout += 1
                     continue
-                yield f"问：{q}\n答：", a
+                yield format_example(q, a)
                 n += 1
         print(f"  {os.path.basename(path)}: {n}", flush=True)
     if n_holdout:
@@ -102,18 +104,14 @@ def _encode_pairs(batch, tok, num_id):
     return out
 
 
-def _vocab_fingerprint(tok):
-    """A hash of the id->token map. Two vocabularies of the same size are not the
-    same vocabulary, and nothing else in a pack reveals which one built it."""
-    import hashlib
-
-    v = tok.get_vocab()
-    h = hashlib.sha256()
-    for tid in range(tok.get_vocab_size()):
-        h.update(str(tid).encode())
-    for t, i in sorted(v.items(), key=lambda kv: kv[1]):
-        h.update(t.encode())
-    return h.hexdigest()[:16]
+# This USED to hash str(tid) for every id before hashing the tokens, which made it
+# disagree with train.vocab_fingerprint on the same tokenizer (5b1008a6e528f464 vs
+# d191af789cdbe597). A pack's fingerprint could therefore never equal a
+# checkpoint's vocab_id, so sft_math.py's equality assert was guaranteed to fire
+# the moment a checkpoint started recording one -- which the next pretrain does.
+# It went unnoticed only because every existing checkpoint predates fingerprinting
+# and takes the warning branch. One implementation now, imported.
+from loader import vocab_fingerprint as _vocab_fingerprint  # noqa: E402
 
 
 def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):

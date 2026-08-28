@@ -31,6 +31,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from holdout import is_holdout  # noqa: E402
+from loader import format_example  # noqa: E402
 
 OUT_DIR = os.path.join(ROOT, "data", "corpus")
 SHARD_BYTES = 100 * 2**20
@@ -71,13 +72,21 @@ def load_garbage_patterns():
 GARBAGE = load_garbage_patterns()
 
 
-# iter_jsonl renders instruction/output rows as "问：{q}\n答：{a}". Three ways an eval question slipped
-# past a naive per-line hash: (1) the "问：" marker means norm("问：{q}") != norm("{q}"); (2) a multi-line
-# question equals no single line; (3) a <15-char question fell outside the old length window (measured
-# 2026-08-26: 496/500 math_test_500 questions reached data/corpus/math/). We now test the whole document,
-# the QA body (leading "问：" prefix and trailing "答：" tail stripped), and every line.
-QA_PREFIX = re.compile(r"^\s*(?:问题?|答案?|Q|A|Question|Answer)\s*[：:]\s*")
-ANSWER_TAIL = re.compile(r"\n\s*(?:答案?|A|Answer)\s*[：:]")
+# iter_jsonl renders instruction/output rows as ChatML. Three ways an eval question slipped
+# past a naive per-line hash: (1) the role marker means norm(wrapped) != norm("{q}"); (2) a
+# multi-line question equals no single line; (3) a <15-char question fell outside the old
+# length window (measured 2026-08-26: 496/500 math_test_500 questions reached
+# data/corpus/math/). We test the whole document, the question body with its wrapper
+# stripped, and every line.
+#
+# QA_PREFIX still carries the 问：/答： forms on purpose. The corpus contains documents
+# written in that shape from before the ChatML switch, and the SOURCE corpora use it too;
+# a contamination filter that only knows the current format stops catching the older one,
+# and this filter existing at all is finding #1 of docs/review_2026-08-26.md.
+QA_PREFIX = re.compile(
+    r"^\s*(?:<\|im_start\|>(?:user|assistant|system)\s*|问题?|答案?|Q|A|Question|Answer)\s*[：:]?\s*"
+)
+ANSWER_TAIL = re.compile(r"(?:<\|im_end\|>|\n\s*(?:答案?|A|Answer)\s*[：:])")
 
 
 def reject_holdout(text):
@@ -198,9 +207,10 @@ def iter_jsonl(path):
                 d = json.loads(line)
                 text = d.get("content") or d.get("text")
                 if not text and d.get("instruction"):
-                    # QA corpora (coig, school_math_r1_zh, ...) in the same "问：/答：" shape the SFT
-                    # data uses, so pretraining already sees the format it will be fine-tuned on.
-                    text = f"问：{d['instruction']}\n答：{d.get('output', '')}"
+                    # QA corpora (coig, school_math_r1_zh, ...) rendered in the SAME ChatML
+                    # the SFT pack uses, so pretraining already sees the format it will be
+                    # fine-tuned in. Before 2026-08-29 this was a homemade 问：/答：.
+                    text = format_example(d["instruction"], d.get("output", ""))[1]
                 yield text or "", d.get("url")
 
 
