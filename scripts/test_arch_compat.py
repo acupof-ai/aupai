@@ -275,3 +275,32 @@ _h0, _ = _m0(_x.clamp(max=99), torch.zeros(1))
 assert torch.isfinite(_h0).all()
 Cfg.fone = False
 print("test_fone OK")
+
+
+# --- FoNE data path: text -> ids + compact values -> dense per-position values ---
+from tokenizers import Tokenizer  # noqa: E402
+
+_tok_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json"
+)
+if os.path.exists(_tok_path):
+    _tk = Tokenizer.from_file(_tok_path)
+    if _tk.token_to_id(fone.NUM_TOKEN) is not None:
+        train.Cfg.fone, train.Cfg.seq = True, 63
+        _texts = ["原价200元打8折是160元", "没有数字", "答案是140，余数6，超大数 12345678 不动"] * 20
+        _ids, _vals = train.encode(_texts, _tk, chunk=50)
+        _n = len(_ids) // (train.Cfg.seq + 1)
+        _rows = _ids[: _n * (train.Cfg.seq + 1)].view(-1, train.Cfg.seq + 1)
+        _dense = train.scatter_values(_rows, _vals, train.Cfg.num_id)
+        _mask = _rows == train.Cfg.num_id
+        # Values must land in row-major order, one per [NUM], and nowhere else.
+        assert torch.equal(_dense[_mask], _vals[: int(_mask.sum())].float()), "scatter misaligned"
+        assert (_dense[~_mask] == 0).all(), "value leaked onto a non-[NUM] position"
+        # A number too large for the Fourier code must keep its ordinary tokens.
+        assert not (_vals >= 10**fone.INT_DIGITS).any(), "oversized value entered the stream"
+        train.Cfg.fone, train.Cfg.seq = False, 16
+        print("test_fone_data OK")
+    else:
+        print("test_fone_data SKIP (tokenizer has no [NUM]; run scripts/build_tokenizer.py)")
+else:
+    print("test_fone_data SKIP (no data/tokenizer.json)")

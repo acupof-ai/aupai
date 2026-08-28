@@ -968,9 +968,24 @@ def encode(texts, tok, chunk=50_000, log=None):
     objects and the intermediate arrays bounded."""
     eos = tok.token_to_id("<eos>")
     batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
-    parts = []
+    parts, vparts = [], []
     t0 = time.time()
     for i in range(0, len(texts), chunk):
+        if Cfg.fone:
+            # Numbers become one [NUM] each; their values ride alongside in stream
+            # order, so the k-th [NUM] in the ids takes the k-th value.
+            pieces, vals = fone.encode_text(texts[i : i + chunk], tok, Cfg.num_id)
+            parts.append(np.concatenate([np.append(p, eos) for p in pieces]))
+            vparts.append(vals)
+            if log and (i // chunk) % 4 == 0:
+                ntok = sum(len(p) for p in parts)
+                dt = time.time() - t0
+                log(
+                    f"  encode {min(i + chunk, len(texts))}/{len(texts)} docs, "
+                    f"{ntok / 1e6:.0f}M tokens ({ntok / dt / 1e6:.1f}M tok/s), "
+                    f"{sum(len(v) for v in vparts) / 1e6:.1f}M numbers"
+                )
+            continue
         enc = batch_fn(texts[i : i + chunk])
         parts.append(np.concatenate([np.asarray(e.ids + [eos], dtype=np.int32) for e in enc]))
         if (
@@ -982,7 +997,30 @@ def encode(texts, tok, chunk=50_000, log=None):
                 f"  encode {min(i + chunk, len(texts))}/{len(texts)} docs, "
                 f"{ntok / 1e6:.0f}M tokens ({ntok / dt / 1e6:.1f}M tok/s)"
             )
-    return torch.from_numpy(np.concatenate(parts))  # int32: vocab 32772 fits, halves bandwidth
+    ids = torch.from_numpy(np.concatenate(parts))  # int32: vocab 32773 fits, halves bandwidth
+    if Cfg.fone:
+        return ids, torch.from_numpy(np.concatenate(vparts)) if vparts else torch.zeros(0)
+    return ids
+
+
+def scatter_values(ids, vals, num_id):
+    """Compact per-number values -> a dense tensor shaped like ids.
+
+    The cache stores only the numbers, in stream order, because they are a few
+    percent of the tokens; the model wants one value per position. `ids == num_id`
+    marks the [NUM] slots and, read in row-major order, they line up one-for-one
+    with `vals` -- so a masked assignment puts each value where it belongs. Any
+    row-level slicing must happen AFTER this, never between the two.
+
+    Trailing tokens dropped by the reshape leave their values unused, so vals may
+    be the longer of the two; a shortfall the other way is a corrupt cache.
+    """
+    out = torch.zeros(ids.shape, dtype=torch.float32)
+    mask = ids == num_id
+    k = int(mask.sum())
+    assert k <= len(vals), f"cache has {len(vals)} values for {k} [NUM] tokens"
+    out[mask] = vals[:k].float()
+    return out
 
 
 def _domain_seqs(domain, tok, is_main, ddp):
@@ -1007,13 +1045,19 @@ def _domain_seqs(domain, tok, is_main, ddp):
         data = encode(texts, tok, log=lambda m: print(m, flush=True))
         del texts
         torch.save(data, cache)
-        print(f"mix: {domain} cached {len(data) / 1e6:.0f}M tokens", flush=True)
+        n_tok = len(data[0] if Cfg.fone else data)
+        print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
     if ddp:
         dist.barrier()
     data = torch.load(cache, map_location="cpu", weights_only=True)  # int32; .long() once, per rank
-    n = len(data) // (Cfg.seq + 1)
-    return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
+    if not Cfg.fone:
+        n = len(data) // (Cfg.seq + 1)
+        return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
+    ids, vals = data
+    n = len(ids) // (Cfg.seq + 1)
+    ids = ids[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
+    return ids, scatter_values(ids, vals, Cfg.num_id)
 
 
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
