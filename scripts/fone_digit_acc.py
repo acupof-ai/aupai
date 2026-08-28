@@ -52,7 +52,8 @@ def main():
 
     hit = tot = 0
     exact_hit = exact_tot = 0
-    zeros = 0
+    zeros = all_zero = 0
+    copy_hit = copy_tot = 0
     with torch.no_grad():
         for j in range(0, len(rows), a.batch):
             x = rows[j : j + a.batch].long().to(a.device)
@@ -70,12 +71,23 @@ def main():
             exact_hit += int((pred == tgt).all(-1).sum())
             exact_tot += len(tgt)
             zeros += int((tgt == 0).sum())
+            all_zero += int((tgt == 0).all(-1).sum())
+            # Copying baseline: the previous number in the same row. Math text restates
+            # numbers constantly, so a head that only learned "repeat the last one" would
+            # already score here -- the exact rate is only evidence above THIS line.
+            for r in range(len(x)):
+                vals_r = wb[r][nm[r]]
+                if len(vals_r) > 1:
+                    copy_hit += int((vals_r[1:] == vals_r[:-1]).sum())
+                    copy_tot += len(vals_r) - 1
 
     assert tot, f"no [NUM] targets in the last {a.rows} rows of {a.domain}"
     print(f"{a.ckpt} on {a.domain} ({exact_tot} numbers, {tot} digits)")
     print(f"  per-digit accuracy  {100 * hit / tot:5.1f}%")
     print(f"  whole-number exact  {100 * exact_hit / exact_tot:5.1f}%")
-    print(f"  baselines: chance 10.0%, always-0 {100 * zeros / tot:5.1f}%")
+    print(f"  baselines: per-digit chance 10.0%, always-0 {100 * zeros / tot:5.1f}%")
+    print(f"             whole-number always-0 {100 * all_zero / exact_tot:5.1f}%", end="")
+    print(f", copy-previous {100 * copy_hit / max(copy_tot, 1):5.1f}%")
 
 
 if __name__ == "__main__":
