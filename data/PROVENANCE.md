@@ -50,6 +50,29 @@ Conclusion: public Chinese math SFT data is overwhelmingly long-CoT, which is th
 this project needs. The in-repo alternative (`mathbank/`, seeded generators with `vet_programs.py`
 answer verification) is the only source that controls length, difficulty and correctness at once.
 
+## math_short_v8 — generated 2026-08-28 (the answer to the short-solution gap)
+
+`cd mathbank && python3 run_math_short.py 100000 ../data/synthetic/math_short_v8.jsonl --ratios 0,0,0.6,0.4 --seed 28`
+
+97,771 rows (L3 57,771 + L4 40,000; L3 stalls at 57,771 — 509 programs x the 150
+instance cap). sha256 7e45bc95d0aa3226823a7a493a4df525a611ee7287712a7e28bec4ed217830e8
+
+Built after the external survey above found nothing usable. Every property is
+matched to `data/synthetic/math_hard_eval_1k.jsonl` rather than inherited:
+
+| property | v8 | eval | old sft_k4.pt |
+|---|---|---|---|
+| answer length median / p90 | 88 / 136 | 85 / 132 | 156 / 377 |
+| level mix | 100% L3/L4 | 100% L3/L4 | unlabelled |
+| answer correctness | program-verified | — | unverified |
+| forward references | 0.00% | — | — |
+| duplicate instructions | 0 | — | — |
+
+Generator reject rate is 23.3%, up from 2.9%, because `verify()` now also rejects
+forward references — a step citing a value no earlier step produced. Those were
+9.8% of v7-era rows and every equation in them is arithmetically true, so the old
+numeric check passed them; see commit ebd731a.
+
 ## Schema contract (consumed by datagen/build_corpus.py)
 
 - pretrain/text sources: `{"content": ...}` (or `{"text": ...}`)
