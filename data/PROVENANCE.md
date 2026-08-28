@@ -121,3 +121,39 @@ every future batch anyway — that is what made this call cheap to make.
 - Synthetic code/knowledge: data/synthetic/{code_python_zh,knowledge_qa_zh}.jsonl
   via datagen/gen_code.py + gen_knowledge2.py (seeded, zero external deps).
 - Eval holdout filter: scripts/holdout.py — every fetcher must exclude it.
+
+## Eval resolution and the seed trap — measured 2026-08-28
+
+**A new seed is not a new batch.** `run_math_short.py` seeds each draw from
+`f"{seed}-{level}-{program}-{draw}"`, which makes a run reproducible but does
+nothing about repetition: dedup is per-run, and each program draws from a bounded
+instance space. Generating 1,031 rows at seed 99 against math_short_v8's seed 28
+returned **294 identical questions and 86.4% shared templates**. The generator now
+takes `--exclude <glob>`, which loads earlier batches into the dedup set; the same
+run then collided **0** times. Rows also carry `program_id`, and the run prints an
+`EFFSIZE` line.
+
+**Rows are not independent observations.** Greedy pass/fail correlates inside a
+program: over 1,298 programs x 8 instances (`data/rl/instance_rates.jsonl`),
+ICC = 0.296 and 62.6% of programs are all-or-none. An accuracy over N rows in
+K programs is worth
+
+    n_eff = K·m / (1 + (m−1)·0.296),  m = N/K
+
+which ceilings at K/0.296 no matter how many instances each program generates.
+
+**math_hard_eval_1k holds up.** It has 899 distinct number-templates and 486
+distinct solution skeletons over 1,032 rows, so n_eff is 774-989 and the 95%
+half-width at a 3% pass rate is **±1.06% to ±1.20%**. It also shares only 0.3% of
+templates with math_short_v8 against 86.4% between two same-bank batches, so it is
+program-disjoint from training. Its generator predates the program bank and is
+gone, which is why that disjointness is luck rather than design.
+
+**Expanding it from the current bank does not work.** Any new rows would come from
+the bank the training data comes from, at 86.4% template overlap. Reserving
+programs instead caps at ±1.03% for 309 of them — no better than today, and 309
+programs removed from training. `mathbank/split_bank.py` implements the split and
+records the arithmetic; it is deliberately not applied.
+
+**What actually buys resolution:** eval-only programs, roughly 312 for ±1.03%,
+517 for ±0.80%, and 1,178 for ±0.53%. The whole L3/L4 bank is 943.

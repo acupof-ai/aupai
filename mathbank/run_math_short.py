@@ -25,6 +25,10 @@ from mathcommon import eval_lhs, num
 
 RATIOS = {"L1": 0.15, "L2": 0.35, "L3": 0.35, "L4": 0.15}
 MAX_INST = 150          # peer hard line: instance cap per program
+# Intra-program correlation of greedy pass/fail, from the band probe over 1298
+# programs x 8 instances (data/rl/instance_rates.jsonl, 2026-08-27). 62.6% of
+# programs are all-or-none, which is why a row is not an independent observation.
+ICC = 0.296
 TOK = re.compile(r"-?\d+(?:\.\d+)?(?:/\d+)?")
 
 
@@ -121,6 +125,23 @@ def main():
         help="override the L1:L2:L3:L4 mix, e.g. '0,0,0.6,0.4' to match math-hard "
         "(which is 100%% L3/L4). Default is 0.15,0.35,0.35,0.15.",
     )
+    ap.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="GLOB",
+        help="jsonl batches whose instructions this run must not reproduce; repeatable. "
+        "A NEW SEED IS NOT A NEW BATCH: measured 2026-08-28, seed 99 against seed 28's "
+        "math_short_v8 gave 294 of 1031 rows identical and 86.4% shared templates, "
+        "because each program draws from a bounded instance space and dedup is per-run.",
+    )
+    ap.add_argument(
+        "--only-programs",
+        metavar="FILE",
+        help="restrict generation to the program ids listed here, one per line. With its "
+        "complement it splits the bank so an eval and its training set share no program, "
+        "which is what separates learning a rule from recalling a template.",
+    )
     args = ap.parse_args()
     if args.ratios:
         vals = [float(x) for x in args.ratios.split(",")]
@@ -136,8 +157,27 @@ def main():
     if not args.n or not args.out:
         ap.error("n and out are required (unless --list)")
 
+    keepset = None
+    if args.only_programs:
+        with open(args.only_programs, encoding="utf-8") as f:
+            keepset = {ln.strip() for ln in f if ln.strip()}
+        bank = {lev: [(n, fn) for n, fn in ps if n in keepset] for lev, ps in bank.items()}
+        print(f"restricted to {sum(len(p) for p in bank.values())}/{len(keepset)} listed programs",
+              file=sys.stderr)
+
     rng = random.Random(args.seed)
     rows, seen, rejected = [], set(), 0
+    import glob as _glob
+    for pat in args.exclude:
+        for p in sorted(_glob.glob(pat)):
+            with open(p, encoding="utf-8") as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if ln:
+                        seen.add(json.loads(ln)["instruction"])
+    if args.exclude:
+        print(f"excluding {len(seen)} instructions from earlier batches", file=sys.stderr)
+    n_excluded = len(seen)
     used = {lev: set() for lev in RATIOS}
     attempts = {lev: 0 for lev in RATIOS}
 
@@ -175,7 +215,11 @@ def main():
                 seen.add(ins)
                 counts[name] += 1
                 used[lev].add(name)
-                rows.append({"instruction": ins, "output": out, "level": lev})
+                # program_id travels with the row: it is the clustering unit for any
+                # confidence interval over this data, and without it a batch's effective
+                # sample size cannot be recovered afterwards (math_hard_eval_1k has no
+                # such field, so its design effect can only be estimated).
+                rows.append({"instruction": ins, "output": out, "level": lev, "program_id": name})
                 keep += 1
                 progressed = True
             if not progressed:
@@ -191,11 +235,17 @@ def main():
     total = len(rows) or 1
     nprogs = sum(len(used[lev]) for lev in RATIOS)
     print(f"wrote {len(rows)} rows -> {args.out}", file=sys.stderr)
+    m = total / max(1, nprogs)
+    deff = 1 + (m - 1) * ICC
     print(f"STATS programs={nprogs} "
-          f"inst_avg={total / max(1, nprogs):.1f} "
+          f"inst_avg={m:.1f} "
           f"level_dist={dict(level_dist)} "
           f"reject_rate={rejected / (rejected + len(rows)):.4f} "
           f"attempts={sum(attempts.values())}", file=sys.stderr)
+    # Rows are clustered inside a program, so an accuracy over them is worth fewer
+    # independent observations than its row count. ICC measured on the band probe.
+    print(f"EFFSIZE deff={deff:.2f} n_eff={len(rows) / deff:.0f} "
+          f"(icc={ICC}, excluded={n_excluded})", file=sys.stderr)
 
 
 if __name__ == "__main__":
