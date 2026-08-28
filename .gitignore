@@ -15,4 +15,3 @@ data/outbatch/
 data/workbatch/
 .ruff_cache/
 .DS_Store
-cli/target/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-line summary for a checkpoint, for `aupai ckpt list` (and `aupai status`).
+"""One-line summary for a checkpoint: params, dtype, step, arch.
 
     python scripts/ckpt_info.py ckpt_k4_11b_lr05.pt [more.pt ...]
 

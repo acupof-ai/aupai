@@ -10,40 +10,21 @@
 - **训练快**：FP8（torchao e4m3_tensorwise）+ Muon + WSD + Liger FLCE，batch 32 无 grad_ckpt，8×H20 上 ~90K tok/s/gpu、MFU 38%。
 - **数据干净**：语料构建自带 holdout 过滤（整文档 + QA body + 逐行，防 eval 污染）、跨域去重、math 近重去重。
 
-## aupai CLI — 训练全流程中控
-
-一个 Rust 二进制（`cli/`，薄调度层，shell out 到已有 python/bash 工具），mac + linux pod 通用。
+## 常用命令
 
 ```bash
-cd cli && cargo build --release           # 构建；二进制在 cli/target/release/aupai
-aupai list                                # 所有命令一览
-aupai status                              # 系统总览：数据就绪度 / ckpt / 流水线 / 在跑的训练
+python scripts/build_tokenizer.py --force            # 训 data/tokenizer.json（分层采样，~5 分钟）
+torchrun --nproc_per_node=7 train.py --fp8 --fone \
+  --attn_res --attn_res_blocks 4 --warmup 150 --lr_scale 0.5 --name X --track   # 预训练
+scripts/eval_hard.sh <ckpt> [ngpu]                   # math-hard 评测（metric of record）
+scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>     # SFT
+torchrun --nproc_per_node=8 algorithms/rlvr.py --resume <ckpt>   # RLVR / GSPO
+python scripts/exp.py start|done                     # 实验记录 → EXPERIMENTS.md
+python scripts/data_overview.py                      # 各域 token 数 + 占比
+python scripts/fone_probe.py                         # FoNE vs BPE 算术 A/B
 ```
 
-常用命令（全部支持 `--dry-run` 预演）：
-
-```bash
-aupai data                                # 各域 token 分布 vs mix 目标
-aupai mix                                 # 校验 data/mix.json 调度
-aupai pretokenize                         # 分词进 token 缓存（多核）
-aupai train --name k5 --track             # 预训练（默认 = 已验证最优配方 + trackio 记录）
-aupai eval <ckpt>                         # math-hard 评测（metric of record）
-aupai sft <name> <ckpt> <sft.pt>          # SFT
-aupai rl --resume <ckpt>                  # RLVR / GSPO
-aupai ckpt list|best|clean                # checkpoint 管理
-aupai dashboard [name]                    # trackio 本地曲线面板
-aupai arch                                # 打开架构页
-```
-
-**流水线一行到底**（数据就绪后）：
-
-```bash
-aupai pipeline --name k5 --track          # tokenizer→pretokenize→data→pretrain→eval，带阶段状态
-aupai pipeline --resume k5                # 从上次失败/中断的阶段续跑
-aupai pipeline --status k5                # 看每阶段状态 / 产物
-```
-
-> 注：`pipeline` 假设原始语料 jsonl 已在 `data/`。数据的**下载/生成**（`datagen/fetch_data.py`、`scripts/fetch_*.py`、`datagen/gen_*.py`、`mathbank/`）尚未全部纳入 CLI —— 接入 `fetch`/`corpus` 阶段后即可从零一行训练。见下。
+远程执行见 AGENTS.md 的 Pod 一节——长任务必须 `setsid`，`nohup` 挡不住 crictl 的进程组回收。
 
 ## 数据流水线
 
