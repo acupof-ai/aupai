@@ -37,6 +37,20 @@
 - Best base to date is `ckpt_k4_11b_lr05.pt` (fp8 + attn_res blocks4 + warmup 150 + lr_scale 0.5).
   A fresh clean-corpus pretrain is in progress; `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
 
+## Tokenizer / vocabulary
+- vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
+  `padded_vocab` is 32,832 either way, so adding `[NUM]` resized nothing.
+- **Keep 32K.** A fitted vocabulary scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the optimum
+  for this 166M non-embedding model near 12-20K once overtraining is accounted for; a measured sweep
+  on this corpus shows 64K buys +2.8% compression for +33.6M params and **+14% compute per character**
+  (the d×V output matmul runs every forward pass — tying halves the params, not the FLOPs; at 32K it
+  is already ~17% of FLOPs). Big multilingual vocabs (Qwen3 151,936 / GLM-4 151,552 / DeepSeek-V3
+  129,280) buy English + code + 50 languages, not Chinese. Measured head to head on this corpus, ours
+  emits FEWER tokens than Qwen3-0.6B: 1.61 vs 1.45 chars/token.
+- Always train with `initial_alphabet=ByteLevel.alphabet()`. Without it only the byte-alphabet chars
+  present in the corpus survive (measured 193/256), which silently drops NUL bytes on the round trip
+  and breaks every fast tokenizer library.
+
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
 - `uv sync` after dependency changes (torch, fla, liger-kernel, torchao are linux-only markers).
