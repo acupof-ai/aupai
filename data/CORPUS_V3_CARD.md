@@ -81,6 +81,17 @@ in building it.
   below web on purpose; SmolLM2 uses Cosmopedia at ~11% against real web, and no
   benchmark we own could detect an overdose — every multiple-choice eval sits at
   the 25% chance line (C-Eval: 24.8 / 23.7 / 23.0, chance 25%, ±1.34pt).
+- **A source's metadata fields are its claims, not measurements of its content.**
+  Twice tonight a field was read as if it described the data. cosmopedia's `score`
+  correlates with our own judgement at Spearman +0.198 and is non-monotonic. And
+  `source = CCI3` in opencsg/Fineweb-Edu-Chinese was read as "web novels" when
+  CCI3-HQ is BAAI's *general* Chinese web corpus — the name of an upstream
+  dataset, not a content type. Reading 24 random documents found no fiction at
+  all: ecology-agreement news, municipal emissions regulation, a district party
+  meeting speech, tax exercises, criminal-sentencing explainers, WMS barcode
+  technique, housing-fund policy, PMP exam material. The corpus's own hand-audit
+  contradicted the label before anyone read the content — 59% usable is
+  impossible for web novels, which both readers score as drop.
 - **Published quality scores in the sources are not usable as thresholds.**
   Measured: cosmopedia's own `score` column correlates with ours at Spearman
   +0.198 and is non-monotonic across its own bands. A 120-document hand audit of
