@@ -39,6 +39,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint  # used by --grad_ckpt
+import fone
 from tokenizers import Tokenizer
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from tokenizers.models import BPE
@@ -130,6 +131,8 @@ class Cfg:
     attn_window = 1024
     ffn_hidden = 3072
     vocab = 32772
+    fone = False  # --fone: numbers as one [NUM] token with a Fourier value embedding
+    num_id = 32772  # the [NUM] token id; == vocab, so enabling fone makes it 32773
     seq = 4096  # recurrent arch handles arbitrary length at inference
     batch = (
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
@@ -552,6 +555,14 @@ class HybridLM(nn.Module):
         self.norm = RMSNorm(cfg.d)
         self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
         self.head.weight = self.tok.weight  # tied
+        # FoNE: numbers arrive as a single [NUM] token whose identity carries no value,
+        # so the value is injected additively from its Fourier features and read back
+        # by a ten-way-per-digit head. Both are tiny (16 x d) next to the tied vocab
+        # head, and opt-in, so a checkpoint trained without them still loads.
+        self.fone = getattr(cfg, "fone", False)
+        if self.fone:
+            self.num_proj = nn.Linear(fone.NUM_DIMS, cfg.d, bias=False)
+            self.num_head = nn.Linear(cfg.d, fone.NUM_DIMS, bias=False)
         self.attn_res = getattr(cfg, "attn_res", False)
         n_sub = 2 * cfg.layers
         n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)  # 0 -> Full (every sublayer)
@@ -606,9 +617,25 @@ class HybridLM(nn.Module):
                     done, partial = done + partial, []
         return self.final_ar(done + partial)
 
-    def forward(self, idx, targets=None, cu=None):
-        """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask."""
-        hidden = self.norm(self._body(self.tok(idx), cu))
+    def num_logits(self, hidden):
+        """Hidden states -> (..., digits, 10) per-digit logits at every position.
+
+        Only [NUM] positions are scored against it; the caller masks. Kept separate
+        from forward() because the loss lives in the training loop, next to FLCE.
+        """
+        return fone.digit_logits(self.num_head(hidden))
+
+    def forward(self, idx, targets=None, cu=None, num_vals=None):
+        """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
+
+        num_vals: (B, T) float, the value at each [NUM] position and anything elsewhere
+        (non-[NUM] contributions are masked out, not trusted)."""
+        emb = self.tok(idx)
+        if self.fone and num_vals is not None:
+            mask = (idx == self.cfg.num_id).unsqueeze(-1)
+            feat = fone.encode_tensor(num_vals.masked_fill(~mask.squeeze(-1), 0.0)).to(emb.dtype)
+            emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
+        hidden = self.norm(self._body(emb, cu))
         if targets is None:
             # Inference: compute logits with softcap
             logits = self.head(hidden)[..., : self.cfg.vocab].float()
@@ -946,7 +973,9 @@ def encode(texts, tok, chunk=50_000, log=None):
     for i in range(0, len(texts), chunk):
         enc = batch_fn(texts[i : i + chunk])
         parts.append(np.concatenate([np.asarray(e.ids + [eos], dtype=np.int32) for e in enc]))
-        if log and (i // chunk) % 4 == 0:  # every ~200K docs: sparse enough to be cheap, dense enough to not look hung
+        if (
+            log and (i // chunk) % 4 == 0
+        ):  # every ~200K docs: sparse enough to be cheap, dense enough to not look hung
             ntok = sum(len(p) for p in parts)
             dt = time.time() - t0
             log(
@@ -963,7 +992,11 @@ def _domain_seqs(domain, tok, is_main, ddp):
     from -- rebuild the corpus and the stale cache is silently ignored, not silently reused."""
     cache = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
     shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
-    fresh = os.path.exists(cache) and shards and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
+    fresh = (
+        os.path.exists(cache)
+        and shards
+        and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
+    )
     if is_main and not fresh:
         texts = []
         for p in shards:
@@ -1134,6 +1167,11 @@ def main():
             setattr(Cfg, k, v)
     if args.no_doc_mask:
         Cfg.doc_mask = False
+    if Cfg.fone:
+        # [NUM] sits one past the base vocab, and forward() slices logits to
+        # Cfg.vocab -- without this the model could never predict the token it is
+        # supposed to emit for every number.
+        Cfg.vocab = Cfg.num_id + 1
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
@@ -1143,7 +1181,9 @@ def main():
     runlog = RunLog(args.name, track=args.track) if is_main else print
     if args.mix is not None:
         Cfg.mix = args.mix
-    ckpt_path = os.path.join(ROOT, f"ckpt_{args.name}.pt")  # always name-derived; pipeline evals ckpt_<name>.pt
+    ckpt_path = os.path.join(
+        ROOT, f"ckpt_{args.name}.pt"
+    )  # always name-derived; pipeline evals ckpt_<name>.pt
     amp = device.startswith("cuda")
 
     mix_path = os.path.join(ROOT, Cfg.mix) if Cfg.mix else None

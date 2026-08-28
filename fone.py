@@ -50,6 +50,20 @@ def encode(values, m=INT_DIGITS, n=FRAC_DIGITS, dtype=torch.float32):
     return torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).reshape(d.shape[0], -1).to(dtype)
 
 
+def encode_tensor(x, m=INT_DIGITS, n=FRAC_DIGITS):
+    """Batched encode for the training graph: (...) values -> (..., 2*(m+n)) features.
+
+    Same quantity as encode(), written in torch on the input's own device and kept
+    differentiable-shaped. Values are data, not parameters, so no gradient flows
+    back through the digit extraction -- the learnable part is num_proj downstream.
+    """
+    scaled = torch.round(x.double().abs() * (10.0**n))
+    place = 10.0 ** torch.arange(m + n, dtype=torch.float64, device=x.device)
+    d = torch.remainder(torch.div(scaled.unsqueeze(-1), place, rounding_mode="floor"), 10)
+    ang = 2 * math.pi * d / 10.0
+    return torch.stack([torch.cos(ang), torch.sin(ang)], dim=-1).flatten(-2).to(x.dtype)
+
+
 def digit_basis(dtype=torch.float32):
     """The ten reference points phi(j, 10) for j = 0..9 — the decoding dictionary."""
     j = torch.arange(10, dtype=torch.float64)
@@ -190,6 +204,14 @@ def _selftest():
     # Values beyond the representable range wrap rather than crash; encode_text
     # keeps them out by leaving oversized numbers as ordinary text.
     assert encode([10**INT_DIGITS]).shape == (1, NUM_DIMS)
+
+    # The training-graph encoder must agree with the preprocessing one exactly,
+    # or the model sees a different code than the data was built with.
+    bt = torch.tensor(vals, dtype=torch.float32)
+    assert torch.allclose(encode_tensor(bt), encode(vals), atol=1e-6), "encode_tensor != encode"
+    b2 = encode_tensor(bt.reshape(3, 4))  # batched shape is preserved
+    assert b2.shape == (3, 4, NUM_DIMS), b2.shape
+    assert torch.allclose(b2.reshape(-1, NUM_DIMS), encode(vals), atol=1e-6)
 
     # Text -> (ids, values) against the real tokenizer, if it is available.
     import os

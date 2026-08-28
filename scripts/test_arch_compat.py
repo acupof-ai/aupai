@@ -231,3 +231,47 @@ for _nb, _pairs in ((0, 325), (2, 61), (4, 85)):
     _p += _blocks + _partial
     assert _p == _pairs, f"attn_res_blocks={_nb}: {_p} pairs, expected {_pairs}"
 print("test_attn_res OK")
+
+
+# --- FoNE: value-carrying [NUM] embedding + per-digit head ---
+import fone  # noqa: E402
+
+Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.seq = 64, 2, 4, 128, 16
+Cfg.attn_res, Cfg.grad_ckpt = False, False
+Cfg.fone, Cfg.num_id, Cfg.vocab = True, 100, 101  # [NUM] one past the base vocab
+_m = HybridLM(Cfg)
+_x = torch.randint(0, 100, (2, 16))
+_x[0, 3] = _x[1, 5] = Cfg.num_id
+_v = torch.zeros(2, 16)
+_v[0, 3], _v[1, 5] = 152.0, 1640.0
+
+_h, _ = _m(_x, torch.zeros(1), num_vals=_v)
+_nl = _m.num_logits(_h)
+assert _nl.shape == (2, 16, fone.INT_DIGITS + fone.FRAC_DIGITS, 10), _nl.shape
+
+# Untrained per-digit loss must sit at the ten-way chance level, not somewhere odd.
+_mask = _x == Cfg.num_id
+_tgt = fone.digits_of(_v[_mask].tolist())
+_loss = torch.nn.functional.cross_entropy(_nl[_mask].reshape(-1, 10), _tgt.reshape(-1))
+assert 1.9 < _loss.item() < 2.9, f"digit loss {_loss.item()} far from ln(10)=2.303"
+
+# Both FoNE parameters must actually receive gradient.
+_loss.backward()
+assert _m.num_head.weight.grad is not None and _m.num_head.weight.grad.abs().sum() > 0
+assert _m.num_proj.weight.grad is not None and _m.num_proj.weight.grad.abs().sum() > 0
+
+# The value must reach the hidden state -- same ids, different numbers, different output.
+_h2, _ = _m(_x, torch.zeros(1), num_vals=_v * 0 + 7.0)
+assert not torch.allclose(_h, _h2), "num_vals does not affect the forward pass"
+
+# A [NUM] id the model could never predict would make the token useless.
+assert Cfg.num_id < Cfg.vocab, "[NUM] must be inside the logit slice"
+
+# Opt-out is a no-op: no new parameters, forward works without num_vals.
+Cfg.fone, Cfg.vocab = False, 100
+_m0 = HybridLM(Cfg)
+assert not hasattr(_m0, "num_proj") and not hasattr(_m0, "num_head")
+_h0, _ = _m0(_x.clamp(max=99), torch.zeros(1))
+assert torch.isfinite(_h0).all()
+Cfg.fone = False
+print("test_fone OK")
