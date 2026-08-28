@@ -49,6 +49,14 @@ def main():
     p.add_argument("--temperature", type=float, default=0.0, help="sampling temperature (k>1 needs >0)")
     p.add_argument("--data", default=None, help="problem jsonl (default: the math-hard holdout)")
     p.add_argument(
+        "--tokenizer",
+        default=TOK_PATH,
+        help="a checkpoint must be scored with the vocabulary it was trained on. data/tokenizer.json "
+        "is rebuilt in place, so an older checkpoint needs its own file passed here -- ids do not "
+        "survive a vocabulary rebuild, and nothing in the checkpoint detects the mismatch beyond "
+        "cfg.vocab.",
+    )
+    p.add_argument(
         "--dump",
         default=None,
         help="write {instruction, greedy, gens} per problem here, for the solve-rate probe",
@@ -61,7 +69,11 @@ def main():
     model = HybridLM(cfg).to(a.device)
     model.load_state_dict(ck["model"])
     model = model.to(torch.bfloat16).eval()
-    tok = Tokenizer.from_file(TOK_PATH)
+    tok = Tokenizer.from_file(a.tokenizer)
+    assert tok.get_vocab_size() == cfg.vocab, (
+        f"{a.tokenizer} has vocab {tok.get_vocab_size()} but the checkpoint was trained at "
+        f"{cfg.vocab}; pass --tokenizer with the matching file"
+    )
     # A FoNE checkpoint writes numbers as [NUM] carrying a value, so both the prompt
     # and the generated text go through fone rather than the tokenizer alone.
     fone_on = getattr(cfg, "fone", False)

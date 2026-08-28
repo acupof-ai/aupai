@@ -28,6 +28,7 @@ sys.path.insert(0, ROOT)
 os.environ["FLA_FLASH_KDA"] = "0"
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+import fone
 from train import HybridLM  # noqa: E402
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -147,7 +148,7 @@ ALL_BENCHMARKS = list(MC_BENCHMARKS) + ["gsm8k"]
 # --- Batched log-likelihood scorer (shared by all multiple-choice benchmarks) ---
 
 @torch.no_grad()
-def score_mc(model, tok, items, device, batch_size=MC_BATCH):
+def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
     """Score multiple-choice items by continuation log-likelihood.
 
     Each item: {"prompt": str, "options": [str, ...], "label": int}.
@@ -162,36 +163,54 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH):
         return 0.0
 
     # Pre-tokenize once; flatten (item, option) pairs into jobs.
-    jobs = []  # (prompt_ids, option_ids, item_idx, option_idx)
+    # A FoNE checkpoint has only ever seen a number as one [NUM] carrying a value, so
+    # its prompts go through fone; scoring one with plain BPE puts every numeric
+    # question off-distribution and understates the model.
+    def enc(texts):
+        if num_id is None:
+            return [e.ids for e in tok.encode_batch(texts)], [[0.0] * 0 for _ in texts]
+        return fone.encode_prompts(texts, tok, num_id)
+
+    jobs = []  # (prompt_ids, prompt_vals, option_ids, option_vals, item_idx, option_idx)
+    prompts, opts_flat, index = [], [], []
     for i, it in enumerate(items):
-        p_ids = tok.encode(it["prompt"]).ids
+        prompts.append(it["prompt"])
         for j, opt in enumerate(it["options"]):
-            o_ids = tok.encode(opt).ids
-            if o_ids:  # empty continuation would score 0 and corrupt argmax
-                jobs.append((p_ids, o_ids, i, j))
+            opts_flat.append(opt)
+            index.append((i, j))
+    p_all, pv_all = enc(prompts)
+    o_all, ov_all = enc(opts_flat)
+    for k, (i, j) in enumerate(index):
+        if o_all[k]:  # empty continuation would score 0 and corrupt argmax
+            pv = pv_all[i] if num_id is not None else [0.0] * len(p_all[i])
+            ov = ov_all[k] if num_id is not None else [0.0] * len(o_all[k])
+            jobs.append((p_all[i], pv, o_all[k], ov, i, j))
 
     n_items = len(items)
     max_opts = max(len(it["options"]) for it in items)
     scores = torch.full((n_items, max_opts), -1e9, dtype=torch.float32, device=device)
 
-    jobs.sort(key=lambda job: len(job[0]) + len(job[1]))  # length-bucketed batches
+    jobs.sort(key=lambda job: len(job[0]) + len(job[2]))  # length-bucketed batches
 
     for s in range(0, len(jobs), batch_size):
         chunk = jobs[s : s + batch_size]
-        max_len = max(len(p) + len(o) for p, o, _, _ in chunk)
+        max_len = max(len(p) + len(o) for p, _, o, _, _, _ in chunk)
         B = len(chunk)
         x = torch.zeros((B, max_len), dtype=torch.long, device=device)
+        v = torch.zeros((B, max_len), device=device) if num_id is not None else None
         rows, positions, targets = [], [], []
-        for b, (p_ids, o_ids, _, _) in enumerate(chunk):
+        for b, (p_ids, p_val, o_ids, o_val, _, _) in enumerate(chunk):
             full = p_ids + o_ids
             x[b, : len(full)] = torch.tensor(full, dtype=torch.long, device=device)
+            if num_id is not None:
+                v[b, : len(full)] = torch.tensor(p_val + o_val, device=device)
             pl = len(p_ids)
             for k, t in enumerate(o_ids):
                 rows.append(b)
                 positions.append(max(pl - 1 + k, 0))  # logit predicting token k of the option
                 targets.append(t)
 
-        logits = model(x)[0]  # (B, T, V) float32, softcapped
+        logits = model(x, num_vals=v)[0]  # (B, T, V) float32, softcapped
         rows_t = torch.tensor(rows, device=device)
         pos_t = torch.tensor(positions, device=device)
         tgt_t = torch.tensor(targets, device=device)
@@ -200,7 +219,7 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH):
         token_lp = token_lp[torch.arange(len(tgt_t), device=device), tgt_t]
         job_scores = torch.zeros(B, dtype=torch.float32, device=device)
         job_scores.scatter_add_(0, rows_t, token_lp)  # sum token log-probs per job
-        for b, (_, _, ii, jj) in enumerate(chunk):
+        for b, (_, _, _, _, ii, jj) in enumerate(chunk):
             scores[ii, jj] = job_scores[b]
 
     preds = scores.argmax(dim=1).cpu()
@@ -242,14 +261,21 @@ def load_model(ckpt_path, device):
     model.load_state_dict(ck["model"])
     model = model.to(torch.bfloat16)
     model.eval()
-    return model
+    return model, cfg
 
 
-def load_tokenizer():
-    tok = Tokenizer.from_file(TOK_PATH)
-    for t in SPECIAL_TOKENS:
-        if tok.token_to_id(t) is None:
-            tok.add_special_tokens([t])
+def load_tokenizer(path, cfg):
+    """The vocabulary a checkpoint was trained on, not whatever is on disk today.
+
+    This used to add any missing special token at load time, which changes the vocab
+    size and papers over the one signal that a wrong tokenizer is in play. Ids do not
+    survive a vocabulary rebuild, and data/tokenizer.json is rebuilt in place.
+    """
+    tok = Tokenizer.from_file(path)
+    assert tok.get_vocab_size() == cfg.vocab, (
+        f"{path} has vocab {tok.get_vocab_size()} but the checkpoint was trained at "
+        f"{cfg.vocab}; pass --tokenizer with the matching file"
+    )
     return tok
 
 
@@ -264,6 +290,7 @@ def main():
     )
     parser.add_argument("--batch", type=int, default=MC_BATCH, help="MC scoring batch size")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     args = parser.parse_args()
 
     names = args.benchmarks or ALL_BENCHMARKS
@@ -277,21 +304,30 @@ def main():
     else:
         device = args.device
 
-    model = load_model(args.ckpt, device)
-    tok = load_tokenizer()
+    model, cfg = load_model(args.ckpt, device)
+    tok = load_tokenizer(args.tokenizer, cfg)
+    num_id = getattr(cfg, "num_id", None) if getattr(cfg, "fone", False) else None
+    if num_id is not None:
+        print(f"FoNE checkpoint: prompts encode numbers as [NUM] (id {num_id})")
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Loaded {args.ckpt}: {n_params:.1f}M params, bf16, device={device}")
 
     results = {}  # display name -> (accuracy, seconds)
     for key in names:
         if key == "gsm8k":
+            if num_id is not None:
+                # This path generates through tok.decode, which would print the [NUM]
+                # token instead of the number it stands for. eval/math_hard.py has the
+                # FoNE decode; reporting a number from here would just be wrong.
+                print("  GSM8K: skipped on a FoNE checkpoint (use eval/math_hard.py)")
+                continue
             display = "GSM8K"
             t0 = time.perf_counter()
             acc = run_gsm8k(model, tok, device)
         else:
             display, loader = MC_BENCHMARKS[key]
             t0 = time.perf_counter()
-            acc = score_mc(model, tok, loader(), device, args.batch)
+            acc = score_mc(model, tok, loader(), device, args.batch, num_id)
         elapsed = time.perf_counter() - t0
         results[display] = (acc, elapsed)
         print(f"  {display}: {acc:.1%} ({elapsed:.1f}s)", flush=True)
