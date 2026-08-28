@@ -320,6 +320,22 @@ if os.path.exists(_tok_path):
         # Prompt positions stay masked; the answer's 160 must still be a loss target.
         assert (_d["labels"][_m] == _num_id).any(), "no [NUM] survived as a loss target"
         print("test_fone_sft_pack OK")
+
+        # --- text -> [NUM] + values -> text survives the round trip ------------
+        for _t in ["原价200元打8折是160元", "余数6，商3.5", "没有数字", "超大数 12345678 不动"]:
+            _i, _v = fone.encode_prompts([_t], _tk, _num_id)
+            assert fone.decode_text(_i[0], [x for x in _v[0] if x], _tk, _num_id) == _t, _t
+        assert fone.render(36.0) == "36" and fone.render(3.5) == "3.5" and fone.render(0.0) == "0"
+        # return_hidden must not disturb the logits it sits beside.
+        train.Cfg.fone, train.Cfg.num_id, train.Cfg.vocab = True, 100, 101
+        _m2 = train.HybridLM(train.Cfg).eval()
+        _x = torch.randint(0, 100, (2, 8))
+        with torch.no_grad():
+            _l1, _n1 = _m2(_x)
+            _l2, _h2 = _m2(_x, return_hidden=True)
+        assert _n1 is None and _h2 is not None and torch.equal(_l1, _l2), "return_hidden changed the logits"
+        train.Cfg.fone, train.Cfg.vocab = False, 100
+        print("test_fone_infer OK")
     else:
         print("test_fone_data SKIP (tokenizer has no [NUM]; run scripts/build_tokenizer.py)")
 else:

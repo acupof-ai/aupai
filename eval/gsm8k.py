@@ -16,6 +16,7 @@ import torch
 from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import fone
 from train import HybridLM
 
 EOS_ID = 1
@@ -36,21 +37,36 @@ def extract_number(text):
 
 
 @torch.no_grad()
-def generate_batch(model, prompts, max_new, device, temperature=0.0):
-    """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids."""
+def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_values=None):
+    """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids.
+
+    prompt_values switches on the FoNE path: a per-position value list for each prompt.
+    Then the return is (ids, values) per row, because a [NUM] token carries no number
+    of its own -- the digit head reads it off the same hidden state that predicted the
+    token, and fone.decode_text writes it back into the text.
+    """
     B = len(prompts)
     keep = max(0, MAX_CTX - max_new)  # prompt budget; 0 means "keep all" (p[-0:] == p[0:])
+    fone_on = prompt_values is not None
+    if fone_on:
+        prompt_values = [v[-keep:] for v in prompt_values]
     prompts = [p[-keep:] for p in prompts]
     lengths = [len(p) for p in prompts]
     x = torch.full((B, max(lengths)), EOS_ID, dtype=torch.long, device=device)
+    v = torch.zeros((B, max(lengths)), device=device) if fone_on else None
     for i, p in enumerate(prompts):
         x[i, : lengths[i]] = torch.tensor(p, device=device)
+        if fone_on:
+            v[i, : lengths[i]] = torch.tensor(prompt_values[i], device=device)
     ends = torch.tensor(lengths, device=device)  # next write position per row
     done = torch.zeros(B, dtype=torch.bool, device=device)
     ar = torch.arange(B, device=device)
+    num_id = model.cfg.num_id if fone_on else None
 
     for _ in range(max_new):
-        logits, _ = model(x[:, -MAX_CTX:])
+        logits, hidden = model(
+            x[:, -MAX_CTX:], num_vals=v[:, -MAX_CTX:] if fone_on else None, return_hidden=fone_on
+        )
         # logits only covers the last MAX_CTX positions; index relative to that slice
         off = max(0, x.size(1) - MAX_CTX)
         step_logits = logits[ar, ends - off - 1]
@@ -60,12 +76,21 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0):
             nxt = step_logits.argmax(dim=-1)
         if x.size(1) <= int(ends.max()):
             x = torch.cat([x, torch.full((B, 1), EOS_ID, dtype=torch.long, device=device)], dim=1)
+            if fone_on:
+                v = torch.cat([v, torch.zeros((B, 1), device=device)], dim=1)
         x[ar, ends] = torch.where(done, torch.full_like(nxt, EOS_ID), nxt)
+        if fone_on:
+            val = fone.decode(model.num_logits(hidden[ar, ends - off - 1].float())).to(v.dtype)
+            v[ar, ends] = torch.where(nxt == num_id, val, torch.zeros_like(val))
         ends += (~done).long()
         done |= nxt == EOS_ID
         if bool(done.all()):
             break
-    return [x[i, lengths[i] : ends[i]].tolist() for i in range(B)]
+    ids = [x[i, lengths[i] : ends[i]].tolist() for i in range(B)]
+    if not fone_on:
+        return ids
+    vals = [v[i, lengths[i] : ends[i]][x[i, lengths[i] : ends[i]] == num_id].tolist() for i in range(B)]
+    return ids, vals
 
 
 @torch.no_grad()

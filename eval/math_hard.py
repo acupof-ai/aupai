@@ -20,6 +20,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
+import fone  # noqa: E402
 from train import HybridLM  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from eval.math_zh import ANS_RE, check_steps  # noqa: E402
@@ -61,6 +62,10 @@ def main():
     model.load_state_dict(ck["model"])
     model = model.to(torch.bfloat16).eval()
     tok = Tokenizer.from_file(TOK_PATH)
+    # A FoNE checkpoint writes numbers as [NUM] carrying a value, so both the prompt
+    # and the generated text go through fone rather than the tokenizer alone.
+    fone_on = getattr(cfg, "fone", False)
+    num_id = getattr(cfg, "num_id", None)
 
     rows = [json.loads(l) for l in open(a.data or TEST_PATH, encoding="utf-8")][a.shard :: a.shards]
     preds = os.path.join(
@@ -80,18 +85,30 @@ def main():
     with open(preds, "w", encoding="utf-8") as f:
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
-            base = [tok.encode(f"问：{r['instruction']}\n答：").ids for r in batch]
+            texts_in = [f"问：{r['instruction']}\n答：" for r in batch]
+            if fone_on:
+                base, base_v = fone.encode_prompts(texts_in, tok, num_id)
+            else:
+                base, base_v = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                greedy = generate_batch(model, base, a.max_new, a.device, 0.0)
+                greedy = generate_batch(model, base, a.max_new, a.device, 0.0, base_v)
                 sampled = []
                 if k > 1:
-                    sampled = generate_batch(
-                        model, [p for p in base for _ in range(k)], a.max_new, a.device, temp
-                    )
+                    rep = [p for p in base for _ in range(k)]
+                    rep_v = [v for v in base_v for _ in range(k)] if fone_on else None
+                    sampled = generate_batch(model, rep, a.max_new, a.device, temp, rep_v)
+            if fone_on:
+                greedy, greedy_v = greedy
+                sampled, sampled_v = sampled if k > 1 else ([], [])
             for i, r in enumerate(batch):
                 oks, texts = [], []
-                for ids in [greedy[i]] + sampled[i * k : (i + 1) * k]:
-                    gen = tok.decode(ids)
+                pairs = [(greedy[i], greedy_v[i] if fone_on else None)] + [
+                    (sampled[j], sampled_v[j] if fone_on else None)
+                    for j in range(i * k, (i + 1) * k)
+                    if k > 1  # k == 1 means greedy only; sampled is empty
+                ]
+                for ids, vs in pairs:
+                    gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
                     ok = score(gen, str(r["answer"]))
                     oks.append(ok)
                     texts.append(gen)

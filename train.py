@@ -635,11 +635,15 @@ class HybridLM(nn.Module):
         """
         return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
 
-    def forward(self, idx, targets=None, cu=None, num_vals=None):
+    def forward(self, idx, targets=None, cu=None, num_vals=None, return_hidden=False):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
 
         num_vals: (B, T) float, the value at each [NUM] position and anything elsewhere
-        (non-[NUM] contributions are masked out, not trusted)."""
+        (non-[NUM] contributions are masked out, not trusted).
+
+        return_hidden puts the hidden states in the second slot during inference, which
+        FoNE sampling needs: the state that predicts [NUM] is also the one num_logits()
+        reads the digits from. Off by default -- infer_local.py keeps a cache there."""
         emb = self.tok(idx)
         if self.fone and num_vals is not None:
             mask = (idx == self.cfg.num_id).unsqueeze(-1)
@@ -651,7 +655,7 @@ class HybridLM(nn.Module):
             logits = self.head(hidden)[..., : self.cfg.vocab].float()
             if SOFTCAP:
                 logits = SOFTCAP * torch.tanh(logits / SOFTCAP)  # same cap as training
-            return logits, None
+            return logits, (hidden if return_hidden else None)
         # Training: return hidden states; loss computed eagerly in the loop
         # (Liger FLCE is compile-incompatible, must stay outside torch.compile)
         return hidden, None

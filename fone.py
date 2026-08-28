@@ -115,6 +115,52 @@ def decode(logits, n=FRAC_DIGITS):
     return (d.double() * place).sum(-1) / (10.0**n)
 
 
+def encode_prompts(texts, tok, num_id):
+    """Texts -> ([ids], [values]) per text, one value per position rather than per number.
+
+    encode_text stores values compactly; a sampler wants them spread over the
+    positions so it can hand the model a (B, T) tensor.
+    """
+    pieces, vals = encode_text(texts, tok, num_id)
+    ids_out, val_out, k = [], [], 0
+    for p in pieces:
+        ids, dense = p.tolist(), []
+        for t in ids:
+            dense.append(float(vals[k]) if t == num_id else 0.0)
+            k += t == num_id
+        ids_out.append(ids)
+        val_out.append(dense)
+    return ids_out, val_out
+
+
+def render(v, n=FRAC_DIGITS):
+    """A decoded value -> the text a number would have been written as.
+
+    The code always carries n fractional digits, so 36 comes back as 36.0 and has
+    to lose them again; 3.5 keeps the one it needs.
+    """
+    s = f"{v:.{n}f}".rstrip("0").rstrip(".")
+    return s or "0"
+
+
+def decode_text(ids, vals, tok, num_id):
+    """Generated ids plus their [NUM] values -> text, numbers written back in.
+
+    tok.decode() alone would emit the [NUM] token itself and lose the number, so
+    the stream is decoded in runs between [NUM] positions.
+    """
+    out, run, k = [], [], 0
+    for t in ids:
+        if t == num_id:
+            out.append(tok.decode(run))
+            out.append(render(float(vals[k])))
+            run, k = [], k + 1
+        else:
+            run.append(t)
+    out.append(tok.decode(run))
+    return "".join(out)
+
+
 def split_numbers(text):
     """Text -> (segments, values): the text with numbers cut out, and their values.
 
