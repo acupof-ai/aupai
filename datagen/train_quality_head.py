@@ -93,6 +93,10 @@ def main():
     from loader import load_checkpoint, load_tokenizer
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
+    # Non-contiguous parameters make cublasGemmEx fail outright on this checkpoint;
+    # eval/ppl.py carries the same line for the same reason.
+    for pmt in model.parameters():
+        pmt.data = pmt.data.contiguous()
     tok = load_tokenizer(a.tokenizer, cfg)
 
     if a.score:
