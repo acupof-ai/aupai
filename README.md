@@ -6,6 +6,18 @@ KDA 是线性衰减循环，每层状态 256 KiB，与上下文长度无关。ML
 
 架构可视化 <https://acupof-ai.github.io/aupai/>，可拖拽算参数、训练开销、显存。
 
+## 从零开始
+
+```bash
+uv sync
+python scripts/test_arch_compat.py     # CPU 冒烟测试，不需要 GPU
+python scripts/build_tokenizer.py --force
+```
+
+仓库带一份 5,052 篇、约 0.9M token 的样本语料在 `data/corpus/*.jsonl`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 从原始源构建到 `data/corpus/<domain>/`，`data/mix.json` 存在时 train.py 走分域调度，否则回退到这份样本。
+
+`data/tokenizer.json` 不入库。词表必须先建，train.py 缺它会直接报错——它曾经会静默训一个新的，那个词表缺 4 个 chat special 和 `[NUM]`，但 vocab_size 对得上，于是任何已有 checkpoint 配它都是乱码且不报错。
+
 ## 命令
 
 ```bash

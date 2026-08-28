@@ -40,10 +40,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint  # used by --grad_ckpt
 from tokenizers import Tokenizer
-from tokenizers.decoders import ByteLevel as ByteLevelDecoder
-from tokenizers.models import BPE
-from tokenizers.pre_tokenizers import ByteLevel
-from tokenizers.trainers import BpeTrainer
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import fone
@@ -971,23 +967,24 @@ def load_texts():
 
 
 def build_tokenizer(texts):
-    if os.path.exists(TOK_PATH):
-        tok = Tokenizer.from_file(TOK_PATH)
-        assert tok.get_vocab_size() == Cfg.vocab, (
-            f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab {Cfg.vocab}"
-        )
-        return tok
-    tok = Tokenizer(BPE(unk_token="<unk>"))
-    tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
-    tok.decoder = ByteLevelDecoder()
-    # initial_alphabet: see scripts/build_tokenizer.py -- without all 256 ByteLevel
-    # chars seeded, only the ones the corpus contains survive, and a NUL byte is
-    # silently dropped on the round trip.
-    trainer = BpeTrainer(
-        vocab_size=Cfg.vocab, special_tokens=["<unk>", "<eos>"], initial_alphabet=ByteLevel.alphabet()
+    """Load data/tokenizer.json. Never build one here.
+
+    This used to train a BPE inline when the file was missing, which is the worst
+    failure this repo can produce: the inline trainer registered only <unk>/<eos>,
+    so the 4 chat specials and [NUM] were absent, yet vocab_size still matched
+    Cfg.vocab and the size assert passed. Every id then meant something different,
+    and a checkpoint loaded against it read scrambled embeddings without an error.
+    The tokenizer is gitignored, so a fresh clone hit exactly that path.
+    """
+    assert os.path.exists(TOK_PATH), (
+        f"{TOK_PATH} is missing. Build it with `python scripts/build_tokenizer.py --force`, "
+        "which is the only supported path -- it registers the chat specials and [NUM] that "
+        "an inline BPE would silently drop."
     )
-    tok.train_from_iterator(texts, trainer)
-    tok.save(TOK_PATH)
+    tok = Tokenizer.from_file(TOK_PATH)
+    assert tok.get_vocab_size() == Cfg.vocab, (
+        f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab {Cfg.vocab}"
+    )
     return tok
 
 

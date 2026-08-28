@@ -84,7 +84,7 @@ MARKERS = [
     re.compile(r"(?:答案|答)\s*(?:是|为)?\s*[:：]?\s*(-?[\d,./%]+)"),
 ]
 # Only consulted when no marker is present. \frac{10}{3} must be read as a fraction rather than
-# falling through to LAST_NUM, which would return the denominator (REVIEW_2026-08-26.md #2).
+# falling through to LAST_NUM, which would return the denominator (docs/review_2026-08-26.md #2).
 FALLBACKS = [re.compile(r"\\[dt]?frac\{(-?[\d.]+)\}\{(-?[\d.]+)\}")]
 # Thousands separators and scientific notation are part of the number: without them "40,000。"
 # reads as "000" and "1.763e+04" as "04".

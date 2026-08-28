@@ -15,3 +15,11 @@ data/outbatch/
 data/workbatch/
 .ruff_cache/
 .DS_Store
+
+# raw math sources and built domain shards: hundreds of MB, GitHub caps a file at
+# 100 MB, and every one is either frozen-and-archived or rebuildable. The 5,052-doc
+# sample corpus at data/corpus/*.jsonl stays tracked -- it is what makes a fresh
+# clone runnable.
+data/math/
+data/corpus/*/
+!data/corpus/primary/

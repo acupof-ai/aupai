@@ -46,8 +46,13 @@ def main():
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         for r in band:
+            # rlvr_data.load_problems reads {prompt, answer, source}; the probe rows call the
+            # question "instruction", and the mismatch is a KeyError 500 steps of GPU time later.
             f.write(
-                json.dumps({"instruction": r["instruction"], "answer": r["answer"]}, ensure_ascii=False)
+                json.dumps(
+                    {"prompt": r["instruction"], "answer": r["answer"], "source": "band"},
+                    ensure_ascii=False,
+                )
                 + "\n"
             )
     # Which band was used is part of the result: a run that had to reach 5-95% to find enough

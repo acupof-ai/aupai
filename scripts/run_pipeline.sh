@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pretrain -> SFT -> RL -> benchmark, unattended, one stage at a time.
 #
-#   PRETRAIN=k4_11b_lr05 bash scripts/run_pipeline.sh          # wait for a running pretrain, then go
+#   PRETRAIN=k6_fone bash scripts/run_pipeline.sh              # wait for a running pretrain, then go
 #   FROM=sft bash scripts/run_pipeline.sh                      # resume the chain at a later stage
 #
 # Every stage writes runs/pipeline.log, records itself with scripts/exp.py, and stops the chain on
@@ -10,11 +10,15 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-PRETRAIN=${PRETRAIN:-k4_11b_lr05}
-SFT=${SFT:-sft_k4}
-RL=${RL:-rl_k4}
+PRETRAIN=${PRETRAIN:-k6_fone}
+SFT=${SFT:-sft_k6}
+RL=${RL:-rl_k6}
 NGPU=${NGPU:-8}
 FROM=${FROM:-pretrain}
+SFT_PT=${SFT_PT:-data/sft/sft_mix_fone.pt}
+# Default arm of the three in data/PROVENANCE.md: verified synthetic plus the real rows
+# that survived hand sampling. Belle is excluded -- 38.7% of it is semantically defective.
+SFT_SOURCES=${SFT_SOURCES:-data/synthetic/math_short_v8.jsonl,data/sft/real_math_noBelle.jsonl,data/alpaca_gpt4_zh.jsonl}
 LOG=runs/pipeline.log
 mkdir -p runs data/rl
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -36,11 +40,12 @@ fi
 # ---- 2. SFT ------------------------------------------------------------------------------------
 if want sft && [ ! -f "ckpt_$SFT.pt" ]; then
   say "stage sft: packing"
-  python3 prepare_sft_math.py --out data/sft/sft_k4.pt \
-    --sources "data/math/math_all_v7.jsonl,data/synthetic/math_short_sol_v1.jsonl" >> "$LOG" 2>&1 \
+  # --fone is not optional against a FoNE base: it has only ever seen a number as one
+  # [NUM] carrying a Fourier value, and sft_math.py refuses a pack without values.
+  python3 prepare_sft_math.py --fone --out "$SFT_PT" --sources "$SFT_SOURCES" >> "$LOG" 2>&1 \
     || die "sft packing"
   say "stage sft: training on ckpt_$PRETRAIN.pt"
-  NGPU=$NGPU PORT=29660 bash scripts/run_sft.sh "$SFT" "ckpt_$PRETRAIN.pt" data/sft/sft_k4.pt \
+  NGPU=$NGPU PORT=29660 bash scripts/run_sft.sh "$SFT" "ckpt_$PRETRAIN.pt" "$SFT_PT" \
     --batch 24 --epochs 2 --lr_scale 0.1 >> "$LOG" 2>&1 || die "sft"
   say "stage sft: $(python3 scripts/exp.py list 2>/dev/null | grep " $SFT " | tail -1)"
 fi
