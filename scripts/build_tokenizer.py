@@ -80,12 +80,15 @@ def main():
     if os.path.exists(a.mix):
         with open(a.mix, encoding="utf-8") as f:
             mix_names = list(json.load(f)["domains"])
+    # ONLY the domains the mix names feed the vocab. Auto-adding every dir under
+    # data/corpus/ here silently pulls in the UNFILTERED 299M-doc `web` (kept on
+    # disk to re-threshold later) and wastes the whole sample on it — the same
+    # quiet-wrong shape as the mix web-vs-web_hq trap. The mix is the single
+    # source of truth for what trains; a recipe-change this script does not know
+    # about must be recorded there first.
     domains = [d for d in mix_names if os.path.isdir(os.path.join(corpus, d))]
-    for d in sorted(os.listdir(corpus)) if os.path.isdir(corpus) else []:
-        if os.path.isdir(os.path.join(corpus, d)) and d not in domains:
-            domains.append(d)
     if not domains:
-        print("no data/corpus/<domain>/ to train on", file=sys.stderr)
+        print("no data/corpus/<domain>/ named by the mix recipe (update data/mix.json domains)", file=sys.stderr)
         return 1
 
     budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")  # 0 -> whole corpus
