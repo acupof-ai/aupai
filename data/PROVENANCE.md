@@ -33,6 +33,23 @@ replaces the frozen copy.
 | coig.jsonl | chat | cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6 | 163,443 | scripts/fetch_chat_data.py (BAAI/COIG instructions config; normalizer TBD — diff raw dump vs frozen file on first fetch) |
 | school_math_r1_zh.jsonl | math | c8f6a7cce2e4c0b76711919a99767aa435a5ce6b509da722ffcb750d42124834 | 223,423 | scripts/fetch_math_data.py belle branch (pod sha identical, verified 2026-08-27; known 3.6% tail_answer gold bug, see REVIEW_2026-08-26.md #2) |
 
+## External SFT-math candidates surveyed 2026-08-28 (short-solution search)
+
+Looking for Chinese math with answers in the eval's own length band (60-132 chars;
+math_hard_eval_1k is median 85 / p90 132). Downloaded through `HF_ENDPOINT=https://hf-mirror.com`
+— huggingface.co itself is unreachable from the pod, the mirror is not.
+
+| repo | rows | answer median | in 60-132ch band | verdict |
+|---|---|---|---|---|
+| ALmonster/MathInstruct-Chinese | 256,294 | 146 | 94,577 (37%) | only real candidate; multiple-choice format ("选项：(A)…答案是E"), machine-translated from English MathInstruct, Indian units (卢比/便士), and some reasoning chains skip a step. Needs option-stripping + \boxed{} conversion; broken chains are not repairable. sha256 997403a204bfecf1a7aab333c5359067680ae58a38363ae9f566ac0d1cde93cd |
+| Azure99/blossom-math-v4 | 10,000 | 352 | 253 (3%) | rejected — long-CoT, verbose hedging prose |
+| swulling/gsm8k_chinese | 7,473 | 257 | 716 (10%) | rejected — content is English despite the name |
+| zake7749/kyara-chinese-math-sft-s0-30K | — | — | — | unavailable: GatedRepoError |
+
+Conclusion: public Chinese math SFT data is overwhelmingly long-CoT, which is the opposite of what
+this project needs. The in-repo alternative (`mathbank/`, seeded generators with `vet_programs.py`
+answer verification) is the only source that controls length, difficulty and correctness at once.
+
 ## Schema contract (consumed by datagen/build_corpus.py)
 
 - pretrain/text sources: `{"content": ...}` (or `{"text": ...}`)
