@@ -97,7 +97,19 @@ def main():
     # BPE base holds <unk>/<eos> and merges; the specials sit on top. Cfg.vocab (32773) is the
     # FINAL total, so the trainer targets Cfg.vocab - 5 = 32768 to land at 32773 after adding them.
     base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
-    trainer = BpeTrainer(vocab_size=base_vocab, special_tokens=["<unk>", "<eos>"])
+    # Seed all 256 ByteLevel characters. Without this the trainer only keeps the ones
+    # the corpus happened to contain -- measured 2026-08-28: 193/256, with 63 missing
+    # (0xC0, 0xC1, 0xD2-0xDF, ...). Chinese text rarely hits them, so the gap is quiet
+    # rather than loud: it does not raise, and it does not even emit <unk> (BPE falls
+    # back to finer pieces), but a NUL byte is silently dropped -- "café\x00binary"
+    # decodes back as "cafébinary". It also violates the totality invariant that
+    # ByteLevel exists to provide, which is why gigatoken refuses this vocab outright
+    # ("no single-byte vocab entry for byte 0x00") and fastokens raises on corpus text.
+    trainer = BpeTrainer(
+        vocab_size=base_vocab,
+        special_tokens=["<unk>", "<eos>"],
+        initial_alphabet=ByteLevel.alphabet(),
+    )
     tok.train_from_iterator(texts, trainer)
     # THE FIX: register the chat/think specials build_tokenizer drops.
     tok.add_special_tokens(CHAT_SPECIALS)

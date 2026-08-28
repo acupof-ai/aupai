@@ -967,7 +967,12 @@ def build_tokenizer(texts):
     tok = Tokenizer(BPE(unk_token="<unk>"))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    trainer = BpeTrainer(vocab_size=Cfg.vocab, special_tokens=["<unk>", "<eos>"])
+    # initial_alphabet: see scripts/build_tokenizer.py -- without all 256 ByteLevel
+    # chars seeded, only the ones the corpus contains survive, and a NUL byte is
+    # silently dropped on the round trip.
+    trainer = BpeTrainer(
+        vocab_size=Cfg.vocab, special_tokens=["<unk>", "<eos>"], initial_alphabet=ByteLevel.alphabet()
+    )
     tok.train_from_iterator(texts, trainer)
     tok.save(TOK_PATH)
     return tok
