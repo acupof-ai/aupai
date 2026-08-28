@@ -41,6 +41,30 @@ the teacher's hard yes/no ties cap its AUC, the student's continuous score
 recovers the ordering. Keeping the top 20% gives 52.8% hand-labelled-keep against
 a base rate of 18.3%.
 
+## Did the filter work
+
+Judged by Qwen3.8-27B on the same binary rubric as everything else:
+
+| | judged educational | n answered |
+|---|---:|---:|
+| web, **old** corpus, unfiltered | 21.8% | 165 |
+| web, **new** corpus, unfiltered | *control running* | — |
+| **web_hq** (new, filtered) | **42.2%** | 374/400 |
+| cosmopedia | 59.3% | 383/400 |
+
+42.2% against 21.8% is 20.4 points, z ~ 5.0, p < 1e-6. **That comparison is
+confounded and the number should not yet be credited to the filter.** The 21.8%
+baseline was measured on the corpus BEFORE the rebuild dropped
+`data/pretrain_full.jsonl` (provenance unknown) and before traditional->simplified
+conversion. The gap therefore mixes three causes: the rebuild, the script
+conversion, and the quality filter.
+
+The control — the same judge on the NEW unfiltered web — separates them, and is
+the number that says what the classifier work was worth. If it comes back near
+42%, the rebuild and t2s did the work and the 27B annotation, distillation and
+six-GPU scoring of 2.99M documents bought little. That result would be reported
+the same way.
+
 ## What is wrong with it
 
 - **The base rate is 18.3%.** Even after filtering, by the same hand labels
