@@ -90,6 +90,22 @@
   hard yes/no ties cap its AUC, the student's continuous score recovers the ordering.
   Everything cheaper was measured first and failed: spam regex 0.50, char n-grams 0.60, structural
   features 0.62, Qwen3-0.6B 0.539. **Character n-grams rank by topic; the labels split on register.**
+- **Cross-source quality comparisons need ONE judge on ONE rubric.** The distilled head is
+  trained on the 27B's judgements of WEB PAGES and cannot rank textbook prose: it scores
+  cosmopedia below raw web (median -1.67 against -1.33), which is not credible. Judged by the
+  27B itself on the same binary rubric: unfiltered web **21.8%** educational, cosmopedia
+  **59.3%** -- and an independent 120-document hand audit of a sibling opencsg corpus landed
+  on 59%. Two methods, one number.
+- **A published quality score is a claim, not a measurement.** cosmopedia's own `score` column
+  correlates with ours at Spearman **+0.198** and is non-monotonic across its own bands; the
+  same shape appeared in opencsg/Fineweb-Edu-Chinese (bands 52/66/59% usable, top band
+  dirtiest). Run `datagen/audit_source_score.py` before using any source's score as a cut.
+- **The mix is the source of truth about what the corpus is; the filesystem is not.**
+  `data/corpus/web` (unfiltered, 2.99M docs) is kept on disk so a different quality
+  threshold can be re-cut, and anything that enumerates `data/corpus/*` picks it up:
+  `build_tokenizer.py` would have drowned its stratified sample in the very documents
+  the filter removed, and a mix naming `web` instead of `web_hq` trains on them
+  outright. Both fail silently. Take domains from `data/mix_v3.json`.
 - Traps that cost hours, all silent: `--host_cap` is a web-crawl filter and discarded 83.4% of
   Wikipedia (one host) -- pass `--host_cap 0` for any single-source corpus. Sampling a corpus by
   reading shards in sorted order until the quota is met read 8.5% positive where a shard-stratified
