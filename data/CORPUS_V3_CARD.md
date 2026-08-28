@@ -48,22 +48,26 @@ Judged by Qwen3.8-27B on the same binary rubric as everything else:
 | | judged educational | n answered |
 |---|---:|---:|
 | web, **old** corpus, unfiltered | 21.8% | 165 |
-| web, **new** corpus, unfiltered | *control running* | — |
+| web, **new** corpus, unfiltered | **21.3%** | 385/400 |
 | **web_hq** (new, filtered) | **42.2%** | 374/400 |
 | cosmopedia | 59.3% | 383/400 |
 
-42.2% against 21.8% is 20.4 points, z ~ 5.0, p < 1e-6. **That comparison is
-confounded and the number should not yet be credited to the filter.** The 21.8%
-baseline was measured on the corpus BEFORE the rebuild dropped
-`data/pretrain_full.jsonl` (provenance unknown) and before traditional->simplified
-conversion. The gap therefore mixes three causes: the rebuild, the script
-conversion, and the quality filter.
+The control settles the attribution. Rebuilding the corpus and converting it to
+simplified moved the educational share **not at all**: 21.8% -> 21.3%, a 0.5-point
+difference against a 3.8-point standard error (z = 0.13). The whole gain is the
+quality filter: **21.3% -> 42.2%, z = 6.3, p < 1e-9**. Educational density
+roughly doubles.
 
-The control — the same judge on the NEW unfiltered web — separates them, and is
-the number that says what the classifier work was worth. If it comes back near
-42%, the rebuild and t2s did the work and the 27B annotation, distillation and
-six-GPU scoring of 2.99M documents bought little. That result would be reported
-the same way.
+This is not a verdict on the rebuild or on t2s, which paid off on axes this judge
+cannot see. The rebuild dropped `data/pretrain_full.jsonl`, whose provenance was
+unknown — a reproducibility gain, not a density one. t2s moved web from 1.04 to
+1.558 chars/token, a 50% compression gain that gets more text into the same token
+budget. Three interventions, three different axes, and the 27B measures one of
+them.
+
+It also validates the classifier end to end: 2.6x enrichment on the held-out hand
+labels came back as ~2x on the real corpus, measured by a judge that had no part
+in building it.
 
 ## What is wrong with it
 
