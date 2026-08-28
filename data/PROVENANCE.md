@@ -97,14 +97,27 @@ In data/rl: rlvr_math_clean.jsonl (a second clean pass differing from rlvr_clean
 result is instance_rates + program_rates + rl_band). Kept rlvr_math.jsonl, which the
 trainer reads, and rlvr_clean.jsonl, which run_pipeline.sh reads.
 
-NOT reproducible, therefore not deleted: math_short_v1 / v2 / v4 predate this file
-and no generator command or seed was recorded for them. Only v8 below has one. Any
-future batch must be logged here at generation time or it becomes undeletable too.
+Also deleted: math_short_v1 / v2 / v4 / sol_v1 (43 MB). Their exact bytes cannot be
+reproduced, because no command or seed was recorded before this file existed, but
+nothing needs those bytes. v8 matches the eval on both axes and they do not:
+
+| | rows | answer length median / p90 | levels |
+|---|---|---|---|
+| math_hard_eval_1k | 1,032 | 85 / 132 | 100% L3+L4 |
+| v8 | 97,771 | 88 / 136 | 100% L3+L4 |
+| v4 | 76,677 | 64 / 118 | 32% L1/L2 |
+| v2 | 72,000 | 58 / 110 | 33% L1/L2 |
+| v1 | 12,382 | 83 / 174 | unlabelled |
+
+The one thing they held alone is L1/L2 easy problems, which the eval contains none
+of and which `run_math_short.py --ratios` regenerates on demand (its default mix,
+0.15/0.35/0.35/0.15, is the shape v2 and v4 have). Record the command and seed for
+every future batch anyway — that is what made this call cheap to make.
 
 ## Related
 
-- Synthetic math: data/synthetic/math_short_v*.jsonl — v8 is reproducible from the
-  seeded command above; v1/v2/v4 are not (see Cleanup 2026-08-28).
+- Synthetic math: data/synthetic/math_short_v8.jsonl, reproducible from the seeded
+  command above.
 - Synthetic code/knowledge: data/synthetic/{code_python_zh,knowledge_qa_zh}.jsonl
   via datagen/gen_code.py + gen_knowledge2.py (seeded, zero external deps).
 - Eval holdout filter: scripts/holdout.py — every fetcher must exclude it.
