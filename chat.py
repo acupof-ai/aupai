@@ -3,13 +3,11 @@
 
 import os
 import sys
-from types import SimpleNamespace
 
 import torch
-from tokenizers import Tokenizer
 
 from sampling import top_p_sample
-from train import TOK_PATH, HybridLM
+from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 CKPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ckpt.pt")
@@ -30,11 +28,10 @@ def generate(model, tok, prompt, max_new=512, temp=0.8, top_p=0.95):
 
 
 def main():
-    ck = torch.load(CKPT, map_location=device, weights_only=False)
-    cfg = SimpleNamespace(**ck["cfg"])  # use saved config, not current Cfg
-    model = HybridLM(cfg).to(device)
-    model.load_state_dict(ck["model"])
-    tok = Tokenizer.from_file(TOK_PATH)
+    model, cfg = load_checkpoint(CKPT, device=device)
+    tok = load_tokenizer(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tokenizer.json"), cfg
+    )
     if len(sys.argv) > 1:
         print(generate(model, tok, sys.argv[1]))
         return
@@ -46,7 +43,7 @@ def main():
             break
         if not q:
             break
-        print(generate(model, tok, f"问：{q}\n答："))
+        print(generate(model, tok, format_prompt(q)))
 
 
 if __name__ == "__main__":
