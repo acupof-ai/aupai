@@ -39,13 +39,14 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint  # used by --grad_ckpt
-import fone
 from tokenizers import Tokenizer
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from tokenizers.models import BPE
 from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.trainers import BpeTrainer
 from torch.nn.parallel import DistributedDataParallel as DDP
+
+import fone
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -375,7 +376,11 @@ class FP8Linear(nn.Module):
 
 
 def _fp8_ok(mod, name):
-    return name != "head" and mod.weight.shape[0] % 16 == 0 and mod.weight.shape[1] % 16 == 0
+    # num_proj/num_head are the FoNE heads: 16x1024, so FP8 buys nothing, and num_head runs on
+    # hidden[nmask] whose row count is the batch's [NUM] count -- almost never a multiple of 16,
+    # which torch._scaled_mm rejects in the backward. Weight dims can be checked here; that one
+    # cannot, so keep both out by name.
+    return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
 
 
 def convert_to_fp8_compute(model):
@@ -623,8 +628,12 @@ class HybridLM(nn.Module):
 
         Only [NUM] positions are scored against it; the caller masks. Kept separate
         from forward() because the loss lives in the training loop, next to FLCE.
+
+        Callers hand this fp32 hidden states (the loss wants fp32), but the model body
+        may be bf16 and this runs outside autocast, so match the weight going in and
+        come back out in fp32 for the cross-entropy.
         """
-        return fone.digit_logits(self.num_head(hidden))
+        return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
 
     def forward(self, idx, targets=None, cu=None, num_vals=None):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
@@ -996,7 +1005,9 @@ def encode(texts, tok, chunk=50_000, log=None):
             # Numbers become one [NUM] each; their values ride alongside in stream
             # order, so the k-th [NUM] in the ids takes the k-th value.
             pieces, vals = fone.encode_text(texts[i : i + chunk], tok, Cfg.num_id)
-            parts.append(np.concatenate([np.append(p, eos) for p in pieces]))
+            # np.int32(eos), not eos: a python int promotes the int32 pieces to int64,
+            # and build_mix's int32 destination then refuses the assignment.
+            parts.append(np.concatenate([np.append(p, np.int32(eos)) for p in pieces]))
             vparts.append(vals)
             if log and (i // chunk) % 4 == 0:
                 ntok = sum(len(p) for p in parts)
@@ -1019,6 +1030,7 @@ def encode(texts, tok, chunk=50_000, log=None):
                 f"{ntok / 1e6:.0f}M tokens ({ntok / dt / 1e6:.1f}M tok/s)"
             )
     ids = torch.from_numpy(np.concatenate(parts))  # int32: vocab 32773 fits, halves bandwidth
+    assert ids.dtype == torch.int32, f"token stream is {ids.dtype}, not int32"
     if Cfg.fone:
         return ids, torch.from_numpy(np.concatenate(vparts)) if vparts else torch.zeros(0)
     return ids
