@@ -24,13 +24,25 @@
 - Mix: `data/mix.json` = per-domain weight / epoch cap / anneal weight; when present train.py builds the
   schedule (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in
   order, so `Cfg.epochs` is forced to 1. Delete or `--mix ""` to fall back to the flat corpus.
-- Numbers (`--fone`): BPE splits numbers by corpus frequency, not place value (1640 → `16|40`), so a
-  carry rule cannot transfer. `--fone` collapses each number to one `[NUM]` carrying a Fourier value
-  and scores ten ways per digit. A GPU A/B at equal params and steps: BPE 1.4%, FoNE 100% on held-out
-  two-digit arithmetic (`scripts/fone_probe.py`). It costs ~14% throughput. **`--fone` changes the
-  data format everywhere**: pack SFT with `prepare_sft_math.py --fone`, and a checkpoint whose `fone`
-  flag disagrees with the pack raises rather than silently reading every number as zero.
-  `scripts/fone_digit_acc.py --ckpt X` scores the digit head against chance and copy-previous.
+- Numbers (`--fone`): **off by default, and measurement says leave it off.** BPE splits numbers by
+  frequency rather than place value (1640 → `16|40`), and `--fone` fixes that -- one `[NUM]` per
+  number carrying a Fourier value, ten-way scored per digit. The mechanism works: k6's digit head
+  reached 66.5% whole-number exact on held-out math against a 16.4% copy-previous baseline. It still
+  bought nothing end to end. Same data, same 6 epochs: plain k5 reached math-hard 3.6%, FoNE k6
+  reached 3.2% (z=-0.49, p=0.627), while each beat its own base significantly. So number
+  representation is not the constraint here, and `--fone` costs 14% throughput (73K vs 85K
+  tok/s/gpu). Worth re-testing on a base that can actually solve these problems.
+  `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`, and a
+  checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores
+  the digit head against its two baselines.
+- **Every checkpoint is scored with the vocabulary it was trained on.** `data/tokenizer.json` is
+  rebuilt in place and ids do not survive a rebuild; size does not identify a vocabulary either.
+  Checkpoints carry `vocab_id` (a hash of the id→token map), packs carry the same, and `sft_math.py`
+  refuses a mismatch. For an older checkpoint pass `--tokenizer` / `TOKENIZER=`. Three separate bugs
+  in one day came from skipping this, the loudest being a k5 SFT that trained at loss 4.77 instead
+  of 1.28 with nothing raising.
+- Stage end: `scripts/eval_all.sh <ckpt> [tokenizer]` -- math-hard, math-500, the MC suite, and the
+  digit head for a FoNE checkpoint, each labelled with what it can and cannot say.
 - pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
 - FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
 
