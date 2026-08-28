@@ -109,6 +109,13 @@ in building it.
   never in scope.
 - **Nothing here is validated by a trained model yet.** Every number is a property
   of the data. Whether this corpus produces a better model than v2 is unmeasured.
+- **v3's val loss is not comparable to k5's 2.020.** The vocabulary changed
+  (fingerprint `0bce3584bc24f255` against `d191af789cdbe597`), the corpus changed,
+  and web went from 1.04 to 1.558 chars/token. The same text is now fewer tokens
+  and each token carries more, so cross-entropy per token rises for reasons that
+  have nothing to do with the model being worse. Only two things compare across
+  versions: `eval/ppl.py`'s **per-domain** perplexity within one checkpoint, and
+  the downstream scores from `scripts/eval_all.sh`.
 
 ## Provenance and contamination
 
