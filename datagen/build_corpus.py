@@ -290,7 +290,15 @@ def main():
     ap.add_argument("--target_tokens", type=float, default=8e9)
     ap.add_argument("--domain", default="primary", help="data/mix.json domain -> data/corpus/<domain>/")
     ap.add_argument("--out", default=None, help="output dir (default data/corpus/<domain>)")
-    ap.add_argument("--host_cap", type=int, default=20_000, help="max docs per URL host")
+    ap.add_argument(
+        "--host_cap",
+        type=int,
+        default=20_000,
+        help="max docs per URL host. This is a WEB-CRAWL filter: it stops one site from "
+        "dominating a scrape. A single-source corpus is all one host, so the default "
+        "silently discards most of it -- Chinese Wikipedia lost 83.4%% to it (192,417 of "
+        "230,792 documents) before this note existed. Pass 0 to disable for such a source.",
+    )
     ap.add_argument("--limit", type=int, default=None, help="stop after N input docs (dry runs)")
     ap.add_argument("--dry", action="store_true", help="no output files, print the rejects histogram")
     ap.add_argument(
@@ -336,7 +344,7 @@ def main():
             why = reject(text)
             if why is None:
                 host = urlsplit(url).netloc if url else ""
-                if host and hosts[host] >= a.host_cap:
+                if host and a.host_cap and hosts[host] >= a.host_cap:
                     why = "host_cap"
                 else:
                     k = exact_key(text)

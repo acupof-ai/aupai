@@ -258,17 +258,24 @@ def main():
                 )
         return
 
+    # Stride EVERY shard rather than reading the first ones until the quota is met.
+    # The old prefix version drew its 20K from the first ~40 of 125 shards and read
+    # 8.5% positive where the same model reads 21.8% on a shard-stratified sample --
+    # shards are not interchangeable, and a teacher set drawn from a slice teaches
+    # the classifier that slice. dist_check.py's docstring carries the same warning
+    # about the eval file, which is ordered by level.
     files = sorted(glob.glob(a.glob))
+    per = max(1, a.n // max(1, len(files)) + 1)
+    rng = random.Random(0)
     docs = []
     for f in files:
         with open(f, encoding="utf-8") as fh:
-            for line in fh:
-                if line.strip():
-                    docs.append(json.loads(line).get("content", ""))
-        if len(docs) >= a.n * 4:
-            break
-    random.Random(0).shuffle(docs)
+            lines = [x for x in fh if x.strip()]
+        for x in rng.sample(lines, min(per, len(lines))):
+            docs.append(json.loads(x).get("content", ""))
+    rng.shuffle(docs)
     docs = docs[: a.n]
+    print(f"sampled from {len(files)} shards, up to {per} each", flush=True)
     print(f"scoring {len(docs)} documents", flush=True)
 
     with open(a.out, "w", encoding="utf-8") as o:
