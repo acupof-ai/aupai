@@ -58,11 +58,24 @@ a base rate of 18.3%.
   +0.198 and is non-monotonic across its own bands. A 120-document hand audit of
   opencsg/Fineweb-Edu-Chinese found the same shape — bands 52% / 66% / 59% usable,
   top band dirtiest.
-- **Our classifier cannot rank cosmopedia.** It scores cosmopedia below raw web
-  (median −1.67 against −1.33), which is not credible given cosmopedia passes every
-  deterministic filter and reads well by hand. It was trained on the 27B's
-  judgements of *web pages*; textbook prose is out of distribution for it. Cross-source
-  comparison needs the 27B on both, on one rubric.
+- **Our classifier cannot rank cosmopedia**, and this was measured rather than
+  assumed. It scores cosmopedia below raw web (median −1.67 against −1.33). Judged
+  instead by the 27B itself on one rubric:
+
+  | | judged educational |
+  |---|---:|
+  | our web, unfiltered | 21.8% |
+  | cosmopedia | **59.3%** (383/400 answered) |
+
+  An independent 120-document hand audit of a sibling opencsg corpus landed on
+  **59%**. Two methods, different corpora, one number. So the classifier's contrary
+  signal is an out-of-distribution artifact: it was trained on the 27B's judgements
+  of *web pages* and textbook prose is outside that. **Cross-source comparison needs
+  one judge on one rubric.**
+
+  This does not raise textbook's weight. The cap is a policy about synthetic data
+  inheriting a generator's distribution, with no instrument here able to detect an
+  overdose; better quality does not lift it.
 - **t2s covers single-codepoint 1:1 mappings only** (3,553 entries). Zero
   convertible characters remain, but vocabulary-level differences (軟體/软件) were
   never in scope.
