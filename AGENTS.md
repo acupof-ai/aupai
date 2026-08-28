@@ -11,7 +11,11 @@
   Any `--flag` matching `Cfg.<flag>` overrides it (`python train.py --help`).
 - SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` (logs + eval + EXPERIMENTS.md).
 - Eval: `scripts/eval_hard.sh <ckpt> [ngpu]` on `data/synthetic/math_hard_eval_1k.jsonl` — the metric of
-  record. math-500 is saturated (32.2 / 26.8 / 32.0 / 31.0); never conclude from it.
+  record. It resolves to about ±1.1pt at a 2-3% pass rate, so test significance before explaining a gap.
+  math-500 is saturated (32.2 / 26.8 / 32.0 / 31.0) AND 10.2% of it is memorizable: 51 of its 500
+  questions have a near-duplicate in the Belle/mxode training data at Jaccard >= 0.8 carrying the same
+  answer (measured 2026-08-28). Its absolute score is inflated; a comparison between checkpoints with
+  equal exposure still holds. math-hard is clean by the same scan (top-1 median 0.156, max 0.538).
 - AttnRes A/B: `NGPU=6 STEPS=500 scripts/run_ablation.sh` (base vs `--attn_res`, same seed).
 - Corpus: `python datagen/build_corpus.py --domain web --source fineweb2 --target_tokens 6e9` (clean/dedup/
   cap into `data/corpus/<domain>/`; `--dry --limit N` prints the rejects histogram). Sources are
