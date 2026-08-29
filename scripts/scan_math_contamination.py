@@ -69,6 +69,15 @@ import time
 from collections import defaultdict
 from multiprocessing import get_context
 
+# Fork-after-OpenBLAS deadlock: the parent builds HoldoutIndex (spawning the
+# OpenBLAS pool, 4 threads on the pod), then fork()s workers that inherit a
+# broken pool and hang at 0% CPU on their first BLAS call. macOS uses
+# Accelerate (fork-safe) so --jobs worked locally; Linux/OpenBLAS hangs.
+# The matmul is sparse@dense and barely uses BLAS anyway -- serial BLAS costs
+# nothing, and throughput comes from process parallelism. Must precede numpy.
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import numpy as np
 from scipy import sparse
 
@@ -241,8 +250,15 @@ def scan_path(path, idx, qfield, full_doc, threshold):
 
 
 def _worker(args):
+    # idx rides fork copy-on-write via the module global (set in main before the
+    # Pool is created) -- pickling it per task would push ~200MB x N_tasks
+    # through the task pipe for nothing.
     path, idx, qfield, full_doc, threshold = args
+    idx = _WORKER_IDX if _WORKER_IDX is not None else idx
     return path, *scan_path(path, idx, qfield, full_doc, threshold)
+
+
+_WORKER_IDX = None
 
 
 def deciles(xs):
@@ -373,8 +389,10 @@ def main():
         else:
             fresh.append(p)
     if args.jobs > 1 and len(fresh) > 1:
+        global _WORKER_IDX
+        _WORKER_IDX = idx  # fork inheritance: workers read this, no per-task pickle
         with get_context("fork").Pool(min(args.jobs, len(fresh))) as pool:
-            results = pool.map(_worker, [(p, idx, args.q_field, args.full_doc, args.threshold)
+            results = pool.map(_worker, [(p, None, args.q_field, args.full_doc, args.threshold)
                                          for p in fresh])
     else:
         results = [_worker((p, idx, args.q_field, args.full_doc, args.threshold)) for p in fresh]
