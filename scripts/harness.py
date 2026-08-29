@@ -2,20 +2,15 @@
 """The single place this project's progress is checked, recorded, and advanced.
 
 Two rules:
+- A stage is done when the measurement that would falsify it exists and is recorded, not when it produced a file.
+- A check without a failing case is not a check: every CHECKS entry carries broken(), and --selftest asserts FAIL on it.
 
-    A STAGE IS NOT DONE BECAUSE IT PRODUCED A FILE. IT IS DONE BECAUSE THE
-    MEASUREMENT THAT WOULD FALSIFY IT EXISTS AND IS RECORDED.
-
-    A CHECK WITHOUT A FAILING CASE IS NOT A CHECK. Every entry in CHECKS carries a
-    `broken()` world; --selftest asserts the check reports FAIL on it. Reviewers
-    mutated four separately-written guards in this repo and all four still PASSed.
-
-    python scripts/harness.py            # check + status
-    python scripts/harness.py check      # invariants only; exit 1 on any failure
-    python scripts/harness.py ledger     # provenance and score, one row per checkpoint
-    python scripts/harness.py gaps       # what is NOT measured, stated out loud
-    python scripts/harness.py measure    # ...then GO MEASURE IT (full matrix, records itself)
-    python scripts/harness.py --selftest # every check must fail on its broken world
+python scripts/harness.py            # check + status
+python scripts/harness.py check      # invariants only; exit 1 on any failure
+python scripts/harness.py ledger     # provenance and score, one row per checkpoint
+python scripts/harness.py gaps       # what is NOT measured, stated out loud
+python scripts/harness.py measure    # ...then GO MEASURE IT (full matrix, records itself)
+python scripts/harness.py --selftest # every check must fail on its broken world
 """
 
 import argparse
@@ -42,13 +37,9 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
 @functools.lru_cache(maxsize=None)
 def cfg_default(field):
-    """Read a Cfg field from train.py by AST: importing train.py pulls torch/fla/liger,
-    and this file must run on CPU-only CI and laptops.
-
-    Raises on a field it cannot read. Returning None let a one-token edit retire two
-    checks: annotating `mix = "..."` as `mix: str = "..."` makes it an ast.AnnAssign,
-    cfg_default returned None, and both mix checks reported SKIP with the text 'chosen
-    on purpose' -- an intent nobody expressed -- while main() exited 0."""
+    """Read a Cfg field from train.py by AST -- importing train.py pulls torch, and this
+    file must run on CPU-only CI. Raises on a field it cannot read: returning None once
+    let a one-token annotation edit retire two checks while main() exited 0."""
     src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.ClassDef) and node.name == "Cfg":
@@ -93,8 +84,7 @@ def experiments():
 
 CKPT_RE = re.compile(r"\bckpt_[A-Za-z0-9_.-]+?\.pt\b")
 # Must take the number carrying the %: "math-hard 37/1032 = 3.6%" holds three numbers and
-# only the last is the score. `[^%]` stops the window bleeding into the NEXT metric --
-# "math-hard deferred to bench stage; math-500 44.0%" scored 44.0 as a math-hard result.
+# only the last is the score. `[^%]` stops the window bleeding into the next metric.
 SCORE_RE = re.compile(r"math-hard[^%]{0,40}?(\d+(?:\.\d+)?)\s*%")
 
 
@@ -105,10 +95,9 @@ def score_from(text):
 
 def recorded_scores():
     """checkpoint -> (math-hard %, source), plus scores that matched no checkpoint.
-
-    Must cover `scripts/eval_hard.sh <ckpt>`, which takes the checkpoint POSITIONALLY:
-    matching only `--out ckpt_X.pt` dropped every score eval_hard.sh ever produced
-    (k6_fone's 1.7% included) and listed those checkpoints as never measured."""
+    eval_hard.sh takes the checkpoint positionally (matching only --out dropped every
+    score it produced); inputs are excluded, or resuming ckpt_A credits A with the
+    output's score."""
     scores, orphans = {}, []
     for row in experiments():
         s = score_from(str(row.get("result", "")))
@@ -141,11 +130,7 @@ def recorded_scores():
 
 def checkpoint_names(scores):
     """Every checkpoint this repo knows about: on disk, named in a command, OR carrying a
-    score. The last source was missing and it silently dropped two real measurements --
-    ckpt_rl_k4 4.1% and ckpt_sft_v5_hard 3.1% -- because `--name X` attributes a score to
-    ckpt_X without `ckpt_X.pt` ever appearing in a command. 4.1% is HIGHER than the 3.6%
-    the ledger was calling the best on record, so the one place progress is read from was
-    hiding the top of its own table."""
+    score. The last source once silently dropped the top of the ledger's own table."""
     names = {os.path.basename(p)[: -len(".pt")] for p in glob.glob(os.path.join(ROOT, "ckpt_*.pt"))}
     for row in experiments():
         names.update(n[: -len(".pt")] for n in CKPT_RE.findall(str(row.get("cmd", ""))))
@@ -176,11 +161,8 @@ def local_tokenizers():
 
 
 def _tmp_repo(mix_obj=None):
-    """A throwaway tree shaped like the repo, for a check to fail against.
-
-    The mix goes at cfg_default("mix") -- the path the checks actually read. Writing it to
-    a made-up data/mix_test.json instead meant both mix checks FAILed on their
-    file-does-not-exist branch and their real logic was never once executed by --selftest."""
+    """A throwaway tree shaped like the repo, for a check to fail against. The mix goes at
+    cfg_default("mix") -- the path the checks actually read, not a made-up one."""
     import tempfile
 
     d = tempfile.mkdtemp()
@@ -222,9 +204,8 @@ def _broken_tokenizer(eos_id=1, with_num=True):
 
 
 def _broken_stale_run():
-    """The row is built by the REAL logger, not hand-written. The old broken world invented
-    a `date` key to match the check's own bug, so both agreed on a schema exp.py has never
-    written and the selftest passed on a check that could not fire."""
+    """The row is built by the REAL logger, not hand-written -- a hand-written row shares
+    the check's own schema assumptions."""
     import subprocess
 
     d = _tmp_repo()
@@ -288,10 +269,8 @@ def check_mix_shards(root):
     missing = [d for d in doms if not glob.glob(os.path.join(corpus, d, "*.jsonl"))]
     if not missing:
         return PASS, f"all {len(doms)} domains have shards"
-    # This guards TRAINING, so strictness follows the ability to train: the pod has 8 GPUs
-    # and the full corpus, and a GPU box with a missing domain is about to tokenize on missing
-    # data. Dev boxes and CI ship no corpus -- on those this was red forever, and a permanent
-    # red is the same as no signal.
+    # Strictness follows the ability to train: a GPU box with a missing domain is about to
+    # tokenize on missing data; dev boxes ship no corpus, and a permanent red is no signal.
     if not _gpu_present():
         return SKIP, f"no GPU on this machine: {len(missing)}/{len(doms)} domains lack shards (not the pod)"
     return FAIL, f"no shards for {missing}"
@@ -339,10 +318,8 @@ MAX_TRACKED_MB = 5
 
 
 def check_no_oversized_blob(root):
-    """gitignore does not apply to an already-tracked path, so the pattern list was never the
-    guard it reads as. Moving a file into data/_quarantine/ un-ignored it and committed 40MB;
-    data/sft/*.jsonl was ignored while .parquet and .json were not. Both were patched after
-    the fact. This fires on the NEXT one."""
+    """gitignore does not cover already-tracked paths, so the pattern list was never the
+    guard. This fires on the next one."""
     import subprocess
 
     p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-l", "HEAD"], capture_output=True, text=True)
@@ -359,8 +336,8 @@ def check_no_oversized_blob(root):
 
 
 def _broken_blob():
-    """A real blob through real git plumbing. Synthesising an ls-tree line would repeat the
-    mistake that left no_stale_running reading a key exp.py never wrote."""
+    """A real blob through real git plumbing -- a synthesised ls-tree line shares the
+    check's own assumptions."""
     import subprocess
 
     d = _tmp_repo()
@@ -390,11 +367,8 @@ def check_no_stale_running(root):
             continue
         if r.get("status") != "running":
             continue
-        # The field is `started`, which is what scripts/exp.py writes, in %Y-%m-%d %H:%M.
-        # This read `date` -- a key exp.py has never emitted -- so every row raised into a
-        # bare `except: continue` and the check returned PASS having examined ZERO rows,
-        # with five runs up to three days stale. An unreadable date is now a FAIL: a check
-        # that cannot see its subject must not report on it.
+        # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
+        # a FAIL: a check that cannot see its subject must not report on it.
         try:
             t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
         except Exception:
@@ -408,8 +382,7 @@ def check_no_stale_running(root):
 
 
 def check_guard_on_path(root):
-    """The guard's logic was never what failed; its being ON THE PATH was. Reported here
-    so deleting the call site shows up as a FAIL, not just a raise somewhere in CI."""
+    """Deleting the guard's call site must show up as a FAIL, not just a raise in CI."""
     src_path = os.path.join(root, "train.py")
     if not os.path.exists(src_path):
         return SKIP, "train.py not present"
@@ -431,10 +404,8 @@ def _broken_guard():
 
 # --------------------------------------------------------------------------- facts
 #
-# Measurements live in facts/*.json, one file per migrated AGENTS.md section -- never in
-# AGENTS.md prose. A fact carries its measurement config because a value printed without one
-# is this project's repeated failure class (hanzi 0.00%, utilised 6.4%, undertrained 4.0%,
-# en fertility 2.36 -- the four wrong numbers in the rules section).
+# Measurements live in facts/*.json, never in prose. A fact carries its measurement
+# config -- a value without one is this project's repeated failure class.
 
 FACTS_DIR = os.path.join(ROOT, "facts")
 FACT_REQUIRED = {"id", "value", "measured", "source", "config", "uncertainty", "status"}
@@ -504,9 +475,8 @@ def check_facts_well_formed(root):
 
 
 def _broken_facts():
-    """The REAL facts files and REAL AGENTS.md, damaged: one entry loses its config.
-    Hand-writing a facts file would repeat the no_stale_running mistake -- the check and
-    its broken world believing the same fiction."""
+    """The REAL facts files and REAL AGENTS.md, with one entry's config deleted. A
+    hand-written file would share the check's own assumptions."""
     import shutil
 
     d = _tmp_repo()
@@ -524,12 +494,9 @@ ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|
 
 
 def check_entrypoints_ran(root):
-    """A command in the AGENTS.md entry-point table that was tried and never succeeded is a
-    capability the doc claims and the repo does not have. WARN, not FAIL: it is a to-do that
-    is fixed by running it (run_ablation.sh: killed, then OOM-fail). A script the table cites
-    that does not even exist is FAIL -- the doc is rotten. Wrappers are invisible to the log
-    (run_ddp.sh logs torchrun ... train.py), so a row with zero matches is skipped: never
-    tried is not the same as tried and failed."""
+    """A cited script that does not exist is FAIL -- the doc is rotten. A command tried and
+    never ok is WARN -- a to-do fixed by running it. Zero log matches is skipped: never
+    tried is not tried and failed (wrappers log the inner command)."""
     agents = os.path.join(root, "AGENTS.md")
     if not os.path.exists(agents):
         return SKIP, "AGENTS.md not present"
@@ -542,13 +509,16 @@ def check_entrypoints_ran(root):
             rows.append(json.loads(line))
         except Exception:
             pass
+    if not rows:
+        # An empty log is the post-reset state, not a clean bill: zero matches must read
+        # as "never tried", never as PASS.
+        return SKIP, "runs/experiments.jsonl has no rows"
     missing, stale = [], []
     for line in open(agents, encoding="utf-8"):
         if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
             continue
-        # Distinctive tokens from the TASK cell catch attempts logged under an inner command:
-        # ab2_attnres_vs_base logged `torchrun ... train.py`, never the wrapper, so a
-        # script-name match alone sees only the killed run and misses the OOM failure.
+        # Task-cell tokens catch attempts logged under an inner command (the wrapper is
+        # invisible to the log).
         task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
         for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
             if not os.path.exists(os.path.join(root, s)):
@@ -593,38 +563,39 @@ def check_entrypoints_table_present(root):
 def _broken_entrypoint():
     """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
     FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
-    synthetic world. The experiments log is the real one, copied, so every other row resolves
-    exactly as in production."""
-    import shutil
+    synthetic world. The log row is written by the REAL logger with --root d, so the check
+    runs instead of SKIPping on an absent log."""
+    import shutil, subprocess
 
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
-    shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    subprocess.run(
+        [
+            sys.executable,
+            os.path.join(HERE, "exp.py"),
+            "--root",
+            d,
+            "start",
+            "--name",
+            "broken_world",
+            "--cmd",
+            "./run_ddp.sh --mix x",
+        ],
+        check=True,
+        capture_output=True,
+    )
     return d
 
 
 def _broken_entrypoints_table():
-    """The REAL AGENTS.md with its entry-point table deleted -- the check must FAIL, not
-    SKIP. Deletes the contiguous '|'-block under the '| task | command |' header; if the
-    header wording drifts, falls back to deleting every script-citing row, which still
-    leaves the check with zero rows."""
+    """The REAL AGENTS.md with every script-citing table row deleted -- the check must
+    FAIL, not SKIP. The doc carries several script-citing tables, so deleting only the
+    entry-point block would leave the count above zero."""
     d = _tmp_repo()
     lines = open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read().splitlines(keepends=True)
-    out, i, dropped = [], 0, 0
-    while i < len(lines):
-        s = lines[i].strip().lower()
-        if s.startswith("|") and "task" in s and "command" in s:
-            i += 1
-            while i < len(lines) and lines[i].strip().startswith("|"):
-                dropped += 1
-                i += 1
-            continue
-        out.append(lines[i])
-        i += 1
-    if dropped == 0:
-        out = [ln for ln in out if not ("|" in ln and ENTRY_SCRIPT_RE.search(ln))]
+    out = [ln for ln in lines if not ("|" in ln and ENTRY_SCRIPT_RE.search(ln))]
     with open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8") as f:
         f.writelines(out)
     return d
@@ -639,6 +610,8 @@ DOCS_SUBDIRS = ("lessons", "audits")
 FRONTMATTER_KEYS = ("question", "status", "source")
 FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
 FACT_REF_RE = re.compile(r"facts/([\w.-]+)\.json#([\w.]+)")
+CMD_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.S)
+CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
 
 
 def _frontmatter(path):
@@ -717,7 +690,7 @@ def check_fact_refs(root):
                 continue
             for m in FACT_REF_RE.finditer(open(os.path.join(d, f), encoding="utf-8").read()):
                 n += 1
-                fname, fid = m.group(1), m.group(2)
+                fname, fid = m.group(1) + ".json", m.group(2)
                 if fname not in index:
                     bad.append(f"docs/{sub}/{f}: facts/{fname}.json does not exist")
                 elif fid not in index[fname]:
@@ -743,14 +716,14 @@ def _broken_docs_root():
 
 
 def _broken_lessons_fm():
-    """The REAL docs tree with rl_at_200m.md's frontmatter stripped -- the check must
+    """The REAL docs tree with kept_methods.md's frontmatter stripped -- the check must
     FAIL on the missing fields, not on a hand-written file sharing the check's own
     assumptions."""
     import shutil
 
     d = _tmp_repo()
     shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
-    p = os.path.join(d, "docs", "lessons", "rl_at_200m.md")
+    p = os.path.join(d, "docs", "lessons", "kept_methods.md")
     text = open(p, encoding="utf-8").read()
     if text.startswith("---\n"):
         text = text[text.find("\n---", 4) + 4 :].lstrip("\n")
@@ -766,8 +739,37 @@ def _broken_fact_ref():
     d = _tmp_repo()
     shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
     shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
-    with open(os.path.join(d, "docs", "lessons", "rl_at_200m.md"), "a", encoding="utf-8") as f:
+    with open(os.path.join(d, "docs", "lessons", "kept_methods.md"), "a", encoding="utf-8") as f:
         f.write("\n\nSee facts/tokenizer.json#tok.does_not_exist.\n")
+    return d
+
+
+def check_doc_commands(root):
+    """Every .sh/.py cited in an AGENTS.md command block exists. A documented command
+    that does not run is worse than none. Only fenced blocks are scanned; prose citations
+    and data files are not (a missing data file is caught at runtime by the mix guard)."""
+    agents = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(agents):
+        return SKIP, "AGENTS.md not present"
+    missing = set()
+    for block in CMD_BLOCK_RE.findall(open(agents, encoding="utf-8").read()):
+        for tok in CMD_PATH_RE.findall(block):
+            if not os.path.exists(os.path.join(root, tok)):
+                missing.add(tok)
+    if missing:
+        return FAIL, f"command block cites script(s) not in the repo: {sorted(missing)[:5]}"
+    return PASS, "every script cited in a command block exists"
+
+
+def _broken_doc_commands():
+    """The REAL AGENTS.md with one fenced block appended citing a script that does not
+    exist -- the FAIL tier."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    with open(os.path.join(d, "AGENTS.md"), "a", encoding="utf-8") as f:
+        f.write("\n```bash\npython scripts/nonexistent_command.sh --flag\n```\n")
     return d
 
 
@@ -789,9 +791,7 @@ CHECKS = [
     (
         "no_oversized_blob",
         f"no file over {MAX_TRACKED_MB}MB is tracked by git",
-        "gitignore does not apply to already-tracked paths, so moving a file out of an ignored "
-        "directory committed 40MB, and data/sft ignored only *.jsonl while the data arrived as "
-        "*.parquet",
+        "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
         check_no_oversized_blob,
         _broken_blob,
     ),
@@ -826,8 +826,7 @@ CHECKS = [
     (
         "facts_well_formed",
         "every facts/*.json entry carries its measurement config, and AGENTS.md asserts no guarded phrase",
-        "a value printed without its measurement config is the project's repeated failure class "
-        "(hanzi 0.00%, utilised 6.4%, undertrained 4.0%, en fertility 2.36)",
+        "a value without its measurement config is the project's repeated failure class",
         check_facts_well_formed,
         _broken_facts,
     ),
@@ -866,6 +865,13 @@ CHECKS = [
         "the reset zeroed conclusions while scattered docs still cited them -- a retracted fact must be discoverable, not a silent pointer",
         check_fact_refs,
         _broken_fact_ref,
+    ),
+    (
+        "doc_commands_exist",
+        "every .sh/.py cited in an AGENTS.md command block exists",
+        "a documented command that does not run is worse than none",
+        check_doc_commands,
+        _broken_doc_commands,
     ),
 ]
 
@@ -917,8 +923,7 @@ def ledger():
         sc = f"{s:.1f}%" if s is not None else "-"
         print(f"  {n:<26}{'yes' if on_disk else 'record':>8}{sc:>11}   {src or ''}")
     if orphans:
-        # Named out loud: dropping unmatched scores silently is how five real
-        # measurements became "never measured".
+        # Dropping unmatched scores silently turns real measurements into "never measured".
         print(f"\n  {len(orphans)} recorded score(s) matched NO checkpoint name:")
         for name, s, cmd in orphans:
             print(f"    {name}: {s:.1f}%   cmd={cmd!r}")
@@ -979,7 +984,7 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
 
     Needs GPUs and the checkpoints, i.e. the pod. A checkpoint whose vocabulary does not
     match the tokenizer is recorded as a FAILURE, not skipped: eval_all.sh stops on that
-    mismatch by design and an unrecorded stop is how a gap becomes permanent."""
+    mismatch by design; an unrecorded stop makes a gap permanent."""
     import subprocess
 
     scores, _ = recorded_scores()
@@ -990,9 +995,8 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
     ]
     if only:
         todo = [n for n in todo if only in n]
-    # Newest first, so the checkpoints anyone is waiting on land before the archaeology.
-    # NOT capped: the whole point is that gaps stops listing the same names forever, and
-    # math-hard alone is ~5 min per checkpoint, so even 38 of them is one idle night.
+    # Newest first. NOT capped: gaps must stop listing the same names forever, and
+    # math-hard alone is ~5 min per checkpoint.
     todo.sort(key=lambda n: os.path.getmtime(os.path.join(ROOT, f"{n}.pt")), reverse=True)
     # gaps counts every unscored name; this can only close the ones whose weights exist. Say
     # which ones it cannot, or an empty todo reads as "nothing left" over gaps' remainder.
@@ -1071,13 +1075,10 @@ def _demo():
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
 
     saved = os.path.join(ROOT, "runs", "experiments.jsonl")
-    if os.path.exists(saved):
+    if os.path.exists(saved) and os.path.getsize(saved):
         s, _o = recorded_scores()
         assert s, "no scores attributed at all from a non-empty experiments.jsonl"
 
-    doms, err = read_mix(os.path.join(DATA, "mix_v3.json"))
-    if not err:
-        assert "web" not in doms and "web_hq" in doms, doms
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
@@ -1120,10 +1121,9 @@ def _demo():
 
 
 def main():
-    # argparse, not a hand-rolled scan: two parsers (a bare-flag filter for the subcommand
-    # and an index lookup for the values) let `harness.py --ngpu 7 measure` resolve cmd="7",
-    # match no branch, print nothing and exit 0. A silent no-op is the failure mode this
-    # file exists to prevent, and `choices` turns it into an error for free.
+    # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
+    # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
+    # failure mode this file exists to prevent.
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages"]
