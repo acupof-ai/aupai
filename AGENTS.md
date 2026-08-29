@@ -1,5 +1,7 @@
 # aupai — 200M Chinese LLM (KDA + gated MLA hybrid, optional Attention Residuals)
 
+Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA with a 1024-token sliding window over 4096-token sequences, so dependence across spans longer than the window rides the KDA path, not attention.
+
 ## Writing rules (all docs, commit messages, and replies)
 
 - No metaphors. They distort.
