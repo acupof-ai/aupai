@@ -110,7 +110,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `entrypoints_table_present` | AGENTS.md has ≥1 entry-point row citing a script | the table was deleted; restore it |
 | `docs_root_clean` | zero `.md` directly under `docs/` | classify the file into `lessons/`/`audits/`/`standards/` |
 | `lessons_have_frontmatter` | every lessons/audits doc has `question`/`status`/`source` | add the frontmatter |
-| `fact_refs_resolve` | every `facts/x.json#id` citation resolves; retracted citations WARN | fix the citation or the fact |
+| `fact_refs_resolve` | every `facts/<file>.json#<id>` citation resolves; retracted citations WARN | fix the citation or the fact |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
 
 ## Add a check
@@ -156,8 +156,8 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 
 | set | resolution | caveat |
 |---|---|---|
-| math-hard, 1032 problems | ±1.1pt at a 2–3% pass rate | metric of record; test significance before explaining a gap |
-| math-500 | saturated | 30% of questions have a containment hit in the math SFT corpus (`facts/contamination.json`); absolute value inflated, equal-exposure comparisons hold |
+| math-hard, 1032 problems | — | v1 retired as metric of record: our own generators contaminated it; continuity only |
+| math-500 | saturated | 0.0% contamination on the pod corpus; 30% of questions have a containment hit in the math SFT corpus, so post-SFT values are inflated, base values clean (`facts/contamination.json`) |
 | MC suite | low | three of five sit at chance |
 
 ## Data
@@ -234,6 +234,6 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 **Before committing model/optimizer changes:** `python scripts/test_arch_compat.py` (CPU: AttnRes fwd/bwd, legacy-ckpt round-trip, optimizer grouping/schedule/snapshot, KDA decay init). Old checkpoints keep loading: `HybridLM.load_state_dict` remaps fused keys and auto-disables AttnRes; consumers build the model from `ck["cfg"]`, never from the live `Cfg` class. `ruff format && ruff check` on touched files (line length 110; CI gates E9/F).
 
-**Fact store — `facts/*.json`.** Measurements live here, one file per domain, never in prose. Required per entry: `id`, `value`, `measured` (YYYY-MM-DD), `source` (command or artifact), `config` (non-empty), `uncertainty`, `status` (`measured` / `recorded` / `unmeasured` / `retracted`). `unmeasured` and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `unit`, `guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot answer). `facts_well_formed` enforces the required fields.
+**Fact store — `facts/*.json`.** Measurements live here, one file per domain, never in prose. Required per entry: `id`, `value`, `measured` (YYYY-MM-DD), `source` (command or artifact), `config` (non-empty), `uncertainty`, `status` (`measured` / `recorded` / `unmeasured` / `retracted`). `unmeasured` and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `unit`, `guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot answer). `facts_well_formed` enforces the required fields. Domain files: `facts/tokenizer.json` (fingerprint, sizes, gate values, frontier, sweeps), `facts/contamination.json` (math holdout containment), `facts/data_scaling.json` (scaling-law and token-budget measurements), `facts/multilingual.json` (corpus stats, fertility, zh:en ratio/transfer evidence, token supply).
 
 **Coordination.** Several sessions share this tree. Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back. Commit messages in English, one concern per commit.

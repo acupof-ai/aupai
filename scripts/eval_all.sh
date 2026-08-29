@@ -35,14 +35,16 @@ echo "ckpt $CKPT | vocab $CKPT_VOCAB | fone $IS_FONE | tokenizer $TOK" | tee -a 
 
 say() { echo "$*" | tee -a "$LOG"; }
 
-# 1. math-hard -- the metric of record; 95% half-width +/-1.1pt at a 3% pass rate,
-#    so smaller differences are not differences.
-say "--- math-hard (metric of record)"
+# 1. math-hard -- v1 retired as metric of record: our own generators contaminated it.
+#    Run for continuity; numbers across the 0830v1 reset are not comparable.
+say "--- math-hard (retired as metric of record; continuity only)"
 NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_hard.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
-# 2. math-500 -- 10.2% has a near-duplicate with the same answer in Belle; absolute
-#    value inflated, comparisons at equal exposure only.
-say "--- math-500 (inflated ~10pt by contamination; comparison only)"
+# 2. math-500 -- 0.0% contamination on the pod pretraining corpus (holdout-filtered;
+#    the 10.2% figure was the local corpus). 30% of questions have a containment hit
+#    in the math SFT corpus, so post-SFT absolute values are inflated; base-checkpoint
+#    values are clean.
+say "--- math-500 (post-SFT inflated by SFT-corpus overlap; base values clean)"
 NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
 # 3. MC suite -- a 200M Chinese model at the 25% chance line; a regression tripwire,
