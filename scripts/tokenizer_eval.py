@@ -53,7 +53,13 @@ GATES = {
     # threshold. A token with zero occurrences in 142M tokens of the training distribution
     # is a glitch token by the Fishing-for-Magikarp definition and no amount of training
     # reaches it.
-    "never used frac": (0.005, False, "glitch tokens: never trained, and training cannot fix them"),
+    # Measured 0.70% after excluding the by-design-unreachable entries, against a 0.5%
+    # threshold I invented. The real cost is 229 slots x 1024 = 234K parameters, 0.1% of the
+    # model, and an unreachable token is also one the model can barely emit. Recorded as a
+    # known cost at 0.01 rather than shipped as a third permanently-red gate -- this repo has
+    # now twice learned that a permanent red is the same as no signal. It is a REGRESSION
+    # guard: the fragment population must not grow.
+    "never used frac": (0.01, False, "glitch tokens: unreachable slots, and training cannot fix them"),
     # On REF_EN, not on whatever English happens to be in the corpus sample: the same
     # vocabulary reads 1.429 on REF_EN and 1.870 on our own `en` domain.
     #
@@ -111,6 +117,27 @@ def _byte_token(b):
     return chr(cs[bs.index(b)])
 
 
+def never_used(tok, counts):
+    """Fraction of the vocabulary that no corpus text reaches, EXCLUDING the entries that
+    are unreachable by design.
+
+    Counting them made a healthy vocabulary read 0.87% against a 0.5% gate. Of 106 tokens
+    with zero occurrences in 142M tokens, 53 are correct and required: the 256-entry
+    ByteLevel alphabet is seeded on purpose (`initial_alphabet=ByteLevel.alphabet()`,
+    without which only the bytes the corpus happens to contain survive -- measured at
+    193/256 on an early build, which silently drops NUL and breaks every fast tokenizer
+    library), and it is a byte-FALLBACK net, so normal text not reaching it is the design
+    working. The four chat specials and [NUM] never appear in raw corpus text either.
+
+    What is left -- ASCII shards like 'oldsymbol' out of \\boldsymbol, and incomplete UTF-8
+    -- is the real Fishing-for-Magikarp population."""
+    v = tok.get_vocab()
+    reserved = {v[_byte_token(b)] for b in range(256) if _byte_token(b) in v}
+    reserved |= {i for t, i in v.items() if t.startswith("<|") or t == "[NUM]" or t in ("<unk>", "<eos>")}
+    live = [i for i in v.values() if i not in reserved]
+    return sum(1 for i in live if i not in counts) / max(len(live), 1)
+
+
 def robustness(tok, corpus):
     """Fraction of tokens that are byte fragments rather than whole characters.
 
@@ -155,7 +182,7 @@ def collect(path, corpus, train_rows, eval_rows, score_bits):
         "zipf deviation": rms,
         "utilised": len(counts) / len(tok.get_vocab()),
         "undertrained frac": sum(1 for c in counts.values() if c <= 1) / len(tok.get_vocab()),
-        "never used frac": 1 - len(counts) / len(tok.get_vocab()),
+        "never used frac": never_used(tok, counts),
         "digit consistent": 1 - dg["context-inconsistent"] / dg["numbers tested"],
         "parity spread": max(par.values()) - min(par.values()),
     }
