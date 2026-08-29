@@ -54,6 +54,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Eval, one metric | `scripts/eval_hard.sh <ckpt> [ngpu]` |
 | Eval, full matrix | `scripts/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
 | Score matrix | `scripts/score_matrix.py --ckpt <ckpt> [--json runs/score_matrix.jsonl]` — per-type metrics; generative SKIPs on base, never 0 |
+| Pod drift | `scripts/pod_sync_check.sh` — sha256 of tracked code vs /work/aupai; exit 1 on DIFF/MISSING |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram |
