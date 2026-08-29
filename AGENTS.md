@@ -24,14 +24,24 @@
 - Mix: `data/mix.json` = per-domain weight / epoch cap / anneal weight; when present train.py builds the
   schedule (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in
   order, so `Cfg.epochs` is forced to 1. Delete or `--mix ""` to fall back to the flat corpus.
-- Numbers (`--fone`): **off by default, and measurement says leave it off.** BPE splits numbers by
+- Numbers (`--fone`): **that "leave it off" verdict was wrong; see the correction below.** BPE splits numbers by
   frequency rather than place value (1640 → `16|40`), and `--fone` fixes that -- one `[NUM]` per
   number carrying a Fourier value, ten-way scored per digit. The mechanism works: k6's digit head
   reached 66.5% whole-number exact on held-out math against a 16.4% copy-previous baseline. It still
   bought nothing end to end. Same data, same 6 epochs: plain k5 reached math-hard 3.6%, FoNE k6
-  reached 3.2% (z=-0.49, p=0.627), while each beat its own base significantly. So number
-  representation is not the constraint here, and `--fone` costs 14% throughput (73K vs 85K
-  tok/s/gpu). Worth re-testing on a base that can actually solve these problems.
+  reached 3.2% (z=-0.49, p=0.627), while each beat its own base significantly. It costs 14%
+  throughput (73K vs 85K tok/s/gpu).
+  **CORRECTED 2026-08-29.** That comparison held "same data" fixed, and the data is the confound:
+  arithmetic appears in this corpus only as `a+b=c`, which Lee et al. (arXiv 2307.03381) show is
+  the one format a small transformer never learns. The experiment compared FoNE-plus-unlearnable
+  against BPE-plus-unlearnable, so a tie was the only possible outcome and the design could not
+  have detected the effect it was testing for. Two signals that DID appear were read backwards:
+  the digit head at 66.5% whole-number exact against a 16.4% baseline, and wrong-equation rate
+  43.3% -> 32.7% at p~1e-12, the largest effect ever measured on this project. "Arithmetic improved
+  and the score did not, therefore representation is not the constraint" inverts the inference --
+  representation WAS a constraint and was fixed; the flat score means a SECOND constraint sits
+  downstream of it. With a learnable format, FoNE takes bare two-digit arithmetic from **0% to
+  20-32%** where ckpt_k7_v3 through BPE scores 0/180 (see EXPERIMENTS.md, k6_arith).
   `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`, and a
   checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores
   the digit head against its two baselines.
