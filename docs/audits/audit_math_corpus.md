@@ -157,13 +157,15 @@ either (`facts/contamination.json#cont.math_hard_v2`).
 
 ## The holdout set itself must be rebuilt
 
-math-500 is 30% contaminated and stays only as the active eval until a replacement
+math-500 is 30.0% contaminated **by the local corpus** and 0.0% by the pod corpus
+that trained 0830v1 (`facts/contamination.json#cont.union_pod`) — host-specific
+numbers, never merge them — and stays only as the active eval until a replacement
 exists. The v2 rule (`facts/contamination.json#cont.holdout_v2`, tool:
 `scripts/holdout_split.py`): each **new** source is split *before* ingest —
 `qhash[:8] % 100 < 2` goes to `data/eval/holdout_v2/`, the rest is the corpus
 candidate — and the remainder is gated against the full holdout; any hit refuses the
 whole source and discards the slice. Eligibility is enforced: only never-ingested
 sources (no ledger entry, not in PROVENANCE) can seed the holdout, so the
-contamination that killed math-500 is impossible by construction. The v2 set is
+local-corpus contamination that hit math-500 is impossible by construction. The v2 set is
 empty until the first eligible source arrives; switching the eval pipeline off
 math-500 is a separate decision, recorded as the fact's uncertainty.
