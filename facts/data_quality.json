@@ -1,0 +1,277 @@
+{
+ "facts": [
+  {
+   "id": "dq.cci3.handread_150",
+   "value": 0.6,
+   "unit": "fraction trainable",
+   "measured": "2026-08-30",
+   "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
+   "config": {
+    "uncertainty": "+-0.10 (n=150, binomial)",
+    "categories": "SEO advertorial 30%, template/question-bank/essay 17%, rewrite 10%, hard farm fingerprint 11.4%"
+   },
+   "uncertainty": 0.1,
+   "status": "measured"
+  },
+  {
+   "id": "dq.cci3.filter_retention",
+   "value": 0.971,
+   "unit": "fraction kept",
+   "measured": "2026-08-30",
+   "source": "project filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + quality_clf SPAM) run on CCI3-HQ",
+   "config": {
+    "contrast": "hand-read says ~40% garbage; filter written for fineweb2 gambling/adult SEO and cosmopedia templates, misses CCI3-HQ's failure modes"
+   },
+   "uncertainty": "pass rate exact for the filter run; n not recorded. The finding is the 40pp gap to the hand-read, not the rate's precision",
+   "status": "measured"
+  },
+  {
+   "id": "dq.cci3.rewrite_fingerprint",
+   "value": 0.0207,
+   "unit": "fraction of docs",
+   "measured": "2026-08-30",
+   "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
+   "config": {
+    "fingerprint": "'原文地址:' tail marker",
+    "note": "self-admitted rewrites only; un-admitted fraction unmeasured"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.handread.small_sample_flip",
+   "value": "first 30 docs read 57% farm; later 120 docs read 62% usable",
+   "measured": "2026-08-30",
+   "source": "aupai-3b hand-read, same annotator same criteria",
+   "config": {
+    "n_first": 30,
+    "n_later": 120,
+    "implication": "n=30 binomial SE ~0.09; small-sample hand-read conclusions flip"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.domain_loss.drops_16x",
+   "value": {
+    "web_hq": -1.663,
+    "textbook": -1.76,
+    "wiki": -1.901,
+    "en": -1.858,
+    "math": -1.962,
+    "code": -1.988,
+    "chat": -1.762
+   },
+   "unit": "held-out loss drop over 16x data span",
+   "measured": "2026-08-30",
+   "source": "six checkpoints, per-domain held-out loss (aupai-fb)",
+   "config": {
+    "shares": {
+     "web_hq": 0.324,
+     "textbook": 0.496,
+     "wiki": 0.076,
+     "en": 0.05,
+     "math": 0.025,
+     "code": 0.018,
+     "chat": 0.012
+    },
+    "observation": "smallest-share domains (math/code) drop most; largest-share textbook below average; web_hq smallest drop"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.quality_head.auc_vs_hand",
+   "value": 0.823,
+   "unit": "AUC",
+   "measured": "2026-08-30",
+   "source": "project measurement (aupai-fb)",
+   "config": {
+    "method": "FineWeb-Edu stage 2: 27B teacher labels distilled to logistic head on 200M mean hidden state (datagen/train_quality_head.py)",
+    "domain": "web only",
+    "failure": "scores cosmopedia below raw web -- head does not transfer across registers"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.quality_head.teacher_vs_hand",
+   "value": 0.739,
+   "unit": "AUC",
+   "measured": "2026-08-30",
+   "source": "datagen/train_quality_head.py:150 (27B teacher vs hand labels)",
+   "config": {
+    "note": "teacher itself is 2.9x better than chance; head cannot exceed teacher by much"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.char_ngram.ceiling",
+   "value": 0.6,
+   "unit": "AUC",
+   "measured": "2026-08-30",
+   "source": "datagen/quality_clf.py docstring (hashed char 2-4 grams + LR, few hundred hand labels)",
+   "config": {
+    "diagnosis": "char n-grams rank by TOPIC while labels split on REGISTER; a ceiling more labels do not lift"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.teacher.speed_cost",
+   "value": 0.76,
+   "unit": "docs/s",
+   "measured": "2026-08-30",
+   "source": "datagen/train_quality_head.py docstring",
+   "config": {
+    "corpus_size": 1970000,
+    "pod_days": 4,
+    "note": "27B annotating 1.97M docs needs four pod-days; head needs minutes"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.scaling.drop_mechanical",
+   "value": "domain loss drop over a fixed data multiplier is proportional to remaining loss above floor: Delta_d = (L_d - A_d)(1 - 16^-beta); small-share domains drop more even when the optimal mixture is uniform",
+   "measured": "2026-08-30",
+   "source": "derived from power-law learning curves: Kaplan arXiv:2001.08361, Chinchilla arXiv:2203.15556",
+   "config": {
+    "implication": "the 16x drop table (dq.domain_loss.drops_16x) cannot by itself justify upweighting math/code; decision-relevant quantity is marginal w_d * dL_d/dC_d, not Delta_d",
+    "literature_direct_observation": "none found -- no paper directly states small-share domains drop more"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.reweight.doremi",
+   "value": "+6.5pp average few-shot accuracy; 2.6x fewer training steps to baseline accuracy",
+   "measured": "2026-08-30",
+   "source": "arXiv:2305.10429 (DoReMi)",
+   "config": {
+    "method": "Group DRO on 280M proxy learns domain weights, sampled for 8B (30x)",
+    "corpus": "The Pile",
+    "evidence": "paper self-reported, single corpus, no third-party replication"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.reweight.regmix",
+   "value": "best of 64 candidate mixtures at 1B/25B; matches or beats DoReMi at ~10% of its compute",
+   "measured": "2026-08-30",
+   "source": "arXiv:2407.01492 (RegMix, ICLR 2025)",
+   "config": {
+    "method": "512 small models (1M/1B tokens) regress mixture performance, extrapolate",
+    "evidence": "self-reported"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.reweight.data_mixing_laws",
+   "value": "optimized mixture matches default mixture trained 48% longer (or saves to 73% of steps); beats DoGE/DoReMi at same budget",
+   "measured": "2026-08-30",
+   "source": "arXiv:2403.16952 (Data Mixing Laws)",
+   "config": {
+    "method": "fit L_i(r) = c_i + k_i * exp(sum_j t_ij * r_j) on 70M-410M grid, extrapolate to 1B/100B RedPajama",
+    "evidence": "self-reported, validated at <=1B"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.math.deepseekmath_ablation",
+   "value": "GSM8K 2.9->23.8, MMLU-STEM 19.5->33.1, MMLU 49.1->54.9, BBH 55.2->59.5; code slightly down (HumanEval 43.2->40.9, MBPP 60.4->52.6)",
+   "measured": "2026-08-30",
+   "source": "arXiv:2402.03300 (DeepSeekMath) tables 1 and 4",
+   "config": {
+    "scale": "DeepSeek-LLM 1.3B base, few-shot CoT",
+    "intervention": "continued pretraining with vs without math corpus (500B tokens, 120B math)",
+    "note": "strongest causal evidence that math pretraining transfers to general reasoning; also the only with/without ablation found"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.math.llama3_mix",
+   "value": "25% math+reasoning tokens, 17% code, 8% multilingual, ~50% general knowledge; 15.6T tokens",
+   "measured": "2026-08-30",
+   "source": "arXiv:2407.21783 (Llama 3)",
+   "config": {
+    "evidence": "recipe disclosure only, no ablation, no causality",
+    "note": "DeepSeek-V3 arXiv:2412.19437 and Qwen2.5 arXiv:2412.15115 also tilt to math/code but give no percentages (verified in full text)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.math.dclm_counter",
+   "value": "mixing 33% wiki/books/StackExchange/arXiv/GitHub into already-filtered CC hurts average performance by 1.2pp at 1B (+2.2pp on weakly-filtered C4)",
+   "measured": "2026-08-30",
+   "source": "arXiv:2406.11794 (DCLM) table 6",
+   "config": {
+    "note": "counter-evidence: domain mixing helps only when base filtering is weak; phi-1.5 arXiv:2309.05463 shows narrow textbook-only weighting costs knowledge; Kimi k1.5 arXiv:2501.12599 shows math/code ability can be injected later via RL"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.e2.matched_token_protocol",
+   "value": "plot all 7 domains' held-out loss vs their own token count C_d = w_d * T on one axes; shared (B, beta) predicts collapse to a single curve",
+   "measured": "2026-08-30",
+   "source": "agent B derivation from dq.scaling.drop_mechanical; data source scripts/domain_loss.py on the six 0830v1 checkpoints",
+   "config": {
+    "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
+    "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
+    "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free"
+   },
+   "uncertainty": null,
+   "status": "unmeasured",
+   "claim": "the math/code loss-drop advantage survives matched-token comparison",
+   "audit": "not yet run; requires scripts/domain_loss.py on six 0830v1 checkpoints (pod GPU)",
+   "refuted_by": "E2 plot showing math/code collapse onto the shared curve"
+  },
+  {
+   "id": "dq.criterion.rule_split",
+   "value": "filter rules split into corpus-independent (byte/encoding/duplication -- always valid) and corpus-dependent (regex tables, SPAM keyword list, quality-head threshold -- necessarily fail on a new corpus)",
+   "measured": "2026-08-30",
+   "source": "read of filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py, datagen/quality_clf.py SPAM, datagen/train_quality_head.py",
+   "config": {
+    "independent": "encoding, byte-level, MinHash duplication",
+    "dependent": "pass1-3 regex patterns (written against cosmopedia/fineweb2 failure modes), SPAM gambling/adult keywords, quality-head threshold (trained on web labels)",
+    "evidence": "dependent rules retained 97.1% of CCI3-HQ while hand-read found 40% garbage (dq.cci3.filter_retention, dq.cci3.handread_150)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.criterion.recall_ratio",
+   "value": "transfer criterion: hand-label N=150 docs from the new corpus, run the corpus-dependent filter on the same docs, compute recall_new = P(filter=drop | hand=garbage); compare to recall_home on the corpus the filter was tuned on; ratio >= 0.8 VALID, < 0.5 RECALIBRATE, in between WEAK (RECALIBRATE if garbage rate > 10%)",
+   "measured": "2026-08-30",
+   "source": "project design (this session)",
+   "config": {
+    "sample_size": "N=150 gives +-0.08 on a proportion at p=0.5; 385 for +-0.05",
+    "recalibration": "cluster hand-labeled garbage by failure pattern, add 1-2 regexes per pattern or a few hundred labels to the quality head, re-test on a FRESH sample until ratio >= 0.8 (never re-test on the calibration sample)",
+    "thresholds_justification": "0.5 ratio = filter catches less than half of what it catches at home; 0.8 = within normal corpus variation",
+    "independence": "hand-labels for the known-answer case (CCI3-HQ) were produced by aupai-3b for a quality audit before this criterion existed -- not shared assumptions with the criterion"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.criterion.known_answer_cci3",
+   "value": "RECALIBRATE (recall_new <= 0.073, ratio <= 0.073 even assuming recall_home = 1.0)",
+   "measured": "2026-08-30",
+   "source": "arithmetic on dq.cci3.filter_retention (0.971 kept -> 0.029 dropped) and dq.cci3.handread_150 (0.40 garbage): recall = 0.029/0.40 = 0.0725, upper bound assuming every dropped doc was truly garbage",
+   "config": {
+    "known_answer": "CCI3-HQ is the negative control: filter is KNOWN to fail there (hand-read 40% garbage, retention 97.1%); criterion outputs RECALIBRATE -- matches the known answer",
+    "note": "verdict does not depend on recall_home: even a perfect home filter gives ratio 0.073 < 0.5",
+    "positive_control_pending": "web_hq with data/web_labels.jsonl on pod -- in-sample by construction (filter tuned on those labels), sanity check only, not a transfer test"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  }
+ ]
+}
