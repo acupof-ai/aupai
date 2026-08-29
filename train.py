@@ -136,8 +136,11 @@ class Cfg:
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
-    # mix.json is the v2 mix, whose 88% "web" weight points at the UNFILTERED corpus.
-    mix = "data/mix_v3.json"  # domain mix (weights / epoch caps / anneal)
+    # A default that names a RETIRED mix trains on the retired recipe in silence -- this default
+    # pointed at the v2 mix (88% unfiltered web) until 2026-08-29, and at the v3 mix until the
+    # 2026-08-30 reset retired it. It tracks the current version's largest budget; every scaling
+    # run still passes --mix explicitly rather than relying on it.
+    mix = "data/mix_scale_3.24b.json"  # domain mix (weights / epoch caps / anneal)
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
     val_batches = 20
