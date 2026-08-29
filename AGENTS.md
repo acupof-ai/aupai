@@ -124,6 +124,20 @@
   copy supervised -- 40 examples packed into 8 rows instead of 5, and nothing would have reported it.
 
 ## Tokenizer / vocabulary
+- **`data/tokenizer.json` is rebuilt IN PLACE and the old file is gone.** Every checkpoint
+  needs the vocabulary it was trained on, and `ckpt_k6_fone.pt` nearly became unusable this way:
+  the corpus-v3 rebuild overwrote the 32,773-token file k6 was trained on with a DIFFERENT
+  32,773-token file (`d191af789cdbe597` -> `0bce3584bc24f255`). Same size, every id different,
+  so a size check passes and the scores are noise. Recovered only because the local checkout
+  still had the old file; it is now `data/tokenizer_k6.json` on the pod.
+  **Before rebuilding, copy the current file to `data/tokenizer_<name>.json` for every live
+  checkpoint.** `scripts/loader.py` compares fingerprints, which is what makes this survivable.
+- `scripts/tokenizer_report.py` measures a vocabulary on four groups -- compression,
+  distribution (Zipf deviation, utilisation, undertrained tokens), structure (digit place-value,
+  UTF-8 integrity, round-trip, whitespace), and English (fertility, morphology, parity).
+  chars/token alone is a weak proxy: arXiv 2506.03101 measures its correlation with downstream
+  performance from rho=-0.77 to rho=-0.09 depending on task. It caught that k5's vocabulary was
+  round-trip LOSSY (NUL and tab did not survive) and used only 72.3% of its slots.
 - vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
   `padded_vocab` is 32,832 either way, so adding `[NUM]` resized nothing.
 - **Keep 32K.** A fitted vocabulary scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the optimum
