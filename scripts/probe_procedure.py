@@ -147,6 +147,7 @@ def main():
     ap.add_argument("--fone", action="store_true")
     ap.add_argument("--n", type=int, default=60, help="held-out problems per procedure")
     ap.add_argument("--steps", type=int, default=220)
+    ap.add_argument("--batch", type=int, default=60, help="problems decoded per forward pass")
     a = ap.parse_args()
 
     import torch
@@ -159,22 +160,29 @@ def main():
     if a.fone:
         import fone
 
-    def gen(prompt):
-        """train.generate_batch owns the FoNE value channel and the prompt truncation that
-        every hand-rolled copy of this loop was missing."""
-        if a.fone:
-            (ids,), (vals,) = fone.encode_prompts([prompt], tok, cfg.num_id)
-            (out,), (ov,) = generate_batch(model, [ids], a.steps, "cuda:0", prompt_values=[vals])
-            return fone.decode_text(out, ov, tok, cfg.num_id)
-        ids = tok.encode(prompt, add_special_tokens=False).ids
-        (out,) = generate_batch(model, [ids], a.steps, "cuda:0")
-        return tok.decode(out)
+    def gen_all(prompts):
+        """All problems in one batched call. One prompt at a time ran 180 sequential decodes
+        of up to `steps` tokens each and held the GPU at 31% -- launch-bound, not
+        compute-bound -- so the probe took ~15 minutes where the work is about 20 seconds.
+        Greedy decoding is per-row independent, so batching does not change any answer."""
+        out = []
+        for s in range(0, len(prompts), a.batch):
+            chunk = prompts[s : s + a.batch]
+            if a.fone:
+                ids, vals = fone.encode_prompts(chunk, tok, cfg.num_id)
+                gen, gv = generate_batch(model, ids, a.steps, "cuda:0", prompt_values=vals)
+                out += [fone.decode_text(g, v, tok, cfg.num_id) for g, v in zip(gen, gv, strict=True)]
+            else:
+                ids = [tok.encode(p, add_special_tokens=False).ids for p in chunk]
+                out += [tok.decode(g) for g in generate_batch(model, ids, a.steps, "cuda:0")]
+            print(f"  {min(s + a.batch, len(prompts))}/{len(prompts)}", flush=True)
+        return out
 
     cases = load_cases(a.n)
-    print(f"{a.ckpt}\n{len(cases)} HELD-OUT problems (blake2b split, same filter as training)\n")
+    print(f"{a.ckpt}\n{len(cases)} HELD-OUT problems (blake2b split, same filter as training)\n", flush=True)
+    texts = gen_all([c["instruction"] for c in cases])
     agg = {}
-    for c in cases:
-        t = gen(c["instruction"])
+    for c, t in zip(cases, texts, strict=True):
         n, ok = steps_valid(c["fmt"], t)
         ans = final_answer(c["fmt"], t) == gold_answer(c["fmt"], c["output"])
         steps_ok = n > 0 and ok == n

@@ -64,6 +64,46 @@ readout, separately, gating nothing.
 That last row is the one being pre-registered. It is the reading that will be least
 available after the fact.
 
+## AMENDMENT, written AFTER the result — the table above was missing a branch
+
+**Not pre-registered. Added 2026-08-29 after ARM A ran, and labelled so because the whole
+point of the section above is that it was written first.**
+
+ARM A landed on "BOTH near zero", whose committed reading is *coverage was not the
+constraint, go to the pretrain-extension arm*. **That reading is wrong for this result**,
+and taking the null at face value would have retired a correct path.
+
+| | base k8 | + procedure SFT |
+|---|---|---|
+| BOTH (mul / eq / unit) | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 |
+| STEPS, total | 0/180 | 4/180 |
+| digit head, teacher-forced on gold procedure text | 209/982 = **21.3%** | 562/982 = **57.2%** |
+| FoNE encode -> decode round-trip | 120/120 | — |
+
+Teacher-forced, the model predicts 57.2% of the numbers in gold procedure text, against
+21.3% at base. It also learned the unit-conversion chain shape and the `结果 = ` terminator.
+Free-running, every number is wrong and the chain degenerates into `1/1 ≈ 1/1` loops.
+
+**The procedure was learned; it does not survive autoregressive rollout.** One wrong number
+early and there is no recovery. That is exposure bias, not missing coverage, and SFT loss
+falling to 0.144 with zero generalisation says the same thing: it fit
+next-token-given-a-gold-prefix, which is not the same skill as executing a procedure.
+
+The missing fourth branch, stated now for the next round:
+
+| result | reading | next arm |
+|---|---|---|
+| BOTH near zero **but teacher-forced accuracy jumps** | the steps are learned, the rollout is not | train on self-generated prefixes — scheduled sampling / DAgger-style — before any RL, because the failure is recovery from the model's OWN error and step-RL samples exactly those rollouts |
+
+Two consequences worth recording:
+
+1. **A null landing in a pre-registered cell does not make that cell correct.** The
+   pre-registration is what made the gap visible instead of absorbing the result.
+2. 57.2% crosses lessons-b0's own >50% step-correctness gate, so its conditional objection
+   to step-level supervision does not bind on this checkpoint. That does not by itself
+   argue for step-RL: the failure mode is self-error recovery, and step-RL samples the
+   model's own rollouts, which is the thing that is broken.
+
 ## What the probe cannot measure
 
 `procedure_curriculum` splits on `prob_key(fmt, body)` — problem level. The held-out 10% is
