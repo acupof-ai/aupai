@@ -76,12 +76,12 @@ pod "cd /work/aupai && setsid nohup bash -c './run_ddp.sh --mix data/mix_scale_3
 Every GPU run gets a row before it starts and a result when it ends:
 
 ```bash
-python scripts/exp.py start --name <name> --cmd "<command>" --notes "<config>"
-python scripts/exp.py done  --name <name> --result "math-hard 3.6%" --status ok
+python scripts/exp.py start --name <name> --cmd "<command>" --hypothesis "<question the run answers>"
+python scripts/exp.py done  --name <name> --result "math-hard 3.6%" --finding "<what the number means>" --decision "<what changes>" --status ok
 python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 ```
 
-`hypothesis` = the question the run answers; `finding` = the measured result; `decision` = what changes because of it.
+`hypothesis` is written BEFORE the run starts. `result` is the number; `finding` is its interpretation, not the number; `decision` is what changes because of it.
 
 ## Harness — `python scripts/harness.py`
 
@@ -184,7 +184,7 @@ Every checkpoint is scored with the vocabulary it was trained on. `data/tokenize
 
 ## Tokenizer
 
-Frozen 2026-08-29. A rebuild is allowed only under the three unfreeze conditions, and invalidates every checkpoint trained on the old vocabulary. Before rebuilding, copy the live file to `data/tokenizer_<name>.json`.
+Frozen 2026-08-29. A rebuild is allowed only under the three unfreeze conditions, and invalidates every checkpoint trained on the old vocabulary.
 
 - **Gates** (`scripts/tokenizer_eval.py --tokenizers <paths>`): round-trip lossless and all 256 bytes are vetoes; hanzi whole-char ≥ 0.95 is a veto; ref fertility ≤ 1.55 and never-used ≤ 0.01 are regression guards.
 - **Build** (`scripts/build_tokenizer.py`): always pass `initial_alphabet=ByteLevel.alphabet()` — without it NUL silently drops; stratified equal-byte sample per domain.
