@@ -1,3 +1,9 @@
+---
+question: "200M 基座上怎么测出能力变化——哪些指标有分辨率、中文最小对怎么建、loss 与能力之间先亮什么、MC 地板是模型还是套件问题"
+status: recorded
+source: "literature (CLiMP/BLiMP/Pythia/SmolLM/Schaeffer) + project measurements 2026-08-30; facts in facts/base_eval.json"
+---
+
 # How to measure capability change at 200M scale
 
 Research, 2026-08-30. Question (aupai-fb): at 200M parameters, domain loss moves

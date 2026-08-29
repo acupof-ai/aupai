@@ -260,6 +260,14 @@
    },
    "measured": "2026-08-30",
    "source": "sampled 2000 docs from each of two parallel-build groups, bigram-jaccard all pairs (numpy/sparse)",
+   "config": {
+    "sample_docs_per_group": 2000,
+    "groups": "web_cci3 build grp0 x grp1",
+    "metric": "char-bigram jaccard >= 0.7",
+    "pairs_scored": 4000000,
+    "tool": "numpy/sparse all-pairs"
+   },
+   "uncertainty": "0/4.0M pairs; rule-of-three 95% upper bound 7.5e-7 per pair; per-group B/A fractions have ~1pp resolution at n=2000",
    "boundary": "bigram-jaccard is a coarse near-dup signal; renamed/reordered copies score >0.7. 0 hits means no doc was even 70% bigram-shared -- a clean signal at this sample. A 2000-vs-2000 sample leaves ~1% resolution in the B/A fractions.",
    "status": "measured"
   },
@@ -274,6 +282,24 @@
    },
    "measured": "2026-08-30",
    "source": "two stratified hand-reads of data/raw/cci3_hq (n=30 seed42 + n=120 seed7), reader: cklxx session",
+   "config": {
+    "samples": [
+     {
+      "n": 30,
+      "seed": 42,
+      "usable_pct": 37
+     },
+     {
+      "n": 120,
+      "seed": 7,
+      "usable_pct": 62
+     }
+    ],
+    "reader": "cklxx",
+    "bins": "content-farm/SEO/template/洗稿 vs usable",
+    "population": "data/raw/cci3_hq"
+   },
+   "uncertainty": "n=30 binomial half-width +-17pp at 95%, n=120 +-8.5pp; the 25pp gap between reads is ~1.2x the combined half-width -- opposite verdicts within sampling noise, which is the finding",
    "boundary": "this is a methodology statement surfaced by CCI3, not a statement about CCI3 itself; it is why this project scores every corpus with a distribution and verifies cuts against labeled reads",
    "status": "measured"
   },

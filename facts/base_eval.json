@@ -4,7 +4,7 @@
       "id": "be.generative_zero",
       "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
       "measured": "2026-08-30",
-      "source": "runs/eval_v2_procreplay.log, data/eval/hard_ckpt_k8_proc_replay.pt.jsonl (pod); facts/contamination.json#cont.math_hard_v2.resolution_probe",
+      "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
       "config": {
         "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
         "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
@@ -63,7 +63,10 @@
       "value": "Schaeffer et al. 2023: emergent abilities are largely a metric artifact — with smooth token-level metrics (target logprob, acceptability) improvement is continuous from early training; discontinuous metrics (exact match, pass@1) manufacture the phase transition. Practical transfer: score the log-probability of the correct answer against matched wrong ones instead of exact-matching generation",
       "measured": "2026-08-30",
       "source": "Schaeffer et al. 2023, arXiv 2304.15004",
-      "config": {},
+      "config": {
+        "paper": "arXiv 2304.15004",
+        "scope": "metric granularity vs apparent emergence; token-level smooth metrics show continuous improvement"
+      },
       "uncertainty": null,
       "status": "recorded"
     },
@@ -105,7 +108,11 @@
       "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire",
       "measured": "2026-08-30",
       "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis)",
-      "config": {},
+      "config": {
+        "suite": "5 MC benchmarks, 4 English + ceval",
+        "model": "0830v1 ladder, 200M-class",
+        "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale"
+      },
       "uncertainty": null,
       "status": "recorded"
     },
@@ -114,7 +121,10 @@
       "value": "synthesized ordering of when metrics leave the floor: domain loss -> token-level target logprob / acceptability minimal pairs -> LAMBADA-style constrained prediction -> MC commonsense (~410M+) -> few-shot ICL -> generation. The 'loss moves but capability does not' gap is mostly metric granularity (Schaeffer), not a model waiting period. Likelihood measures recognition not production — necessary, not sufficient",
       "measured": "2026-08-30",
       "source": "docs/lessons/base_eval_at_200m.md §3; Schaeffer 2304.15004; BLiMP; Pythia Fig.6",
-      "config": {},
+      "config": {
+        "synthesized_from": "Schaeffer 2304.15004, BLiMP 2020, Pythia Fig.6 (separate studies, not one ladder)",
+        "validation": "the 0830v1 six-checkpoint run is the direct test (aupai-de's implementation)"
+      },
       "uncertainty": "the ordering is synthesized from separate studies, not measured on one ladder; the 0830v1 six-checkpoint run is the direct test and belongs to de's implementation",
       "status": "recorded"
     },
