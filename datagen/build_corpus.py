@@ -51,14 +51,22 @@ BOILER = re.compile(
 
 
 def load_garbage_patterns():
+    # A missing pattern file used to silently set GARBAGE = None, so the same command returned
+    # 86.6% pass rate on the pod (files absent) and 80.7% locally, with nothing raising. Absence
+    # is now an error; disabling is explicit, because it is a legitimate choice -- garbage_topic
+    # was written for gambling/adult SEO and false-positives on para-athletes and dinosaurs.
+    if os.environ.get("AUPAI_NO_GARBAGE") == "1":
+        return None
     pats = []
     for name in ("pass1_garbage", "pass2_garbage", "pass3_garbage"):
         path = os.path.join(ROOT, "filters", f"{name}.py")
-        if os.path.exists(path):
-            ns = {}
-            exec(compile(open(path, encoding="utf-8").read(), path, "exec"), ns)
-            pats += ns.get("PATTERNS", [])
-    return re.compile("|".join(f"(?:{p})" for p in pats)) if pats else None
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"{path} missing; set AUPAI_NO_GARBAGE=1 to run without it")
+        ns = {}
+        exec(compile(open(path, encoding="utf-8").read(), path, "exec"), ns)
+        pats += ns.get("PATTERNS", [])
+    assert pats, "garbage pattern files loaded but PATTERNS is empty"
+    return re.compile("|".join(f"(?:{p})" for p in pats))
 
 
 GARBAGE = load_garbage_patterns()

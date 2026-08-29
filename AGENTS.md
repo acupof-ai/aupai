@@ -218,7 +218,20 @@ shared.
 - **A published quality score is a claim, not a measurement.** cosmopedia's own `score` column
   correlates with ours at Spearman **+0.198** and is non-monotonic across its own bands; the
   same shape appeared in opencsg/Fineweb-Edu-Chinese (bands 52/66/59% usable, top band
-  dirtiest). Run `datagen/audit_source_score.py` before using any source's score as a cut.
+  dirtiest). Third case, 2026-08-29: cosmopedia's `score` cannot separate a document whose facts
+  came from its seed from one whose did not -- 0.828 against 0.836. Fourth, same day:
+  `chinese-fineweb-edu-v2`'s `score` reads Spearman **+0.074** against our distilled head over
+  n=6,020, non-monotonic, its **top decile the worst of the ten**. Run
+  `datagen/audit_source_score.py` before using any source's score as a cut.
+- **A score BAND that is a directory can work where the score NUMBER does not.**
+  `Fineweb-Edu-Chinese-V2.1` ships `2_3`/`3_4`/`4_5` as separate paths, and the share scoring
+  above our `web_hq` median rises 28.5% -> 58.1% -> **83.2%** across them (Spearman +0.466).
+  Inside one band the number is worthless again (`4_5`: **-0.105**). Cut on the directory, never
+  on the column, and do not assume the two carry the same information.
+- **Sources are stored in blocks, so reading rows in order reads one source.** The brief said
+  `chinese-fineweb-edu-v2` was CCI3 plus IndustryCorpus2; row groups 0-49 are 100% CCI3 and all
+  301 row groups hold **eight**. Draw row groups at random, not a prefix. Same failure as the
+  8.5%-vs-18.9% shard-order draw.
 - **The mix is the source of truth about what the corpus is; the filesystem is not.**
   `data/corpus/web` (unfiltered, 2.99M docs) is kept -- a different quality threshold has
   to be re-cuttable from it -- but anything that enumerates `data/corpus/*` picked it up:

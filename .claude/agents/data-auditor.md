@@ -47,10 +47,17 @@ about provenance, not about content**.
    reject histogram. The pass rate here, not the source's score, is the quality number.
 4. **Is it synthetic, and which kind?** Decide by evidence, not by the card. Sample 30 rows and
    check whether the output's numbers and named entities are a subset of its own declared
-   source. Anchored rephrasing measures +6.7pp at 1B; from-scratch generation ties naive
-   summarisation and must stay under 5% of the mix at our size. `chinese-cosmopedia` is
-   from-scratch — its `source` contributes only a topic — and `chinese-fineweb-edu-v2` is
-   filtered real web despite the similar naming.
+   source. Anchored rephrasing is safe to ~30% of the mix; from-scratch generation must stay
+   under 5% at our size. Neither bound has a measured downstream effect at 200M — 2510.01631's
+   metric is Pile perplexity — so report the split, do not claim a gain.
+   **Do not judge anchoring by reading whether the prose feels generic** — that classifies
+   register, not provenance, and it misclassified `chinese-cosmopedia` twice. Find a marker that
+   proves the pipeline (a seed reference in the output text, a `metadata.raw` field, a number
+   subset test), then measure how much of the seed *survives*, as a rate against a real-text
+   control. cosmopedia: 2.97% of documents name their seed, yet dates survive at 0.18x and
+   percentages at 0.12x of `web_hq` — seeded, then rewritten until the facts are gone
+   (`docs/audit_cosmopedia.md`). `chinese-fineweb-edu-v2` is filtered real web despite the
+   similar naming.
 5. **Traditional Chinese.** 59.4% of the fineweb2 Chinese slice was traditional and converting
    it moved chars/token 1.04 -> 1.45. Measure the fraction; opencc is 1:1 single-codepoint only
    and does not cover vocabulary-level differences (軟體/软件).

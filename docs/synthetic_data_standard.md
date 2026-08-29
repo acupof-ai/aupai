@@ -6,16 +6,37 @@ believing one: a published quality score correlates with our own measurement at 
 **+0.198**, and in `opencsg/Fineweb-Edu-Chinese` the **top** score band was the dirtiest
 (52/66/59% usable across three bands).
 
-## The distinction that decides everything
+## The classification that sets the weight
 
-Two things get called synthetic and only one of them works at our size.
+The literature measures two categories. **Our first real candidate fits neither**, so the
+classification a source gets is a measurement, not a lookup.
 
-| | anchored REPHRASING | from-scratch GENERATION |
-|---|---|---|
-| what the source contributes | the document | a topic |
-| can you check the output against it | **yes** — facts, numbers, entities | no |
-| measured, 1B model | **+6.7pp** over web, 7.7x training speedup | 47.1%, ties naive summarisation at 46.7% |
-| safe share of the mix | ~30% | **under 5% for sub-1B**, collapse above |
+| | anchored REPHRASING | seed-anchored, FACTS STRIPPED | from-scratch GENERATION |
+|---|---|---|---|
+| what the source contributes | the document | the document | a topic |
+| output checkable against it | **yes** — facts, numbers, entities | the seed is provable, the facts are gone | no |
+| what the literature measured | 5–10x speedup to the same Pile PPL, at 33% and 67% alike | **nothing — not a studied category** | 33% needs ~20B tokens to catch plain CC; 67% never does |
+| safe share of the mix | ~30% | **prior <5%, moved by criterion 6** | **under 5% for sub-1B** |
+| our example | CCI4.0-M2-CoT (98% number subset, n=200, CC-high only) | `chinese-cosmopedia` | none admitted |
+
+The two outer columns come from arXiv 2510.01631, whose grid runs 200M–1B params × 1B–50B
+tokens — the smallest cell is 200M/1B, so **30% is an interpolation at our size**. Its metric is
+**Pile perplexity over 14 domains plus Wikitext, not benchmark accuracy**; no downstream point
+difference is reported at any scale.
+
+The middle column is ours. It exists because a source can pass the "was it handed a document"
+test and still fail the thing that test is a proxy for — cosmopedia's seed is provable in 2.97%
+of documents and its dates survive at 0.18x of real web. Neither bound was measured on anything
+like it, so criterion 6 sets the weight. **Until it reports, the prior is the from-scratch
+bound**, because 0.12–0.22x fact survival is measured information and an unconstrained prior
+throws it away; criterion 6 can move it in either direction.
+
+Earlier versions of this file gave "+6.7pp at 1B", "7.7x", and "47.1 / 46.7 / 50.4". Audited
+2026-08-29 against 2510.01631v1 (both HTML renderings), 2506.04689 and 2508.10975v2: **none of
+those numbers appears in any of them, and no source was found.** They are removed rather than
+replaced. Two sessions searching independently also failed to locate the BeyondWeb paper itself
+— cited here as 2508.10975v2, which one session did read. Treat any claim in this file that
+rests only on it as unverified.
 
 Measured on the two candidates we downloaded, 2026-08-29:
 
@@ -32,22 +53,47 @@ opencsg/chinese-cosmopedia          cols [text, score, source, data_format]
    269,551 rows/file, score mean 0.839
 ```
 
-**cosmopedia's output has no checkable relationship to its own `source`.** Its samples — "正丙基
-亚砜", "速写概述" — could have been written from any source with the same title. That is
-from-scratch generation, and `data/mix_v3.json` gives it **36%** of a 3.3B-token budget.
+**cosmopedia is seeded on a real document and then rewritten until most of the document is
+gone.** It is neither of the two categories above, and two hand reads called it from-scratch
+before a census showed otherwise (`docs/audit_cosmopedia.md`):
+
+- **2.97% of documents (8,003 / 269,551) name the seed in their own text** — 「网页摘录」
+  「上述文本」 — and the content beside those references is the seed's: a chipset model, a
+  county bureau's duties, 三重县's 5,776.56 km². That is a prompt leak, so it identifies the
+  pipeline for **all** of it, not the anchored share.
+- **The anchoring is diluted, and that is what to measure.** Checkable-fact markers per 1,000
+  chars against `web_hq`: dates **0.18x**, date+month **0.11x**, percentages **0.12x**, number
+  +unit **0.22x**, any number 0.52x, pedagogical framing (本单元/我们将) **11.4x**. Most of its
+  digits are section numbering.
+- Its own `score` cannot separate anything: **0.828 vs 0.836**, so no `score >= X` cut exists.
+
+`data/mix_v3.json` gives it **36%** of a 3.3B-token budget. Neither the 30% nor the 5% bound
+applies; the weight is set by criterion 6, not read off the literature.
+
+**The general lesson: "is it anchored" is not a document-level judgement call.** Reading whether
+prose *feels* generic classifies register, not provenance. Use a marker whose presence proves the
+pipeline (a seed reference, a `metadata.raw` field, a number subset test) and then measure how
+much of the seed survives, as a rate against a real-text control.
 
 ## The six criteria
 
 1. **Anchored to one source document, verifiably.** Numbers and named entities in the output
    must be a subset of the source's. This is the only hard test that separates interpretation
    from invention, and it is cheap to run.
-2. **It adds something the source lacks, and you can name what.** Only three things count:
-   format (web -> QA), register (-> pedagogical), and **explicit intermediate steps**. If you
-   cannot name the addition it is a paraphrase, and paraphrase saturates — naive summarisation
-   scores 46.7% against rephrasing's 50.4%.
-3. **One source, several styles.** Single-strategy generation shows diminishing returns from
-   "lack of stylistic diversity". Measure the distribution over strategies and audiences, and
-   n-gram diversity against the source corpus.
+2. **It adds something the source lacks, and you can name what.** BeyondWeb (2508.10975v2)
+   defines three strategies and only three: format transformation (web -> QA), style
+   modification (-> pedagogical register), and content restructuring. If you cannot name the
+   addition it is a paraphrase.
+   An earlier version listed **explicit intermediate steps** as a fourth. It is not in that
+   paper — "explicit reasoning" returns zero hits in the full text — and no other source was
+   found for it. Kept out until one is. This matters for CCI4.0-M2-CoT: added reasoning steps
+   are not evidence of anchoring, so the anchoring test in criterion 1 still decides whether it
+   takes the ~30% bound or the 5% one.
+3. **One source, several styles.** Multi-strategy beats single-strategy in BeyondWeb, as a
+   saturation curve with no per-strategy ablation behind it. Measure the distribution over
+   strategies and audiences, and n-gram diversity against the source corpus.
+   Rephraser size saturates at ~3B: 1B -> 3B is +1.5pp, 3B -> 8B is +0.4pp. Using the 27B to
+   generate is spending 9x for the +0.4.
 4. **No eval leakage.** `scripts/scan_contamination.py` on every new source, before it enters
    a mix. This is finding #1 of docs/review_2026-08-26.md and it recurs whenever skipped.
 5. **A minority of the mix.** ~30% for rephrased, **under 5% for from-scratch at 200M**.
@@ -56,8 +102,34 @@ from-scratch generation, and `data/mix_v3.json` gives it **36%** of a 3.3B-token
    its own kind proves nothing. The falsifying measurement is two pretrains differing only in
    the synthetic share, compared on web / wiki / math.
 
-Criterion 6 is running as `runs/ab_tb36.log` vs `runs/ab_tb05.log` — 500 steps each, identical
-seed and card count, `data/mix_v3.json` (textbook 36%) against `data/mix_v3_lowtb.json` (5%).
+Criterion 6 is NOT cleanly answered: the prepared comparison is confounded and cannot support a
+"from-scratch synthetic is harmful" claim.
+
+`ckpt_tb36` (textbook 36%, `mix_v3`) vs `ckpt_tb05` (textbook 5%, `mix_v3_lowtb`), each 500 steps,
+same seed 42, same val split, same vocab_id 0bce3584bc24f255, both fone. Held-out loss on the
+same fixed web_hq/wiki shards:
+
+| domain | tb36 (36%) | tb05 (5%) | Δ (36%−5%) |
+|---|---|---|---|
+| web_hq | 5.2296 | **5.1330** | +0.097 |
+| wiki | 4.6598 | **4.5509** | +0.109 |
+
+**The comparison is confounded.** `mix_v3_lowtb`'s own comment says the freed weight goes to the
+real-text domains in their existing proportions — so tb05 has 31% less textbook AND ~31% more
+web/wiki. Scoring the two arms on the web_hq/wiki holdout then measures an arm trained on more web
+against one trained on less. A model trained on more web scoring better on web holdout is a
+tautology, the mirror image of the in-kind-training trap criterion 6 was written to guard against.
+
+So this answers **"at a fixed token budget, is replacing textbook with web worth more?"** — yes,
+and that supports **down-weighting** the seed-diluted synthetic (0.36 → 0.12). It does NOT answer
+"is from-scratch synthetic harmful to the representation"; that claim has no evidence here and
+needs an equal-exposure design (arms with identical web/wiki/math token counts, differing only in
+an added textbook slab) before it can be asserted. No paired test was run; Δ≈0.10 (relative ~2%)
+is the magnitude a 31% same-domain data difference explains, so treat both point estimates as
+unverified beyond the confound.
+
+Both arms are fone; the comparison holds on the fone channel only and does not transfer to a
+non-fone mix_v4 target without re-measuring.
 
 ## Where the open data actually is
 
