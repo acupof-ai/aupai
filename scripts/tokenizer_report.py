@@ -106,17 +106,23 @@ def utf8_integrity(tok, corpus):
     A vocabulary trained on unstratified text had no whole token for common
     traditional characters and scored web at 1.04 chars/token -- worse than one
     token per character."""
+    # The token STRING of a ByteLevel BPE is byte-mapped -- 今天 is stored as 'ä»Ĭå¤©' --
+    # so searching it for a literal hanzi finds none, ever. This reported 0.00% whole-char
+    # hanzi and 3,797 byte fragments on a vocabulary that in fact encodes 软件工程师 as ONE
+    # token: an alarm that fires on every correct ByteLevel vocabulary, which is worse than
+    # no alarm. Decode each token back to text before asking the question.
     rows = [r for v in corpus.values() for r in v][:600]
     frag = whole = 0
     for e in tok.encode_batch(rows):
-        for t in e.tokens:
-            s = t.replace("Ġ", "")
+        for tid in e.ids:
+            s = tok.decode([tid]).strip()
             if not s:
                 continue
-            if HAN.search(s):
-                whole += len(HAN.findall(s))
-            elif len(s) <= 2 and all(ord(ch) > 127 for ch in s):
-                frag += 1
+            n = len(HAN.findall(s))
+            if n:
+                whole += n
+            elif "\ufffd" in s:
+                frag += 1  # an incomplete UTF-8 sequence: a genuine byte fragment
     tot = whole + frag
     return {"hanzi in whole-char tokens": f"{100 * whole / max(1, tot):.2f}%", "byte fragments": frag}
 
