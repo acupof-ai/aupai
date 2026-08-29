@@ -14,6 +14,7 @@ Two rules:
     python scripts/harness.py check      # invariants only; exit 1 on any failure
     python scripts/harness.py ledger     # provenance and score, one row per checkpoint
     python scripts/harness.py gaps       # what is NOT measured, stated out loud
+    python scripts/harness.py measure    # ...then GO MEASURE IT (full matrix, records itself)
     python scripts/harness.py --selftest # every check must fail on its broken world
 """
 
@@ -505,6 +506,79 @@ def gaps():
             print(f"    EXPERIMENTS.md:{i}  {ln[:96]}")
 
 
+def measure(only=None, ngpu=None, tokenizer=None, dry=False):
+    """CLOSE the gaps instead of reporting them.
+
+    `gaps` naming a checkpoint as unmeasured, over and over, is not progress -- somebody
+    still has to type the command, and on this project that somebody produced three
+    write-ups and zero runs of the metric of record in one night. This runs the FULL
+    matrix (scripts/eval_all.sh: math-hard, math-500, the MC suite, and the digit head for
+    a FoNE checkpoint) on every checkpoint that is on disk and has no score, and writes the
+    result back through scripts/exp.py so the ledger picks it up on the next read.
+
+    Needs GPUs and the checkpoints, i.e. the pod. A checkpoint whose vocabulary does not
+    match the tokenizer is recorded as a FAILURE, not skipped: eval_all.sh stops on that
+    mismatch by design and an unrecorded stop is how a gap becomes permanent."""
+    import subprocess
+
+    scores, _ = recorded_scores()
+    todo = [
+        n
+        for n in checkpoint_names(scores)
+        if n not in scores and os.path.exists(os.path.join(ROOT, f"{n}.pt"))
+    ]
+    if only:
+        todo = [n for n in todo if only in n]
+    if not todo:
+        print("  nothing to measure: every checkpoint on disk carries a score")
+        return 0
+    print(f"  {len(todo)} checkpoint(s) on disk with no score: {', '.join(todo)}")
+    if dry:
+        return 0
+    env = dict(os.environ)
+    if ngpu:
+        env["NGPU"] = str(ngpu)
+    for n in todo:
+        ck = f"{n}.pt"
+        cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
+        print(f"\n  === {ck} ===", flush=True)
+        p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
+        out = p.stdout + p.stderr
+        # Every headline the matrix prints, in order, as one result string.
+        hits = [ln.strip() for ln in out.splitlines() if ln.startswith("TOTAL") or "STOP:" in ln]
+        result = " | ".join(hits) if hits else f"eval produced no TOTAL line (rc={p.returncode})"
+        status = "ok" if hits and p.returncode == 0 and not any("STOP:" in h for h in hits) else "fail"
+        print(f"  {result}")
+        for act in (
+            [
+                "start",
+                "--name",
+                n,
+                "--cmd",
+                " ".join(cmd),
+                "--hypothesis",
+                "harness measure: closing a gaps entry",
+            ],
+            [
+                "done",
+                "--name",
+                n,
+                "--status",
+                status,
+                "--result",
+                result,
+                "--finding",
+                "Measured by `harness.py measure`, not by hand.",
+            ],
+        ):
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py")] + act, cwd=ROOT, capture_output=True
+            )
+    experiments.cache_clear()
+    print(f"\n  measured {len(todo)}; re-run `harness.py gaps` to see what is left")
+    return 0
+
+
 def stages(res=None):
     res = {n: s for n, s, _e, _a, _i in (res or run_checks(quiet=True))}
     scores, _ = recorded_scores()
@@ -558,6 +632,10 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
+def _flag(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     cmd = args[0] if args else "all"
@@ -574,6 +652,13 @@ def main():
     if cmd in ("all", "gaps"):
         print("\nGAPS  (stated out loud, never inferred from an absence)")
         gaps()
+    if cmd == "measure":
+        return measure(
+            only=_flag("--only"),
+            ngpu=_flag("--ngpu"),
+            tokenizer=_flag("--tokenizer"),
+            dry="--dry" in sys.argv,
+        )
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)
