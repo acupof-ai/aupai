@@ -86,6 +86,19 @@
   the same defect on one afternoon — satisfied by an empty list, by a missing file, or by
   a deleted call site — and every one of their selftests passed. Add a check only with its
   broken world; the selftest fails otherwise.
+- **A probe that asks "did training install X" must measure TEACHER-FORCED and FREE-RUNNING
+  in the same run, or its null cannot be read.** `probe_procedure` scored free-running only:
+  BOTH went 0.0 -> 0.0 after procedure SFT, which fits the pre-registered cell "coverage was
+  not the constraint" and would have retired a correct path. Teacher-forced on the same gold
+  text, the digit head went **21.3% -> 57.2%** (McNemar p=5.7e-62). The procedure was
+  learned and does not survive the model's own rollout — exposure bias, not missing data.
+  The gap between the two numbers IS the diagnosis; either number alone is unreadable.
+  ARM B makes the same point from the other side: 7.4% replay moved teacher-forced
+  significantly (57.2 -> 61.1, p=6.6e-05) and moved BOTH not at all. One intervention, two
+  measurements, opposite outcomes — coverage would have moved both.
+- **A null landing in a pre-registered cell does not certify that cell.** Pre-registration
+  (`docs/exp_procedure_sft.md`) is what made the missing branch visible instead of absorbing
+  the result into an existing one; the amendment there is labelled as written afterwards.
 - **Build the broken world by MUTATING A REAL ARTIFACT, never by hand-writing one from the
   check's own source.** All six checks passed `--selftest` while three were dead, because
   each broken world was synthesised from the check author's memory of the input format and
