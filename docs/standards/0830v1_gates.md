@@ -13,13 +13,37 @@ latent=d/4) + AttnRes, NoPE throughout. Commit b3cad87. Changing it reopens G3.
 | G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_at_200m.md` + 12 `facts/base_eval.json` entries | lessons-b0 | GREEN 2026-08-30, frozen; reporting the panel is now mandatory per run |
 | G1b zh minimal pairs | the eval set built to `be.minimal_pair_rules`, n>=277 | the set + its build script | aupai-3b | open; needed before the panel's minimal-pair row can be read, not before G3 |
 | G2 profile | step time split by source, percentages summing to ~100 | `facts/efficiency.json` | lessons-e1 | open work; also selects the kernel target |
-| G3 first run | 0.2b budget point trained on the new arch | `ckpt_*`, one `experiments.jsonl` row, one `score_matrix.jsonl` row | aupai-fb, aupai-de | blocked: GPU 1-7 held by `0830v1_repeat4` (old sliding-window arch) |
+| G3 first run | 0.2b budget point trained on the new arch | `ckpt_*`, one `experiments.jsonl` row, one `score_matrix.jsonl` row | aupai-fb | waits on the pod cleanup report and on G2 |
 | G4 scaling curve | all six `mix_scale_*` points scored | six score-matrix rows, fitted E + B/D^beta with residuals | aupai-fb | waits on G3 |
 
 Kernel work (tilerl-bench-harness-plan) runs alongside and gates on G2 for target
 selection, not on G0. It lands only through the five correctness gates in its brief:
 fp64 reference no worse than the kernel it replaces, bit-exact reruns, 200-step
 step-by-step loss comparison, `test_arch_compat` coverage, and a working fallback.
+
+## Who does what
+
+| session | owns | does not do |
+|---|---|---|
+| aupai-fb | controller: GPU allocation, `train.py`, launching and recording runs, every gate ruling | |
+| aupai-de | harness, CI gates, doc deletion, code cleanup, pod hygiene | training runs, research |
+| aupai-3b | corpus build, filters, quality head, eval-set construction | kernels, harness |
+| tilerl-bench-harness-plan | kernels and their benchmarks, written in this repo under `scripts/` | changing the architecture's math |
+| lessons-b0 | research: what has resolution at 200M | writing repo code |
+| lessons-e1 | research: where the step time goes | writing repo code |
+| lessons-44 | research: filter transfer | writing repo code |
+
+## GPU allocation
+
+aupai-fb allocates all 8 cards. Nobody starts a GPU process without asking; kill only by
+exact PID, never `pkill -f`. Current plan, in order:
+
+- **Phase A (now)**: GPU 0-7 free. lessons-e1 profiles the real 7-card DDP config for G2;
+  tilerl runs `attn_res_bench.py --full` and `bench_gated_mla.py --full` on GPU 0.
+  Both are minutes, and the profile must precede the long run — a 5-hour run started
+  before we know where its time goes cannot be re-decided afterwards.
+- **Phase B**: GPU 1-7 run the 0.2b pretrain. GPU 0 goes to aupai-3b for quality-head
+  scoring.
 
 Two rules this round does not bend:
 
