@@ -1,0 +1,41 @@
+{
+  "total_tokens": 200000000.0,
+  "domains": {
+    "web_hq": {
+      "weight": 0.32383,
+      "epochs": 1,
+      "anneal": 0.32383
+    },
+    "textbook": {
+      "weight": 0.496222,
+      "epochs": 1,
+      "anneal": 0.496222
+    },
+    "wiki": {
+      "weight": 0.075723,
+      "epochs": 1,
+      "anneal": 0.075723
+    },
+    "en": {
+      "weight": 0.049544,
+      "epochs": 1,
+      "anneal": 0.049544
+    },
+    "math": {
+      "weight": 0.025172,
+      "epochs": 1,
+      "anneal": 0.025172
+    },
+    "code": {
+      "weight": 0.017741,
+      "epochs": 1,
+      "anneal": 0.017741
+    },
+    "chat": {
+      "weight": 0.011768,
+      "epochs": 1,
+      "anneal": 0.011768
+    }
+  },
+  "_comment": "scale curve budget 0.2b: weights identical to 3.24b. See peer A decision: three independent full runs sharing per-domain pool chat prefix; cross-domain interleave order differs by budget (same seed), a documented curve boundary, NOT strict nesting. mxode excluded. unfiltered web excluded (separate two-arm). SYNTHETIC-SHARE COST: this curve is measured on a ~50%-synthetic corpus (textbook=chinese-cosmopedia, w=0.496, the highest weighting it has ever received). This is NOT an endorsement that 50% synthetic is correct -- it is the natural-proportion choice requiring no new (reset-voided) judgment. Whether 50% is right is a SEPARATE exposure-aligned two-arm, not this curve. Do not read the curve as certifying the 50% ratio. Per-domain prefix holds; cross-domain interleave order differs per budget (same seed) = documented boundary, not strict nesting (anneal renormalizes, making byte-prefix impossible in principle). mxode excluded; unfiltered web excluded (separate two-arm)."
+}
