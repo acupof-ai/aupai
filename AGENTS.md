@@ -1,5 +1,16 @@
 # aupai — 200M Chinese LLM (KDA + gated MLA hybrid, optional Attention Residuals)
 
+## Writing rules (all docs, commit messages, and replies)
+
+- No metaphors. They distort.
+- No big words, no verdict-first tone, no invented compressed terms, no filler explanation, no
+  spoken/speech register.
+- Delete anything a competent reader already knows.
+- Every rewrite must raise information density. Rephrasing without new information is a no-op.
+- 3+ consecutive prose paragraphs: check whether a table, list, or grouping works instead.
+- Target: simple, clear, coherent, specific, accurate, complete. Written for a short attention
+  span, so short units and strict logical order matter more than completeness of phrasing.
+
 ## Layout
 - Root: `train.py`, `sft.py`, `sft_math.py`, `prepare_sft_math.py`, `serve.py`, `chat.py`, `infer.py` (entry points).
 - `mathbank/` synthetic math generators (`run_math_short.py`, `vet_programs.py`, `math_programs_*`),
@@ -7,161 +18,145 @@
   `scripts/` ops (exp log, eval shards, SFT packing, local inference), `workflows/` corpus JS.
 
 ## Entry points
-- Pretrain: `run_ddp.sh [train.py flags]` → `torchrun ... train.py --fp8 [--attn_res] [--name X]`.
-  Any `--flag` matching `Cfg.<flag>` overrides it (`python train.py --help`).
-- SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` (logs + eval + EXPERIMENTS.md).
-- Eval: `scripts/eval_hard.sh <ckpt> [ngpu]` on `data/synthetic/math_hard_eval_1k.jsonl` — the metric of
-  record. It resolves to about ±1.1pt at a 2-3% pass rate, so test significance before explaining a gap.
-  math-500 is saturated (32.2 / 26.8 / 32.0 / 31.0) AND 10.2% of it is memorizable: 51 of its 500
-  questions have a near-duplicate in the Belle/mxode training data at Jaccard >= 0.8 carrying the same
-  answer (measured 2026-08-28). Its absolute score is inflated; a comparison between checkpoints with
-  equal exposure still holds. math-hard is clean by the same scan (top-1 median 0.156, max 0.538).
-- AttnRes A/B: `NGPU=6 STEPS=500 scripts/run_ablation.sh` (base vs `--attn_res`, same seed).
-- Corpus: `python datagen/build_corpus.py --domain web --source fineweb2 --target_tokens 6e9` (clean/dedup/
-  cap into `data/corpus/<domain>/`; `--dry --limit N` prints the rejects histogram). Sources are
-  interchangeable; the filters are the product. Run every domain (incl. mathbank/synthetic via
-  `--source jsonl:<glob>`) through it so the eval holdout filter covers all of them.
-- Mix: `data/mix_v3.json` = per-domain weight / epoch cap / anneal weight. train.py builds the schedule
-  (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in order, so
-  `Cfg.epochs` is forced to 1. **It is the ONLY data path.** The flat-corpus fallback was deleted
-  2026-08-29 along with `data/mix.json`, `load_texts()` and `data/corpus/primary`: it was the branch a
-  named-but-missing mix fell through to, training on 244KB in silence. There is nothing to fall back to
-  now, so that failure cannot recur. Git ships a 2,000-document sample (4,992 with the
-  untracked shards, which `.gitignore`'s `data/corpus/*/` hides) as `data/mix_sample.json` over
-  `data/corpus/sample/`, a mix like any other -- getting-started and pod use the same code.
-- Numbers (`--fone`): **that "leave it off" verdict was wrong; see the correction below.** BPE splits numbers by
-  frequency rather than place value (1640 → `16|40`), and `--fone` fixes that -- one `[NUM]` per
-  number carrying a Fourier value, ten-way scored per digit. The mechanism works: k6's digit head
-  reached 66.5% whole-number exact on held-out math against a 16.4% copy-previous baseline. It still
-  bought nothing end to end. Same data, same 6 epochs: plain k5 reached math-hard 3.6%, FoNE k6
-  reached 3.2% (z=-0.49, p=0.627), while each beat its own base significantly. It costs 14%
-  throughput (73K vs 85K tok/s/gpu).
-  **CORRECTED 2026-08-29.** That comparison held "same data" fixed, and the data is the confound:
-  arithmetic appears in this corpus only as `a+b=c`, which Lee et al. (arXiv 2307.03381) show is
-  the one format a small transformer never learns. The experiment compared FoNE-plus-unlearnable
-  against BPE-plus-unlearnable, so a tie was the only possible outcome and the design could not
-  have detected the effect it was testing for. Two signals that DID appear were read backwards:
-  the digit head at 66.5% whole-number exact against a 16.4% baseline, and wrong-equation rate
-  43.3% -> 32.7% at p~1e-12, the largest effect ever measured on this project. "Arithmetic improved
-  and the score did not, therefore representation is not the constraint" inverts the inference --
-  representation WAS a constraint and was fixed; the flat score means a SECOND constraint sits
-  downstream of it. With a learnable format, FoNE takes bare two-digit arithmetic from **0% to
-  16%** against a BPE control trained on the SAME data for the SAME 20 epochs (0/180 first
-  number, 3/180 anywhere; Fisher one-sided p=1.2e-7). Termination is a SEPARATE failure the
-  representation does not touch (17% vs 21% emit `<eos>`) -- three formats on identical prompts
-  leave the answer underdetermined. An earlier "20-32%" here was memorisation: the probe drew
-  from an 8,100-pair space the 200K-row training set had exhausted, and 77% of its cases were in
-  training. **Synthetic data needs a split on the PROBLEM, not on the row** --
-  `arith_curriculum.held_out` hashes it (see EXPERIMENTS.md, k6_arith + its CORRECTION).
-  `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`, and a
-  checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores
-  the digit head against its two baselines.
-  **It does improve arithmetic, sharply.** Wrong-equation rate in the generated steps:
-  k6 32.7% against k5 43.3% at base (p~1e-12), 30.2% against 37.7% after the same SFT
-  (p~2e-8), while emitting MORE equations (77% of generations against 66%). That is the
-  largest effect measured on this project and it moves the score not at all. Score and
-  arithmetic are different questions; `eval_all.sh` reports both.
-- **Every checkpoint is scored with the vocabulary it was trained on.** `data/tokenizer.json` is
-  rebuilt in place and ids do not survive a rebuild; size does not identify a vocabulary either.
-  Checkpoints carry `vocab_id` (a hash of the id→token map), packs carry the same, and `sft_math.py`
-  refuses a mismatch. For an older checkpoint pass `--tokenizer` / `TOKENIZER=`. Three separate bugs
-  in one day came from skipping this, the loudest being a k5 SFT that trained at loss 4.77 instead
-  of 1.28 with nothing raising.
-- Stage end: `scripts/eval_all.sh <ckpt> [tokenizer]` -- math-hard, math-500, the MC suite, and the
-  digit head for a FoNE checkpoint, each labelled with what it can and cannot say.
-- pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
-- FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
+
+| task | command |
+|---|---|
+| Pretrain | `run_ddp.sh [train.py flags]` → `torchrun ... train.py --fp8 [--attn_res] [--name X]`. Any `--flag` matching `Cfg.<flag>` overrides it |
+| SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` — logs, eval, EXPERIMENTS.md |
+| Eval, one metric | `scripts/eval_hard.sh <ckpt> [ngpu]` |
+| Eval, full matrix | `scripts/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
+| Measure everything unscored | `python scripts/harness.py measure` |
+| pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
+| Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram |
+| AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
+| FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod) |
+
+### What each eval can and cannot say
+
+| set | resolution | caveat |
+|---|---|---|
+| math-hard, 1032 problems | ±1.1pt at a 2–3% pass rate | The metric of record. Test significance before explaining any gap |
+| math-500 | saturated | **10.2% memorizable**: 51 of 500 questions have a near-duplicate in Belle/mxode at Jaccard ≥0.8 with the same answer. Absolute value inflated; comparisons at equal exposure hold |
+| MC suite | ARC-E z=9.1, PIQA z=3.6 above chance | The other three sit at the 25% line |
+
+### Mix — `data/mix_v3.json`
+
+Per-domain weight, epoch cap, anneal weight. train.py builds the schedule (main phase, then the
+last `Cfg.anneal_frac` of tokens at anneal weights) and consumes it in order, so `Cfg.epochs` is
+forced to 1. **It is the only data path.** The flat-corpus fallback was deleted 2026-08-29 with
+`data/mix.json`, `load_texts()` and `data/corpus/primary`: a named-but-missing mix fell through to
+it and trained on 244KB in silence. Git ships a 2,000-document sample (4,992 with the untracked
+shards `.gitignore`'s `data/corpus/*/` hides) as `data/mix_sample.json`.
+
+### Numbers — `--fone`
+
+BPE splits numbers by frequency, not place value (1640 → `16|40`). FoNE gives each number one
+`[NUM]` token carrying a Fourier value, scored ten-way per digit.
+
+| measurement | FoNE | control | test |
+|---|---|---|---|
+| bare two-digit arithmetic, learnable format | **16%** | 0% | Fisher one-sided p=1.2e-7 |
+| wrong-equation rate at base | 32.7% | 43.3% | p~1e-12 |
+| wrong-equation rate after the same SFT | 30.2% | 37.7% | p~2e-8 |
+| digit head, whole-number exact | 66.5% | 16.4% (copy-previous) | — |
+| math-hard | 3.2% | 3.6% | z=−0.49, p=0.627 |
+| throughput | 73K tok/s/gpu | 85K | −14% |
+
+**It improves arithmetic sharply and moves the score not at all.** Score and arithmetic are
+different questions; `eval_all.sh` reports both.
+
+An earlier reading of this table — "arithmetic improved and the score did not, therefore
+representation is not the constraint" — inverts the inference. Representation was a constraint
+and was fixed; the flat score means a second constraint sits downstream. The original comparison
+also held "same data" fixed and the data was the confound: arithmetic appears in this corpus only
+as `a+b=c`, the one format Lee et al. (arXiv 2307.03381) show a small transformer never learns.
+FoNE-plus-unlearnable against BPE-plus-unlearnable could only tie.
+
+Termination is a separate failure the representation does not touch (17% vs 21% emit `<eos>`):
+three formats on identical prompts leave the answer underdetermined.
+
+`--fone` changes the data format everywhere. Pack with `prepare_sft_math.py --fone`; a checkpoint
+whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores the digit
+head against its two baselines.
+
+### Vocabulary identity
+
+Every checkpoint is scored with the vocabulary it was trained on. `data/tokenizer.json` is rebuilt
+in place; ids do not survive a rebuild and size does not identify a vocabulary. Checkpoints and
+packs carry `vocab_id` (a hash of the id→token map) and `sft_math.py` refuses a mismatch. For an
+older checkpoint pass `--tokenizer` / `TOKENIZER=`. Three bugs in one day came from skipping this,
+the loudest a k5 SFT that trained at loss 4.77 instead of 1.28 with nothing raising.
+
+### Synthetic data
+
+`docs/synthetic_data_standard.md`. One distinction decides the mix weight: **anchored rephrasing**
+(+6.7pp at 1B, ~30% of the mix) versus **from-scratch generation** (ties naive summarisation,
+under 5% for sub-1B). Test: are the output's numbers and entities a subset of its declared source.
 
 ## The harness — `python scripts/harness.py`
-- **The single place progress is checked, recorded and advanced.** `check` (invariants,
-  exit 1 on failure, in CI), `ledger` (every checkpoint with its provenance AND its
-  math-hard on one line), `gaps` (what is NOT measured, stated out loud), `stages`.
-- **A stage is done when the measurement that would falsify it exists — not when it
-  produced a file.** One night produced three write-ups and zero runs of the metric of
-  record, so "which checkpoint is best" was unanswerable while the conclusions read as
-  settled. `gaps` exists so that is visible instead of inferred from an absence.
-- **A check without a failing case is not a check.** Every entry in `CHECKS` carries a
-  `broken()` building a world where its condition is violated, and `--selftest` asserts
-  the check reports FAIL there. Four separately written guards for this repo all shipped
-  the same defect on one afternoon — satisfied by an empty list, by a missing file, or by
-  a deleted call site — and every one of their selftests passed. Add a check only with its
-  broken world; the selftest fails otherwise.
-- **A probe that asks "did training install X" must measure TEACHER-FORCED and FREE-RUNNING
-  in the same run, or its null cannot be read.** `probe_procedure` scored free-running only:
-  BOTH went 0.0 -> 0.0 after procedure SFT, which fits the pre-registered cell "coverage was
-  not the constraint" and would have retired a correct path. Teacher-forced on the same gold
-  text, the digit head went **21.3% -> 57.2%** (McNemar p=5.7e-62). The procedure was
-  learned and does not survive the model's own rollout — exposure bias, not missing data.
-  The gap between the two numbers IS the diagnosis; either number alone is unreadable.
-  ARM B makes the same point from the other side: 7.4% replay moved teacher-forced
-  significantly (57.2 -> 61.1, p=6.6e-05) and moved BOTH not at all. One intervention, two
-  measurements, opposite outcomes — coverage would have moved both.
-- **A null landing in a pre-registered cell does not certify that cell.** Pre-registration
-  (`docs/exp_procedure_sft.md`) is what made the missing branch visible instead of absorbing
-  the result into an existing one; the amendment there is labelled as written afterwards.
-- **A METRIC WITHOUT A KNOWN-ANSWER CASE IS NOT A METRIC** — the dual of the rule above,
-  for files that measure rather than check. `scripts/tokenizer_report.py` reported four
-  wrong numbers in one day, every one of them a value that depends on the measurement
-  configuration printed without it: hanzi whole-char **0.00% against a true 99.2%** (it
-  searched byte-mapped token strings for a literal hanzi, so it fired on every CORRECT
-  ByteLevel vocabulary); utilisation **6.4% against 99.7%** and the undertrained tail
-  **4.0% against 0.43%** (402 documents and 1.6M tokens instead of 142M — a token of true
-  frequency 1e-6 appears 1.6 times in 1.6M, so a healthy Zipf tail MUST put percent of the
-  vocabulary at <=1 use); English fertility **2.36 against 1.87** (documents clipped to
-  2,000 characters). Three of the four are caught automatically by the **scale-stability**
-  assertion in its `--selftest`: ten times the text must not move a per-character or
-  per-word ratio, and any metric that DOES move is declared scale-bound and carries its
-  corpus size instead of a bare threshold. One known answer is not enough either — a single
-  low-hanzi case would have passed the broken version, so the test asserts a PAIR that must
-  differ by 60 points. `sample_corpus`'s `shards` and `clip` are part of every metric's
-  definition, not tuning knobs.
-- **Build the broken world by MUTATING A REAL ARTIFACT, never by hand-writing one from the
-  check's own source.** All six checks passed `--selftest` while three were dead, because
-  each broken world was synthesised from the check author's memory of the input format and
-  agreed with the check's bug instead of with production. `no_stale_running` read `date`;
-  `exp.py` has only ever written `started`, so every row raised into a bare `except:
-  continue` and the check returned PASS having examined ZERO rows, with five runs up to
-  three days stale — verbatim the incident it cites. Its broken world hand-wrote a `date`
-  key, so both halves believed the same fiction. Both mix worlds wrote `data/mix_test.json`
-  while the checks read `cfg_default("mix")`, so they FAILed on "file does not exist" and
-  the real logic never once ran. The fixes are structural: `_broken_stale_run` now shells
-  out to `scripts/exp.py start` (via `AUPAI_ROOT`) and ages the row it really wrote, and
-  `_tmp_repo` writes the mix at the path the checks actually read.
-- **`cfg_default` raises instead of returning None.** Annotating `mix = "..."` as
+
+`check` (invariants, exit 1, in CI) · `ledger` (checkpoint, provenance, math-hard) ·
+`gaps` (what is unmeasured) · `measure` (measures it) · `stages`.
+
+### Rules, and the incident behind each
+
+| Rule | What happened without it |
+|---|---|
+| A stage is done when its falsifying measurement exists, not when it produced a file | One night: three write-ups, zero runs of the metric of record. "Which checkpoint is best" was unanswerable while the conclusions read as settled |
+| A check without a failing case is not a check. Every `CHECKS` entry carries `broken()`; `--selftest` asserts FAIL there | Four separately written guards shipped the same defect in one afternoon — satisfied by an empty list, a missing file, a deleted call site — and every selftest passed |
+| Build the broken world by mutating a real artifact, never by hand-writing one from the check's own source | Three of six checks were dead while `--selftest` passed. `no_stale_running` read `date`; `exp.py` only ever wrote `started`, so every row hit a bare `except: continue` and the check returned PASS on zero rows with five runs three days stale. Its broken world hand-wrote `date` — both halves believed the same fiction |
+| A metric without a known-answer case is not a metric | `tokenizer_report.py` reported four wrong numbers in one day (below) |
+| An install probe measures teacher-forced AND free-running in the same run | `probe_procedure` scored free-running only: BOTH 0.0 → 0.0 after procedure SFT, which fits "coverage was not the constraint" and would have retired a correct path. Teacher-forced, the digit head went 21.3% → 57.2% (McNemar p=5.7e-62). The procedure was learned and does not survive the model's own rollout |
+| A null landing in a pre-registered cell does not certify that cell | `docs/exp_procedure_sft.md`; its amendment is labelled as written afterwards |
+| A permanent red is the same as no signal | Twice: CI red on a clean checkout at step 4, and `mix_shards_present` red because a checkout ships only `data/corpus/sample` |
+
+### The four wrong numbers, and what catches them
+
+Every one is a value that depends on the measurement configuration, printed without it.
+
+| Metric | Reported | True | Cause |
+|---|---|---|---|
+| hanzi whole-char | 0.00% | 99.2% | Searched byte-mapped token strings for a literal hanzi — fired on every correct ByteLevel vocabulary |
+| vocabulary utilised | 6.4% | 99.7% | 402 documents |
+| undertrained (≤1 use) | 4.0% | 0.43% | 1.6M tokens, not 142M. A token of frequency 1e-6 appears 1.6 times in 1.6M, so a healthy Zipf tail must put percent of the vocabulary at ≤1 use |
+| English fertility | 2.36 | 1.87 | Documents clipped to 2,000 characters |
+
+`tokenizer_report.py --selftest` catches three of the four with one assertion: ten times the
+text must not move a per-character or per-word ratio. A metric that does move is declared
+scale-bound and carries its corpus size instead of a bare threshold. Known answers come in
+pairs — a single low-hanzi case passes the broken version — and must differ by 60 points.
+`sample_corpus`'s `shards` and `clip` are part of every metric's definition.
+
+### Two failure modes specific to this file
+
+- **`cfg_default` raises rather than returning None.** Annotating `mix = "..."` as
   `mix: str = "..."` makes it an `ast.AnnAssign`; both corpus invariants then reported SKIP
-  with the text "chosen on purpose" — an intent nobody expressed — and `check` exited 0. A
-  one-token edit no reviewer would flag silently retired two checks, in the file whose own
-  thesis is that "could not check" must never read as "checked".
-- **The ledger must take names from the SCORES too, not only from disk and command lines.**
-  `--name X` attributes a score to `ckpt_X` without `ckpt_X.pt` ever appearing in a command,
-  so `ckpt_rl_k4` 4.1% and `ckpt_sft_v5_hard` 3.1% were dropped — and 4.1% is higher than
-  the 3.6% the ledger was calling the best on record. The single place progress is read
-  from was hiding the top of its own table.
-- **CI was RED on a clean checkout at step 4 for the whole checkout's existence**, so no
-  step after it — `test_sft_pack`, `eqcheck`, `holdout`, `harness check` — had ever run.
-  `loader.py selftest` asserted on gitignored `data/tokenizer.json` where every other
-  tokenizer-dependent step prints SKIP. "CI is green" was never evidence of anything.
-  `mix_shards_present` was the second: a checkout ships only `data/corpus/sample`, so it is
-  now SKIP when NONE of the mix's domains resolve and FAIL only when some do and some
-  don't — a permanent red is the same as no signal.
-- **`E2E_GPU=7 python scripts/test_e2e.py` tests the JOINS, which is what no other test does.**
-  Every stage has a unit test and the chain had none, so the defects that survive are the ones
-  between stages: a pack whose fingerprint could never equal any checkpoint's `vocab_id` because
-  `prepare_sft.py` hashed `str(id)` before the token, and an SFT that ran at loss 4.77 instead of
-  1.28 on weights it had silently reinitialised. It carries ONE artifact through
-  mix -> tokenize -> pretrain -> checkpoint -> load -> pack -> SFT -> generate on the sample corpus
-  sample and asserts the seams: checkpoint `vocab_id` == tokenizer fingerprint == pack fingerprint,
-  cfg comes from `ck["cfg"]`, and cos(pretrained embedding, post-SFT embedding) > 0.9.
-- **It also asserts the pretrain actually STEPPED**: cos(fresh init under `Cfg.seed`, checkpoint)
-  < 0.9, measured -0.028 after six real steps. Without it every stage passed on a 206M random init
-  with the training loop stubbed to zero iterations — the chain test could not see that no training
-  had happened, which is the whole class of failure it exists for.
-- **There is no CPU half and `E2E_GPU` is required.** DeltaRecurrence is fla/Triton only, so a
-  cardless run could only re-check the mix and the vocabulary that `harness.py check` already
-  covers, then exit 0 — which reads as "the chain works". It was wired into CI in exactly that
-  shape, so the skip path was DELETED rather than documented. **CI does not run it; only a GPU run
-  covers the joins.** It will not pick a card on its own: the pod's GPUs are shared, and a test that
-  grabs whatever looks free eventually grabs a pretrain's.
+  with the text "chosen on purpose", and `check` exited 0.
+- **The ledger takes names from the scores too.** `--name X` attributes a score to `ckpt_X`
+  without `ckpt_X.pt` appearing in any command, so `ckpt_rl_k4` 4.1% was dropped — higher
+  than the 3.6% the ledger called the best on record.
+
+### `E2E_GPU=<idx> python scripts/test_e2e.py`
+
+The only test of the JOINS. Every stage has a unit test; the chain had none, so the surviving
+defects were between stages: a pack whose fingerprint could never equal any checkpoint's
+`vocab_id` (`prepare_sft.py` hashed `str(id)` before the token), and an SFT that ran at loss
+4.77 instead of 1.28 on silently reinitialised weights.
+
+It carries one artifact through mix → tokenize → pretrain → checkpoint → load → pack → SFT →
+generate and asserts:
+
+- checkpoint `vocab_id` == tokenizer fingerprint == pack fingerprint
+- cfg comes from `ck["cfg"]`
+- cos(pretrained embedding, post-SFT embedding) > 0.9
+- **the pretrain actually stepped**: cos(fresh init under `Cfg.seed`, checkpoint) < 0.9,
+  measured −0.028 after six real steps. Without it every stage passed on a 206M random init
+  with the training loop stubbed to zero iterations.
+
+`E2E_GPU` is required and there is no CPU half. A cardless run could only re-check what
+`harness.py check` covers, then exit 0 — which reads as "the chain works", and it was wired
+into CI in exactly that shape. CI does not run it. It will not pick a card: the pod's GPUs are
+shared.
 
 ## Before committing model/optimizer changes
 - CI (.github/workflows/ci.yml) runs ruff E9/F, py_compile, test_arch_compat, eqcheck, holdout on every push.
@@ -252,72 +247,103 @@
   copy supervised -- 40 examples packed into 8 rows instead of 5, and nothing would have reported it.
 
 ## Tokenizer / vocabulary
-- **`data/tokenizer.json` is rebuilt IN PLACE and the old file is gone.** Every checkpoint
-  needs the vocabulary it was trained on, and `ckpt_k6_fone.pt` nearly became unusable this way:
-  the corpus-v3 rebuild overwrote the 32,773-token file k6 was trained on with a DIFFERENT
-  32,773-token file (`d191af789cdbe597` -> `0bce3584bc24f255`). Same size, every id different,
-  so a size check passes and the scores are noise. Recovered only because the local checkout
-  still had the old file; it is now `data/tokenizer_k6.json` on the pod.
-  **Before rebuilding, copy the current file to `data/tokenizer_<name>.json` for every live
-  checkpoint.** `scripts/loader.py` compares fingerprints, which is what makes this survivable.
-- `scripts/tokenizer_report.py` measures a vocabulary on four groups -- compression,
-  distribution (Zipf deviation, utilisation, undertrained tokens), structure (digit place-value,
-  UTF-8 integrity, round-trip, whitespace), and English (fertility, morphology, parity).
-  chars/token alone is a weak proxy: arXiv 2506.03101 measures its correlation with downstream
-  performance from rho=-0.77 to rho=-0.09 depending on task. It caught that k5's vocabulary was
-  round-trip LOSSY (NUL and tab did not survive) and used only 72.3% of its slots.
-- vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
-  `padded_vocab` is 32,832 either way, so adding `[NUM]` resized nothing.
-- **Measured against the 2026 frontier, our CHINESE is frontier-level and our English pays
-  the bilingual-at-32K tax.** Same passages, same code, 2026-08-29:
-  ours 32,773 / en 1.429 / zh 1.693 chars-per-token; DeepSeek-V3 128,815 / 1.104 / **1.693**;
-  GLM-4.5 151,365 / 1.130 / 1.608; Qwen3-0.6B 151,669 / 1.130 / 1.494; SmolLM3 128,256 /
-  1.130 / 1.134; Phi-4-mini 200,029 / 1.143 / 1.144. **Our Chinese ties DeepSeek-V3 and beats
-  Qwen3 and GLM-4.5 on a quarter of the slots.** English is 25% behind and every frontier
-  model buys its 1.13 with a 128K-200K vocabulary -- **not one of them is still at 32K**.
-  That fix is unavailable to us (see below), so 1.429 is a recorded price, not a defect, and
-  `tokenizer_eval`'s English gate is a REGRESSION GUARD at 1.55, not a target.
-  Rebalancing the sample cannot buy it back: an en-share sweep at 14/33/50% moved fertility
-  1.870 -> 1.911 -> 1.988, the wrong way, because at a fixed 32K the two languages compete
-  for the same slots.
-- **FROZEN 2026-08-29: `data/tokenizer.json`, fingerprint `0bce3584bc24f255`, vocab 32,773.**
-  Backed up as `data/tokenizer_k8.json` on the pod. Every gate in `scripts/tokenizer_eval.py`
-  passes; the two that do not read as targets are regression guards with their cost recorded
-  (English fertility 1.429, unreachable slots 0.70% = 234K parameters = 0.1% of the model).
-  **Three conditions unfreeze it, and nothing else does:**
-  (a) the model grows enough that the fitted optimum leaves 12-20K — the frontier's 128K-200K
-  is right for 7B-100B+, not for a 166M non-embedding model;
-  (b) the corpus distribution changes materially, e.g. a 100x scale-up onto a different source,
-  since the current vocabulary was trained on a 112K-document stratified sample of corpus v3;
-  (c) an extrinsic test — two pretrains differing ONLY in the vocabulary — says a candidate is
-  better. That test has never been run here, and TokEval (arXiv 2608.18062) is explicit that
-  intrinsic metrics screen but do not rank: "adjacent rows of results tables mostly differ by
-  less than seed retraining would move a single model".
-  Unfreezing invalidates every checkpoint: ids do not survive a rebuild, and size does not
-  identify a vocabulary. Copy the live file to `data/tokenizer_<name>.json` FIRST.
-- **Keep 32K.** A fitted vocabulary scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the optimum
-  for this 166M non-embedding model near 12-20K once overtraining is accounted for; a measured sweep
-  on this corpus shows 64K buys +2.8% compression for +33.6M params and **+14% compute per character**
-  (the d×V output matmul runs every forward pass — tying halves the params, not the FLOPs; at 32K it
-  is already ~17% of FLOPs). Big multilingual vocabs (Qwen3 151,936 / GLM-4 151,552 / DeepSeek-V3
-  129,280) buy English + code + 50 languages, not Chinese. Measured head to head on this corpus, ours
-  emits FEWER tokens than Qwen3-0.6B: 1.61 vs 1.45 chars/token.
-- Train from a STRATIFIED sample, which `scripts/build_tokenizer.py` does (equal per-domain byte
-  budget), not from the raw corpus. Feeding all 9.4M docs let web drown everything else: the old
-  vocab had no whole-token for common traditional characters and split them into byte pieces, so web
-  scored 1.04 chars/token — worse than one token per character. Rebuilding from a 112K-doc stratified
-  sample took 5 minutes instead of 45+ and emits **12.5% fewer tokens** on held-out corpus text
-  (1.484 vs 1.299 chars/token), better on every domain. Slot spend shifted where you would want it:
-  single-character tokens 3,175 -> 4,706 and 5+-character tokens 4,312 -> 7,817. Every pretrain
-  before 2026-08-28, k5 included, used the weaker vocab.
-- Sample SIZE barely matters; sample BALANCE does. 25K docs vs 395K (16x data, 6x time) moved
-  chars/token 2.6093 -> 2.6296 and hanzi occurrence-coverage 99.51% -> 99.62%, and the 5K-10K
-  frequency tier stayed at 0% either way — the binding constraint is the 32K vocab budget, not the
-  corpus. Of 7,825 distinct hanzi only the top ~1K get whole tokens, which still covers 99.6% of
-  occurrences.
-- Always train with `initial_alphabet=ByteLevel.alphabet()`. Without it only the byte-alphabet chars
-  present in the corpus survive (measured 193/256), which silently drops NUL bytes on the round trip
-  and breaks every fast tokenizer library.
+
+**FROZEN 2026-08-29.** `data/tokenizer.json`, fingerprint `0bce3584bc24f255`, vocab 32,773
+(32,768 BPE merges including `<unk>`/`<eos>`, plus 4 chat specials and `[NUM]`; `padded_vocab`
+is 32,832 either way, so adding `[NUM]` resized nothing). Backed up as `data/tokenizer_k8.json`
+on the pod.
+
+### Where we stand against the 2026 frontier
+
+Same English passage, same Chinese passage, same code, `tokenizers/from_pretrained`:
+
+| tokenizer | vocab | en fertility | zh chars/token |
+|---|---|---|---|
+| **ours** | **32,773** | **1.429** | **1.693** |
+| DeepSeek-V3 | 128,815 | 1.104 | 1.693 |
+| GLM-4.5 | 151,365 | 1.130 | 1.608 |
+| Qwen3-0.6B | 151,669 | 1.130 | 1.494 |
+| SmolLM3-3B | 128,256 | 1.130 | 1.134 |
+| Phi-4-mini | 200,029 | 1.143 | 1.144 |
+| gpt2 | 50,257 | 1.156 | 0.465 |
+
+Chinese ties DeepSeek-V3 and beats Qwen3 and GLM-4.5 on a quarter of the slots. English is 25%
+behind, and every frontier model buys its 1.13 with 128K–200K — **none is still at 32K in 2026**.
+That fix is unavailable here: the fitted scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the
+optimum for a 166M non-embedding model at 12–20K, and a measured sweep showed 32K→64K buys +2.8%
+compression for +33.6M parameters and **+14% compute per character** (the d×V output matmul runs
+every forward pass; tying halves the parameters, not the FLOPs — at 32K it is already ~17% of FLOPs).
+
+Rebalancing cannot buy English back: an en-share sweep at 14/33/50% moved fertility
+1.870 → 1.911 → 1.988, the wrong way, because at a fixed 32K the two languages compete for slots.
+
+### Gates — `python scripts/tokenizer_eval.py --tokenizers <paths>`
+
+| gate | value | threshold | meaning |
+|---|---|---|---|
+| round-trip lossless | pass | — | veto |
+| 256 bytes present | 256/256 | — | veto |
+| hanzi whole-char | 0.9913 | ≥0.95 | veto |
+| ref fertility | 1.429 | ≤1.55 | regression guard, cost recorded |
+| never-used slots | 0.0070 | ≤0.01 | regression guard, 234K params = 0.1% of the model |
+
+`never used` excludes entries unreachable by design: the seeded ByteLevel alphabet is a
+byte-FALLBACK net, and the chat specials and `[NUM]` do not appear in raw corpus text. Counting
+them read 0.87%.
+
+### Unfreeze conditions — three, and nothing else
+
+1. The model outgrows the fitted 12–20K optimum.
+2. The corpus distribution changes materially. The current vocabulary was trained on a
+   112K-document stratified sample of corpus v3.
+3. An extrinsic test — two pretrains differing only in the vocabulary — says a candidate is
+   better. Never run here. TokEval (arXiv 2608.18062) is explicit that intrinsic metrics screen
+   but do not rank: "adjacent rows of results tables mostly differ by less than seed retraining
+   would move a single model."
+
+Unfreezing invalidates every checkpoint. Ids do not survive a rebuild and size does not identify
+a vocabulary: the corpus-v3 rebuild overwrote the 32,773-token file `ckpt_k6_fone` was trained on
+with a **different** 32,773-token file (`d191af789cdbe597` → `0bce3584bc24f255`), so a size check
+passes and the scores are noise. **Copy the live file to `data/tokenizer_<name>.json` first.**
+`scripts/loader.py` compares fingerprints, which is what makes this survivable.
+
+### Building one
+
+`scripts/build_tokenizer.py`, stratified equal-byte sample per domain, `--weights` to change the
+balance, `--out` to keep a candidate out of `data/tokenizer.json`.
+
+- **Always pass `initial_alphabet=ByteLevel.alphabet()`.** Without it only the byte-alphabet
+  characters present in the corpus survive (measured 193/256), which silently drops NUL and
+  breaks every fast tokenizer library.
+- **Sample balance matters, sample size barely does.** 25K documents vs 395K (16x data, 6x time)
+  moved chars/token 2.6093 → 2.6296 and hanzi occurrence-coverage 99.51% → 99.62%; the 5K–10K
+  frequency tier stayed at 0% either way. The binding constraint is the 32K budget, not the corpus.
+  Of 7,825 distinct hanzi only the top ~1K get whole tokens, covering 99.6% of occurrences.
+- Feeding all 9.4M documents let web drown everything else: that vocabulary had no whole token
+  for common traditional characters and scored web at **1.04 chars/token**, worse than one token
+  per character. A 112K-document stratified sample took 5 minutes instead of 45+ and emitted
+  **12.5% fewer tokens** on held-out text (1.484 vs 1.299 chars/token), better on every domain.
+  Single-character tokens 3,175 → 4,706; 5+-character tokens 4,312 → 7,817. Every pretrain before
+  2026-08-28, k5 included, used the weaker vocabulary.
+
+### Measurement — `scripts/tokenizer_report.py`
+
+Four groups: compression, distribution, structure, English. `--selftest` is mandatory before
+believing any number it prints; see the harness section for the four wrong numbers it emitted in
+one day and the scale-stability assertion that catches three of them.
+
+chars/token alone is a weak proxy — arXiv 2506.03101 measures its correlation with downstream
+performance from ρ=−0.77 to −0.09 depending on task. TokEval measures Rényi efficiency as the
+strongest single predictor (ρ=−0.80 against BPB) with compression rate at −0.51.
+
+**Faster tokenizer libraries do not drop in** (evaluated 2026-08-28; 9.49B tokens at 2.3M tok/s,
+~66 min). `gigatoken` refuses this vocabulary ("no single-byte vocab entry for byte 0x00" — it
+needs a complete 256-byte base a Chinese-corpus BPE does not have); `fastokens` matches ids on
+short strings but raises "character not in vocabulary" on real corpus text instead of falling back
+to `<unk>`; `tiktoken` uses a different regex pretokenizer and cannot reproduce ByteLevel BPE ids.
+Adopting any of them means retraining the vocabulary, which changes every id. 75% of the time is
+already in the Rust tokenizer on 90–143 cores. The real win is incremental tokenization, not a
+faster library.
 
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.
