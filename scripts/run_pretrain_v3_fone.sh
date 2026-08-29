@@ -127,18 +127,25 @@ with tempfile.TemporaryDirectory() as td:
     torch.save((torch.zeros(4, dtype=torch.int32), torch.zeros(2)), pair)
     assert not cache_is_fone(plain) and cache_is_fone(pair), "cache_is_fone selftest failed"
 
-cdir = os.path.dirname(train.TOKEN_CACHE)
-stale = [
-    d for d in doms
-    if os.path.exists(f"{cdir}/tokens_{d}.pt") and not cache_is_fone(f"{cdir}/tokens_{d}.pt")
-]
-assert not stale, (
-    f"token caches built WITHOUT --fone: {stale}. train.py reuses tokens_<domain>.pt when its mtime "
-    "and vocab stamp look fresh -- the flag is not part of that check -- and then unpacks it as "
-    "(ids, values). Delete them first (this costs a retokenize for the next non-fone run too):\n    "
-    + " ".join(f"rm {cdir}/tokens_{d}.pt {cdir}/tokens_{d}.pt.vocab" for d in stale)
+# The cache used to be keyed on domain + vocabulary fingerprint but NOT on --fone, which
+# rewrites the stream while leaving the fingerprint identical, so k7_v3's non-FoNE cache
+# looked fresh to a FoNE run. train.py now namespaces the two, so nothing has to be
+# deleted -- but verify THIS train.py carries the fix rather than trusting the pod copy:
+# the pod is not a git repo and receives files by hand, so a stale train.py is the normal
+# way this regresses.
+import ast
+
+_src = open("train.py", encoding="utf-8").read()
+assert "_domain_cache_path" in _src, (
+    "this train.py predates the FoNE cache namespacing: it would load a non-FoNE token "
+    "cache as fresh and unpack `ids, vals = data` off a 1-D tensor, 40 minutes in."
 )
-print(f"  token caches under {cdir}: none built without --fone")
+_fn = next(
+    n for n in ast.walk(ast.parse(_src))
+    if isinstance(n, ast.FunctionDef) and n.name == "_domain_cache_path"
+)
+assert "fone" in ast.unparse(_fn), "_domain_cache_path no longer varies with --fone"
+print("  token cache: namespaced by --fone, no deletion needed")
 print(f"VOCAB_ID {fp}")
 PY
 )
