@@ -95,6 +95,25 @@ predicts math stays flat, but sub-500M full FT overwrites priors (Fine-Tuning Tr
 and dilution is the one risk neither prior covers. If replay dents the probe, that is the
 LoRA signal.
 
+## The control is k8, not any earlier number
+
+k8_v3_fone is a NEW base — the first combination of corpus v3 with `--fone`, so it differs
+from every earlier checkpoint in both the data and the number representation. **`sft_k5_ctrl`'s
+3.6% is therefore not the control for this experiment**, and neither is k7_v3's 2.8% BOTH.
+The only valid comparison is k8 base against k8+SFT on the same probe: anything cross-base
+mixes the corpus effect with the SFT effect and cannot separate them. Run the probe on the
+bare k8 checkpoint first, before any SFT, and record it.
+
+## Statistics, fixed in advance
+
+`probe_procedure --n 60` scores 60 held-out problems per procedure = **n=180**. At a 30% pass
+rate SE is about 3.4pt, so a 5pt arm difference is noise.
+
+- **Between arms** (SFT vs SFT+replay): Fisher exact, one-sided. The `--fone` arithmetic
+  result on this project used the same test at p=1.2e-7.
+- **Within one arm, before vs after**: McNemar (paired) — the same 180 problems are scored
+  twice, and a two-proportion z-test throws that pairing away.
+
 ## Instrument caveat
 
 math-hard resolves to +-1.1pt at a 2-3% pass rate. `probe_procedure` at n=180 held-out
