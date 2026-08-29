@@ -1,0 +1,79 @@
+{
+  "facts": [
+    {
+      "id": "cont.union",
+      "value": {"hit_0.7": 507, "hit_0.8": 223, "hit_0.9": 84, "long_holdouts": 1498, "exact_matches": 0},
+      "measured": "2026-08-30",
+      "source": "scripts/scan_math_contamination.py union run over data/corpus/math/*.jsonl (9 shards, 530,234 rows)",
+      "config": {
+        "metric": "containment = |holdout bigrams ∩ row bigrams| / |holdout bigrams|, zh char-bigrams / en word tokens",
+        "verdict_threshold": 0.8,
+        "holdout_files": ["data/eval/math_test_500.jsonl", "data/synthetic/math_hard_eval_1k.jsonl"],
+        "min_bigrams": 20,
+        "short_holdouts_excluded": 34
+      },
+      "uncertainty": "union dedups holdouts across shards; per-shard counts in cont.shards overlap",
+      "boundary": "containment counts number-swapped template variants as hits — the same-numbers subset is cont.same_numbers, unmeasured",
+      "status": "measured"
+    },
+    {
+      "id": "cont.split",
+      "value": {"math_500": "150/500 (30.0%) at 0.8", "math_hard_1k": "73/1032 (7.1%) at 0.8"},
+      "measured": "2026-08-30",
+      "source": "scripts/scan_math_contamination.py union run, split by holdout file of origin",
+      "config": {"note": "150+73=223=cont.union hit_0.8; no holdout text appears in both files"},
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.fpr",
+      "value": {"false_positive_holdouts": 0, "holdouts": 1498, "clean_docs_scanned": 2000, "threshold": 0.8},
+      "measured": "2026-08-30",
+      "source": "scripts/scan_math_contamination.py over data/corpus/sample/batch_*.jsonl",
+      "config": {"clean_corpus": "web prose sample batches, assumed clean", "scan_mode": "--full-doc"},
+      "uncertainty": "assumed-clean is not proven-clean, and 2,000 docs is a small sample — a 0.1% FPR would need ~3,000 docs to surface once",
+      "status": "measured"
+    },
+    {
+      "id": "cont.shards",
+      "value": {
+        "ape210k_000": {"rows": 53772, "hit_0.8": 21, "verdict": "REJECT"},
+        "gsm8k_zh_000": {"rows": 7398, "hit_0.8": 0, "verdict": "clean"},
+        "math23k_000": {"rows": 19916, "hit_0.8": 0, "verdict": "clean"},
+        "math_short_sol_v1_000": {"rows": 2262, "hit_0.8": 11, "verdict": "REJECT"},
+        "math_short_v6_000": {"rows": 95311, "hit_0.8": 43, "verdict": "REJECT"},
+        "math_short_v7_000": {"rows": 73682, "hit_0.8": 37, "verdict": "REJECT"},
+        "math_short_v8_000": {"rows": 66803, "hit_0.8": 30, "verdict": "REJECT"},
+        "mxode_000": {"rows": 174860, "hit_0.8": 141, "verdict": "REJECT"},
+        "mxode_001": {"rows": 36230, "hit_0.8": 107, "verdict": "REJECT"}
+      },
+      "measured": "2026-08-30",
+      "source": "scripts/scan_math_contamination.py, one run per shard at thresholds 0.7/0.8/0.9",
+      "config": {"policy": "REJECT THE WHOLE SOURCE — do not filter rows", "short_holdout_bucket": "reported separately, excluded from these counts"},
+      "uncertainty": "per-shard hits are holdout-max counts; the same holdout can be hit in multiple shards (union in cont.union)",
+      "status": "measured"
+    },
+    {
+      "id": "cont.jaccard_era",
+      "value": {"math_500": "12.2%", "math_hard_1k": "0.3%", "mxode_rows": 949, "metric": "Jaccard >= 0.8 on extracted questions, same-number-multiset pairs"},
+      "measured": "2026-08-29",
+      "source": "pre-containment Jaccard driver over data/corpus/math/*.jsonl",
+      "config": {"pair_classification": "contam (same numbers) vs template (number-swapped); only contam counted"},
+      "uncertainty": null,
+      "status": "recorded",
+      "audit": "method superseded 2026-08-30 by containment: Jaccard 0.8 misses verbatim embeds with extra text (a verbatim holdout in an 841-char doc scores Jaccard 0.339), which is why math-hard moved 0.3% -> 7.1% under containment. Numbers retained for provenance only."
+    },
+    {
+      "id": "cont.same_numbers",
+      "claim": "of the 223 containment hits, the subset sharing the holdout's exact number multiset (true contamination) versus number-swapped template variants",
+      "value": "unmeasured",
+      "measured": "2026-08-30",
+      "source": "scripts/scan_math_contamination.py union run recorded hit holdout indices only, not corpus rows",
+      "config": {"required_for": "deciding whether REJECTED shards are salvageable by row-level filtering vs wholly template-derived"},
+      "uncertainty": "zh char-bigrams make number-swapped templates score high containment, so the template share could be large; the Jaccard-era same-numbers rate (12.2% vs 30.0% containment on math-500) suggests a majority of hits may be template variants",
+      "status": "unmeasured",
+      "audit": "union run did not persist (corpus row, holdout) pairs, so number-multiset equality cannot be checked from saved output",
+      "refuted_by": "a pair-level re-scan recording each hit's corpus row and classifying by number-multiset equality"
+    }
+  ]
+}

@@ -1,0 +1,265 @@
+{
+  "facts": [
+    {
+      "id": "ds.muennighoff_formula",
+      "value": "L(U_D,R_N,R_D) = 521/(U_N + 5.3*U_N*(1-e^(-R_N/5.3)))^0.35 + 1488/(U_D + 15.4*U_D*(1-e^(-R_D/15.4)))^0.35 + 1.87, with U_N = 0.051*U_D; fitted R_D*=15.387756, R_N*=5.309743, alpha=beta=0.35, E=1.87",
+      "measured": "2026-08-30",
+      "source": "2023 paper; Muennighoff et al., Scaling Data-Constrained Language Models, arXiv 2305.16264, Eq.17 + Appendix A",
+      "config": {
+        "fit_range": "epochs 1-500, params 7M-9B, C4 subsets, GPT-2 architecture, cosine 10x decay per run, 5 seeds/dot"
+      },
+      "uncertainty": null,
+      "boundary": "fitted on GPT-2 architecture, English C4; KDA+MLA and Chinese are out of distribution",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_four_epoch",
+      "value": "8.7B model at 4 epochs (44B unique tokens) finishes +0.5% validation loss vs single-epoch (178B unique); downstream differences insignificant up to ~4 epochs (25% budget)",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.6-7",
+      "config": {
+        "model": "8.7B params",
+        "data": "C4",
+        "schedule": "cosine 10x decay, no early stopping, shuffled after each epoch",
+        "seeds": 5
+      },
+      "uncertainty": null,
+      "boundary": "measured at 8.7B; the paper's fit covers 7M-9B but this specific number is an 8.7B point — 200M is in the fit range, not a direct measurement",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_per_epoch_decay",
+      "value": "each repeated epoch worth ~94% of the previous pass (delta~0.06 for data, ~0.19 for parameters); at R_D* repeated tokens worth on average 1-1/e ~ 63% of fresh; hard ceiling: effective data plateaus at ~16.4x the unique corpus regardless of epochs",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.5 + Appendix A",
+      "config": {
+        "fit_range": "epochs 1-500, 7M-9B params, C4"
+      },
+      "uncertainty": null,
+      "boundary": "delta is a fit constant, not a per-size measurement; no per-size repetition-tolerance table is published",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_size_epoch_interaction",
+      "value": "R_N*=5.3 < R_D*=15.4, so excess parameters decay faster than repeated data; data-constrained efficient frontier allocates compute to more epochs over more parameters; validated: a 27%-smaller model beat the Chinchilla-suggested model at 9.3e21 FLOPs / 25B unique tokens",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.5, 8",
+      "config": {
+        "range": "7M-9B params, C4"
+      },
+      "uncertainty": null,
+      "boundary": "interaction is captured only through the R_N*/R_D* terms; no direct small-vs-large repetition-tolerance split",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_mitigations",
+      "value": "no dropout or regularization durability test (speculative only); reshuffling after each epoch is standard, not ablated; mixing code gives ~2x effective tokens even for natural-language eval, safe to ~50% code; perplexity filtering helped, deduplication did not help downstream",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.6, 9",
+      "config": {
+        "range": "7M-9B params, C4 + The Stack"
+      },
+      "uncertainty": null,
+      "boundary": "code-mix result is natural-language eval; math eval not tested",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_approach1",
+      "value": "fixed-N data-scaling protocol: for each parameter count N, train 4 models on horizons spanning a factor of 16x; each run its own cosine schedule matched to its horizon (LR drops 10x); cosine overshoot >25% noticeably degrades performance",
+      "measured": "2026-08-30",
+      "source": "2022 paper; Hoffmann et al., Chinchilla, arXiv 2203.15556, Sec.3 Approach 1",
+      "config": {
+        "models": "70M-16B",
+        "tokens": "5B-500B",
+        "peak_lr": "2e-4 smallest models, 1.25e-4 largest"
+      },
+      "uncertainty": null,
+      "boundary": "smallest stated budget 5B tokens; no 200M-specific curve; all runs <1 epoch",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_exponents",
+      "value": "L(N,D) = E + A/N^0.34 + B/D^0.28, E=1.69, A=406.4, B=410.7",
+      "measured": "2026-08-30",
+      "source": "2022 paper; arXiv 2203.15556, Sec.4",
+      "config": {
+        "fit_on": "smoothed training loss, MassiveText domains, <1 epoch"
+      },
+      "uncertainty": null,
+      "boundary": "fitted on their corpus and schedule; beta=0.28 is the prior for a 200M fit, not a measurement at 200M",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_readout",
+      "value": "scaling curves fit on smoothed TRAINING loss as unbiased estimate of test loss under the infinite-data assumption; downstream evals (MMLU, BIG-bench, etc.) used only for the final Chinchilla model",
+      "measured": "2026-08-30",
+      "source": "2022 paper; arXiv 2203.15556, Sec.4",
+      "config": {
+        "type": "paper readout",
+        "paper": "arXiv 2203.15556 Sec.4",
+        "assumption": "infinite-data"
+      },
+      "uncertainty": null,
+      "boundary": "infinite-data assumption fails in the repeated-data regime — training loss is then biased by memorization and held-out loss is required",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.kaplan_min_regime",
+      "value": "power-law fits broke at the smallest dataset (~22M tokens, 40 updates/epoch — 'a different regime'); fits poor for smallest D; valid only after an initial transient; 3000-step warmup (~1.57B tokens at their batch)",
+      "measured": "2026-08-30",
+      "source": "2020 paper; Kaplan et al., Scaling Laws for Neural Language Models, arXiv 2001.08361, Sec.3-5",
+      "config": {
+        "models": "768-1.5B non-embedding (fits from 1e3 params)",
+        "data": "22M-23B tokens (WebText2)",
+        "schedule": "3000-step warmup + cosine to zero"
+      },
+      "uncertainty": null,
+      "boundary": "warmup token count is arithmetic from their batch (512x1024), not stated; their batch is 5.24e5 tokens/step",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.kaplan_noise",
+      "value": "run-to-run variation ~0.05 in loss; results at convergence largely independent of LR schedule as long as LR not too small and decay not too fast",
+      "measured": "2026-08-30",
+      "source": "2020 paper; arXiv 2001.08361, Sec.5",
+      "config": {
+        "schedule_experiments": "3M-param model"
+      },
+      "uncertainty": null,
+      "boundary": "schedule-independence measured at 3M params and at convergence — a 200M curve's per-point readouts must still be annealed to be comparable",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsd_minicpm",
+      "value": "WSD: constant-LR stable phase + exponential decay tail (f=0.5^((s-S)/T)); MiniCPM decay = 5000 steps / 20B tokens (~1.4% of total), peak LR 0.01, batch 3.93M; HQ data in decay beats same data in SFT (GSM8K 27.7->42.3 on 2.4B)",
+      "measured": "2026-08-30",
+      "source": "2024 paper; MiniCPM, arXiv 2404.06395, Sec.6",
+      "config": {
+        "models": "2.4B, 1.2B",
+        "total_tokens": "~1.4T (2.4B)"
+      },
+      "uncertainty": null,
+      "boundary": "validated as a training strategy at 1.2-2.4B; not validated as a scaling-curve readout method at any scale",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_mechanism",
+      "value": "WSM = weighted average of recent checkpoints (mean average of last n, save every 25B tokens); window n=12 sufficient; merge duration is the critical factor, surpassing checkpoint interval and merge quantity; merging and LR decay are alternative pathways, not complementary",
+      "measured": "2026-08-30",
+      "source": "2025 paper; WSM, arXiv 2507.17634, Sec.3-4",
+      "config": {
+        "model": "Ling-mini MoE, 16.3B total / 1.4B active",
+        "base_run": "10.2T tokens"
+      },
+      "uncertainty": null,
+      "boundary": "single model, MoE, 1.4B active params; no dense or sub-1B results",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_proxy",
+      "value": "within ONE constant-LR run, WSM merges (4 checkpoints over preceding 100B tokens) at 2T/4T/6T/8T/10T milestones 'consistently and closely mirror' full 100B-token decay runs started at each milestone; WSM is 'a reliable, high-fidelity proxy for estimating a model's post-anneal potential at any point during training'",
+      "measured": "2026-08-30",
+      "source": "2025 paper; arXiv 2507.17634, Sec.4.3.1",
+      "config": {
+        "model": "Ling-mini 1.4B active",
+        "milestones": "2T-10T tokens"
+      },
+      "uncertainty": null,
+      "boundary": "the only direct evidence that one run can yield multiple valid scaling-curve readouts; scale 1.4B active, MoE",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_vs_wsd",
+      "value": "WSM mean-merge vs WSD best checkpoint: +1.3 points average (up to +2.7 MATH, +2.4 HumanEval, +2.1 MMLU-Pro); Table 1 base 62.67->63.95; merge algorithms: 1-sqrt 64.06 > mean 63.95 > EMA 63.01",
+      "measured": "2026-08-30",
+      "source": "2025 paper; arXiv 2507.17634, Tables 1-3",
+      "config": {
+        "model": "Ling-mini 1.4B active",
+        "eval": "average benchmark points"
+      },
+      "uncertainty": null,
+      "boundary": "single model; downstream points, not loss",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsqd",
+      "value": "WSqD: horizon-independent base LR (cooldown only at the end); matches or outperforms carefully tuned WSD across multiple horizons with one reused peak LR, up to 10% less compute for the same validation loss",
+      "measured": "2026-08-30",
+      "source": "2026 paper; WSqD, yuxinchen2020.github.io/publications/WSqD_schedule.pdf",
+      "config": {
+        "data": "SlimPajama",
+        "horizons": "15000/30000/45000/60000 iterations",
+        "optimizer": "AdamW"
+      },
+      "uncertainty": "model sizes not extracted from the PDF text",
+      "boundary": "solves peak-LR transfer across horizons, not the anneal-per-point cost",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.lr_decay_waste",
+      "value": "aggressive LR decay wastes the best data: curriculum benefit vanishes as decay strengthens; optimal ending LR ~1/3 of peak (1e-3 vs standard 1e-5 at peak 3e-3); constant LR + EMA of last checkpoints (CMA) and moderate decay each recover the benefit; combined +1.64% average accuracy over random shuffle + standard decay",
+      "measured": "2026-08-30",
+      "source": "2025 paper; How Learning Rate Decay Wastes Your Best Data, arXiv 2511.18903",
+      "config": {
+        "model": "Qwen2.5-1.5B",
+        "tokens": "30B",
+        "data": "DCLM-Baseline",
+        "peak_lr": "3e-3"
+      },
+      "uncertainty": null,
+      "boundary": "1.5B only; effect shown on both validation loss and downstream accuracy",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.smollm2_anneal",
+      "value": "SmolLM2-1.7B anneal = last 1T of 11T (9%), linear decay to 0, WSD peak 5e-4; anneal mix 58% web / 24% Stack-Edu / 14% math / 4% Cosmopedia v2; per-domain anneal weights are designed, not ablated",
+      "measured": "2026-08-30",
+      "source": "2025 paper; SmolLM2, arXiv 2502.02737",
+      "config": {
+        "models": "135M/360M/1.7B"
+      },
+      "uncertainty": null,
+      "boundary": "no per-domain anneal-composition ablation exists in the paper",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.mathhard_resolution",
+      "value": "math-hard resolves +-1.1pt at 2-3% pass rate (n=1032); a 4.1% vs 2.9% gap is z=1.44, p=0.15",
+      "measured": "2026-08-29",
+      "source": "aupai EXPERIMENTS.md + adversarial_review.md scoreboard",
+      "config": {
+        "n": 1032
+      },
+      "uncertainty": null,
+      "boundary": "cannot resolve the ~0.01-0.1 loss deltas a scaling-curve fit needs; usable only as a final-model sanity check",
+      "status": "measured"
+    },
+    {
+      "id": "ds.project_corpus",
+      "value": "corpus 3.24B tokens total; model 166M non-embedding params = 19.5 tokens/param (Chinchilla-optimal ~20); SmolLM2-1.7B reference ~6000 tokens/param",
+      "measured": "2026-08-30",
+      "source": "aupai-3b census, relayed by aupai-fb",
+      "config": {
+        "mix": "data/mix_scale_3.24b.json",
+        "model_nonembedding_params_M": 166,
+        "census_by": "aupai-3b"
+      },
+      "uncertainty": null,
+      "boundary": "3b's measurement; not independently re-verified by e1",
+      "status": "measured"
+    },
+    {
+      "id": "ds.trainpy_steps",
+      "value": "warmup 20 steps, batch 32, seq 4096, accum 1; at 6 GPUs = 786,432 tokens/step; warmup = 15.7M tokens; a 0.2B-token point = 254 steps = 12.7x warmup",
+      "measured": "2026-08-30",
+      "source": "aupai train.py:119-124 (read-only inspection)",
+      "config": {
+        "gpus": 6,
+        "per_gpu_batch": 32
+      },
+      "uncertainty": "tokens/step assumes batch 32 per GPU across all 6 GPUs",
+      "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 254 steps is 6.3x that",
+      "status": "measured"
+    }
+  ]
+}
