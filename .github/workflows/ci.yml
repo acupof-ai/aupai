@@ -16,3 +16,5 @@ jobs:
       - run: python scripts/test_sft_pack.py
       - run: python scripts/eqcheck.py
       - run: python scripts/holdout.py
+      - run: python scripts/harness.py --selftest
+      - run: python scripts/harness.py check

@@ -67,6 +67,21 @@
 - pass@k gate for RL: `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` (needs pass@8-pass@1 >= 15pt).
 - FP8 NaN probe: `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod, GPU).
 
+## The harness — `python scripts/harness.py`
+- **The single place progress is checked, recorded and advanced.** `check` (invariants,
+  exit 1 on failure, in CI), `ledger` (every checkpoint with its provenance AND its
+  math-hard on one line), `gaps` (what is NOT measured, stated out loud), `stages`.
+- **A stage is done when the measurement that would falsify it exists — not when it
+  produced a file.** One night produced three write-ups and zero runs of the metric of
+  record, so "which checkpoint is best" was unanswerable while the conclusions read as
+  settled. `gaps` exists so that is visible instead of inferred from an absence.
+- **A check without a failing case is not a check.** Every entry in `CHECKS` carries a
+  `broken()` building a world where its condition is violated, and `--selftest` asserts
+  the check reports FAIL there. Four separately written guards for this repo all shipped
+  the same defect on one afternoon — satisfied by an empty list, by a missing file, or by
+  a deleted call site — and every one of their selftests passed. Add a check only with its
+  broken world; the selftest fails otherwise.
+
 ## Before committing model/optimizer changes
 - CI (.github/workflows/ci.yml) runs ruff E9/F, py_compile, test_arch_compat, eqcheck, holdout on every push.
 - `python scripts/test_arch_compat.py` (CPU, no GPU deps): AttnRes fwd/bwd, legacy-ckpt round-trip,
@@ -117,11 +132,30 @@
   same shape appeared in opencsg/Fineweb-Edu-Chinese (bands 52/66/59% usable, top band
   dirtiest). Run `datagen/audit_source_score.py` before using any source's score as a cut.
 - **The mix is the source of truth about what the corpus is; the filesystem is not.**
-  `data/corpus/web` (unfiltered, 2.99M docs) is kept on disk so a different quality
-  threshold can be re-cut, and anything that enumerates `data/corpus/*` picks it up:
+  `data/corpus/web` (unfiltered, 2.99M docs) is kept -- a different quality threshold has
+  to be re-cuttable from it -- but anything that enumerates `data/corpus/*` picked it up:
   `build_tokenizer.py` would have drowned its stratified sample in the very documents
   the filter removed, and a mix naming `web` instead of `web_hq` trains on them
   outright. Both fail silently. Take domains from `data/mix_v3.json`.
+  Two fixes, 2026-08-29: `scripts/quarantine_web.sh` **renames** it to
+  `data/_quarantine/web_unfiltered` (never deletes -- 13GB gone is not recoverable, a
+  rename is one `mv` back), so no glob over `data/corpus/*` can resolve it as a domain;
+  and `train.py` gained its own `web`-not-in-the-mix guard, on the path `main()` takes, so
+  `run_ddp.sh` and a bare `python train.py` are covered and not just the one wrapper.
+  `scripts/run_pretrain_v3.sh` still carries its copy: the two can drift, and train.py's is
+  the one that matters. A NAMED-BUT-MISSING mix is now an assertion too -- it used to fall
+  through to the flat corpus (`data/corpus/primary`, 244KB) in silence, and repointing the
+  default at `mix_v3.json` made that likely on a pod that had not received the file.
+- **`Cfg.mix` defaulted to `data/mix.json` -- the V2 mix, 88% weight on unfiltered `web`,
+  11.5B tokens -- until 2026-08-29.** Any run launched through `run_ddp.sh` without an
+  explicit `--mix` before that date trained on the unfiltered corpus. `run_pretrain_v3.sh`
+  passed `--mix data/mix_v3.json`; nothing else did. Cfg defaults also disagreed with the
+  recorded recipe (warmup 20 against `--warmup 150`, `attn_res` False against `--attn_res
+  --attn_res_blocks 4`), so a bare `run_ddp.sh` reproduced neither the data nor the arch.
+- **`ckpt_k7_v3` and `ckpt_k6_fone` have never been combined.** k7_v3 is corpus v3
+  (3.29B, filtered) with NO FoNE; k6_fone is corpus v2 (11.33B, unfiltered) WITH FoNE.
+  Every FoNE conclusion on this project therefore rests on a v2 base, measured against a
+  v2 control -- the arithmetic effect is real, but FoNE on filtered data is unmeasured.
 - Traps that cost hours, all silent: `--host_cap` is a web-crawl filter and discarded 83.4% of
   Wikipedia (one host) -- pass `--host_cap 0` for any single-source corpus. Sampling a corpus by
   reading shards in sorted order until the quota is met read 8.5% positive where a shard-stratified

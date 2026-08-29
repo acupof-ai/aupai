@@ -136,7 +136,7 @@ class Cfg:
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
     )
     accum = 1  # was 3; no_sync makes accumulation cheap
-    epochs = 3  # mix mode (data/mix.json) forces epochs=1; this only governs the flat-corpus fallback
+    epochs = 3  # mix mode (Cfg.mix) forces epochs=1; this only governs the flat-corpus fallback
     warmup = 20
     warmdown = 0.65
     final_lr_frac = 0.05
@@ -156,7 +156,9 @@ class Cfg:
     # Document boundaries: <eos> positions become cu_seqlens so KDA state and SWA attention reset per
     # document instead of leaking across the ~10 docs packed into each 4K row (train/infer mismatch).
     doc_mask = True
-    mix = "data/mix.json"  # domain mix (weights / epoch caps / anneal); absent -> legacy flat corpus
+    # Corpus v3 (filtered web_hq + textbook + wiki); mix.json is the v2 mix, whose 88% "web" weight
+    # points at the UNFILTERED corpus. Absent file -> legacy flat corpus.
+    mix = "data/mix_v3.json"  # domain mix (weights / epoch caps / anneal)
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
     val_batches = 20  # batches of the val split used for the periodic check
@@ -1123,6 +1125,76 @@ def _domain_seqs(domain, tok, is_main, ddp):
     return ids, scatter_values(ids, vals, Cfg.num_id)
 
 
+def _assert_mix_domains(names, corpus_dir):
+    """Reject a mix that names the unfiltered corpus, or a domain with no shards on disk.
+
+    This guard used to live only in scripts/run_pretrain_v3.sh, while AGENTS.md documents
+    run_ddp.sh as THE pretrain entry point -- run_ddp.sh calls train.py directly, so the
+    documented path was the unguarded one. Both failures are silent: a "web" domain trains
+    happily on the documents the v3 filters removed, and a domain with no shards is simply
+    scheduled at zero rows. Called from main() where the mix json is read, which is the single
+    point run_ddp.sh, a bare `python train.py` and run_pretrain_v3.sh all pass through. Not
+    inside build_mix: scripts/test_arch_compat.py exercises the scheduler with a synthetic
+    in-memory mix whose domains have no corpus at all."""
+    for name in names:
+        assert name != "web", (
+            "mix domain 'web' is the UNFILTERED corpus: train.py globs data/corpus/<domain>/*.jsonl, "
+            "so this trains on 2,991,648 unfiltered documents and silently discards every quality "
+            "filter the corpus-v3 rebuild applied. Use web_hq."
+        )
+        # _domain_seqs already refuses an empty domain (the `assert texts` below), so this is not
+        # the only thing standing between a missing shard and a bad run -- it fails before the
+        # 40-minute tokenize instead of during it. Claiming it prevents a silent zero-row schedule
+        # would be documenting an incident that cannot happen.
+        assert glob.glob(os.path.join(corpus_dir, name, "*.jsonl")), (
+            f"mix domain '{name}' has no shards: {os.path.join(corpus_dir, name)}/*.jsonl matches "
+            "nothing. _domain_seqs would raise on this too, but only after tokenizing the domains "
+            "that do exist."
+        )
+
+
+def _selftest_mix_guard():
+    """Runs at import, so it fails in CI (scripts/test_arch_compat.py imports train) rather than
+    on the pod 40 minutes into a tokenize. Pure in-memory + a tmpdir; costs microseconds."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "web_hq"))
+        open(os.path.join(d, "web_hq", "a.jsonl"), "w").close()
+        os.makedirs(os.path.join(d, "web"))
+        open(os.path.join(d, "web", "a.jsonl"), "w").close()
+        os.makedirs(os.path.join(d, "empty"))
+        _assert_mix_domains(["web_hq"], d)
+        for bad in (["web"], ["web_hq", "web"], ["empty"], ["web_hq", "missing"]):
+            try:
+                _assert_mix_domains(bad, d)
+            except AssertionError:
+                continue
+            raise AssertionError(f"mix guard accepted {bad}")
+
+    # THE GUARD MUST BE ON THE PATH, and testing its logic does not test that. The bug being
+    # fixed was never that the logic was wrong -- scripts/run_pretrain_v3.sh had correct logic
+    # the whole time -- it was that the logic was not on the path run_ddp.sh takes. Deleting the
+    # call from main() left every logic test above passing. So assert the call site exists, in
+    # the same function that decides use_mix.
+    import ast
+    import inspect
+
+    src = inspect.getsource(inspect.getmodule(_assert_mix_domains))
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    calls = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+    assert "_assert_mix_domains" in calls, (
+        "main() no longer calls _assert_mix_domains, so run_ddp.sh is unguarded again -- which is "
+        "the exact bug this guard exists to fix, and every logic test above still passes without it."
+    )
+    assert "use_mix" in {t.id for n in ast.walk(fn) for t in ast.walk(n) if isinstance(t, ast.Name)}, (
+        "main() no longer computes use_mix; the guard's call site has moved and is unverified here"
+    )
+
+
+_selftest_mix_guard()
+
+
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
     {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}}
@@ -1302,9 +1374,22 @@ def main():
     amp = device.startswith("cuda")
 
     mix_path = os.path.join(ROOT, Cfg.mix) if Cfg.mix else None
-    use_mix = bool(mix_path and os.path.exists(mix_path))
+    # A NAMED-BUT-MISSING mix is an error, not a fallback. It used to take the flat
+    # corpus branch silently, and repointing the default at data/mix_v3.json made that
+    # far more likely: /work/aupai on the pod is not a git repo, files arrive by hand,
+    # and a pod without the file would have trained on data/corpus/primary -- 244KB --
+    # reporting nothing. `--mix ""` remains the explicit way to ask for the flat path.
+    assert mix_path is None or os.path.exists(mix_path), (
+        f"--mix names {Cfg.mix}, which does not exist. This is NOT a fallback: the flat "
+        f"corpus is a different (and nearly empty) dataset. Push the file, or pass "
+        f'--mix "" to ask for the flat corpus on purpose.'
+    )
+    use_mix = bool(mix_path)
     if use_mix:
         assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
+        _assert_mix_domains(
+            list(json.load(open(mix_path, encoding="utf-8"))["domains"]), os.path.join(DATA, "corpus")
+        )
         tok = build_tokenizer([])
         eos_id = tok.token_to_id("<eos>")
         tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
@@ -1406,7 +1491,7 @@ def main():
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
             f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
-            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'}"
+            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone}"
         )
         # param-count assert removed: architecture now scales well beyond the original ~23M target (e.g. 200M)
 
@@ -1619,7 +1704,7 @@ def main():
                     "opt": opt_snapshot(optimizers),
                     "step": step,
                     "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                                "vocab_id": VOCAB_ID,
+                    "vocab_id": VOCAB_ID,
                 },
                 ckpt_path + f".ep{ep + 1}",
             )
@@ -1631,7 +1716,7 @@ def main():
             {
                 "model": raw_model.state_dict(),
                 "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                                "vocab_id": VOCAB_ID,
+                "vocab_id": VOCAB_ID,
             },
             ckpt_path,
         )
