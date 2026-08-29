@@ -158,6 +158,84 @@ def roundtrip(tok, corpus):
     return {"lossless": f"{len(rows) + len(extra) - len(bad)}/{len(rows) + len(extra)}", "failures": bad[:3]}
 
 
+WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+
+#: Words whose morpheme boundaries are not in doubt. A vocabulary that cuts inside
+#: a morpheme forces the model to relearn the same prefix or suffix in every word
+#: that carries it; one that cuts AT the boundary shares it.
+MORPH = [
+    ("unhappiness", ["un", "happi", "ness"]),
+    ("rebuilding", ["re", "build", "ing"]),
+    ("nationalise", ["nation", "al", "ise"]),
+    ("teacher", ["teach", "er"]),
+    ("disagreement", ["dis", "agree", "ment"]),
+    ("faster", ["fast", "er"]),
+]
+
+
+def english_metrics(tok, corpus):
+    """Fertility and word-splitting, which are the standard measures for an
+    alphabetic script and are meaningless for Chinese -- Chinese has no word
+    boundary to divide by, so chars/token stands in for it there.
+
+    This matters here beyond the `en` domain: every multiple-choice benchmark in
+    eval/ except C-Eval is English, so English tokenisation quality shows up
+    directly in the MC suite.
+    """
+    rows = corpus.get("en") or [r for v in corpus.values() for r in v]
+    rows = rows[:400]
+    words = n_tok = split = 0
+    for r in rows:
+        for w in WORD.findall(r):
+            k = len(tok.encode(" " + w, add_special_tokens=False).ids)
+            words += 1
+            n_tok += k
+            split += k > 1
+    if not words:
+        return None
+    out = {
+        "fertility (tokens/word)": n_tok / words,
+        "words split (>1 token)": f"{100 * split / words:.1f}%",
+    }
+    # case and leading-space consistency: "the" and " the" and "The" should not be
+    # three unrelated things
+    incons = 0
+    for w in ["the", "model", "number", "answer", "question"]:
+        forms = {tuple(tok.encode(f, add_special_tokens=False).tokens) for f in (w, " " + w)}
+        incons += len(forms) > 1
+    out["leading-space inconsistent"] = f"{incons}/5"
+    # morphology
+    hit = 0
+    for w, morphs in MORPH:
+        toks = [t.replace("Ġ", "") for t in tok.encode(" " + w, add_special_tokens=False).tokens]
+        cuts, pos = set(), 0
+        for t in toks:
+            pos += len(t)
+            cuts.add(pos)
+        true, pos = set(), 0
+        for m in morphs:
+            pos += len(m)
+            true.add(pos)
+        hit += len(cuts & true) > 1 or toks == [w]
+    out["morpheme-aligned"] = f"{hit}/{len(MORPH)}"
+    return out
+
+
+def parity(tok, corpus):
+    """Bytes per token in each domain, relative to the best domain.
+
+    A vocabulary that serves one language far better than another spends the
+    model's context budget unevenly. Perfect parity is 1.00 everywhere."""
+    per = {}
+    for dom, rows in corpus.items():
+        encs = tok.encode_batch(rows)
+        b = sum(len(r.encode()) for r in rows)
+        t = sum(len(e.ids) for e in encs)
+        per[dom] = b / t
+    best = max(per.values())
+    return {d: v / best for d, v in sorted(per.items(), key=lambda kv: -kv[1])}
+
+
 def whitespace_handling(tok):
     """Line breaks and indentation, which TokEval finds correlate with task
     accuracy -- a vocabulary that spends a token per newline wastes budget on
@@ -214,12 +292,26 @@ def report(tok, corpus, name):
     )
     print(f"   whitespace {whitespace_handling(tok)}")
 
+    print("\n-- ENGLISH  (fertility is the alphabetic-script analogue of chars/token;")
+    print("             every MC benchmark in eval/ except C-Eval is English)")
+    em = english_metrics(tok, corpus)
+    if em:
+        for k, val in em.items():
+            print(f"   {k:<28}{val if isinstance(val, str) else format(val, '.3f')}")
+
+    par = parity(tok, corpus)
+    print("\n-- PARITY  (bytes/token relative to the best-served domain; 1.00 is even)")
+    for dd, vv in par.items():
+        print(f"   {dd:<10}{vv:>7.3f}")
+
     return {
         "chars/tok": tot_c / tot_t,
         "zipf_dev": rms,
         "utilised": len(counts) / len(v),
         "undertrained": once,
         "digit_inconsistent": d["context-inconsistent"],
+        "en fertility": (em or {}).get("fertility (tokens/word)", float("nan")),
+        "parity spread": max(par.values()) - min(par.values()),
     }
 
 
@@ -249,6 +341,8 @@ def main():
             "utilised": +1,
             "undertrained": -1,
             "digit_inconsistent": -1,
+            "en fertility": -1,
+            "parity spread": -1,
         }
         for k in x:
             d = y[k] - x[k]
