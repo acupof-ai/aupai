@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """Build data/tokenizer.json: the fixed tokenizer-training pipeline.
 
-train.py's build_tokenizer rebuild path registers only <unk>/<eos>, so a freshly retrained
-tokenizer drops the 4 chat/think specials the model relies on (a known bug). This script is the
-single source of truth for the rebuild: ByteLevel BPE, vocab 32768, THEN the specials at their fixed
-ids -> vocab 32772, matching the existing data/tokenizer.json exactly.
+train.py's build_tokenizer rebuild path registers only <unk>/<eos> and silently drops the 4
+chat/think specials the model relies on; this script is the single source of truth instead.
+Stratified equal per-domain byte budget, so math/code symbols earn merges instead of drowning in web.
 
     python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix_v3.json]
-
-Trains on the content field of every data/corpus/<domain>/*.jsonl (stratified: an equal per-domain
-byte budget so math/code symbols earn merges instead of drowning in web). Prints a coverage report.
 """
 
 import argparse
@@ -23,20 +19,13 @@ sys.path.insert(0, ROOT)
 
 import train  # noqa: E402  (TOK_PATH, Cfg.vocab, DATA)
 
-# The 4 specials build_tokenizer forgets, plus [NUM]. ids follow the 32768 base vocab.
-# [NUM] is last (32772) and always present: --fone gives it a value embedding, and
-# without --fone it simply never appears in the data, so the vocab is one id wider
-# either way and no checkpoint needs resizing to switch.
+# [NUM] is last (32772) and always present: without --fone it never appears in the data, so the
+# vocab is one id wider either way and no checkpoint needs resizing to switch.
 CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>", "[NUM]"]
 BYTES_PER_TOKEN_EST = 4  # only to turn --sample-tokens into a per-domain byte budget
-# Default sample. Feeding the whole corpus took 45+ minutes and bought nothing: the
-# BPE merge loop is inherently sequential (~5 of the box's 180 cores), and a sweep on
-# this corpus showed sample size barely moves the result. 25K docs vs 395K (16x the
-# data, 6x the time): chars/token 2.6093 -> 2.6296, hanzi occurrence-coverage
-# 99.51% -> 99.62%, and the 5K-10K frequency tier stays at 0% either way. The binding
-# constraint is the 32K vocab budget, not the sample -- the vocab spends itself on
-# frequent word pieces and rare hanzi never fit, however much corpus it sees.
-# Override with --sample-tokens when retuning vocab size, where the tradeoff may differ.
+# Sample size barely moves the result and the whole corpus costs 45+ minutes: 25K docs vs 395K
+# (16x data, 6x time) moved chars/token 2.6093 -> 2.6296 and hanzi coverage 99.51% -> 99.62%.
+# The binding constraint is the 32K vocab budget, not the sample. Raise when retuning vocab size.
 DEFAULT_SAMPLE_TOKENS = 250_000 * 250  # ~250K docs at the measured ~250 tokens/doc
 
 
@@ -84,12 +73,8 @@ def main():
     if os.path.exists(a.mix):
         with open(a.mix, encoding="utf-8") as f:
             mix_names = list(json.load(f)["domains"])
-    # ONLY the domains the mix names feed the vocab. Auto-adding every dir under
-    # data/corpus/ here silently pulls in the UNFILTERED 299M-doc `web` (kept on
-    # disk to re-threshold later) and wastes the whole sample on it — the same
-    # quiet-wrong shape as the mix web-vs-web_hq trap. The mix is the single
-    # source of truth for what trains; a recipe-change this script does not know
-    # about must be recorded there first.
+    # ONLY the domains the mix names. Enumerating data/corpus/* instead silently pulls in the
+    # UNFILTERED `web` (kept on disk to re-threshold later) and wastes the whole sample on it.
     domains = [d for d in mix_names if os.path.isdir(os.path.join(corpus, d))]
     if not domains:
         print("no data/corpus/<domain>/ named by the mix recipe (update the mix domains)", file=sys.stderr)
@@ -111,24 +96,19 @@ def main():
     tok = Tokenizer(BPE(unk_token="<unk>"))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    # BPE base holds <unk>/<eos> and merges; the specials sit on top. Cfg.vocab (32773) is the
-    # FINAL total, so the trainer targets Cfg.vocab - 5 = 32768 to land at 32773 after adding them.
+    # Cfg.vocab (32773) is the FINAL total, so the trainer targets 32768 to land there after
+    # the specials are added on top.
     base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
-    # Seed all 256 ByteLevel characters. Without this the trainer only keeps the ones
-    # the corpus happened to contain -- measured 2026-08-28: 193/256, with 63 missing
-    # (0xC0, 0xC1, 0xD2-0xDF, ...). Chinese text rarely hits them, so the gap is quiet
-    # rather than loud: it does not raise, and it does not even emit <unk> (BPE falls
-    # back to finer pieces), but a NUL byte is silently dropped -- "café\x00binary"
-    # decodes back as "cafébinary". It also violates the totality invariant that
-    # ByteLevel exists to provide, which is why gigatoken refuses this vocab outright
-    # ("no single-byte vocab entry for byte 0x00") and fastokens raises on corpus text.
+    # initial_alphabet seeds all 256 ByteLevel chars. Without it only the bytes the corpus
+    # contains survive (measured 193/256) and a NUL is silently dropped: "café\x00binary"
+    # decodes back as "cafébinary", with no raise and not even an <unk>.
     trainer = BpeTrainer(
         vocab_size=base_vocab,
         special_tokens=["<unk>", "<eos>"],
         initial_alphabet=ByteLevel.alphabet(),
     )
     tok.train_from_iterator(texts, trainer)
-    # THE FIX: register the chat/think specials build_tokenizer drops.
+    # the specials train.py's rebuild path drops
     tok.add_special_tokens(CHAT_SPECIALS)
 
     vsize = tok.get_vocab_size()

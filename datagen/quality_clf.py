@@ -1,25 +1,11 @@
 #!/usr/bin/env python3
-"""Educational-quality classifier for the Chinese web corpus.
+"""Educational-quality classifier for the Chinese web corpus, following FineWeb-Edu
+(arXiv 2406.17557): label documents for educational value, fit a cheap classifier, keep the top slice.
 
-Why. The v2 mix (deleted 2026-08-29) gave web 88% of an 11.5B-token pretrain, and hand-reading
-140 random web documents says roughly a quarter of them are worth training on.
-The rest are gambling-SEO pages, product spec sheets, hospital ads, serialized
-web novels, machine translation, and forum fragments spliced together. The
-existing filters in datagen/build_corpus.py are heuristics and they let all of
-this through: a keyword scan for gambling/contact spam fires on only 2.5% of
-480,952 documents, because 业配文 and 企业产品页 have no keyword signature.
-
-Method, following FineWeb-Edu (arXiv 2406.17557): label documents for
-educational value, fit a cheap classifier on the labels, keep the top slice.
-Their threshold of 3 removed 92% of FineWeb and reached the same MMLU with 10x
-fewer tokens, which is the licence to train on less data after filtering.
-
-Where we differ, and it is a real weakness: they labelled 500K documents with
-Llama-3-70B. There is no LLM on this pod, so the labels here are hand-assigned
-a few hundred at a time and the classifier is a hashed character n-gram logistic
-regression rather than an embedding model. Expect it to catch the obvious 60%
-and be unreliable near the boundary. Cross-validated AUC is printed on every
-fit; do not raise the threshold past what that number supports.
+Hand labels a few hundred at a time and hashed character n-grams, not 500K LLM labels and an
+embedding model: this reaches AUC ~0.60 and is unreliable near the boundary. Cross-validated AUC is
+printed on every fit; do not raise the threshold past what that number supports. train_quality_head.py
+supersedes it.
 
     python datagen/quality_clf.py fit    --labels data/web_labels.jsonl
     python datagen/quality_clf.py score  --glob 'data/corpus/web/*.jsonl' --out data/web_scores.npy
@@ -39,10 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIM = 2**18
 MODEL = os.path.join(ROOT, "data", "quality_clf.npz")
 
-# Hard negatives with a keyword signature. These are not the classifier -- they are
-# the cases so unambiguous that spending classifier capacity on them is waste, and
-# they double as label sanity checks. Gambling brand names appear INSIDE otherwise
-# ordinary sentences (SEO injection), so a hit anywhere in the document is enough.
+# Hard negatives with a keyword signature. Gambling brand names appear INSIDE otherwise ordinary
+# sentences (SEO injection), so a hit anywhere in the document is enough.
 SPAM = re.compile(
     r"(彩票|賭場|赌场|赌博|博彩|真人娱乐|北京赛车|时时彩|老虎机|六合彩|百家乐|开户送|注册送"
     r"|威廉希尔|德赢vwin|杏彩|凯发k8|明陞|m88asia|BOSS真人|森林舞会游戏|助赢|大智彩票|必威"
@@ -51,14 +35,9 @@ SPAM = re.compile(
 
 
 def features(text, dim=DIM):
-    """Hashed character 2-, 3- and 4-grams over the first 1000 characters.
-
-    First 1000 characters because that is the window FineWeb-Edu's annotator saw,
-    and because a page's nature is settled in its opening: a product sheet opens
-    with specifications, an ad opens with a brand, an article opens with a claim.
-    Character n-grams and not words: Chinese has no spaces, and a word segmenter
-    is another dependency to be wrong about.
-    """
+    """Hashed character 2-, 3- and 4-grams over the first 1000 characters (FineWeb-Edu's
+    annotator window). Characters, not words: Chinese has no spaces and a segmenter is
+    another dependency to be wrong about."""
     t = text[:1000]
     v = np.zeros(dim, dtype=np.float32)
     for n in (2, 3, 4):
@@ -71,11 +50,7 @@ def features(text, dim=DIM):
 
 
 def _fit_lr(X, y, epochs=2000, lr=5.0, l2=1e-4):
-    """Logistic regression by plain gradient descent.
-
-    scikit-learn is not installed on the pod and this is 20 lines. ponytail: full
-    batch, no early stopping -- at a few hundred rows the whole fit is milliseconds.
-    """
+    """Logistic regression by full-batch gradient descent (no sklearn on the pod)."""
     w = np.zeros(X.shape[1], dtype=np.float32)
     b = 0.0
     for _ in range(epochs):
@@ -88,8 +63,8 @@ def _fit_lr(X, y, epochs=2000, lr=5.0, l2=1e-4):
 
 
 def _auc(y, s):
-    """Rank AUC. With ~100 labels this is the only honest quality number available;
-    accuracy at a fixed threshold would hide how bad the ranking is near the boundary."""
+    """Rank AUC. At ~100 labels, accuracy at a fixed threshold hides how bad the ranking
+    is near the boundary."""
     order = np.argsort(s)
     ranks = np.empty(len(s), dtype=np.float64)
     ranks[order] = np.arange(1, len(s) + 1)
@@ -110,7 +85,6 @@ def load_labels(path):
 def cmd_fit(a):
     X, y, rows = load_labels(a.labels)
     print(f"{len(y)} labels, {int(y.sum())} keep ({y.mean():.0%})")
-    # 5-fold CV first: the number that says whether this classifier is worth applying.
     idx = np.arange(len(y))
     rng = np.random.default_rng(0)
     rng.shuffle(idx)
@@ -152,9 +126,7 @@ def cmd_score(a):
 
 
 def _demo():
-    """The classifier must separate the two kinds of document it was built to
-    separate. Trained on six hand-written examples of each, it must rank a held-out
-    pair correctly -- if it cannot do that, nothing downstream is worth running."""
+    """Fit on five hand-written examples of each class; a held-out pair must rank correctly."""
     pos = [
         "物理学是描述世上质量与能量交互作用的学问。我们会从电磁学出发，进展到光学，并说明近代物理对人类观念的突破。",
         "产后抑郁症是指产妇在分娩后出现抑郁、悲伤、易激怒等一系列症状为特征的心理障碍，通常在产后2-4周出现。",

@@ -1,27 +1,13 @@
 #!/usr/bin/env python3
 """A tokenizer harness: compression, distribution, structure, and integrity.
 
-chars/token is the number this repo optimised and it is a weak proxy. "Beyond Text
-Compression" (arXiv 2506.03101) reports its correlation with downstream
-performance swinging from rho=-0.77 on translation to rho=-0.09 on summarisation,
-and finds **deviation from a Zipfian power law** the strongest cheap predictor.
-TokEval (arXiv 2608.18062) adds that information-theoretic metrics predict
-language-modelling ability at rho up to 0.80, and that **structure-sensitive**
-checks -- digit place-value alignment, line-break handling -- correlate with task
-accuracy. Cognetta et al. (2024) and Dagan et al. (2024) give counterexamples
-where raising Renyi efficiency *hurts*, so it is reported and never optimised.
-
-Small models expose tokenizer differences most sharply: arXiv 2506.03101 has a
-350M model with a good tokenizer beating a 2.7B model with a bad one. This model
-is 200M, which is exactly where this matters.
-
-Four groups, in increasing order of how much they should be trusted:
-
-  COMPRESSION  cheap, weak, task-dependent
-  DISTRIBUTION Zipf deviation, utilisation, undertrained tokens
-  STRUCTURE    digit place-value, UTF-8 boundaries, whitespace, round-trip
-  EXTRINSIC    two training runs differing only in the vocabulary -- the only
-               one that settles anything, and the only one this cannot do
+chars/token is the number this repo optimised and it is a weak proxy: arXiv
+2506.03101 puts its correlation with downstream performance anywhere from
+rho=-0.77 (translation) to -0.09 (summarisation), and finds Zipf deviation the
+strongest cheap predictor; TokEval (arXiv 2608.18062) adds structure-sensitive
+checks. Groups are printed in increasing order of trustworthiness, and the one
+that would settle it -- two runs differing only in the vocabulary -- is extrinsic
+and not here.
 
     python scripts/tokenizer_report.py
     python scripts/tokenizer_report.py --tokenizer new.json --compare old.json
@@ -63,11 +49,7 @@ def sample_corpus(domains, per_domain=400, seed=7):
 
 # ---------------------------------------------------------------- distribution
 def zipf_deviation(counts):
-    """RMS deviation of log-frequency from the fitted Zipf line, and its slope.
-
-    arXiv 2506.03101 reports this as the single most informative cheap predictor
-    of downstream performance. Natural language follows a power law; a vocabulary
-    whose token frequencies depart from one is spending slots badly."""
+    """RMS deviation of log-frequency from the fitted Zipf line, and its slope."""
     freqs = sorted((f for f in counts.values() if f > 0), reverse=True)
     if len(freqs) < 50:
         return float("nan"), float("nan")
@@ -82,7 +64,7 @@ def zipf_deviation(counts):
 
 
 def renyi_efficiency(counts, alpha=2.5):
-    """Reported WITH its counterexamples: Cognetta et al. (2024) raise it and hurt
+    """Reported, never optimised: Cognetta et al. (2024) raise it and hurt
     downstream; Dagan et al. (2024) find it anti-correlates with code generation."""
     tot = sum(counts.values())
     ps = [c / tot for c in counts.values() if c]
@@ -95,11 +77,8 @@ def renyi_efficiency(counts, alpha=2.5):
 def digit_consistency(tok):
     """Does the same number tokenise the same way in different contexts?
 
-    BPE merges digits by frequency, so ' 63' and '63' can be different token
-    sequences and '1640' can become '16|40', which has nothing to do with its
-    value. Every arithmetic result in the literature assumes the model can see
-    place value; this measures whether it can.
-    """
+    BPE merges digits by frequency, so ' 63' and '63' can differ and '1640'
+    becomes '16|40', which has nothing to do with its value."""
     ctxs = ["{n}", " {n}", "= {n}", "共{n}个", "第{n}章", "({n})"]
     nums = ["7", "63", "122", "1640", "2024", "10000"]
     inconsistent, splits = 0, []
@@ -122,13 +101,11 @@ def digit_consistency(tok):
 
 
 def utf8_integrity(tok, corpus):
-    """Fraction of hanzi that survive as part of a whole-character token rather
-    than being emitted as ByteLevel fragments.
+    """Fraction of hanzi in whole-character tokens rather than ByteLevel fragments.
 
-    CLAUDE.md records this exact failure: a vocabulary trained on unstratified
-    text had no whole token for common traditional characters, split them into
-    byte pieces, and scored web at 1.04 chars/token -- worse than one token per
-    character."""
+    A vocabulary trained on unstratified text had no whole token for common
+    traditional characters and scored web at 1.04 chars/token -- worse than one
+    token per character."""
     rows = [r for v in corpus.values() for r in v][:600]
     frag = whole = 0
     for e in tok.encode_batch(rows):
@@ -136,7 +113,6 @@ def utf8_integrity(tok, corpus):
             s = t.replace("Ġ", "")
             if not s:
                 continue
-            # a ByteLevel fragment of a hanzi decodes to mojibake, not to a hanzi
             if HAN.search(s):
                 whole += len(HAN.findall(s))
             elif len(s) <= 2 and all(ord(ch) > 127 for ch in s):
@@ -147,8 +123,7 @@ def utf8_integrity(tok, corpus):
 
 def roundtrip(tok, corpus):
     """encode -> decode must return the input. A vocabulary trained without the
-    full 256-byte alphabet silently drops bytes; CLAUDE.md records NUL being lost
-    that way, which breaks every fast tokenizer library."""
+    full 256-byte alphabet silently drops bytes (NUL and tab, on k5)."""
     rows = [r for v in corpus.values() for r in v][:400]
     extra = ["NUL\x00byte", "emoji 🚀 ok", "tab\tnewline\n", "混合 mixed 123", "  双空格  "]
     bad = []
@@ -160,9 +135,8 @@ def roundtrip(tok, corpus):
 
 WORD = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
 
-#: Words whose morpheme boundaries are not in doubt. A vocabulary that cuts inside
-#: a morpheme forces the model to relearn the same prefix or suffix in every word
-#: that carries it; one that cuts AT the boundary shares it.
+#: Words whose morpheme boundaries are not in doubt. Cutting inside a morpheme
+#: makes the model relearn the same affix in every word carrying it.
 MORPH = [
     ("unhappiness", ["un", "happi", "ness"]),
     ("rebuilding", ["re", "build", "ing"]),
@@ -174,14 +148,9 @@ MORPH = [
 
 
 def english_metrics(tok, corpus):
-    """Fertility and word-splitting, which are the standard measures for an
-    alphabetic script and are meaningless for Chinese -- Chinese has no word
-    boundary to divide by, so chars/token stands in for it there.
+    """Fertility and word-splitting: chars/token's analogue for an alphabetic script.
 
-    This matters here beyond the `en` domain: every multiple-choice benchmark in
-    eval/ except C-Eval is English, so English tokenisation quality shows up
-    directly in the MC suite.
-    """
+    Matters beyond `en`: every MC benchmark in eval/ except C-Eval is English."""
     rows = corpus.get("en") or [r for v in corpus.values() for r in v]
     rows = rows[:400]
     words = n_tok = split = 0
@@ -197,8 +166,7 @@ def english_metrics(tok, corpus):
         "fertility (tokens/word)": n_tok / words,
         "words split (>1 token)": f"{100 * split / words:.1f}%",
     }
-    # case and leading-space consistency: "the" and " the" and "The" should not be
-    # three unrelated things
+    # "the" and " the" should not be unrelated token sequences
     incons = 0
     for w in ["the", "model", "number", "answer", "question"]:
         forms = {tuple(tok.encode(f, add_special_tokens=False).tokens) for f in (w, " " + w)}
@@ -222,10 +190,7 @@ def english_metrics(tok, corpus):
 
 
 def parity(tok, corpus):
-    """Bytes per token in each domain, relative to the best domain.
-
-    A vocabulary that serves one language far better than another spends the
-    model's context budget unevenly. Perfect parity is 1.00 everywhere."""
+    """Bytes per token per domain, relative to the best-served one; 1.00 is even."""
     per = {}
     for dom, rows in corpus.items():
         encs = tok.encode_batch(rows)
@@ -237,9 +202,7 @@ def parity(tok, corpus):
 
 
 def whitespace_handling(tok):
-    """Line breaks and indentation, which TokEval finds correlate with task
-    accuracy -- a vocabulary that spends a token per newline wastes budget on
-    every structured document."""
+    """Line breaks and indentation; TokEval finds these correlate with task accuracy."""
     out = {}
     for s in ["\n", "\n\n", "    ", "\n    ", "。\n"]:
         out[repr(s)] = len(tok.encode(s, add_special_tokens=False).ids)

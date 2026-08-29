@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Prepare stage-2 math SFT data: same packing as prepare_sft.py, math-heavy mix.
 
-Mix (~69% math / 31% general by rows):
-  school_math_train (~220K, deduped, 500 held out)
-  gsm8k_zh_train (7.5K, #### normalized to 答案是：)
-  alpaca_gpt4_zh (52K, general replay)
-  coig_50k (50K sampled, exam/reading replay)
+Default SOURCES are ~69% math / 31% general replay by rows; gsm8k_zh_train has
+its #### normalized to 答案是：.
 """
 
 import json
@@ -66,8 +63,8 @@ def main():
         "--tokenizer",
         default=TOK_PATH,
         help="the vocabulary of the base this pack will train. data/tokenizer.json is rebuilt in "
-        "place and ids do not survive a rebuild, so packing for an older base against today's file "
-        "produces a pack whose every id is wrong -- it trains, at a loss four times too high.",
+        "place and ids do not survive a rebuild; packing an older base against today's file "
+        "trains at four times the loss with nothing raising.",
     )
     args = ap.parse_args()
     sources = [(p, "instruction", "output") for p in args.sources.split(",")] if args.sources else SOURCES

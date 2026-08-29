@@ -1,10 +1,7 @@
 """Re-score both probes with 'gold anywhere in the generation'.
 
-"First number emitted" penalises a model for CHOOSING A DIFFERENT FORMAT, not
-for being wrong: the BPE control answers a bare `61 + 48 = ` with scratchpad
-prose, so the first number it emits is a scratchpad digit and never the answer.
-Scoring the whole generation removes that confound. If BPE is still at zero
-here, the format choice was not what was hiding the arithmetic.
+"First number emitted" scores format choice, not correctness: the BPE control answers a
+bare `61 + 48 = ` with scratchpad prose, so its first number is a scratchpad digit.
 """
 
 import argparse, random, re, sys, torch
@@ -96,11 +93,8 @@ draw(a.n, 2, 19, "*", "×")
 
 
 def readings(t):
-    """Both encodings of the leading answer, because the model does not obey the
-    format tag: prompted `[逆] 61 + 48 = ` it answers `109`, not `9 0 1`. Parsing
-    only the reverse reading scored that correct answer as 901 and reported 5.6%
-    where the arithmetic was right. Scoring both asks "did it compute", which is
-    the question, instead of "did it use the format I asked for"."""
+    """Both encodings of the leading answer: the model ignores the format tag, so parsing
+    only the reverse reading read a correct `109` as 901 and reported 5.6%."""
     plain_nums = [int(x) for x in re.findall(r"-?\d+", t)]
     m = re.match(r"\s*(-?)((?:\d\s*)+)", t)
     rev = [int(m.group(1) + re.sub(r"\s", "", m.group(2))[::-1])] if m else []
@@ -108,9 +102,8 @@ def readings(t):
 
 
 def score(prefix, label, strip_eq=False):
-    """strip_eq must match how the checkpoint was trained: round 5 drops `= ` from
-    scratchpad prompts, and probing it with `= ` would measure whether the model
-    tolerates a prompt shape it never saw, not whether it computes."""
+    """strip_eq must match how the checkpoint was trained (round 5 drops `= ` from
+    scratchpad prompts), else this measures prompt tolerance, not computation."""
     first, anywhere, stops = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}, 0
     for p, gold, op in cases:
         if strip_eq:
@@ -132,9 +125,8 @@ def score(prefix, label, strip_eq=False):
 
 print(f"{a.ckpt}  ({'FoNE' if a.fone else 'BPE'})")
 if a.tag:
-    # With one prompt per format the literature's prediction becomes testable for
-    # the first time: plain should be worst, scratchpad best. Round 3's flat
-    # 24/24/23% could not test it -- the prompt did not say which format to use.
+    # One prompt per format, so plain-worst/scratchpad-best becomes testable; round 3's
+    # flat 24/24/23% could not test it -- the prompt never said which format to use.
     for t, lab in (("[答] ", "plain"), ("[逆] ", "reverse"), ("[竖式] ", "scratchpad")):
         score(t, lab, strip_eq=a.strip_eq and lab == "scratchpad")
 else:

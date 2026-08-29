@@ -1,38 +1,15 @@
 #!/usr/bin/env python3
-"""Rank vocabularies on every dimension at once, with the weights written down.
+"""Rank vocabularies across dimensions at once, with the weights written down.
 
-`tokenizer_report.py` prints four groups of numbers per vocabulary and stops
-there. That is enough to inspect ONE vocabulary and not enough to CHOOSE between
-several: the numbers are on incomparable scales (chars/token ~1.9, Zipf RMS
-~0.4, a count of undertrained tokens ~3,000), so a reader silently supplies
-their own weights and calls the result a judgement. This file supplies them
-explicitly instead, which makes them arguable.
+`tokenizer_report.py` prints the numbers; this file combines them. Correctness is
+a gate, not a scored metric -- k5's vocabulary dropped NUL and tab, and any
+aggregate trading correctness against compression would have let it win.
+Correlated metrics are averaged within a dimension first, so adding another
+compression metric cannot outvote another dimension.
 
-Three things it does that a flat printout cannot:
-
-GATES BEFORE SCORES. A vocabulary that loses bytes on the round trip is
-disqualified, not penalised. Scoring it would let a broken tokenizer win on
-compression -- and this repo has already shipped one: k5's vocabulary dropped NUL
-and tab, and no aggregate that trades correctness against compression would have
-caught it.
-
-DIMENSIONS, NOT METRICS. Seven correlated compression numbers are one dimension,
-not seven votes. Metrics are averaged within a dimension first, so adding another
-way to measure compression cannot outvote correctness.
-
-THE PROFILE IS THE OUTPUT; THE SCALAR IS A SUMMARY. Every dimension is printed
-next to the total, because two vocabularies at the same score can be opposite
-vocabularies. A single number that hides that is worse than no number.
-
-Known gaps, so they are not mistaken for zeros:
-  - no Chinese word-boundary alignment (needs jieba, not installed). Whether
-    tokens respect linguistic units is a real dimension and is MISSING here.
-  - PREDICTABILITY uses bits/char, which `tokenizer_sweep` documents as unable
-    to rank vocabulary SIZE -- it is strictly monotone in size with no interior
-    optimum. It is scored across size-matched candidates only, and reported but
-    not scored when the field spans sizes.
-  - no downstream verdict. Every dimension here is a proxy. The verdict is two
-    pretrains differing only in the vocabulary.
+Gaps, so they are not mistaken for zeros: no Chinese word-boundary alignment
+(needs jieba); bits/char is scored only on a size-matched field (see
+tokenizer_sweep.py); every dimension is a proxy.
 
     python scripts/tokenizer_eval.py --tokenizers data/tokenizer.json,data/vocab_sweep/v16384.json
 """
@@ -45,21 +22,18 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-# Weight per dimension. These are a claim, and the only defensible thing to do
-# with a claim is to write it where someone can disagree with it.
-#
 # CORRECTNESS is not here: it is a gate. Everything below is a preference.
 DIMENSIONS = {
-    "compression": 0.30,  # what chars/token measures; cheap and task-dependent
+    "compression": 0.30,
     "predictability": 0.25,  # bits/char -- compression the model can actually use
     "distribution": 0.20,  # dead slots and glitch tokens are wasted parameters
-    "structure": 0.15,  # place-value alignment, script integrity
+    "structure": 0.15,
     "equity": 0.10,  # no domain starved relative to the best-served one
 }
 
 
 def gates(tok, corpus):
-    """Disqualifiers. Each one is a correctness property, not a preference."""
+    """Disqualifiers: correctness properties, not preferences."""
     import tokenizer_report as R
 
     out = {}
@@ -88,27 +62,23 @@ def _byte_token(b):
 
 
 def robustness(tok, corpus):
-    """How much of the text falls back to byte fragments.
+    """Fraction of tokens that are byte fragments rather than whole characters.
 
-    A whole-character token for a rare hanzi costs one slot; without it the
-    character becomes 3 byte fragments the model must learn to reassemble. This
-    is the failure that made web score 1.04 chars/token -- worse than one token
-    per character -- and chars/token alone reports it only as a small number, not
-    as a structural defect."""
+    Missing whole-character hanzi tokens is what made web score 1.04 chars/token
+    -- worse than one token per character -- which chars/token alone underreports."""
     frag = tot = 0
     for rows in corpus.values():
         for e in tok.encode_batch(rows):
             for t in e.tokens:
                 tot += 1
-                # a token that decodes to no complete character is a byte piece
                 if len(t) == 1 and ord(t) >= 256:
                     frag += 1
     return {"byte-fragment tokens": frag / max(tot, 1)}
 
 
 def cost(tok, d_model=1024):
-    """The output matmul runs every forward pass, so vocabulary size is compute,
-    not just parameters. Tying halves the params and none of the FLOPs."""
+    """Vocabulary size is compute, not just parameters: tying halves the params
+    and none of the output matmul's per-forward FLOPs."""
     V = tok.get_vocab_size()
     return {"embed params (M)": V * d_model / 1e6, "output FLOPs/token (M)": 2 * V * d_model / 1e6}
 
@@ -160,19 +130,14 @@ METRICS = {
 }
 
 
-# Below this relative spread a metric is called a tie rather than normalised.
-# Min-max maps whatever range it is given onto the full 0..1, so on a tight field
-# it manufactures a decisive-looking score out of noise: three vocabularies at
-# 93.39% / 93.17% / 93.43% utilisation -- a 0.28% spread -- came out as
-# 0.611 / 0.333 / 0.723 before this existed. A difference that small is not
-# decision-grade for a proxy, and a scale that reports it as one is lying.
+# Below this relative spread a metric is a tie, not normalised: min-max stretches
+# any range onto 0..1, so 93.39/93.17/93.43% utilisation (0.28% spread) scored
+# 0.611/0.333/0.723 before this existed.
 TIE_SPREAD = 0.01
 
 
 def normalise(rows, key, higher_better):
-    """Min-max across the field. Relative on purpose: there is no principled
-    absolute scale for chars/token, and inventing one would hide the arbitrary
-    choice inside a constant instead of showing it as a ranking."""
+    """Min-max across the field; relative, since chars/token has no absolute scale."""
     vals = [r[1][key] for r in rows if key in r[1]]
     if not vals:
         return {}
@@ -208,12 +173,11 @@ def main():
     train_rows, eval_rows = load_text(doms, a.n_train, 800)
 
     # bits/char cannot rank across sizes (tokenizer_sweep documents why), so it is
-    # scored only when the field is size-matched and reported otherwise.
+    # scored only when the field is size-matched. 5% tolerance: a few reserved
+    # specials (32,773 vs 32,768) are not a size sweep; the artifact needs ~2x.
     from tokenizers import Tokenizer
 
     sizes = [Tokenizer.from_file(p).get_vocab_size() for p in paths]
-    # A few reserved specials are not a size sweep: 32,773 against 32,768 is
-    # 0.015%, while the artifact bits/char suffers is driven by ratios like 2x.
     score_bits = (max(sizes) - min(sizes)) / max(sizes) < 0.05
     if not score_bits:
         print(f"! vocabulary sizes span {min(sizes)}..{max(sizes)} -- bits/char REPORTED, NOT SCORED")
@@ -276,7 +240,7 @@ def main():
 
 
 def _demo():
-    """The scoring scale is itself logic, and it has already been wrong once."""
+    """The scoring scale is logic and has been wrong once."""
     rows = [("a", {"x": 0.9339}), ("b", {"x": 0.9317}), ("c", {"x": 0.9343})]
     n = normalise(rows, "x", True)
     assert set(n.values()) == {0.5}, f"0.28% spread must be a tie, got {n}"
@@ -287,7 +251,7 @@ def _demo():
     n = normalise(rows, "x", False)
     assert n == {"a": 1.0, "b": 0.0}, n
 
-    # a real spread just above the threshold must NOT collapse
+    # a spread just above the threshold must NOT collapse
     rows = [("a", {"x": 1.0}), ("b", {"x": 1.02})]
     assert set(normalise(rows, "x", True).values()) == {0.0, 1.0}
 

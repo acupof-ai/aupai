@@ -1,47 +1,23 @@
 #!/usr/bin/env python3
 """Rank candidate vocabularies by bits per CHARACTER under an n-gram model.
 
-Why this metric and not chars/token. Compression alone is a weak proxy -- arXiv
-2506.03101 measures its correlation with downstream performance swinging from
-rho=-0.77 to rho=-0.09 by task. Bits per character is different in kind: it is
-the cost of encoding held-out text under a model trained on the token stream that
-vocabulary produces, divided by the CHARACTERS in that text. So it is directly
-comparable across vocabularies of different sizes and segmentations, and it
-rewards two things at once --
+Held-out text encoded under a model trained on the token stream a vocabulary
+produces, divided by the CHARACTERS in it -- so it is comparable across
+segmentations and rewards compression AND predictability at once, where
+chars/token sees only the first (arXiv 2506.03101 puts chars/token's correlation
+with downstream performance anywhere from rho=-0.77 to -0.09 by task). A proxy;
+the verdict is two pretrains differing only in the vocabulary.
 
-    fewer tokens per character   (compression, what chars/token measures)
-    more predictable tokens      (what chars/token cannot see)
+**IT CANNOT RANK VOCABULARY SIZE.** Measured 2026-08-29: a trigram over 32K types
+has 8x the parameters of one over 16K, so at equal token counts it is
+data-starved and smaller always wins -- an estimator artifact, not a property of
+the vocabulary. Two signatures: the ordering is strictly monotone in size with no
+interior optimum (16K/32K/49K/65K = 4.5947/4.6546/4.7042/4.7479 at n_train=30K,
+where a real optimum would be U-shaped), and the 16K-vs-32K gap shrinks toward
+zero with data (0.1070 -> 0.0896 -> 0.0599 at n_train 3K -> 12K -> 30K).
 
-A vocabulary that compresses well into an unpredictable stream and one that
-compresses poorly into a trivial stream both score badly, which is the behaviour
-wanted. An n-gram is enough: it is the same quantity a transformer minimises, at
-a lower ceiling, and it runs on CPU in seconds.
-
-This is a proxy, not a verdict. The verdict is two training runs differing only
-in the vocabulary. But it is a proxy that can rank twenty candidates in minutes,
-where the verdict costs a day each.
-
-**IT CANNOT RANK VOCABULARY SIZE.** Measured 2026-08-29 on six candidates: 16K
-wins at every training size, and the win is an artifact of the estimator, not a
-property of the vocabulary. A trigram over 32K types has 8x the parameters of one
-over 16K, so at equal token counts it is data-starved -- the transformer this is
-meant to predict is not. Two signatures, either one sufficient:
-
-  the ordering is STRICTLY MONOTONE in size, with no interior optimum --
-  16K/32K/49K/65K score 4.5947/4.6546/4.7042/4.7479 at n_train=30K. A real
-  size optimum is U-shaped (too small compresses badly, too large is sparse);
-  a curve that only ever rewards "smaller" is measuring parameter count.
-
-  the gap shrinks with data -- 16K against 32K runs 0.1070 -> 0.0896 -> 0.0599
-  at n_train 3K -> 12K -> 30K, heading to zero rather than to a constant.
-
-So this cannot check AGENTS.md's fitted "optimum near 12-20K". Only a paired
-pretrain -- one base, two vocabularies -- can, and that costs a day.
-
-Use it for decisions that HOLD SIZE FIXED, where the estimator's capacity is the
-same on both sides. Digit splitting is such a decision, and it costs
--0.08% / +0.10% / +0.18% bits/char at those three sizes (5.8494/5.1093/4.6632
-against 5.8542/5.1041/4.6546) -- small, but growing with data, so not free.
+Use it only for decisions that HOLD SIZE FIXED. Digit splitting is one, and costs
+-0.08% / +0.10% / +0.18% bits/char at those three sizes -- growing with data.
 
     python scripts/tokenizer_sweep.py --tokenizers data/tokenizer.json,data/tokenizer_k5.json
     python scripts/tokenizer_sweep.py --sweep       # train and rank variants
@@ -61,8 +37,7 @@ DOMAINS = "web_hq,textbook,wiki,math,chat,code,en"
 
 
 def load_text(domains, n_train=3000, n_eval=800, seed=11):
-    """Held-out characters are identical for every candidate; only the
-    segmentation of them changes."""
+    """Held-out characters are identical for every candidate; only segmentation differs."""
     rng = random.Random(seed)
     rows = []
     for d in domains:
@@ -80,11 +55,10 @@ def load_text(domains, n_train=3000, n_eval=800, seed=11):
 
 
 def bits_per_char(tok, train_rows, eval_rows, order=3, lam=(0.55, 0.30, 0.15)):
-    """Interpolated n-gram over the token stream; returns bits per character.
+    """Interpolated 3/2/1-gram over the token stream; returns bits per character.
 
-    Linear interpolation of orders 3/2/1 with fixed weights, add-k on the
-    unigram so nothing is zero. Fixed weights rather than tuned ones on purpose:
-    tuning per candidate would let a vocabulary win by being easier to tune."""
+    Weights are fixed, not tuned per candidate: tuning would let a vocabulary win
+    by being easier to tune."""
     V = tok.get_vocab_size()
     c1 = collections.Counter()
     c2 = collections.Counter()

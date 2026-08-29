@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 """Train candidate vocabularies that differ in one decision each, for ranking.
 
-The decisions worth sweeping, and why each is in doubt:
-
-  size          CLAUDE.md fits a scaling law putting the optimum near 12-20K for
-                this 166M non-embedding model, and 32K was kept because a 64K
-                sweep bought +2.8% compression for +14% compute per character.
-                That reasoning was entirely about compression; bits/char can now
-                check it.
-  digits        `scripts/tokenizer_report.py` measures all six test numbers
-                tokenising differently by context and only 3 of 6 place-value
-                aligned. `Digits(individual_digits=True)` fixes both by rule.
-                Cost unknown until measured.
-  domain mix    the current vocabulary was trained on an equal-byte sample per
-                domain. Whether that is the right split is untested.
+Decisions swept: vocabulary size (CLAUDE.md's fitted law says 12-20K, we run 32K)
+and digit splitting (tokenizer_report measures all six test numbers tokenising
+differently by context, 3 of 6 place-value aligned; Digits(individual_digits=True)
+fixes both by rule at unmeasured cost).
 
 Every variant trains on the SAME stratified sample so only the named decision
-differs, and every one gets the four ChatML specials plus [NUM] at fixed ids so
-the loader's fingerprint check keeps working.
+differs, and gets the ChatML specials plus [NUM] at fixed ids so the loader's
+fingerprint check keeps working.
 
     python scripts/train_vocab_variants.py --out data/vocab_sweep
 """
@@ -37,8 +28,7 @@ DOMAINS = ["web_hq", "textbook", "wiki", "math", "chat", "code", "en"]
 
 
 def sample_texts(per_domain_bytes, seed=13):
-    """Equal byte budget per domain -- the stratification CLAUDE.md records as the
-    fix for web drowning everything else (1.04 chars/token before, 1.484 after)."""
+    """Equal byte budget per domain; unstratified, web drowns the rest (1.04 -> 1.484 chars/token)."""
     rng = random.Random(seed)
     out = []
     for d in DOMAINS:
@@ -74,8 +64,7 @@ def train_one(texts, size, split_digits, out_path):
 
     tok = Tokenizer(BPE(unk_token="<unk>"))
     pre = ByteLevel(add_prefix_space=False)
-    # Digits BEFORE ByteLevel: the split has to happen on the text, not on the
-    # byte-level re-encoding of it.
+    # Digits BEFORE ByteLevel: the split must happen on the text, not on its byte-level re-encoding.
     tok.pre_tokenizer = Sequence([Digits(individual_digits=True), pre]) if split_digits else pre
     tok.decoder = ByteLevelDecoder()
     trainer = BpeTrainer(

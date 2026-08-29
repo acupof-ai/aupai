@@ -1,10 +1,8 @@
 """The BPE half of the FoNE comparison. Same held-out cases, same scoring.
 
-probe3.py cannot score a non-FoNE checkpoint: it calls fone.encode_prompts and
-model.num_logits, neither of which exists without [NUM]. This is that file with
-the arithmetic of the representation removed and nothing else changed -- same
-rng, same draw(), same held_out filter, so the two probes see the SAME 180
-problems in the SAME order and the comparison is paired.
+probe3.py cannot score a non-FoNE checkpoint (it calls fone.encode_prompts /
+model.num_logits). Same rng, draw() and held_out filter as probe3.py, so both probes see
+the SAME 180 problems in the SAME order and the comparison is paired.
 """
 
 import argparse, random, re, sys, torch

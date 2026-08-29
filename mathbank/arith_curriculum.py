@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
 """Bare arithmetic in the formats that are known to be learnable.
 
-Measured on ckpt_k7_v3: **0/180 on two-digit addition, subtraction and
-multiplication** with no word problem attached. It is not computing at all -- given
-`59 + 63 = ` it emits `00\\n答案是：\\boxed`, filling the slot after the equals sign
-with the most common continuation. That is why 51.2% of the equations inside its
-solutions are wrong while 91% of generations still produce one: it learned the
-shape of a solution, which is cheap, and not the computation, which is not.
+ckpt_k7_v3 scores 0/180 on two-digit +, -, × with no word problem attached: given
+`59 + 63 = ` it emits `00\\n答案是：\\boxed`, filling the slot after `=` with the most
+common continuation. Hence 51.2% of the equations in its solutions are wrong while 91%
+of generations still produce one -- it learned the shape, not the computation.
 
-Lee et al., *Teaching Arithmetic to Small Transformers* (arXiv 2307.03381), give
-the sample counts for NanoGPT (10.6M parameters, twenty times smaller than this
-model) to reach ~100% on three-digit addition:
+Lee et al., *Teaching Arithmetic to Small Transformers* (arXiv 2307.03381), samples for
+NanoGPT (10.6M params) to reach ~100% on three-digit addition:
 
     plain      `123+456=579`      never converges, plateaus near 85%
     reverse    least digit first  ~2,500 samples
     simplified scratchpad         ~2,000 samples
     detailed   scratchpad         ~1,000 samples
 
-A thousand samples. This model has 0.19B scheduled math tokens and cannot add two
-digits, so the problem was never volume -- it is that plain `a+b=c` is the one
-format that does not work, and it is the only format the corpus contains.
-
-Why reverse works: carries propagate from the least significant digit upward, so
-emitting that digit first means every step depends only on what has already been
-written. Left-to-right forces the model to know a carry before computing it.
+Volume was never the problem: plain `a+b=c` is the one format that does not work, and it
+is the only format the corpus contains. Reverse works because carries propagate upward
+from the least significant digit, so every step depends only on what is already written.
 
     python mathbank/arith_curriculum.py --n 200000 --out data/synthetic/arith_v1.jsonl
     python mathbank/arith_curriculum.py --selftest
@@ -47,8 +40,8 @@ def plain(a, b, op):
 
 
 def reverse(a, b, op):
-    """Answer written least-significant digit first. The prompt keeps normal order
-    so the model reads the question the way the corpus writes it."""
+    """Answer least-significant digit first; the prompt keeps normal order so the model
+    reads the question the way the corpus writes it."""
     v = {"+": a + b, "-": a - b, "*": a * b}[op]
     sym = {"+": "+", "-": "-", "*": "×"}[op]
     sign = "-" if v < 0 else ""
@@ -56,12 +49,9 @@ def reverse(a, b, op):
 
 
 def scratchpad_add(a, b):
-    """Digit-by-digit with the carry written down, least significant first.
-
-    This is the format with the best sample efficiency in the paper (~1,000
-    examples for three digits) because every line is a one-digit problem whose
-    inputs are all already on the page.
-    """
+    """Digit-by-digit with the carry written down, least significant first. Best sample
+    efficiency in the paper (~1,000 examples for three digits): every line is a one-digit
+    problem whose inputs are already on the page."""
     da, db = list(str(a))[::-1], list(str(b))[::-1]
     n = max(len(da), len(db))
     da += ["0"] * (n - len(da))
@@ -98,24 +88,19 @@ def scratchpad_sub(a, b):
 
 FORMATS = ("plain", "reverse", "scratchpad")
 
-# Three formats trained on identical prompts leave the model guessing which one
-# to answer in, and it hedges: measured on ckpt_k6_arith3, only 17% of
-# generations emit <eos> -- it writes the right answer and then keeps going in
-# another format. The BPE control terminated at 21%, so this is not the number
-# representation, it is the ambiguity. A tag in the prompt removes it.
+# Identical prompts across three formats make the model hedge: ckpt_k6_arith3 emitted
+# <eos> on only 17% of generations (BPE control 21%, so it is the ambiguity, not the
+# number representation) -- right answer, then more of it in another format.
 TAGS = {"plain": "[答]", "reverse": "[逆]", "scratchpad": "[竖式]"}
 
 
 def held_out(a, b, op):
-    """A deterministic train/test split ON THE PROBLEM, not on the row.
+    """A deterministic train/test split ON THE PROBLEM, not on the row -- hashing keeps it
+    stable across regenerations and it cannot leak by reshuffling.
 
-    Without this the two-digit space (90x90 = 8,100 pairs) is exhausted long
-    before 200,000 samples, so a probe drawing from the same space scores
-    memorisation. Measured on arith_v1: 138 of 180 probe cases (77%) were in the
-    training set, a median of 3 times each and one 197 times.
-
-    Hashing the problem rather than sampling rows means the split is stable across
-    regenerations and cannot leak by reshuffling."""
+    The two-digit space (90x90 = 8,100 pairs) is exhausted long before 200,000 samples, so
+    without this a probe scores memorisation: on arith_v1, 138 of 180 probe cases (77%)
+    were in training, median 3 times each and one 197 times."""
     import hashlib
 
     h = hashlib.blake2b(f"{a}{op}{b}".encode(), digest_size=4).digest()
@@ -125,19 +110,14 @@ def held_out(a, b, op):
 def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False, strip_eq=False):
     """A curriculum: 1-digit through `digits`-digit, every format, balanced.
 
-    split="train" emits only problems that hash to the training side, "test" only
-    the held-out ones, "all" ignores the split. tag=True prefixes the prompt with
-    the format marker so the answer is determined by the question.
+    split="train"/"test"/"all" selects the hash side. tag=True prefixes the format marker
+    so the answer is determined by the question.
 
-    strip_eq=True removes the trailing `= ` from SCRATCHPAD prompts only. Measured
-    on ckpt_k6_arith4: prompted `[竖式] 61 + 48 = ` the model answers
-    `109，0 + 1 + 进位0 = 1，写 0...` -- the result FIRST and the working after it,
-    as decoration. A scratchpad is only sample-efficient because it IS the
-    computation (Lee et al. 2307.03381); answered this way the mechanism never
-    runs. The cause is the prompt: a third of the training data is `a + b = `
-    followed immediately by the answer, so `= ` is a shortcut slot the model can
-    fill without working. Removing the slot removes the shortcut -- plain and
-    reverse keep theirs, so they stay comparable to round 4 as internal controls."""
+    strip_eq=True drops the trailing `= ` from SCRATCHPAD prompts only: ckpt_k6_arith4
+    answered `[竖式] 61 + 48 = ` with `109，0 + 1 + 进位0 = 1，写 0...`, the result first and
+    the working as decoration, so the computation never ran. `= ` is a shortcut slot -- a
+    third of the training data fills it with the answer immediately. plain and reverse keep
+    theirs as internal controls comparable to round 4."""
     out = []
     guard = 0
     while len(out) < n:

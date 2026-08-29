@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
 """Distil the 27B's judgement into a classifier head on our own 200M model.
 
-Stage two of FineWeb-Edu's architecture. The 27B answers 0.76 documents a second
-on one H20; `data/corpus/web` holds 1.97M documents, so scoring them all with it
-would take four days on the whole pod. It labels a sample instead, and a cheap
-model learns the mapping and scores everything.
+Stage two of FineWeb-Edu's architecture: the 27B at 0.76 docs/s would need four pod-days for
+data/corpus/web's 1.97M documents, a logistic head on our 200M's mean hidden state needs minutes.
 
-The cheap model is our own pretrained checkpoint with a 2-way head on the mean
-hidden state. Two reasons over the obvious alternatives:
-
-  * Hashed character n-grams were measured at AUC 0.60 against hand labels and
-    the diagnosis was a representation ceiling, not a data one -- they rank by
-    TOPIC and the labels split on REGISTER, so a page about air conditioners
-    scores the same whether it is a technical explainer or a product sheet. More
-    labels do not fix that; features that carry meaning do.
-  * opencsg trained exactly this classifier for Chinese and published the
-    dataset card but not the weights on HuggingFace, so it cannot be reused.
-
-Scoring 1.97M documents with a 200M model at 512 tokens is minutes, not days.
+Not hashed character n-grams (AUC 0.60): they rank by TOPIC and the labels split on REGISTER, so a
+page about air conditioners scores the same as explainer or product sheet -- a representation
+ceiling that more labels do not lift. opencsg's equivalent Chinese classifier is not published.
 
     python datagen/train_quality_head.py --labels data/web_27b_labels.jsonl \\
         --ckpt ckpt_k5_clean_0827.pt --tokenizer data/tokenizer_k5.json \\
@@ -93,8 +82,7 @@ def main():
     from loader import load_checkpoint, load_tokenizer
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
-    # Non-contiguous parameters make cublasGemmEx fail outright on this checkpoint;
-    # eval/ppl.py carries the same line for the same reason.
+    # Non-contiguous parameters make cublasGemmEx fail outright on this checkpoint.
     for pmt in model.parameters():
         pmt.data = pmt.data.contiguous()
     tok = load_tokenizer(a.tokenizer, cfg)
@@ -103,11 +91,9 @@ def main():
         w = torch.load(a.head, map_location="cpu", weights_only=True)
         import numpy as np
 
-        # "@file" is a newline-separated shard list, so a parallel run can hand each
-        # worker a contiguous block of the sorted shard order. The blocks must be
-        # contiguous and concatenated in worker order: clean_web.py walks the same
-        # glob and lines score[i] up with document i, so any other split silently
-        # attaches every score to the wrong document.
+        # "@file" is a newline-separated shard list for a parallel run. Blocks must be contiguous
+        # in sorted glob order and concatenated in worker order: clean_web.py matches score[i] to
+        # document i by position, so any other split attaches every score to the wrong document.
         if a.score.startswith("@"):
             with open(a.score[1:], encoding="utf-8") as fh:
                 files = [x.strip() for x in fh if x.strip()]
@@ -134,9 +120,8 @@ def main():
     print(f"{len(rows)} teacher labels, {y.mean():.1%} positive", flush=True)
     X = _features(model, _encode([r["t"] for r in rows], tok), a.device)
 
-    # Logistic head on frozen features. The backbone is not fine-tuned: with 20K
-    # labels from a teacher that is itself only 2.9x better than chance, fine-tuning
-    # would fit the teacher's mistakes as readily as its judgement.
+    # Backbone stays frozen: fine-tuning on 20K labels from a teacher only 2.9x better than
+    # chance would fit the teacher's mistakes as readily as its judgement.
     d = X.shape[1]
     w = torch.zeros(d, requires_grad=True)
     b = torch.zeros(1, requires_grad=True)
@@ -157,8 +142,7 @@ def main():
     print(f"saved {a.out}")
 
     if a.check:
-        # The teacher's own held-out AUC only says the head copied the teacher. This
-        # says whether the pair agrees with a human, which is the question.
+        # Held-out-teacher AUC only says the head copied the teacher; this says it agrees with a human.
         with open(a.check, encoding="utf-8") as fh:
             hand = [json.loads(x) for x in fh if x.strip()]
         hf = _features(model, _encode([r["t"] for r in hand], tok), a.device)

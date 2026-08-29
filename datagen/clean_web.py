@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
 """Rebuild data/corpus/web into a cleaned, quality-ranked corpus.
 
-Four filters, in order of how certain each one is. The certain ones run
-unconditionally; the classifier only decides the last cut, and its threshold is
-set from a measured AUC rather than a wish.
+Four filters in order of how certain each one is; only the last, the quality classifier, is soft.
 
-1. Traditional -> Simplified. 59.4% of the fineweb2 Chinese slice is traditional
-   and the corpus was never converted, so the model learns two scripts for one
-   language and the tokenizer wastes slots on both. scripts/t2s_corpus.py has
-   existed the whole time and was never applied to web.
-2. Gambling / contact / adult spam by keyword. Hits 2.5% of documents. Small,
-   but every hit is unambiguous, and several are keywords injected mid-sentence
-   into otherwise ordinary text, which is worse than an obvious ad.
-3. Within-document repetition. Product sheets and content farms repeat blocks
-   verbatim; forum-fragment splices repeat nothing but are made of very short
-   pieces. Both are measured here, both are structural, neither needs a model.
-4. The educational-quality classifier, last and softest.
+1. Traditional -> Simplified. 59.4% of the fineweb2 Chinese slice is traditional and was never
+   converted, so the model learns two scripts and the tokenizer wastes slots on both.
+2. Gambling / contact / adult spam by keyword: 2.5% of documents, every hit unambiguous.
+3. Within-document repetition (content farms) and short-sentence splices (forum fragments).
+4. The educational-quality classifier.
 
     python datagen/clean_web.py --scores data/web_scores.npy --keep 0.40 \\
         --out data/corpus/web_hq
@@ -51,8 +43,7 @@ def repetition(text):
 
 
 def fragmented(text):
-    """A splice of unrelated forum posts has many sentences and all of them short.
-    A real article has a mean sentence length well above 10 characters."""
+    """Many sentences, all short: a splice of forum posts. A real article means >10 chars/sentence."""
     sents = [s for s in SENT.split(text) if s.strip()]
     if len(sents) < 6:
         return False
@@ -71,9 +62,8 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     a = ap.parse_args()
 
-    # t2s_corpus exposes the opencc-derived {codepoint: simplified} table, not a
-    # convert function; str.translate over it is idempotent, so running this after
-    # scripts/t2s_corpus.py has already converted a shard changes nothing.
+    # An opencc-derived {codepoint: simplified} table, so str.translate is idempotent: safe to run
+    # on a shard scripts/t2s_corpus.py already converted.
     from t2s_corpus import table  # noqa: E402
 
     t2s = table()
@@ -85,12 +75,8 @@ def main():
         import numpy as np
 
         s = np.load(a.scores)
-        # score[i] must be the score OF document i in this same glob order. The
-        # scorer walks the identical sorted glob and its parallel workers take
-        # contiguous blocks concatenated in worker order for exactly this reason.
-        # A silent misalignment here attaches every score to a different document
-        # and still produces a perfectly ordinary-looking distribution, so the
-        # count is checked rather than assumed.
+        # score[i] is the score OF document i in this same sorted glob order. A misalignment
+        # still produces an ordinary-looking distribution, so the count is checked, not assumed.
         n_docs = sum(1 for f in files for line in open(f, encoding="utf-8") if line.strip())
         assert len(s) == n_docs, (
             f"{a.scores} holds {len(s)} scores but {len(files)} shards hold {n_docs} documents. "

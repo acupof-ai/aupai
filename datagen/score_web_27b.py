@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Score web documents for educational value with the 27B served by tileRL.
 
-This is FineWeb-Edu's actual method (arXiv 2406.17557): a strong model labels a
-sample, a cheap classifier learns from those labels, the cheap classifier scores
-the whole corpus. Everything weaker was tried first and measured, so the reason
-for reaching this far is on the record rather than assumed:
+Stage one of FineWeb-Edu's method (arXiv 2406.17557): a strong model labels a sample,
+train_quality_head.py distils it. Everything cheaper was measured first and failed:
 
     gambling/contact-spam regex alone             AUC 0.50
     hashed character 2-4 grams, 180 hand labels   AUC 0.60
@@ -12,19 +10,9 @@ for reaching this far is on the record rather than assumed:
     Qwen3-0.6B, 0-5 rubric                        AUC 0.539
     Qwen3-0.6B, binary yes/no prompt              AUC 0.647
 
-Two things that sweep taught, both of which apply here:
-
-  * Character n-grams rank by TOPIC; the labels split on REGISTER. A page about
-    air conditioners is a technical explainer or a product sheet and its
-    n-grams barely differ.
-  * A small model cannot hold a six-level rubric. The SAME 0.6B went from 0.539
-    to 0.647 when the six levels became one yes/no question. So this script
-    supports both `--rubric binary` and `--rubric five`, and --check measures
-    which one the 27B actually does better on rather than assuming the bigger
-    model can take the finer scale.
-
-`--check` scores 180 hand-labelled documents and prints AUC. Nothing downstream
-runs until that number is clearly above 0.62.
+The same 0.6B gained 0.108 AUC when the six-level rubric became one yes/no question, so both
+rubrics stay and `--check` measures which the 27B does better on. Nothing downstream runs until
+that AUC is clearly above 0.62.
 
     python datagen/score_web_27b.py --check data/web_labels.jsonl --rubric binary
     python datagen/score_web_27b.py --glob 'data/corpus/web/*.jsonl' --n 100000 \\
@@ -67,14 +55,9 @@ FIVE = """给下面这段网页文本的教育价值打分，0 到 5 分。
 def ask(url, model, prompt, timeout=300, max_tokens=400):
     """One completion. Returns the string after the model's think block.
 
-    max_tokens has to cover the WHOLE think block, not just the answer. The first
-    version asked for 24 and measured a short toy prompt where <think> came back
-    empty; on real documents the model thinks for a few hundred tokens, 24 cut it
-    off mid-reasoning, and the parser then picked a stray digit out of the
-    reasoning text. That produced an inverted five-point score (AUC 0.407) and,
-    worse, a BIASED sample: long high-quality documents make it think longer, so
-    they were the ones that failed. Measured on the 180 hand labels -- answered
-    documents were 13.7% hand-keep, unanswered ones 28.6%.
+    max_tokens must cover the WHOLE think block: at 24 it cut reasoning off mid-way, the parser
+    picked a stray digit out of it (AUC 0.407, inverted) and the failures were biased toward long
+    high-quality documents (13.7% hand-keep among answered vs 28.6% among failed).
     """
     body = json.dumps(
         {
@@ -93,21 +76,16 @@ def ask(url, model, prompt, timeout=300, max_tokens=400):
 
 
 def strip_think(txt):
-    """The answer is what follows the think block. Returns None when the block never
-    closed, which means the generation was truncated mid-reasoning -- that is a
-    failure to answer, not an answer, and must never fall through to the parser."""
+    """The answer is what follows the think block; None if the block never closed (truncated
+    mid-reasoning is a failure to answer, and must never reach the parser)."""
     if txt.lstrip().startswith("<think>") and "</think>" not in txt:
         return None
     return txt.split("</think>", 1)[-1].strip()
 
 
 def to_score(raw, rubric):
-    """Map the model's text to a number, or None if it did not answer the question.
-
-    Unparseable answers are dropped rather than defaulted: a default silently
-    turns 'the model refused' into a real-looking label, which is how a bad
-    annotation set gets built without anyone noticing.
-    """
+    """Model text -> number, or None. Unparseable answers are dropped, never defaulted: a default
+    turns 'the model refused' into a real-looking label."""
     if raw is None:  # truncated mid-think
         return None
     if rubric == "binary":
@@ -125,11 +103,8 @@ def to_score(raw, rubric):
 def pad_to_shape(prompt, tok, n_tokens):
     """Truncate or newline-pad so every prompt is EXACTLY n_tokens long.
 
-    tileLang JIT-compiles a kernel per sequence shape (~15s for the three kernels,
-    then cached on disk). 180 documents of 180 different lengths means 180 compiles
-    and a server pinned at 0% GPU while it builds them. One shape means one compile.
-    Padding is newlines, which are one token each and which the model ignores at the
-    tail of a document.
+    tileLang JIT-compiles a kernel per sequence shape (~15s each), so mixed lengths pin the
+    server at 0% GPU. Newlines pad because they are one token each and ignored at a tail.
     """
     if tok is None:
         return prompt
@@ -152,8 +127,7 @@ def score_many(texts, url, model, rubric, workers=16, chars=1200, tok=None, pad=
             p = tpl.format(t=texts[i][:chars])
             if pad:
                 p = pad_to_shape(p, tok, pad)
-            # round-robin by index: each endpoint sees workers/len(urls) concurrent
-            # requests, which is what keeps every KV pool inside its 4096 tokens.
+            # round-robin: keeps each endpoint's KV pool inside its 4096 tokens.
             return i, to_score(ask(urls[i % len(urls)], model, p, max_tokens=max_tokens), rubric)
         except (urllib.error.URLError, OSError, KeyError, json.JSONDecodeError):
             return i, None
@@ -228,10 +202,8 @@ def main():
 
         ok = [(r["y"], v) for r, v in zip(rows, s, strict=True) if v is not None]
         print(f"{len(rows)} hand labels, {len(ok)} answered ({len(ok) / len(rows):.0%})")
-        # An unanswered document is not a neutral loss. Truncated thinking correlates
-        # with length and length correlates with quality, so a low answer rate silently
-        # biases the sample toward the documents we are trying to REMOVE -- measured
-        # 13.7% hand-keep among answered against 28.6% among failed. Always report it.
+        # Unanswered is not a neutral loss: truncated thinking tracks length, length tracks
+        # quality, so a low answer rate biases the sample toward what we mean to REMOVE.
         got = np.array([v is not None for v in s])
         yy = np.array([r["y"] for r in rows], float)
         ll = np.array([len(r["t"]) for r in rows], float)
@@ -258,12 +230,8 @@ def main():
                 )
         return
 
-    # Stride EVERY shard rather than reading the first ones until the quota is met.
-    # The old prefix version drew its 20K from the first ~40 of 125 shards and read
-    # 8.5% positive where the same model reads 21.8% on a shard-stratified sample --
-    # shards are not interchangeable, and a teacher set drawn from a slice teaches
-    # the classifier that slice. dist_check.py's docstring carries the same warning
-    # about the eval file, which is ordered by level.
+    # Stride EVERY shard: a prefix draw from the first ~40 of 125 shards read 8.5% positive
+    # where a shard-stratified draw reads 21.8%. Shards are not interchangeable.
     files = sorted(glob.glob(a.glob))
     per = max(1, a.n // max(1, len(files)) + 1)
     rng = random.Random(0)

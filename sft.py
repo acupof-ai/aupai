@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 """SFT: fine-tune a pretrained HybridLM checkpoint on packed instruction data.
 
-Same acceleration stack as train.py: FP8 compute, torch.compile, DDP, Muon,
-Liger FLCE loss. Prompt tokens are masked (labels=-100); loss is computed on
-answer + <eos> tokens only.
-
 Usage: torchrun --nproc_per_node=8 sft.py --resume /work/aupai/ckpt.pt.step6000
 """
 
@@ -40,7 +36,7 @@ from train import (
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SFT_DATA = os.path.join(ROOT, "data", "sft", "sft_all.pt")
 CKPT_SFT = os.path.join(ROOT, "ckpt_sft.pt")
-EOS_ID = 1  # <eos> id in data/tokenizer.json; packed SFT rows carry ~10 samples each
+EOS_ID = 1  # <eos> id in data/tokenizer.json
 SAVE_INTERVAL = 500
 LOG_INTERVAL = 10
 
@@ -58,7 +54,7 @@ def main():
 
     ck = torch.load(args.resume, map_location="cpu", weights_only=False)
     for k, v in ck.get("cfg", {}).items():
-        setattr(Cfg, k, v)  # model architecture (d, layers, attn_res, ...) comes from the checkpoint
+        setattr(Cfg, k, v)  # architecture comes from the checkpoint, never the live Cfg
     Cfg.batch = args.batch
     Cfg.epochs = args.epochs
     Cfg.grad_ckpt = True  # required for stability (removing it causes NaN)
@@ -79,14 +75,13 @@ def main():
     if ddp:
         X = X[rank::world].contiguous()
         Y = Y[rank::world].contiguous()
-    n_even = ddp_even_len(len(X), Cfg.batch, ddp)  # identical step count on every rank
+    n_even = ddp_even_len(len(X), Cfg.batch, ddp)
     X, Y = X[:n_even], Y[:n_even]
     X = X.pin_memory()
     Y = Y.pin_memory()
     if is_main:
         print(f"sft rows {len(X)} per rank (world {world})", flush=True)
 
-    # model: pretrained weights -> bf16 -> FP8 compute
     raw_model = HybridLM(Cfg).to(device)
     raw_model.load_state_dict(ck["model"])
     fp8 = not args.no_fp8 and amp
@@ -99,7 +94,6 @@ def main():
             flush=True,
         )
 
-    # optimizers: Muon for 2D params, AdamW for embeddings + 1D (same as train.py)
     optimizers = build_optimizers(raw_model, Cfg)
 
     model = raw_model
@@ -139,7 +133,6 @@ def main():
             last = loss.item()
             grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
 
-            # sync NaN check across DDP ranks: if any rank is bad, all skip
             if ddp:
                 flag = torch.tensor([float(math.isfinite(last) and math.isfinite(grad_norm))], device=device)
                 dist.all_reduce(flag, op=dist.ReduceOp.MIN)
