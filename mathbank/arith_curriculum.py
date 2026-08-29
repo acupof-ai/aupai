@@ -122,12 +122,22 @@ def held_out(a, b, op):
     return int.from_bytes(h, "little") % 10 == 0  # 10% held out
 
 
-def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False):
+def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False, strip_eq=False):
     """A curriculum: 1-digit through `digits`-digit, every format, balanced.
 
     split="train" emits only problems that hash to the training side, "test" only
     the held-out ones, "all" ignores the split. tag=True prefixes the prompt with
-    the format marker so the answer is determined by the question."""
+    the format marker so the answer is determined by the question.
+
+    strip_eq=True removes the trailing `= ` from SCRATCHPAD prompts only. Measured
+    on ckpt_k6_arith4: prompted `[竖式] 61 + 48 = ` the model answers
+    `109，0 + 1 + 进位0 = 1，写 0...` -- the result FIRST and the working after it,
+    as decoration. A scratchpad is only sample-efficient because it IS the
+    computation (Lee et al. 2307.03381); answered this way the mechanism never
+    runs. The cause is the prompt: a third of the training data is `a + b = `
+    followed immediately by the answer, so `= ` is a shortcut slot the model can
+    fill without working. Removing the slot removes the shortcut -- plain and
+    reverse keep theirs, so they stay comparable to round 4 as internal controls."""
     out = []
     guard = 0
     while len(out) < n:
@@ -151,7 +161,10 @@ def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False):
             q, ans = scratchpad_add(a, b) if op == "+" else scratchpad_sub(a, b)
         if split != "all" and held_out(a, b, op) != (split == "test"):
             continue
-        q = f"{TAGS[fmt]} {q.strip()}" if tag else q.strip()
+        q = q.strip()
+        if strip_eq and fmt == "scratchpad":
+            q = q.rstrip("= ")
+        q = f"{TAGS[fmt]} {q}" if tag else q
         out.append({"instruction": q, "output": ans, "fmt": fmt, "op": op, "digits": d})
     return out
 
@@ -169,6 +182,15 @@ def _demo():
     assert all(r["instruction"].startswith(TAGS[r["fmt"]]) for r in tg), "tag does not match fmt"
     assert len({r["instruction"].split()[0] for r in tg}) == 3, "not all three tags emitted"
     print(f"tag check: {len(tg)} rows, every prompt carries its own format tag")
+    se = generate(400, random.Random(4), digits=3, split="train", tag=True, strip_eq=True)
+    for r in se:
+        if r["fmt"] == "scratchpad":
+            assert not r["instruction"].rstrip().endswith("="), r["instruction"]
+        else:
+            assert r["instruction"].rstrip().endswith("="), r["instruction"]
+    n_sp = sum(r["fmt"] == "scratchpad" for r in se)
+    assert n_sp, "no scratchpad rows drawn; strip_eq untested"
+    print(f"strip_eq check: {n_sp}/{len(se)} scratchpad prompts lost `=`, others kept it")
     for r in rows:
         q, out = r["instruction"], r["output"]
         lhs, _ = q.split("=")
@@ -206,9 +228,12 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--split", choices=["train", "test", "all"], default="train")
     ap.add_argument("--tag", action="store_true", help="prefix the prompt with its format marker")
+    ap.add_argument("--strip_eq", action="store_true", help="drop `= ` from scratchpad prompts")
     ap.add_argument("--out", default="data/synthetic/arith_v1.jsonl")
     a = ap.parse_args()
-    rows = generate(a.n, random.Random(a.seed), digits=a.digits, split=a.split, tag=a.tag)
+    rows = generate(
+        a.n, random.Random(a.seed), digits=a.digits, split=a.split, tag=a.tag, strip_eq=a.strip_eq
+    )
     with open(a.out, "w", encoding="utf-8") as o:
         for r in rows:
             o.write(json.dumps(r, ensure_ascii=False) + "\n")

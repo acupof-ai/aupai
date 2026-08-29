@@ -25,9 +25,18 @@ where the verdict costs a day each.
 wins at every training size, and the win is an artifact of the estimator, not a
 property of the vocabulary. A trigram over 32K types has 8x the parameters of one
 over 16K, so at equal token counts it is data-starved -- the transformer this is
-meant to predict is not. The signature is in the trend: the 16K-vs-32K gap runs
-0.1070 -> 0.0896 -> 0.0599 bits/char at n_train 3K -> 12K -> 30K, shrinking
-monotonically toward zero rather than converging on a constant advantage.
+meant to predict is not. Two signatures, either one sufficient:
+
+  the ordering is STRICTLY MONOTONE in size, with no interior optimum --
+  16K/32K/49K/65K score 4.5947/4.6546/4.7042/4.7479 at n_train=30K. A real
+  size optimum is U-shaped (too small compresses badly, too large is sparse);
+  a curve that only ever rewards "smaller" is measuring parameter count.
+
+  the gap shrinks with data -- 16K against 32K runs 0.1070 -> 0.0896 -> 0.0599
+  at n_train 3K -> 12K -> 30K, heading to zero rather than to a constant.
+
+So this cannot check AGENTS.md's fitted "optimum near 12-20K". Only a paired
+pretrain -- one base, two vocabularies -- can, and that costs a day.
 
 Use it for decisions that HOLD SIZE FIXED, where the estimator's capacity is the
 same on both sides. Digit splitting is such a decision, and it costs

@@ -384,3 +384,72 @@ with two vocabularies. CLAUDE.md records them as indistinguishable on math
 (math-500 51.6/51.2 p=0.899, math-hard 2.9/1.9 p=0.152), so the confound is
 small, but some part of p=1.2e-7 could in principle come from the base. Closing
 it costs a paired pretrain.
+
+## k6_arith4 — the format tag (2026-08-29)
+
+**Asked.** Round 3 terminated on only 17% of generations and the BPE control on
+21%, so non-termination is not the number representation. Hypothesis: three
+formats trained on identical prompts leave the answer underdetermined. Predicted
+`<eos>` rate moves and computation does not.
+
+**The prediction was wrong in the informative direction.** Round 4 is round 3
+plus a `[答]`/`[逆]`/`[竖式]` tag in the prompt, nothing else changed. Scored on
+the same 180 held-out problems with the same scorer:
+
+| | computation | termination |
+|---|---:|---:|
+| round 3, untagged | 30/180 = 16.7% | 25.6% |
+| round 4, `[答]` | **75/180 = 41.7%** | **62.8%** |
+| | p = 1.2e-7 | p = 6.6e-13 |
+
+**Both moved, and computation moved 25 points.** Format ambiguity is a
+COMPUTATION cost, not just a formatting cost -- capacity spent hedging over which
+format to answer in is capacity not spent on the answer.
+
+**A scoring artifact caught before it was reported.** The first run put reverse at
+5.6%. The generations show why: the model ignores the tag -- prompted
+`[逆] 61 + 48 = ` it answers `109`, not `9 0 1` -- and the reverse parser turned
+that correct answer into 901. Scoring both encodings moves reverse 5.6% -> 30.0%;
+24 points were the parser. Same failure as "first number emitted" penalising the
+BPE control for choosing scratchpad: **the metric was asking "did it use the
+format I asked for" when the question is "did it compute".** `readings()` now
+accepts either encoding.
+
+**Format ordering is the reverse of the literature's**: plain 41.7% > reverse
+30.0% ~ scratchpad 28.9% (plain vs reverse p=0.014), where Lee et al. have plain
+never converging and scratchpad best. The generations say why, and it is not that
+scratchpads do not work here:
+
+    [竖式] 61 + 48 =  ->  109，0 + 1 + 进位0 = 1，写 0，0\n7 + 3 + 进位0 = 10...
+
+**The result comes FIRST and the working after it, as decoration.** A scratchpad
+is sample-efficient because it IS the computation; answered this way the
+mechanism never runs. The cause is the prompt: a third of the training data is
+`a + b = ` followed immediately by the answer, so `= ` is a shortcut slot that
+can be filled without working. Round 5 removes it from scratchpad prompts only
+(`generate(strip_eq=True)`); plain and reverse keep theirs as internal controls.
+
+## Vocabulary sweep — the metric cannot answer the question it was built for
+
+Six variants on one stratified sample (16K/32K/49K/65K x digit-split), ranked by
+bits/char under an interpolated trigram at n_train 3K/12K/30K.
+
+**bits/char cannot rank vocabulary SIZE.** At n_train=30K the ordering is
+strictly monotone -- 16K 4.5947, 32K 4.6546, 49K 4.7042, 65K 4.7479 -- with no
+interior optimum. A real size optimum is U-shaped; a curve that only rewards
+"smaller" is measuring the estimator's parameter count, not the vocabulary. The
+16K-against-32K gap also shrinks with data (0.1070 -> 0.0896 -> 0.0599), heading
+to zero. AGENTS.md's fitted "optimum near 12-20K" is therefore still untested.
+
+**Digit splitting: cost measured, benefit never was.** -0.08% / +0.10% / +0.18%
+bits/char at the three training sizes -- cheap, and growing with data. But
+"cheap" is not "useful", and an earlier note here calling it adoptable said only
+that it is not expensive. It and FoNE are ALTERNATIVE fixes for the same defect
+(`--fone` replaces every number with `[NUM]`, after which segmentation of digits
+is moot), and the evidence is lopsided: FoNE has 0% -> 16.7% against a matched
+control at p=1.2e-7, digit splitting has no benefit measurement at all.
+
+**Decision.** Do not spend the paired pretrain that a size verdict needs. The
+binding constraint is not the vocabulary -- one prompt tag bought +25pt
+computation and +37pt termination, which is larger than anything the size
+question is likely to be worth.

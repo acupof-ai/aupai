@@ -20,6 +20,7 @@ ap.add_argument("--ckpt")
 ap.add_argument("--tokenizer")
 ap.add_argument("--fone", action="store_true")
 ap.add_argument("--n", type=int, default=60)
+ap.add_argument("--tag", action="store_true", help="prompt with the format marker (round 4+)")
 ap.add_argument("--steps", type=int, default=48)
 a = ap.parse_args()
 
@@ -39,7 +40,7 @@ if a.fone:
 def gen(prompt):
     if a.fone:
         (ids,), (vals,) = fone.encode_prompts([prompt], tok, num_id)
-        out, outv = list(ids), list(vals)
+        out, outv, stopped = list(ids), list(vals), False
         for _ in range(a.steps):
             lg, hd = model(
                 torch.tensor([out], device="cuda:0"),
@@ -48,23 +49,26 @@ def gen(prompt):
             )
             nxt = lg[0, -1].argmax().item()
             if nxt == eos:
+                stopped = True
                 break
             v = float(fone.decode(model.num_logits(hd[0, -1].float()))) if nxt == num_id else 0.0
             out.append(nxt)
             outv.append(v)
         tail = out[len(ids) :]
-        return fone.decode_text(tail, [x for t, x in zip(tail, outv[len(ids) :]) if t == num_id], tok, num_id)
+        txt = fone.decode_text(tail, [x for t, x in zip(tail, outv[len(ids) :]) if t == num_id], tok, num_id)
+        return txt, stopped
     ids = tok.encode(prompt, add_special_tokens=False).ids
-    out = list(ids)
+    out, stopped = list(ids), False
     for _ in range(a.steps):
         lg = model(torch.tensor([out], device="cuda:0"))
         if isinstance(lg, tuple):
             lg = lg[0]
         nxt = lg[0, -1].argmax().item()
         if nxt == eos:
+            stopped = True
             break
         out.append(nxt)
-    return tok.decode(out[len(ids) :])
+    return tok.decode(out[len(ids) :]), stopped
 
 
 rng = random.Random(0)
@@ -89,18 +93,43 @@ draw(a.n, 10, 99, "+", "+")
 draw(a.n, 10, 99, "-", "-")
 draw(a.n, 2, 19, "*", "×")
 
-first, anywhere = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}
-for p, gold, op in cases:
-    t = gen(p)
-    nums = [int(x) for x in re.findall(r"-?\d+", t)]
-    first[op][1] += 1
-    first[op][0] += bool(nums) and nums[0] == gold
-    anywhere[op] += gold in nums
-print(f"{a.ckpt}  ({'FoNE' if a.fone else 'BPE'})")
-for op in first:
-    c, n = first[op]
+
+def readings(t):
+    """Both encodings of the leading answer, because the model does not obey the
+    format tag: prompted `[逆] 61 + 48 = ` it answers `109`, not `9 0 1`. Parsing
+    only the reverse reading scored that correct answer as 901 and reported 5.6%
+    where the arithmetic was right. Scoring both asks "did it compute", which is
+    the question, instead of "did it use the format I asked for"."""
+    plain_nums = [int(x) for x in re.findall(r"-?\d+", t)]
+    m = re.match(r"\s*(-?)((?:\d\s*)+)", t)
+    rev = [int(m.group(1) + re.sub(r"\s", "", m.group(2))[::-1])] if m else []
+    return plain_nums, rev
+
+
+def score(prefix, label):
+    first, anywhere, stops = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}, 0
+    for p, gold, op in cases:
+        t, stopped = gen(prefix + p)
+        stops += stopped
+        nums, rev = readings(t)
+        first[op][1] += 1
+        first[op][0] += (bool(nums) and nums[0] == gold) or (bool(rev) and rev[0] == gold)
+        anywhere[op] += gold in nums or gold in rev
+    tf = sum(c for c, _ in first.values())
+    ta, tn = sum(anywhere.values()), sum(n for _, n in first.values())
+    per = "  ".join(f"{op} {c}/{n}" for op, (c, n) in first.items())
     print(
-        f"  {op}  first {c}/{n} = {100 * c / n:>3.0f}%   anywhere {anywhere[op]}/{n} = {100 * anywhere[op] / n:>3.0f}%"
+        f"  {label:<12} first {tf}/{tn} = {100 * tf / tn:>4.1f}%   anywhere {ta}/{tn} = {100 * ta / tn:>4.1f}%"
+        f"   <eos> {100 * stops / tn:>4.1f}%   [{per}]"
     )
-tf, ta, tn = sum(c for c, _ in first.values()), sum(anywhere.values()), sum(n for _, n in first.values())
-print(f"  TOTAL first {tf}/{tn} = {100 * tf / tn:.1f}%   anywhere {ta}/{tn} = {100 * ta / tn:.1f}%")
+
+
+print(f"{a.ckpt}  ({'FoNE' if a.fone else 'BPE'})")
+if a.tag:
+    # With one prompt per format the literature's prediction becomes testable for
+    # the first time: plain should be worst, scratchpad best. Round 3's flat
+    # 24/24/23% could not test it -- the prompt did not say which format to use.
+    for t, lab in (("[答] ", "plain"), ("[逆] ", "reverse"), ("[竖式] ", "scratchpad")):
+        score(t, lab)
+else:
+    score("", "untagged")
