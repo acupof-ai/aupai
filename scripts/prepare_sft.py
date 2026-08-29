@@ -188,7 +188,9 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     input_ids = torch.tensor(rows_ids, dtype=torch.int32)
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
-    blob = {"input_ids": input_ids, "labels": labels, "vocab": _vocab_fingerprint(tok)}
+    # vocab_id, the same key checkpoints use: this held "vocab" while checkpoints held
+    # "vocab_id", so the two artifacts a fingerprint check compares named it differently.
+    blob = {"input_ids": input_ids, "labels": labels, "vocab_id": _vocab_fingerprint(tok)}
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)
         n_num = int((input_ids == num_id).sum())

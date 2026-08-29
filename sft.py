@@ -20,15 +20,16 @@ from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from train import (
-    SOFTCAP,
     Cfg,
     HybridLM,
     RunLog,
+    SOFTCAP,
     build_optimizers,
     convert_to_fp8_compute,
     ddp_even_len,
     doc_cu_seqlens,
     opt_snapshot,
+    save_checkpoint,
     set_schedule,
     setup_ddp,
 )
@@ -53,6 +54,9 @@ def main():
     args = parser.parse_args()
 
     ck = torch.load(args.resume, map_location="cpu", weights_only=False)
+    # Carried onto every checkpoint this writes: without it load_tokenizer can only warn
+    # and load whatever data/tokenizer.json currently is, the file rebuilt in place.
+    ck_vocab = ck.get("vocab_id")
     for k, v in ck.get("cfg", {}).items():
         setattr(Cfg, k, v)  # architecture comes from the checkpoint, never the live Cfg
     Cfg.batch = args.batch
@@ -161,13 +165,7 @@ def main():
                 good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                 good_opt = opt_snapshot(optimizers)
                 if is_main:
-                    torch.save(
-                        {
-                            "model": good_state,
-                            "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                        },
-                        CKPT_SFT + f".step{step}",
-                    )
+                    save_checkpoint(CKPT_SFT + f".step{step}", good_state, Cfg, ck_vocab, step=step)
             if is_main and step % LOG_INTERVAL == 0:
                 runlog(f"step {step}/{total_steps} loss {last:.3f} {time.time() - t0:.0f}s")
                 t0 = time.time()
@@ -177,13 +175,7 @@ def main():
             break
 
     if is_main:
-        torch.save(
-            {
-                "model": raw_model.state_dict(),
-                "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-            },
-            CKPT_SFT,
-        )
+        save_checkpoint(CKPT_SFT, raw_model.state_dict(), Cfg, ck_vocab)
         print(f"saved {CKPT_SFT}", flush=True)
         runlog.plot()
     if ddp:

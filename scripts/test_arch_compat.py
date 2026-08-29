@@ -372,3 +372,27 @@ finally:
 assert _plain != _fone, f"both flags map to the same token cache: {_plain}"
 assert "_fone" in _fone and "_fone" not in _plain, (_plain, _fone)
 print("token cache namespaced by --fone: OK")
+
+
+# --- the two vocab_fingerprint implementations must agree -------------------------
+# train.py has one and scripts/loader.py has another, deliberately: loader must stay
+# importable without torch. Nothing asserted they agree except test_e2e, which is
+# GPU-only -- so a divergence would make every checkpoint unloadable and CI would be
+# green. Checkpoints are stamped by train's copy and verified by loader's.
+import train as _train  # noqa: E402
+from loader import vocab_fingerprint as _loader_fp  # noqa: E402
+
+_tok_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json"
+)
+if os.path.exists(_tok_path):
+    from tokenizers import Tokenizer as _Tok  # noqa: E402
+
+    _t = _Tok.from_file(_tok_path)
+    assert _train.vocab_fingerprint(_t) == _loader_fp(_t), (
+        f"train.vocab_fingerprint {_train.vocab_fingerprint(_t)} != "
+        f"loader.vocab_fingerprint {_loader_fp(_t)}: every checkpoint would fail to load"
+    )
+    print("vocab_fingerprint: train == loader OK")
+else:
+    print("vocab_fingerprint SKIP (no data/tokenizer.json)")

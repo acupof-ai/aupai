@@ -33,7 +33,7 @@ EOS_ID = 1
 NUM_ID = 32772
 
 
-def load_checkpoint(path, device="cpu", fone_ok=True):
+def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
     """(model, cfg), the model built from ck["cfg"] — never the live Cfg, which the
     train loop owns and which is not stable across runs. cfg gains `vocab_id` for
     load_tokenizer to cross-check."""
@@ -57,6 +57,14 @@ def load_checkpoint(path, device="cpu", fone_ok=True):
     if "model" in ck:
         model.load_state_dict(ck["model"])
     model.eval()
+    if dtype is not None:
+        # Ten call sites repeated `model.bfloat16()` (fp32 raises "FlashAttention only
+        # support fp16 and bf16" in the SWA blocks) and only four of them followed it with
+        # the .contiguous() pass, so the other six were one Muon checkpoint away from
+        # cublasGemmEx failing on a non-contiguous parameter.
+        model = model.to(dtype)
+        for p in model.parameters():
+            p.data = p.data.contiguous()
     return model, cfg
 
 

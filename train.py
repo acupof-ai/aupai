@@ -863,6 +863,94 @@ def _jsonl_content(path):
 VOCAB_ID = None  # fingerprint of the id->token map the run trained against
 
 
+# Greedy/sampled decoding, the ONE implementation. There were seven near-identical copies
+# (three probes, infer.py, test_e2e.py, rlvr_generate.py, and this one); only this one
+# batches, truncates the prompt to the trained context, and handles the FoNE value channel,
+# so every other copy was slower and silently unbounded. It lives here because `model` is a
+# HybridLM and scripts/loader.py must stay importable without torch.
+_EOS = 1
+_MAX_CTX = 4096  # the trained seq len; smaller truncates the model's own long reasoning away
+
+
+@torch.no_grad()
+def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_values=None):
+    """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids.
+
+    prompt_values switches on the FoNE path: a per-position value list for each prompt.
+    Then the return is (ids, values) per row, because a [NUM] token carries no number
+    of its own -- the digit head reads it off the same hidden state that predicted the
+    token, and fone.decode_text writes it back into the text.
+    """
+    B = len(prompts)
+    keep = max(0, _MAX_CTX - max_new)  # prompt budget; 0 means "keep all" (p[-0:] == p[0:])
+    fone_on = prompt_values is not None
+    if fone_on:
+        prompt_values = [v[-keep:] for v in prompt_values]
+    prompts = [p[-keep:] for p in prompts]
+    lengths = [len(p) for p in prompts]
+    x = torch.full((B, max(lengths)), _EOS, dtype=torch.long, device=device)
+    v = torch.zeros((B, max(lengths)), device=device) if fone_on else None
+    for i, p in enumerate(prompts):
+        x[i, : lengths[i]] = torch.tensor(p, device=device)
+        if fone_on:
+            v[i, : lengths[i]] = torch.tensor(prompt_values[i], device=device)
+    ends = torch.tensor(lengths, device=device)  # next write position per row
+    done = torch.zeros(B, dtype=torch.bool, device=device)
+    ar = torch.arange(B, device=device)
+    num_id = model.cfg.num_id if fone_on else None
+
+    for _ in range(max_new):
+        logits, hidden = model(
+            x[:, -_MAX_CTX:], num_vals=v[:, -_MAX_CTX:] if fone_on else None, return_hidden=fone_on
+        )
+        # logits only covers the last _MAX_CTX positions; index relative to that slice
+        off = max(0, x.size(1) - _MAX_CTX)
+        step_logits = logits[ar, ends - off - 1]
+        if temperature > 0:
+            nxt = torch.multinomial(torch.softmax(step_logits.float() / temperature, dim=-1), 1).squeeze(1)
+        else:
+            nxt = step_logits.argmax(dim=-1)
+        if x.size(1) <= int(ends.max()):
+            x = torch.cat([x, torch.full((B, 1), _EOS, dtype=torch.long, device=device)], dim=1)
+            if fone_on:
+                v = torch.cat([v, torch.zeros((B, 1), device=device)], dim=1)
+        x[ar, ends] = torch.where(done, torch.full_like(nxt, _EOS), nxt)
+        if fone_on:
+            val = fone.decode(model.num_logits(hidden[ar, ends - off - 1].float())).to(v.dtype)
+            v[ar, ends] = torch.where(nxt == num_id, val, torch.zeros_like(val))
+        ends += (~done).long()
+        done |= nxt == _EOS
+        if bool(done.all()):
+            break
+    ids = [x[i, lengths[i] : ends[i]].tolist() for i in range(B)]
+    if not fone_on:
+        return ids
+    vals = [v[i, lengths[i] : ends[i]][x[i, lengths[i] : ends[i]] == num_id].tolist() for i in range(B)]
+    return ids, vals
+
+
+def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
+    """The ONLY way a checkpoint is written, so no writer can forget the vocabulary.
+
+    There were nine torch.save sites and four schemas. Stamping vocab_id on two of them left
+    sft.py and algorithms/rlvr_trainer.py still writing a checkpoint that load_tokenizer can
+    only WARN about before loading whatever data/tokenizer.json currently is -- the file that
+    is rebuilt in place. `cfg` may be a Cfg class, a namespace or a dict; the private keys are
+    stripped here rather than at each call site."""
+    assert vocab_id, f"refusing to write {path} with no vocab_id: it could never be scored safely"
+    cfg = cfg if isinstance(cfg, dict) else vars(cfg)
+    ck = {
+        "model": model_state,
+        "cfg": {k: v for k, v in cfg.items() if not k.startswith("_")},
+        "vocab_id": vocab_id,
+    }
+    if opt is not None:
+        ck["opt"] = opt
+    if step is not None:
+        ck["step"] = step
+    torch.save(ck, path)
+
+
 def vocab_fingerprint(tok):
     """Hash of the id->token map, so a checkpoint records WHICH vocabulary it saw. Size does not
     identify one: two 32,773-token files can disagree on every id, and a pack built against the
@@ -1021,7 +1109,12 @@ def _assert_mix_domains(names, corpus_dir):
 
 
 def _selftest_mix_guard():
-    """Runs at import, so it fails in CI rather than 40 minutes into a tokenize on the pod."""
+    """Runs at import, so it fails in CI rather than 40 minutes into a tokenize on the pod.
+
+    LOGIC only. That the guard is ON main()'s path -- the actual bug, which every logic test
+    here passes without -- is scripts/harness.py check_guard_on_path, which asserts it by AST
+    in CI and has a broken world. It used to be duplicated here, costing an inspect.getsource
+    + ast.parse of 1,500 lines on every `import train`, i.e. on every DDP rank."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
@@ -1037,22 +1130,6 @@ def _selftest_mix_guard():
             except AssertionError:
                 continue
             raise AssertionError(f"mix guard accepted {bad}")
-
-    # The bug was never wrong logic -- run_pretrain_v3.sh had it right -- but logic that was not
-    # on run_ddp.sh's path. Deleting the main() call leaves every test above passing.
-    import ast
-    import inspect
-
-    src = inspect.getsource(inspect.getmodule(_assert_mix_domains))
-    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "main")
-    calls = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-    assert "_assert_mix_domains" in calls, (
-        "main() no longer calls _assert_mix_domains, so run_ddp.sh is unguarded again -- which is "
-        "the exact bug this guard exists to fix, and every logic test above still passes without it."
-    )
-    assert "mix_path" in {t.id for n in ast.walk(fn) for t in ast.walk(n) if isinstance(t, ast.Name)}, (
-        "main() no longer resolves mix_path; the guard's call site has moved and is unverified here"
-    )
 
 
 _selftest_mix_guard()
@@ -1407,16 +1484,7 @@ def main():
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
                     if is_main and step % 1000 == 0:
-                        torch.save(
-                            {
-                                "model": good_state,
-                                "opt": good_opt,
-                                "step": step,
-                                "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                                "vocab_id": VOCAB_ID,
-                            },
-                            ckpt_path + f".step{step}",
-                        )
+                        save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
                         # keep the newest 3; resume only needs the latest
                         stale = sorted(
                             glob.glob(ckpt_path + ".step*"),
@@ -1479,28 +1547,23 @@ def main():
         )
         if is_main:
             runlog(f"ep {ep + 1}/{Cfg.epochs} train {last:.3f} val {v:.3f} {time.time() - t0:.0f}s")
-            torch.save(
-                {
-                    "model": raw_model.state_dict(),
-                    "opt": opt_snapshot(optimizers),
-                    "step": step,
-                    "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                    "vocab_id": VOCAB_ID,
-                },
+            save_checkpoint(
                 ckpt_path + f".ep{ep + 1}",
+                raw_model.state_dict(),
+                Cfg,
+                VOCAB_ID,
+                opt_snapshot(optimizers),
+                step,
             )
         if step >= total_steps:
             break  # --max_steps reached (validation + epoch ckpt already done above)
 
     if is_main:
-        torch.save(
-            {
-                "model": raw_model.state_dict(),
-                "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                "vocab_id": VOCAB_ID,
-            },
-            ckpt_path,
-        )
+        # A checkpoint that took no optimizer steps is a 206M random init that every
+        # downstream check passes. test_e2e stage 4 measures the postcondition; this makes
+        # the simplest form of it impossible.
+        assert step > 0, "refusing to save: the training loop ran zero optimizer steps"
+        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID)
         print(f"saved {ckpt_path}")
         runlog.plot()
     if ddp:

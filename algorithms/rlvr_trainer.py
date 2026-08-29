@@ -152,7 +152,7 @@ def main():
 
     sys.path.insert(0, ROOT)
     from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
-    from train import RunLog, convert_to_fp8_compute
+    from train import RunLog, convert_to_fp8_compute, save_checkpoint
 
     torch.manual_seed(1337)
     random.seed(1337)
@@ -231,11 +231,13 @@ def main():
     def save_ckpt(path, step):
         sd = {n: m.detach().cpu() for n, m in master.items()}
         sd["head.weight"] = sd["tok.weight"]  # tied embedding alias
-        cfg_clean = {k: v for k, v in vars(cfg).items() if not k.startswith("_")}
-        torch.save({"model": sd, "cfg": cfg_clean, "step": step}, path)
+        save_checkpoint(path, sd, cfg, cfg.vocab_id, step=step)
         # bf16 inference copy: half the size, zero quality loss (inference runs bf16 anyway)
-        sd_bf16 = {n: (t.to(torch.bfloat16) if torch.is_tensor(t) and t.is_floating_point() else t) for n, t in sd.items()}
-        torch.save({"model": sd_bf16, "cfg": cfg_clean, "step": step}, path.replace(".pt", "_bf16.pt"))
+        sd_bf16 = {
+            n: (t.to(torch.bfloat16) if torch.is_tensor(t) and t.is_floating_point() else t)
+            for n, t in sd.items()
+        }
+        save_checkpoint(path.replace(".pt", "_bf16.pt"), sd_bf16, cfg, cfg.vocab_id, step=step)
 
     # Best-ckpt: keep the peak-smoothed-acc state, not just the latest. The 2026-08-27 direct-RL
     # run peaked at step 280, collapsed to 0.339 by step 390, and the step-400 periodic save

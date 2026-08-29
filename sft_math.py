@@ -23,15 +23,16 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 import fone
 from train import (
-    SOFTCAP,
     Cfg,
     HybridLM,
     RunLog,
+    SOFTCAP,
     build_optimizers,
     convert_to_fp8_compute,
     ddp_even_len,
     doc_cu_seqlens,
     opt_snapshot,
+    save_checkpoint,
     set_schedule,
     setup_ddp,
 )
@@ -95,7 +96,7 @@ def main():
     # 4.77 vs 1.28, 2026-08-28) -- every id is wrong and in range, and the sizes match.
     ck_vocab = args.vocab or ck.get("vocab_id")
     if ck_vocab and "vocab" in d:
-        assert d["vocab"] == ck_vocab, (
+        assert d["vocab_id"] == ck_vocab, (
             f"{args.sft_path} was packed against vocabulary {d['vocab']} but "
             f"{args.resume} was trained on {ck_vocab}; repack with "
             "`prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
@@ -212,14 +213,7 @@ def main():
                 good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                 good_opt = opt_snapshot(optimizers)
                 if is_main:
-                    torch.save(
-                        {
-                            "model": good_state,
-                            "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                            "vocab_id": ck_vocab,
-                        },
-                        args.out + f".step{step}",
-                    )
+                    save_checkpoint(args.out + f".step{step}", good_state, Cfg, ck_vocab, step=step)
             if is_main and step % LOG_INTERVAL == 0:
                 runlog(f"step {step}/{total_steps} loss {last:.3f} {time.time() - t0:.0f}s")
                 t0 = time.time()
@@ -229,18 +223,7 @@ def main():
             break
 
     if is_main:
-        # vocab_id, or the model people actually evaluate is the one that cannot be checked:
-        # train.py stamps every checkpoint it writes, these two did not, and load_tokenizer
-        # can then only warn and load whatever data/tokenizer.json currently is -- the file
-        # that is rebuilt in place, and that nearly cost ckpt_k6_fone.
-        torch.save(
-            {
-                "model": raw_model.state_dict(),
-                "cfg": {k: v for k, v in vars(Cfg).items() if not k.startswith("_")},
-                "vocab_id": ck_vocab,
-            },
-            args.out,
-        )
+        save_checkpoint(args.out, raw_model.state_dict(), Cfg, ck_vocab)
         print(f"saved {args.out}", flush=True)
         runlog.plot()
     if ddp:

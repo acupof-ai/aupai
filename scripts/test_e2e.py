@@ -181,7 +181,7 @@ def main():
         pack = os.path.join(tmp, "sft.pt")
         run([sys.executable, "prepare_sft_math.py", "--sources", sft_jsonl, "--out", pack])
         pk = torch.load(pack, map_location="cpu", weights_only=False)
-        pack_fp = pk.get("vocab") if isinstance(pk, dict) else None
+        pack_fp = pk.get("vocab_id") if isinstance(pk, dict) else None
         assert pack_fp == fp, (
             f"pack fingerprint {pack_fp} != {fp}. prepare_sft.py once hashed str(id) before the "
             "token, so a pack's fingerprint could NEVER equal a checkpoint's vocab_id and the "
@@ -225,20 +225,18 @@ def main():
         # bf16, as eval/math_hard.py does: flash_attn_func in the SWA blocks raises
         # "FlashAttention only support fp16 and bf16 data type" on the fp32 weights a
         # checkpoint loads as.
-        model, cfg = load_checkpoint(sft_ckpt, device="cuda:0")
-        model = model.to(torch.bfloat16)
+        from train import generate_batch
+
+        model, cfg = load_checkpoint(sft_ckpt, device="cuda:0", dtype=torch.bfloat16)
         tok = Tokenizer.from_file(tok_path)
         ids = tok.encode("1 + 1 = ", add_special_tokens=False).ids
+        (out,) = generate_batch(model, [ids], 4, "cuda:0")
+        # argmax over all-NaN logits returns 0 silently, and FP8 e4m3 backward NaN without
+        # grad_ckpt is a documented failure here, so "it did not raise" is not enough.
         with torch.no_grad():
-            for _ in range(4):
-                lg = model(torch.tensor([ids], device="cuda:0"))
-                lg = lg[0] if isinstance(lg, tuple) else lg
-                # argmax over all-NaN logits returns 0 silently, and FP8 e4m3 backward NaN
-                # without grad_ckpt is a documented failure here (sft_math.py:56). Without
-                # this the stage proves only that forward() did not raise.
-                assert torch.isfinite(lg).all(), "logits contain NaN/Inf"
-                ids.append(int(lg[0, -1].argmax()))
-        print(f"    generated: {tok.decode(ids)!r}")
+            lg = model(torch.tensor([ids + out], device="cuda:0"))
+            assert torch.isfinite(lg[0] if isinstance(lg, tuple) else lg).all(), "logits are NaN/Inf"
+        print(f"    generated: {tok.decode(ids + out)!r}")
 
         stage(10, "THE JOIN: the SFT checkpoint still says which vocabulary it speaks")
         # Without vocab_id, load_tokenizer only warns and loads whatever data/tokenizer.json

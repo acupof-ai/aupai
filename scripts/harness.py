@@ -18,6 +18,7 @@ Two rules:
 """
 
 import ast
+import functools
 import glob
 import json
 import os
@@ -29,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 DATA = os.path.join(ROOT, "data")
-CORPUS = os.path.join(DATA, "corpus")
+SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
@@ -37,6 +38,7 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 # --------------------------------------------------------------------------- facts
 
 
+@functools.lru_cache(maxsize=None)
 def cfg_default(field):
     """Read a Cfg field from train.py by AST: importing train.py pulls torch/fla/liger,
     and this file must run on CPU-only CI and laptops.
@@ -71,6 +73,7 @@ def read_mix(path):
     return list(doms), None
 
 
+@functools.lru_cache(maxsize=None)
 def experiments():
     p = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(p):
@@ -224,8 +227,17 @@ def _broken_stale_run():
 
     d = _tmp_repo()
     subprocess.run(
-        [sys.executable, os.path.join(HERE, "exp.py"), "start", "--name", "killed_job", "--cmd", "x"],
-        env={**os.environ, "AUPAI_ROOT": d},
+        [
+            sys.executable,
+            os.path.join(HERE, "exp.py"),
+            "--root",
+            d,
+            "start",
+            "--name",
+            "killed_job",
+            "--cmd",
+            "x",
+        ],
         check=True,
         capture_output=True,
     )
@@ -261,17 +273,18 @@ def check_mix_shards(root):
     if err:
         return FAIL, f"cannot read the default mix: {err}"
     corpus = os.path.join(root, "data", "corpus")
-    present = [d for d in doms if glob.glob(os.path.join(corpus, d, "*.jsonl"))]
-    if not present:
-        # A git checkout ships data/corpus/sample and nothing else, so NONE of the mix's
-        # domains resolving means "not the pod", while SOME resolving means a real gap.
-        # Reporting FAIL here made `harness.py check` red in CI forever, which is the same
-        # as no signal.
-        return SKIP, f"none of {doms} present: this is a checkout, not the pod"
-    missing = [d for d in doms if d not in present]
-    if missing:
-        return FAIL, f"no shards for {missing}"
-    return PASS, f"all {len(doms)} domains have shards"
+    missing = [d for d in doms if not glob.glob(os.path.join(corpus, d, "*.jsonl"))]
+    if not missing:
+        return PASS, f"all {len(doms)} domains have shards"
+    # "No domain resolves" is not evidence of a checkout: a pod whose corpus was wiped,
+    # unmounted or renamed resolves zero domains too, and that is the catastrophe this
+    # check exists for. Discriminate on whether a corpus EXISTS at all -- a git checkout
+    # ships data/corpus/sample and only that -- so the question becomes "is there a corpus
+    # here that the mix fails to point at", which is the real one.
+    other = [d for d in glob.glob(os.path.join(corpus, "*")) if os.path.basename(d) != SAMPLE_DOMAIN]
+    if len(missing) == len(doms) and not any(glob.glob(os.path.join(d, "*.jsonl")) for d in other):
+        return SKIP, "data/corpus holds only the shipped sample: this is a checkout, not the pod"
+    return FAIL, f"no shards for {missing}"
 
 
 def check_tokenizer_roundtrip(root):
@@ -448,13 +461,10 @@ def run_checks(root=ROOT, quiet=False):
 def ledger():
     scores, orphans = recorded_scores()
     toks = local_tokenizers()
-    rows = []
+    print(f"  {'checkpoint':<26}{'on disk':>8}{'math-hard':>11}   source of the score")
     for n in checkpoint_names(scores):
         on_disk = os.path.exists(os.path.join(ROOT, f"{n}.pt"))
         s, src = scores.get(n, (None, None))
-        rows.append((n, on_disk, s, src))
-    print(f"  {'checkpoint':<26}{'on disk':>8}{'math-hard':>11}   source of the score")
-    for n, on_disk, s, src in rows:
         sc = f"{s:.1f}%" if s is not None else "-"
         print(f"  {n:<26}{'yes' if on_disk else 'record':>8}{sc:>11}   {src or ''}")
     if orphans:
@@ -467,7 +477,6 @@ def ledger():
         print("\n  local tokenizers:")
         for k, v in toks.items():
             print(f"    {k:<26}{v}")
-    return rows
 
 
 def gaps():
@@ -496,8 +505,8 @@ def gaps():
             print(f"    EXPERIMENTS.md:{i}  {ln[:96]}")
 
 
-def stages():
-    res = {n: s for n, s, _e, _a, _i in run_checks(quiet=True)}
+def stages(res=None):
+    res = {n: s for n, s, _e, _a, _i in (res or run_checks(quiet=True))}
     scores, _ = recorded_scores()
     print(f"  {'stage':<12}{'gates':>26}   postcondition")
     for name, gates, post in STAGES:
@@ -552,12 +561,13 @@ def _demo():
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     cmd = args[0] if args else "all"
+    res = []
     if cmd in ("all", "check"):
         print("INVARIANTS  (a check that cannot run is a FAILURE, never a pass)")
         res = run_checks()
         bad = [n for n, s, *_ in res if s == FAIL]
     else:
-        res, bad = [], []
+        bad = []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -566,7 +576,7 @@ def main():
         gaps()
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
-        stages()
+        stages(res)
     if bad:
         print(f"\n{len(bad)} invariant(s) FAILED: {', '.join(bad)}")
         return 1

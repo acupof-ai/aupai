@@ -16,12 +16,23 @@ import os
 import subprocess
 import time
 
-# AUPAI_ROOT exists so harness.py's broken world can run THIS logger into a temp tree and
-# age the row it really wrote. Its old broken world hand-wrote a `date` key exp.py has
-# never emitted, so the check and its test agreed on a fiction and the check never fired.
-ROOT = os.environ.get("AUPAI_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# --root is how harness.py's broken world runs THIS logger into a temp tree and ages the
+# row it really wrote (its old broken world hand-wrote a `date` key exp.py has never
+# emitted, so the check and its test agreed on a fiction and the check never fired). It is
+# a FLAG and not an env var on purpose: an ambient AUPAI_ROOT would silently redirect the
+# experiment log of a production run, and every launch on this project already goes through
+# `pod "... setsid nohup ..."`, where exporting one is a keystroke away. The log is the
+# ledger; it does not get an ambient override.
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "runs", "experiments.jsonl")
 MD = os.path.join(ROOT, "EXPERIMENTS.md")
+
+
+def set_root(root):
+    global ROOT, LOG, MD
+    ROOT = root
+    LOG = os.path.join(root, "runs", "experiments.jsonl")
+    MD = os.path.join(root, "EXPERIMENTS.md")
 
 
 def rows():
@@ -88,6 +99,7 @@ def render():
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--root", help="repo root to log into (tests only; default this checkout)")
     sub = ap.add_subparsers(dest="action", required=True)
     s = sub.add_parser("start")
     s.add_argument("--name", required=True)
@@ -107,6 +119,8 @@ def main():
     sub.add_parser("render")
     sub.add_parser("list")
     a = ap.parse_args()
+    if a.root:
+        set_root(a.root)
 
     if a.action == "start":
         rs = rows()

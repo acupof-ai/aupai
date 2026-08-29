@@ -10,6 +10,7 @@ sys.path.insert(0, ".")
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "mathbank")
 from loader import load_checkpoint, load_tokenizer
+from train import generate_batch
 from arith_curriculum import held_out
 
 ap = argparse.ArgumentParser()
@@ -22,51 +23,22 @@ ap.add_argument("--strip_eq", action="store_true", help="scratchpad prompts drop
 ap.add_argument("--steps", type=int, default=48)
 a = ap.parse_args()
 
-model, cfg = load_checkpoint(a.ckpt, device="cuda:0")
-model = model.bfloat16()
-for p in model.parameters():
-    p.data = p.data.contiguous()
+model, cfg = load_checkpoint(a.ckpt, device="cuda:0", dtype=torch.bfloat16)
 tok = load_tokenizer(a.tokenizer, cfg)
-eos = tok.token_to_id("<eos>")
 if a.fone:
     import fone
 
-    num_id = cfg.num_id
 
-
-@torch.no_grad()
 def gen(prompt):
+    """One call into train.generate_batch, which owns the FoNE value channel and the
+    prompt truncation every hand-rolled copy of this loop was missing."""
     if a.fone:
-        (ids,), (vals,) = fone.encode_prompts([prompt], tok, num_id)
-        out, outv, stopped = list(ids), list(vals), False
-        for _ in range(a.steps):
-            lg, hd = model(
-                torch.tensor([out], device="cuda:0"),
-                num_vals=torch.tensor([outv], device="cuda:0"),
-                return_hidden=True,
-            )
-            nxt = lg[0, -1].argmax().item()
-            if nxt == eos:
-                stopped = True
-                break
-            v = float(fone.decode(model.num_logits(hd[0, -1].float()))) if nxt == num_id else 0.0
-            out.append(nxt)
-            outv.append(v)
-        tail = out[len(ids) :]
-        txt = fone.decode_text(tail, [x for t, x in zip(tail, outv[len(ids) :]) if t == num_id], tok, num_id)
-        return txt, stopped
+        (ids,), (vals,) = fone.encode_prompts([prompt], tok, cfg.num_id)
+        (out,), (ov,) = generate_batch(model, [ids], a.steps, "cuda:0", prompt_values=[vals])
+        return fone.decode_text(out, ov, tok, cfg.num_id), len(out) < a.steps
     ids = tok.encode(prompt, add_special_tokens=False).ids
-    out, stopped = list(ids), False
-    for _ in range(a.steps):
-        lg = model(torch.tensor([out], device="cuda:0"))
-        if isinstance(lg, tuple):
-            lg = lg[0]
-        nxt = lg[0, -1].argmax().item()
-        if nxt == eos:
-            stopped = True
-            break
-        out.append(nxt)
-    return tok.decode(out[len(ids) :]), stopped
+    (out,) = generate_batch(model, [ids], a.steps, "cuda:0")
+    return tok.decode(out), len(out) < a.steps
 
 
 rng = random.Random(0)

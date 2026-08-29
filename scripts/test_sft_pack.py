@@ -59,7 +59,7 @@ def main():
     ids, lab = d["input_ids"], d["labels"]
     from loader import vocab_fingerprint
 
-    assert d["vocab"] == vocab_fingerprint(tok), (
+    assert d["vocab_id"] == vocab_fingerprint(tok), (
         f"pack fingerprint {d['vocab']} != {vocab_fingerprint(tok)}; a pack whose fingerprint "
         "cannot equal a checkpoint's vocab_id makes sft_math.py's assert unsatisfiable"
     )

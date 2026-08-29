@@ -152,47 +152,23 @@ def main():
     import torch
 
     from loader import load_checkpoint, load_tokenizer
+    from train import generate_batch
 
-    model, cfg = load_checkpoint(a.ckpt, device="cuda:0")
-    model = model.bfloat16()
-    for p in model.parameters():
-        p.data = p.data.contiguous()
+    model, cfg = load_checkpoint(a.ckpt, device="cuda:0", dtype=torch.bfloat16)
     tok = load_tokenizer(a.tokenizer, cfg)
-    eos = tok.token_to_id("<eos>")
     if a.fone:
         import fone
 
-    @torch.no_grad()
     def gen(prompt):
+        """train.generate_batch owns the FoNE value channel and the prompt truncation that
+        every hand-rolled copy of this loop was missing."""
         if a.fone:
             (ids,), (vals,) = fone.encode_prompts([prompt], tok, cfg.num_id)
-            out, outv = list(ids), list(vals)
-            for _ in range(a.steps):
-                lg, hd = model(
-                    torch.tensor([out], device="cuda:0"),
-                    num_vals=torch.tensor([outv], device="cuda:0"),
-                    return_hidden=True,
-                )
-                nxt = lg[0, -1].argmax().item()
-                if nxt == eos:
-                    break
-                v = float(fone.decode(model.num_logits(hd[0, -1].float()))) if nxt == cfg.num_id else 0.0
-                out.append(nxt)
-                outv.append(v)
-            tail = out[len(ids) :]
-            return fone.decode_text(
-                tail, [x for t, x in zip(tail, outv[len(ids) :]) if t == cfg.num_id], tok, cfg.num_id
-            )
+            (out,), (ov,) = generate_batch(model, [ids], a.steps, "cuda:0", prompt_values=[vals])
+            return fone.decode_text(out, ov, tok, cfg.num_id)
         ids = tok.encode(prompt, add_special_tokens=False).ids
-        out = list(ids)
-        for _ in range(a.steps):
-            lg = model(torch.tensor([out], device="cuda:0"))
-            lg = lg[0] if isinstance(lg, tuple) else lg
-            nxt = lg[0, -1].argmax().item()
-            if nxt == eos:
-                break
-            out.append(nxt)
-        return tok.decode(out[len(ids) :])
+        (out,) = generate_batch(model, [ids], a.steps, "cuda:0")
+        return tok.decode(out)
 
     cases = load_cases(a.n)
     print(f"{a.ckpt}\n{len(cases)} HELD-OUT problems (blake2b split, same filter as training)\n")
