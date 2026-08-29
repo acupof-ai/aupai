@@ -90,7 +90,10 @@ def make(cfg, device, seed):
         torch.randn(cfg["B"], cfg["T"], cfg["D"], generator=g, dtype=torch.float64).to(device)
         for _ in range(cfg["n"])
     ]
-    gq64 = torch.randn(cfg["D"], generator=g, dtype=torch.float64).to(device)
+    # 1/sqrt(D) so the logits land at O(1). Unit-variance gq gives logits with std sqrt(D) = 32,
+    # which saturates the softmax to a hard argmax and prices bf16 against a regime the trained
+    # model never occupies (q is zero-init, so real logits start at 0).
+    gq64 = torch.randn(cfg["D"], generator=g, dtype=torch.float64).to(device) * cfg["D"] ** -0.5
     return vs64, gq64, [v.to(dt) for v in vs64], gq64.to(dt)
 
 
@@ -105,6 +108,7 @@ def _fwd_bwd(fn, V, Q):
 def _score(x, ref):
     return dict(
         fwd=err(x[0], ref[0])["max_abs"],
+        fwd_rel=err(x[0], ref[0])["rel"],
         dv=max(err(a, b)["max_abs"] for a, b in zip(x[1], ref[1], strict=True)),
         dq=err(x[2], ref[2])["max_abs"],
     )
@@ -154,6 +158,20 @@ def config_stamp(cfg, device):
     return s
 
 
+def peak_mem_fwd_bwd(cfg, device, fn):
+    """Peak allocated bytes for one fwd+bwd. The memory claim has to be measured, not derived:
+    eager autograd does not save the accumulate loop's temporaries (add's backward saves
+    nothing), while one_pass's fp32 running accumulator is saved by every rescale multiply."""
+    if device.type != "cuda":
+        return None
+    _, _, vs, gq = make(cfg, device, SEEDS[0])
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    base = torch.cuda.memory_allocated()
+    _fwd_bwd(fn, vs, gq)
+    return {"peak_MB": (torch.cuda.max_memory_allocated() - base) / 1e6}
+
+
 def bench(cfg, device, fn, iters=10, warmup=3):
     _, _, vs, gq = make(cfg, device, SEEDS[0])
     sync = torch.cuda.synchronize if device.type == "cuda" else (lambda: None)
@@ -187,7 +205,8 @@ if __name__ == "__main__":
         cfg = gcfg = dict(cfg, dtype="float32")  # no bf16 arithmetic worth measuring on CPU
 
     verdict, trials = g1(gcfg, dev)
-    assert trials[0]["baseline"]["fwd"] < 1e-2, trials[0]
+    # Relative, not absolute: at D=1024 in bf16 a max|d| of ~4e-2 is just bf16's mantissa.
+    assert trials[0]["baseline"]["fwd_rel"] < 1e-2, trials[0]
     assert g2(gcfg, dev, one_pass), "one_pass is non-deterministic — G2 floor is broken"
     out = {"g1": verdict, "g1_config": config_stamp(gcfg, dev), "g2_bit_exact": True}
     for name, fn in (("two_pass", two_pass), ("one_pass", one_pass)):
@@ -195,6 +214,7 @@ if __name__ == "__main__":
         # The shipped model runs under torch.compile, so the eager pair is not the
         # baseline a kernel has to beat — compile fuses the two-pass reads too.
         out[f"bench_{name}_compiled"] = bench(cfg, dev, torch.compile(fn), warmup=5)
+        out[f"mem_{name}"] = peak_mem_fwd_bwd(cfg, dev, fn)
     print(json.dumps(out, indent=2))
     if args.json:
         with open(args.json, "w") as f:
