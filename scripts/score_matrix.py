@@ -151,11 +151,26 @@ def _run(cmd, patterns):
 
 
 def metric_mc(ckpt_path, tok_path, benchmarks):
-    return _run(
-        [sys.executable, "eval/run_eval.py", "--ckpt", ckpt_path, "--tokenizer", tok_path,
-         "--benchmarks", *benchmarks],
-        {d: rf"{d}:\s*([\d.]+)%" for d in benchmarks},
-    )
+    """run_eval prints '  <display name>  25.1%' lines (ceval displays as
+    'C-Eval (zh)'), so parse every percent line by its display name rather
+    than by the benchmark flag."""
+    try:
+        r = subprocess.run(
+            [sys.executable, "eval/run_eval.py", "--ckpt", ckpt_path, "--tokenizer", tok_path,
+             "--benchmarks", *benchmarks],
+            capture_output=True, text=True, cwd=ROOT, timeout=3600,
+        )
+    except Exception as e:
+        return None, f"run_eval.py failed to run: {e}"
+    out = {}
+    for line in r.stdout.splitlines():
+        m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", line)
+        if m:
+            out[m.group(1).strip()] = float(m.group(2))
+    if not out:
+        tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
+        return None, f"run_eval.py produced no score: {' | '.join(tail)[:200]}"
+    return out, None
 
 
 def metric_math_hard(ckpt_path, tok_path):
@@ -256,10 +271,22 @@ def main():
             print(f"  {m:15s} SKIPPED: {why}", flush=True)
 
     if a.json:
-        with open(a.json, "a", encoding="utf-8") as f:
+        # A re-run updates its checkpoint's record, last write wins: the matrix is
+        # the current state, not a history.
+        existing = []
+        if os.path.exists(a.json):
+            for line in open(a.json, encoding="utf-8"):
+                try:
+                    r = json.loads(line)
+                    if r.get("ckpt") not in {x["ckpt"] for x in records}:
+                        existing.append(line)
+                except Exception:
+                    existing.append(line)
+        with open(a.json, "w", encoding="utf-8") as f:
+            f.writelines(existing)
             for r in records:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"\nappended {len(records)} record(s) to {a.json}")
+        print(f"\nwrote {len(records)} record(s) to {a.json}")
 
 
 if __name__ == "__main__":
