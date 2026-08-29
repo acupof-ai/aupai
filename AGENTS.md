@@ -51,6 +51,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` |
 | Eval, one metric | `scripts/eval_hard.sh <ckpt> [ngpu]` |
 | Eval, full matrix | `scripts/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
+| Score matrix | `scripts/score_matrix.py --ckpt <ckpt> [--json runs/score_matrix.jsonl]` — per-type metrics; generative SKIPs on base, never 0 |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram |
@@ -112,6 +113,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `lessons_have_frontmatter` | every lessons/audits doc has `question`/`status`/`source` | add the frontmatter |
 | `fact_refs_resolve` | every `facts/<file>.json#<id>` citation resolves; retracted citations WARN | fix the citation or the fact |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
+| `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `scripts/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
 
 ## Add a check
 
@@ -234,6 +236,6 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 **Before committing model/optimizer changes:** `python scripts/test_arch_compat.py` (CPU: AttnRes fwd/bwd, legacy-ckpt round-trip, optimizer grouping/schedule/snapshot, KDA decay init). Old checkpoints keep loading: `HybridLM.load_state_dict` remaps fused keys and auto-disables AttnRes; consumers build the model from `ck["cfg"]`, never from the live `Cfg` class. `ruff format && ruff check` on touched files (line length 110; CI gates E9/F).
 
-**Fact store — `facts/*.json`.** Measurements live here, one file per domain, never in prose. Required per entry: `id`, `value`, `measured` (YYYY-MM-DD), `source` (command or artifact), `config` (non-empty), `uncertainty`, `status` (`measured` / `recorded` / `unmeasured` / `retracted`). `unmeasured` and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `unit`, `guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot answer). `facts_well_formed` enforces the required fields. Domain files: `facts/tokenizer.json` (fingerprint, sizes, gate values, frontier, sweeps), `facts/contamination.json` (math holdout containment), `facts/data_scaling.json` (scaling-law and token-budget measurements), `facts/multilingual.json` (corpus stats, fertility, zh:en ratio/transfer evidence, token supply).
+**Fact store — `facts/*.json`.** Measurements live here, one file per domain, never in prose. Required per entry: `id`, `value`, `measured` (YYYY-MM-DD), `source` (command or artifact), `config` (non-empty), `uncertainty`, `status` (`measured` / `recorded` / `unmeasured` / `retracted`). `unmeasured` and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `unit`, `guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot answer). `facts_well_formed` enforces the required fields. Domain files: `facts/tokenizer.json` (fingerprint, sizes, gate values, frontier, sweeps), `facts/contamination.json` (math holdout containment), `facts/data_scaling.json` (scaling-law and token-budget measurements), `facts/multilingual.json` (corpus stats, fertility, zh:en ratio/transfer evidence, token supply), `facts/data_quality.json` (hand-read quality audits, filter retention, domain loss drops, quality-head AUC).
 
 **Coordination.** Several sessions share this tree. Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back. Commit messages in English, one concern per commit.

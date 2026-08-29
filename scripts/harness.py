@@ -93,6 +93,25 @@ def score_from(text):
     return float(m.group(1)) if m else None
 
 
+def produced_checkpoint(cmd, run_name):
+    """The checkpoint a run's cmd produced, or None. Priority: --out, then --name,
+    then a single free ckpt_*.pt in the cmd. INPUTS are excluded: rl_direct resumed
+    ckpt_k4 and scored its own output, and crediting k4 with that score is the
+    loudest wrong-attribution bug this ledger had."""
+    inputs = set(re.findall(r"--(?:resume|sft_path|tokenizer|ckpt)\s+(\S+)", cmd))
+    m = re.search(r"--out\s+(ckpt_[A-Za-z0-9_.-]+)\.pt", cmd)
+    if m:
+        return m.group(1)
+    if m := re.search(r"--name\s+([A-Za-z0-9_.-]+)", cmd):
+        return f"ckpt_{m.group(1)}"
+    if not cmd.strip():
+        return f"ckpt_{run_name}"
+    free = [n for n in CKPT_RE.findall(cmd) if n not in inputs]
+    if len(free) == 1:
+        return free[0][: -len(".pt")]
+    return None
+
+
 def recorded_scores():
     """checkpoint -> (math-hard %, source), plus scores that matched no checkpoint.
     eval_hard.sh takes the checkpoint positionally (matching only --out dropped every
@@ -105,22 +124,7 @@ def recorded_scores():
             continue
         cmd = str(row.get("cmd", ""))
         run = str(row.get("name", "?"))
-        # Priority order; every form below is real in this log. INPUTS are excluded or
-        # the score lands on the wrong checkpoint: rl_direct resumed ckpt_k4_11b_lr05.pt
-        # and scored the RL output, crediting k4 with a number k4 did not produce.
-        inputs = set(re.findall(r"--(?:resume|sft_path|tokenizer|ckpt)\s+(\S+)", cmd))
-        cand = None
-        m = re.search(r"--out\s+(ckpt_[A-Za-z0-9_.-]+)\.pt", cmd)
-        if m:
-            cand = m.group(1)
-        elif m := re.search(r"--name\s+([A-Za-z0-9_.-]+)", cmd):
-            cand = f"ckpt_{m.group(1)}"
-        elif not cmd.strip():
-            cand = f"ckpt_{run}"
-        else:
-            free = [n for n in CKPT_RE.findall(cmd) if n not in inputs]
-            if len(free) == 1:
-                cand = free[0][: -len(".pt")]
+        cand = produced_checkpoint(cmd, run)
         if cand is None:
             orphans.append((run, s, cmd[:60]))
             continue
@@ -773,6 +777,118 @@ def _broken_doc_commands():
     return d
 
 
+def check_score_matrix(root):
+    """Every status=ok training run has a score-matrix record for the checkpoint it
+    produced. 'Trained but not scored' must be impossible: an ok row with no matrix
+    record is a FAIL, not a gap. Eval/measure rows produce no checkpoint and are
+    exempt. The matrix is runs/score_matrix.jsonl, one record per scored checkpoint."""
+    log = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(log):
+        return SKIP, "runs/experiments.jsonl not present"
+    rows = []
+    for line in open(log, encoding="utf-8"):
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            pass
+    if not rows:
+        return SKIP, "experiments.jsonl has no rows"
+    scored = set()
+    matrix = os.path.join(root, "runs", "score_matrix.jsonl")
+    if os.path.exists(matrix):
+        for line in open(matrix, encoding="utf-8"):
+            try:
+                scored.add(json.loads(line).get("ckpt"))
+            except Exception:
+                pass
+    missing = []
+    for r in rows:
+        if r.get("status") != "ok":
+            continue
+        cmd = str(r.get("cmd", ""))
+        if not any(t in cmd for t in ("train.py", "sft_math", "rlvr", "run_ddp.sh", "run_sft.sh")):
+            continue
+        cand = produced_checkpoint(cmd, str(r.get("name", "?")))
+        if cand and f"{cand}.pt" not in scored:
+            missing.append(cand)
+    if missing:
+        return FAIL, f"ok training run(s) with no score-matrix record: {sorted(set(missing))[:5]}"
+    return PASS, "every ok training run has a score-matrix record"
+
+
+def _broken_score_matrix():
+    """A REAL ok training row, written by the real exp.py, with no score-matrix
+    record -- the FAIL tier."""
+    import subprocess
+
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "x", "--cmd", "./run_ddp.sh --name x"],
+        ["done", "--name", "x", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    return d
+
+
+def check_corpus_fp(root):
+    """Every built domain's stamped fingerprint (build_corpus.py writes it into
+    build_corpus_stats.json) matches the live directory. Drift since build = FAIL."""
+    corpus = os.path.join(root, "data", "corpus")
+    if not os.path.isdir(corpus):
+        return SKIP, "no data/corpus"
+    mismatches, stamped = [], 0
+    for dom in sorted(os.listdir(corpus)):
+        stats = os.path.join(corpus, dom, "build_corpus_stats.json")
+        if not os.path.isfile(stats):
+            continue
+        try:
+            fp = json.load(open(stats, encoding="utf-8")).get("fingerprint")
+        except Exception:
+            continue
+        if not fp:
+            continue
+        stamped += 1
+        live = _fp_dir(os.path.join(corpus, dom))
+        if live != fp:
+            mismatches.append(f"{dom}: stamped {fp} != live {live}")
+    if not stamped:
+        return SKIP, "no domain carries a stamped fingerprint"
+    if mismatches:
+        return FAIL, "; ".join(mismatches[:3])
+    return PASS, f"{stamped} domain(s) match their build-time fingerprint"
+
+
+def _fp_dir(d):
+    import hashlib
+    h = hashlib.sha1()
+    for name in sorted(os.listdir(d)):
+        if name == "build_corpus_stats.json" or name.startswith("."):
+            continue
+        st = os.stat(os.path.join(d, name))
+        h.update(f"{name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+    return h.hexdigest()[:16]
+
+
+def _broken_corpus_fp():
+    """A REAL shard in a temp corpus, stamped correctly, then one line appended --
+    the live fingerprint must stop matching the stamp."""
+    import shutil
+    d = _tmp_repo()
+    dom = os.path.join(d, "data", "corpus", "math")
+    os.makedirs(dom)
+    real = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "math", "*.jsonl")))
+    real = real or sorted(glob.glob(os.path.join(ROOT, "data", "**", "*.jsonl"), recursive=True))
+    shutil.copy(real[0], os.path.join(dom, "real_shard.jsonl"))
+    json.dump({"fingerprint": _fp_dir(dom)},
+              open(os.path.join(dom, "build_corpus_stats.json"), "w"))
+    with open(os.path.join(dom, "real_shard.jsonl"), "a", encoding="utf-8") as f:
+        f.write('{"question": "broken world drift", "output": "1"}\n')
+    return d
+
+
 CHECKS = [
     (
         "mix_not_unfiltered",
@@ -867,11 +983,25 @@ CHECKS = [
         _broken_fact_ref,
     ),
     (
+        "corpus_fp_matches",
+        "every built domain's stamped fingerprint matches its live directory",
+        "two corpora both called data/corpus/math (0.0% vs 30.0% contaminated) were indistinguishable until 2026-08-30 -- a checkpoint must name its corpus like it names its tokenizer",
+        check_corpus_fp,
+        _broken_corpus_fp,
+    ),
+    (
         "doc_commands_exist",
         "every .sh/.py cited in an AGENTS.md command block exists",
         "a documented command that does not run is worse than none",
         check_doc_commands,
         _broken_doc_commands,
+    ),
+    (
+        "score_matrix_present",
+        "every status=ok training run has a score-matrix record for its checkpoint",
+        "a base checkpoint reads zero on every generative eval, and an unscored ok run is invisible -- the matrix is the only score that moves on a base",
+        check_score_matrix,
+        _broken_score_matrix,
     ),
 ]
 
@@ -887,7 +1017,7 @@ STAGES = [
         "a tokenizer_<name>.json pinned per live checkpoint",
     ),
     ("corpus", ["mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
-    ("pretrain", ["guard_on_path", "no_stale_running"], "checkpoint carries vocab_id; val loss recorded"),
+    ("pretrain", ["guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
     ("sft", ["pinned_ids"], "pack fingerprint == checkpoint vocab_id; loss-mask test passes"),
     ("eval", [], "math-hard recorded in runs/experiments.jsonl"),
 ]

@@ -68,7 +68,7 @@ def head_texts(path, n):
 
 
 @torch.no_grad()
-def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP):
+def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
     """Mean next-token CE over packed held-out text. Packing matches training, so the
     number is on the same scale as the val figure train.py prints."""
     ids = []
@@ -81,14 +81,14 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP):
     x = torch.tensor(ids[: n * seq], dtype=torch.long).view(n, seq).to(device)
     y = torch.tensor(ids[1 : n * seq + 1], dtype=torch.long).view(n, seq).to(device)
     tot = cnt = 0.0
-    for i in range(0, n, 4):
+    for i in range(0, n, bs):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
-            logits = model(x[i : i + 4])
+            logits = model(x[i : i + bs])
         if isinstance(logits, tuple):
             logits = logits[0]
         b = logits.shape[0]
         loss = torch.nn.functional.cross_entropy(
-            logits.float().view(-1, logits.shape[-1]), y[i : i + 4].reshape(-1), reduction="sum"
+            logits.float().view(-1, logits.shape[-1]), y[i : i + bs].reshape(-1), reduction="sum"
         )
         tot += loss.item()
         cnt += b * seq
@@ -109,22 +109,25 @@ def selftest(model, tok, texts, seq, device):
     shuf = ["".join(tok.decode([i]) for i in ids[: len(ids)])]
     bad, _ = domain_loss(model, tok, shuf, seq, device)
 
-    # 2. Scale invariance across the accumulator: the same text twice, scored over twice as
-    #    many batches, must give the same PER-TOKEN mean. `texts * N` alone cannot test this --
-    #    the cap truncates it back to the same N sequences and the assertion passes vacuously,
-    #    which is how this selftest was first written. The cap has to move with the input.
-    a, _ = domain_loss(model, tok, texts, seq, device, cap=16)
-    b, _ = domain_loss(model, tok, texts * 2, seq, device, cap=32)
+    # 2. The accumulator: THE SAME sequences regrouped into different batches must give the
+    #    same per-token mean. A sum divided by a token count is invariant; a mean of batch
+    #    means is not, and that is the bug this catches.
+    #    Two earlier versions of this assertion were vacuous. `texts * 10` is truncated by the
+    #    cap back to the same sequences. `texts * 2` with a doubled cap reads FURTHER INTO THE
+    #    SAME STREAM, so it compares two different samples and fails on sampling noise -- a
+    #    check that fires on correct code is as useless as one that never fires.
+    a, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=4)
+    b, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=1)
 
     ok = True
-    print(f"  selftest real {real:.4f} | shuffled {bad:.4f} | 16seq {a:.4f} | 32seq(2x) {b:.4f}")
+    print(f"  selftest real {real:.4f} | shuffled {bad:.4f} | bs4 {a:.4f} | bs1 {b:.4f}")
     if bad - real < 1.0:
         print(f"  FAIL shuffled text scores {bad - real:+.3f} vs real; must be much worse")
         ok = False
-    if abs(b - a) > 0.05:
+    if abs(b - a) > 1e-3:
         print(
-            f"  FAIL doubling the input moved a per-token mean by {b - a:+.3f}; the accumulator "
-            "is size-dependent"
+            f"  FAIL regrouping the same sequences moved the mean by {b - a:+.5f}; the "
+            "accumulator is batch-dependent"
         )
         ok = False
     print("  selftest " + ("OK" if ok else "FAILED"))
