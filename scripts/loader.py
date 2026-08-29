@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Single loader for checkpoint / tokenizer / prompt across every consumer.
 
-Root cause this fixes: each consumer (chat, serve, infer, eval/*, rlvr*, ckpt
-tools) implemented its own checkpoint->HybridLM + Tokenizer.from_file + prompt
-formatting. That copied four worry: the model must be built from ck[\"cfg\"]
-but a live Cfg worked in some and silently diverged in others; the tokenizer
-must match the checkpoint's OWN vocabulary (a 32,772-token vocab can disagree
-on every id while the size matches — measured 2026-08-28, four-fold loss without
-raising); and the prompt becomes 问：{q}\\n答： in one place and ChatML somewhere
-else. There is one canonical version of each; everything routes through here.
+Every consumer used to roll its own, and each copy diverged silently. Notably: two
+32,772-token vocabularies can disagree on every id while the size matches — measured
+2026-08-28, a four-fold loss with nothing raising.
 
     from loader import load_checkpoint, load_tokenizer, format_prompt
     model, cfg = load_checkpoint(path)           # built from ck[\"cfg\"], never live Cfg
@@ -32,23 +27,16 @@ def vocab_fingerprint(tok):
     return h.hexdigest()[:16]
 
 
-# sft.py, sft_math.py, eval/gsm8k.py and algorithms/rlvr_generate.py each hardcode
-# <eos> as id 1, and Cfg pins [NUM] at 32772. Both are true of today's vocabulary and
-# neither is checked anywhere, so a rebuilt vocabulary would move them silently. The
-# self-test below asserts them against the real file, in one place instead of four.
+# sft.py, sft_math.py, eval/gsm8k.py and algorithms/rlvr_generate.py hardcode these ids;
+# a vocabulary rebuild moves them silently. _demo() asserts them against the real file.
 EOS_ID = 1
 NUM_ID = 32772
 
 
 def load_checkpoint(path, device="cpu", fone_ok=True):
-    """Load a checkpoint and the model built strictly from it.
-
-    The model is constructed from ck[\"cfg\"] — never from the live Cfg class,
-    which the train loop owns and which is not stable across runs. Returns
-    (model, cfg); cfg carries an added `vocab_id` (the checkpoint's own vocabulary
-    fingerprint, or None for pre-fingerprint checkpoints) so load_tokenizer can
-    cross-check it.
-    """
+    """(model, cfg), the model built from ck["cfg"] — never the live Cfg, which the
+    train loop owns and which is not stable across runs. cfg gains `vocab_id` for
+    load_tokenizer to cross-check."""
     import torch
 
     from train import HybridLM  # delayed: this pulls torch; consumers already require it
@@ -57,10 +45,8 @@ def load_checkpoint(path, device="cpu", fone_ok=True):
     cfg = SimpleNamespace(**ck["cfg"])
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
-    # A FoNE checkpoint reads a number through the [NUM] value channel. A caller that
-    # does not fill that channel gets every number as zero and scores garbage without
-    # raising -- math-500 read 0.4% instead of 47.0% that way. Callers with no FoNE
-    # path pass fone_ok=False and get an error instead of a wrong number.
+    # A caller that does not fill the [NUM] value channel reads every number as zero and
+    # scores garbage without raising -- math-500 read 0.4% instead of 47.0% that way.
     if getattr(cfg, "fone", False) and not fone_ok:
         raise RuntimeError(
             f"{path} is a --fone checkpoint and this caller has no FoNE encode/decode path; "
@@ -75,16 +61,8 @@ def load_checkpoint(path, device="cpu", fone_ok=True):
 
 
 def load_tokenizer(path, cfg):
-    """Load the tokenizer and VERIFY it matches the checkpoint's vocabulary.
-
-    Two checks, both hard where the checkpoint pins them:
-      1. size == cfg.vocab (a wrong file of a different size is already a mismatch).
-      2. if cfg.vocab_id is set (checkpoint carries the id->token hash), the loaded
-         tokenizer's fingerprint must equal it; a mismatch means the wrong file and
-         raises rather than training/decoding scrambled ids in silence.
-    A checkpoint WITHOUT vocab_id (old format) cannot be cross-checked — warn, don't
-    fail.
-    """
+    """Load the tokenizer and VERIFY it matches the checkpoint: size == cfg.vocab, then
+    fingerprint == cfg.vocab_id. An old checkpoint without vocab_id only warns."""
     from tokenizers import Tokenizer
 
     assert os.path.exists(path), (
@@ -111,13 +89,8 @@ def load_tokenizer(path, cfg):
     return tok
 
 
-#: ChatML, the format Qwen, Yi and most fine-tunes use. This repo used a homemade
-#: 问：/答： instead, which nothing else in the world reads, and which cannot carry a
-#: system message or a multi-turn conversation. The four ChatML specials were
-#: already in the vocabulary and appeared ZERO times in 160,414 chat documents --
-#: the slots were reserved and never used. Switching costs a repack; it happens
-#: alongside a corpus rebuild so the pretraining data carries the format too, and
-#: SFT no longer has to teach it from nothing.
+#: ChatML, replacing the homemade 问：/答：. The four specials were already in the
+#: vocabulary and appeared ZERO times in 160,414 chat documents, so the switch was free.
 IM_START, IM_END = "<|im_start|>", "<|im_end|>"
 
 
@@ -128,15 +101,10 @@ def format_prompt(question, system=None):
 
 
 def format_example(question, answer, system=None):
-    """One training example as (prompt, completion), where prompt + completion is the
-    whole thing. The split is the loss boundary: pack_and_save masks `prompt` and
-    supervises `completion`, and it builds the full text as `prompt + completion`,
-    so returning the already-joined text here double-writes the prompt into every
-    row (found by scripts/packsmoke on 2026-08-29 -- the supervised span decoded as
-    the entire example a second time).
-
-    The completion ends with <|im_end|>: the model has to be supervised on its own
-    stop token or it never learns to stop."""
+    """(prompt, completion) split at the loss boundary: pack_and_save builds the row as
+    prompt + completion, so returning joined text here writes the prompt into every row
+    twice (scripts/packsmoke, 2026-08-29). The completion ends with <|im_end|> because
+    the model must be supervised on its own stop token to learn to stop."""
     return format_prompt(question, system), f"{answer}{IM_END}"
 
 
@@ -149,15 +117,18 @@ def format_history(messages):
 
 # -- self-test: the loader must agree on a real checkpoint-tokenizer pair ----------
 def _demo():
-    """The three ways this loader is supposed to fail, each actually provoked.
-
-    The point of the fingerprint is that it REJECTS a wrong tokenizer, so a
-    self-test that never constructs a wrong one proves nothing.
-    """
+    """Each way this loader is supposed to fail, actually provoked -- a self-test that
+    never builds a wrong tokenizer proves nothing about the fingerprint."""
     from tokenizers import Tokenizer
 
     path = os.path.join(ROOT, "data", "tokenizer.json")
-    assert os.path.exists(path), f"{path} missing for selftest"
+    if not os.path.exists(path):
+        # data/tokenizer.json is gitignored, so this asserted on every clean checkout and
+        # made CI red at step 4 for the whole checkout's existence -- every step after it,
+        # including harness.py check, has never once run. test_arch_compat.py and
+        # test_sft_pack.py already degrade this way; this was the only one that did not.
+        print("loader selftest SKIP (no data/tokenizer.json)")
+        return
     tok = Tokenizer.from_file(path)
     n = tok.get_vocab_size()
     fp = vocab_fingerprint(tok)
@@ -166,22 +137,21 @@ def _demo():
     # 1. the matching pair loads.
     load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id=fp))
 
-    # 2. right size, wrong ids -> must raise. This is the k5 bug: sizes agreed and
-    #    nothing complained while every id was wrong.
+    # 2. right size, wrong ids -> must raise (the k5 bug: sizes agreed, every id wrong).
     try:
         load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id="0" * 16))
         raise AssertionError("a wrong vocab_id was accepted")
     except RuntimeError:
         pass
 
-    # 3. wrong size -> must raise before the fingerprint is even consulted.
+    # 3. wrong size -> must raise before the fingerprint is consulted.
     try:
         load_tokenizer(path, SimpleNamespace(vocab=n + 1, vocab_id=fp))
         raise AssertionError("a wrong vocab size was accepted")
     except AssertionError as e:
         assert "different vocabulary" in str(e), e
 
-    # 4. no fingerprint (pre-2026-08-29 checkpoint) -> warn, still load.
+    # 4. no fingerprint (old checkpoint) -> warn, still load.
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id=None))
@@ -190,12 +160,10 @@ def _demo():
     assert format_prompt("x") == "<|im_start|>user\nx<|im_end|>\n<|im_start|>assistant\n"
     pr, comp = format_example("x", "y")
     assert pr == format_prompt("x") and comp == "y<|im_end|>"
-    # pack_and_save builds the row as prompt + completion and masks len(prompt).
-    # If completion repeated the prompt, every row would carry it twice.
     assert (pr + comp).count("<|im_start|>user") == 1, "the prompt appears twice in one example"
     assert format_prompt("x", system="s").startswith("<|im_start|>system\ns<|im_end|>")
     assert format_history([{"role": "user", "content": "a"}]) == format_prompt("a")
-    # every ChatML special must be ONE token, or the format costs 8 tokens a turn
+    # one token each, or the format costs 8 tokens a turn
     for sp in (IM_START, IM_END):
         assert len(tok.encode(sp, add_special_tokens=False).ids) == 1, (
             f"{sp} is not a single token in this vocabulary; add it in scripts/build_tokenizer.py"
@@ -208,10 +176,9 @@ def _demo():
 
 
 def _demo_keys():
-    """infer_local keeps its own HybridLM because fla is CUDA-only. Two copies of a
-    model drift: the FoNE heads were added to train.py and infer_local crashed on
-    every k6 checkpoint until someone hit it by hand. Compare the parameter names
-    without importing either module's GPU dependencies."""
+    """infer_local keeps its own HybridLM because fla is CUDA-only, and the two drift:
+    FoNE heads landed in train.py only, and infer_local crashed on every k6 checkpoint
+    until someone hit it by hand. Compares parameter names via AST, no GPU deps."""
     import ast
     import re
 

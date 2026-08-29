@@ -18,3 +18,7 @@ jobs:
       - run: python scripts/holdout.py
       - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
+      # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton
+      # only), so on a runner it could only re-check the mix and the vocabulary that the
+      # two steps above already cover, and exit 0 -- a green that means nothing. The chain
+      # is covered by `E2E_GPU=<idx> python scripts/test_e2e.py` on the pod, and nowhere else.
