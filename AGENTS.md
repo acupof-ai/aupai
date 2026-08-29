@@ -41,7 +41,13 @@
   and the score did not, therefore representation is not the constraint" inverts the inference --
   representation WAS a constraint and was fixed; the flat score means a SECOND constraint sits
   downstream of it. With a learnable format, FoNE takes bare two-digit arithmetic from **0% to
-  20-32%** where ckpt_k7_v3 through BPE scores 0/180 (see EXPERIMENTS.md, k6_arith).
+  16%** against a BPE control trained on the SAME data for the SAME 20 epochs (0/180 first
+  number, 3/180 anywhere; Fisher one-sided p=1.2e-7). Termination is a SEPARATE failure the
+  representation does not touch (17% vs 21% emit `<eos>`) -- three formats on identical prompts
+  leave the answer underdetermined. An earlier "20-32%" here was memorisation: the probe drew
+  from an 8,100-pair space the 200K-row training set had exhausted, and 77% of its cases were in
+  training. **Synthetic data needs a split on the PROBLEM, not on the row** --
+  `arith_curriculum.held_out` hashes it (see EXPERIMENTS.md, k6_arith + its CORRECTION).
   `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`, and a
   checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores
   the digit head against its two baselines.

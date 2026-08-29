@@ -98,11 +98,42 @@ def scratchpad_sub(a, b):
 
 FORMATS = ("plain", "reverse", "scratchpad")
 
+# Three formats trained on identical prompts leave the model guessing which one
+# to answer in, and it hedges: measured on ckpt_k6_arith3, only 17% of
+# generations emit <eos> -- it writes the right answer and then keeps going in
+# another format. The BPE control terminated at 21%, so this is not the number
+# representation, it is the ambiguity. A tag in the prompt removes it.
+TAGS = {"plain": "[答]", "reverse": "[逆]", "scratchpad": "[竖式]"}
 
-def generate(n, rng, digits=3, formats=FORMATS):
-    """A curriculum: 1-digit through `digits`-digit, every format, balanced."""
+
+def held_out(a, b, op):
+    """A deterministic train/test split ON THE PROBLEM, not on the row.
+
+    Without this the two-digit space (90x90 = 8,100 pairs) is exhausted long
+    before 200,000 samples, so a probe drawing from the same space scores
+    memorisation. Measured on arith_v1: 138 of 180 probe cases (77%) were in the
+    training set, a median of 3 times each and one 197 times.
+
+    Hashing the problem rather than sampling rows means the split is stable across
+    regenerations and cannot leak by reshuffling."""
+    import hashlib
+
+    h = hashlib.blake2b(f"{a}{op}{b}".encode(), digest_size=4).digest()
+    return int.from_bytes(h, "little") % 10 == 0  # 10% held out
+
+
+def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False):
+    """A curriculum: 1-digit through `digits`-digit, every format, balanced.
+
+    split="train" emits only problems that hash to the training side, "test" only
+    the held-out ones, "all" ignores the split. tag=True prefixes the prompt with
+    the format marker so the answer is determined by the question."""
     out = []
-    for _ in range(n):
+    guard = 0
+    while len(out) < n:
+        guard += 1
+        if guard > n * 50:
+            break
         d = rng.randint(1, digits)
         lo, hi = 10 ** (d - 1) if d > 1 else 0, 10**d - 1
         a, b = rng.randint(lo, hi), rng.randint(lo, hi)
@@ -118,14 +149,26 @@ def generate(n, rng, digits=3, formats=FORMATS):
             q, ans = reverse(a, b, op)
         else:
             q, ans = scratchpad_add(a, b) if op == "+" else scratchpad_sub(a, b)
-        out.append({"instruction": q.strip(), "output": ans, "fmt": fmt, "op": op, "digits": d})
+        if split != "all" and held_out(a, b, op) != (split == "test"):
+            continue
+        q = f"{TAGS[fmt]} {q.strip()}" if tag else q.strip()
+        out.append({"instruction": q, "output": ans, "fmt": fmt, "op": op, "digits": d})
     return out
 
 
 def _demo():
     """Every format must reproduce the true value, or the curriculum teaches errors."""
     rng = random.Random(0)
-    rows = generate(4000, rng, digits=4)
+    rows = generate(4000, rng, digits=4, split="all")
+    tr = generate(300, random.Random(1), digits=3, split="train")
+    te = generate(300, random.Random(2), digits=3, split="test")
+    keys = lambda rs: {r["instruction"] for r in rs}
+    assert not (keys(tr) & keys(te)), "train and test share a problem"
+    print(f"split check: {len(keys(tr))} train / {len(keys(te))} test problems, 0 shared")
+    tg = generate(300, random.Random(3), digits=3, split="train", tag=True)
+    assert all(r["instruction"].startswith(TAGS[r["fmt"]]) for r in tg), "tag does not match fmt"
+    assert len({r["instruction"].split()[0] for r in tg}) == 3, "not all three tags emitted"
+    print(f"tag check: {len(tg)} rows, every prompt carries its own format tag")
     for r in rows:
         q, out = r["instruction"], r["output"]
         lhs, _ = q.split("=")
@@ -161,9 +204,11 @@ def main():
     ap.add_argument("--n", type=int, default=200000)
     ap.add_argument("--digits", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--split", choices=["train", "test", "all"], default="train")
+    ap.add_argument("--tag", action="store_true", help="prefix the prompt with its format marker")
     ap.add_argument("--out", default="data/synthetic/arith_v1.jsonl")
     a = ap.parse_args()
-    rows = generate(a.n, random.Random(a.seed), digits=a.digits)
+    rows = generate(a.n, random.Random(a.seed), digits=a.digits, split=a.split, tag=a.tag)
     with open(a.out, "w", encoding="utf-8") as o:
         for r in rows:
             o.write(json.dumps(r, ensure_ascii=False) + "\n")

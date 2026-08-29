@@ -21,6 +21,19 @@ This is a proxy, not a verdict. The verdict is two training runs differing only
 in the vocabulary. But it is a proxy that can rank twenty candidates in minutes,
 where the verdict costs a day each.
 
+**IT CANNOT RANK VOCABULARY SIZE.** Measured 2026-08-29 on six candidates: 16K
+wins at every training size, and the win is an artifact of the estimator, not a
+property of the vocabulary. A trigram over 32K types has 8x the parameters of one
+over 16K, so at equal token counts it is data-starved -- the transformer this is
+meant to predict is not. The signature is in the trend: the 16K-vs-32K gap runs
+0.1070 -> 0.0896 -> 0.0599 bits/char at n_train 3K -> 12K -> 30K, shrinking
+monotonically toward zero rather than converging on a constant advantage.
+
+Use it for decisions that HOLD SIZE FIXED, where the estimator's capacity is the
+same on both sides. Digit splitting is such a decision, and it costs
+-0.08% / +0.10% / +0.18% bits/char at those three sizes (5.8494/5.1093/4.6632
+against 5.8542/5.1041/4.6546) -- small, but growing with data, so not free.
+
     python scripts/tokenizer_sweep.py --tokenizers data/tokenizer.json,data/tokenizer_k5.json
     python scripts/tokenizer_sweep.py --sweep       # train and rank variants
 """

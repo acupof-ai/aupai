@@ -339,3 +339,48 @@ the model to stop.
 BPE has, and no vocabulary rebuild is needed for arithmetic. What is not yet
 answered is how high this goes once the model can terminate -- that needs more
 epochs and an EOS the packing actually supervises, not a different encoding.
+
+### CORRECTION (2026-08-29): the 20-32% above measured memorisation
+
+The probe drew problems with `random.Random(0)` from the two-digit space. That
+space is 8,100 pairs and the training set was 200,000 rows, so it was exhausted
+many times over: **138 of the 180 probe cases (77%) were in the training set**, a
+median of 3 exposures each and one 197 times. The table above is not a
+generalisation result, and at 20-32% on problems it had already seen it is not a
+clean memorisation result either.
+
+`arith_curriculum.held_out` now splits on a blake2b hash of the problem, so the
+split is deterministic and cannot leak by reshuffling: 115,300 train / 2,119 test
+problems, **overlap 0**. `probe3.py` and `probe3_bpe.py` draw through the same
+filter, so both probes see the same 180 held-out problems in the same order.
+
+**Re-measured on held-out problems, with the control that never existed.** Same
+`arith_tr.jsonl`, same 20 epochs, same lr, same batch; only the representation
+differs (k6+FoNE against k5+BPE, the two bases CLAUDE.md records as
+indistinguishable on math).
+
+| | first number | answer anywhere | terminated |
+|---|---:|---:|---:|
+| FoNE (`ckpt_k6_arith3`) | **29/180 = 16.1%** | **32/180 = 17.8%** | 17% |
+| BPE (`ckpt_k5_arith_bpe`) | 0/180 = 0.0% | 3/180 = 1.7% | 21% |
+
+Fisher exact, one-sided: **p = 1.2e-7**.
+
+"First number emitted" was scored a second way because it has a real defect: the
+BPE model answers a bare `61 + 48 = ` with scratchpad prose, so its first number
+is a carry digit and never the answer -- the metric was penalising a format
+choice, not an error. Scoring the gold anywhere in the generation moves BPE 0 ->
+3 and FoNE 29 -> 32. The gap survives, so format choice was not hiding arithmetic.
+
+**Termination is a separate failure and the representation does not touch it:
+17% against 21%.** Three formats trained on identical prompts leave the answer
+underdetermined, and the model hedges -- it writes the right number and then
+continues in another format. That is a data defect, not a model one, and it is
+cheap to test: round 4 is round 3 with a `[答]`/`[逆]`/`[竖式]` tag in the prompt
+and nothing else changed.
+
+**Not controlled:** k6 and k5 are different pretrained checkpoints, not one base
+with two vocabularies. CLAUDE.md records them as indistinguishable on math
+(math-500 51.6/51.2 p=0.899, math-hard 2.9/1.9 p=0.152), so the confound is
+small, but some part of p=1.2e-7 could in principle come from the base. Closing
+it costs a paired pretrain.
