@@ -21,6 +21,7 @@ ap.add_argument("--tokenizer")
 ap.add_argument("--fone", action="store_true")
 ap.add_argument("--n", type=int, default=60)
 ap.add_argument("--tag", action="store_true", help="prompt with the format marker (round 4+)")
+ap.add_argument("--strip_eq", action="store_true", help="scratchpad prompts drop `= ` (round 5+)")
 ap.add_argument("--steps", type=int, default=48)
 a = ap.parse_args()
 
@@ -106,9 +107,14 @@ def readings(t):
     return plain_nums, rev
 
 
-def score(prefix, label):
+def score(prefix, label, strip_eq=False):
+    """strip_eq must match how the checkpoint was trained: round 5 drops `= ` from
+    scratchpad prompts, and probing it with `= ` would measure whether the model
+    tolerates a prompt shape it never saw, not whether it computes."""
     first, anywhere, stops = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}, 0
     for p, gold, op in cases:
+        if strip_eq:
+            p = p.rstrip("= ")
         t, stopped = gen(prefix + p)
         stops += stopped
         nums, rev = readings(t)
@@ -130,6 +136,6 @@ if a.tag:
     # the first time: plain should be worst, scratchpad best. Round 3's flat
     # 24/24/23% could not test it -- the prompt did not say which format to use.
     for t, lab in (("[答] ", "plain"), ("[逆] ", "reverse"), ("[竖式] ", "scratchpad")):
-        score(t, lab)
+        score(t, lab, strip_eq=a.strip_eq and lab == "scratchpad")
 else:
     score("", "untagged")
