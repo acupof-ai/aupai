@@ -628,6 +628,22 @@
    },
    "uncertainty": null,
    "status": "measured"
+  },
+  {
+   "id": "dq.regex.recal_step01",
+   "value": "Step 0+1 regex layer: on 3b's 150 (calibration) recall 1.7%->23.7% (+22.0pp), regex-layer precision 13/13=100%; on the locked 400 (fresh re-test) +9.1pp recall (11/121), precision 65% (11/17) -- precision does NOT transfer",
+   "unit": "recall/precision of the regex recalibration layer",
+   "measured": "2026-08-30",
+   "source": "aupai-3b run on data/corpus/sample/cci3_handread_150.jsonl (200-char excerpts, TOC class undercounted); agent C re-test on data/corpus/sample/cci3_audit_400.jsonl with identical patterns",
+   "config": {
+    "step0": "原文地址[:：] fingerprint -> 7/59 junk at 100% precision on the 150; 0 hits on the 400 by construction (fingerprint pool excluded)",
+    "step1": "4 structural regexes (zuowen/tiku/jiaoan/book-toc) -> +6 junk on the 150 (100% precision); +11/121 on the 400 at 65% precision (6 FP: zuowen 1, jiaoan 2, book_toc 3)",
+    "merged_precision_note": "3b's 13/13 is the regex layer alone; merged with the legacy filter's 1 usable FP (酒驾国标 symbols) the 150-sample precision is 14/15=93.3%",
+    "verdict": "RECALIBRATE stands: 23.7% << 0.5 floor; regexes are a corpus-specific patch, the quality head (Step 2) remains the only path to the floor",
+    "wiring": "which filter file receives the regexes is blocked on fb's web_hq/CCI3 landing ruling -- measurements are independent of it"
+   },
+   "uncertainty": null,
+   "status": "measured"
   }
  ]
 }
