@@ -272,6 +272,362 @@
    },
    "uncertainty": null,
    "status": "measured"
+  },
+  {
+   "id": "dq.dedup.minhash_rates",
+   "value": "near-duplicate rates: C4 3.04%, RealNews 13.63%, Wiki-40B 0.39% of docs",
+   "measured": "2026-08-30",
+   "source": "Lee et al. 2022, arXiv:2107.06499",
+   "config": {
+    "method": "MinHash 5-gram, 9000-dim signature, LSH b=20/r=450, edit sim >0.8",
+    "note": "farm-dense corpora expected higher; same paper: ExactSubstr 50-token substrings remove 7.18% of C4 tokens, dedup cuts memorization 1.926%->0.189%"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.dedup.spin_evades_ngram",
+   "value": "spun document pairs show only 20.8-38.8% 4-gram shingling similarity -- indistinguishable from unrelated articles",
+   "measured": "2026-08-30",
+   "source": "DSpin, NDSS 2014, DOI 10.14722/ndss.2014.23004",
+   "config": {
+    "tool": "The Best Spinner",
+    "implication": "any literal/n-gram regex or high-threshold MinHash misses synonym-replacement rewrites by design; 52% of abused-wiki pages were auto-generated spin, 68.0% SEO spam"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.dedup.dspin_anchor",
+   "value": "immutable-anchor detector (function-word sequence alignment, threshold 0.75): spun pages 77-93% similarity vs non-spun 59.4%",
+   "measured": "2026-08-30",
+   "source": "DSpin, NDSS 2014",
+   "config": {
+    "chinese_adaptation": "50-100 high-frequency function characters as immutable anchors",
+    "validation_asset": "the 2.07% fingerprint docs (dq.cci3.rewrite_fingerprint) are self-admitted rewrites -- a ready validation set where recall should approach 100%"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.classifier.cci3_pipeline",
+   "value": "Qwen2-72B-Instruct labels 145k random docs 0-5 (140k train/14k test) -> BGE-M3 + regression head (threshold 3) -> applied to 1.5B docs (9700 A100 hours); macro F1 0.73; ~80% agreement with GPT-4 labels",
+   "measured": "2026-08-30",
+   "source": "arXiv:2410.18505 (CCI3.0-HQ -- the paper for THIS project's corpus)",
+   "config": {
+    "benchmarks": "FineWeb-edu 0.47, ChineseWebText 0.39, IndustryCorpus2 0.60 macro F1",
+    "gap": "paper reports no human-read count, no dedup removal rate, no per-stage removal rates",
+    "implication": "directly copyable; extend the label dimension from educational value to farm/advertorial/template"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.classifier.dclm_fasttext",
+   "value": "fastText bigram classifier on 400k labels (200k positive = OpenHermes2.5 + high-score ELI5; 200k negative = random RefinedWeb), keep top 10%",
+   "measured": "2026-08-30",
+   "source": "arXiv:2406.11794 (DCLM)",
+   "config": {
+    "note": "cheapest proven recipe; no LLM annotation needed; Core 28.6->30.2"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.classifier.human_agreement_counter",
+   "value": "AskLLM filter had highest human agreement (ROC-AUC 82%) but WORST downstream (Core 28.5 vs fastText >31); human agreement vs downstream R^2 < 0.3",
+   "measured": "2026-08-30",
+   "source": "arXiv:2406.11794 (DCLM) Appendix N",
+   "config": {
+    "setup": "16 annotators, ~500 docs x 3 labels, IAA 71%, 1B models, same pool top~15%",
+    "implication": "before setting weights, decide the objective: human 'usable' rate or downstream eval (R6 EM-LLM); the two can rank filters oppositely"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.filter.fineweb_rules",
+   "value": "duplicate-line char ratio >= 0.1 removes 12.47% of tokens; punctuation-line ratio <= 0.12 removes 10.14%; short-line ratio >= 0.67 removes 3.73%",
+   "measured": "2026-08-30",
+   "source": "arXiv:2406.17557 (FineWeb)",
+   "config": {
+    "note": "corpus-independent structural rules; most effective on template/question-bank garbage; ChineseWebText 2.0 (arXiv:2411.19668) total removal 42.4% with BERT quality score + 13-gram dedup"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.sample.size_table",
+   "value": "n=150 gives +-7.8pp at p=0.6 (95% CI); +-5pp needs 369; +-3pp needs 1025; +-2pp needs 2305",
+   "measured": "2026-08-30",
+   "source": "arithmetic on n = z^2 p(1-p) / e^2, z=1.96, simple random sampling",
+   "config": {
+    "note": "the project's +-10 was conservative; the 30-vs-120 flip (57% vs 62% farm, 19pp, SE~10.1pp, ~1.9 sigma, p~0.06) is confounded: reading order was not randomized, so drift vs corpus heterogeneity cannot be separated"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.sample.kim_two_stage",
+   "value": "two-stage human-LLM protocol: human labels needed n = n* x (1 - rho^2), rho^2 = human-LLM R^2; at rho^2=0.7, +-3pp needs ~308 human labels instead of 1025",
+   "measured": "2026-08-30",
+   "source": "Kim 2026, arXiv:2605.16354",
+   "config": {
+    "protocol": "randomize order -> LLM-score 3000-5000 docs -> stratified double-label 300-500 -> doubly-robust estimate",
+    "warning": "use the pilot R^2 lower confidence bound -- overestimating rho^2 under-allocates human labels (author-stated)",
+    "stratified_gain": "DEFF = 1 - sum W_h(p_h-p)^2/[p(1-p)]; example strata save 17.5%"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.sample.drift",
+   "value": "IAA drops >32 points across 8 batches; same-minute annotation kappa=0.98 vs next-day 0.65; two annotators showed 'autopilot' streaks",
+   "measured": "2026-08-30",
+   "source": "Abdulmumin et al. 2026, arXiv:2605.27239",
+   "config": {
+    "setup": "3565 tweets, 3 annotators, 8 batches, timestamps",
+    "controls": "batch size <=50-100, 10-15 gold calibration docs per batch, re-label calibration set at session start/end, monitor annotation speed"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.hidden.prevalence",
+   "value": "p_hidden = 0.080 (32/400); total rewrite = 2.07% + 0.9793 x 0.080 = 9.91%",
+   "measured": "2026-08-30",
+   "source": "agent C 400-doc hand audit, data/corpus/sample/cci3_audit_400.jsonl (seed 20260830, non-fingerprint pool)",
+   "config": {
+    "rubric": "rewrite=Y iff explicit transfer marker (文章来源于/转自/转载自/来源:/摘自/整理编辑/综合整理/选载权); stock disclaimers without named source (图片来自网络侵删 etc.) count N",
+    "ci": "+-2.7pp (n=400, binomial, p=0.08)",
+    "contrast": "self-admitted fingerprint rate 2.07% -- un-admitted rewrites are ~4x the admitted rate; total ~10% of CCI3-HQ docs are rewrites"
+   },
+   "uncertainty": 0.027,
+   "status": "measured"
+  },
+  {
+   "id": "dq.fineweb_edu.chinese_failure",
+   "value": "FineWeb-Edu classifier on Chinese web: precision 0.91, recall 0.02, F1 0.03 (vs CCI3's own classifier macro F1 0.73)",
+   "measured": "2026-08-30",
+   "source": "arXiv:2410.18505 (CCI3.0-HQ) Table 4",
+   "config": {
+    "note": "direct cross-language failure measurement; the English-trained head is not usable on Chinese"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.register.style_flip",
+   "value": "rewriting documents into Wikipedia style (facts preserved, token count +-10%) flips ~7% of FineWeb-Edu filter decisions; all 26 tested domains score higher after rewrite",
+   "measured": "2026-08-30",
+   "source": "arXiv:2605.23721 (Klimaszewski & Andruszkiewicz, ACL 2026)",
+   "config": {
+    "setup": "100k FineWeb docs, Qwen2.5-72B-Instruct rewriter, 26 domains x 20k",
+    "note": "same failure mode as the project's quality head scoring cosmopedia below raw web (unpublished, mechanism-consistent); two Nemotron-CC-derived classifiers failed the same test"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.criterion.hq_intersection",
+   "value": "three mainstream classifiers (FineWeb-Edu, DCLM fastText, Nemotron LLM ensemble) agree on only 10.1% of docs as HQ; top-1k domain intersection is 368",
+   "measured": "2026-08-30",
+   "source": "arXiv:2412.02595 (Nemotron-CC)",
+   "config": {
+    "implication": "'quality' has no consensus definition across classifiers; a single criterion is a choice of target distribution, not a universal property"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.universal.criterion_absent",
+   "value": "no validated universal quality criterion exists; quality is operationalized as similarity to a target distribution (Llama 3, SkyPile, RedPajama all use 'Wikipedia suitability')",
+   "measured": "2026-08-30",
+   "source": "three independent direct measurements: dq.fineweb_edu.chinese_failure, dq.register.style_flip, dq.criterion.hq_intersection; review arXiv:2402.16827 ('no one-size-fits-all'); DSIR arXiv:2302.03169 (worst target pairing -6% F1, HyperPartisan -30%)",
+   "config": {
+    "transferable_practices": "DCLM-style fastText with target-domain positives (zero LLM labels); LLM-annotate+distill with per-register prompts and per-register validation; multi-classifier ensemble (Nemotron-CC: HQ 8-14% -> 25%); per-domain thresholds (CCI4: 26 subdomains x 99.5 percentile, arXiv:2506.07463)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.classifier.sample_complexity",
+   "value": "published FineWeb-Edu-style annotation budgets: CCI3 140k (0.5B model, smallest), FineWeb-Edu 460k (110M), DCLM 400k (fastText), Ultra-FineWeb 600k (fastText), CCI4 460k",
+   "measured": "2026-08-30",
+   "source": "arXiv:2410.18505, 2406.17557, 2406.11794, 2505.05427, 2506.07463",
+   "config": {
+    "lower_bound": "unmeasured -- no published scaling study of labels-vs-AUC for this head type; project must run its own learning curve",
+    "dclm_zero_llm": "DCLM proves zero LLM annotation works: curated positives (OpenHermes2.5 + ELI5) + random negatives, downstream beats AskLLM and perplexity filtering (Core 30.2 vs 28.6 vs 29.0)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.cost.zero_shot_vs_distill",
+   "value": "at 100GB Chinese scale (~2B tokens): zero-shot 70B scoring ~1100 H100-hours; distillation route ~6 H100-hours annotation + CPU-class training/inference",
+   "measured": "2026-08-30",
+   "source": "arithmetic by agent A on literature anchors: Ultra-FineWeb 15T tokens LLM filter = 6000 H100-hours (arXiv:2505.05427); assumptions: UTF-8 3 bytes/char, Qwen tokenizer ~1.7 chars/token, 70B vLLM batch 5k tok/s/H100",
+   "config": {
+    "note": "two orders of magnitude; zero-shot also re-pays the full cost on every register/criterion change"
+   },
+   "uncertainty": 0.3,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.fineweb_edu.metrics_gap",
+   "value": "FineWeb-Edu never reported AUC; official metric is F1 82% at threshold 3 (model card: accuracy 0.71, macro F1 0.50)",
+   "measured": "2026-08-30",
+   "source": "arXiv:2406.17557 Appendix F.1 + HF model card HuggingFaceTB/fineweb-edu-classifier",
+   "config": {
+    "implication": "the project's head AUC 0.823 (dq.quality_head.auc_vs_hand) is not comparable to the official F1 82%; also FineWeb-Edu has no standalone arXiv paper (HF tech report DOI 10.57967/hf/2497)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "dq.hidden.preliminary_estimate",
+   "value": "hidden rewrite prevalence among non-fingerprint docs ~8.1% (SE 2.3pp), derived from 3b's 150-doc read: 10% rewrite total minus 2.07% self-admitted",
+   "measured": "2026-08-30",
+   "source": "arithmetic on dq.cci3.handread_150 and dq.cci3.rewrite_fingerprint",
+   "config": {
+    "computation": "(0.10 - 0.0207) / 0.9793 = 0.0807; SE = sqrt(0.081*0.919/147) ~ 0.023",
+    "note": "preliminary only -- the 150-doc read was not stratified by fingerprint, so this mixes pools; the 400-doc audit (dq.audit.protocol_400) tightens it",
+    "audit_confirmation": "CONFIRMED by the 400-doc audit: p_hidden = 8.0% vs the preliminary 8.1% (SE 2.3pp) -- the mixed-pool derivation happened to be right"
+   },
+   "uncertainty": 0.023,
+   "status": "measured"
+  },
+  {
+   "id": "dq.audit.protocol_400",
+   "value": "junk 121/400 = 30.3%; rewrite 32/400 = 8.0%; single reader (agent C), rubric fixed before reading",
+   "measured": "2026-08-30",
+   "source": "agent C hand audit of data/corpus/sample/cci3_audit_400.jsonl; labels persisted in session notes",
+   "config": {
+    "junk_rubric": "content farm/SEO/template/题库/作文/book-TOC+metadata/exam catalog/marketing/ads/product-placement/headless fragment/conversion artifacts",
+    "junk_rate_vs_150": "30.3% vs 3b's 39.3% on 150 -- same ballpark, different pools (400 excludes fingerprint pool)",
+    "iaa": "NO overlap with 3b's 150 by id or text prefix -- the two samples share zero docs; free IAA not available, would need 3b to re-read a subset of the 400",
+    "headless_rule": "docs beginning mid-word/mid-sentence counted junk (conversion artifact): 8 docs"
+   },
+   "uncertainty": "+-4.6pp junk (p=0.30), +-2.7pp rewrite (p=0.08)",
+   "status": "measured"
+  },
+  {
+   "id": "dq.criterion.positive_control_protocol",
+   "value": "MEASURED 2026-08-30: recall_home = 3.4% (5/147 hand-junk dropped, all garbage_topic), precision = 5/5 = 1.0; ratio = recall_new/recall_home = 0.017/0.034 = 0.50 -- exactly on the VALID/RECALIBRATE boundary, not the clean VALID a positive control wants. The filter catches almost nothing of what humans reject on BOTH corpora (home 3.4%, CCI3 1.7%): it is a format/encoding filter with perfect precision and near-zero recall, not a quality filter. Correction to the earlier in-sample warning: the pass1-3 regexes were never tuned on web_labels (they are cosmopedia-oriented and predate it) -- web_labels is an INDEPENDENT test, which makes the low home recall stronger evidence, not weaker.",
+   "measured": "2026-08-30",
+   "source": "project measurement: datagen/build_corpus.py reject_reason() run on data/corpus/sample/web_labels.jsonl (180 rows, staged to git commit d76a8a1); same code path as the CCI3 measurement in dq.criterion.cci3_measured",
+   "config": {
+    "matrix": {
+     "hand_junk_drop": 5,
+     "hand_junk_keep": 142,
+     "hand_usable_drop": 0,
+     "hand_usable_keep": 33
+    },
+    "junk_rate": 0.817,
+    "rubric": "web_labels y=0 means 'no educational value' (score_web_27b.py BINARY rubric) -- stricter than 3b's CCI3 usable/junk rubric (39.3% junk); the recall gap is therefore partly a rubric gap, but 3.4% under the home rubric still says the regex layer does not make quality decisions",
+    "drop_reasons": "garbage_topic x5 only",
+    "implication": "the ratio criterion needs an absolute floor on recall_home (proposed >=0.5): without it a do-nothing filter scores ratio 1.0 = VALID on every corpus -- the degenerate case the positive control was built to catch, inverted"
+   },
+   "uncertainty": null,
+   "status": "measured",
+   "claim": "the criterion outputs VALID/WEAK (not RECALIBRATE) on the filter's home corpus",
+   "audit": "REFUTED as designed: ratio 0.50 is boundary, and recall_home 3.4% is below any meaningful absolute floor -- the criterion as originally specified would pass a do-nothing filter; fixed by adding the recall_home floor (dq.criterion.ratio_needs_floor)",
+   "refuted_by": "this measurement itself"
+  },
+  {
+   "id": "dq.web_hq.build_path",
+   "value": "web_hq is NOT built through build_corpus.py's regex-only path. Its pipeline: scripts/score_corpus.sh scores every web shard with the distilled quality head (data/quality_head.pt, 231 docs/s) -> scripts/build_web_hq.sh keeps top 40% by score -> datagen/clean_web.py applies four hard filters (spam/short/repetitive/fragmented) plus the score cut (cut = 60th percentile). The 3.4% regex-layer recall_home (dq.criterion.positive_control_protocol) therefore does NOT represent web_hq's actual quality gate -- the head is the gate; the regex layer is a format pre-filter. Resolved 2026-08-30 in response to fb's blocking question before the first pretrain (web_hq = 32.4% of mix_scale_0.2b).",
+   "measured": "2026-08-30",
+   "source": "code-verified: scripts/build_web_hq.sh, scripts/score_corpus.sh, datagen/clean_web.py (repo has no second web_hq builder); pod-side run inferred from data/corpus/web_hq existing in mix_v3 -- the actual pod run log was not inspected",
+   "config": {
+    "keep_fraction": 0.4,
+    "head_auc_vs_hand": 0.823,
+    "teacher_vs_hand": 0.739,
+    "caveat": "head 2x2 confusion at the operating point (top-40% cut) on web_labels was never computed -- needs pod-side head + 200M backbone to score web_labels; recorded as dq.web_hq.head_operating_point",
+    "web_labels_junk_rate": 0.817,
+    "web_labels_note": "81.7% is the PRE-cut raw web sample; the top-40% cut removes most but AUC 0.823 is not perfect separation"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.web_hq.head_operating_point",
+   "value": "quality head's 2x2 confusion at the top-40% operating cut on web_labels (180 hand labels) -- the true recall_home of web_hq's actual quality gate",
+   "measured": "2026-08-30",
+   "source": "design (this session); not yet computed",
+   "config": {
+    "how": "pod-side: score data/corpus/sample/web_labels.jsonl with data/quality_head.pt + ckpt_k5_clean_0827.pt backbone (audit_source_score.py has the wiring), cut at the same 60th-percentile threshold used by build_web_hq.sh, compare drop/keep vs hand y",
+    "blocker": "head and backbone checkpoints are pod-side only",
+    "why_it_matters": "the ratio criterion's recall_home floor (>=0.5) should be evaluated on the component that makes the quality decision; if the head's operating-point recall is also <0.5 the floor binds on the real gate, not just the regex layer"
+   },
+   "uncertainty": null,
+   "status": "unmeasured",
+   "claim": "the head's operating-point recall_home is measurable and should be >=0.5 for the criterion to pass web_hq's own gate",
+   "audit": "not yet run; blocked on pod-side weights",
+   "refuted_by": "measured recall <0.5 at the operating cut"
+  },
+  {
+   "id": "dq.criterion.ratio_needs_floor",
+   "value": "the recall-ratio criterion must require BOTH ratio >= 0.8 AND recall_home >= 0.5 absolute; a ratio alone is gamed by a do-nothing filter (recall 0 on every corpus -> ratio undefined/1.0 -> VALID everywhere). The web_hq positive control caught exactly this: home recall 3.4% means 0.8 x home = 2.7%, a band so thin that 'VALID' would certify near-total blindness. With the floor, the existing regex filter itself reads RECALIBRATE-class on its home corpus -- quality decisions live in the quality head (AUC 0.823 vs hand, dq.quality_head.auc_vs_hand), not in the regex layer.",
+   "measured": "2026-08-30",
+   "source": "derived from dq.criterion.positive_control_protocol (measured) and dq.criterion.cci3_measured",
+   "config": {
+    "floor_value": "0.5 proposed, not yet validated -- set from the intuition that a filter catching <50% of hand-junk is not a quality filter; adjust when the quality head's home 2x2 is measured",
+    "scope": "floor applies to whatever component makes the quality decision (quality head once retrained); the regex layer keeps its format-filter role with precision 1.0"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.criterion.cci3_measured",
+   "value": "RECALIBRATE (measured recall_new = 1.7%, 1/59)",
+   "measured": "2026-08-30",
+   "source": "aupai-3b 2x2 confusion matrix: 150 hand-read CCI3-HQ docs x existing filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + datagen/quality_clf.py SPAM, non-sentence-boundary criteria not_zh/boilerplate/symbols/garbage_topic)",
+   "config": {
+    "matrix": {
+     "hand_junk_drop": 1,
+     "hand_junk_keep": 58,
+     "hand_usable_drop": 1,
+     "hand_usable_keep": 90
+    },
+    "junk_rate": 0.393,
+    "false_positive": "1/91 usable dropped (酒驾国标, symbols)",
+    "structural_blindness": "filter passes 58/59 content-farm/rewrite/SEO/template docs -- blind to the class, not off on threshold; supersedes the 0.073 arithmetic upper bound in dq.criterion.known_answer_cci3 with a measurement"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.criterion.bound_vs_measured",
+   "value": "arithmetic upper bound recall <= 0.073 was 4x looser than measured 1.7%",
+   "measured": "2026-08-30",
+   "source": "comparison of dq.criterion.known_answer_cci3 (bound) and dq.criterion.cci3_measured (measurement)",
+   "config": {
+    "why": "the bound used the full-corpus drop rate 2.9% (retention 97.1%); the 150-doc sample showed only 1.3% drops (2/150, and one of them was usable) -- drop-rate sample variance plus the bound's optimistic assumption that every drop hit garbage",
+    "lesson": "reality was worse than the most pessimistic derivation; when a bound and a measurement disagree, the measurement also audits the bound's assumptions"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "dq.audit.confusion_400",
+   "value": "existing filter on the 400-doc audit sample: recall 17.4% (21/121 hand-junk dropped), precision 53.8% (21/39 drops); 100/121 hand-junk docs pass",
+   "unit": "2x2 on the locked re-test sample",
+   "measured": "2026-08-30",
+   "source": "agent C ran reject_reason from datagen/build_corpus.py on all 400 audit docs vs hand labels",
+   "config": {
+    "matrix": {
+     "TP": 21,
+     "FP": 18,
+     "FN": 100,
+     "TN": 261
+    },
+    "fp_breakdown": "10/18 FP are not_zh (English academic papers -- language gate working as designed, not real errors); 8 real Chinese FPs: garbage_topic 5, nav_menu 2, boilerplate 1",
+    "role": "PRE-RECALIBRATION BASELINE on the fresh sample: any recalibrated filter/head must beat recall 17.4% here without wrecking precision; this sample stays locked -- never calibrate on it",
+    "fn_note": "all 100 FNs were 'keep' -- the filter is structurally blind to CCI3-HQ junk, same conclusion as dq.criterion.cci3_measured on the 150"
+   },
+   "uncertainty": null,
+   "status": "measured"
   }
  ]
 }
