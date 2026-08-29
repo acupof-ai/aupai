@@ -3,12 +3,15 @@
 Runs on CPU where fla is absent (a shape-preserving stand-in replaces the Triton
 kernel) and on CUDA where fla is present -- the real chunk_kda cannot take CPU
 tensors, so a fla machine without a visible GPU exits loudly instead of silently
-skipping. Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-init == uniform
+skipping. On CUDA the model runs under the same bf16 autocast training uses
+(train.py:755): FlashAttention refuses fp32, so the CUDA path never executed
+before that was added. Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-init == uniform
 mean, and legacy checkpoint round-trip: old-key state_dict -> load (remap) ->
 save -> load, identical key set and outputs.
 Run: python scripts/test_arch_compat.py
 """
 
+import contextlib
 import os
 import sys
 
@@ -22,7 +25,11 @@ if train.chunk_kda is None:  # no fla on this machine: shape-preserving stand-in
     train.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)
     DEV = "cpu"
 elif torch.cuda.is_available():
-    DEV = "cuda:0"  # the real Triton kernel raises on CPU tensors
+    if "CUDA_VISIBLE_DEVICES" in os.environ:
+        DEV = "cuda"
+    else:  # no pin: land on the freest card, GPU0 may be busy
+        _free = [torch.cuda.mem_get_info(i)[0] for i in range(torch.cuda.device_count())]
+        DEV = f"cuda:{_free.index(max(_free))}"
 else:
     sys.exit(
         "fla is installed but no CUDA device is visible: the real chunk_kda is a "
@@ -30,6 +37,17 @@ else:
         "run on a machine without fla. Skipping silently would leave this gate dead "
         "on the only machine with the real kernel."
     )
+
+
+@contextlib.contextmanager
+def _amp():
+    if DEV.startswith("cuda"):
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            yield
+    else:
+        yield
+
+
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
 
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.vocab, Cfg.seq = 64, 2, 4, 128, 100, 16
@@ -45,7 +63,8 @@ for blocks, ckpt, dyn in [
 ]:
     Cfg.attn_res, Cfg.attn_res_blocks, Cfg.grad_ckpt, Cfg.attn_res_dyn_q = True, blocks, ckpt, dyn
     m = HybridLM(Cfg).to(DEV)
-    h, _ = m(x, y)
+    with _amp():
+        h, _ = m(x, y)
     h.sum().backward()
     assert m.final_ar.q.grad is not None and torch.isfinite(h).all()
     assert blocks == 0 or len(m.ar_block_ends) == blocks, "Block AttnRes must produce exactly N blocks"
@@ -76,14 +95,19 @@ for k, v in old.state_dict().items():
             break
     else:
         legacy[k] = v
+# remap_legacy_state_dict cats with fresh CPU beta/pad tensors, so the round-trip
+# runs on CPU; the models move to DEV only for the forward comparison.
+legacy = {k: v.cpu() for k, v in legacy.items()}
 Cfg.attn_res = True
-new = HybridLM(Cfg).to(DEV)
+new = HybridLM(Cfg)
 new.load_state_dict(legacy)
 assert new.attn_res is False and Cfg.attn_res is False, "old ckpt must disable AttnRes"
 assert set(new.state_dict()) == set(old.state_dict()), "round-trip key set changed"
-again = HybridLM(Cfg).to(DEV)
+again = HybridLM(Cfg)
 again.load_state_dict(new.state_dict())
-with torch.no_grad():
+new.to(DEV)
+again.to(DEV)
+with torch.no_grad(), _amp():
     assert torch.allclose(old(x)[0], new(x)[0]) and torch.allclose(old(x)[0], again(x)[0])
 # optimizer plumbing: schedule gates wd decay to Muon, snapshot is a real copy, conv kernels off the scalar group
 Cfg.attn_res = False
@@ -96,12 +120,14 @@ assert opts[0].param_groups[0]["weight_decay"] == Cfg.muon_wd
 train.set_schedule(opts, 100, 100, Cfg)
 assert opts[0].param_groups[0]["weight_decay"] == 0.0
 assert train.lr_mult(10**6, 100, Cfg) == Cfg.final_lr_frac, "lr must stay at the floor past total (resume)"
-m(x, y)[0].sum().backward()
+with _amp():
+    m(x, y)[0].sum().backward()
 for o in opts:
     o.step()
 snap = train.opt_snapshot(opts)
 before = next(v for st in snap[1]["state"].values() for v in st.values() if torch.is_tensor(v)).clone()
-m(x, y)[0].sum().backward()
+with _amp():
+    m(x, y)[0].sum().backward()
 for o in opts:
     o.step()
 after = next(v for st in snap[1]["state"].values() for v in st.values() if torch.is_tensor(v))
@@ -115,7 +141,8 @@ idx = torch.tensor([[5, 1, 7, 7], [1, 1, 3, 3]])
 cu = train.doc_cu_seqlens(idx, eos_id=1)
 assert cu.tolist() == [0, 2, 4, 5, 6, 8] and cu.dtype == torch.int32, cu
 m = HybridLM(Cfg).to(DEV)
-assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
+with _amp():
+    assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")
 
 # --- mix schedule: the plan is sharded per rank, so what one rank holds is 1/world of it ---
@@ -259,13 +286,14 @@ _x[0, 3] = _x[1, 5] = Cfg.num_id
 _v = torch.zeros(2, 16, device=DEV)
 _v[0, 3], _v[1, 5] = 152.0, 1640.0
 
-_h, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v)
+with _amp():
+    _h, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v)
 _nl = _m.num_logits(_h)
 assert _nl.shape == (2, 16, fone.INT_DIGITS + fone.FRAC_DIGITS, 10), _nl.shape
 
 # Untrained per-digit loss must sit at the ten-way chance level, not somewhere odd.
 _mask = _x == Cfg.num_id
-_tgt = fone.digits_of(_v[_mask].tolist())
+_tgt = fone.digits_of(_v[_mask].tolist()).to(DEV)
 _loss = torch.nn.functional.cross_entropy(_nl[_mask].reshape(-1, 10), _tgt.reshape(-1))
 assert 1.9 < _loss.item() < 2.9, f"digit loss {_loss.item()} far from ln(10)=2.303"
 
@@ -275,7 +303,8 @@ assert _m.num_head.weight.grad is not None and _m.num_head.weight.grad.abs().sum
 assert _m.num_proj.weight.grad is not None and _m.num_proj.weight.grad.abs().sum() > 0
 
 # The value must reach the hidden state -- same ids, different numbers, different output.
-_h2, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v * 0 + 7.0)
+with _amp():
+    _h2, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v * 0 + 7.0)
 assert not torch.allclose(_h, _h2), "num_vals does not affect the forward pass"
 
 # A [NUM] id the model could never predict would make the token useless.
@@ -285,7 +314,8 @@ assert Cfg.num_id < Cfg.vocab, "[NUM] must be inside the logit slice"
 Cfg.fone, Cfg.vocab = False, 100
 _m0 = HybridLM(Cfg).to(DEV)
 assert not hasattr(_m0, "num_proj") and not hasattr(_m0, "num_head")
-_h0, _ = _m0(_x.clamp(max=99), torch.zeros(1, device=DEV))
+with _amp():
+    _h0, _ = _m0(_x.clamp(max=99), torch.zeros(1, device=DEV))
 assert torch.isfinite(_h0).all()
 Cfg.fone = False
 print("test_fone OK")
@@ -344,17 +374,18 @@ if os.path.exists(_tok_path):
         train.Cfg.fone, train.Cfg.num_id, train.Cfg.vocab = True, 100, 101
         _m2 = train.HybridLM(train.Cfg).to(DEV).eval()
         _x = torch.randint(0, 100, (2, 8), device=DEV)
-        with torch.no_grad():
+        with torch.no_grad(), _amp():
             _l1, _n1 = _m2(_x)
             _l2, _h2 = _m2(_x, return_hidden=True)
         assert _n1 is None and _h2 is not None and torch.equal(_l1, _l2), "return_hidden changed the logits"
         # no_head skips the vocabulary head so a decoder can run it on the B positions it
         # actually reads instead of on B x T. It must be the SAME number: generate_batch now
         # takes this path, so a divergence here silently rewrites every generated token.
-        with torch.no_grad():
+        with torch.no_grad(), _amp():
             _n3, _h3 = _m2(_x, no_head=True)
         assert _n3 is None, "no_head still returned logits"
-        assert torch.equal(_m2.lm_logits(_h3), _l1), "no_head + lm_logits != the full-head path"
+        with _amp():
+            assert torch.equal(_m2.lm_logits(_h3), _l1), "no_head + lm_logits != the full-head path"
         train.Cfg.fone, train.Cfg.vocab = False, 100
         print("test_fone_infer OK")
     else:
