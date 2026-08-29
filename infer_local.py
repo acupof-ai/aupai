@@ -147,7 +147,7 @@ class DeltaRecurrence(nn.Module):
         return self.o(out.reshape(B, T, D).to(x.dtype)), (new_state, new_conv)
 
 
-class SlidingWindowAttention(nn.Module):
+class GatedMLA(nn.Module):
     """K3 Gated MLA: latent KV compression + full attention (NoPE, KDA handles position)."""
 
     def __init__(self, cfg):
@@ -207,7 +207,7 @@ class Block(nn.Module):
     def __init__(self, cfg, is_attn=False):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
-        self.mixer = SlidingWindowAttention(cfg) if is_attn else DeltaRecurrence(cfg)
+        self.mixer = GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg)
         self.n2 = RMSNorm(cfg.d)
         self.ffn = SwiGLU(cfg)
         attn_res = getattr(cfg, "attn_res", False)
@@ -296,7 +296,6 @@ def load_model(ckpt_path, device, dtype):
         heads=8,
         layers=12,
         attn_every=4,
-        attn_window=1024,
         ffn_hidden=3072,
         vocab=32772,
         seq=4096,

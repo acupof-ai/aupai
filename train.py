@@ -2,8 +2,8 @@
 """Train a ~200M Chinese LLM with hybrid recurrent architecture (KDA + gated MLA).
 
 Muon (2D params) + AdamW (embeddings/1D), bf16 autocast, optional FP8 via torchao, Flash
-Attention sliding window, torch.compile, DDP, Liger FLCE with logit softcap, and optional
-Attention Residuals (--attn_res, arXiv 2603.15031) in place of the residual sum.
+Full causal attention, torch.compile, DDP, Liger FLCE with logit softcap, and Attention
+Residuals (arXiv 2603.15031) in place of the residual sum (--attn_res, on by default).
 
     torchrun --nproc_per_node=8 train.py --fp8 [--attn_res] [--fone] [--name X]
 """
@@ -15,6 +15,7 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import copy
 import datetime
 import glob
+import hashlib
 import json
 import math
 import random
@@ -110,7 +111,6 @@ class Cfg:
     heads = 8  # hd=128, required for FlashKDA CUTLASS kernel
     layers = 12
     attn_every = 4
-    attn_window = 1024
     ffn_hidden = 3072
     vocab = 32773  # 32768 BPE merges + <unk>/<eos> inside them, 4 chat specials, [NUM]
     fone = False
@@ -129,7 +129,7 @@ class Cfg:
     seed = 42
     compile = True  # model body only; FLCE loss kept outside (Liger compile-incompatible)
     grad_ckpt = False  # costs 25% wall-clock for ~15GB savings; batch 32 fits without it on H20
-    attn_res = False  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
+    attn_res = True  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
     attn_res_blocks = 0
     attn_res_dyn_q = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
@@ -227,14 +227,13 @@ class DeltaRecurrence(nn.Module):
         return self.o(out.reshape(B, T, D).to(x.dtype))
 
 
-class SlidingWindowAttention(nn.Module):
-    """K3 Gated MLA: latent KV compression + sliding window attention (NoPE, KDA handles position)."""
+class GatedMLA(nn.Module):
+    """Gated MLA: latent KV compression + full causal attention (NoPE, KDA handles position)."""
 
     def __init__(self, cfg):
         super().__init__()
         self.h, self.hd = cfg.heads, cfg.d // cfg.heads
         self.latent = cfg.d // 4
-        self.attn_window = cfg.attn_window
         self.kv_down = nn.Linear(cfg.d, self.latent, bias=False)
         self.kv_up = nn.Linear(self.latent, 2 * cfg.d, bias=False)  # fused k_up|v_up
         self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate
@@ -252,11 +251,9 @@ class SlidingWindowAttention(nn.Module):
         k = F.rms_norm(k, (self.hd,))
         if HAS_FA and cu is not None:
             q, k, v = (t.reshape(B * T, self.h, self.hd) for t in (q, k, v))
-            y = flash_attn_varlen_func(
-                q, k, v, cu, cu, T, T, causal=True, window_size=(self.attn_window - 1, 0)
-            )
+            y = flash_attn_varlen_func(q, k, v, cu, cu, T, T, causal=True)
         elif HAS_FA:
-            y = flash_attn_func(q, k, v, causal=True, window_size=(self.attn_window - 1, 0))
+            y = flash_attn_func(q, k, v, causal=True)
         else:  # CPU fallback: causal only, no document mask (ponytail: block-diag mask if ever needed)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
@@ -454,7 +451,7 @@ class Block(nn.Module):
     def __init__(self, cfg, is_attn=False):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
-        self.mixer = SlidingWindowAttention(cfg) if is_attn else DeltaRecurrence(cfg)
+        self.mixer = GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg)
         self.n2 = RMSNorm(cfg.d)
         self.ffn = SwiGLU(cfg)
         attn_res = getattr(cfg, "attn_res", False)
@@ -951,10 +948,27 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     stripped here rather than at each call site."""
     assert vocab_id, f"refusing to write {path} with no vocab_id: it could never be scored safely"
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
+    # Corpus fingerprint alongside vocab_id: which corpus this checkpoint trained on.
+    # Canonical implementation: scripts/corpus_fingerprint.py; inline so train.py
+    # imports nothing from scripts/. A domain absent from disk is absent from the map.
+    corpus_fp = {}
+    mix_path = cfg.get("mix")
+    if mix_path:
+        for dom in json.load(open(mix_path, encoding="utf-8")).get("domains", {}):
+            ddir = os.path.join("data", "corpus", dom)
+            if os.path.isdir(ddir):
+                fh = hashlib.sha1()
+                for nm in sorted(os.listdir(ddir)):
+                    if nm == "build_corpus_stats.json" or nm.startswith("."):
+                        continue
+                    st = os.stat(os.path.join(ddir, nm))
+                    fh.update(f"{nm}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+                corpus_fp[dom] = fh.hexdigest()[:16]
     ck = {
         "model": model_state,
         "cfg": {k: v for k, v in cfg.items() if not k.startswith("_")},
         "vocab_id": vocab_id,
+        "corpus_fp": corpus_fp,
     }
     if opt is not None:
         ck["opt"] = opt

@@ -85,7 +85,7 @@ def run(use_fone, steps, device, seed=0):
 
     cfg = type("C", (), {k: v for k, v in vars(train.Cfg).items() if not k.startswith("_")})
     cfg.d, cfg.layers, cfg.heads, cfg.head_dim, cfg.ffn_hidden = 256, 4, 4, 64, 512
-    cfg.seq, cfg.attn_window, cfg.grad_ckpt, cfg.attn_res = 32, 32, False, False
+    cfg.seq, cfg.grad_ckpt, cfg.attn_res = 32, False, False
     cfg.fone, cfg.num_id = use_fone, num_id
 
     rng = random.Random(seed)

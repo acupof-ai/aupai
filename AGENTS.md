@@ -1,6 +1,6 @@
 # aupai — 200M Chinese LLM (KDA + gated MLA hybrid, optional Attention Residuals)
 
-Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA with a 1024-token sliding window over 4096-token sequences, so dependence across spans longer than the window rides the KDA path, not attention.
+Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA, full causal over the 4096-token sequence (document-masked). The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training. Attention Residuals are on by default.
 
 ## Writing rules (all docs, commit messages, and replies)
 
