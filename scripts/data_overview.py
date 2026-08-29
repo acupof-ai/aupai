@@ -6,7 +6,7 @@ instant) when present; otherwise data/corpus/<domain>/*.jsonl is tokenized with
 the project tokenizer and cached in <corpus>/.counts.json, so the first run
 counts and every later run is free.
 
-    python scripts/data_overview.py [--mix data/mix_v3.json] [--corpus data/corpus]
+    python scripts/data_overview.py [--mix data/mix_scale_3.24b.json] [--corpus data/corpus]
 """
 
 import argparse
@@ -32,7 +32,7 @@ def cache_tokens(domain):
 
 
 def corpus_tokens(domain, corpus_dir, tok, sidecar):
-    """Count a corpus/<domain> directory via the tokenizer, caching per file (size, mtime)."""
+    """Count a corpus/<domain> directory, caching per file on (size, mtime)."""
     d = os.path.join(corpus_dir, domain)
     if not os.path.isdir(d):
         return None
@@ -74,8 +74,8 @@ def fmt_tokens(n):
 
 def main():
     ap = argparse.ArgumentParser()
-    # The configured mix, not a second copy of its name: four scripts each hardcoded
-    # "data/mix.json" and all four went stale the day it was deleted.
+    # The configured mix (harness.cfg_default), not a hardcoded name: a hardcoded path
+    # goes stale when the mix file is replaced.
     ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--corpus", default=os.path.join(ROOT, "data", "corpus"))
     a = ap.parse_args()

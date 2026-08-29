@@ -136,7 +136,7 @@
       "id": "tok.faster_libraries",
       "value": {"tokens": "9.49B", "throughput": "2.3M tok/s", "wallclock": "~66 min", "rust_share": 0.75, "cores": "90-143", "gigatoken": "refuses: no single-byte vocab entry for byte 0x00 (needs a complete 256-byte base)", "fastokens": "matches ids on short strings, raises 'character not in vocabulary' on real corpus text instead of falling back to <unk>", "tiktoken": "different regex pretokenizer, cannot reproduce ByteLevel BPE ids"},
       "measured": "2026-08-28",
-      "source": "evaluation session 2026-08-28; docs/audits/audit_fineweb_edu_v2.md confirms 2.3M tok/s",
+      "source": "evaluation session 2026-08-28 (2.3M tok/s, 9.49B tokens, ~66 min on 90-143 cores)",
       "config": {"vocab": "the frozen 32,773-token vocabulary", "note": "adopting any of them means retraining the vocabulary, which changes every id; the real win is incremental tokenization, not a faster library"},
       "uncertainty": null,
       "status": "recorded"
