@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 import torch
 
@@ -33,22 +34,25 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from domain_loss import HOLDOUT_ROWS, domain_files, tail_texts, domain_loss  # noqa: E402
-from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
+from domain_loss import HOLDOUT_ROWS, domain_files, head_texts, domain_loss  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 # Type -> the metrics that apply. Generative evals read zero on a base
 # checkpoint, so they are not in base's list: they go under "skipped".
+# English MC sits at chance on every 200M checkpoint measured (ceval moves,
+# the English three do not, same model same scale -- b0's finding), so base
+# gets ceval only as a z-score tripwire.
 APPLIES = {
-    "base": ["domain_loss", "minimal_pairs", "mc"],
-    "sft": ["domain_loss", "minimal_pairs", "mc", "math_hard", "math_500"],
-    "rl": ["domain_loss", "minimal_pairs", "mc", "math_hard", "math_500", "pass_at_k"],
+    "base": ["domain_loss", "minimal_pairs", "mc_ceval"],
+    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500"],
+    "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
     "math_500": "generative; a base checkpoint reads zero",
     "pass_at_k": "RL only; an SFT checkpoint has no policy to sample from",
+    "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
 }
-PAIRS_PATH = os.path.join(ROOT, "data", "minimal_pairs_zh.jsonl")
 
 
 def classify(cfg, ckpt_name):
@@ -92,7 +96,7 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
     files = domain_files(mix_path, ROOT)
     if not files:
         return None, f"no shards for any domain in {mix_path}"
-    cache = {name: tail_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
+    cache = {name: head_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
     out = {}
     for name, texts in cache.items():
         loss, ntok = domain_loss(model, tok, texts, seq, device)
@@ -106,60 +110,25 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
     return out, None
 
 
-@torch.no_grad()
-def metric_minimal_pairs(model, tok, device):
-    """Sum-logprob comparison on length-matched Chinese minimal pairs.
-
-    Floor is 50%: with no knowledge, which string scores higher is a coin
-    flip. Pairs come from data/minimal_pairs_zh.jsonl as {"correct", "wrong",
-    "dimension"}; construction rules are b0's, this is the runner."""
-    if not os.path.exists(PAIRS_PATH):
-        return None, f"{os.path.relpath(PAIRS_PATH, ROOT)} not present"
-    pairs = []
-    for line in open(PAIRS_PATH, encoding="utf-8"):
-        line = line.strip()
-        if line:
-            pairs.append(json.loads(line))
-    if not pairs:
-        return None, "no pairs"
-
-    def seq_logprob(text):
-        ids = torch.tensor(tok.encode(text).ids, dtype=torch.long, device=device)
-        if len(ids) < 2:
-            return None, len(ids)
-        x = ids[:-1].unsqueeze(0)
-        y = ids[1:]
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
-            logits = model(x)
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        lp = torch.log_softmax(logits.float()[0], dim=-1)
-        return float(lp[range(len(y)), y].sum()), len(ids)
-
-    wins, margins, length_matched = 0, [], 0
-    per_dim = {}
-    for p in pairs:
-        sc, lc = seq_logprob(p["correct"])
-        sw, lw = seq_logprob(p["wrong"])
-        if sc is None or sw is None:
-            continue
-        if lc == lw:
-            length_matched += 1
-        if sc > sw:
-            wins += 1
-            per_dim.setdefault(p.get("dimension", "?"), [0, 0])[0] += 1
-        per_dim.setdefault(p.get("dimension", "?"), [0, 0])[1] += 1
-        margins.append(sc - sw)
-    n = len(margins)
-    if n == 0:
-        return None, "every pair failed to score"
-    return {
-        "acc": round(wins / n, 4),
-        "n_pairs": n,
-        "length_matched_frac": round(length_matched / n, 4),
-        "mean_margin": round(sum(margins) / n, 4),
-        "per_dimension": {d: {"acc": round(w / t, 4), "n": t} for d, (w, t) in sorted(per_dim.items())},
-    }, None
+def metric_minimal_pairs(ckpt_path):
+    """b0's eval/base_matrix.py: token-aligned Chinese minimal pairs across five
+    syntactic dimensions, with BPE-merge handling (a pair is skipped, not scored,
+    if the edit changes tokenization) and a --swap known-answer mode. Floor is
+    50% by construction. The pair bank is 277 pairs -- a de-risked prototype,
+    not the 1000-pairs-per-dimension resolution target."""
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+        out = tf.name
+    try:
+        r = subprocess.run(
+            [sys.executable, "eval/base_matrix.py", "--ckpt", ckpt_path, "--out", out],
+            capture_output=True, text=True, cwd=ROOT, timeout=1800,
+        )
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["no output"]
+            return None, f"base_matrix.py exited {r.returncode}: {tail[0][:200]}"
+        return json.load(open(out, encoding="utf-8")), None
+    finally:
+        os.unlink(out)
 
 
 def _run(cmd, patterns):
@@ -181,11 +150,11 @@ def _run(cmd, patterns):
     return out, None
 
 
-def metric_mc(ckpt_path, tok_path):
+def metric_mc(ckpt_path, tok_path, benchmarks):
     return _run(
         [sys.executable, "eval/run_eval.py", "--ckpt", ckpt_path, "--tokenizer", tok_path,
-         "--benchmarks", "ceval", "mmlu", "arc-easy", "hellaswag", "piqa"],
-        {d: rf"{d}:\s*([\d.]+)%" for d in ("ceval", "mmlu", "arc-easy", "hellaswag", "piqa")},
+         "--benchmarks", *benchmarks],
+        {d: rf"{d}:\s*([\d.]+)%" for d in benchmarks},
     )
 
 
@@ -223,7 +192,7 @@ def score(ckpt_path, mix_path, tok_path, device):
         "skipped": {},
     }
     wanted = APPLIES[kind]
-    needs_model = bool({"domain_loss", "minimal_pairs"} & set(wanted))
+    needs_model = "domain_loss" in wanted
     model = tok = seq = None
     if needs_model:
         model, cfg = load_checkpoint(ckpt_path, device=device, dtype=torch.bfloat16)
@@ -234,15 +203,18 @@ def score(ckpt_path, mix_path, tok_path, device):
     if "domain_loss" in wanted:
         v, err = metric_domain_loss(model, tok, seq, device, mix_path)
         record["metrics"]["domain_loss"] = v if v else {"error": err}
-    if "minimal_pairs" in wanted:
-        v, err = metric_minimal_pairs(model, tok, device)
-        record["metrics"]["minimal_pairs"] = v if v else {"error": err}
     if model is not None:
         del model
         torch.cuda.empty_cache()
-    if "mc" in wanted:
-        v, err = metric_mc(ckpt_path, tok_path)
-        record["metrics"]["mc"] = v if v else {"error": err}
+    if "minimal_pairs" in wanted:
+        v, err = metric_minimal_pairs(ckpt_path)
+        record["metrics"]["minimal_pairs"] = v if v else {"error": err}
+    if "mc_ceval" in wanted:
+        v, err = metric_mc(ckpt_path, tok_path, ["ceval"])
+        record["metrics"]["mc_ceval"] = v if v else {"error": err}
+    if "mc_full" in wanted:
+        v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy", "hellaswag", "piqa"])
+        record["metrics"]["mc_full"] = v if v else {"error": err}
     if "math_hard" in wanted:
         v, err = metric_math_hard(ckpt_path, tok_path)
         record["metrics"]["math_hard"] = v if v else {"error": err}
