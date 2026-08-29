@@ -862,7 +862,7 @@ CHECKS = [
     (
         "fact_refs_resolve",
         "every facts/<file>.json#<id> citation resolves; citing a retracted fact WARNs",
-        "the reset zeroed conclusions while scattered docs still cited them -- a retracted fact must be discoverable, not a silent pointer",
+        "the citation regex dropped .json from the path, so this check passed on zero real citations until its fix on 2026-08-30 (36 citations now resolve)",
         check_fact_refs,
         _broken_fact_ref,
     ),

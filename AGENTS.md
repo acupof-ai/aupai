@@ -63,7 +63,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 ./run_ddp.sh --mix data/mix_scale_3.24b.json --name <name> [--attn_res] [--warmup 150] [--lr_scale 0.5]
 ```
 
-Any `--flag` matching `Cfg.<flag>` overrides it. The three 0830v1 mixes: `mix_scale_0.3b.json`, `mix_scale_1b.json`, `mix_scale_3.24b.json`. Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
+Any `--flag` matching `Cfg.<flag>` overrides it. The 0830v1 budget points are six mixes — `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json` — identical weights, scaled `total_tokens`. Five are a ×2 geometric series: three points would exactly identify the three parameters of E + B/D^β and leave no residual degrees of freedom to expose a bad fit. Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
 On the pod, launch detached (see Pod):
 
