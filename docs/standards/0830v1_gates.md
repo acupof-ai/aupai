@@ -9,10 +9,11 @@ latent=d/4) + AttnRes, NoPE throughout. Commit b3cad87. Changing it reopens G3.
 
 | gate | opens when | evidence | owner | status |
 |---|---|---|---|---|
-| G0 harness green | `scripts/harness.py check` exits 0 AND `--selftest` exits 0 | both exit codes | aupai-de, lessons-b0 | blocked: facts_well_formed, lessons_have_frontmatter |
-| G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/*.md` + `facts/base_eval.json` entries with config | lessons-b0 | open work |
-| G2 profile | step time split by source, percentages summing to ~100 | `facts/efficiency.json` | lessons-e1 | open work |
-| G3 first run | 0.2b budget point trained on the new arch | `ckpt_*`, one `experiments.jsonl` row, one `score_matrix.jsonl` row | aupai-fb, aupai-de | waits on G0, G1 |
+| G0 harness green | `scripts/harness.py check` exits 0 AND `--selftest` exits 0 | both exit codes | aupai-de | GREEN 2026-08-30 (73cef7b, 16/16 selftest) |
+| G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_at_200m.md` + 12 `facts/base_eval.json` entries | lessons-b0 | GREEN 2026-08-30, frozen; reporting the panel is now mandatory per run |
+| G1b zh minimal pairs | the eval set built to `be.minimal_pair_rules`, n>=277 | the set + its build script | aupai-3b | open; needed before the panel's minimal-pair row can be read, not before G3 |
+| G2 profile | step time split by source, percentages summing to ~100 | `facts/efficiency.json` | lessons-e1 | open work; also selects the kernel target |
+| G3 first run | 0.2b budget point trained on the new arch | `ckpt_*`, one `experiments.jsonl` row, one `score_matrix.jsonl` row | aupai-fb, aupai-de | blocked: GPU 1-7 held by `0830v1_repeat4` (old sliding-window arch) |
 | G4 scaling curve | all six `mix_scale_*` points scored | six score-matrix rows, fitted E + B/D^beta with residuals | aupai-fb | waits on G3 |
 
 Kernel work (tilerl-bench-harness-plan) runs alongside and gates on G2 for target
