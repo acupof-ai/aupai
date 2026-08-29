@@ -16,6 +16,8 @@ jobs:
       - run: python scripts/test_sft_pack.py
       - run: python scripts/eqcheck.py
       - run: python scripts/holdout.py
+      - run: python scripts/tokenizer_report.py --selftest
+      - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
       # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton

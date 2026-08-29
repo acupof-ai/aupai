@@ -61,11 +61,17 @@ def main():
         default=DEFAULT_SAMPLE_TOKENS,
         help=f"cap the training sample (tokens; default {DEFAULT_SAMPLE_TOKENS:,}, 0 = whole corpus)",
     )
+    ap.add_argument("--weights", default="", help="per-domain sample weight, e.g. en=3,code=2")
+    ap.add_argument("--out", default="", help="write here instead of data/tokenizer.json")
     ap.add_argument("--mix", default=os.path.join(train.DATA, os.path.basename(train.Cfg.mix)))
     a = ap.parse_args()
 
-    if os.path.exists(train.TOK_PATH) and not a.force:
-        print(f"{train.TOK_PATH} exists; pass --force to retrain", file=sys.stderr)
+    # --out keeps a candidate out of data/tokenizer.json: that file is read by every
+    # consumer and rebuilt in place, and ids do not survive a rebuild, so a sweep that
+    # wrote there would invalidate every live checkpoint one variant at a time.
+    out_path = a.out or train.TOK_PATH
+    if os.path.exists(out_path) and not a.force:
+        print(f"{out_path} exists; pass --force to retrain", file=sys.stderr)
         return 1
 
     corpus = os.path.join(train.DATA, "corpus")
@@ -81,9 +87,19 @@ def main():
         return 1
 
     budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")  # 0 -> whole corpus
-    per_domain = budget / len(domains)
-    print(f"sampling {len(domains)} domains ({', '.join(domains)})", file=sys.stderr)
-    samples = {d: domain_texts(corpus, d, per_domain) for d in domains}
+    # The tokenizer's sample balance is NOT the corpus mix. It decides what earns merges,
+    # so it should be weighted by what the vocabulary must be good at -- and English is
+    # measured at fertility 1.87 (target <=1.5) under the equal-byte default while every
+    # multiple-choice benchmark in eval/ except C-Eval is English.
+    w = dict(kv.split("=") for kv in a.weights.split(",")) if a.weights else {}
+    wt = {d: float(w.get(d, 1.0)) for d in domains}
+    tot_w = sum(wt.values())
+    print(
+        f"sampling {len(domains)} domains, byte shares "
+        + ", ".join(f"{d} {wt[d] / tot_w:.0%}" for d in domains),
+        file=sys.stderr,
+    )
+    samples = {d: domain_texts(corpus, d, budget * wt[d] / tot_w) for d in domains}
     texts = [t for docs in samples.values() for t in docs]
     print(f"{len(texts)} docs", file=sys.stderr)
 
@@ -118,8 +134,8 @@ def main():
             f"WARNING vocab {vsize} != {expected} (corpus too small to fill {base_vocab} merges?)",
             file=sys.stderr,
         )
-    tok.save(train.TOK_PATH)
-    print(f"saved {train.TOK_PATH} (vocab {vsize})")
+    tok.save(out_path)
+    print(f"saved {out_path} (vocab {vsize})")
 
     print(f"\n{'domain':<8}{'tokens':>10}{'chars/tok':>12}{'unk_rate':>10}")
     unk_id = tok.token_to_id("<unk>")

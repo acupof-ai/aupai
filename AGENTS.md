@@ -99,6 +99,22 @@
 - **A null landing in a pre-registered cell does not certify that cell.** Pre-registration
   (`docs/exp_procedure_sft.md`) is what made the missing branch visible instead of absorbing
   the result into an existing one; the amendment there is labelled as written afterwards.
+- **A METRIC WITHOUT A KNOWN-ANSWER CASE IS NOT A METRIC** — the dual of the rule above,
+  for files that measure rather than check. `scripts/tokenizer_report.py` reported four
+  wrong numbers in one day, every one of them a value that depends on the measurement
+  configuration printed without it: hanzi whole-char **0.00% against a true 99.2%** (it
+  searched byte-mapped token strings for a literal hanzi, so it fired on every CORRECT
+  ByteLevel vocabulary); utilisation **6.4% against 99.7%** and the undertrained tail
+  **4.0% against 0.43%** (402 documents and 1.6M tokens instead of 142M — a token of true
+  frequency 1e-6 appears 1.6 times in 1.6M, so a healthy Zipf tail MUST put percent of the
+  vocabulary at <=1 use); English fertility **2.36 against 1.87** (documents clipped to
+  2,000 characters). Three of the four are caught automatically by the **scale-stability**
+  assertion in its `--selftest`: ten times the text must not move a per-character or
+  per-word ratio, and any metric that DOES move is declared scale-bound and carries its
+  corpus size instead of a bare threshold. One known answer is not enough either — a single
+  low-hanzi case would have passed the broken version, so the test asserts a PAIR that must
+  differ by 60 points. `sample_corpus`'s `shards` and `clip` are part of every metric's
+  definition, not tuning knobs.
 - **Build the broken world by MUTATING A REAL ARTIFACT, never by hand-writing one from the
   check's own source.** All six checks passed `--selftest` while three were dead, because
   each broken world was synthesised from the check author's memory of the input format and

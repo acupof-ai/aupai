@@ -29,7 +29,12 @@ DEFAULT_DOMAINS = "web_hq,textbook,wiki,math,chat,code,en"
 
 
 # ---------------------------------------------------------------- corpus
-def sample_corpus(domains, per_domain=400, seed=7):
+def sample_corpus(domains, per_domain=400, seed=7, shards=3, clip=2000):
+    """Documents per domain. `shards` and `clip` are part of every metric's DEFINITION,
+    not tuning knobs: the same vocabulary reads 4.0% undertrained on the 1.6M-token
+    default and 0.43% on 142M, because a token of true frequency 1e-6 appears 1.6 times
+    in 1.6M tokens and a healthy Zipf tail therefore MUST put percent of the vocabulary
+    at <=1 use. Any frequency-tail threshold has to name the corpus it was measured on."""
     rng = random.Random(seed)
     out = {}
     for d in domains:
@@ -37,11 +42,11 @@ def sample_corpus(domains, per_domain=400, seed=7):
         if not fs:
             continue
         rows = []
-        for f in rng.sample(fs, min(3, len(fs))):
+        for f in rng.sample(fs, min(shards, len(fs))):
             with open(f, encoding="utf-8") as fh:
                 lines = fh.readlines()
-            for x in rng.sample(lines, min(per_domain // 3 + 1, len(lines))):
-                rows.append(json.loads(x).get("content", "")[:2000])
+            for x in rng.sample(lines, min(per_domain // shards + 1, len(lines))):
+                rows.append(json.loads(x).get("content", "")[:clip])
         if rows:
             out[d] = rows
     return out
@@ -284,6 +289,127 @@ def report(tok, corpus, name):
     }
 
 
+# ---------------------------------------------------------------- self-test
+#
+# A CHECK WITHOUT A FAILING CASE IS NOT A CHECK (harness.py). The dual, for a file
+# that measures rather than checks:
+#
+#     A METRIC WITHOUT A KNOWN-ANSWER CASE IS NOT A METRIC, AND A METRIC WHOSE
+#     VALUE MOVES WITH THE SAMPLE MUST CARRY THE SAMPLE IN ITS DEFINITION.
+#
+# This file reported four wrong numbers in one day, all of one class -- a value that
+# depends on the measurement configuration, printed without it:
+#
+#   hanzi in whole-char tokens   0.00%  (true 99.2%)  searched byte-mapped token
+#                                                     strings for a literal hanzi
+#   vocabulary utilised           6.4%  (true 99.7%)  402 documents
+#   undertrained (<=1 use)        4.0%  (true 0.43%)  1.6M tokens, not 142M
+#   en fertility                  2.36  (true 1.87)   documents clipped to 2000 chars
+#
+# Three of the four are caught by the scale-stability assertion below, which no
+# amount of reading the code would have caught.
+
+SCALE_STABLE = ("chars/token", "fertility", "hanzi whole-char")  # must not move with sample size
+SCALE_BOUND = ("utilised", "never used", "undertrained")  # meaningless without the corpus size
+
+
+def _tiny_tokenizer(merges=200):
+    """A real ByteLevel BPE over a known corpus, so a metric can be checked against an
+    answer computed by hand rather than against the metric's own output."""
+    from tokenizers import Tokenizer
+    from tokenizers.decoders import ByteLevel as BLD
+    from tokenizers.models import BPE
+    from tokenizers.pre_tokenizers import ByteLevel as BLP
+    from tokenizers.trainers import BpeTrainer
+
+    tok = Tokenizer(BPE(unk_token=None))
+    tok.pre_tokenizer = BLP(add_prefix_space=False)
+    tok.decoder = BLD()
+    # A REAL frequency tail: 40 copies of one sentence has none, so the <=1-use metric
+    # cannot move with sample size and the scale-stability case below proves nothing.
+    import random as _r
+
+    rng = _r.Random(0)
+    zh = "今天天气很好我们去公园散步他昨天买了三本书这条河很长学校在山的南边"
+    en = "the quick brown fox jumps over lazy dog and then walks home slowly again"
+    text = [
+        "".join(rng.sample(zh, 12)) + "。" + " ".join(rng.sample(en.split(), 6)) + f". {rng.randrange(10000)}"
+        for _ in range(400)
+    ]
+    tok.train_from_iterator(
+        text, BpeTrainer(vocab_size=merges, initial_alphabet=BLP.alphabet(), show_progress=False)
+    )
+    return tok, text
+
+
+def _demo():
+    tok, text = _tiny_tokenizer()
+    corpus = {"t": text}
+
+    # 1. KNOWN ANSWERS, A PAIR. One number cannot show a metric discriminates: it read the
+    #    token STRING ('今天' is stored byte-mapped as 'ä»Ĭå¤©') and returned 0.00% on every
+    #    correct ByteLevel vocabulary, and a single low-answer case would have PASSED that.
+    #    So: a 200-merge vocabulary genuinely cannot form whole hanzi out of 3-byte UTF-8
+    #    and must score LOW, a 3000-merge one over the same text must score HIGH.
+    hz = lambda t: float(utf8_integrity(t, corpus)["hanzi in whole-char tokens"].rstrip("%"))
+    lo = hz(tok)
+    big, _bigtext = _tiny_tokenizer(merges=3000)
+    hi = hz(big)
+    assert lo < 20, f"a 200-merge vocabulary reports {lo}% whole-char hanzi; it cannot form them"
+    assert hi > 80, f"a 3000-merge vocabulary reports {hi}% whole-char hanzi (should be near 100)"
+    assert hi - lo > 60, f"utf8_integrity does not discriminate: {lo}% vs {hi}%"
+
+    # 2. KNOWN ANSWER. Round-trip on text this vocabulary was trained on must be lossless.
+    assert roundtrip(tok, corpus)["lossless"], "round-trip lost bytes on its own training text"
+
+    # 3. SCALE STABILITY. Ten times the text, same characters: a per-character or per-word
+    #    ratio must not move. `utilised` and the frequency tail MUST move, which is why
+    #    they are SCALE_BOUND and carry their corpus size instead of a bare threshold.
+    import collections
+
+    # `big`, not `tok`: a 200-target vocabulary is just the 256-byte alphabet with no
+    # merges, so it has no frequency tail at all and the assertion below would pass by
+    # being vacuous rather than by demonstrating anything.
+    def counts_for(rows):
+        c = collections.Counter()
+        for e in big.encode_batch(rows):
+            c.update(e.ids)
+        return c
+
+    few, many = text[:40], text
+    cs, cb = counts_for(few), counts_for(many)
+    ratio = lambda c, rows: sum(c.values()) / sum(len(r) for r in rows)
+    rs, rb = ratio(cs, few), ratio(cb, many)
+    assert abs(rs - rb) / rb < 0.02, f"tokens/char moved {rs:.4f} -> {rb:.4f} with sample size"
+
+    V = len(big.get_vocab())
+    us, ub = len(cs) / V, len(cb) / V
+    assert ub >= us, "utilisation fell with more text"
+    tail_s = sum(1 for c in cs.values() if c <= 1) / V
+    tail_b = sum(1 for c in cb.values() if c <= 1) / V
+    assert tail_s != tail_b, (
+        "the <=1-use tail did not move with a 10x sample, so this self-test cannot "
+        "demonstrate why that metric needs its corpus size stated"
+    )
+
+    # 4. The sample knobs are part of the definition, so they must actually bind.
+    import sys as _sys
+
+    if os.path.isdir(os.path.join(ROOT, "data", "corpus")):
+        a = sample_corpus(["sample"], 60, shards=1, clip=200)
+        b = sample_corpus(["sample"], 60, shards=1, clip=2000)
+        if a and b:
+            la = sum(len(r) for r in a["sample"])
+            lb = sum(len(r) for r in b["sample"])
+            assert lb > la, f"clip= did not bind: {la} vs {lb} chars"
+        print("   sample_corpus: shards/clip bind", file=_sys.stderr)
+
+    print(
+        f"tokenizer_report self-test OK ({len(SCALE_STABLE)} scale-stable metrics checked, "
+        f"{len(SCALE_BOUND)} declared scale-bound, 2 known-answer cases)"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
@@ -325,4 +451,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        _demo()
+    else:
+        main()

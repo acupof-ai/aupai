@@ -32,8 +32,36 @@ DIMENSIONS = {
 }
 
 
+# Hard thresholds. A vocabulary is used for the life of every checkpoint trained on
+# it -- ids do not survive a rebuild -- so these are chosen by what is EXPENSIVE TO
+# CHANGE LATER, not by what scores well today.
+#
+# TokEval (arXiv 2608.18062) is the field's suite: 14 metrics, 6 categories, and its
+# own conclusion is that intrinsic metrics SCREEN but do not RANK -- "adjacent rows of
+# results tables mostly differ by less than seed retraining would move a single model".
+# So this file gates on correctness and on the two failures that no amount of training
+# can repair, and leaves ranking to the weighted dimensions below and, finally, to two
+# pretrains differing only in the vocabulary.
+#
+# It also follows TokEval's protocol requirement: the corpus and the normalisation unit
+# are part of the metric's definition. The same vocabulary reads 6.4% utilisation on 402
+# math documents and 94.5% on 2,814 across seven domains -- always gate on the full mix.
+GATES = {
+    # name: (threshold, higher_is_better, why it is a veto and not a preference)
+    # NEVER used, not "<=1 use": the <=1 rate is a function of how much text you counted
+    # (4.0% at 1.6M tokens, 0.43% at 142M, same vocabulary), so it cannot carry a fixed
+    # threshold. A token with zero occurrences in 142M tokens of the training distribution
+    # is a glitch token by the Fishing-for-Magikarp definition and no amount of training
+    # reaches it.
+    "never used frac": (0.005, False, "glitch tokens: never trained, and training cannot fix them"),
+    "en fertility": (1.5, False, "every MC benchmark in eval/ except C-Eval is English"),
+    "hanzi whole-char": (0.95, True, "byte-fragmented hanzi is worse than one token per character"),
+}
+
+
 def gates(tok, corpus):
-    """Disqualifiers: correctness properties, not preferences."""
+    """Disqualifiers: correctness first, then the two properties a rebuild is the only
+    remedy for. Everything else is a preference and is scored, not gated."""
     import tokenizer_report as R
 
     out = {}
@@ -46,6 +74,17 @@ def gates(tok, corpus):
     out["all 256 bytes present"] = have == 256
     out["_bytes"] = have
     return out
+
+
+def threshold_gates(metrics):
+    """(name, value, threshold, ok) for each GATES entry present in `metrics`."""
+    rows = []
+    for k, (thr, higher, _why) in GATES.items():
+        if k not in metrics:
+            continue
+        val = metrics[k]
+        rows.append((k, val, thr, (val >= thr) if higher else (val <= thr)))
+    return rows
 
 
 def _byte_token(b):
@@ -105,11 +144,21 @@ def collect(path, corpus, train_rows, eval_rows, score_bits):
         "zipf deviation": rms,
         "utilised": len(counts) / len(tok.get_vocab()),
         "undertrained frac": sum(1 for c in counts.values() if c <= 1) / len(tok.get_vocab()),
+        "never used frac": 1 - len(counts) / len(tok.get_vocab()),
         "digit consistent": 1 - dg["context-inconsistent"] / dg["numbers tested"],
         "parity spread": max(par.values()) - min(par.values()),
     }
     m.update(robustness(tok, corpus))
     m.update(cost(tok))
+    # Rényi is TokEval's single strongest predictor of BPB (rho = -0.80), stronger than
+    # compression rate (-0.51); it is scored rather than gated because its counterexamples
+    # (arXiv 2402.14614) are real.
+    m["renyi"] = R.renyi_efficiency(counts)
+    em = R.english_metrics(tok, corpus)
+    if em:
+        m["en fertility"] = em["fertility (tokens/word)"]
+    u = R.utf8_integrity(tok, corpus)
+    m["hanzi whole-char"] = float(u["hanzi in whole-char tokens"].rstrip("%")) / 100
     if score_bits:
         from tokenizer_sweep import bits_per_char
 
@@ -124,8 +173,11 @@ METRICS = {
     "bits/char": ("predictability", False),
     "zipf deviation": ("distribution", False),
     "utilised": ("distribution", True),
+    "never used frac": ("distribution", False),
     "undertrained frac": ("distribution", False),
     "digit consistent": ("structure", True),
+    "renyi": ("predictability", True),
+    "en fertility": ("compression", False),
     "parity spread": ("equity", False),
 }
 
@@ -156,14 +208,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tokenizers", required=True)
     ap.add_argument("--domains", default="web_hq,textbook,wiki,math,chat,code,en")
-    ap.add_argument("--per_domain", type=int, default=400)
+    ap.add_argument("--per_domain", type=int, default=3000)
+    ap.add_argument("--shards", type=int, default=8, help="shards per domain; part of the metric definition")
+    ap.add_argument("--clip", type=int, default=0, help="chars per doc, 0 = whole document")
     ap.add_argument("--n_train", type=int, default=12000)
     a = ap.parse_args()
 
     import tokenizer_report as R
 
     doms = [d for d in a.domains.split(",") if d]
-    corpus = R.sample_corpus(doms, a.per_domain)
+    corpus = R.sample_corpus(doms, a.per_domain, shards=a.shards, clip=a.clip or 10**9)
     if not corpus:
         sys.exit("no corpus under data/corpus/")
     paths = [p.strip() for p in a.tokenizers.split(",") if p.strip()]
@@ -190,7 +244,7 @@ def main():
 
     print(f"\n{'=' * 78}\nGATES  (a failure disqualifies; correctness is not traded against compression)")
     print(f"  {'vocabulary':<24}{'round-trip':>12}{'256 bytes':>12}{'verdict':>10}")
-    ok = []
+    ok, failed = [], []
     for name, m, g, V in rows:
         passed = g["round-trip lossless"] and g["all 256 bytes present"]
         print(
@@ -199,8 +253,20 @@ def main():
         )
         if passed:
             ok.append((name, m))
+        else:
+            failed.append(name)
     if not ok:
         sys.exit("\nevery candidate failed a gate; nothing to rank")
+
+    print(f"\n{'=' * 78}\nTHRESHOLDS  (what a rebuild is the only remedy for)")
+    print(f"  {'vocabulary':<24}{'metric':<20}{'value':>10}{'needs':>10}{'':>8}")
+    for name, m in ok:
+        for k, val, thr, good in threshold_gates(m):
+            arrow = "<=" if not GATES[k][1] else ">="
+            print(f"  {name:<24}{k:<20}{val:>10.4f}{arrow + f'{thr:g}':>10}{'ok' if good else '  FAIL':>8}")
+            if not good:
+                failed.append(f"{name}:{k}")
+                print(f"  {'':<24}  -> {GATES[k][2]}")
 
     print(f"\n{'=' * 78}\nRAW")
     keys = [k for k in METRICS if any(k in m for _, m in ok)] + ["embed params (M)"]
@@ -238,6 +304,14 @@ def main():
         "  only in the vocabulary."
     )
 
+    if failed:
+        print(f"\n  {len(failed)} threshold gate(s) FAILED: {', '.join(failed)}")
+        print("  A gate is a REBUILD trigger, not a preference: ids do not survive a rebuild,")
+        print("  so every checkpoint trained on this vocabulary inherits the defect for life.")
+        return 1
+    print("\n  all threshold gates pass")
+    return 0
+
 
 def _demo():
     """The scoring scale is logic and has been wrong once."""
@@ -265,4 +339,4 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         _demo()
     else:
-        main()
+        sys.exit(main() or 0)
