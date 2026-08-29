@@ -78,6 +78,15 @@ def main():
     )
     k = max(1, a.k)
     temp = a.temperature if k > 1 or a.temperature > 0 else 0.0
+    # A pass@k run at temperature 0 draws k IDENTICAL copies of the greedy answer, so
+    # pass@k == pass@1 and the gap is 0 by construction -- and scripts/eval_hard.sh
+    # defaults TEMP=0. That reads as "no headroom" when nothing was actually sampled, and
+    # the RL gate (pass@k - pass@1 >= 15pt) is decided on it.
+    assert not (k > 1 and temp <= 0), (
+        f"--k {k} at temperature {temp}: the k samples would be identical to the greedy "
+        "answer and pass@k would equal pass@1 by construction. Pass --temperature (0.8 is "
+        "the project's pass@k setting) or TEMP=0.8 through scripts/eval_hard.sh."
+    )
     # pass@1 is always the greedy answer; the k sampled answers only feed pass@k and the sampled mean,
     # so pass@k - pass@1 is not inflated by sampling noise on the pass@1 side.
     by = {}  # level -> [greedy correct, sum of sampled acc, any-correct, n]
@@ -145,7 +154,7 @@ def main():
                 lv = by.setdefault(r["level"], [0, 0.0, 0, 0])
                 lv[0] += int(oks[0])
                 lv[1] += sum(oks[1:]) / k if k > 1 else 0.0
-                lv[2] += int(any(oks))
+                lv[2] += int(any(oks))  # greedy + k samples -> pass@(k+1); labelled below
                 lv[3] += 1
     if dump:
         dump.close()
@@ -155,12 +164,17 @@ def main():
     pk = sum(v[2] for v in by.values())
     line = f"math-hard: pass@1(greedy) {p1 / n:.1%} ({p1}/{n})"
     if k > 1:
-        line += f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k} {pk / n:.1%} ({pk}/{n}) | gap {(pk - p1) / n:+.1%}"
+        # k+1, not k: `oks` holds the greedy answer AND the k samples, so any() is a pass
+        # over k+1 generations. Printing it as pass@k overstated every gate it fed.
+        line += (
+            f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k + 1} {pk / n:.1%} ({pk}/{n})"
+            f" | gap {(pk - p1) / n:+.1%} | T={temp}"
+        )
     print(line)
     print(
         "  "
         + ", ".join(
-            f"{lvl}: p@1 {v[0] / v[3]:.0%}" + (f" p@{k} {v[2] / v[3]:.0%}" if k > 1 else "") + f" (n={v[3]})"
+            f"{lvl}: p@1 {v[0] / v[3]:.0%}" + (f" p@{k + 1} {v[2] / v[3]:.0%}" if k > 1 else "") + f" (n={v[3]})"
             for lvl, v in sorted(by.items())
         )
     )
