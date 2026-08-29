@@ -559,7 +559,7 @@ def gaps():
             print(f"    EXPERIMENTS.md:{i}  {ln[:96]}")
 
 
-def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False, all_ckpts=False, newest=8):
+def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
     """CLOSE the gaps instead of reporting them.
 
     `gaps` naming a checkpoint as unmeasured, over and over, is not progress -- somebody
@@ -582,16 +582,10 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False, all_ckp
     ]
     if only:
         todo = [n for n in todo if only in n]
-    elif not all_ckpts:
-        # The full matrix is ~13 min per checkpoint on 7 GPUs, so 38 checkpoints is 8.2 GPU
-        # hours -- and most of that list is dead ends and architecture stubs whose math-hard
-        # all lands inside the metric's own +-1.1pt band, i.e. 20 statistically identical
-        # numbers for 4 GPU hours. Newest first, and no mid-run .stepNNN copies.
-        todo = [n for n in todo if not re.search(r"\.step\d+$", n)]
-        todo.sort(key=lambda n: os.path.getmtime(os.path.join(ROOT, f"{n}.pt")), reverse=True)
-        if len(todo) > newest:
-            print(f"  measuring the {newest} newest of {len(todo)}; --all for the rest")
-            todo = todo[:newest]
+    # Newest first, so the checkpoints anyone is waiting on land before the archaeology.
+    # NOT capped: the whole point is that gaps stops listing the same names forever, and
+    # math-hard alone is ~5 min per checkpoint, so even 38 of them is one idle night.
+    todo.sort(key=lambda n: os.path.getmtime(os.path.join(ROOT, f"{n}.pt")), reverse=True)
     # gaps counts every unscored name; this can only close the ones whose weights exist. Say
     # which ones it cannot, or an empty todo reads as "nothing left" over gaps' remainder.
     absent = [n for n in checkpoint_names(scores) if n not in scores and n not in todo]
@@ -713,7 +707,6 @@ def main():
     ap.add_argument("--tokenizer", help="measure: the vocabulary these checkpoints were trained on")
     ap.add_argument("--dry", action="store_true", help="measure: list what would run")
     ap.add_argument("--full", action="store_true", help="measure: the whole matrix, not just math-hard")
-    ap.add_argument("--all", action="store_true", help="measure: every checkpoint, not the newest 8")
     ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
     a = ap.parse_args()
     if a.selftest:
@@ -733,9 +726,7 @@ def main():
         print("\nGAPS  (stated out loud, never inferred from an absence)")
         gaps()
     if cmd == "measure":
-        return measure(
-            only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry, full=a.full, all_ckpts=a.all
-        )
+        return measure(only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry, full=a.full)
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)
