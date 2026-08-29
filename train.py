@@ -561,12 +561,18 @@ class HybridLM(nn.Module):
                     done, partial = done + partial, []
         return self.final_ar(done + partial)
 
+    def lm_logits(self, hidden):
+        """The vocabulary head plus the softcap, split out so a decoder can apply it to the
+        handful of positions it actually reads instead of to the whole prefix."""
+        logits = self.head(hidden)[..., : self.cfg.vocab].float()
+        return SOFTCAP * torch.tanh(logits / SOFTCAP) if SOFTCAP else logits
+
     def num_logits(self, hidden):
         """Per-digit logits (..., digits, 10) at every position; the caller masks to [NUM]. Runs
         outside autocast, so cast to the weight dtype and back to fp32."""
         return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
 
-    def forward(self, idx, targets=None, cu=None, num_vals=None, return_hidden=False):
+    def forward(self, idx, targets=None, cu=None, num_vals=None, return_hidden=False, no_head=False):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
         num_vals: (B, T) float, the value at each [NUM] position; elsewhere masked out, not trusted.
         return_hidden: FoNE sampling needs the state that predicted [NUM] to read its digits from."""
@@ -577,10 +583,16 @@ class HybridLM(nn.Module):
             emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
         hidden = self.norm(self._body(emb, cu))
         if targets is None:
-            logits = self.head(hidden)[..., : self.cfg.vocab].float()
-            if SOFTCAP:
-                logits = SOFTCAP * torch.tanh(logits / SOFTCAP)
-            return logits, (hidden if return_hidden else None)
+            # no_head: a decoder reads ONE position per row while the head ran over all T.
+            # At B=64, T=557, V=32832 the fp32 logits alone are 4.7GB and the softcap chain
+            # allocates several more copies, all freed immediately -- 17% of per-position
+            # forward FLOPs, 99.8% of it discarded, and the transient is what pins the eval
+            # batch size. The caller gathers its B positions and calls lm_logits on those.
+            # Slicing [:, -1:] here would be WRONG: rows are right-padded from different
+            # prompt lengths, so each row decodes from its own column, not the last one.
+            if no_head:
+                return None, hidden
+            return self.lm_logits(hidden), (hidden if return_hidden else None)
         # Training: the loss is computed in the loop -- Liger FLCE is compile-incompatible
         return hidden, None
 
@@ -900,12 +912,12 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
     num_id = model.cfg.num_id if fone_on else None
 
     for _ in range(max_new):
-        logits, hidden = model(
-            x[:, -_MAX_CTX:], num_vals=v[:, -_MAX_CTX:] if fone_on else None, return_hidden=fone_on
-        )
-        # logits only covers the last _MAX_CTX positions; index relative to that slice
+        _, hidden = model(x[:, -_MAX_CTX:], num_vals=v[:, -_MAX_CTX:] if fone_on else None, no_head=True)
+        # hidden covers only the last _MAX_CTX positions; index relative to that slice, then
+        # run the head on those B rows alone rather than on B x T.
         off = max(0, x.size(1) - _MAX_CTX)
-        step_logits = logits[ar, ends - off - 1]
+        step_hidden = hidden[ar, ends - off - 1]
+        step_logits = model.lm_logits(step_hidden)
         if temperature > 0:
             nxt = torch.multinomial(torch.softmax(step_logits.float() / temperature, dim=-1), 1).squeeze(1)
         else:
@@ -916,7 +928,7 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
                 v = torch.cat([v, torch.zeros((B, 1), device=device)], dim=1)
         x[ar, ends] = torch.where(done, torch.full_like(nxt, _EOS), nxt)
         if fone_on:
-            val = fone.decode(model.num_logits(hidden[ar, ends - off - 1].float())).to(v.dtype)
+            val = fone.decode(model.num_logits(step_hidden.float())).to(v.dtype)
             v[ar, ends] = torch.where(nxt == num_id, val, torch.zeros_like(val))
         ends += (~done).long()
         done |= nxt == _EOS

@@ -559,7 +559,7 @@ def gaps():
             print(f"    EXPERIMENTS.md:{i}  {ln[:96]}")
 
 
-def measure(only=None, ngpu=None, tokenizer=None, dry=False):
+def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False, all_ckpts=False, newest=8):
     """CLOSE the gaps instead of reporting them.
 
     `gaps` naming a checkpoint as unmeasured, over and over, is not progress -- somebody
@@ -582,6 +582,16 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False):
     ]
     if only:
         todo = [n for n in todo if only in n]
+    elif not all_ckpts:
+        # The full matrix is ~13 min per checkpoint on 7 GPUs, so 38 checkpoints is 8.2 GPU
+        # hours -- and most of that list is dead ends and architecture stubs whose math-hard
+        # all lands inside the metric's own +-1.1pt band, i.e. 20 statistically identical
+        # numbers for 4 GPU hours. Newest first, and no mid-run .stepNNN copies.
+        todo = [n for n in todo if not re.search(r"\.step\d+$", n)]
+        todo.sort(key=lambda n: os.path.getmtime(os.path.join(ROOT, f"{n}.pt")), reverse=True)
+        if len(todo) > newest:
+            print(f"  measuring the {newest} newest of {len(todo)}; --all for the rest")
+            todo = todo[:newest]
     # gaps counts every unscored name; this can only close the ones whose weights exist. Say
     # which ones it cannot, or an empty todo reads as "nothing left" over gaps' remainder.
     absent = [n for n in checkpoint_names(scores) if n not in scores and n not in todo]
@@ -598,13 +608,19 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False):
     env = {**os.environ, "NGPU": str(ngpu)} if ngpu else None
     for n in todo:
         ck = f"{n}.pt"
-        cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
+        # math-hard alone by default: it is the metric of record, the only thing score_from
+        # reads, and the only thing that closes a gaps entry. The MC suite is ~30% of the
+        # matrix's runtime and eval_all.sh's own comment says it sits at the chance line.
+        if full:
+            cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
+        else:
+            cmd = ["bash", os.path.join(HERE, "eval_hard.sh"), ck, str(ngpu or 6)]
         print(f"\n  === {ck} ===", flush=True)
         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         # eval_all.sh writes runs/evalall_<ckpt>.log unconditionally, so a crash after the
         # math-hard stage still leaves the lines that DID land; re-capturing stdout loses them.
         log = os.path.join(ROOT, "runs", f"evalall_{n}.log")
-        out = open(log, encoding="utf-8").read() if os.path.exists(log) else p.stdout + p.stderr
+        out = open(log, encoding="utf-8").read() if full and os.path.exists(log) else p.stdout + p.stderr
         # eval_all.sh:91's own extractor. Matching only "TOTAL" dropped the digit head and the
         # arithmetic rate -- the two things the matrix exists to report BESIDE the score.
         keep = re.compile(r"TOTAL|whole-number exact|^Average|% wrong|STOP:")
@@ -696,6 +712,8 @@ def main():
     ap.add_argument("--ngpu", help="measure: shards for eval_all.sh")
     ap.add_argument("--tokenizer", help="measure: the vocabulary these checkpoints were trained on")
     ap.add_argument("--dry", action="store_true", help="measure: list what would run")
+    ap.add_argument("--full", action="store_true", help="measure: the whole matrix, not just math-hard")
+    ap.add_argument("--all", action="store_true", help="measure: every checkpoint, not the newest 8")
     ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
     a = ap.parse_args()
     if a.selftest:
@@ -715,7 +733,9 @@ def main():
         print("\nGAPS  (stated out loud, never inferred from an absence)")
         gaps()
     if cmd == "measure":
-        return measure(only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry)
+        return measure(
+            only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry, full=a.full, all_ckpts=a.all
+        )
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)

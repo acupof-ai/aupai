@@ -334,6 +334,13 @@ if os.path.exists(_tok_path):
             _l1, _n1 = _m2(_x)
             _l2, _h2 = _m2(_x, return_hidden=True)
         assert _n1 is None and _h2 is not None and torch.equal(_l1, _l2), "return_hidden changed the logits"
+        # no_head skips the vocabulary head so a decoder can run it on the B positions it
+        # actually reads instead of on B x T. It must be the SAME number: generate_batch now
+        # takes this path, so a divergence here silently rewrites every generated token.
+        with torch.no_grad():
+            _n3, _h3 = _m2(_x, no_head=True)
+        assert _n3 is None, "no_head still returned logits"
+        assert torch.equal(_m2.lm_logits(_h3), _l1), "no_head + lm_logits != the full-head path"
         train.Cfg.fone, train.Cfg.vocab = False, 100
         print("test_fone_infer OK")
     else:
