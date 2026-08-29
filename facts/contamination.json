@@ -220,7 +220,8 @@
     "scale_control": "web_hq (the corpus 0830v1 trains on) is the same-scale comparator, NOT an abstract clean population"
    },
    "boundary": "rates sum holdout-shard hit incidents per corpus / size; the same holdout can be counted in multiple shards (not a distinct-holdout union). short-holdout bucket (<20 bigrams) excluded from the main count -- known FPR dead-zone ('1+1等于几' class), reported separately, p100=1.0 in both corpora.",
-   "status": "measured"
+   "status": "measured",
+   "uncertainty": "rates sum holdout-shard hit incidents (same holdout counted in multiple shards); baseline web_hq is the in-training corpus, not a proven-clean population -- the comparison is 'no dirtier than what we train on', not an absolute FPR"
   },
   {
    "id": "cont.cci3_scale_failure",
@@ -234,8 +235,16 @@
    "measured": "2026-08-30",
    "source": "contrasted scans, same script/parans: CCI3-HQ vs web_hq on the training pod",
    "boundary": "the OLD cont.fpr 0/1498-on-269/2000-docs would have 'cleared' everything: small-sample FPR has no binding power on 500K-doc-shard FPR -- a second instance of a metric that reads scale-bound as absolute (per project harness rule).",
-   "status": "measured"
-  }
+   "status": "measured",
+   "config": {
+    "host": "training pod",
+    "threshold": 0.8,
+    "mode": "--full-doc"
+   },
+   "uncertainty": null
+  },
+  {
+   "id": "cont.shards",
    "value": {
     "ape210k_000": {
      "rows": 53772,

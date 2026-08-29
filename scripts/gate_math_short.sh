@@ -16,7 +16,11 @@ cd "$(dirname "$0")/.."
 rc=0
 for src in "$@"; do
     echo "--- gate: $src"
-    python3 scripts/scan_math_contamination.py "$src" || rc=1
+    # baseline: gsm8k_zh -- the accepted clean math shard (same distribution family,
+    # 0 hits). The scanner REQUIRES a same-scale baseline; without one a FPR number
+    # has no binding power (cont.cci3_scale_failure).
+    python3 scripts/scan_math_contamination.py "$src" \
+        --fpr-baseline data/corpus/math/gsm8k_zh_000.jsonl || rc=1
 done
 if [ "$rc" -ne 0 ]; then
     echo "GATE REFUSED: fix the bank (or the batch), do not ingest contaminated rows"

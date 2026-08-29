@@ -41,10 +41,15 @@ containment, and hit counts at 0.7 / 0.8 / 0.9, so the reader can see how sensit
 verdict is to the threshold.
 
 Usage:
-    python scripts/scan_math_contamination.py <path> [--q-field NAME] [--full-doc]
+    python scripts/scan_math_contamination.py <path> --fpr-baseline BASELINE_PATH
+                                                 [--q-field NAME] [--full-doc]
                                                  [--threshold 0.8] [--jobs N] [--force]
-                                                 [--fpr-baseline CLEAN_PATH]
     python scripts/scan_math_contamination.py --self-check
+
+    --fpr-baseline is REQUIRED: the same-scale in-training corpus. The verdict is
+    the candidate's per-GB hit rate vs the baseline's -- REJECT if > 2x (fb's
+    pre-registered rule, cont.cci3_vs_webhq_rates) or on any exact hit. Absolute
+    per-shard counts are meaningless across unequal corpus sizes (cont.cci3_scale_failure).
 
 Modes:
     default      jsonl/parquet with a question field (math sources); the question part
@@ -54,9 +59,9 @@ Modes:
                  positive rate at the threshold; the only evidence the threshold means
                  anything. Not recorded in the ledger.
 
-Exit code: 1 if any holdout is hit at the threshold (REJECT THE WHOLE SOURCE -- do not
-filter rows), 0 if clean. Field-extraction failures never pass as clean: if >1% of rows
-yield empty text the scan errors out instead of reporting 0 hits.
+Exit code: 1 if the candidate REJECTs (exact hit, or per-GB hit rate > 2x the
+baseline's), 0 if clean. Field-extraction failures never pass as clean: if >1% of
+rows yield empty text the scan errors out instead of reporting 0 hits.
 """
 
 import argparse
@@ -93,6 +98,10 @@ HOLDOUT_FILES = [
     "data/synthetic/math_hard_eval_v2_1k.jsonl",
 ]
 DEFAULT_THRESHOLD = 0.8
+# fb's pre-registered admission rule (2026-08-30, cont.cci3_vs_webhq_rates):
+# accept a candidate corpus if its per-GB hit rate is at most this x the
+# same-scale in-training baseline's rate. Above it, REJECT.
+RATE_REJECT_RATIO = 2.0
 MIN_BIGRAMS = 20
 CHUNK = 20000
 NUM_RE = __import__("re").compile(r"\d+\.?\d*")
@@ -183,13 +192,14 @@ class HoldoutIndex:
             for g in bg:
                 self.H[self.g2i[g], j] = 1
         self.short = [i for i, b in enumerate(h_bigrams) if len(b) < MIN_BIGRAMS]
+        self.short_set = set(self.short)
         self.nums = defaultdict(list)
         for i, q in enumerate(holdouts):
             nums = numbers(q)
             if len(nums) >= 2:
                 self.nums[nums].append(i)
 
-    def scan_chunk(self, texts):
+    def scan_chunk(self, texts, threshold):
         """One batch. Exact-hit rows are excluded from containment (same as the old
         per-row path: an exact hit returned early, contributing no bigrams)."""
         ridx, cidx = [], []
@@ -216,11 +226,18 @@ class HoldoutIndex:
             )
             cont = np.asarray(R @ self.H, dtype=np.float64) / self.sizes
             max_cont = np.maximum(max_cont, cont.max(axis=0))
-        return exact_hits, max_cont, num_flags
+            # per-ROW hits over LONG holdouts only: the additive unit for
+            # scale-free rates (short holdouts saturate and stay a separate bucket)
+            long_cols = [i for i in range(cont.shape[1]) if i not in self.short_set]
+            hit_rows = int((cont[:, long_cols].max(axis=1) >= threshold).sum()) if long_cols else 0
+        else:
+            hit_rows = 0
+        return exact_hits, max_cont, num_flags, hit_rows
 
 
 def scan_path(path, idx, qfield, full_doc, threshold):
     n = empty = 0
+    hit_rows = 0
     max_cont = np.zeros(len(idx.holdouts), dtype=np.float32)
     exact_hits, num_flags = [], 0
     chunk = []
@@ -232,21 +249,23 @@ def scan_path(path, idx, qfield, full_doc, threshold):
             continue
         chunk.append(text)
         if len(chunk) >= CHUNK:
-            ex, mc, nf = idx.scan_chunk(chunk)
+            ex, mc, nf, hr = idx.scan_chunk(chunk, threshold)
             exact_hits += [(chunk_start + r, t) for r, t in ex]
             max_cont = np.maximum(max_cont, mc)
             num_flags += nf
+            hit_rows += hr
             chunk_start += len(chunk)
             chunk = []
     if chunk:
-        ex, mc, nf = idx.scan_chunk(chunk)
+        ex, mc, nf, hr = idx.scan_chunk(chunk, threshold)
         exact_hits += [(chunk_start + r, t) for r, t in ex]
         max_cont = np.maximum(max_cont, mc)
         num_flags += nf
+        hit_rows += hr
     if n and empty / n > 0.01:
         sys.exit(f"REFUSED: {empty}/{n} rows ({empty/n:.1%}) extracted empty -- "
                  f"field name mismatch? Pass --q-field. Not reporting clean on empty text.")
-    return n, empty, exact_hits, max_cont.tolist(), num_flags
+    return n, empty, exact_hits, max_cont.tolist(), num_flags, hit_rows
 
 
 def _worker(args):
@@ -269,26 +288,46 @@ def deciles(xs):
             for p in (50, 75, 90, 95, 99, 100)}
 
 
-def report(name, n, empty, exact_hits, max_cont, num_flags, threshold, holdouts, short):
-    long_i = [i for i in range(len(holdouts)) if i not in set(short)]
+def report(name, n, empty, exact_hits, max_cont, num_flags, hit_rows, bytes_,
+           threshold, holdouts, short, base_per_gb):
+    """Scale-free rates for one corpus/shard, vs a same-scale baseline rate.
+
+    Verdict (fb pre-registered 2026-08-30, cont.cci3_vs_webhq_rates):
+      exact hit            -> REJECT (verbatim contamination, no FPR defense)
+      candidate per-GB rate > RATE_REJECT_RATIO x baseline -> REJECT
+      else clean.
+    Absolute per-shard counts are meaningless across unequal corpus sizes
+    (cont.cci3_scale_failure): the baseline is the same-scale in-training corpus.
+    """
+    long_i = [i for i in range(len(holdouts)) if i not in short]
     long_vals = [max_cont[i] for i in long_i]
     short_vals = [max_cont[i] for i in short]
-    hits = {t: sum(1 for v in long_vals if v >= t) for t in (0.7, 0.8, 0.9)}
-    print(f"\n=== {name}: {n} rows, {empty} empty")
+    gb = bytes_ / 1e9
+    per_gb = hit_rows / gb if gb else 0.0
+    per_mdoc = hit_rows / n * 1e6 if n else 0.0
+    print(f"\n=== {name}: {n} rows, {gb:.3f} GB, {empty} empty")
     print(f"exact-normalized hits: {len(exact_hits)}")
     for row, t in exact_hits[:5]:
         print(f"  row {row}: {t}")
-    print(f"containment distribution (holdouts with >= {MIN_BIGRAMS} bigrams, n={len(long_vals)}):")
-    print(f"  deciles: {deciles(long_vals)}")
-    print(f"  holdouts hit at 0.7 / 0.8 / 0.9: {hits[0.7]} / {hits[0.8]} / {hits[0.9]}")
+    print(f"hit rows (containment >= {threshold}, long holdouts): {hit_rows} "
+          f"= {per_gb:.1f}/GB = {per_mdoc:.1f}/M-docs")
+    print(f"  (union holdouts hit at 0.7/0.8/0.9: "
+          f"{sum(v >= 0.7 for v in long_vals)}/{sum(v >= 0.8 for v in long_vals)}/{sum(v >= 0.9 for v in long_vals)}"
+          f" -- context only, not the verdict)")
     if short:
         s_hits = sum(1 for v in short_vals if v >= threshold)
         print(f"short-holdout bucket (<{MIN_BIGRAMS} bigrams, n={len(short)}): "
-              f"max-containment deciles {deciles(short_vals)}, {s_hits} at {threshold} "
-              f"-- REPORTED SEPARATELY, not in the main count")
+              f"deciles {deciles(short_vals)}, {s_hits} at {threshold} -- REPORTED SEPARATELY")
     print(f"number-multiset flags (cross-language screen, review-only): {num_flags}")
-    verdict = "REJECT" if hits[threshold] or exact_hits else "clean"
-    print(f"verdict at {threshold}: {verdict}")
+    if exact_hits:
+        verdict = "REJECT"
+    elif base_per_gb == 0:
+        verdict = "REJECT" if hit_rows else "clean"
+    else:
+        verdict = "REJECT" if per_gb / base_per_gb > RATE_REJECT_RATIO else "clean"
+    ratio = "inf" if base_per_gb == 0 and hit_rows else (f"{per_gb / base_per_gb:.2f}x" if base_per_gb else "n/a")
+    print(f"verdict: {verdict} (baseline {base_per_gb:.1f}/GB, ratio {ratio}, "
+          f"reject if > {RATE_REJECT_RATIO}x or exact)")
     return 1 if verdict == "REJECT" else 0
 
 
@@ -305,23 +344,25 @@ def ledger_read():
     return rows
 
 
-def ledger_cached(ledger, path, hhash, threshold):
+def ledger_cached(ledger, path, hhash, threshold, baseline_id):
     st = os.stat(path)
     for row in ledger:
         if (row.get("path") == path and row.get("bytes") == st.st_size
                 and row.get("mtime") == int(st.st_mtime) and row.get("holdout_hash") == hhash
-                and row.get("threshold") == threshold):
+                and row.get("threshold") == threshold and row.get("baseline_id") == baseline_id):
             return row
     return None
 
 
-def ledger_append(path, hhash, threshold, n, hits_08, exact, verdict):
+def ledger_append(path, hhash, threshold, baseline_id, n, hit_rows, exact, per_gb, verdict):
     st = os.stat(path)
     with open(LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps({
             "path": path, "bytes": st.st_size, "mtime": int(st.st_mtime),
-            "holdout_hash": hhash, "threshold": threshold, "scanned_at": int(time.time()),
-            "rows": n, "hits_0.8": hits_08, "exact": exact, "verdict": verdict,
+            "holdout_hash": hhash, "threshold": threshold, "baseline_id": baseline_id,
+            "scanned_at": int(time.time()),
+            "rows": n, "hit_rows": hit_rows, "per_gb": round(per_gb, 2),
+            "exact": exact, "verdict": verdict,
         }, ensure_ascii=False) + "\n")
 
 
@@ -331,11 +372,12 @@ def self_check():
     idx = HoldoutIndex(holdouts)
     contaminated = "老师出题：" + holdouts[0] + " 请列式计算。"
     clean = "办公室里有个不起眼的现象：谁在周会上被点名夸过一次，下次他的周报就写得更细。"
-    _, mc1, _ = idx.scan_chunk([contaminated])
-    _, mc2, _ = idx.scan_chunk([clean])
+    _, mc1, _, hr1 = idx.scan_chunk([contaminated], 0.8)
+    _, mc2, _, hr2 = idx.scan_chunk([clean], 0.8)
     v1, v2 = float(mc1[0]), float(mc2[0])
     assert v1 == 1.0, f"verbatim embed must be containment 1.0, got {v1}"
     assert v1 - v2 >= 0.6, f"known-answer pair must differ by >= 0.6, got {v1} vs {v2}"
+    assert hr1 == 1 and hr2 == 0, f"hit-row counting wrong: {hr1}/{hr2}"
     # field fall-through must not pass as clean
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
@@ -354,6 +396,19 @@ def self_check():
     return 0
 
 
+def scan_many(paths, idx, args):
+    """Scan fresh paths with the fork pool (idx rides COW via _WORKER_IDX)."""
+    if not paths:
+        return []
+    if args.jobs > 1 and len(paths) > 1:
+        global _WORKER_IDX
+        _WORKER_IDX = idx
+        with get_context("fork").Pool(min(args.jobs, len(paths))) as pool:
+            return pool.map(_worker, [(p, None, args.q_field, args.full_doc, args.threshold)
+                                      for p in paths])
+    return [_worker((p, idx, args.q_field, args.full_doc, args.threshold)) for p in paths]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?")
@@ -362,8 +417,10 @@ def main():
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--jobs", type=int, default=1, help="parallel workers over shards (fork)")
     ap.add_argument("--force", action="store_true", help="rescan even if the ledger has a fresh verdict")
-    ap.add_argument("--fpr-baseline", metavar="CLEAN_PATH",
-                    help="known-clean corpus to estimate the false-positive rate")
+    ap.add_argument("--fpr-baseline", metavar="BASELINE_PATH",
+                    help="REQUIRED: same-scale in-training corpus; the verdict is the candidate's "
+                         "per-GB hit rate vs the baseline's (a FPR number without a same-scale "
+                         "baseline has no binding power -- cont.cci3_scale_failure)")
     ap.add_argument("--self-check", action="store_true")
     ap.add_argument("--holdout", action="append",
                     help="holdout jsonl (repeatable); overrides the default math-500+math-hard set")
@@ -372,46 +429,53 @@ def main():
         sys.exit(self_check())
     if not args.path:
         ap.error("path required (or --self-check)")
+    if not args.fpr_baseline:
+        ap.error("--fpr-baseline is required: pass the same-scale in-training corpus "
+                 "(e.g. the web_hq shards or data/corpus/math/gsm8k_zh_000.jsonl for math batches)")
     holdouts = load_holdouts(args.holdout)
     if not holdouts:
         sys.exit("no holdout files found; run scripts/holdout.py first or run from repo root")
     idx = HoldoutIndex(holdouts)
     hhash = holdout_hash(holdouts)
     paths = sorted(glob.glob(args.path)) if "*" in args.path else [args.path]
+    base_paths = sorted(glob.glob(args.fpr_baseline)) if "*" in args.fpr_baseline else [args.fpr_baseline]
+    baseline_id = ":".join(f"{p}:{os.stat(p).st_size}:{int(os.stat(p).st_mtime)}" for p in base_paths)
     ledger = [] if args.force else ledger_read()
     rc = 0
     fresh, cached = [], []
     for p in paths:
-        row = None if args.fpr_baseline else ledger_cached(ledger, p, hhash, args.threshold)
+        row = ledger_cached(ledger, p, hhash, args.threshold, baseline_id)
         if row and not args.force:
             cached.append((p, row))
             rc |= 1 if row["verdict"] == "REJECT" else 0
         else:
             fresh.append(p)
-    if args.jobs > 1 and len(fresh) > 1:
-        global _WORKER_IDX
-        _WORKER_IDX = idx  # fork inheritance: workers read this, no per-task pickle
-        with get_context("fork").Pool(min(args.jobs, len(fresh))) as pool:
-            results = pool.map(_worker, [(p, None, args.q_field, args.full_doc, args.threshold)
-                                         for p in fresh])
-    else:
-        results = [_worker((p, idx, args.q_field, args.full_doc, args.threshold)) for p in fresh]
+
+    # baseline first: its rate is the verdict's reference. Same mode as the candidate.
+    b_results = scan_many(base_paths, idx, args)
+    b_rows = sum(r[1] for r in b_results)
+    b_bytes = sum(os.stat(p).st_size for p in base_paths)
+    b_hits = sum(r[6] for r in b_results)
+    b_exact = sum(len(r[3]) for r in b_results)
+    b_mc = np.maximum.reduce([np.asarray(r[4], dtype=np.float64) for r in b_results]) if b_results else np.zeros(len(holdouts))
+    base_per_gb = b_hits / (b_bytes / 1e9) if b_bytes else 0.0
+    print(f"BASELINE ({len(base_paths)} shard(s), {b_rows} rows, {b_bytes / 1e9:.3f} GB): "
+          f"{b_hits} hit rows = {base_per_gb:.1f}/GB, {b_exact} exact")
+
+    results = scan_many(fresh, idx, args)
     short = set(idx.short)
-    for p, n, empty, exact, mc, nf in results:
-        rc |= report(os.path.basename(p), n, empty, exact, mc, nf, args.threshold, holdouts, short)
-        long_i = [i for i in range(len(holdouts)) if i not in short]
-        hits_08 = sum(1 for i in long_i if mc[i] >= args.threshold)
-        verdict = "REJECT" if hits_08 or exact else "clean"
-        ledger_append(p, hhash, args.threshold, n, hits_08, len(exact), verdict)
+    for p, n, empty, exact, mc, nf, hr in results:
+        bytes_ = os.stat(p).st_size
+        rc |= report(os.path.basename(p), n, empty, exact, mc, nf, hr, bytes_,
+                     args.threshold, holdouts, short, base_per_gb)
+        per_gb = hr / (bytes_ / 1e9) if bytes_ else 0.0
+        verdict = "REJECT" if (exact or (base_per_gb == 0 and hr) or
+                               (base_per_gb and per_gb / base_per_gb > RATE_REJECT_RATIO)) else "clean"
+        ledger_append(p, hhash, args.threshold, baseline_id, n, hr, len(exact), per_gb, verdict)
     for p, row in cached:
         print(f"=== {os.path.basename(p)}: cached {row['verdict']} "
-              f"({row['hits_0.8']} hits at 0.8, scanned_at={row['scanned_at']}) -- ledger")
-    if args.fpr_baseline:
-        fn, fe, fex, fmc, fnf = scan_path(args.fpr_baseline, idx, args.q_field, True, args.threshold)
-        long_i = [i for i in range(len(holdouts)) if i not in short]
-        fp = sum(1 for i in long_i if fmc[i] >= args.threshold)
-        print(f"\nFPR baseline ({os.path.basename(args.fpr_baseline)}, {fn} docs, assumed clean): "
-              f"{fp}/{len(long_i)} holdouts hit at {args.threshold} = {fp/len(long_i):.2%}")
+              f"({row.get('hit_rows', row.get('hits_0.8', '?'))} hit rows, {row.get('per_gb', '?')}/GB, "
+              f"scanned_at={row['scanned_at']}) -- ledger")
     sys.exit(rc)
 
 
