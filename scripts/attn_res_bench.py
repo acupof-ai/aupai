@@ -27,6 +27,9 @@ import torch
 
 CFG = dict(B=32, T=4096, D=1024, n=25, dtype="bfloat16")
 TINY = dict(CFG, B=2, T=16, D=64, n=5)
+# G1 holds D and n at target but shrinks B*T: the fp64 reference materializes 3 copies of
+# n*[B,T,D], which is ~80 GB at CFG and OOMs before it measures anything.
+G1_CFG = dict(CFG, B=2, T=512)
 SEEDS = tuple(range(1000, 1020))  # frozen: "20 trials" must mean the same 20 every run
 MAX_RATIO, MEAN_RATIO = 1.10, 1.0
 
@@ -179,18 +182,19 @@ if __name__ == "__main__":
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cfg = CFG if args.full else TINY
+    gcfg = G1_CFG if args.full else TINY
     if dev.type != "cuda":
-        cfg = dict(cfg, dtype="float32")  # no bf16 arithmetic worth measuring on CPU
+        cfg = gcfg = dict(cfg, dtype="float32")  # no bf16 arithmetic worth measuring on CPU
 
-    verdict, trials = g1(cfg, dev)
+    verdict, trials = g1(gcfg, dev)
     assert trials[0]["baseline"]["fwd"] < 1e-2, trials[0]
-    assert g2(cfg, dev, one_pass), "one_pass is non-deterministic — G2 floor is broken"
-    out = {
-        "g1": verdict,
-        "g2_bit_exact": True,
-        "bench_two_pass": bench(cfg, dev, two_pass),
-        "bench_one_pass": bench(cfg, dev, one_pass),
-    }
+    assert g2(gcfg, dev, one_pass), "one_pass is non-deterministic — G2 floor is broken"
+    out = {"g1": verdict, "g1_config": config_stamp(gcfg, dev), "g2_bit_exact": True}
+    for name, fn in (("two_pass", two_pass), ("one_pass", one_pass)):
+        out[f"bench_{name}"] = bench(cfg, dev, fn)
+        # The shipped model runs under torch.compile, so the eager pair is not the
+        # baseline a kernel has to beat — compile fuses the two-pass reads too.
+        out[f"bench_{name}_compiled"] = bench(cfg, dev, torch.compile(fn), warmup=5)
     print(json.dumps(out, indent=2))
     if args.json:
         with open(args.json, "w") as f:
