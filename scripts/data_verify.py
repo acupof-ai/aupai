@@ -8,8 +8,8 @@ Checks three things against the manifest and reports a machine-actionable list:
 
 Severity is tier-driven:
   frozen / eval  -> mismatch/missing is an ERROR (exit 1): these cannot be rebuilt,
-                    so a wrong byte means a silent distribution shift (the
-                    tokenizer.json case) and must stop the pipeline.
+                    so a wrong byte means a silent distribution shift and must stop
+                    the pipeline.
   fetched        -> any drift is a WARNING (exit 0 for warn, but printed
                     clearly): re-derivable, but the drift is worth noting.
   derived        -> never recorded/checked with a pin; present-or-absent is fine,
@@ -33,30 +33,24 @@ ERROR_TIERS = {"frozen", "eval"}
 
 
 def selfcheck():
-    """Validate the verify logic on a tiny hand-built tree with KNOWN answers.
-
-    Per project law (two probe bugs produced wrong conclusions): never trust a
-    check's numbers until the check itself is validated on known cases. Builds
-    three files (good/missing/tampered) + a matching manifest and asserts the
-    verifier classifies each correctly. Prints PASS/FAIL lines."""
+    """Known-answer validation of the verify logic: a hand-built tree (good/missing/
+    tampered) + matching manifest; asserts each is classified correctly. Prints
+    PASS/FAIL lines."""
     import shutil
 
     tmp = tempfile.mkdtemp(prefix="dataverify_")
     try:
-        # a known-good file
         good = os.path.join(tmp, "good.txt")
         open(good, "w").write("hello")
         good_sha = hashlib.sha256(b"hello").hexdigest()
-        # a tampered file (same name, wrong content)
         tam = os.path.join(tmp, "tam.txt")
         open(tam, "w").write("HELLO")
-        # missing file: never created
         man = os.path.join(tmp, "MANIFEST.tsv")
         with open(man, "w") as f:
             f.write("# test manifest\n")
-            f.write(f"good.txt\t{good_sha}\t5\tfrozen\tx\n")  # ok
-            f.write(f"tam.txt\t{good_sha}\t5\tfrozen\tx\n")  # sha mismatch
-            f.write(f"nope.txt\t{'0' * 64}\t9\tfrozen\tx\n")  # missing
+            f.write(f"good.txt\t{good_sha}\t5\tfrozen\tx\n")
+            f.write(f"tam.txt\t{good_sha}\t5\tfrozen\tx\n")
+            f.write(f"nope.txt\t{'0' * 64}\t9\tfrozen\tx\n")
         rows = []
         for line in open(man):
             line = line.strip()
@@ -162,7 +156,6 @@ def main():
         f"size-mismatch {len(mismatch_sz)} | sha-mismatch {len(mismatch_sha)}"
     )
     if a.scan:
-        # top-level source files under data/ not in manifest
         known = {r["path"] for r in rows}
         for base, _, files in os.walk(os.path.join(a.root, "data")):
             for fn in files:

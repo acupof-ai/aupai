@@ -2,11 +2,8 @@
 """Written procedures whose intermediate state is on the page — the skill behind
 "cannot execute a multi-step written procedure" (aupai-fb, 2026-08-29).
 
-arith_curriculum showed the model can GUESS a two-digit answer but not EXECUTE
-a procedure: prompted `[竖式] 61 + 48 = ` it answers the result first and hangs
-the working on after it, as decoration. Run through ocsg_determ-style probing,
-removing the `= ` shortcut slot collapses answers-first to 2.8%. The fix is data
-whose answer is derivable ONLY from the steps, so guessing has nothing to grab.
+The fix is data whose answer is derivable ONLY from the steps, so guessing has
+nothing to grab.
 
 This generator teaches three procedures that share one mechanism — every output
 line is a strict function of the line above it, verified line-by-line in _demo:
@@ -42,8 +39,7 @@ import json
 import random
 import sys
 
-# format markers — one per procedure, so the answer format is determined by the
-# prompt (mis-formatted answers were the computation-killer on the mixed arith set).
+# format markers — one per procedure, so the answer format is determined by the prompt.
 TAG = {"mul": "[竖式乘法]", "unit": "[单位换算]", "eq": "[解方程]"}
 FORMATS = tuple(TAG)
 
@@ -153,7 +149,7 @@ def eq(rng=None):
     sign = "-" if b < 0 else "+"
     absb = abs(b)
     c = a * x + b
-    s = c - b  # ax = s
+    s = c - b
     out = [f"{a}x {sign} {absb} = {c}"]
     if b < 0:
         out.append(f"两边同时加 {absb}：{a}x = {c} + {absb} = {s}")

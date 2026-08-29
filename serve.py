@@ -15,33 +15,28 @@ from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 device = "cpu"
-# prefer SFT checkpoint, fall back to pretrained
 _ckpt_path = os.path.join(ROOT, "ckpt_sft.pt")
 if not os.path.exists(_ckpt_path):
     _ckpt_path = os.path.join(ROOT, "ckpt.pt")
 model, cfg = load_checkpoint(_ckpt_path, device=device)
-# The vocabulary the checkpoint was trained on. Adding missing specials at load time,
-# which this used to do, changes the vocab size and hides the one signal that the wrong
-# file is loaded -- so assert instead (load_tokenizer asserts size + vocab_id).
+# Do not add missing specials at load: it changes vocab size and hides a wrong-file
+# load; load_tokenizer asserts size + vocab_id instead.
 TOK_PATH = os.environ.get("TOKENIZER", os.path.join(ROOT, "data", "tokenizer.json"))
 tok = load_tokenizer(TOK_PATH, cfg)
 print(f"model loaded, vocab={tok.get_vocab_size()}, seq={cfg.seq}", flush=True)
 
 
 def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
-    # <eos>, not <|im_end|>: the SFT data ends every answer with <eos> and contains no
-    # ChatML token at all, so stopping on <|im_end|> never fired and generation ran to
-    # max_new every time.
+    # Stop on <eos>, not <|im_end|>: SFT data ends every answer with <eos> and contains no ChatML token.
     eos = tok.token_to_id("<eos>")
     prompt_ids = tok.encode(prompt).ids
     x = torch.tensor([prompt_ids], device=device)
-    seen = {}  # token -> count, for repetition penalty
+    seen = {}
     for _ in range(max_new):
         with torch.no_grad():
             logits = model(x[:, -cfg.seq :])[0][:, -1] / temp
         # mask padding tokens (never trained, avoid random high logits)
         logits[:, tok.get_vocab_size() :] = float("-inf")
-        # repetition penalty: penalize tokens already generated
         if rep_penalty > 1.0:
             for tid, cnt in seen.items():
                 if cnt > 0 and logits[0, tid] > 0:
@@ -61,14 +56,9 @@ def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
 def format_history(history):
     """The format the SFT data is actually in: 问：/答：, one turn at a time.
 
-    This used to emit ChatML -- <|im_start|>role\n...<|im_end|> -- and those four
-    tokens appear ZERO times in any SFT pack, so the model was being served a format
-    it had never seen while chat.py, which uses 问：/答：, worked. The specials hold
-    vocabulary slots 32768-32771 against a multi-turn SFT that has not been built.
-
-    Prior turns are kept as context in the same shape; the model was trained on
-    single-turn examples separated by <eos>, so this is a mild extrapolation rather
-    than a format it cannot read.
+    ChatML specials appear zero times in any SFT pack (they hold slots 32768-32771
+    against a multi-turn SFT not yet built). Prior turns stay as context in the same
+    shape: trained on single-turn <eos>-separated examples, so this is mild extrapolation.
     """
     parts = []
     for msg in history:

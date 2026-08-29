@@ -16,7 +16,6 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SOURCES = [
-    # (outfile, hf repo, config, expected sha256 from PROVENANCE.md, normalizer)
     (
         "alpaca_gpt4_zh.jsonl",
         "HuggingFaceH4/alpaca_gpt4_data_zh",
@@ -30,7 +29,7 @@ SOURCES = [
         "instructions",
         "cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6",
         None,
-    ),  # normalizer TBD on first fetch; local file is frozen truth until then
+    ),
 ]
 
 

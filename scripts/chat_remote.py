@@ -14,7 +14,6 @@ TOK_PATH = "data/tokenizer.json"
 
 
 def infer_remote(ids):
-    """Run inference on pod, return output token IDs."""
     ids_json = json.dumps(ids)
     tmp_remote = "/tmp/infer_ids.json"
 
@@ -27,7 +26,6 @@ def infer_remote(ids):
         capture_output=True,
         timeout=30,
     )
-    # Run inference
     result = subprocess.run(
         ["bash", "-c", f"~/bin/pod 'cd /work/aupai && CUDA_VISIBLE_DEVICES=0 python3 infer.py {tmp_remote}'"],
         capture_output=True,

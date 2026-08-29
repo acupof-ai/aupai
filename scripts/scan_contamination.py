@@ -1,8 +1,6 @@
 """Every new source has to be scanned for eval questions before it enters the corpus.
 
-Finding #1 of docs/lessons/review_2026-08-26.md was stage-1 SFT training on the very
-corpus the 500 eval problems were drawn from, with no exclusion anywhere. New
-sources get the same scan or that finding just happens again with a new source.
+    python scripts/scan_contamination.py [glob]
 """
 
 import glob, json, sys

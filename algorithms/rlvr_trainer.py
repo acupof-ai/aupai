@@ -68,14 +68,12 @@ def seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, devic
         gen_t[i, :n] = torch.tensor(g[:n], device=device)
         mask[i, :n] = 1.0
     full = torch.cat([torch.tensor(prompt_ids, device=device).repeat(group_size, 1), gen_t], dim=1)
-    # Right-padding is safe: the model is causal (KDA/MLA), so hidden[t] depends
-    # only on [:t+1]; pad positions after a response never feed back.
+    # Right-padding is safe: the model is causal, so hidden[t] depends only on
+    # [:t+1] and pad positions after a response never feed back.
     with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
         logits, _ = model(full)
     log_probs = F.log_softmax(logits[:, plen - 1 : -1, :].float(), dim=-1)
     token_lps = log_probs.gather(-1, gen_t.unsqueeze(-1)).squeeze(-1)
-    # Per-row length normalization. The previous code divided by mask.sum(1), which
-    # was a group constant because every row shared the padded length.
     seq_lp = (token_lps * mask).sum(1) / mask.sum(1).clamp(min=1)
     return seq_lp, gen_t, mask
 
@@ -100,8 +98,7 @@ def gspo_loss(
     applied at the same granularity. Token-level ratios (GRPO) accumulate variance
     with response length and are amplified by clipping.
 
-    A KL anchor against the frozen SFT reference keeps 500 steps from drifting —
-    the previous run had no anchor and collapsed from 32% to 11%.
+    A KL anchor against the frozen SFT reference prevents drift over 500 steps.
     """
     import torch
 
@@ -111,10 +108,9 @@ def gspo_loss(
     with torch.no_grad():
         ref_lp, _, _ = seq_logprob(ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
         old_lp = seq_lp.detach()  # one optimizer step per rollout, so old == current
-    ratio = torch.exp(seq_lp - old_lp)  # sequence-level, already length-normalized
+    ratio = torch.exp(seq_lp - old_lp)
     surr = torch.min(ratio * adv, torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv)
-    # k3 estimator: unbiased, non-negative, and unlike (lp - ref_lp) it has a
-    # non-zero gradient at theta == theta_old, so the anchor actually pulls.
+    # k3 estimator: unbiased, non-negative, with a non-zero gradient at theta == theta_old, so the anchor pulls.
     d = ref_lp - seq_lp
     kl = torch.exp(d) - d - 1.0
     return -(surr - kl_beta * kl).mean()
@@ -179,9 +175,8 @@ def main():
 
     # Model: SFT weights -> bf16. Two copies: FP8 for training, plain bf16 for
     # generation (FP8 quantization noise would degrade sampling).
-    # load_checkpoint builds {cfg, weight} strict from ck["cfg"] with grad_ckpt
-    # False and the model in eval(); this trainer needs grad_ckpt ON, which train.py
-    # reads into self.grad_ckpt at construction - restore it here.
+    # load_checkpoint builds the model in eval() with grad_ckpt False; this
+    # trainer needs grad_ckpt ON, so restore it here.
     model, cfg = load_checkpoint(args.resume, device=device)
     cfg.grad_ckpt = True  # required for stability
     model.grad_ckpt = True
@@ -215,8 +210,8 @@ def main():
 
     tok = load_tokenizer(TOK_PATH, cfg)
     problems = load_problems(args.data)
-    # DDP: all ranks sample same prompts (same random seed per step),
-    # generate different responses (different torch seed per rank).
+    # DDP: all ranks sample the same prompts (same seed per step), generate
+    # different responses (per-rank torch seed).
     if is_main:
         print(
             f"RLVR: {sum(p.numel() for p in raw_model.parameters()) / 1e6:.1f}M params | "
@@ -239,9 +234,7 @@ def main():
         }
         save_checkpoint(path.replace(".pt", "_bf16.pt"), sd_bf16, cfg, cfg.vocab_id, step=step)
 
-    # Best-ckpt: keep the peak-smoothed-acc state, not just the latest. The 2026-08-27 direct-RL
-    # run peaked at step 280, collapsed to 0.339 by step 390, and the step-400 periodic save
-    # overwrote the good state -- the peak was unrecoverable.
+    # Best-ckpt: keep the peak-smoothed-acc state, not just the latest.
     best_path = args.out.replace(".pt", "_best.pt")
     best_acc, acc_hist = -1.0, []
 
@@ -252,7 +245,7 @@ def main():
 
         # --- 1. Generate N responses per prompt (bf16, no grad) ---
         t0 = time.time()
-        groups = []  # (prompt_ids, gen_ids_list, rewards)
+        groups = []
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
             for item in batch:
                 prompt_ids = tok.encode(format_prompt(item["prompt"])).ids[-MAX_PROMPT:]
@@ -271,24 +264,21 @@ def main():
                 groups.append((prompt_ids, gen_ids_list, rewards))
         gen_time = time.time() - t0
 
-        # Sync ranks: generation time varies (different prompt/response lengths),
-        # so fast ranks must wait before DDP all-reduce (NCCL timeout is 10min).
+        # Sync ranks before DDP all-reduce: generation time varies per rank.
         if ddp:
             dist.barrier()
 
         # --- 2. Drop degenerate groups (all-correct or all-wrong) ---
-        # Those have std=0 -> adv=0 -> zero gradient, so a forward/backward on them
-        # is pure waste. Which groups are degenerate differs per rank (each samples
-        # its own responses), so the keep-decision is all-reduced with MAX: every
-        # rank runs the same forward count and DDP stays in lockstep.
+        # std=0 -> adv=0 -> zero gradient, so a forward/backward on them is
+        # pure waste. The keep-decision is all-reduced with MAX so every rank
+        # runs the same forward count and DDP stays in lockstep.
         keep = torch.tensor([1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r in groups], device=device)
         if ddp:
             dist.all_reduce(keep, op=dist.ReduceOp.MAX)
         kept = [g for g, k in zip(groups, keep.tolist()) if k > 0.5]
         n_degenerate += len(groups) - len(kept)
         if not kept:
-            # Every prompt this step was trivially solved or hopeless; skipping is
-            # safe because all ranks reached the same conclusion from the same tensor.
+            # Skipping is safe: all ranks reached the same conclusion from the same tensor.
             if is_main:
                 runlog(f"step {step}/{args.steps} all groups degenerate, skipped")
             continue
@@ -361,8 +351,7 @@ def main():
                     f"loss {t[2] / max(t[3], 1):.4f} gnorm {t[4] / max(t[3], 1):.3f} "
                     f"gen {t[5] / 10:.0f}s degen {n_degenerate}"
                 )
-                # 30-step smoothing: a 10-step window is noise (0.34-0.77 swings), and a collapsing
-                # run can still print one good window. Save when the smoothed mean makes a new peak.
+                # 30-step smoothing: a 10-step window is noise; save when the smoothed mean makes a new peak.
                 acc_hist.append(acc)
                 acc_hist[:] = acc_hist[-3:]
                 smoothed = sum(acc_hist) / len(acc_hist)

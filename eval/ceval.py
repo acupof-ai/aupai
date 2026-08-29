@@ -1,17 +1,8 @@
 #!/usr/bin/env python3
 """C-Eval: 1,050 Chinese multiple-choice questions across 52 school and professional subjects.
 
-This repo trains a Chinese model and, until now, scored it only on MMLU, ARC,
-HellaSwag, PIQA, BoolQ, OpenBookQA and WinoGrande -- all English, all sitting at
-the 25% chance line -- plus our own synthetic Chinese math. So no instrument in
-the repo could see a change in Chinese knowledge or reasoning, which is most of
-what the pretrain corpus contains. data/ceval.jsonl has been on the pod since
-2026-08-24 and nothing ever read it.
-
 Scored the same way as MMLU: the prompt carries the four options and the model
-picks between the bare letter tokens A/B/C/D. Chance is 25%. A 200M model is
-expected near chance at first; the value is that a real move now has somewhere
-to show up.
+picks between the bare letter tokens A/B/C/D. Chance is 25%.
 
     python eval/run_eval.py --ckpt X --tokenizer T --benchmarks ceval
 """
@@ -52,8 +43,7 @@ def load_items(path=PATH):
 
 
 def _demo():
-    """The label must index the option the file names, or the score is a permutation
-    of the truth and still looks plausible."""
+    """The label must index the option the file names, or the score is a silently permuted truth."""
     items = load_items()
     assert len(items) == 1050, len(items)
     raw = list(load_dataset())

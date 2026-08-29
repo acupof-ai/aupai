@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Reproduce the math-domain corpus expansion (2026-08-27).
-#
-# Adds ~0.07B tokens of new math (LF/dedup/length-filtered, holdout-clean):
-#   - math_short_v6/v7/v8: fresh-seed mathbank drain (reproducible from mathbank/,
-#     seed + instance-cap; different seeds -> non-overlapping instruction pools)
+# Reproduce the math-domain corpus expansion: ~0.07B tokens of new math (LF/dedup/
+# length-filtered, holdout-clean) into data/corpus/math/.
+#   - math_short_v6/v7/v8: fresh-seed mathbank drain (seed + instance-cap; different
+#     seeds -> non-overlapping instruction pools)
 #   - ape210k / math23k / mxode / gsm8k_zh: HF fetch via scripts/fetch_math_data.py
 #   - math_short_sol_v1: short-solution line from mathbank/run_short_sol.py
-# belle is skipped on purpose: it reproduces school_math_r1_zh already in corpus.
-#
-# Output: data/corpus/math/  (~0.07B tokens, 530K docs). aupai-01's corpus cache
-# freshness check re-tokenizes automatically when these files change.
+# belle is skipped on purpose: it duplicates school_math_r1_zh already in corpus.
 #
 # Rerun from scratch:
 #   cd mathbank && python run_math_short.py 200000 ../data/synthetic/math_short_v6.jsonl --seed 20260827

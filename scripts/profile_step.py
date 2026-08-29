@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Where the step time actually goes: CUDA kernels ranked by total time, grouped by what emitted them.
 
-MFU sits at 34% on 8xH20 with FP8 and no gradient checkpointing, so roughly two thirds of the card
-is going somewhere other than the matmuls. This answers where, on one GPU, without needing the whole
-DDP job.
+Runs on one GPU, so it answers where the time goes without the whole DDP job.
 
     python scripts/profile_step.py --steps 12 --batch 24 --attn_res --attn_res_blocks 4
     python scripts/profile_step.py --steps 12 --batch 32            # the AttnRes-free baseline

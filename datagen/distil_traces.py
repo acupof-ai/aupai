@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
 """Generate reasoning traces from the 27B for sequence-level distillation into k6.
 
-**Why not token-level reverse KL.** Reverse KL, D(student || teacher), is the right
-objective for a small student -- it is mode-seeking, so the student concentrates on
-what the teacher is confident about instead of trying to cover a distribution it has
-no capacity for. It is also **undefined here**: the teacher is Qwen3 with its own
-vocabulary and the student has 32,773 tokens of its own. `P(token_i)` does not refer
-to the same object on both sides, so there is no KL to compute. tileRL's server also
-returns `"logprobs": None`.
-
-What is left, and what R1-distill does: the teacher writes solutions, the student
-trains on the text. That is sequence-level distillation, and it is tokenizer-blind.
-
-The mode-seeking property can be recovered later without a shared vocabulary by
-sampling k solutions per problem and keeping only those that reach the right answer
--- rejection sampling is a hard-thresholded approximation of the same idea, and it
-needs no logprobs at all. `--k` and `--keep_correct` do that here.
+Token-level reverse KL is undefined here: teacher and student have different
+vocabularies, and the server returns no logprobs. Sequence-level distillation
+(teacher writes solutions, student trains on the text) is tokenizer-blind;
+--k + --keep_correct recovers the mode-seeking property by rejection sampling.
 
     python datagen/distil_traces.py --problems data/synthetic/math_hard_train.jsonl \\
         --n 20000 --k 4 --keep_correct --out data/synthetic/distil_v1.jsonl
@@ -39,13 +28,9 @@ PROMPT = """请用中文解答下面的数学题。
 
 
 def split_think(txt):
-    """(reasoning, answer). The reasoning is the point: this is a distillation of
-    HOW the teacher solves, not of what it concludes. An earlier version of this
-    file discarded the think block and would have produced ordinary SFT data
-    wearing the name of reasoning distillation.
-
-    A block that never closed means the generation was truncated mid-reasoning --
-    that is not a trace and must not be used."""
+    """(reasoning, answer). The reasoning is the point: this distils HOW the teacher
+    solves, not what it concludes. A block that never closed means the generation was
+    truncated mid-reasoning -- that is not a trace and must not be used."""
     if txt.lstrip().startswith("<think>") and "</think>" not in txt:
         return None, None
     if "</think>" not in txt:

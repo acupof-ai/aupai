@@ -54,8 +54,8 @@ def main():
     args = parser.parse_args()
 
     ck = torch.load(args.resume, map_location="cpu", weights_only=False)
-    # Carried onto every checkpoint this writes: without it load_tokenizer can only warn
-    # and load whatever data/tokenizer.json currently is, the file rebuilt in place.
+    # Carried onto every checkpoint this writes: without it load_tokenizer can only
+    # warn against the in-place-rebuilt data/tokenizer.json.
     ck_vocab = ck.get("vocab_id")
     for k, v in ck.get("cfg", {}).items():
         setattr(Cfg, k, v)  # architecture comes from the checkpoint, never the live Cfg

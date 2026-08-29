@@ -12,17 +12,13 @@ random.seed(42)
 
 
 def to_qa(doc):
-    """Convert prose to Q&A format: extract key points as questions."""
     content = doc["content"]
     title = doc.get("title", "")
-    # Split into sentences
     sentences = re.split(r"(?<=[。！？])", content)
     sentences = [s.strip() for s in sentences if len(s.strip()) > 10]
 
     qa_parts = [f"# {title}（问答版）\n"]
-    # Take key sentences and turn them into Q&A
     for i, s in enumerate(sentences[:8]):
-        # Extract the main concept and create a question
         if "——" in s or "：" in s:
             concept = s.split("——")[0].split("：")[0][:30]
             qa_parts.append(f"**问：{concept}是什么？**\n\n{s}\n")
@@ -38,7 +34,6 @@ def to_qa(doc):
 
 
 def to_list(doc):
-    """Convert prose to list/card format."""
     content = doc["content"]
     title = doc.get("title", "")
     sentences = re.split(r"(?<=[。！？])", content)
@@ -47,7 +42,6 @@ def to_list(doc):
     parts = [f"# {title}（清单版）\n"]
     parts.append("## 核心要点\n")
     for i, s in enumerate(sentences[:10], 1):
-        # Clean up the sentence for list format
         s = s.lstrip("所以").lstrip("因此").lstrip("这").lstrip("那")
         parts.append(f"{i}. {s}")
     if len(sentences) > 10:
@@ -60,7 +54,6 @@ def to_list(doc):
 
 
 def to_summary(doc):
-    """Create a condensed + expanded version: summary first, then original with transitions."""
     content = doc["content"]
     title = doc.get("title", "")
     sentences = re.split(r"(?<=[。！？])", content)
@@ -75,7 +68,6 @@ def to_summary(doc):
     parts.append(f"## 概述\n\n{summary}\n")
     parts.append("## 详细分析\n")
 
-    # Add transitional phrases
     transitions = [
         "进一步来看，",
         "具体而言，",
@@ -106,7 +98,7 @@ def main():
 
     augmented = []
     for doc in docs:
-        augmented.append(doc)  # original
+        augmented.append(doc)
         augmented.append(to_qa(doc))
         augmented.append(to_list(doc))
         augmented.append(to_summary(doc))

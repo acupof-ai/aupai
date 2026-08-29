@@ -1,16 +1,12 @@
 #!/usr/bin/env bash
-# Corpus rebuild (2026-08-29) — drop belle-derived data, web from fineweb2.
-#
-# User decision: rebuild, not archive. bell the school_math_r1_zh (= belles copy)
-# and every corpus shard derived from it; pull web from the reproducible
-# fineweb2-cmn source; keep code/en/chat (frozen/fetched, no measured problem).
+# Rebuild corpus domains from reproducible sources, dropping belle-derived data.
 #
 #   bash scripts/rebuild_corpus.sh math     # rebuild just one domain (fast, verifies)
 #   bash scripts/rebuild_corpus.sh web      # the big fineweb2 pull
 #   bash scripts/rebuild_corpus.sh          # all domains
 #
-# Each domain rm's its old data/corpus/<domain>/ first, so stale belle-derived
-# shards do not survive. Small domains run before web; web --excludes all of them.
+# Each domain rm's its old data/corpus/<domain>/ first, so stale shards do not survive.
+# Small domains run before web; web --excludes all of them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BC=(python3 datagen/build_corpus.py)
@@ -68,9 +64,8 @@ if has web; then
   for d in code en math chat; do
     [ -d "data/corpus/$d" ] && EX+=(--exclude "data/corpus/$d/*.jsonl")
   done
-  # use the local fineweb2-cmn parquets (already on pod at $FW2, reproducible from
-  # HuggingFaceFW/fineweb-2 cmn_Hani), NOT a fresh HF pull — pod has no HF route up
-  # and the parquets are the reproducible fineweb2 source.
+  # local fineweb2-cmn parquets, not a fresh HF pull: the pod has no HF route, and
+  # these parquets are the reproducible fineweb2 source.
   FW2=${FW2:-/data00/fw2raw}
   "${BCW[@]}" --domain web --target_tokens 3e9 --source "parquet:$FW2/*.parquet" "${EX[@]}" \
     > "$LOGS/web.log" 2>&1

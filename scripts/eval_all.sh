@@ -16,9 +16,8 @@ NGPU=${NGPU:-6}
 LOG=runs/evalall_$(basename "$CKPT" .pt).log
 : > "$LOG"
 
-# A checkpoint must be scored with the vocabulary it was trained on. data/tokenizer.json
-# is rebuilt in place and ids do not survive a rebuild, so a mismatch is silent noise,
-# not an error -- every tool below asserts cfg.vocab against the file.
+# Score a checkpoint with the vocabulary it was trained on: ids do not survive a
+# tokenizer rebuild, so a mismatch is silent noise.
 VOCAB=$(python3 -c "
 import torch, sys
 ck = torch.load('$CKPT', map_location='cpu', weights_only=False)
@@ -36,38 +35,33 @@ echo "ckpt $CKPT | vocab $CKPT_VOCAB | fone $IS_FONE | tokenizer $TOK" | tee -a 
 
 say() { echo "$*" | tee -a "$LOG"; }
 
-# 1. math-hard -- the metric of record. 1032 problems, 899 templates, 486 solution
-#    skeletons, so n_eff is 774-989 and the 95% half-width at a 3% pass rate is
-#    +/-1.1pt. Differences smaller than that are not differences.
+# 1. math-hard -- the metric of record; 95% half-width +/-1.1pt at a 3% pass rate,
+#    so smaller differences are not differences.
 say "--- math-hard (metric of record)"
 NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_hard.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
-# 2. math-500 -- saturated, and 10.2% of it has a near-duplicate carrying the same
-#    answer in the Belle training data. Its absolute value is inflated; only use it
-#    to compare checkpoints with equal exposure.
+# 2. math-500 -- 10.2% has a near-duplicate with the same answer in Belle; absolute
+#    value inflated, comparisons at equal exposure only.
 say "--- math-500 (inflated ~10pt by contamination; comparison only)"
 NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
-# 3. English MC suite -- this is a 200M Chinese model and it sits at the 25% chance
-#    line, so treat it as a regression tripwire rather than a capability measure.
+# 3. MC suite -- a 200M Chinese model at the 25% chance line; a regression tripwire,
+#    not a capability measure.
 say "--- MC suite (regression tripwire; chance is 25%)"
 say "    ceval is the only Chinese one; the rest are English and this is a Chinese model."
 CUDA_VISIBLE_DEVICES=0 python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK" \
   --benchmarks ceval mmlu arc-easy hellaswag piqa 2>&1 | tee -a "$LOG" | tail -10 || say "  FAILED"
 
-# 4. FoNE digit head -- only meaningful for a --fone checkpoint. Scored against two
-#    baselines because raw accuracy is unreadable without them: always-0 is 84.8%
-#    per digit, and copy-the-previous-number is 16.4% whole-number.
+# 4. FoNE digit head -- --fone checkpoints only; raw accuracy is unreadable without
+#    the always-0 and copy-previous baselines.
 if [ "$IS_FONE" = "True" ]; then
   say "--- FoNE digit head"
   CUDA_VISIBLE_DEVICES=0 python3 scripts/fone_digit_acc.py --ckpt "$CKPT" --domain math \
     2>&1 | tee -a "$LOG" | tail -4 || say "  FAILED"
 fi
 
-# 5. Arithmetic accuracy inside the generated steps. This is the one axis where a
-#    change showed up when math-hard did not: FoNE cut it from 43.3% to 32.7% at
-#    base (p~1e-12) while end-to-end solving stayed flat. Score and arithmetic are
-#    different questions and this repo needs both.
+# 5. Arithmetic accuracy inside the generated steps: score and arithmetic are
+#    different questions, and this repo measures both.
 say "--- arithmetic in generated steps (eqcheck)"
 python3 - "$CKPT" <<'PYEOF' 2>&1 | tee -a "$LOG"
 import glob, json, os, sys

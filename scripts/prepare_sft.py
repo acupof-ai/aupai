@@ -35,7 +35,6 @@ SEQ = 4096  # model context; rows are SEQ+1 (input + 1 to predict)
 MAX_EXAMPLES = 500_000
 ENC_BATCH = 8192
 
-# (path, question_key, answer_key)
 SOURCES = [
     (os.path.join(DATA, "alpaca_gpt4_zh.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "coig.jsonl"), "instruction", "output"),
@@ -104,13 +103,8 @@ def _encode_pairs(batch, tok, num_id):
     return out
 
 
-# This USED to hash str(tid) for every id before hashing the tokens, which made it
-# disagree with train.vocab_fingerprint on the same tokenizer (5b1008a6e528f464 vs
-# d191af789cdbe597). A pack's fingerprint could therefore never equal a
-# checkpoint's vocab_id, so sft_math.py's equality assert was guaranteed to fire
-# the moment a checkpoint started recording one -- which the next pretrain does.
-# It went unnoticed only because every existing checkpoint predates fingerprinting
-# and takes the warning branch. One implementation now, imported.
+# Imported, not re-implemented: a pack's fingerprint must equal the vocab_id train.py
+# stamps into every checkpoint, or sft_math.py's equality check can never fire.
 from loader import vocab_fingerprint as _vocab_fingerprint  # noqa: E402
 
 
@@ -124,15 +118,9 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     num_id set adds "values": float32 (N, seq+1), the number at every [NUM]
     position and 0 elsewhere, which sft_math.py feeds to the FoNE embedding.
     """
-    # The old scheme concatenated a flat token stream, cut it every row_len tokens,
-    # and tail-truncated over-length examples (which deletes the prompt and leaves
-    # plen=0). sft.py doc-masks by <eos> (doc_cu_seqlens, Cfg.doc_mask) so within-row
-    # cross-example attention is already blocked -- but the mask cannot supply a
-    # missing question: truncation left 3.9% of loss tokens as headless answer
-    # fragments at full weight, and the flat cut orphaned 16.4% of answer tails
-    # across a row boundary (18.9% of rows opened mid-answer). Dropping over-length
-    # examples and never splitting one across a row removes both, and every row now
-    # opens with a real (masked) prompt.
+    # Never split an example across rows; drop over-length ones. sft.py doc-masks by
+    # <eos>, so within-row cross-example attention is already blocked, but a truncated
+    # example has no prompt for the mask to supply.
     rows_ids, rows_lab, rows_val = [], [], []
     cur_ids, cur_lab, cur_val = [], [], []
     n_drop = 0
@@ -188,8 +176,8 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     input_ids = torch.tensor(rows_ids, dtype=torch.int32)
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
-    # vocab_id, the same key checkpoints use: this held "vocab" while checkpoints held
-    # "vocab_id", so the two artifacts a fingerprint check compares named it differently.
+    # "vocab_id": the same key checkpoints carry, or the fingerprint check compares
+    # two differently-named fields.
     blob = {"input_ids": input_ids, "labels": labels, "vocab_id": _vocab_fingerprint(tok)}
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)

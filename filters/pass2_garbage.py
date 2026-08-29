@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Second-pass filter: new patterns from verification round 1."""
+"""Second-pass Cosmopedia garbage filter."""
 import json, re, sys
 
 PATTERNS = [

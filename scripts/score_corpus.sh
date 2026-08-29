@@ -3,10 +3,8 @@
 #
 #   scripts/score_corpus.sh [ngpu] [glob]
 #
-# Measured 231 documents/s on one H20 (27,049 in 117s), so data/corpus/web's
-# 1.97M documents are ~25 minutes across six cards and 2.4 hours on one. The 27B
-# that produced the training labels answers 0.76/s -- four days for the same
-# corpus. That gap is the whole reason for the two-stage design.
+# The 27B teacher answers 0.76/s -- four days for 1.97M documents; the distilled head
+# does 231/s. That gap is the reason for the two-stage design.
 #
 # Writes data/web_scores.<i>.npy per worker plus the shard list each covered, so
 # datagen/clean_web.py can line scores up with documents in glob order.

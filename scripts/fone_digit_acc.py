@@ -42,15 +42,13 @@ def main():
     if next(model.parameters()).dtype == torch.float32 and a.device.startswith("cuda"):
         model = model.to(torch.bfloat16)
 
-    # _domain_cache_path, not a hand-built name: the FoNE cache is tokens_<domain>_fone.pt
-    # and this read tokens_<domain>.pt, a bare 1-D id tensor, so `ids, vals = ...` unpacked a
-    # million-element tensor ("too many values to unpack"). train.py:1041 documents this exact
-    # failure and the fix is to go through the helper that owns the name.
+    # _domain_cache_path, not a hand-built name: the FoNE cache is tokens_<domain>_fone.pt,
+    # and the helper owns the name.
     train.Cfg.fone = True
     cache = train._domain_cache_path(a.domain)
     ids, vals = torch.load(cache, map_location="cpu", weights_only=True)
-    # The LAST rows of the cache: training consumes it from the front, so the tail is
-    # the least-seen part of a domain that is only ~5 epochs deep.
+    # Last rows of the cache: training consumes from the front, so the tail is the
+    # least-seen (held-out) part.
     n = len(ids) // (cfg.seq + 1)
     rows = ids[: n * (cfg.seq + 1)].view(-1, cfg.seq + 1)[-a.rows :]
     dense = train.scatter_values(ids[: n * (cfg.seq + 1)].view(-1, cfg.seq + 1), vals, cfg.num_id)[-a.rows :]
@@ -77,9 +75,8 @@ def main():
             exact_tot += len(tgt)
             zeros += int((tgt == 0).sum())
             all_zero += int((tgt == 0).all(-1).sum())
-            # Copying baseline: the previous number in the same row. Math text restates
-            # numbers constantly, so a head that only learned "repeat the last one" would
-            # already score here -- the exact rate is only evidence above THIS line.
+            # Copy baseline: the previous number in the same row -- math text restates
+            # numbers constantly, so exact rate is evidence only above this line.
             for r in range(len(x)):
                 vals_r = wb[r][nm[r]]
                 if len(vals_r) > 1:

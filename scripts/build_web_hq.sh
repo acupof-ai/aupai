@@ -3,11 +3,10 @@
 #
 #   scripts/build_web_hq.sh [keep_fraction]
 #
-# Runs after scripts/score_corpus.sh. Concatenates the per-worker score arrays in
-# WORKER order -- each worker owned a contiguous block of the sorted shard list,
-# and clean_web.py matches score[i] to document i across the same sorted glob, so
-# any other order silently attaches every score to a different document.
-# clean_web.py asserts the counts match rather than trusting that.
+# Runs after scripts/score_corpus.sh. Concatenate the per-worker score arrays in WORKER
+# order: each worker owned a contiguous block of the sorted shard list, and clean_web.py
+# matches score[i] to document i across the same sorted glob -- any other order silently
+# attaches every score to a different document.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

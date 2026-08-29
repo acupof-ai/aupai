@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """Score procedure EXECUTION separately from the final answer, on held-out problems.
 
-ckpt_k6_arith4's 28.9% on scratchpad prompts meant nothing: it answered `[竖式] 61 + 48 = `
-with `109，0 + 1 + 进位0 = 1，写 0...` -- the result first, the working as decoration. So
-three axes: ANSWER (final value right), STEPS (every intermediate line true, checked line
+Three axes: ANSWER (final value right), STEPS (every intermediate line true, checked line
 by line), BOTH. BOTH is the number that means something; ANSWER-without-STEPS gets its own
-column so that failure cannot hide inside a headline again.
+column so that failure cannot hide inside a headline.
 
 Problems come from procedure_curriculum's held-out side through the SAME blake2b split the
-training set was filtered by -- sampling the problem space independently scores
-memorisation, which is how a 200,000-row arithmetic run reported 20-32% with 77% of its
-probe cases in training.
+training set was filtered by -- an independent sample scores memorisation.
 
     python scripts/probe_procedure.py --ckpt ckpt_X.pt --tokenizer data/tokenizer_k8.json
     python scripts/probe_procedure.py --selftest      # no GPU: the scorers, on gold data
@@ -114,10 +110,8 @@ def _demo():
     assert tot["ok"] == tot["chk"], f"gold data failed its own step check: {tot['ok']}/{tot['chk']}"
     assert tot["ans"] == tot["n"], f"gold answers not parsed: {tot['ans']}/{tot['n']}"
 
-    # Corrupt the number after the FIRST `=` on each line -- the result of that step. Two
-    # earlier corruptions both falsely accused a working checker: shifting EVERY right-hand
-    # side stayed internally consistent (211/211 still true), and anchoring at the line END
-    # hit `，进位 0` and touched no multiplication line at all.
+    # Corrupt the result of each step (the number after the FIRST `=`), or the corruption
+    # breaks nothing and a working checker still scores true.
     bad_chk = bad_ok = 0
     for r in rows:
         broken = "\n".join(
@@ -131,7 +125,7 @@ def _demo():
         f"corrupted steps still scored {bad_ok}/{bad_chk}: the step checker does not check"
     )
 
-    # A bare right answer must score ANSWER without STEPS -- the k6_arith4 failure.
+    # A bare right answer must score ANSWER without STEPS.
     r = next(x for x in rows if x["fmt"] == "eq")
     g = gold_answer("eq", r["output"])
     n, ok = steps_valid("eq", f"结果 x = {g}")

@@ -14,7 +14,6 @@ SFT_PATH = "/work/aupai/data/sft/sft_all.jsonl"
 PRETRAIN_PATH = "/work/aupai/data/mix/mixed_v3.jsonl"
 OUT_PATH = "/work/aupai/data/sft/sft_mixed.jsonl"
 
-# Load SFT data and format as text
 sft = []
 with open(SFT_PATH) as f:
     for line in f:
@@ -23,7 +22,6 @@ with open(SFT_PATH) as f:
         sft.append({"content": text})
 print(f"SFT: {len(sft)}")
 
-# Sample equal amount of pretraining data
 pre = []
 with open(PRETRAIN_PATH) as f:
     lines = f.readlines()
@@ -33,7 +31,6 @@ for line in lines[: len(sft)]:
     pre.append({"content": d["content"]})
 print(f"Pretrain sample: {len(pre)}")
 
-# Mix 1:1
 mixed = sft + pre
 random.shuffle(mixed)
 with open(OUT_PATH, "w") as f:

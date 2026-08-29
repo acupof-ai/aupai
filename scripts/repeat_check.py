@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 """Measure duplicates / template reuse in web text — the content-farm signal.
 
-Two failure classes aupai-fb hand-tagged on 180 web samples:
-  - content-farm paragraphs: the same paragraph (or near-) repeats inside one doc
-  - cross-doc template reuse: 洗稿/模板 farms reuse identical paragraphs across
-    many documents
-
-Both are measurable surface-statistically (character-bigram jaccard), the same
-way dist_check measures the eval-adjacent axes. Per project law the probes are
-self-validated on hand-built cases BEFORE the full counts are trusted.
+Two axes: the same paragraph (or near-) repeating inside one doc, and identical
+paragraphs shared across docs (洗稿/模板 farms). Both are surface-statistical
+(character-bigram jaccard). The probes are self-validated on hand-built cases
+before the full counts are trusted.
 
   python scripts/repeat_check.py --dir data/corpus/web   # full run, reject histogram
   python scripts/repeat_check.py --selftest              # validate the probes first
@@ -76,7 +72,6 @@ def cross_doc_template(texts, thr=0.8):
         for p in _paragraphs(t):
             pool.append(_shingles(p))
             doc_of.append(di)
-    # near-dup search across docs (skip same doc)
     hit_docs = collections.Counter()  # doc -> how many shared-near-dup partners
     for i in range(len(pool)):
         if not pool[i]:
@@ -154,7 +149,6 @@ def main():
     print(
         f"doc-internal dup_ratio: median {med:.2f} p90 {p90:.2f} | docs with dup_ratio>=0.3: {hi} ({hi / len(rows):.1%})"
     )
-    # cross-doc template on a sample
     from random import Random
 
     rng = Random(0)

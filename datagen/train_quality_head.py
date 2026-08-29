@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Distil the 27B's judgement into a classifier head on our own 200M model.
 
-Stage two of FineWeb-Edu's architecture: the 27B at 0.76 docs/s would need four pod-days for
-data/corpus/web's 1.97M documents, a logistic head on our 200M's mean hidden state needs minutes.
-
-Not hashed character n-grams (AUC 0.60): they rank by TOPIC and the labels split on REGISTER, so a
-page about air conditioners scores the same as explainer or product sheet -- a representation
-ceiling that more labels do not lift. opencsg's equivalent Chinese classifier is not published.
+Stage two of FineWeb-Edu's architecture: the 27B at 0.76 docs/s would need four
+pod-days for 1.97M documents; a logistic head on the 200M's mean hidden state
+needs minutes. Not hashed character n-grams (AUC 0.60): they rank by TOPIC while
+the labels split on REGISTER -- a ceiling more labels do not lift.
 
     python datagen/train_quality_head.py --labels data/web_27b_labels.jsonl \\
         --ckpt ckpt_k5_clean_0827.pt --tokenizer data/tokenizer_k5.json \\

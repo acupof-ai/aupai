@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
 """Score web documents for educational value with the 27B served by tileRL.
 
-Stage one of FineWeb-Edu's method (arXiv 2406.17557): a strong model labels a sample,
-train_quality_head.py distils it. Everything cheaper was measured first and failed:
-
-    gambling/contact-spam regex alone             AUC 0.50
-    hashed character 2-4 grams, 180 hand labels   AUC 0.60
-    structural features (tables, phones, quotes)  AUC 0.62
-    Qwen3-0.6B, 0-5 rubric                        AUC 0.539
-    Qwen3-0.6B, binary yes/no prompt              AUC 0.647
-
-The same 0.6B gained 0.108 AUC when the six-level rubric became one yes/no question, so both
-rubrics stay and `--check` measures which the 27B does better on. Nothing downstream runs until
-that AUC is clearly above 0.62.
+Stage one of FineWeb-Edu's method: a strong model labels a sample, train_quality_head.py
+distils it. Everything cheaper was measured first and failed (spam regex AUC 0.50, char
+n-grams 0.60, structural features 0.62, Qwen3-0.6B 0.539-0.647), so both rubrics stay and
+`--check` measures which the 27B does better on. Nothing downstream runs until that AUC is
+clearly above 0.62.
 
     python datagen/score_web_27b.py --check data/web_labels.jsonl --rubric binary
     python datagen/score_web_27b.py --glob 'data/corpus/web/*.jsonl' --n 100000 \\
@@ -53,11 +46,10 @@ FIVE = """给下面这段网页文本的教育价值打分，0 到 5 分。
 
 
 def ask(url, model, prompt, timeout=300, max_tokens=400):
-    """One completion. Returns the string after the model's think block.
+    """One completion; the string after the model's think block.
 
-    max_tokens must cover the WHOLE think block: at 24 it cut reasoning off mid-way, the parser
-    picked a stray digit out of it (AUC 0.407, inverted) and the failures were biased toward long
-    high-quality documents (13.7% hand-keep among answered vs 28.6% among failed).
+    max_tokens must cover the WHOLE think block: a truncated block makes the parser
+    pick a stray digit, and truncation biases toward long high-quality documents.
     """
     body = json.dumps(
         {
@@ -230,8 +222,8 @@ def main():
                 )
         return
 
-    # Stride EVERY shard: a prefix draw from the first ~40 of 125 shards read 8.5% positive
-    # where a shard-stratified draw reads 21.8%. Shards are not interchangeable.
+    # Stride EVERY shard: shards are not interchangeable (a prefix draw read 8.5%
+    # positive where a shard-stratified draw reads 21.8%).
     files = sorted(glob.glob(a.glob))
     per = max(1, a.n // max(1, len(files)) + 1)
     rng = random.Random(0)

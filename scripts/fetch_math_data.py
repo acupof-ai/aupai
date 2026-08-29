@@ -66,7 +66,7 @@ def ape210k(row):
     except (SyntaxError, ZeroDivisionError, TypeError, NameError):
         return None
     if abs(val - r) > 1e-4 * max(1.0, abs(r)):
-        return None  # equation disagrees with the recorded answer
+        return None
     return {
         "instruction": q,
         "output": f"列式：{eq} = {fmt(r)}\n答案是：\\boxed{{{fmt(r)}}}",
@@ -74,17 +74,16 @@ def ape210k(row):
     }
 
 
-# Two tiers, and the tier matters more than the position. An explicit answer marker always beats a
-# bare \frac buried in the derivation: math23k solutions typically end "因此，现在电视机卖1664元一台"
-# with no marker at all, and a single-tier rule that ranks every pattern by end offset returns the
-# \frac{1}{5} from the middle of the working (measured: it corrupts 18.6% of math23k this way).
+# Two tiers, tier matters more than position: an explicit answer marker always beats a
+# bare \frac buried in the derivation. A single-tier rule ranked by end offset returns
+# the mid-working \frac for marker-less solutions (corrupts 18.6% of math23k).
 MARKERS = [
     re.compile(r"\\boxed\{([^{}]+)\}"),
     re.compile(r"####\s*(-?[\d,./%]+)"),
     re.compile(r"(?:答案|答)\s*(?:是|为)?\s*[:：]?\s*(-?[\d,./%]+)"),
 ]
-# Only consulted when no marker is present. \frac{10}{3} must be read as a fraction rather than
-# falling through to LAST_NUM, which would return the denominator (docs/lessons/review_2026-08-26.md #2).
+# Only consulted when no marker is present: \frac{10}{3} must read as a fraction, not
+# fall through to LAST_NUM, which returns the denominator.
 FALLBACKS = [re.compile(r"\\[dt]?frac\{(-?[\d.]+)\}\{(-?[\d.]+)\}")]
 # Thousands separators and scientific notation are part of the number: without them "40,000。"
 # reads as "000" and "1.763e+04" as "04".
@@ -104,9 +103,8 @@ def _best(text, patterns):
 
 
 def tail_answer(text):
-    """Gold answer: the last explicit answer marker; failing that a fraction or the last number in
-    the closing lines. Selecting by end offset within a tier matters too -- '解答：\n\n1. ...' used
-    to match the 答 pattern and yield '1.' as the answer for 3.5% of mxode rows."""
+    """Gold answer: the last explicit answer marker; failing that a fraction or the last
+    number in the closing lines."""
     text = text.strip()
     hit = _best(text, MARKERS)
     if hit is not None:
@@ -184,7 +182,6 @@ def tick(row):
 
 
 SOURCES = {
-    # name: (hf repo, split, normalizer, row cap)
     "ape210k": ("MU-NLPC/Calc-ape210k", "train", ape210k, None),
     "belle": ("BelleGroup/school_math_0.25M", "train", belle, None),
     "gsm8k_zh": ("meta-math/GSM8K_zh", "train", gsm8k_zh, None),

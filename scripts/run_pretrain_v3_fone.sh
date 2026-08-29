@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Pretrain k8_v3_fone: corpus v3 AND --fone, the two improvements that have never
-# been combined. ckpt_k7_v3 is v3 without FoNE; ckpt_k6_fone is FoNE on the v2
-# corpus (11.33B unfiltered tokens). Neither answers what FoNE does on filtered data.
+# Pretrain on corpus v3 AND --fone.
 #
 #   scripts/run_pretrain_v3_fone.sh [--dry]
 #   NGPU=8 PORT=29600 scripts/run_pretrain_v3_fone.sh --dry
@@ -18,12 +16,9 @@
 #   3. the tokenizer carries the ChatML specials as single tokens
 #   4. [NUM] is a single token AT Cfg.num_id -- --fone pins the id rather than
 #      resizing, so a vocabulary that moved it trains against the wrong column
-#   5. data/tokenizer.json is copied to data/tokenizer_k8.json BEFORE the run.
-#      data/tokenizer.json is rebuilt IN PLACE; the k6 rebuild replaced a
-#      32,773-token file with a DIFFERENT 32,773-token file (d191af789cdbe597 ->
-#      0bce3584bc24f255) and every id changed, so a size check passes and the
-#      scores are noise. k6's vocabulary survived only because a local checkout
-#      still had the old file.
+#   5. data/tokenizer.json is copied to data/tokenizer_k8.json BEFORE the run:
+#      data/tokenizer.json is rebuilt in place, and a same-size rebuild changes
+#      every id, so a size check passes and the scores are noise
 #   6. the token caches, if present, were built WITH --fone. tokens_<domain>.pt has
 #      the same filename either way and train.py's freshness check looks at mtime
 #      and vocab id, not at the flag.
@@ -127,12 +122,8 @@ with tempfile.TemporaryDirectory() as td:
     torch.save((torch.zeros(4, dtype=torch.int32), torch.zeros(2)), pair)
     assert not cache_is_fone(plain) and cache_is_fone(pair), "cache_is_fone selftest failed"
 
-# The cache used to be keyed on domain + vocabulary fingerprint but NOT on --fone, which
-# rewrites the stream while leaving the fingerprint identical, so k7_v3's non-FoNE cache
-# looked fresh to a FoNE run. train.py now namespaces the two, so nothing has to be
-# deleted -- but verify THIS train.py carries the fix rather than trusting the pod copy:
-# the pod is not a git repo and receives files by hand, so a stale train.py is the normal
-# way this regresses.
+# Verify THIS train.py namespaces caches by --fone: the pod is not a git repo and
+# receives files by hand, so a stale train.py is the normal way this regresses.
 import ast
 
 _src = open("train.py", encoding="utf-8").read()
@@ -176,8 +167,7 @@ HYP='FoNE was measured only on the v2 unfiltered corpus, where it fixed arithmet
 (wrong-equation 43.3%->32.7%) and moved math-hard not at all. Does it move the score on v3?' \
 scripts/run_pretrain.sh $NAME $FLAGS"
 # setsid, not nohup: pod shells run through `crictl exec`, and when that session
-# ends the kernel kills the whole process group -- nohup only blocks SIGHUP. A
-# run_sft.sh launched with plain nohup died between train and eval on 2026-08-28.
+# ends the kernel kills the whole process group -- nohup only blocks SIGHUP.
 LAUNCH="setsid nohup bash -c \"$INNER > runs/${NAME}_launch.log 2>&1\" </dev/null >/dev/null 2>&1 &"
 
 echo

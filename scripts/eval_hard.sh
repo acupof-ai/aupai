@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
-# Shard eval/math_hard.py across GPUs. Usage: scripts/eval_math.sh ckpt_sft_v5.pt [ngpu]
+# Shard eval/math_hard.py across GPUs. Usage: scripts/eval_hard.sh <ckpt> [ngpu]
 #
-# A failed shard must not be reported as a lower score: bare `wait` returns 0
-# regardless of child status and the merge never checked the row count, so an OOM
-# in shard 3 produced "TOTAL math-hard: 148/456 = 32.5%" with exit 0 and
-# run_sft.sh wrote it into EXPERIMENTS.md (docs/review_2026-08-26.md #9).
+# A failed shard must not be reported as a lower score: check each child's exit
+# and the merged row count.
 set -euo pipefail
 CKPT=$1; N=${2:-6}
 K=${K:-1}; TEMP=${TEMP:-0}          # K>1 turns this into a sharded pass@k run
-# K>1 with TEMP=0 is rejected by eval/math_hard.py, which is the right layer: it also
-# covers the direct `python eval/math_hard.py --k 8` the RL gate is documented as using.
-# Coercing TEMP here instead made TEMP mean two things depending on K, and silently
-# rewriting a value the operator passed is this repo's entire failure catalogue.
-MAXNEW=${MAXNEW:-512}               # generation budget; raise it to test reasoning-length scaling
-# The vocabulary the checkpoint was trained on. Ids do not survive a rebuild of
-# data/tokenizer.json, and a mismatch scores as noise rather than raising.
+# K>1 with TEMP=0 is rejected by eval/math_hard.py -- the right layer, since it also
+# covers the direct --k 8 the RL gate uses. Do not coerce TEMP here.
+MAXNEW=${MAXNEW:-512}               # raise to test reasoning-length scaling
+# The vocabulary the checkpoint was trained on: a rebuild changes ids, and a
+# mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
 cd "$(dirname "$0")/.."
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs
 trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < data/synthetic/math_hard_eval_1k.jsonl)
-# math_hard writes one prediction row per generation: the greedy one always, plus K sampled ones
-# only when K > 1. Scaling by K+1 unconditionally makes the k=1 case assert 2x the real count.
+# One prediction row per generation: greedy always, plus K sampled only when K>1;
+# scaling by K+1 unconditionally would assert 2x the real count at k=1.
 ROWS=$([ "$K" -gt 1 ] && echo $((EXPECTED * (K + 1))) || echo "$EXPECTED")
 
 pids=()
@@ -46,8 +42,8 @@ base = f"data/eval/hard_{os.path.basename(ck)}"
 rows = [json.loads(l) for i in range(n) for l in open(f"{base}.{i}.jsonl", encoding="utf-8")]
 assert len(rows) == expected, f"merged {len(rows)} preds, expected {expected} — a shard is short"
 if k > 1:
-    # pass@1 is the greedy row; pass@k is any-correct over that question's sampled rows. Both have
-    # to be computed here rather than read off a shard line -- a shard covers 1/N of the questions.
+    # pass@1 is the greedy row; pass@k is any-correct over the question's sampled rows.
+    # Computed here, not off a shard line: a shard covers 1/N of the questions.
     from collections import defaultdict
 
     g, sm = defaultdict(list), defaultdict(list)

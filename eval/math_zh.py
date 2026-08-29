@@ -57,9 +57,8 @@ def main():
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model = model.to(torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
-    # Without this a FoNE checkpoint scores near zero for a reason that has nothing to
-    # do with the model: tok.decode emits the [NUM] token itself instead of the number
-    # it stands for, so no answer parses. Measured 2026-08-28: 0.4% against a real 1.8%.
+    # A FoNE checkpoint must decode through fone: tok.decode emits the [NUM] token
+    # itself, so no answer parses and the score collapses for a non-model reason.
     fone_on = getattr(cfg, "fone", False)
     num_id = getattr(cfg, "num_id", None)
 

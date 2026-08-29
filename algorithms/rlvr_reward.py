@@ -68,7 +68,7 @@ def reward_fn(gen_text, gt_raw):
     exact or numeric (1e-4 relative tolerance) match against ground truth."""
     pred = extract_boxed(gen_text)
     if pred is None:
-        return 0.0  # no boxed answer in response
+        return 0.0
     p, g = normalize_answer(pred), normalize_answer(gt_raw)
     if p is None or g is None:
         return 0.0

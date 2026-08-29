@@ -73,7 +73,6 @@ def kda_forward(q, k, v, g, beta, A_log, dt_bias, state=None, lower_bound=-5.0):
     q = q * torch.rsqrt(q.pow(2).sum(-1, keepdim=True) + 1e-6) * scale
     k = k * torch.rsqrt(k.pow(2).sum(-1, keepdim=True) + 1e-6)
 
-    # Gate: lower_bound * sigmoid(exp(A_log) * (g + dt_bias))  (use_gate_in_kernel)
     A = torch.exp(A_log.float()).view(1, 1, H, 1)
     bias = dt_bias.float().view(1, 1, H, K)
     decay = torch.exp(lower_bound * torch.sigmoid(A * (g + bias)))  # (B, T, H, K)
@@ -83,19 +82,18 @@ def kda_forward(q, k, v, g, beta, A_log, dt_bias, state=None, lower_bound=-5.0):
     S = q.new_zeros(B, H, V, K) if state is None else state.float()
     out = torch.empty(B, T, H, V, device=q.device)
     for t in range(T):
-        S = S * decay[:, t].unsqueeze(2)  # forget gate (broadcast over value dim)
+        S = S * decay[:, t].unsqueeze(2)
         kt, vt = k[:, t], v[:, t]
-        vt = vt - (S @ kt.unsqueeze(-1)).squeeze(-1)  # delta: v - S @ k (decayed S)
+        vt = vt - (S @ kt.unsqueeze(-1)).squeeze(-1)
         vt = vt * beta[:, t].unsqueeze(-1)
-        S = S + vt.unsqueeze(-1) * kt.unsqueeze(-2)  # rank-1 update
+        S = S + vt.unsqueeze(-1) * kt.unsqueeze(-2)
         out[:, t] = (S @ q[:, t].unsqueeze(-1)).squeeze(-1)
     return out, S
 
 
 # ---------------------------------------------------------------- Model
-# Copied from train.py (same parameter names/shapes so checkpoints load directly),
-# with two inference-only changes: chunk_kda -> kda_forward, and optional KV/state
-# caches for incremental decoding.
+# Mirrors train.py's HybridLM (same param names/shapes so checkpoints load directly):
+# chunk_kda -> kda_forward, plus KV/state caches for incremental decoding.
 
 
 class RMSNorm(nn.Module):
@@ -105,8 +103,7 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        # float32 for stability (bf16 under autocast in training was close enough;
-        # fp32 here is strictly more accurate and costs nothing at this size)
+        # float32 for stability; free at this size.
         in_dtype = x.dtype
         x = x.float()
         return (x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.g.float()).to(in_dtype)
@@ -132,8 +129,8 @@ class DeltaRecurrence(nn.Module):
         ksize = self.short_conv.kernel_size[0]
         if conv_state is None:
             conv_state = x.new_zeros(B, ksize - 1, D)
-        # Causal conv: rolling window of the last (ksize-1) inputs. On the first
-        # call conv_state is zeros, which exactly reproduces F.pad(x, (3, 0)).
+        # Causal conv: rolling window of the last ksize-1 inputs; zeros on first
+        # call reproduces F.pad(x, (3, 0)).
         xc = torch.cat([conv_state, x], dim=1)
         h = F.silu(self.short_conv(xc.transpose(1, 2)).transpose(1, 2))
         new_conv = xc[:, -(ksize - 1) :, :]
@@ -182,7 +179,7 @@ class SlidingWindowAttention(nn.Module):
         k2 = full_k.transpose(1, 2)
         v2 = full_v.transpose(1, 2)
         # Prefill (no cache): causal mask. Decode (T=1, cache present): the single
-        # query legitimately sees every cached key, so no mask is needed.
+        # query sees every cached key, so no mask is needed.
         y = F.scaled_dot_product_attention(q, k2, v2, is_causal=(past_k is None))
         y = y.transpose(1, 2).reshape(B, T, D)
         gate = torch.sigmoid(gate_in)
@@ -241,10 +238,9 @@ class HybridLM(nn.Module):
         n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)
         self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
         self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
-        # This class is a Mac-side reimplementation of train.HybridLM (fla's KDA kernel is
-        # CUDA-only), which means every architecture change has to be mirrored here. It was
-        # not, and a --fone checkpoint failed to load at all: "Unexpected key num_proj.weight".
-        # The FoNE pieces themselves come from fone.py, which is pure PyTorch.
+        # Mac-side reimplementation of train.HybridLM (fla's KDA kernel is
+        # CUDA-only): every architecture change must be mirrored here. The FoNE
+        # pieces come from fone.py, pure PyTorch.
         self.fone = getattr(cfg, "fone", False)
         if self.fone:
             self.num_proj = nn.Linear(fone.NUM_DIMS, cfg.d, bias=False)
@@ -286,7 +282,7 @@ class HybridLM(nn.Module):
         x, new_caches = self._body(emb, cache)
         hidden = self.norm(x)
         logits = self.head(hidden)[..., : self.cfg.vocab].float()
-        logits = 15.0 * torch.tanh(logits / 15.0)  # logit softcap
+        logits = 15.0 * torch.tanh(logits / 15.0)
         return logits, new_caches, hidden
 
 
@@ -339,15 +335,13 @@ def sample_next(logits, prev_ids, temperature, top_k, repeat_penalty):
 
 @torch.no_grad()
 def generate(model, tok, prompt, args, device):
-    # The SFT data is 问：{q}\n答：{a}<eos> and nothing else, so a bare question is
-    # a continuation prompt, not an instruction: the model writes whatever text
-    # plausibly follows it. --raw keeps the old behaviour for probing a base model.
+    # SFT data is 问：.../答：... only: a bare question is a continuation prompt;
+    # --raw feeds it verbatim for probing a base model.
     if not args.raw:
         prompt = f"问：{prompt}\n答："
     eos = tok.token_to_id("<eos>")
-    # A [NUM] token carries no number of its own: the digit head reads it off the same
-    # hidden state that predicted the token, and fone.decode_text writes it back into
-    # the text. Without this a --fone checkpoint prints the literal [NUM].
+    # [NUM] carries no number of its own: the digit head reads it off the
+    # predicting hidden state; without this a --fone checkpoint prints literal [NUM].
     num_id = model.cfg.num_id if model.fone else None
     if model.fone:
         (ids,), (vals,) = fone.encode_prompts([prompt], tok, num_id)

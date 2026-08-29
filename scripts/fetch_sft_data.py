@@ -129,7 +129,6 @@ def main():
         fetch_missing()
         return
 
-    # Check input files exist
     inputs = {
         "reasoning": os.path.join(OUT, "reasoning.jsonl"),
         "gsm8k": os.path.join(OUT, "gsm8k_zh.json"),
@@ -141,7 +140,6 @@ def main():
             print(f"ERROR: {name} not found at {path}")
             sys.exit(1)
 
-    # Load all datasets
     reasoning = load_reasoning(inputs["reasoning"])
     gsm8k = load_gsm8k(inputs["gsm8k"])
     qwq = load_qwq_mmlu(inputs["qwq"])
@@ -149,15 +147,12 @@ def main():
 
     print(f"reasoning: {len(reasoning)}, gsm8k: {len(gsm8k)}, qwq: {len(qwq)}, fable5: {len(fable5)}")
 
-    # Merge Chinese sources, take subset
     chinese = reasoning + gsm8k + qwq
     random.shuffle(chinese)
     chinese = chinese[: args.max_samples]
 
-    # Add Fable 5 traces
     merged = chinese + fable5
 
-    # Dedup by instruction
     seen = set()
     deduped = []
     dupes = 0
@@ -172,7 +167,6 @@ def main():
 
     random.shuffle(deduped)
 
-    # Save
     with open(args.output, "w", encoding="utf-8") as f:
         for d in deduped:
             f.write(json.dumps(d, ensure_ascii=False) + "\n")

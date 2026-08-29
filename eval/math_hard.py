@@ -64,8 +64,8 @@ def main():
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
     model = model.to(torch.bfloat16)
     tok = load_tokenizer(a.tokenizer, cfg)
-    # A FoNE checkpoint writes numbers as [NUM] carrying a value, so both the prompt
-    # and the generated text go through fone rather than the tokenizer alone.
+    # A FoNE checkpoint writes numbers as [NUM] carrying a value, so prompt and
+    # output go through fone, not the tokenizer alone.
     fone_on = getattr(cfg, "fone", False)
     num_id = getattr(cfg, "num_id", None)
 
@@ -78,17 +78,15 @@ def main():
     )
     k = max(1, a.k)
     temp = a.temperature if k > 1 or a.temperature > 0 else 0.0
-    # A pass@k run at temperature 0 draws k IDENTICAL copies of the greedy answer, so
-    # pass@k == pass@1 and the gap is 0 by construction -- and scripts/eval_hard.sh
-    # defaults TEMP=0. That reads as "no headroom" when nothing was actually sampled, and
-    # the RL gate (pass@k - pass@1 >= 15pt) is decided on it.
+    # pass@k at temperature 0 draws k identical greedy answers, so pass@k == pass@1
+    # by construction; eval_hard.sh defaults TEMP=0.
     assert not (k > 1 and temp <= 0), (
         f"--k {k} at temperature {temp}: the k samples would be identical to the greedy "
         "answer and pass@k would equal pass@1 by construction. Pass --temperature (0.8 is "
         "the project's pass@k setting) or TEMP=0.8 through scripts/eval_hard.sh."
     )
-    # pass@1 is always the greedy answer; the k sampled answers only feed pass@k and the sampled mean,
-    # so pass@k - pass@1 is not inflated by sampling noise on the pass@1 side.
+    # pass@1 is the greedy answer; the k samples feed only pass@k and the sampled
+    # mean, so pass@k - pass@1 has no sampling noise on the pass@1 side.
     by = {}  # level -> [greedy correct, sum of sampled acc, any-correct, n]
     n_eq = n_bad = tot_len = n_gen = 0
     per_batch = max(1, a.batch // k)
@@ -116,7 +114,7 @@ def main():
                 pairs = [(greedy[i], greedy_v[i] if fone_on else None)] + [
                     (sampled[j], sampled_v[j] if fone_on else None)
                     for j in range(i * k, (i + 1) * k)
-                    if k > 1  # k == 1 means greedy only; sampled is empty
+                    if k > 1
                 ]
                 for ids, vs in pairs:
                     gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
@@ -164,10 +162,6 @@ def main():
     pk = sum(v[2] for v in by.values())
     line = f"math-hard: pass@1(greedy) {p1 / n:.1%} ({p1}/{n})"
     if k > 1:
-        # pass@k is over the k SAMPLES; the greedy answer is pass@1 and not a draw. This
-        # counted greedy too, i.e. pass@(k+1) under a pass@k label, while eval_hard.sh's
-        # merge heredoc computed the sampled-only version -- so one run reported two
-        # different quantities and the one that reached the ledger was the other one.
         line += (
             f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k} {pk / n:.1%} ({pk}/{n})"
             f" | gap {(pk - p1) / n:+.1%} | T={temp}"

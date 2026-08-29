@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""Expanded procedural Chinese knowledge Q&A -> 10K+ target.
+"""Expanded procedural Chinese knowledge Q&A.
 
-Method (per aupai-80): curated high-confidence facts + structured tables + a
-template fan-out engine, PLUS a procedural math-property family (squares, cubes,
-primes, divisors, lcm/gcd, factorial, fibonacci, 九九乘法) whose answers are
-computed in Python — every number is exact. No LLM, no hallucination.
-
-Reuses the existing 147 curated facts from gen_knowledge. Dedup by question.
+Curated high-confidence facts + structured tables + a template fan-out engine,
+plus a math-property family (squares, cubes, primes, divisors, lcm/gcd, factorial,
+fibonacci, 九九乘法) whose answers are computed in Python -- every number exact.
+No LLM. Dedup by question.
 """
 
 import json

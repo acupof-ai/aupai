@@ -18,7 +18,6 @@ rng = random.Random(2024)
 
 
 def code_for(name):
-    """return (prompt, code) for a given template name"""
     n = lambda lo, hi: rng.randint(lo, hi)  # noqa
     if name == "print":
         w = rng.choice(["你好,Python!", "欢迎学习编程", "1 + 1 = ?", "坚持就是胜利"])

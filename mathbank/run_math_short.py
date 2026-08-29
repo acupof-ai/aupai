@@ -64,14 +64,14 @@ def verify(instruction, lines, ans):
     line_tokens = " ".join(tok for ln in lines for tok in TOK.findall(ln))
     for n in inst_nums:
         if str(n) not in line_tokens:
-            return None, False  # prose number absent from any equation -> suspect
+            return None, False
     # Derived values a step may cite: the question's own numbers, plus whatever
     # earlier steps produced. A step citing a large value that exists nowhere yet
     # is a forward reference -- every equation still checks out arithmetically, so
     # the numeric pass above waves it through, but the chain reads out of order
-    # ("84 × 73 = 6132 / 6142 - 6132 = 10 / 83 × 74 = 6142") and teaches the model
-    # it may use a quantity before deriving it. Only values >= FWD_MIN are judged;
-    # below that a number is as likely a rate or a small constant as a derived one.
+    # and teaches the model it may use a quantity before deriving it. Only values
+    # >= FWD_MIN are judged; below that a number is as likely a rate or a small
+    # constant as a derived one.
     FWD_MIN = 100
     known = set()
     for t in TOK.findall(instruction):

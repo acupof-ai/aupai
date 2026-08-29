@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Educational-quality classifier for the Chinese web corpus, following FineWeb-Edu
-(arXiv 2406.17557): label documents for educational value, fit a cheap classifier, keep the top slice.
+"""Educational-quality classifier for the Chinese web corpus (FineWeb-Edu's method):
+label documents for educational value, fit a cheap classifier, keep the top slice.
 
-Hand labels a few hundred at a time and hashed character n-grams, not 500K LLM labels and an
-embedding model: this reaches AUC ~0.60 and is unreliable near the boundary. Cross-validated AUC is
-printed on every fit; do not raise the threshold past what that number supports. train_quality_head.py
-supersedes it.
+Hashed character n-grams on a few hundred hand labels: AUC ~0.60, unreliable near
+the boundary -- cross-validated AUC is printed on every fit, and train_quality_head.py
+supersedes this. Do not raise the threshold past what the printed AUC supports.
 
     python datagen/quality_clf.py fit    --labels data/web_labels.jsonl
     python datagen/quality_clf.py score  --glob 'data/corpus/web/*.jsonl' --out data/web_scores.npy

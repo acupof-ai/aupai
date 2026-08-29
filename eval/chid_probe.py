@@ -1,23 +1,13 @@
 #!/usr/bin/env python3
 """CHID Chinese-idiom cloze probe — the one Chinese eval with resolution at 200M.
 
-CHID (clue/chid) is 10-choice idiom cloze: random line 10% vs MMLU's 25%, and a
-decoder-only LM scores it directly by continuation log-likelihood (the empty
-sits mid-paragraph, so we score with the left context only — idiom choice is
-driven by the preceding syntax, which is exactly what 200M learns from the
-Chinese corpus). standalone from run_eval.score_mc, so no benchmarking harness
-change is needed to probe it.
+10-choice idiom cloze (random 10%). A decoder-only LM scores it by continuation
+log-likelihood with the left context only: the blank sits mid-paragraph and idiom
+choice is driven by the preceding syntax. Standalone from run_eval.score_mc.
 
-NOTE on running this: the pod has no HF route and needs aupai-fb's socks5 proxy,
-and clue/chid is pulled via `datasets` — which needs httpx[socks]/socksio on the
-host. On the PEP-668 pod that's a `--break-system-packages` pip (refused by
-default). Run where the proxy + socks dep are available; this file only defines
-the loader and the scorer, not the infra.
+Needs the HF proxy + httpx[socks] on the host; the pod has neither by default.
 
-Expected decision gate (aupai-fb): dev 3,218, k4 vs k5. ~12% both -> no signal,
-abandon; ~20%+ with a real spread -> wire into CI.
-
-Usage:  python eval/chid_probe.py --ckpt ckpt_sft.pt [--k4 --k5 for the A/B]
+Usage:  python eval/chid_probe.py --ckpt X
 """
 import argparse
 import os
@@ -32,12 +22,10 @@ from eval.run_eval import score_mc  # noqa: E402
 def load_chid(split="dev", max_rows=None):
     """Load clue/chid records into score_mc items.
 
-    schema (verified-on-first-run): `content` = paragraph split into segments
-    with the idiom blanks inline; `candidates` = candidate idiom strings;
-    `answers` = per-blank {text, candidate_id}. We build one item per blank:
-      prompt  = the full left context up to the blank (blank is a delimiter)
-      options = the candidate idioms
-      label   = that blank's candidate_id (index into candidates)
+    schema: `content` = paragraph split into segments with the idiom blanks inline;
+    `candidates` = candidate idiom strings; `answers` = per-blank {text, candidate_id}.
+    One item per blank: prompt = full left context up to the blank, options = the
+    candidates, label = that blank's candidate_id.
     """
     from datasets import load_dataset
 
@@ -47,13 +35,12 @@ def load_chid(split="dev", max_rows=None):
         content = row["content"]
         cands = row["candidates"]
         answers = row["answers"]
-        # content is a list of segments; a blank is marked by a placeholder-like
-        # segment (empty or the idiom removed). Prompt = all segments before the
-        # i-th answer's blank, joined.
+        # A blank is a placeholder segment ("" or "#idiom#"); the prompt is the
+        # segments before it, joined.
         n_blank = 0
         left = []
         for seg in content:
-            if seg in ("", "#idiom#"):  # placeholder markers CHID uses
+            if seg in ("", "#idiom#"):
                 if n_blank < len(answers):
                     a = answers[n_blank]
                     cid = a["candidate_id"] if isinstance(a, dict) else a

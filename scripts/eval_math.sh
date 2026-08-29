@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Shard eval/math_zh.py across GPUs. Usage: scripts/eval_math.sh ckpt_sft_v5.pt [ngpu]
+# Shard eval/math_zh.py across GPUs. Usage: scripts/eval_math.sh <ckpt> [ngpu]
 #
-# A failed shard must not be reported as a lower score: bare `wait` returns 0
-# regardless of child status and the merge never checked the row count, so an OOM
-# in shard 3 produced "TOTAL math-500: 148/456 = 32.5%" with exit 0 and
-# run_sft.sh wrote it into EXPERIMENTS.md (docs/review_2026-08-26.md #9).
+# A failed shard must not be reported as a lower score: check each child's exit
+# and the merged row count.
 set -euo pipefail
 CKPT=$1; N=${2:-6}
-# The vocabulary the checkpoint was trained on. Ids do not survive a rebuild of
-# data/tokenizer.json, and a mismatch scores as noise rather than raising.
+# The vocabulary the checkpoint was trained on: a rebuild changes ids, and a
+# mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
 cd "$(dirname "$0")/.."
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs

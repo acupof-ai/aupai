@@ -16,8 +16,8 @@ RL=${RL:-rl_k6}
 NGPU=${NGPU:-8}
 FROM=${FROM:-pretrain}
 SFT_PT=${SFT_PT:-data/sft/sft_mix_fone.pt}
-# Default arm of the three in data/PROVENANCE.md: verified synthetic plus the real rows
-# that survived hand sampling. Belle is excluded -- 38.7% of it is semantically defective.
+# Default SFT arm: verified synthetic plus the real rows that survived hand sampling.
+# Belle is excluded -- 38.7% of it is semantically defective.
 SFT_SOURCES=${SFT_SOURCES:-data/synthetic/math_short_v8.jsonl,data/sft/real_math_noBelle.jsonl,data/alpaca_gpt4_zh.jsonl}
 LOG=runs/pipeline.log
 mkdir -p runs data/rl
@@ -29,7 +29,7 @@ die() { say "PIPELINE FAILED at $1"; exit 1; }
 declare -A STAGE=([pretrain]=1 [sft]=2 [probe]=3 [rl]=4 [bench]=5)
 want() { [ "${STAGE[$1]}" -ge "${STAGE[$FROM]}" ]; }
 
-# ---- 1. pretrain: adopt a run already in flight rather than starting a second one --------------
+# ---- 1. pretrain: adopt a run already in flight rather than starting a second one
 if want pretrain; then
   say "stage pretrain: waiting for ckpt_$PRETRAIN.pt"
   while pgrep -f "train\.py .*--name $PRETRAIN" > /dev/null; do sleep 120; done
@@ -37,7 +37,7 @@ if want pretrain; then
   say "stage pretrain: done — $(grep -E '^(ep |step )' "runs/$PRETRAIN.log" | tail -1)"
 fi
 
-# ---- 2. SFT ------------------------------------------------------------------------------------
+# ---- 2. SFT
 if want sft && [ ! -f "ckpt_$SFT.pt" ]; then
   say "stage sft: packing"
   # --fone is not optional against a FoNE base: it has only ever seen a number as one
@@ -50,14 +50,14 @@ if want sft && [ ! -f "ckpt_$SFT.pt" ]; then
   say "stage sft: $(python3 scripts/exp.py list 2>/dev/null | grep " $SFT " | tail -1)"
 fi
 
-# ---- 3. difficulty probe: keep only the problems this model gets right 20-80% of the time -------
+# ---- 3. difficulty probe: keep only the problems this model gets right 20-80% of the time
 if want probe && [ ! -f data/rl/rl_band.jsonl ]; then
   say "stage probe: 10,382 instances x (1 greedy + 8 sampled), sharded over $NGPU GPUs"
   bash scripts/probe_band.sh "ckpt_$SFT.pt" "$NGPU" >> "$LOG" 2>&1 || die "probe"
   say "stage probe: $(grep -m1 '^band:' "$LOG" | tail -1)"
 fi
 
-# ---- 4. RL, run to completion ------------------------------------------------------------------
+# ---- 4. RL, run to completion
 if want rl && [ ! -f "ckpt_$RL.pt" ]; then
   DATA=data/rl/rl_band.jsonl
   [ -s "$DATA" ] || DATA=data/rl/rlvr_clean.jsonl
@@ -77,7 +77,7 @@ if want rl && [ ! -f "ckpt_$RL.pt" ]; then
   say "stage rl: done — $LAST"
 fi
 
-# ---- 5. benchmark every checkpoint the chain produced -------------------------------------------
+# ---- 5. benchmark every checkpoint the chain produced
 if want bench; then
   say "stage bench"
   for CK in "ckpt_$PRETRAIN.pt" "ckpt_$SFT.pt" "ckpt_$RL.pt"; do

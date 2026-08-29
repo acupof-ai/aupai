@@ -24,8 +24,7 @@ import train  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    # The configured mix, not a second copy of its name: four scripts each hardcoded
-    # "data/mix.json" and all four went stale the day it was deleted.
+    # The configured mix, not a hardcoded name: a hardcoded path goes stale when the mix is retired.
     ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--domains", help="comma-separated subset (default: every domain in the mix)")
     a = ap.parse_args()

@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """The eval holdout, as a hash set every data path must exclude.
 
-Finding #1 of docs/lessons/review_2026-08-26.md: stage-1 SFT trained on the full Belle-derived
-corpus that the 500 eval problems were drawn from, with no exclusion anywhere and
-no script that produced the split. Every reported accuracy before this file existed
-may be partly memorization.
-
 `python scripts/holdout.py` regenerates data/eval/holdout_hashes.txt from the eval
 files; importers use `is_holdout(question)`.
 """

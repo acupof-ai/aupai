@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
 """Rank candidate vocabularies by bits per CHARACTER under an n-gram model.
 
-Held-out text encoded under a model trained on the token stream a vocabulary
-produces, divided by the CHARACTERS in it -- so it is comparable across
-segmentations and rewards compression AND predictability at once, where
-chars/token sees only the first (arXiv 2506.03101 puts chars/token's correlation
-with downstream performance anywhere from rho=-0.77 to -0.09 by task). A proxy;
-the verdict is two pretrains differing only in the vocabulary.
+Held-out text encoded under a model trained on the token stream a vocabulary produces, divided by
+the CHARACTERS in it -- comparable across segmentations, rewarding compression AND predictability
+at once, where chars/token sees only the first. A proxy; the verdict is two pretrains differing
+only in the vocabulary.
 
-**IT CANNOT RANK VOCABULARY SIZE.** Measured 2026-08-29: a trigram over 32K types
-has 8x the parameters of one over 16K, so at equal token counts it is
-data-starved and smaller always wins -- an estimator artifact, not a property of
-the vocabulary. Two signatures: the ordering is strictly monotone in size with no
-interior optimum (16K/32K/49K/65K = 4.5947/4.6546/4.7042/4.7479 at n_train=30K,
-where a real optimum would be U-shaped), and the 16K-vs-32K gap shrinks toward
-zero with data (0.1070 -> 0.0896 -> 0.0599 at n_train 3K -> 12K -> 30K).
+**IT CANNOT RANK VOCABULARY SIZE.** A trigram over 32K types has 8x the parameters of one over
+16K, so at equal token counts it is data-starved and smaller always wins -- an estimator artifact,
+not a property of the vocabulary. Signatures: the ordering is strictly monotone in size with no
+interior optimum, and the size gap shrinks toward zero with more data.
 
-Use it only for decisions that HOLD SIZE FIXED. Digit splitting is one, and costs
--0.08% / +0.10% / +0.18% bits/char at those three sizes -- growing with data.
+Use it only for decisions that HOLD SIZE FIXED. Digit splitting is one.
 
     python scripts/tokenizer_sweep.py --tokenizers data/tokenizer.json,data/tokenizer_k5.json
     python scripts/tokenizer_sweep.py --sweep       # train and rank variants

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Build data/tokenizer.json: the fixed tokenizer-training pipeline.
 
-train.py's build_tokenizer rebuild path registers only <unk>/<eos> and silently drops the 4
-chat/think specials the model relies on; this script is the single source of truth instead.
-Stratified equal per-domain byte budget, so math/code symbols earn merges instead of drowning in web.
+Use this, not train.py's rebuild path: it registers only <unk>/<eos> and silently
+drops the chat/think specials the model relies on.
+Stratified equal per-domain byte budget, so math/code symbols earn merges instead
+of drowning in web.
 
     python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix_v3.json]
 """
@@ -17,15 +18,14 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import train  # noqa: E402  (TOK_PATH, Cfg.vocab, DATA)
+import train  # noqa: E402
 
-# [NUM] is last (32772) and always present: without --fone it never appears in the data, so the
-# vocab is one id wider either way and no checkpoint needs resizing to switch.
+# [NUM] is always present (last id): unused without --fone, so no checkpoint needs
+# resizing to switch.
 CHAT_SPECIALS = ["<|im_start|>", "<|im_end|>", "<|think|>", "<|/think|>", "[NUM]"]
-BYTES_PER_TOKEN_EST = 4  # only to turn --sample-tokens into a per-domain byte budget
-# Sample size barely moves the result and the whole corpus costs 45+ minutes: 25K docs vs 395K
-# (16x data, 6x time) moved chars/token 2.6093 -> 2.6296 and hanzi coverage 99.51% -> 99.62%.
-# The binding constraint is the 32K vocab budget, not the sample. Raise when retuning vocab size.
+BYTES_PER_TOKEN_EST = 4
+# Sample size barely moves the result (25K vs 395K docs moved chars/token 2.6093 -> 2.6296);
+# the binding constraint is the 32K vocab budget, not the sample. Raise when retuning vocab size.
 DEFAULT_SAMPLE_TOKENS = 250_000 * 250  # ~250K docs at the measured ~250 tokens/doc
 
 
@@ -66,9 +66,8 @@ def main():
     ap.add_argument("--mix", default=os.path.join(train.DATA, os.path.basename(train.Cfg.mix)))
     a = ap.parse_args()
 
-    # --out keeps a candidate out of data/tokenizer.json: that file is read by every
-    # consumer and rebuilt in place, and ids do not survive a rebuild, so a sweep that
-    # wrote there would invalidate every live checkpoint one variant at a time.
+    # --out keeps a candidate out of data/tokenizer.json: ids do not survive a rebuild,
+    # so writing there would invalidate every live checkpoint.
     out_path = a.out or train.TOK_PATH
     if os.path.exists(out_path) and not a.force:
         print(f"{out_path} exists; pass --force to retrain", file=sys.stderr)
@@ -79,18 +78,16 @@ def main():
     if os.path.exists(a.mix):
         with open(a.mix, encoding="utf-8") as f:
             mix_names = list(json.load(f)["domains"])
-    # ONLY the domains the mix names. Enumerating data/corpus/* instead silently pulls in the
-    # UNFILTERED `web` (kept on disk to re-threshold later) and wastes the whole sample on it.
+    # Only the domains the mix names: enumerating data/corpus/* would silently pull in
+    # the unfiltered `web` kept on disk.
     domains = [d for d in mix_names if os.path.isdir(os.path.join(corpus, d))]
     if not domains:
         print("no data/corpus/<domain>/ named by the mix recipe (update the mix domains)", file=sys.stderr)
         return 1
 
-    budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")  # 0 -> whole corpus
-    # The tokenizer's sample balance is NOT the corpus mix. It decides what earns merges,
-    # so it should be weighted by what the vocabulary must be good at -- and English is
-    # measured at fertility 1.87 (target <=1.5) under the equal-byte default while every
-    # multiple-choice benchmark in eval/ except C-Eval is English.
+    budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")
+    # Sample balance is NOT the corpus mix: it decides what earns merges, so weight it by
+    # what the vocabulary must be good at (English runs hot at fertility 1.87 under equal-byte).
     w = dict(kv.split("=") for kv in a.weights.split(",")) if a.weights else {}
     wt = {d: float(w.get(d, 1.0)) for d in domains}
     tot_w = sum(wt.values())
@@ -112,19 +109,16 @@ def main():
     tok = Tokenizer(BPE(unk_token="<unk>"))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    # Cfg.vocab (32773) is the FINAL total, so the trainer targets 32768 to land there after
-    # the specials are added on top.
+    # Cfg.vocab is the final total; the trainer targets vocab - len(specials) to land there.
     base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
-    # initial_alphabet seeds all 256 ByteLevel chars. Without it only the bytes the corpus
-    # contains survive (measured 193/256) and a NUL is silently dropped: "café\x00binary"
-    # decodes back as "cafébinary", with no raise and not even an <unk>.
+    # initial_alphabet seeds all 256 bytes. Without it, bytes absent from the corpus vanish
+    # silently (NUL drops with no raise, not even an <unk>).
     trainer = BpeTrainer(
         vocab_size=base_vocab,
         special_tokens=["<unk>", "<eos>"],
         initial_alphabet=ByteLevel.alphabet(),
     )
     tok.train_from_iterator(texts, trainer)
-    # the specials train.py's rebuild path drops
     tok.add_special_tokens(CHAT_SPECIALS)
 
     vsize = tok.get_vocab_size()

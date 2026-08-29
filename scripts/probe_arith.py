@@ -51,8 +51,8 @@ draw(a.n, 2, 19, "*", "×")
 
 
 def readings(t):
-    """Both encodings of the leading answer: the model ignores the format tag, so parsing
-    only the reverse reading read a correct `109` as 901 and reported 5.6%."""
+    """Both encodings of the leading answer: parsing only the reverse reading misreads
+    a plain `109` as 901."""
     plain_nums = [int(x) for x in re.findall(r"-?\d+", t)]
     m = re.match(r"\s*(-?)((?:\d\s*)+)", t)
     rev = [int(m.group(1) + re.sub(r"\s", "", m.group(2))[::-1])] if m else []
@@ -60,8 +60,8 @@ def readings(t):
 
 
 def score(prefix, label, strip_eq=False):
-    """strip_eq must match how the checkpoint was trained (round 5 drops `= ` from
-    scratchpad prompts), else this measures prompt tolerance, not computation."""
+    """strip_eq must match how the checkpoint was trained, else this measures prompt
+    tolerance, not computation."""
     first, anywhere, stops = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}, 0
     prompts = [prefix + (p.rstrip("= ") if strip_eq else p) for p, _g, _o in cases]
     texts = fone.generate_texts(model, tok, cfg, prompts, a.steps)
@@ -84,8 +84,7 @@ def score(prefix, label, strip_eq=False):
 
 print(f"{a.ckpt}  ({'FoNE' if a.fone else 'BPE'})")
 if a.tag:
-    # One prompt per format, so plain-worst/scratchpad-best becomes testable; round 3's
-    # flat 24/24/23% could not test it -- the prompt never said which format to use.
+    # One prompt per format, so plain-worst/scratchpad-best becomes testable.
     for t, lab in (("[答] ", "plain"), ("[逆] ", "reverse"), ("[竖式] ", "scratchpad")):
         score(t, lab, strip_eq=a.strip_eq and lab == "scratchpad")
 else:

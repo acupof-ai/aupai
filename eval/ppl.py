@@ -1,21 +1,10 @@
 #!/usr/bin/env python3
 """Held-out perplexity, reported PER DOMAIN.
 
-Why this is the metric with resolution. Every multiple-choice benchmark in this
-repo sits at the 25% chance line for a 200M model -- MMLU, ARC, HellaSwag, PIQA
-and C-Eval alike -- so none of them can see a change. math-hard resolves to about
-+/-1.1pt at a 3% pass rate. Perplexity always moves, and it moves in a direction
-that means something.
-
-What was wrong before: train.py holds out the first `val_frac` of every domain,
-shuffles them TOGETHER, and reports one number. A blended figure is dominated by
-whichever domain contributes the most rows, so a real change in math or chat
-cannot show up in it. The old version of this file made it worse -- it read a
-single stale token cache and took its first 5%, which for a domain-ordered file
-is one domain, not a sample.
-
-This rebuilds exactly the rows train.py holds out (same caches, same val_frac,
-same val_rows_max) and scores each domain on its own.
+Rebuilds exactly the rows train.py holds out (same caches, same val_frac, same
+val_rows_max) and scores each domain on its own; the summary is an unweighted
+mean across domains, because a row-weighted blend is dominated by the largest
+domain and cannot show a small one moving.
 
     python eval/ppl.py --ckpt ckpt_k5_clean_0827.pt --tokenizer data/tokenizer_k5.json
 """
@@ -85,8 +74,8 @@ def main():
         )
 
     if out:
-        # Unweighted mean across domains, NOT the row-weighted blend train.py prints:
-        # a blend hides a small domain moving, which is the whole reason this is per domain.
+        # Unweighted mean across domains, not the row-weighted blend train.py prints:
+        # a blend hides a small domain moving.
         m = sum(out.values()) / len(out)
         print(f"  {'MEAN':<6} loss {m:.4f}  ppl {math.exp(m):7.2f}  (unweighted across domains)")
 

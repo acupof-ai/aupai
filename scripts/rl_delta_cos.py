@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Deeper comparison of two RL runs' weight deltas.
 
-Run A: ckpt_sft_k4.pt -> ckpt_rl_k4_bf16.pt
-Run B: ckpt_k4_11b_lr05.pt -> ckpt_rl_direct_bf16.pt
-
 Per-component cosine similarity of delta directions, per-layer delta norms,
-and geometry of where run B ended up.
+and endpoint geometry. The four checkpoints are hardcoded in main().
 """
 
 import torch
@@ -63,7 +60,6 @@ def main():
             f"{c:<16} {cos:>12.4f} {mcos:>20.4f} {len(ks):>10} {va.norm() / wa:>14.4f} {vb.norm() / wb:>14.4f}"
         )
 
-    # whole-model cosine
     va = torch.cat([dA[k].flatten() for k in keys])
     vb = torch.cat([dB[k].flatten() for k in keys])
     print(f"\nwhole-model cosine: {torch.nn.functional.cosine_similarity(va, vb, dim=0).item():.4f}")
@@ -85,7 +81,6 @@ def main():
         rb = layB[L][0] ** 0.5 / (layB[L][1] ** 0.5 + 1e-12)
         print(f"{L:>6} {ra:>16.5f} {rb:>16.5f} {rb / (ra + 1e-12):>12.2f}")
 
-    # per-layer per-component breakdown (where in each layer did B move more)
     print("\n=== per-layer x component rms-delta (A / B) ===")
     print(
         f"{'layer':>6} {'mixer A/B':>18} {'ffn A/B':>18} {'ar1 A/B':>18} {'ar2 A/B':>18} {'n1 A/B':>14} {'n2 A/B':>14}"
@@ -105,7 +100,6 @@ def main():
             row.append(f"{da**0.5:>8.2e}/{db**0.5:<8.2e}")
         print(" ".join(row))
 
-    # geometry: where did B end up?
     print("\n=== endpoint geometry (relative rms distances) ===")
 
     def dist(x, y):
@@ -119,7 +113,6 @@ def main():
     print(f"||rl_a - sft|| / ||sft||          = {dist(rl_a, sft):.4f}  (A's own move)")
     print(f"||rl_direct - rl_a|| / ||rl_a||   = {dist(rl_b, rl_a):.4f}  (B endpoint vs A endpoint)")
 
-    # collapse signature: norm layers and ar params — absolute movement in B
     print("\n=== norm/ar absolute movement in B (collapse signature check) ===")
     for pat in ["n1", "n2", "norm", "ar1", "ar2", "final_ar"]:
         ks = [k for k in keys if pat in k]
@@ -127,7 +120,6 @@ def main():
         db = sum(dB[k].abs().max().item() for k in ks) / len(ks)
         print(f"  {pat:<10} mean|max delta|  A={da:.2e}  B={db:.2e}")
 
-    # per-tensor cosine distribution for the big movers (ar q vectors)
     print("\n=== per-tensor cosine for top-moving tensors ===")
     movers = sorted(keys, key=lambda k: -(dA[k].pow(2).sum() + dB[k].pow(2).sum()))[:15]
     for k in movers:

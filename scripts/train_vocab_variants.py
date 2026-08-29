@@ -70,8 +70,8 @@ def train_one(texts, size, split_digits, out_path):
     trainer = BpeTrainer(
         vocab_size=size - len(SPECIALS),
         special_tokens=["<unk>", "<eos>"],
-        initial_alphabet=ByteLevel.alphabet(),  # without this only the bytes the
-        show_progress=False,  # corpus happens to contain survive (193/256 measured)
+        initial_alphabet=ByteLevel.alphabet(),  # else only corpus-contained bytes survive (193/256 measured)
+        show_progress=False,
     )
     tok.train_from_iterator(texts, trainer)
     tok.add_tokens(SPECIALS)

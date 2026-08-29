@@ -2,12 +2,11 @@
 """Weight-driven math batch v11.
 
 aupai-fb's ask: an 80K-row L3/L4 batch at cap 150, matched to the eval's
-operator mix by *weighting program draws* (never deleting rows — v10's
-deletion confounded distribution with volume), decimal taken at its reachable
-ceiling. The LP (measured 2026-08-29) showed the 4 operator axes are each
-reachable via weights, while decimal caps at ~11.3% (bank has only 61/943
-dec-heavy programs). This scripts the LP -> integer instance counts -> sample ->
-verify -> dist_check loop.
+operator mix by *weighting program draws*, never deleting rows; decimal taken
+at its reachable ceiling. The LP (measured 2026-08-29) showed the 4 operator
+axes are each reachable via weights, while decimal caps at ~11.3% (bank has
+only 61/943 dec-heavy programs). This scripts the LP -> integer instance
+counts -> sample -> verify -> dist_check loop.
 
 Usage:
   python3 mathbank/make_v11.py
@@ -115,7 +114,6 @@ def main():
                 if DEC.search(out): dec_rows += 1
                 got += 1; n_out += 1
     print(f"wrote {n_out} rows -> {OUT} (decimal-row {dec_rows / max(1, n_out):.1%})")
-    # dist_check
     os.environ["PYTHONPATH"] = os.path.dirname(os.path.abspath(__file__))
     from dist_check import main as dc
     sys.argv = ["dist_check", OUT]

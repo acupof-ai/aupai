@@ -92,7 +92,7 @@ for o in opts:
     o.step()
 after = next(v for st in snap[1]["state"].values() for v in st.values() if torch.is_tensor(v))
 assert torch.equal(before, after), "snapshot must not alias live optimizer state"
-# KDA decay init: mean retention exp(-softplus(dt_bias)) ~ 0.9 (was 0.5 with zero init at g=0)
+# KDA decay init: mean retention exp(-softplus(dt_bias)) ~ 0.9
 dt_bias = m.blocks[0].mixer.dt_bias
 ret = torch.exp(-torch.nn.functional.softplus(dt_bias)).mean().item()
 assert 0.85 < ret < 0.99, ret

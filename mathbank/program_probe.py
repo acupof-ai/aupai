@@ -100,10 +100,10 @@ def score(gen_path):
         elif "gen" in r:
             gens[r["instruction"]].append(r["gen"])
         if r["instruction"] not in greedy:
-            n_warn += 1  # pass@1 falls back to first sampled gen (noise, see 7d34ac4)
+            n_warn += 1  # pass@1 falls back to first sampled gen
 
-    # per program: [greedy_correct, n_inst, rates(list of per-instance pass@k)]
-    # per instance rows are the SELECTION quantity (RL filters instances, not
+    # per program: [greedy_correct, n_inst, rates(list of per-instance pass@k)].
+    # Per-instance rows are the SELECTION quantity (RL filters instances, not
     # programs — a wide-range program can have some instances in-band and some
     # degenerate); program-level aggregates are diagnostics only.
     agg = defaultdict(lambda: [0, 0, []])

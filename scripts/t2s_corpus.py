@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
 """Traditional -> Simplified over data/corpus/, then drop the duplicates the conversion creates.
 
-Measured on the built corpus (2026-08-26): 59.4% of fineweb-2's cmn_Hani subset is Traditional,
-against 1.2% of data/pretrain_full.jsonl. That is a Simplified-Chinese model spending most of its
-new pretraining data on a script it is never evaluated on, and it also wrecks the tokenizer, which
-was trained on the Simplified corpus: fineweb-2 compresses at 1.07 chars/token versus 1.52 for
-pretrain_full, so the same text costs 42% more tokens.
-
-Conversion is a character table lifted from opencc (convert every CJK codepoint once, keep the ones
-that change) applied with str.translate: a C loop at ~7M chars/s against opencc.convert's 0.5M/s,
-and on the sampled text the two agree exactly -- this opencc build does not do phrase-level
-substitution either, so nothing is lost.
+Conversion uses a cached opencc character table with str.translate (~7M chars/s vs
+opencc.convert's 0.5M/s; the two agree exactly on sampled text -- this opencc build does
+no phrase-level substitution, so nothing is lost).
 
     python scripts/t2s_corpus.py [--dir data/corpus] [--domains web,chat] [--workers 32]
 """

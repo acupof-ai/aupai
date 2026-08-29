@@ -67,8 +67,8 @@ def main():
                     rejected += 1
                     continue
                 out, ok = verify(ins, lines, ans)
-                # no instruction-length floor: 速算/简算 problems ("用简便方法计算：101×61")
-                # are inherently short; the floor was a main-bank anti-triviality rule.
+                # no instruction-length floor: 速算/简算 problems are inherently
+                # short; the floor was a main-bank anti-triviality rule.
                 if not ok:
                     rejected += 1
                     continue

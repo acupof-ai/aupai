@@ -31,14 +31,13 @@ from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noq
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 LETTERS = ["A", "B", "C", "D"]
-MC_BATCH = 32       # sequences per forward pass for log-likelihood scoring
-GEN_BATCH = 16      # prompts per batch for GSM8K greedy generation
+MC_BATCH = 32
+GEN_BATCH = 16
 GEN_MAX_NEW = 256
 
 
 # --- Dataset adapters: normalize every benchmark to {"prompt", "options", "label"} ---
-# Benchmark modules are imported lazily so a broken optional dependency in one
-# module doesn't kill the whole run.
+# Benchmark modules import lazily so a broken optional dep in one doesn't kill the run.
 
 def _load_module(name):
     return import_module(f"eval.{name}")
@@ -138,8 +137,6 @@ MC_BENCHMARKS = {
     "boolq": ("BoolQ", load_boolq),
     "openbookqa": ("OpenBookQA", load_openbookqa),
     "mmlu": ("MMLU", load_mmlu),
-    # The only Chinese benchmark here. Every other entry is English, so before this
-    # the repo had no way to measure the language the model is actually trained in.
     "ceval": ("C-Eval (zh)", lambda: _load_module("ceval").load_items()),
 }
 ALL_BENCHMARKS = list(MC_BENCHMARKS) + ["gsm8k"]
@@ -163,9 +160,8 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
         return 0.0
 
     # Pre-tokenize once; flatten (item, option) pairs into jobs.
-    # A FoNE checkpoint has only ever seen a number as one [NUM] carrying a value, so
-    # its prompts go through fone; scoring one with plain BPE puts every numeric
-    # question off-distribution and understates the model.
+    # A FoNE checkpoint has only ever seen numbers as [NUM] carrying a value, so its
+    # prompts go through fone; plain BPE puts numeric questions off-distribution.
     def enc(texts):
         if num_id is None:
             return [e.ids for e in tok.encode_batch(texts)], [[0.0] * 0 for _ in texts]
@@ -190,7 +186,7 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
     max_opts = max(len(it["options"]) for it in items)
     scores = torch.full((n_items, max_opts), -1e9, dtype=torch.float32, device=device)
 
-    jobs.sort(key=lambda job: len(job[0]) + len(job[2]))  # length-bucketed batches
+    jobs.sort(key=lambda job: len(job[0]) + len(job[2]))
 
     for s in range(0, len(jobs), batch_size):
         chunk = jobs[s : s + batch_size]
@@ -210,12 +206,12 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
                 positions.append(max(pl - 1 + k, 0))  # logit predicting token k of the option
                 targets.append(t)
 
-        logits = model(x, num_vals=v)[0]  # (B, T, V) float32, softcapped
+        logits = model(x, num_vals=v)[0]
         rows_t = torch.tensor(rows, device=device)
         pos_t = torch.tensor(positions, device=device)
         tgt_t = torch.tensor(targets, device=device)
 
-        token_lp = logits[rows_t, pos_t].log_softmax(-1)  # (N_tokens, V)
+        token_lp = logits[rows_t, pos_t].log_softmax(-1)
         token_lp = token_lp[torch.arange(len(tgt_t), device=device), tgt_t]
         job_scores = torch.zeros(B, dtype=torch.float32, device=device)
         job_scores.scatter_add_(0, rows_t, token_lp)  # sum token log-probs per job
@@ -295,9 +291,8 @@ def main():
     for key in names:
         if key == "gsm8k":
             if num_id is not None:
-                # This path generates through tok.decode, which would print the [NUM]
-                # token instead of the number it stands for. eval/math_hard.py has the
-                # FoNE decode; reporting a number from here would just be wrong.
+                # This path decodes through tok, which prints the [NUM] token instead of
+                # the number it stands for; eval/math_hard.py has the FoNE decode.
                 print("  GSM8K: skipped on a FoNE checkpoint (use eval/math_hard.py)")
                 continue
             display = "GSM8K"

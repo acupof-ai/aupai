@@ -2,10 +2,8 @@
 """Arithmetic-step verification shared by the data filters and the evals.
 
 A two-operand regex must not be applied to a longer chain: matching "57 + 54 = 156"
-inside "45 + 57 + 54 = 156" computes 111 and declares the line wrong. Measured cost
-of that bug (docs/lessons/review_2026-08-26.md #4): 5.7% of corpus rows dropped as bad_eq with
->=41% of those arithmetically correct, and a 15-34% false-positive rate when scoring
-model generations — biased exactly toward the multi-step problems that matter.
+inside "45 + 57 + 54 = 156" computes 111 and declares the line wrong. Chains are
+skipped, not scored.
 """
 
 import re
@@ -14,7 +12,6 @@ EQ = re.compile(
     r"(?<![\d./])(-?\d+(?:\.\d+)?)\s*([+\-×÷*/])\s*"
     r"(-?\d+(?:\.\d+)?)\s*=\s*(-?\d+(?:\.\d+)?)(?![\d./])"
 )
-# 3+ operands on the left of an '='; such a line is skipped, not scored.
 CHAIN = re.compile(r"-?\d+(?:\.\d+)?(?:\s*[+\-×÷*/]\s*-?\d+(?:\.\d+)?){2,}\s*=")
 OPS = {
     "+": lambda a, b: a + b,
@@ -50,10 +47,8 @@ def has_bad_step(text):
 
 
 def _demo():
-    # chained expressions are skipped, not miscounted
     assert list(iter_equations("45 + 57 + 54 = 156")) == []
     assert list(iter_equations("总分 = 83 + 67 + 87 = 237")) == []
-    # plain two-operand steps still verify
     assert list(iter_equations("10 - 3 = 7")) == [("10", "-", "3", "7")]
     assert check_steps("8 - 3 = 5\n5 - 2 = 3") == (2, 0)
     assert check_steps("8 - 3 = 6") == (1, 1)

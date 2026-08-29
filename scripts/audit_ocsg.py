@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Audit opencsg/Fineweb-Edu-Chinese-V2.1 parquet — do NOT trust the data card.
+"""Audit an opencsg/Fineweb-Edu-Chinese-V2.1 parquet: score distribution, spam,
+repetition, fragmentation, traditional-char rate, and eval contamination.
 
-Same metrics aupai-fb wants measured on every candidate corpus, our web as the
-reference. One parquet path is enough to see the shape; extra parquets expand
-the source/score spread.
+Reports the source's own `score` column but never cuts on it: a published score
+is a claim, not a measurement.
 
   python3 audit_ocsg.py /work/fwe/000000.parquet
 """
@@ -57,7 +57,6 @@ def main():
     print(f"SPAM          {spam:.2%}")
     print(f"repetition    med {rep[n // 2]:.2f} p90 {rep[int(n * 0.9)]:.2f}")
     print(f"fragmented(short-sent) {frag_n:.2%} | sentlen med {statistics.median(scent):.1f}")
-    # traditional-char rate (t2s table)
     tab = {int(k) for k in json.load(open("/work/aupai/data/t2s_table.json"))}
     tc = 0
     cc = 0
@@ -66,11 +65,10 @@ def main():
         cc += len(t)
         tc += sum(1 for ch in t if ord(ch) in tab)
     print(f"traditional-char {tc / max(1, cc):.2%}")
-    # internal dup ratio sample
     dr = [doc_internal_dup_ratio(r["text"], span=6, thr=0.7) for r in rows[:2000]]
     dr = sorted(dr)
     print(f"doc-internal-dup med {dr[len(dr) // 2]:.2f} p90 {dr[int(len(dr) * 0.9)]:.2f}")
-    # contamination vs eval holdsets: index OpenCSG shingles, query eval problems >=0.85
+    # Contamination vs eval holdsets: shingle index over OpenCSG, eval problems matched at Jaccard >=0.85.
     from scripts.repeat_check import _shingles, _jac
 
     ev = []

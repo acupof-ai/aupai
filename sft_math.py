@@ -76,7 +76,7 @@ def main():
         setattr(Cfg, k, v)
     Cfg.batch = args.batch
     Cfg.epochs = args.epochs
-    # grad_ckpt must stay ON: FP8 e4m3 backward went NaN at step ~100 without it (perf_sweep 2026-08-26)
+    # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
     Cfg.grad_ckpt = not args.no_grad_ckpt
 
     torch.manual_seed(Cfg.seed)
@@ -92,8 +92,8 @@ def main():
     d = torch.load(args.sft_path, map_location="cpu", weights_only=True)
     X = d["input_ids"][:, :-1].long().contiguous()
     Y = d["labels"][:, 1:].long().contiguous()
-    # A pack from another vocabulary trains silently at 4x the loss (k5 on a k6 pack:
-    # 4.77 vs 1.28, 2026-08-28) -- every id is wrong and in range, and the sizes match.
+    # A pack from another vocabulary trains silently at ~4x the loss: every id is
+    # wrong and in range, and the sizes match.
     ck_vocab = args.vocab or ck.get("vocab_id")
     if ck_vocab and "vocab" in d:
         assert d["vocab_id"] == ck_vocab, (

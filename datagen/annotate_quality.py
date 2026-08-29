@@ -1,26 +1,13 @@
 #!/usr/bin/env python3
 """Score web documents 0-5 for educational value with a small instruct model.
 
-This is the step FineWeb-Edu (arXiv 2406.17557) does with Llama-3-70B on 500K
-documents. Two cheaper substitutes were tried first and both failed, which is
-why this exists:
+Cheaper substitutes were measured first and failed: char 2-4 grams AUC 0.60,
+structural features 0.62, spam regex 0.50 -- they rank by TOPIC while the labels
+split on REGISTER, so they cannot replace a model that reads the text.
 
-    hashed character 2-4 grams, 180 hand labels   5-fold CV AUC 0.60
-    structural features (tables, phones, quotes)  5-fold CV AUC 0.62
-    the gambling/contact-spam regex alone         5-fold CV AUC 0.50
-
-n-grams rank by TOPIC and the labels split on REGISTER: a page about air
-conditioners is a good technical explainer or a product sheet, and its character
-n-grams are nearly the same either way. Structural features get the product
-sheets and miss the content farms. Judging the difference needs a model that
-reads the text.
-
-Qwen3-0.6B is small enough to fetch through the tunnel and run on one H20 at a
-few hundred documents a second. It is much weaker than Llama-3-70B, so the
-annotations are checked against 180 hand labels before anything downstream uses
-them -- `--check data/web_labels.jsonl` prints the agreement and the AUC of the
-model's own score against those labels. If that AUC is not clearly above the
-0.62 the cheap features reached, this route is not worth taking either.
+`--check data/web_labels.jsonl` validates against 180 hand labels before anything
+downstream uses the output: it prints agreement and AUC. If that AUC is not
+clearly above 0.62, this route is not worth taking either.
 
     python datagen/annotate_quality.py --model /work/models/qwen3-0.6b \\
         --check data/web_labels.jsonl                        # validate first
@@ -55,9 +42,8 @@ def build(model_dir, device="cuda:0"):
 
     tok = AutoTokenizer.from_pretrained(model_dir)
     model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.bfloat16).to(device).eval()
-    # Score by comparing the logits of the six digit tokens at the first generated
-    # position rather than by generating: one forward pass, no sampling, and the
-    # answer cannot be an unparseable string.
+    # Score the six digit logits at the first position instead of generating:
+    # one forward pass, no sampling, no unparseable answer.
     digit_ids = [tok.encode(str(i), add_special_tokens=False)[0] for i in range(6)]
     return tok, model, digit_ids
 
@@ -78,8 +64,8 @@ def score_batch(texts, tok, model, digit_ids, device="cuda:0", max_len=1024):
     with torch.no_grad():
         logits = model(**enc).logits[:, -1, :]
     d = logits[:, digit_ids].float().softmax(-1)
-    # Expected value, not argmax: the expectation is a continuous score, which
-    # gives a threshold to move later instead of six buckets to argue about.
+    # Expected value, not argmax: a continuous score gives a movable threshold
+    # instead of six buckets to argue about.
     return (d * torch.arange(6, device=d.device)).sum(-1).tolist()
 
 

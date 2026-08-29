@@ -4,9 +4,9 @@
 #   scripts/run_pretrain.sh <name> [train.py flags...]
 #   NGPU=8 PORT=29600 HYP="what this run tests" scripts/run_pretrain.sh k4_attnres --fp8 --attn_res
 #
-# Refuses to start if the box already has GPU memory allocated: two runs that shared a port and a
-# log file is how a previous session ended up with two RL jobs it could not tell apart. FORCE=1
-# overrides, e.g. when the other user's reserved GPUs hold a context.
+# Refuses to start if the box already has GPU memory allocated: two runs sharing a port and a
+# log file are indistinguishable in the ledger. FORCE=1 overrides, e.g. when the other
+# user's reserved GPUs hold a context.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

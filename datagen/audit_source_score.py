@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
-"""Check whether a published corpus's own quality score means anything.
+"""Check whether a published corpus's own quality score is usable as a filter.
 
-Written after a 120-document hand audit of opencsg/Fineweb-Edu-Chinese found its
-score column NON-MONOTONIC with quality: keep rates by band ran 52% / 66% / 59%,
-and the top band was the dirtiest of the three (enrolment ads, government-notice
-templates, fortune-telling). That is a dataset whose filtering is genuinely good
-overall -- 59% usable against 18% for our own web -- and whose score must not be
-used as a threshold.
-
-opencsg/chinese-cosmopedia ships a score column too (0.75-0.95), and the recipe
-was about to lean on it with exactly the assumption the audit just refuted:
-"they published the high-score slice, so quality is handled". This checks it
-instead, by scoring the same documents with our own distilled head and asking
-whether the two agree.
-
-Agreement is reported as Spearman rank correlation and as our head's mean score
-per band of theirs. A published score is usable as a filter only if our score
-rises monotonically across its bands.
+Scores the same documents with our own distilled head and reports Spearman
+correlation plus our mean score per band of theirs. A published score passes
+only if our score rises monotonically across its bands -- published score
+columns have been non-monotonic with quality, so never cut on one unmeasured.
 
     python datagen/audit_source_score.py --parquet '/work/newdata/cosmo/*.parquet' \\
         --head data/quality_head.pt --ckpt ckpt_k5_clean_0827.pt \\

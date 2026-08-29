@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Single loader for checkpoint / tokenizer / prompt across every consumer.
 
-Every consumer used to roll its own, and each copy diverged silently. Notably: two
-32,772-token vocabularies can disagree on every id while the size matches — measured
-2026-08-28, a four-fold loss with nothing raising.
+Two same-size vocabularies can disagree on every id; size never identifies one.
 
     from loader import load_checkpoint, load_tokenizer, format_prompt
     model, cfg = load_checkpoint(path)           # built from ck[\"cfg\"], never live Cfg
@@ -28,7 +26,7 @@ def vocab_fingerprint(tok):
 
 
 # sft.py, sft_math.py, eval/gsm8k.py and algorithms/rlvr_generate.py hardcode these ids;
-# a vocabulary rebuild moves them silently. _demo() asserts them against the real file.
+# a vocabulary rebuild moves them silently.
 EOS_ID = 1
 NUM_ID = 32772
 
@@ -45,8 +43,8 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
     cfg = SimpleNamespace(**ck["cfg"])
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
-    # A caller that does not fill the [NUM] value channel reads every number as zero and
-    # scores garbage without raising -- math-500 read 0.4% instead of 47.0% that way.
+    # A caller without a FoNE encode/decode path reads every number as zero and scores
+    # garbage without raising.
     if getattr(cfg, "fone", False) and not fone_ok:
         raise RuntimeError(
             f"{path} is a --fone checkpoint and this caller has no FoNE encode/decode path; "
@@ -58,10 +56,8 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
         model.load_state_dict(ck["model"])
     model.eval()
     if dtype is not None:
-        # Ten call sites repeated `model.bfloat16()` (fp32 raises "FlashAttention only
-        # support fp16 and bf16" in the SWA blocks) and only four of them followed it with
-        # the .contiguous() pass, so the other six were one Muon checkpoint away from
-        # cublasGemmEx failing on a non-contiguous parameter.
+        # bf16 (fp32 raises in the SWA blocks) then .contiguous() (cublasGemmEx fails on
+        # non-contiguous parameters).
         model = model.to(dtype)
         for p in model.parameters():
             p.data = p.data.contiguous()
@@ -97,8 +93,7 @@ def load_tokenizer(path, cfg):
     return tok
 
 
-#: ChatML, replacing the homemade 问：/答：. The four specials were already in the
-#: vocabulary and appeared ZERO times in 160,414 chat documents, so the switch was free.
+#: ChatML, owned here.
 IM_START, IM_END = "<|im_start|>", "<|im_end|>"
 
 
@@ -109,10 +104,9 @@ def format_prompt(question, system=None):
 
 
 def format_example(question, answer, system=None):
-    """(prompt, completion) split at the loss boundary: pack_and_save builds the row as
-    prompt + completion, so returning joined text here writes the prompt into every row
-    twice (scripts/packsmoke, 2026-08-29). The completion ends with <|im_end|> because
-    the model must be supervised on its own stop token to learn to stop."""
+    """(prompt, completion) split at the loss boundary: pack_and_save concatenates them, so
+    joined text here would duplicate the prompt into every row. The completion ends with
+    <|im_end|> because the model must be supervised on its own stop token to learn to stop."""
     return format_prompt(question, system), f"{answer}{IM_END}"
 
 
@@ -123,7 +117,6 @@ def format_history(messages):
     return out + f"{IM_START}assistant\n"
 
 
-# -- self-test: the loader must agree on a real checkpoint-tokenizer pair ----------
 def _demo():
     """Each way this loader is supposed to fail, actually provoked -- a self-test that
     never builds a wrong tokenizer proves nothing about the fingerprint."""
@@ -131,10 +124,7 @@ def _demo():
 
     path = os.path.join(ROOT, "data", "tokenizer.json")
     if not os.path.exists(path):
-        # data/tokenizer.json is gitignored, so this asserted on every clean checkout and
-        # made CI red at step 4 for the whole checkout's existence -- every step after it,
-        # including harness.py check, has never once run. test_arch_compat.py and
-        # test_sft_pack.py already degrade this way; this was the only one that did not.
+        # data/tokenizer.json is gitignored; a hard assert here fails every clean checkout.
         print("loader selftest SKIP (no data/tokenizer.json)")
         return
     tok = Tokenizer.from_file(path)
@@ -145,7 +135,7 @@ def _demo():
     # 1. the matching pair loads.
     load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id=fp))
 
-    # 2. right size, wrong ids -> must raise (the k5 bug: sizes agreed, every id wrong).
+    # 2. right size, wrong ids -> must raise.
     try:
         load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id="0" * 16))
         raise AssertionError("a wrong vocab_id was accepted")
@@ -184,9 +174,8 @@ def _demo():
 
 
 def _demo_keys():
-    """infer_local keeps its own HybridLM because fla is CUDA-only, and the two drift:
-    FoNE heads landed in train.py only, and infer_local crashed on every k6 checkpoint
-    until someone hit it by hand. Compares parameter names via AST, no GPU deps."""
+    """infer_local keeps its own HybridLM because fla is CUDA-only; the two must not drift.
+    Compares parameter names via AST, no GPU deps."""
     import ast
     import re
 

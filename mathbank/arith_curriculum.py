@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """Bare arithmetic in the formats that are known to be learnable.
 
-ckpt_k7_v3 scores 0/180 on two-digit +, -, × with no word problem attached: given
-`59 + 63 = ` it emits `00\\n答案是：\\boxed`, filling the slot after `=` with the most
-common continuation. Hence 51.2% of the equations in its solutions are wrong while 91%
-of generations still produce one -- it learned the shape, not the computation.
-
 Lee et al., *Teaching Arithmetic to Small Transformers* (arXiv 2307.03381), samples for
 NanoGPT (10.6M params) to reach ~100% on three-digit addition:
 
@@ -88,9 +83,8 @@ def scratchpad_sub(a, b):
 
 FORMATS = ("plain", "reverse", "scratchpad")
 
-# Identical prompts across three formats make the model hedge: ckpt_k6_arith3 emitted
-# <eos> on only 17% of generations (BPE control 21%, so it is the ambiguity, not the
-# number representation) -- right answer, then more of it in another format.
+# Tags disambiguate the format: identical prompts across three formats make the
+# model hedge between answers.
 TAGS = {"plain": "[答]", "reverse": "[逆]", "scratchpad": "[竖式]"}
 
 
@@ -98,9 +92,8 @@ def held_out(a, b, op):
     """A deterministic train/test split ON THE PROBLEM, not on the row -- hashing keeps it
     stable across regenerations and it cannot leak by reshuffling.
 
-    The two-digit space (90x90 = 8,100 pairs) is exhausted long before 200,000 samples, so
-    without this a probe scores memorisation: on arith_v1, 138 of 180 probe cases (77%)
-    were in training, median 3 times each and one 197 times."""
+    The two-digit space (90x90 = 8,100 pairs) is exhausted long before 200,000 samples,
+    so without this a probe scores memorisation."""
     import hashlib
 
     h = hashlib.blake2b(f"{a}{op}{b}".encode(), digest_size=4).digest()
@@ -113,11 +106,10 @@ def generate(n, rng, digits=3, formats=FORMATS, split="train", tag=False, strip_
     split="train"/"test"/"all" selects the hash side. tag=True prefixes the format marker
     so the answer is determined by the question.
 
-    strip_eq=True drops the trailing `= ` from SCRATCHPAD prompts only: ckpt_k6_arith4
-    answered `[竖式] 61 + 48 = ` with `109，0 + 1 + 进位0 = 1，写 0...`, the result first and
-    the working as decoration, so the computation never ran. `= ` is a shortcut slot -- a
-    third of the training data fills it with the answer immediately. plain and reverse keep
-    theirs as internal controls comparable to round 4."""
+    strip_eq=True drops the trailing `= ` from SCRATCHPAD prompts only: `= ` is a
+    shortcut slot -- a third of the training data fills it with the answer immediately,
+    so the model answers first and hangs the working on as decoration. plain and reverse
+    keep theirs as internal controls."""
     out = []
     guard = 0
     while len(out) < n:

@@ -9,8 +9,7 @@ def load_dataset():
     items = []
     for ex in ds:
         prefix, _, suffix = ex["sentence"].partition("_")
-        # Continuation = option + the text after the blank, so the option tokens
-        # are scored in the full sentence context.
+        # Continuation = option + text after the blank, so options are scored in full-sentence context.
         items.append({
             "context": prefix.strip(),
             "options": [ex["option1"] + suffix, ex["option2"] + suffix],
@@ -27,7 +26,6 @@ def log_likelihood(model, tok, context, continuation, device):
     full = torch.tensor([ctx_ids + cont_ids], device=device)
     logits, _ = model(full)
     log_probs = torch.log_softmax(logits[0].float(), dim=-1)
-    # Score only the continuation tokens
     cont_log_probs = log_probs[range(len(ctx_ids) - 1, len(ctx_ids) + len(cont_ids) - 1), cont_ids]
     return cont_log_probs.sum().item()
 
@@ -44,7 +42,7 @@ def evaluate(model, tok, device):
 
 
 if __name__ == "__main__":
-    # Smoke test with dummy data (random model -> ~50% accuracy expected).
+    # Smoke test: random model, expect ~50%.
     class _DummyTok:
         def encode(self, text):
             ids = [abs(hash(w)) % 1000 for w in text.split()] or [0]

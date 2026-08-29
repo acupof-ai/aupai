@@ -26,8 +26,8 @@ from data_overview import cache_tokens  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    # The configured mix, not a second copy of its name: four scripts each hardcoded
-    # "data/mix.json" and all four went stale the day it was deleted.
+    # The configured mix (harness.cfg_default), not a hardcoded name: a hardcoded path
+    # goes stale when the mix file is replaced.
     ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--batch", type=int, default=train.Cfg.batch)
     ap.add_argument("--world", type=int, default=8)

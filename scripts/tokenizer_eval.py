@@ -1,15 +1,13 @@
 #!/usr/bin/env python3
 """Rank vocabularies across dimensions at once, with the weights written down.
 
-`tokenizer_report.py` prints the numbers; this file combines them. Correctness is
-a gate, not a scored metric -- k5's vocabulary dropped NUL and tab, and any
-aggregate trading correctness against compression would have let it win.
-Correlated metrics are averaged within a dimension first, so adding another
-compression metric cannot outvote another dimension.
+`tokenizer_report.py` prints the numbers; this file combines them. Correctness is a gate, not a
+scored metric -- an aggregate trading correctness against compression would let a lossy vocabulary
+win. Correlated metrics are averaged within a dimension first, so adding another compression metric
+cannot outvote another dimension.
 
-Gaps, so they are not mistaken for zeros: no Chinese word-boundary alignment
-(needs jieba); bits/char is scored only on a size-matched field (see
-tokenizer_sweep.py); every dimension is a proxy.
+Gaps, so they are not mistaken for zeros: no Chinese word-boundary alignment (needs jieba);
+bits/char is scored only on a size-matched field (see tokenizer_sweep.py); every dimension is a proxy.
 
     python scripts/tokenizer_eval.py --tokenizers data/tokenizer.json,data/vocab_sweep/v16384.json
 """
@@ -32,45 +30,30 @@ DIMENSIONS = {
 }
 
 
-# Hard thresholds. A vocabulary is used for the life of every checkpoint trained on
-# it -- ids do not survive a rebuild -- so these are chosen by what is EXPENSIVE TO
-# CHANGE LATER, not by what scores well today.
+# Hard thresholds, chosen by what is EXPENSIVE TO CHANGE LATER: a vocabulary is used for the
+# life of every checkpoint trained on it, and ids do not survive a rebuild.
 #
-# TokEval (arXiv 2608.18062) is the field's suite: 14 metrics, 6 categories, and its
-# own conclusion is that intrinsic metrics SCREEN but do not RANK -- "adjacent rows of
-# results tables mostly differ by less than seed retraining would move a single model".
-# So this file gates on correctness and on the two failures that no amount of training
-# can repair, and leaves ranking to the weighted dimensions below and, finally, to two
-# pretrains differing only in the vocabulary.
+# TokEval (arXiv 2608.18062): intrinsic metrics SCREEN but do not RANK, so this file gates on
+# correctness and the two failures no training can repair, and leaves ranking to the weighted
+# dimensions and, finally, to two pretrains differing only in the vocabulary.
 #
-# It also follows TokEval's protocol requirement: the corpus and the normalisation unit
-# are part of the metric's definition. The same vocabulary reads 6.4% utilisation on 402
-# math documents and 94.5% on 2,814 across seven domains -- always gate on the full mix.
+# The corpus and the normalisation unit are part of every metric's definition -- always gate on
+# the full mix, not a slice.
 GATES = {
     # name: (threshold, higher_is_better, why it is a veto and not a preference)
     # NEVER used, not "<=1 use": the <=1 rate is a function of how much text you counted
     # (4.0% at 1.6M tokens, 0.43% at 142M, same vocabulary), so it cannot carry a fixed
-    # threshold. A token with zero occurrences in 142M tokens of the training distribution
-    # is a glitch token by the Fishing-for-Magikarp definition and no amount of training
-    # reaches it.
-    # Measured 0.70% after excluding the by-design-unreachable entries, against a 0.5%
-    # threshold I invented. The real cost is 229 slots x 1024 = 234K parameters, 0.1% of the
-    # model, and an unreachable token is also one the model can barely emit. Recorded as a
-    # known cost at 0.01 rather than shipped as a third permanently-red gate -- this repo has
-    # now twice learned that a permanent red is the same as no signal. It is a REGRESSION
-    # guard: the fragment population must not grow.
+    # threshold. Zero occurrences in 142M tokens of the training distribution is a glitch
+    # token by the Fishing-for-Magikarp definition; no training reaches it.
+    # Regression guard at 0.01, not a hard gate: the measured 0.70% is a known cost (229
+    # slots, 0.1% of the model), and a permanent red is the same as no signal. The fragment
+    # population must not grow.
     "never used frac": (0.01, False, "glitch tokens: unreachable slots, and training cannot fix them"),
-    # On REF_EN, not on whatever English happens to be in the corpus sample: the same
-    # vocabulary reads 1.429 on REF_EN and 1.870 on our own `en` domain.
-    #
-    # The threshold was 1.35 and the REFERENCE CLASS WAS WRONG: it came from English-only
-    # vocabularies (bert 1.182, gpt2 1.156), which is not what we are trying to be. Against
-    # the bilingual frontier -- DeepSeek-V3 1.104, Qwen3 and GLM-4.5 1.130, Phi-4-mini 1.143
-    # -- every one of them buys that with 128K-200K slots, and our Chinese chars/token
-    # (1.693) TIES DeepSeek-V3 and BEATS Qwen3 and GLM-4.5 on a quarter of the vocabulary.
-    # 1.55 is the price of bilingual-at-32K, recorded as a ceiling that must not DRIFT
-    # rather than as a defect to fix: the field's fix is a bigger vocabulary, and the fitted
-    # scaling law puts our optimum at 12-20K, not 128K.
+    # On REF_EN, not on whatever English the corpus sample holds: the same vocabulary reads
+    # 1.429 on REF_EN and 1.870 on our own `en` domain.
+    # 1.55 is the price of bilingual-at-32K -- the bilingual frontier (DeepSeek-V3 1.104,
+    # Qwen3/GLM-4.5 1.130) buys 1.13 with 128K-200K slots, and the fitted scaling law puts our
+    # optimum at 12-20K. A ceiling that must not DRIFT, not a defect to fix.
     "ref fertility": (1.55, False, "regression guard: English must not get worse than it is"),
     "hanzi whole-char": (0.95, True, "byte-fragmented hanzi is worse than one token per character"),
 }
@@ -84,8 +67,8 @@ def gates(tok, corpus):
     out = {}
     r = R.roundtrip(tok, corpus)
     out["round-trip lossless"] = bool(r["lossless"])
-    # A vocabulary missing byte-alphabet entries silently drops those bytes and
-    # breaks every fast tokenizer library. Measured at 193/256 on an early build.
+    # A vocabulary missing byte-alphabet entries silently drops those bytes and breaks
+    # every fast tokenizer library.
     v = tok.get_vocab()
     have = sum(1 for b in range(256) if _byte_token(b) in v)
     out["all 256 bytes present"] = have == 256
@@ -121,16 +104,11 @@ def never_used(tok, counts):
     """Fraction of the vocabulary that no corpus text reaches, EXCLUDING the entries that
     are unreachable by design.
 
-    Counting them made a healthy vocabulary read 0.87% against a 0.5% gate. Of 106 tokens
-    with zero occurrences in 142M tokens, 53 are correct and required: the 256-entry
-    ByteLevel alphabet is seeded on purpose (`initial_alphabet=ByteLevel.alphabet()`,
-    without which only the bytes the corpus happens to contain survive -- measured at
-    193/256 on an early build, which silently drops NUL and breaks every fast tokenizer
-    library), and it is a byte-FALLBACK net, so normal text not reaching it is the design
-    working. The four chat specials and [NUM] never appear in raw corpus text either.
-
-    What is left -- ASCII shards like 'oldsymbol' out of \\boldsymbol, and incomplete UTF-8
-    -- is the real Fishing-for-Magikarp population."""
+    The 256-entry ByteLevel alphabet is seeded on purpose (without it only the bytes the
+    corpus happens to contain survive), and it is a byte-FALLBACK net, so normal text not
+    reaching it is the design working. The four chat specials and [NUM] never appear in raw
+    corpus text either. What is left -- ASCII shards and incomplete UTF-8 -- is the real
+    Fishing-for-Magikarp population."""
     v = tok.get_vocab()
     reserved = {v[_byte_token(b)] for b in range(256) if _byte_token(b) in v}
     reserved |= {i for t, i in v.items() if t.startswith("<|") or t == "[NUM]" or t in ("<unk>", "<eos>")}
@@ -141,8 +119,8 @@ def never_used(tok, counts):
 def robustness(tok, corpus):
     """Fraction of tokens that are byte fragments rather than whole characters.
 
-    Missing whole-character hanzi tokens is what made web score 1.04 chars/token
-    -- worse than one token per character -- which chars/token alone underreports."""
+    Missing whole-character hanzi tokens scores worse than one token per character,
+    which chars/token alone underreports."""
     frag = tot = 0
     for rows in corpus.values():
         for e in tok.encode_batch(rows):

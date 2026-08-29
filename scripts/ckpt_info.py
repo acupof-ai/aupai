@@ -18,8 +18,8 @@ from datetime import UTC, datetime
 def load_meta(path):
     import torch
 
-    # mmap=True (torch>=2.1) maps tensors lazily, so numel/cfg read as metadata
-    # without pulling ~400MB off disk; fall back if the runtime rejects it.
+    # mmap=True reads numel/cfg as metadata without pulling ~400MB off disk; fall
+    # back if the runtime rejects it.
     try:
         ck = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
     except Exception:
@@ -51,7 +51,7 @@ def info(path):
     rec["date"] = datetime.fromtimestamp(st.st_mtime, tz=UTC).strftime("%Y-%m-%d")
     try:
         rec.update(load_meta(path))
-    except Exception as e:  # never let one bad checkpoint break the listing
+    except Exception as e:
         rec["error"] = f"{type(e).__name__}: {e}"
     return rec
 

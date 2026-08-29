@@ -1,24 +1,16 @@
 #!/usr/bin/env python3
-"""Run the whole pipeline end to end on the shipped sample corpus.
-
-Every stage has a unit test; the CHAIN never had one, which is how a pack whose
-fingerprint could never equal any checkpoint's vocab_id shipped. This runs
+"""Run the whole pipeline end to end on the shipped sample corpus, asserting the JOINS, not the stages.
 
     mix -> tokenize -> pretrain N steps -> checkpoint
         -> load it back -> SFT pack -> SFT steps -> generate
 
-on the sample corpus and asserts the JOINS, not the stages.
+E2E_GPU is REQUIRED and there is no CPU half: without a card this could only re-check the mix and
+the vocabulary, which `harness.py check` already does -- a test whose green means nothing is worse
+than no test.
 
-E2E_GPU is REQUIRED and there is no CPU half. KDA is fla/Triton only, so without a
-card this file could only re-check the mix and the vocabulary -- which `harness.py
-check` already does -- and exit 0, which reads as "the chain works". It was wired
-into CI in exactly that shape. A test whose green means nothing is worse than no
-test, so the skip path is deleted rather than documented.
-
-E2E_GPU is exported as CUDA_VISIBLE_DEVICES before torch is imported, so every
-stage says `cuda:0` -- naming `cuda:1` directly raises an illegal memory access
-under fla/Triton, whose kernels launch on the current device. It will not pick a
-card on its own: the pod's cards are shared.
+E2E_GPU is exported as CUDA_VISIBLE_DEVICES before torch is imported, so every stage says `cuda:0`
+-- naming `cuda:1` directly raises an illegal memory access under fla/Triton, whose kernels launch
+on the current device. It will not pick a card on its own: the pod's cards are shared.
 
     E2E_GPU=7 python scripts/test_e2e.py
 """
@@ -131,11 +123,8 @@ def main():
         import torch
 
         ck = torch.load(ckpt, map_location="cpu", weights_only=False)
-        # Stages 4-9 all passed on a 206M random init with the training loop stubbed to zero
-        # iterations -- the chain test could not see that no training happened, which is the
-        # whole class of silent failure it exists for. train.py seeds with Cfg.seed before
-        # building HybridLM, so a fresh init here is bitwise identical to the run's step 0;
-        # measured cos is -0.028 after six real steps and exactly 1.0 after none.
+        # train.py seeds with Cfg.seed before building HybridLM, so a fresh init here is
+        # bitwise identical to the run's step 0; cos < 0.9 proves the pretrain actually stepped.
         from train import Cfg, HybridLM
 
         for k, v in ck["cfg"].items():
@@ -213,8 +202,8 @@ def main():
         before = ck["model"]["tok.weight"].float()
         after = sk["model"]["tok.weight"].float()
         assert before.shape == after.shape
-        # A fresh init is uncorrelated with the pretrained embedding. This is the join that
-        # "loss 4.77 instead of 1.28, with nothing raising" was made of.
+        # A fresh init is uncorrelated with the pretrained embedding; cos > 0.9 proves SFT
+        # resumed them rather than reinitialising.
         cos = torch.nn.functional.cosine_similarity(before.flatten(), after.flatten(), dim=0).item()
         assert cos > 0.9, (
             f"SFT embeddings barely resemble the pretrained ones (cos={cos:.3f}); it reinitialised"
@@ -252,8 +241,8 @@ def main():
         print(f"\ne2e OK: mix -> tokenize -> pretrain -> ckpt -> pack -> sft -> generate, {STEPS} steps")
         return 0
     finally:
-        # On the success path only, this leaked ckpt_e2e_tmp.pt (824MB) plus its .ep1
-        # (1.78GB, it carries optimizer state) into the shared repo root on every failure.
+        # Always clean up the temp checkpoints; the .ep1 carries optimizer state and is the
+        # bigger file.
         rm(os.path.join(ROOT, "ckpt_e2e_tmp.pt"), os.path.join(ROOT, "ckpt_e2e_tmp_sft.pt"))
         shutil.rmtree(tmp, ignore_errors=True)
 

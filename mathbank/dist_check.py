@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """Compare a math batch against the eval on surface statistics, and flag what diverges.
 
-Every check the pipeline had was added after something went wrong: answer length
-after sft_k4 measured harmful, level mix to match the eval, forward references
-after they turned out to be 9.8% of a batch. That is a scar list, not a test. It
-missed a 1.85x skew in how often a solution contains a fraction -- 37.3% in
-math_short_v8 against 20.2% in the eval's own solutions -- which the model then
-reproduced at 51.1% of its generations.
-
 This compares many axes at once so the next skew does not need someone to think of
 it first. It says nothing about whether a batch is CORRECT; verify() and eqcheck.py
 do that. It only says whether it LOOKS like the thing the model is scored on.
@@ -100,14 +93,12 @@ def main():
 
 
 def _demo():
-    """The instrument on a case whose answer is known: the eval against itself is
-    flat, and v8's fraction rate is the skew this was built to catch."""
+    """The instrument on a case whose answer is known: the eval against itself is flat."""
     rows = [json.loads(x) for x in open(EVAL, encoding="utf-8") if x.strip()]
     s = stats(rows)
     assert abs(s["solution contains a fraction"] - 0.202) < 0.01, s["solution contains a fraction"]
     # A RANDOM half, not the first half: the eval file is ordered by level, so its
-    # first half is 29.5% fractions against 20.2% overall. Anything that slices it
-    # with rows[:n] gets a biased sample; the shard scripts stride, which is fine.
+    # first half is 29.5% fractions against 20.2% overall; rows[:n] is biased.
     import random
 
     r = rows[:]

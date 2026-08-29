@@ -57,7 +57,6 @@ def normalize(ans):
     s = re.sub(r"\\frac\{([^}]+)\}\{([^}]+)\}", r"\1/\2", s)
     s = s.replace("\\", "").replace(" ", "").replace("（", "(").replace("）", ")")
     s = s.rstrip("。.,，")
-    # Try numeric comparison
     try:
         return str(float(s))
     except ValueError:
@@ -89,7 +88,6 @@ def prepare(data_dir=DATA, out_path=RLVR_PATH):
             if ans and normalize(ans):
                 out.append({"prompt": d["instruction"], "answer": ans, "source": "gsm8k"})
 
-    # Deduplicate by prompt
     seen = set()
     deduped = []
     for item in out:

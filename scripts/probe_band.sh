@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Measure this checkpoint's per-instance solve rate over the math bank, keep the 20-80% band.
+# Per-instance solve rate over the math bank; keep the 20-80% band.
 #
 #   scripts/probe_band.sh ckpt_sft_k4.pt [ngpu]
 #
-# 10,382 instances x (1 greedy + 8 sampled) is 93K generations; single-process that is hours, so it
-# is sharded across the GPUs exactly like scripts/eval_hard.sh, with the same rule that a failed
-# shard aborts rather than quietly lowering the measured rate.
+# Sharded across the GPUs like scripts/eval_hard.sh; a failed shard aborts rather than
+# quietly lowering the measured rate.
 set -euo pipefail
 CKPT=$1
 N=${2:-8}

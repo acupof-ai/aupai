@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
 """Pack a few ChatML examples and check the loss mask lands where it should.
 
-This exists because the mask is invisible. A pack with a wrong boundary trains
-without complaint, loses a couple of points, and nothing in the logs says why.
-The first version of the ChatML switch shipped exactly that bug: format_example
-returned (prompt, full_text) while pack_and_save builds a row as prompt +
-completion, so every row carried the prompt twice and the second copy was
-SUPERVISED -- the model would have been trained to write the questions. Row
-count alone gave it away once measured: 40 examples packed into 8 rows before
-the fix and 5 after.
+The mask is invisible: a pack with a wrong boundary trains without complaint, loses a couple of
+points, and nothing in the logs says why.
 
     python scripts/test_sft_pack.py
 """

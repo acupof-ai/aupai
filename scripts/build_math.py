@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Merge every math source into one verified corpus, with per-source caps.
 
-Caps matter: sft_v3 regressed to 26.8% because Ape210K's one-line `列式：a/b = c`
-rows were 32% of the mix and collapsed multi-step reasoning (EXPERIMENTS.md).
+Caps keep single-line arithmetic drills (~10% of the mix) from crowding out
+multi-step rows.
 
 Every row must pass: a numeric \\boxed{} answer, no wrong two-operand arithmetic
 step (scripts/eqcheck.py — chained expressions are skipped, not scored), not a
@@ -27,8 +27,6 @@ from eqcheck import check_steps  # noqa: E402
 from holdout import is_holdout  # noqa: E402
 
 D = os.path.join(ROOT, "data")
-# (path, cap) — cap None keeps everything. Multi-step Chinese sources dominate;
-# single-line arithmetic drills are capped at ~10% of the mix.
 SOURCES = [
     (f"{D}/math/belle.jsonl", None),
     (f"{D}/math/mxode.jsonl", None),

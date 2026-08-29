@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Rebuild data/corpus/web into a cleaned, quality-ranked corpus.
 
-Four filters in order of how certain each one is; only the last, the quality classifier, is soft.
+Four filters in order of certainty; only the quality classifier is soft:
 
-1. Traditional -> Simplified. 59.4% of the fineweb2 Chinese slice is traditional and was never
-   converted, so the model learns two scripts and the tokenizer wastes slots on both.
-2. Gambling / contact / adult spam by keyword: 2.5% of documents, every hit unambiguous.
+1. Traditional -> Simplified. 59.4% of the fineweb2 Chinese slice is traditional;
+   without conversion the model learns two scripts and the tokenizer wastes slots.
+2. Gambling / contact / adult spam by keyword: every hit unambiguous.
 3. Within-document repetition (content farms) and short-sentence splices (forum fragments).
 4. The educational-quality classifier.
 

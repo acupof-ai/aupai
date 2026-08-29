@@ -16,13 +16,8 @@ import os
 import subprocess
 import time
 
-# --root is how harness.py's broken world runs THIS logger into a temp tree and ages the
-# row it really wrote (its old broken world hand-wrote a `date` key exp.py has never
-# emitted, so the check and its test agreed on a fiction and the check never fired). It is
-# a FLAG and not an env var on purpose: an ambient AUPAI_ROOT would silently redirect the
-# experiment log of a production run, and every launch on this project already goes through
-# `pod "... setsid nohup ..."`, where exporting one is a keystroke away. The log is the
-# ledger; it does not get an ambient override.
+# --root is a FLAG, not an env var: an ambient AUPAI_ROOT would silently redirect the
+# experiment log of a production run. The log is the ledger; it gets no ambient override.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "runs", "experiments.jsonl")
 MD = os.path.join(ROOT, "EXPERIMENTS.md")

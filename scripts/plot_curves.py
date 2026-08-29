@@ -27,8 +27,8 @@ PLOTS = os.path.join(ROOT, "plots")
 STEP_RE = re.compile(r"^step (\d+)/(\d+) loss (-?[\d.]+)")
 VAL_RE = re.compile(r"^ep (\d+)/(\d+) train ([\d.]+) val ([\d.]+)")
 RL_RE = re.compile(r"^step (\d+)/(\d+) acc ([\d.]+) loss (-?[\d.]+)")
-# Periodic validation. Under a data mix Cfg.epochs is forced to 1, so the epoch-end "ep E/K ... val Y"
-# line fires exactly once and this is the only thing that makes a val curve rather than a val point.
+# Under a data mix Cfg.epochs is forced to 1, so the epoch-end val line fires once;
+# this is the only regex that makes a val CURVE rather than a val point.
 STEPVAL_RE = re.compile(r"^step (\d+)/(\d+) val ([\d.]+)")
 
 

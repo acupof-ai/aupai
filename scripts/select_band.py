@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Pick the RL prompt set from measured per-instance solve rates.
 
-RL only learns where the group disagrees: a prompt the model always gets right and one it always
-gets wrong both give every sample the same reward, so the advantage is zero and the step is wasted.
-The previous run spent half its compute that way -- 30-55% of groups came back all-right or
-all-wrong. The fix is to train on the prompts this model solves *sometimes*.
+RL only learns where the group disagrees: a prompt the model always gets right or always gets
+wrong gives every sample the same reward, so the advantage is zero and the step is wasted.
+Train on the prompts this model solves *sometimes*.
 
     python scripts/select_band.py data/rl/rl_band.jsonl [--min 800]
 """
@@ -46,8 +45,8 @@ def main():
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     with open(a.out, "w", encoding="utf-8") as f:
         for r in band:
-            # rlvr_data.load_problems reads {prompt, answer, source}; the probe rows call the
-            # question "instruction", and the mismatch is a KeyError 500 steps of GPU time later.
+            # rlvr_data.load_problems reads {prompt, answer, source}; the probe rows call
+            # the question "instruction".
             f.write(
                 json.dumps(
                     {"prompt": r["instruction"], "answer": r["answer"], "source": "band"},

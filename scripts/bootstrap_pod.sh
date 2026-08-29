@@ -7,11 +7,9 @@
 # Stages (each rerunnable, each stopping on error rather than feeding a broken
 # artifact to the next):
 #   verify  — data/data_verify.py against data/MANIFEST.tsv; frozen/eval missing
-#             or mismatched is an ERROR. Prints exactly what an empty pod lacks.
-#   fetch   — pull the fetched tier from their upstream repos (via the existing
-#             fetchers) and the frozen tier from an off-box archive. The archive
-#             location is ARCHIVE (below) — fill it in when the storage owner
-#             decides where the 10.6GB go; until then this stage skips frozen.
+#             or mismatched is an ERROR.
+#   fetch   — fetched tier via the fetchers; frozen tier from $ARCHIVE (skipped
+#             until ARCHIVE points at a real archive).
 #   build   — scripts/build_domains.sh -> data/corpus/<domain>/
 #   vocab   — scripts/build_tokenizer.py --force (needs data/mix_v3.json + the corpus)
 #   check   — scripts/check_mix.py: dry-run the schedule before burning GPUs.
@@ -20,7 +18,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-# Off-box archive root for the frozen tier. NOTE: owner-decided, currently empty.
+# Off-box archive root for the frozen tier; fetch skips frozen while this is absent.
 ARCHIVE=${ARCHIVE:-/archive/aupai-frozen}
 STAGE=${1:-all}
 LOG=/tmp/bootstrap.log
@@ -41,7 +39,6 @@ fi
 # --- fetch ------------------------------------------------------------------
 if want fetch; then
   say "stage fetch"
-  # frozen tier: pull from the off-box archive (skip until ARCHIVE is set)
   if [ -d "$ARCHIVE" ]; then
     for f in pretrain_full cosmopedia_extra en_textbook code_filtered en_math_text; do
       [ -f "data/$f.jsonl" ] || cp "$ARCHIVE/$f.jsonl" "data/$f.jsonl"
@@ -49,7 +46,7 @@ if want fetch; then
   else
     say "  ARCHIVE=$ARCHIVE not set/absent — SKIPPING frozen (5 sources); requires user decision"
   fi
-  # fetched tier via the existing fetchers (idempotent: each skips present files)
+  # fetched tier via the fetchers; each skips files already present (idempotent)
   python3 scripts/fetch_math_data.py ape210k belle gsm8k_zh math23k mxode || die "fetch_math_data"
   python3 scripts/fetch_sft_data.py fetch || die "fetch_sft"
   python3 scripts/fetch_chat_data.py || die "fetch_chat"

@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Does FoNE actually teach arithmetic? A/B on synthetic sums, same budget both ways.
 
-The claim under test is narrow and checkable: k5 writes perfectly formatted chains
-whose arithmetic is invented (160 - 8 = 320), and the suspected cause is that the
-BPE vocab splits numbers by corpus frequency rather than place value -- 1640 as
-16|40, 3200 as 3|200 -- so a carry rule learned on one number cannot transfer to
-the next. If that is the cause, giving the model the VALUE instead of the fragments
-should move held-out accuracy a lot, at equal parameters and equal steps.
+The claim under test: the BPE vocab splits numbers by corpus frequency rather than
+place value (1640 as 16|40), so a carry rule learned on one number cannot transfer
+to the next. Giving the model the VALUE instead of the fragments should move
+held-out accuracy a lot, at equal parameters and equal steps.
 
 Deliberately small: a few minutes on one GPU, or CPU with the fla stand-in. It
 answers whether the full pretrain is worth its hours, so it runs first.

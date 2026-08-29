@@ -36,8 +36,8 @@ SOURCES = {
     "skypile": ("Skywork/SkyPile-150B", "data/", "text", None),
 }
 
-# Control tokens leaked in from distilled corpora; a trailing one made the "unfinished" rule reject
-# 38% of data/pretrain_full.jsonl (7641/20000 sampled, 2026-08-26).
+# Control tokens leak in from distilled corpora; strip them or the "unfinished"
+# rule rejects the documents.
 SPECIAL_TOKEN = re.compile(r"<\|[A-Za-z0-9_]+\|>")
 CJK = re.compile(r"[一-鿿㐀-䶿]")
 BAD = re.compile(r"[�\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -51,10 +51,9 @@ BOILER = re.compile(
 
 
 def load_garbage_patterns():
-    # A missing pattern file used to silently set GARBAGE = None, so the same command returned
-    # 86.6% pass rate on the pod (files absent) and 80.7% locally, with nothing raising. Absence
-    # is now an error; disabling is explicit, because it is a legitimate choice -- garbage_topic
-    # was written for gambling/adult SEO and false-positives on para-athletes and dinosaurs.
+    # A missing pattern file must raise, not silently disable the filter.
+    # AUPAI_NO_GARBAGE=1 disables explicitly: garbage_topic false-positives on
+    # para-athletes and dinosaurs.
     if os.environ.get("AUPAI_NO_GARBAGE") == "1":
         return None
     pats = []
@@ -72,10 +71,9 @@ def load_garbage_patterns():
 GARBAGE = load_garbage_patterns()
 
 
-# A naive per-line hash let 496/500 math_test_500 questions into data/corpus/math/ (2026-08-26):
-# the role marker, multi-line questions and <15-char questions all slipped it. Hence three probes
-# below. QA_PREFIX keeps the pre-ChatML 问：/答： forms because the corpus still holds documents
-# written that way.
+# Holdout probes must catch the role marker, multi-line and <15-char questions a
+# per-line hash misses. QA_PREFIX keeps pre-ChatML 问：/答： forms: the corpus
+# still holds documents written that way.
 QA_PREFIX = re.compile(
     r"^\s*(?:<\|im_start\|>(?:user|assistant|system)\s*|问题?|答案?|Q|A|Question|Answer)\s*[：:]?\s*"
 )
@@ -85,7 +83,7 @@ ANSWER_TAIL = re.compile(r"(?:<\|im_end\|>|\n\s*(?:答案?|A|Answer)\s*[：:])")
 def reject_holdout(text):
     if is_holdout(text):
         return "eval_contaminated"
-    body = QA_PREFIX.sub("", ANSWER_TAIL.split(text, 1)[0]).strip()  # "问：{q}\n答：{a}" -> "{q}"
+    body = QA_PREFIX.sub("", ANSWER_TAIL.split(text, 1)[0]).strip()
     if body != text and is_holdout(body):
         return "eval_contaminated"
     for ln in (ln.strip() for ln in text.split("\n")):
@@ -134,8 +132,8 @@ def reject_reason(text):
             return "nav_menu"
         if len(set(lines)) / len(lines) < 0.7:
             return "dup_lines"
-    # 500, not 2000: above 500 chars the "unfinished" tail is a source credit or tag list on a
-    # complete article; 2000 cost 15pt of yield (8000 fineweb-2 cmn_Hani docs, 2026-08-26).
+    # 500, not 2000: above 500 chars an "unfinished" tail is a source credit or
+    # tag list on a complete article.
     if n < 500 and not END_OK.search(text):
         return "unfinished"
     if GARBAGE is not None and GARBAGE.search(text[:600]):
@@ -373,8 +371,8 @@ def main():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n / total:.1%}")
     if not a.dry:
-        # fineweb-2's HF prefix once silently resolved to zero files; an empty domain surfaces later
-        # as a MISSING cache with no hint why.
+        # A 0-kept domain must raise: an empty source glob surfaces later as a
+        # missing cache with no hint why.
         if reasons["kept"] == 0:
             raise SystemExit(
                 f"ERROR: domain '{a.domain}' kept 0 documents from {a.source} -- "

@@ -108,14 +108,10 @@ def digit_consistency(tok):
 def utf8_integrity(tok, corpus):
     """Fraction of hanzi in whole-character tokens rather than ByteLevel fragments.
 
-    A vocabulary trained on unstratified text had no whole token for common
-    traditional characters and scored web at 1.04 chars/token -- worse than one
-    token per character."""
-    # The token STRING of a ByteLevel BPE is byte-mapped -- 今天 is stored as 'ä»Ĭå¤©' --
-    # so searching it for a literal hanzi finds none, ever. This reported 0.00% whole-char
-    # hanzi and 3,797 byte fragments on a vocabulary that in fact encodes 软件工程师 as ONE
-    # token: an alarm that fires on every correct ByteLevel vocabulary, which is worse than
-    # no alarm. Decode each token back to text before asking the question.
+    A vocabulary without whole tokens for common characters scores worse than one
+    token per character, which chars/token alone underreports."""
+    # ByteLevel BPE token strings are byte-mapped (今天 stored as 'ä»Ĭå¤©'), so a
+    # literal-hanzi search fires on every correct vocabulary. Decode each token first.
     rows = [r for v in corpus.values() for r in v][:600]
     frag = whole = 0
     for e in tok.encode_batch(rows):
@@ -134,7 +130,7 @@ def utf8_integrity(tok, corpus):
 
 def roundtrip(tok, corpus):
     """encode -> decode must return the input. A vocabulary trained without the
-    full 256-byte alphabet silently drops bytes (NUL and tab, on k5)."""
+    full 256-byte alphabet silently drops bytes (NUL and tab)."""
     rows = [r for v in corpus.values() for r in v][:400]
     extra = ["NUL\x00byte", "emoji 🚀 ok", "tab\tnewline\n", "混合 mixed 123", "  双空格  "]
     bad = []
@@ -200,34 +196,14 @@ def english_metrics(tok, corpus):
     return out
 
 
-# A FIXED English passage, so `en fertility` names the text it is measured on. The same
+# A FIXED English passage, so `en fertility` names the text it is measured on: the same
 # vocabulary reads 1.429 here and 1.870 on our own `en` domain, and a threshold that does
 # not say which is not a threshold. Reproducible with no corpus and no network.
 #
-# Measured on this passage, 2026-08-29, tokenizers/from_pretrained, with Chinese
-# chars/token on a fixed Chinese passage beside it:
-#
-#   tokenizer            vocab     en fert   zh chars/tok
-#   ours (aupai)        32,773       1.429        1.693
-#   DeepSeek-V3        128,815       1.104        1.693   <- our Chinese TIES it
-#   GLM-4.5            151,365       1.130        1.608   <- we are better
-#   Qwen3-0.6B         151,669       1.130        1.494   <- we are better
-#   SmolLM3-3B         128,256       1.130        1.134
-#   Phi-4-mini         200,029       1.143        1.144
-#   gpt2                50,257       1.156        0.465
-#   bert-base-uncased   30,522       1.182          n/a
-#
-# Read this the right way round. Our CHINESE is frontier-level on a quarter of the
-# slots. Our English is 25% behind, and every frontier model buys its 1.13 with a
-# 128K-200K vocabulary -- NOT ONE of them is still at 32K in 2026.
-#
-# So the English gap is the price of being bilingual on a 32K budget, not a defect,
-# and the fix the field uses is unavailable to us: a fitted vocabulary scaling law
-# (arXiv 2407.13623, N_v proportional to N_nv^0.83) puts the optimum for this 166M
-# non-embedding model at 12-20K, and a measured sweep on this corpus showed 32K->64K
-# buys +2.8% compression for +33.6M parameters and +14% compute per character. The
-# frontier sits at 128K because it is 7B-100B+; we sit at 32K because we are 200M.
-# Revisit if the model grows.
+# The English gap is the price of bilingual-at-32K, not a defect: every frontier model buys
+# 1.13 with a 128K-200K vocabulary, and a fitted scaling law (arXiv 2407.13623) puts this
+# 166M non-embedding model's optimum at 12-20K. A measured sweep showed 32K->64K buys +2.8%
+# compression for +33.6M parameters and +14% compute per character. Revisit if the model grows.
 REF_EN = (
     "The transformer architecture has become the dominant approach for natural language "
     "processing. Researchers demonstrated that self-attention mechanisms could replace "
@@ -347,23 +323,10 @@ def report(tok, corpus, name):
 
 # ---------------------------------------------------------------- self-test
 #
-# A CHECK WITHOUT A FAILING CASE IS NOT A CHECK (harness.py). The dual, for a file
-# that measures rather than checks:
-#
-#     A METRIC WITHOUT A KNOWN-ANSWER CASE IS NOT A METRIC, AND A METRIC WHOSE
-#     VALUE MOVES WITH THE SAMPLE MUST CARRY THE SAMPLE IN ITS DEFINITION.
-#
-# This file reported four wrong numbers in one day, all of one class -- a value that
-# depends on the measurement configuration, printed without it:
-#
-#   hanzi in whole-char tokens   0.00%  (true 99.2%)  searched byte-mapped token
-#                                                     strings for a literal hanzi
-#   vocabulary utilised           6.4%  (true 99.7%)  402 documents
-#   undertrained (<=1 use)        4.0%  (true 0.43%)  1.6M tokens, not 142M
-#   en fertility                  2.36  (true 1.87)   documents clipped to 2000 chars
-#
-# Three of the four are caught by the scale-stability assertion below, which no
-# amount of reading the code would have caught.
+# A METRIC WITHOUT A KNOWN-ANSWER CASE IS NOT A METRIC, AND A METRIC WHOSE VALUE MOVES
+# WITH THE SAMPLE MUST CARRY THE SAMPLE IN ITS DEFINITION. This file once reported four
+# wrong numbers in one day, all of one class -- a value that depends on the measurement
+# configuration, printed without it.
 
 SCALE_STABLE = ("chars/token", "fertility", "hanzi whole-char")  # must not move with sample size
 SCALE_BOUND = ("utilised", "never used", "undertrained")  # meaningless without the corpus size
@@ -402,11 +365,10 @@ def _demo():
     tok, text = _tiny_tokenizer()
     corpus = {"t": text}
 
-    # 1. KNOWN ANSWERS, A PAIR. One number cannot show a metric discriminates: it read the
-    #    token STRING ('今天' is stored byte-mapped as 'ä»Ĭå¤©') and returned 0.00% on every
-    #    correct ByteLevel vocabulary, and a single low-answer case would have PASSED that.
-    #    So: a 200-merge vocabulary genuinely cannot form whole hanzi out of 3-byte UTF-8
-    #    and must score LOW, a 3000-merge one over the same text must score HIGH.
+    # 1. KNOWN ANSWERS, A PAIR. One number cannot show a metric discriminates: a single
+    #    low-answer case passes a broken reader. A 200-merge vocabulary genuinely cannot
+    #    form whole hanzi out of 3-byte UTF-8 and must score LOW; a 3000-merge one over the
+    #    same text must score HIGH.
     hz = lambda t: float(utf8_integrity(t, corpus)["hanzi in whole-char tokens"].rstrip("%"))
     lo = hz(tok)
     big, _bigtext = _tiny_tokenizer(merges=3000)

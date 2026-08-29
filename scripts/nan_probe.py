@@ -55,7 +55,6 @@ def fwd_hook(name):
 for n_, mod in m.named_modules():
     mod.register_forward_hook(fwd_hook(n_))
 
-# instrument FP8 scale magnitudes
 scales = []
 
 
