@@ -152,35 +152,15 @@ def main():
 
     import torch
 
+    import fone
+
     from loader import load_checkpoint, load_tokenizer
-    from train import generate_batch
 
     model, cfg = load_checkpoint(a.ckpt, device="cuda:0", dtype=torch.bfloat16)
     tok = load_tokenizer(a.tokenizer, cfg)
-    if a.fone:
-        import fone
-
-    def gen_all(prompts):
-        """All problems in one batched call. One prompt at a time ran 180 sequential decodes
-        of up to `steps` tokens each and held the GPU at 31% -- launch-bound, not
-        compute-bound -- so the probe took ~15 minutes where the work is about 20 seconds.
-        Greedy decoding is per-row independent, so batching does not change any answer."""
-        out = []
-        for s in range(0, len(prompts), a.batch):
-            chunk = prompts[s : s + a.batch]
-            if a.fone:
-                ids, vals = fone.encode_prompts(chunk, tok, cfg.num_id)
-                gen, gv = generate_batch(model, ids, a.steps, "cuda:0", prompt_values=vals)
-                out += [fone.decode_text(g, v, tok, cfg.num_id) for g, v in zip(gen, gv, strict=True)]
-            else:
-                ids = [tok.encode(p, add_special_tokens=False).ids for p in chunk]
-                out += [tok.decode(g) for g in generate_batch(model, ids, a.steps, "cuda:0")]
-            print(f"  {min(s + a.batch, len(prompts))}/{len(prompts)}", flush=True)
-        return out
-
     cases = load_cases(a.n)
     print(f"{a.ckpt}\n{len(cases)} HELD-OUT problems (blake2b split, same filter as training)\n", flush=True)
-    texts = gen_all([c["instruction"] for c in cases])
+    texts = fone.generate_texts(model, tok, cfg, [c["instruction"] for c in cases], a.steps, batch=a.batch)
     agg = {}
     for c, t in zip(cases, texts, strict=True):
         n, ok = steps_valid(c["fmt"], t)

@@ -18,6 +18,7 @@ Two rules:
     python scripts/harness.py --selftest # every check must fail on its broken world
 """
 
+import argparse
 import ast
 import functools
 import glob
@@ -326,6 +327,49 @@ def check_pinned_ids(root):
     return PASS, f"<eos>={eos} [NUM]={num}"
 
 
+MAX_TRACKED_MB = 5
+
+
+def check_no_oversized_blob(root):
+    """gitignore does not apply to an already-tracked path, so the pattern list was never the
+    guard it reads as. Moving a file into data/_quarantine/ un-ignored it and committed 40MB;
+    data/sft/*.jsonl was ignored while .parquet and .json were not. Both were patched after
+    the fact. This fires on the NEXT one."""
+    import subprocess
+
+    p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-l", "HEAD"], capture_output=True, text=True)
+    if p.returncode:
+        return SKIP, "not a git repository (the pod checkout is not one)"
+    big = []
+    for ln in p.stdout.splitlines():
+        f = ln.split(maxsplit=4)
+        if len(f) == 5 and f[1] == "blob" and f[3].isdigit() and int(f[3]) > MAX_TRACKED_MB * 2**20:
+            big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
+    if big:
+        return FAIL, f"{len(big)} tracked blob(s) over {MAX_TRACKED_MB}MB: {', '.join(big[:4])}"
+    return PASS, f"no tracked blob over {MAX_TRACKED_MB}MB"
+
+
+def _broken_blob():
+    """A real blob through real git plumbing. Synthesising an ls-tree line would repeat the
+    mistake that left no_stale_running reading a key exp.py never wrote."""
+    import subprocess
+
+    d = _tmp_repo()
+    big = os.path.join(d, "big.jsonl")
+    with open(big, "wb") as f:
+        f.write(b"x" * ((MAX_TRACKED_MB + 1) * 2**20))
+    for cmd in (
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "t@t"],
+        ["git", "config", "user.name", "t"],
+        ["git", "add", "-f", "big.jsonl"],
+        ["git", "commit", "-qm", "big"],
+    ):
+        subprocess.run(cmd, cwd=d, check=True, capture_output=True)
+    return d
+
+
 def check_no_stale_running(root):
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
@@ -391,6 +435,15 @@ CHECKS = [
         "a domain with no shards is only caught after the other domains are tokenized",
         check_mix_shards,
         _broken_mix,
+    ),
+    (
+        "no_oversized_blob",
+        f"no file over {MAX_TRACKED_MB}MB is tracked by git",
+        "gitignore does not apply to already-tracked paths, so moving a file out of an ignored "
+        "directory committed 40MB, and data/sft ignored only *.jsonl while the data arrived as "
+        "*.parquet",
+        check_no_oversized_blob,
+        _broken_blob,
     ),
     (
         "tokenizer_roundtrip",
@@ -529,52 +582,50 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False):
     ]
     if only:
         todo = [n for n in todo if only in n]
+    # gaps counts every unscored name; this can only close the ones whose weights exist. Say
+    # which ones it cannot, or an empty todo reads as "nothing left" over gaps' remainder.
+    absent = [n for n in checkpoint_names(scores) if n not in scores and n not in todo]
+    if absent:
+        print(
+            f"  {len(absent)} unscored checkpoint(s) NOT on disk, so not closable here: {', '.join(absent)}"
+        )
     if not todo:
-        print("  nothing to measure: every checkpoint on disk carries a score")
+        print("  nothing to measure: every checkpoint whose weights are here carries a score")
         return 0
     print(f"  {len(todo)} checkpoint(s) on disk with no score: {', '.join(todo)}")
     if dry:
         return 0
-    env = dict(os.environ)
-    if ngpu:
-        env["NGPU"] = str(ngpu)
+    env = {**os.environ, "NGPU": str(ngpu)} if ngpu else None
     for n in todo:
         ck = f"{n}.pt"
         cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
         print(f"\n  === {ck} ===", flush=True)
         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
-        out = p.stdout + p.stderr
-        # Every headline the matrix prints, in order, as one result string.
-        hits = [ln.strip() for ln in out.splitlines() if ln.startswith("TOTAL") or "STOP:" in ln]
-        result = " | ".join(hits) if hits else f"eval produced no TOTAL line (rc={p.returncode})"
-        status = "ok" if hits and p.returncode == 0 and not any("STOP:" in h for h in hits) else "fail"
+        # eval_all.sh writes runs/evalall_<ckpt>.log unconditionally, so a crash after the
+        # math-hard stage still leaves the lines that DID land; re-capturing stdout loses them.
+        log = os.path.join(ROOT, "runs", f"evalall_{n}.log")
+        out = open(log, encoding="utf-8").read() if os.path.exists(log) else p.stdout + p.stderr
+        # eval_all.sh:91's own extractor. Matching only "TOTAL" dropped the digit head and the
+        # arithmetic rate -- the two things the matrix exists to report BESIDE the score.
+        keep = re.compile(r"TOTAL|whole-number exact|^Average|% wrong|STOP:")
+        hits = [ln.strip() for ln in out.splitlines() if keep.search(ln)]
+        result = " | ".join(hits) if hits else f"eval produced no summary line (rc={p.returncode})"
+        # `ok` has to mean what ledger and gaps mean by "measured", which is score_from() being
+        # able to read a math-hard number out of this string. Deciding it on "some TOTAL line
+        # appeared" lets measure record a gap as closed while gaps still lists it -- exactly the
+        # failure this command exists to prevent.
+        status = "ok" if p.returncode == 0 and score_from(result) is not None else "fail"
         print(f"  {result}")
-        for act in (
-            [
-                "start",
-                "--name",
-                n,
-                "--cmd",
-                " ".join(cmd),
-                "--hypothesis",
-                "harness measure: closing a gaps entry",
-            ],
-            [
-                "done",
-                "--name",
-                n,
-                "--status",
-                status,
-                "--result",
-                result,
-                "--finding",
-                "Measured by `harness.py measure`, not by hand.",
-            ],
-        ):
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py")] + act, cwd=ROOT, capture_output=True
-            )
-    experiments.cache_clear()
+
+        # start THEN done, not done alone: exp.py's done appends a row with cmd="" when no
+        # running row matches, and recorded_scores attributes an empty-cmd row as
+        # f"ckpt_{name}" -- so a done-only row here would score `ckpt_ckpt_k8` and leave the
+        # gap open. The start row is also where the ledger reads provenance from.
+        def exp(*argv):
+            subprocess.run([sys.executable, os.path.join(HERE, "exp.py"), *argv], cwd=ROOT, check=True)
+
+        exp("start", "--name", n, "--cmd", " ".join(cmd), "--hypothesis", "harness measure")
+        exp("done", "--name", n, "--status", status, "--result", result)
     print(f"\n  measured {len(todo)}; re-run `harness.py gaps` to see what is left")
     return 0
 
@@ -632,13 +683,24 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
-def _flag(name):
-    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
-
-
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    cmd = args[0] if args else "all"
+    # argparse, not a hand-rolled scan: two parsers (a bare-flag filter for the subcommand
+    # and an index lookup for the values) let `harness.py --ngpu 7 measure` resolve cmd="7",
+    # match no branch, print nothing and exit 0. A silent no-op is the failure mode this
+    # file exists to prevent, and `choices` turns it into an error for free.
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages"]
+    )
+    ap.add_argument("--only", help="measure: substring filter on the checkpoint name")
+    ap.add_argument("--ngpu", help="measure: shards for eval_all.sh")
+    ap.add_argument("--tokenizer", help="measure: the vocabulary these checkpoints were trained on")
+    ap.add_argument("--dry", action="store_true", help="measure: list what would run")
+    ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
+    a = ap.parse_args()
+    if a.selftest:
+        return _demo() or 0
+    cmd = a.cmd
     res = []
     if cmd in ("all", "check"):
         print("INVARIANTS  (a check that cannot run is a FAILURE, never a pass)")
@@ -653,12 +715,7 @@ def main():
         print("\nGAPS  (stated out loud, never inferred from an absence)")
         gaps()
     if cmd == "measure":
-        return measure(
-            only=_flag("--only"),
-            ngpu=_flag("--ngpu"),
-            tokenizer=_flag("--tokenizer"),
-            dry="--dry" in sys.argv,
-        )
+        return measure(only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry)
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)
@@ -669,7 +726,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        _demo()
-    else:
-        sys.exit(main())
+    sys.exit(main())

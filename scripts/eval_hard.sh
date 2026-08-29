@@ -8,10 +8,10 @@
 set -euo pipefail
 CKPT=$1; N=${2:-6}
 K=${K:-1}; TEMP=${TEMP:-0}          # K>1 turns this into a sharded pass@k run
-# K>1 with TEMP=0 draws k identical copies of the greedy answer: pass@k == pass@1, gap 0 by
-# construction, and the RL gate is decided on it. math_hard.py asserts, but default it here
-# so the common `K=8 scripts/eval_hard.sh X` does the right thing rather than raising.
-if [ "$K" -gt 1 ] && [ "$TEMP" = "0" ]; then TEMP=0.8; echo "K=$K: defaulting TEMP=0.8"; fi
+# K>1 with TEMP=0 is rejected by eval/math_hard.py, which is the right layer: it also
+# covers the direct `python eval/math_hard.py --k 8` the RL gate is documented as using.
+# Coercing TEMP here instead made TEMP mean two things depending on K, and silently
+# rewriting a value the operator passed is this repo's entire failure catalogue.
 MAXNEW=${MAXNEW:-512}               # generation budget; raise it to test reasoning-length scaling
 # The vocabulary the checkpoint was trained on. Ids do not survive a rebuild of
 # data/tokenizer.json, and a mismatch scores as noise rather than raising.

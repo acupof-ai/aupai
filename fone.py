@@ -176,6 +176,32 @@ def decode_text(ids, vals, tok, num_id):
     return "".join(out)
 
 
+def generate_texts(model, tok, cfg, prompts, steps, device="cuda:0", temperature=0.0, batch=60):
+    """prompts -> texts, FoNE or not. The ONE place the [NUM] value channel is threaded.
+
+    The encode -> generate_batch -> decode triple with a `fone` branch was copy-pasted into
+    four files, and the batching fix landed in only one of them: scripts/probe_arith.py still
+    fed generate_batch a single prompt at a time, 180 sequential decodes at 31% GPU, ~15
+    minutes where the work is ~20 seconds.
+
+    Chunked because generate_batch allocates (B, T) up front and grows it a column per step;
+    every other caller chunks too."""
+    from train import generate_batch
+
+    fone_on = bool(getattr(cfg, "fone", False))
+    out = []
+    for s in range(0, len(prompts), batch):
+        chunk = prompts[s : s + batch]
+        if fone_on:
+            ids, vals = encode_prompts(chunk, tok, cfg.num_id)
+            gen, gv = generate_batch(model, ids, steps, device, temperature, vals)
+            out += [decode_text(g, v, tok, cfg.num_id) for g, v in zip(gen, gv, strict=True)]
+        else:
+            ids = [tok.encode(p, add_special_tokens=False).ids for p in chunk]
+            out += [tok.decode(g) for g in generate_batch(model, ids, steps, device, temperature)]
+    return out
+
+
 def split_numbers(text):
     """Text -> (segments, values): the text with numbers cut out, and their values.
 

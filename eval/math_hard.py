@@ -154,7 +154,7 @@ def main():
                 lv = by.setdefault(r["level"], [0, 0.0, 0, 0])
                 lv[0] += int(oks[0])
                 lv[1] += sum(oks[1:]) / k if k > 1 else 0.0
-                lv[2] += int(any(oks))  # greedy + k samples -> pass@(k+1); labelled below
+                lv[2] += int(any(oks[1:]))  # SAMPLED only: greedy is not one of the k draws
                 lv[3] += 1
     if dump:
         dump.close()
@@ -164,17 +164,19 @@ def main():
     pk = sum(v[2] for v in by.values())
     line = f"math-hard: pass@1(greedy) {p1 / n:.1%} ({p1}/{n})"
     if k > 1:
-        # k+1, not k: `oks` holds the greedy answer AND the k samples, so any() is a pass
-        # over k+1 generations. Printing it as pass@k overstated every gate it fed.
+        # pass@k is over the k SAMPLES; the greedy answer is pass@1 and not a draw. This
+        # counted greedy too, i.e. pass@(k+1) under a pass@k label, while eval_hard.sh's
+        # merge heredoc computed the sampled-only version -- so one run reported two
+        # different quantities and the one that reached the ledger was the other one.
         line += (
-            f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k + 1} {pk / n:.1%} ({pk}/{n})"
+            f" | sampled@T={temp} mean {ps / n:.1%} | pass@{k} {pk / n:.1%} ({pk}/{n})"
             f" | gap {(pk - p1) / n:+.1%} | T={temp}"
         )
     print(line)
     print(
         "  "
         + ", ".join(
-            f"{lvl}: p@1 {v[0] / v[3]:.0%}" + (f" p@{k + 1} {v[2] / v[3]:.0%}" if k > 1 else "") + f" (n={v[3]})"
+            f"{lvl}: p@1 {v[0] / v[3]:.0%}" + (f" p@{k} {v[2] / v[3]:.0%}" if k > 1 else "") + f" (n={v[3]})"
             for lvl, v in sorted(by.items())
         )
     )

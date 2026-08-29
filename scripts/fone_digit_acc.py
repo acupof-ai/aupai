@@ -42,7 +42,12 @@ def main():
     if next(model.parameters()).dtype == torch.float32 and a.device.startswith("cuda"):
         model = model.to(torch.bfloat16)
 
-    cache = os.path.join(os.path.dirname(train.TOKEN_CACHE), f"tokens_{a.domain}.pt")
+    # _domain_cache_path, not a hand-built name: the FoNE cache is tokens_<domain>_fone.pt
+    # and this read tokens_<domain>.pt, a bare 1-D id tensor, so `ids, vals = ...` unpacked a
+    # million-element tensor ("too many values to unpack"). train.py:1041 documents this exact
+    # failure and the fix is to go through the helper that owns the name.
+    train.Cfg.fone = True
+    cache = train._domain_cache_path(a.domain)
     ids, vals = torch.load(cache, map_location="cpu", weights_only=True)
     # The LAST rows of the cache: training consumes it from the front, so the tail is
     # the least-seen part of a domain that is only ~5 epochs deep.

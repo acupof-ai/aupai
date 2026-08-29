@@ -9,8 +9,8 @@ import argparse, random, re, sys, torch
 sys.path.insert(0, ".")
 sys.path.insert(0, "scripts")
 sys.path.insert(0, "mathbank")
+import fone
 from loader import load_checkpoint, load_tokenizer
-from train import generate_batch
 from arith_curriculum import held_out
 
 ap = argparse.ArgumentParser()
@@ -25,20 +25,6 @@ a = ap.parse_args()
 
 model, cfg = load_checkpoint(a.ckpt, device="cuda:0", dtype=torch.bfloat16)
 tok = load_tokenizer(a.tokenizer, cfg)
-if a.fone:
-    import fone
-
-
-def gen(prompt):
-    """One call into train.generate_batch, which owns the FoNE value channel and the
-    prompt truncation every hand-rolled copy of this loop was missing."""
-    if a.fone:
-        (ids,), (vals,) = fone.encode_prompts([prompt], tok, cfg.num_id)
-        (out,), (ov,) = generate_batch(model, [ids], a.steps, "cuda:0", prompt_values=[vals])
-        return fone.decode_text(out, ov, tok, cfg.num_id), len(out) < a.steps
-    ids = tok.encode(prompt, add_special_tokens=False).ids
-    (out,) = generate_batch(model, [ids], a.steps, "cuda:0")
-    return tok.decode(out), len(out) < a.steps
 
 
 rng = random.Random(0)
@@ -77,10 +63,11 @@ def score(prefix, label, strip_eq=False):
     """strip_eq must match how the checkpoint was trained (round 5 drops `= ` from
     scratchpad prompts), else this measures prompt tolerance, not computation."""
     first, anywhere, stops = {"+": [0, 0], "-": [0, 0], "×": [0, 0]}, {"+": 0, "-": 0, "×": 0}, 0
-    for p, gold, op in cases:
-        if strip_eq:
-            p = p.rstrip("= ")
-        t, stopped = gen(prefix + p)
+    prompts = [prefix + (p.rstrip("= ") if strip_eq else p) for p, _g, _o in cases]
+    texts = fone.generate_texts(model, tok, cfg, prompts, a.steps)
+    for (p, gold, op), t in zip(cases, texts, strict=True):
+        # generate_texts stops at <eos> per row, so a short generation IS a terminated one.
+        stopped = len(tok.encode(t, add_special_tokens=False).ids) < a.steps
         stops += stopped
         nums, rev = readings(t)
         first[op][1] += 1
