@@ -95,6 +95,37 @@ The missing fourth branch, stated now for the next round:
 |---|---|---|
 | BOTH near zero **but teacher-forced accuracy jumps** | the steps are learned, the rollout is not | train on self-generated prefixes — scheduled sampling / DAgger-style — before any RL, because the failure is recovery from the model's OWN error and step-RL samples exactly those rollouts |
 
+### ARM B's dissociation is positive evidence, not a null
+
+Adding 7.4% general replay moved the teacher-forced digit head **significantly** (57.2% ->
+61.1%, McNemar chi2=15.9, p=6.6e-05) and moved BOTH **not at all** (0.0% in all three
+checkpoints). If the failure were missing coverage, extra data should have moved both. It
+moved only the teacher-forced side.
+
+That dissociation is the positive case for the dynamics reading, and it is stronger than
+the ARM A null on its own: one intervention, two measurements, opposite outcomes. (What
+replay actually improved is not measured here — it is not the procedure, and attributing it
+to "general numeric representation" would be a guess.)
+
+### The mechanism, from the code
+
+`train.py:564` defines the only digit head; `train.py:755` (training) and `train.py:919`
+(free generation) both call it, and the teacher-forced measurement above calls the same one.
+So the 57.2%-vs-0 gap is not an artifact of a separate head — the hidden state's prefix is
+the only variable.
+
+More precisely: `train.py:577` feeds the number back into the input embedding
+(`emb = emb + num_proj(feat)`) from `num_vals`, and `num_vals` is gold on every training
+step. **The digit head has never once trained with a wrong value in its input.** So
+scheduled sampling has to be applied to the VALUE channel; doing it on the token channel
+alone cannot reach this gap.
+
+Cheapest first cut (mechanism check, not the real intervention): with probability p, replace
+gold `num_vals` in the prefix with a wrong value during training. Off-distribution, but it
+tests whether "training under a wrong prefix value" has any signal at all, in one batch and
+with no generation. The real intervention is DAgger-shaped: generate, truncate at the first
+error, SFT the gold continuation.
+
 Two consequences worth recording:
 
 1. **A null landing in a pre-registered cell does not make that cell correct.** The
