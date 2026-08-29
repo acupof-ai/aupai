@@ -453,3 +453,45 @@ control at p=1.2e-7, digit splitting has no benefit measurement at all.
 binding constraint is not the vocabulary -- one prompt tag bought +25pt
 computation and +37pt termination, which is larger than anything the size
 question is likely to be worth.
+
+## k6_arith5 — removing the shortcut slot (2026-08-29)
+
+**Asked.** Round 4 answered `[竖式] 61 + 48 = ` with `109，0 + 1 + 进位0 = 1...` --
+result first, working appended as decoration -- so the mechanism that makes a
+scratchpad sample-efficient never ran. Hypothesis: `= ` is a shortcut slot,
+because a third of the training data is `a + b = ` followed immediately by the
+answer. Round 5 removes it from scratchpad prompts only; plain and reverse keep
+theirs as internal controls.
+
+| | computation | termination |
+|---|---:|---:|
+| plain (control, unchanged) | 41.7% -> 38.9% | 62.8% -> **80.0%** |
+| reverse (control, unchanged) | 30.0% -> **34.4%** | 17.2% -> **37.8%** |
+| **scratchpad** (the one variable) | 28.9% -> **2.8%** | 17.8% -> 13.9% |
+
+**Scratchpad collapsed, and it is not a measurement artifact.** Three things were
+checked before believing it, because the previous two rounds each turned up a
+scoring bug:
+  - the training rows are correct (55,888 scratchpad rows, targets intact:
+    `[竖式] 645 + 822` -> `\n5 + 2 + 进位0 = 7，写 7，进位 0\n...`)
+  - the probe uses the round-5 prompt shape (`--strip_eq`), not a shape the model
+    never saw
+  - the generation budget was not the cause -- the generations do not run out of
+    room, they are incoherent from the first token:
+    `[竖式] 74 + 27` -> `+ 1 = 71，写 9010056554 5，翻译6，96 6 6 1借位0张9...`
+
+**So round 4's scratchpad 28.9% was never scratchpad computation.** It was the
+same answer-first guess plain makes, with working appended. Removing the shortcut
+did not damage a working ability; it revealed that the ability was never there.
+
+**The constraint that remains is procedure execution.** This model can guess a
+two-digit answer 30-40% of the time through the FoNE digit head, and cannot
+execute a multi-step written procedure at all. That is downstream of both
+constraints already fixed -- number representation (round 3, p=1.2e-7) and format
+ambiguity (round 4, p=1.2e-7) -- and neither of those touches it.
+
+**Unexplained, and worth not papering over:** both untouched controls improved
+their termination (plain 62.8% -> 80.0%, reverse 17.2% -> 37.8%). Their prompts
+and targets are byte-identical to round 4. The formats are therefore not
+independent -- changing the scratchpad third of the data changed behaviour on the
+other two thirds -- and no hypothesis here explains the direction.
