@@ -54,7 +54,11 @@ GATES = {
     # is a glitch token by the Fishing-for-Magikarp definition and no amount of training
     # reaches it.
     "never used frac": (0.005, False, "glitch tokens: never trained, and training cannot fix them"),
-    "en fertility": (1.5, False, "every MC benchmark in eval/ except C-Eval is English"),
+    # On REF_EN, not on whatever English happens to be in the corpus sample: the same
+    # vocabulary reads 1.429 on REF_EN and 1.870 on our own `en` domain. Threshold set from
+    # measured references on that exact text -- bert-base-uncased 1.182 with a SMALLER
+    # vocabulary than ours -- plus ~15% for being bilingual at 32K. Ours is 1.429: FAIL.
+    "ref fertility": (1.35, False, "every MC benchmark in eval/ except C-Eval is English"),
     "hanzi whole-char": (0.95, True, "byte-fragmented hanzi is worse than one token per character"),
 }
 
@@ -154,6 +158,7 @@ def collect(path, corpus, train_rows, eval_rows, score_bits):
     # compression rate (-0.51); it is scored rather than gated because its counterexamples
     # (arXiv 2402.14614) are real.
     m["renyi"] = R.renyi_efficiency(counts)
+    m.update(R.ref_fertility(tok))
     em = R.english_metrics(tok, corpus)
     if em:
         m["en fertility"] = em["fertility (tokens/word)"]
@@ -178,6 +183,7 @@ METRICS = {
     "digit consistent": ("structure", True),
     "renyi": ("predictability", True),
     "en fertility": ("compression", False),
+    "ref fertility": ("compression", False),
     "parity spread": ("equity", False),
 }
 

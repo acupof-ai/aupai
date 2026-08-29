@@ -200,6 +200,44 @@ def english_metrics(tok, corpus):
     return out
 
 
+# A FIXED English passage, so `en fertility` names the text it is measured on. The same
+# vocabulary reads 1.429 here and 1.870 on our own `en` domain, and a threshold that does
+# not say which is not a threshold. Reproducible with no corpus and no network.
+#
+# Measured on this passage, 2026-08-29, tokenizers/from_pretrained:
+#   ours (aupai)          32,773   1.429   26.0% of words split
+#   bert-base-uncased     30,522   1.182   11.7%      <- SMALLER vocabulary than ours
+#   gpt2                  50,257   1.156   11.7%
+#   Qwen2.5-0.5B         151,665   1.130    9.1%
+#   gpt-neox-20b          50,277   1.117    7.8%
+# So vocabulary size is not the excuse: a same-size English-only vocabulary is 21% better.
+# We spend slots on Chinese and that is the intended trade -- the gate below asks only that
+# the bilingual cost stay inside ~15% of an English-only vocabulary of our own size.
+REF_EN = (
+    "The transformer architecture has become the dominant approach for natural language "
+    "processing. Researchers demonstrated that self-attention mechanisms could replace "
+    "recurrence entirely, enabling parallelization across sequence positions. Subsequent "
+    "investigations established scaling relationships between parameters, dataset size, and "
+    "computational budget. Practitioners increasingly emphasize data quality over raw "
+    "quantity, particularly for smaller models where memorization capacity is constrained. "
+    "Tokenization remains an underappreciated design decision: vocabulary construction "
+    "determines compression efficiency, downstream generalization, and the granularity at "
+    "which numerical reasoning operates."
+) * 8
+EN_REFERENCE = {"bert-base-uncased": 1.182, "gpt2": 1.156, "qwen2.5": 1.130, "gpt-neox": 1.117}
+
+
+def ref_fertility(tok):
+    """Tokens per word on REF_EN -- the same text for every vocabulary, forever."""
+    n = s = 0
+    words = WORD.findall(REF_EN)
+    for w in words:
+        k = len(tok.encode(" " + w, add_special_tokens=False).ids)
+        n += k
+        s += k > 1
+    return {"ref fertility": n / len(words), "ref split": s / len(words)}
+
+
 def parity(tok, corpus):
     """Bytes per token per domain, relative to the best-served one; 1.00 is even."""
     per = {}
@@ -404,9 +442,19 @@ def _demo():
             assert lb > la, f"clip= did not bind: {la} vs {lb} chars"
         print("   sample_corpus: shards/clip bind", file=_sys.stderr)
 
+    # 5. REF_EN is a fixed string, so ref_fertility must be reproducible to the digit --
+    #    it is the anchor the English gate's threshold was derived from, and a silent edit
+    #    to the passage would move the threshold's meaning without moving the threshold.
+    r1, r2 = ref_fertility(big)["ref fertility"], ref_fertility(big)["ref fertility"]
+    assert r1 == r2, "ref_fertility is not deterministic"
+    assert len(WORD.findall(REF_EN)) == 616, (
+        f"REF_EN changed ({len(WORD.findall(REF_EN))} words, was 616): the English gate's "
+        "threshold was measured on the old passage and no longer means what it says"
+    )
+
     print(
         f"tokenizer_report self-test OK ({len(SCALE_STABLE)} scale-stable metrics checked, "
-        f"{len(SCALE_BOUND)} declared scale-bound, 2 known-answer cases)"
+        f"{len(SCALE_BOUND)} declared scale-bound, 2 known-answer cases, REF_EN pinned)"
     )
 
 
