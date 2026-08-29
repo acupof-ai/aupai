@@ -1,143 +1,168 @@
 {
-  "facts": [
-    {
-      "id": "be.generative_zero",
-      "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
-      "measured": "2026-08-30",
-      "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
-      "config": {
-        "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
-        "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.probe_degeneration",
-      "value": "a zero from a degenerate probe carries no difficulty information: the v2 zero is compatible with both 'problems too hard' and 'model cannot attempt this surface form'. A probe that reads the same under opposite facts is not a probe (aupai-fb standard). Resolution: inconclusive(退化), not 'no resolution'; the pre-registered score-threshold criterion lacked a generation-validity precondition",
-      "measured": "2026-08-30",
-      "source": "facts/contamination.json#cont.math_hard_v2.resolution_probe (criterion_lesson, audit); aupai-fb ruling 2026-08-30",
-      "config": {
-        "evidence": "9/1080 boxed, 8/1080 coherent-attempt, colon repetition loops; math-500 control 2.8% same checkpoint"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.mc_chance",
-      "value": "3 of 5 MC benchmarks are pinned at the 25% chance line on the 0830v1 ladder; ceval (the only Chinese one) is among the two that move",
-      "measured": "2026-08-30",
-      "source": "aupai-fb, relaying the existing MC eval record (docs/lessons/base_eval_at_200m.md §4)",
-      "config": {
-        "suite": "5 MC benchmarks, 4 English + ceval",
-        "model": "0830v1 ladder, 200M-class"
-      },
-      "uncertainty": "the exact 5 benchmarks and per-benchmark numbers were not re-derived this session; the 3/5-at-chance + ceval-moves pattern is from fb's record",
-      "status": "recorded"
-    },
-    {
-      "id": "be.loss_moves",
-      "value": "domain loss moves 1.66-1.99 nat across the 0.2B->3.24B ladder (16x data span) while every capability metric sits at floor — the instrument gap this research addresses",
-      "measured": "2026-08-30",
-      "source": "facts/data_scaling.json; aupai-fb task statement",
-      "config": {
-        "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.lit_small_scale",
-      "value": "the Pythia/OLMo/SmolLM lineage scores base models with zero-shot LIKELIHOOD only (continuation log-prob MC + perplexity), never generation. What moves below 400M: perplexity, LAMBADA-style last-word prediction (Pythia-70M already 0.24-0.27), minimal-pair acceptability (BLiMP: knowledge detectable where task accuracy is at floor). MC commonsense needs ~410M+",
-      "measured": "2026-08-30",
-      "source": "Biderman et al. 2023 Pythia arXiv 2304.01373 (suite: LAMBADA/PIQA/WinoGrande/WSC/ARC/SciQ/LogiQA; Fig.6); Warstadt et al. 2020 BLiMP; SmolLM 2024 (eval every 2B tokens)",
-      "config": {
-        "pythia": "70M-12B, 300B tokens, 154 checkpoints each",
-        "smollm": "135M/360M/1.7B, 600B tokens"
-      },
-      "uncertainty": "SmolLM's exact 135M/360M per-benchmark numbers are in paper figures not transcribable from fetched sources; the qualitative claim (eval every 2B tokens, gains slowing after 400B tokens on some benchmarks) is from the SmolLM blog text",
-      "status": "recorded"
-    },
-    {
-      "id": "be.schaeffer_smooth_metrics",
-      "value": "Schaeffer et al. 2023: emergent abilities are largely a metric artifact — with smooth token-level metrics (target logprob, acceptability) improvement is continuous from early training; discontinuous metrics (exact match, pass@1) manufacture the phase transition. Practical transfer: score the log-probability of the correct answer against matched wrong ones instead of exact-matching generation",
-      "measured": "2026-08-30",
-      "source": "Schaeffer et al. 2023, arXiv 2304.15004",
-      "config": {
-        "paper": "arXiv 2304.15004",
-        "scope": "metric granularity vs apparent emergence; token-level smooth metrics show continuous improvement"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.climp_prior_art",
-      "value": "CLiMP (Xiang et al. 2021) is the Chinese minimal-pair prior art: 16 syntactic contrasts across 9 Mandarin phenomena, 1000 pairs/contrast, 95.8% human agreement, template-generated over an annotated vocab (3456 words, 84 features), matched sentence length per pair, one paradigm discarded for <85% human agreement. Best: classifier-noun agreement, verb complement selection; worst: ba construction, binding, filler-gap. Chinese BERT 81.8%, LSTMs moderately above chance. github.com/beileixiang/CLiMP. Newer: ZhoBLiMP (arXiv 2411.06096), MultiBLiMP (arXiv 2504.02768)",
-      "measured": "2026-08-30",
-      "source": "Xiang et al. 2021, arXiv 2101.11131 (full text extracted); docs/lessons/base_eval_at_200m.md §2",
-      "config": {
-        "phenomena_named": "classifier-noun, verb complement, ba construction, coverbs, NP head finality, binding, filler-gap, anaphora/agreement (8 of 9 named in paper text; 16 paradigms in repo)"
-      },
-      "uncertainty": "the 9th phenomenon family is not named in the paper's prose (Table 1 is a figure); the repo lists all 16 paradigms",
-      "status": "recorded"
-    },
-    {
-      "id": "be.minimal_pair_rules",
-      "value": "construction rules for zh minimal pairs: (1) one controlled edit, matched character length AND matched tokenization — BPE merges across the edit boundary break the comparison (22% of our first draft failed: 他在 merges while 他再 does not, 吃了 merges in SVO but not SOV, 这本书 is one token); assert equal token length, contiguous diff span for substitutions, identical token multiset for permutations; skip and report failures. (2) score = full-sentence sum logprob, length-matched so no normalization. (3) known-answer: swap labels, must invert, >=60pt spread on the strongest checkpoint. (4) human spot-check per dimension (CLiMP discarded a paradigm below 85% agreement)",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §2; eval/base_matrix.py align_pairs() (277/303 pairs aligned after the merge fixes)",
-      "config": {
-        "prototype": "eval/base_matrix.py: 5 dims (word_order 99, numeric 100, classifier 42, function_word 20, factual 16), self-test passing"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.sample_size_math",
-      "value": "at a 50% floor, SE=sqrt(0.25/n): n=100 -> 5.0%, n=277 -> 3.0%, n=1000 (BLiMP/CLiMP) -> 1.6%, n=4900 -> 0.7%. Minimum detectable delta at 80% power: ~14pt at n=100, ~8.4pt at n=277, ~4.4pt at n=1000, 2pt at n=4900. Resolving 2 points needs ~4900 pairs/dimension; 1000/dimension is the proven operating point for tracking a 16x ladder",
-      "measured": "2026-08-30",
-      "source": "computed: n=((z_a+z_b)*0.5/delta)^2, z_a=1.96 two-sided, z_b=0.84; docs/lessons/base_eval_at_200m.md §2",
-      "config": {
-        "assumption": "binomial, p=0.5 worst case"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.mc_language_confound",
-      "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis)",
-      "config": {
-        "suite": "5 MC benchmarks, 4 English + ceval",
-        "model": "0830v1 ladder, 200M-class",
-        "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.early_signal_ordering",
-      "value": "synthesized ordering of when metrics leave the floor: domain loss -> token-level target logprob / acceptability minimal pairs -> LAMBADA-style constrained prediction -> MC commonsense (~410M+) -> few-shot ICL -> generation. The 'loss moves but capability does not' gap is mostly metric granularity (Schaeffer), not a model waiting period. Likelihood measures recognition not production — necessary, not sufficient",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §3; Schaeffer 2304.15004; BLiMP; Pythia Fig.6",
-      "config": {
-        "synthesized_from": "Schaeffer 2304.15004, BLiMP 2020, Pythia Fig.6 (separate studies, not one ladder)",
-        "validation": "the 0830v1 six-checkpoint run is the direct test (aupai-de's implementation)"
-      },
-      "uncertainty": "the ordering is synthesized from separate studies, not measured on one ladder; the 0830v1 six-checkpoint run is the direct test and belongs to de's implementation",
-      "status": "recorded"
-    },
-    {
-      "id": "be.math_v2_likelihood_twin",
-      "value": "recommended continuous math signal at 200M: rescore math-hard v2 as likelihood — p(correct solution) vs p(matched wrong solution) per problem — instead of generation. Should move across the 16x ladder where generative pass@1 is structurally zero. Caveat: recognition, not production",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §3 (recommendation); Schaeffer 2304.15004",
-      "config": {
-        "data": "data/synthetic/math_hard_eval_v2_1k.jsonl (1080 problems, construction-from-answer golds)"
-      },
-      "uncertainty": "not yet built or measured; it is a recommendation for de",
-      "status": "recorded"
-    }
-  ]
+ "facts": [
+  {
+   "id": "be.generative_zero",
+   "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
+   "measured": "2026-08-30",
+   "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
+   "config": {
+    "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
+    "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.probe_degeneration",
+   "value": "a zero from a degenerate probe carries no difficulty information: the v2 zero is compatible with both 'problems too hard' and 'model cannot attempt this surface form'. A probe that reads the same under opposite facts is not a probe (aupai-fb standard). Resolution: inconclusive(退化), not 'no resolution'; the pre-registered score-threshold criterion lacked a generation-validity precondition",
+   "measured": "2026-08-30",
+   "source": "facts/contamination.json#cont.math_hard_v2.resolution_probe (criterion_lesson, audit); aupai-fb ruling 2026-08-30",
+   "config": {
+    "evidence": "9/1080 boxed, 8/1080 coherent-attempt, colon repetition loops; math-500 control 2.8% same checkpoint"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.mc_chance",
+   "value": "3 of 5 MC benchmarks are pinned at the 25% chance line on the 0830v1 ladder; ceval (the only Chinese one) is among the two that move",
+   "measured": "2026-08-30",
+   "source": "aupai-fb, relaying the existing MC eval record (docs/lessons/base_eval_at_200m.md §4)",
+   "config": {
+    "suite": "5 MC benchmarks, 4 English + ceval",
+    "model": "0830v1 ladder, 200M-class"
+   },
+   "uncertainty": "the exact 5 benchmarks and per-benchmark numbers were not re-derived this session; the 3/5-at-chance + ceval-moves pattern is from fb's record",
+   "status": "recorded"
+  },
+  {
+   "id": "be.loss_moves",
+   "value": "domain loss moves 1.66-1.99 nat across the 0.2B->3.24B ladder (16x data span) while every capability metric sits at floor — the instrument gap this research addresses",
+   "measured": "2026-08-30",
+   "source": "facts/data_scaling.json; aupai-fb task statement",
+   "config": {
+    "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.lit_small_scale",
+   "value": "the Pythia/OLMo/SmolLM lineage scores base models with zero-shot LIKELIHOOD only (continuation log-prob MC + perplexity), never generation. What moves below 400M: perplexity, LAMBADA-style last-word prediction (Pythia-70M already 0.24-0.27), minimal-pair acceptability (BLiMP: knowledge detectable where task accuracy is at floor). MC commonsense needs ~410M+",
+   "measured": "2026-08-30",
+   "source": "Biderman et al. 2023 Pythia arXiv 2304.01373 (suite: LAMBADA/PIQA/WinoGrande/WSC/ARC/SciQ/LogiQA; Fig.6); Warstadt et al. 2020 BLiMP; SmolLM 2024 (eval every 2B tokens)",
+   "config": {
+    "pythia": "70M-12B, 300B tokens, 154 checkpoints each",
+    "smollm": "135M/360M/1.7B, 600B tokens"
+   },
+   "uncertainty": "SmolLM's exact 135M/360M per-benchmark numbers are in paper figures not transcribable from fetched sources; the qualitative claim (eval every 2B tokens, gains slowing after 400B tokens on some benchmarks) is from the SmolLM blog text",
+   "status": "recorded"
+  },
+  {
+   "id": "be.schaeffer_smooth_metrics",
+   "value": "Schaeffer et al. 2023: emergent abilities are largely a metric artifact — with smooth token-level metrics (target logprob, acceptability) improvement is continuous from early training; discontinuous metrics (exact match, pass@1) manufacture the phase transition. Practical transfer: score the log-probability of the correct answer against matched wrong ones instead of exact-matching generation",
+   "measured": "2026-08-30",
+   "source": "Schaeffer et al. 2023, arXiv 2304.15004",
+   "config": {
+    "paper": "arXiv 2304.15004",
+    "scope": "metric granularity vs apparent emergence; token-level smooth metrics show continuous improvement"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.climp_prior_art",
+   "value": "CLiMP (Xiang et al. 2021) is the Chinese minimal-pair prior art: 16 syntactic contrasts across 9 Mandarin phenomena, 1000 pairs/contrast, 95.8% human agreement, template-generated over an annotated vocab (3456 words, 84 features), matched sentence length per pair, one paradigm discarded for <85% human agreement. Best: classifier-noun agreement, verb complement selection; worst: ba construction, binding, filler-gap. Chinese BERT 81.8%, LSTMs moderately above chance. github.com/beileixiang/CLiMP. Newer: ZhoBLiMP (arXiv 2411.06096), MultiBLiMP (arXiv 2504.02768)",
+   "measured": "2026-08-30",
+   "source": "Xiang et al. 2021, arXiv 2101.11131 (full text extracted); docs/lessons/base_eval_at_200m.md §2",
+   "config": {
+    "phenomena_named": "classifier-noun, verb complement, ba construction, coverbs, NP head finality, binding, filler-gap, anaphora/agreement (8 of 9 named in paper text; 16 paradigms in repo)"
+   },
+   "uncertainty": "the 9th phenomenon family is not named in the paper's prose (Table 1 is a figure); the repo lists all 16 paradigms",
+   "status": "recorded"
+  },
+  {
+   "id": "be.minimal_pair_rules",
+   "value": "construction rules for zh minimal pairs: (1) one controlled edit, matched character length AND matched tokenization — BPE merges across the edit boundary break the comparison (22% of our first draft failed: 他在 merges while 他再 does not, 吃了 merges in SVO but not SOV, 这本书 is one token); assert equal token length, contiguous diff span for substitutions, identical token multiset for permutations; skip and report failures. (2) score = full-sentence sum logprob, length-matched so no normalization. (3) known-answer: swap labels, must invert, >=60pt spread on the strongest checkpoint. (4) human spot-check per dimension (CLiMP discarded a paradigm below 85% agreement)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §2; eval/base_matrix.py align_pairs() (277/303 pairs aligned after the merge fixes)",
+   "config": {
+    "prototype": "eval/base_matrix.py: 5 dims (word_order 99, numeric 100, classifier 42, function_word 20, factual 16), self-test passing"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.sample_size_math",
+   "value": "at a 50% floor, SE=sqrt(0.25/n): n=100 -> 5.0%, n=277 -> 3.0%, n=1000 (BLiMP/CLiMP) -> 1.6%, n=4900 -> 0.7%. Minimum detectable delta at 80% power: ~14pt at n=100, ~8.4pt at n=277, ~4.4pt at n=1000, 2pt at n=4900. Resolving 2 points needs ~4900 pairs/dimension; 1000/dimension is the proven operating point for tracking a 16x ladder",
+   "measured": "2026-08-30",
+   "source": "computed: n=((z_a+z_b)*0.5/delta)^2, z_a=1.96 two-sided, z_b=0.84; docs/lessons/base_eval_at_200m.md §2",
+   "config": {
+    "assumption": "binomial, p=0.5 worst case"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.mc_language_confound",
+   "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis)",
+   "config": {
+    "suite": "5 MC benchmarks, 4 English + ceval",
+    "model": "0830v1 ladder, 200M-class",
+    "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.early_signal_ordering",
+   "value": "synthesized ordering of when metrics leave the floor: domain loss -> token-level target logprob / acceptability minimal pairs -> LAMBADA-style constrained prediction -> MC commonsense (~410M+) -> few-shot ICL -> generation. The 'loss moves but capability does not' gap is mostly metric granularity (Schaeffer), not a model waiting period. Likelihood measures recognition not production — necessary, not sufficient",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §3; Schaeffer 2304.15004; BLiMP; Pythia Fig.6",
+   "config": {
+    "synthesized_from": "Schaeffer 2304.15004, BLiMP 2020, Pythia Fig.6 (separate studies, not one ladder)",
+    "validation": "the 0830v1 six-checkpoint run is the direct test (aupai-de's implementation)"
+   },
+   "uncertainty": "the ordering is synthesized from separate studies, not measured on one ladder; the 0830v1 six-checkpoint run is the direct test and belongs to de's implementation",
+   "status": "recorded"
+  },
+  {
+   "id": "be.math_v2_likelihood_twin",
+   "value": "recommended continuous math signal at 200M: rescore math-hard v2 as likelihood — p(correct solution) vs p(matched wrong solution) per problem — instead of generation. Should move across the 16x ladder where generative pass@1 is structurally zero. Caveat: recognition, not production",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §3 (recommendation); Schaeffer 2304.15004",
+   "config": {
+    "data": "data/synthetic/math_hard_eval_v2_1k.jsonl (1080 problems, construction-from-answer golds)"
+   },
+   "uncertainty": "not yet built or measured; it is a recommendation for de",
+   "status": "recorded"
+  },
+  {
+   "id": "be.eval_panel_200m",
+   "value": "pre-registered base-model eval panel, frozen before the first 0830v1 pretrain: (1) per-domain NLL, (2) CLiMP-backbone minimal pairs 1000/paradigm, (3) LAMBADA-zh last-word, (4) math-hard v2 likelihood twin, (5) ceval MC as z-value tripwire, (6) generative evals are NOT base metrics (post-SFT only). Likelihood-first; per-dimension reporting, never aggregate-only. Doc: docs/lessons/base_eval_panel.md",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md; aupai-fb task 2026-08-30",
+   "config": {
+    "frozen": "before first 0830v1 pretrain",
+    "change_rule": "new version only, no edits to frozen numbers",
+    "architecture": "KDA + full causal MLA + AttnRes, sliding window removed (b3cad87)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.panel_resolution_rules",
+   "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md; computed n=((1.96+0.84)*0.5/delta)^2",
+   "config": {
+    "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt",
+    "power": "0.8, two-sided alpha 0.05"
+   },
+   "uncertainty": "the ladder spread is empirical and unfilled until de runs the six checkpoints; the cut thresholds are pre-registered",
+   "status": "recorded"
+  }
+ ]
 }
