@@ -7,7 +7,7 @@ targets rather than what was built; this describes what runs.
 ## The mix
 
 11.33B tokens scheduled from 8.52B of corpus, so most domains repeat. Weights and
-epoch caps live in `data/mix.json`; `python scripts/check_mix.py` dry-runs the
+epoch caps live in `data/mix_v3.json`; `python scripts/check_mix.py` dry-runs the
 schedule before a launch.
 
 | domain | corpus | main weight | anneal weight | epoch cap |

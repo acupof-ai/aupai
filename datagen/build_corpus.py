@@ -5,14 +5,8 @@
     python datagen/build_corpus.py --domain math --source jsonl:data/synthetic/math_*.jsonl --target_tokens 1e9
     python datagen/build_corpus.py --source jsonl:data/raw/*.jsonl --dry --limit 2000   # inspect rejects
 
-Sources (any mix, repeatable): fineweb2 (HuggingFaceFW/fineweb-2, cmn_Hani), skypile
-(Skywork/SkyPile-150B), jsonl:<glob> (rows with "content"/"text" [+ "url"]). Shards are streamed one at a
-time, so disk holds one parquet at once. Output: data/corpus/primary/<source>_NNN.jsonl (100MB shards,
-{"content","source","url"}) which train.load_texts() already reads, plus a rejects histogram.
-
-Filters (order = cost): length, CJK ratio, bad bytes, symbol/digit ratio, boilerplate markers, URL
-density, line structure (nav menus, duplicated lines), unfinished tail, garbage topics (filters/pass*),
-eval-holdout contamination, exact dedup, MinHash near-dedup, per-host cap.
+Output: data/corpus/<domain>/<source>_NNN.jsonl (100MB shards, {"content","source","url"}), plus a
+rejects histogram. Filters run in order of cost; see reject_reason().
 """
 
 import argparse
@@ -42,10 +36,8 @@ SOURCES = {
     "skypile": ("Skywork/SkyPile-150B", "data/", "text", None),
 }
 
-# ChatML / GPT control tokens leaked in from distilled corpora. Left in place they are junk the
-# tokenizer has no id for, and their trailing position made the "unfinished" rule reject 38% of
-# data/pretrain_full.jsonl -- complete documents whose real sentence-final punctuation sat one
-# token earlier (measured 2026-08-26: 7641/20000 sampled docs).
+# Control tokens leaked in from distilled corpora; a trailing one made the "unfinished" rule reject
+# 38% of data/pretrain_full.jsonl (7641/20000 sampled, 2026-08-26).
 SPECIAL_TOKEN = re.compile(r"<\|[A-Za-z0-9_]+\|>")
 CJK = re.compile(r"[一-鿿㐀-䶿]")
 BAD = re.compile(r"[�\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -64,7 +56,7 @@ def load_garbage_patterns():
         path = os.path.join(ROOT, "filters", f"{name}.py")
         if os.path.exists(path):
             ns = {}
-            exec(compile(open(path, encoding="utf-8").read(), path, "exec"), ns)  # module-level PATTERNS only
+            exec(compile(open(path, encoding="utf-8").read(), path, "exec"), ns)
             pats += ns.get("PATTERNS", [])
     return re.compile("|".join(f"(?:{p})" for p in pats)) if pats else None
 
@@ -72,17 +64,10 @@ def load_garbage_patterns():
 GARBAGE = load_garbage_patterns()
 
 
-# iter_jsonl renders instruction/output rows as ChatML. Three ways an eval question slipped
-# past a naive per-line hash: (1) the role marker means norm(wrapped) != norm("{q}"); (2) a
-# multi-line question equals no single line; (3) a <15-char question fell outside the old
-# length window (measured 2026-08-26: 496/500 math_test_500 questions reached
-# data/corpus/math/). We test the whole document, the question body with its wrapper
-# stripped, and every line.
-#
-# QA_PREFIX still carries the 问：/答： forms on purpose. The corpus contains documents
-# written in that shape from before the ChatML switch, and the SOURCE corpora use it too;
-# a contamination filter that only knows the current format stops catching the older one,
-# and this filter existing at all is finding #1 of docs/review_2026-08-26.md.
+# A naive per-line hash let 496/500 math_test_500 questions into data/corpus/math/ (2026-08-26):
+# the role marker, multi-line questions and <15-char questions all slipped it. Hence three probes
+# below. QA_PREFIX keeps the pre-ChatML 问：/答： forms because the corpus still holds documents
+# written that way.
 QA_PREFIX = re.compile(
     r"^\s*(?:<\|im_start\|>(?:user|assistant|system)\s*|问题?|答案?|Q|A|Question|Answer)\s*[：:]?\s*"
 )
@@ -90,12 +75,12 @@ ANSWER_TAIL = re.compile(r"(?:<\|im_end\|>|\n\s*(?:答案?|A|Answer)\s*[：:])")
 
 
 def reject_holdout(text):
-    if is_holdout(text):  # whole document == an eval question (bare, multi-line, or short)
+    if is_holdout(text):
         return "eval_contaminated"
     body = QA_PREFIX.sub("", ANSWER_TAIL.split(text, 1)[0]).strip()  # "问：{q}\n答：{a}" -> "{q}"
     if body != text and is_holdout(body):
         return "eval_contaminated"
-    for ln in (ln.strip() for ln in text.split("\n")):  # a question on its own line inside a longer doc
+    for ln in (ln.strip() for ln in text.split("\n")):
         for cand in {ln, QA_PREFIX.sub("", ln)}:
             if cand and len(cand) <= 500 and is_holdout(cand):
                 return "eval_contaminated"
@@ -103,9 +88,8 @@ def reject_holdout(text):
 
 
 def reject_light(text):
-    """Pre-cleaned sources (code, English, math, chat): only the checks that are domain-neutral.
-    The web filters below reject on CJK ratio, symbol ratio and digit ratio, which would delete
-    essentially all of a code or English corpus."""
+    """Domain-neutral checks only: the web chain's CJK/symbol/digit ratios delete a code or
+    English corpus outright."""
     n = len(text)
     if n < 100:
         return "short"
@@ -142,9 +126,8 @@ def reject_reason(text):
             return "nav_menu"
         if len(set(lines)) / len(lines) < 0.7:
             return "dup_lines"
-    # 500, not 2000: measured on 8000 fineweb-2 cmn_Hani docs (2026-08-26), everything rejected above
-    # 500 chars was a complete article whose last line is a source credit, tag list, email or URL, while
-    # below 500 it really is forum signatures, changelogs and copyright footers. 2000 cost 15pt of yield.
+    # 500, not 2000: above 500 chars the "unfinished" tail is a source credit or tag list on a
+    # complete article; 2000 cost 15pt of yield (8000 fineweb-2 cmn_Hani docs, 2026-08-26).
     if n < 500 and not END_OK.search(text):
         return "unfinished"
     if GARBAGE is not None and GARBAGE.search(text[:600]):
@@ -162,7 +145,7 @@ def exact_key(text):
 
 class MinHashLSH:
     """128-perm MinHash over char 5-gram shingles, 16 bands x 8 rows (~0.8 Jaccard threshold).
-    ponytail: pure-python, in-memory; fine to ~30M docs, switch to datasketch/rensa beyond that."""
+    ponytail: pure-python, in-memory; fine to ~30M docs."""
 
     def __init__(self, perms=128, bands=16, seed=17):
         import random
@@ -207,9 +190,7 @@ def iter_jsonl(path):
                 d = json.loads(line)
                 text = d.get("content") or d.get("text")
                 if not text and d.get("instruction"):
-                    # QA corpora (coig, school_math_r1_zh, ...) rendered in the SAME ChatML
-                    # the SFT pack uses, so pretraining already sees the format it will be
-                    # fine-tuned in. Before 2026-08-29 this was a homemade 问：/答：.
+                    # Same ChatML the SFT pack uses, so pretraining already sees that format.
                     text = "".join(format_example(d["instruction"], d.get("output", "")))
                 yield text or "", d.get("url")
 
@@ -243,7 +224,7 @@ def iter_source(spec, cache_dir):
 
     files = sorted(f for f in list_repo_files(repo, repo_type="dataset") if f.startswith(prefix))
     for f in files:
-        local = hf_hub_download(repo, f, repo_type="dataset", local_dir=cache_dir)  # real file, removable
+        local = hf_hub_download(repo, f, repo_type="dataset", local_dir=cache_dir)
         if f.endswith(".parquet"):
             import pyarrow.parquet as pq
 
@@ -288,7 +269,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", action="append", required=True, help="fineweb2 | skypile | jsonl:<glob>")
     ap.add_argument("--target_tokens", type=float, default=8e9)
-    ap.add_argument("--domain", default="primary", help="data/mix.json domain -> data/corpus/<domain>/")
+    ap.add_argument("--domain", required=True, help="data/mix_v3.json domain -> data/corpus/<domain>/")
     ap.add_argument("--out", default=None, help="output dir (default data/corpus/<domain>)")
     ap.add_argument(
         "--host_cap",
@@ -384,9 +365,8 @@ def main():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n / total:.1%}")
     if not a.dry:
-        # A domain that kept nothing means a bad --source glob / unresolved HF prefix (fineweb-2's
-        # source once silently resolved to zero files). Fail loud instead of writing an empty domain
-        # that check_mix later reports as a MISSING cache with no hint why.
+        # fineweb-2's HF prefix once silently resolved to zero files; an empty domain surfaces later
+        # as a MISSING cache with no hint why.
         if reasons["kept"] == 0:
             raise SystemExit(
                 f"ERROR: domain '{a.domain}' kept 0 documents from {a.source} -- "

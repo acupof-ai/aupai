@@ -38,7 +38,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix.json"))
+    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_v3.json"))
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--rows", type=int, default=512, help="val rows scored per domain")
     ap.add_argument("--device", default="cuda:0")
@@ -80,7 +80,9 @@ def main():
                 tot += loss.item() * n
                 ntok += n
         out[name] = tot / ntok
-        print(f"  {name:<6} loss {out[name]:.4f}  ppl {math.exp(out[name]):7.2f}  ({len(X)} rows)", flush=True)
+        print(
+            f"  {name:<6} loss {out[name]:.4f}  ppl {math.exp(out[name]):7.2f}  ({len(X)} rows)", flush=True
+        )
 
     if out:
         # Unweighted mean across domains, NOT the row-weighted blend train.py prints:

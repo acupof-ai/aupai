@@ -1,22 +1,11 @@
 #!/usr/bin/env python3
-"""Train a ~200M Chinese LLM with hybrid recurrent architecture.
+"""Train a ~200M Chinese LLM with hybrid recurrent architecture (KDA + gated MLA).
 
-Acceleration techniques (from karpathy/nanochat):
-- bf16 autocast + TF32 matmuls
-- FP8 compute (--fp8, Hopper): fp8 GEMMs, bf16 params, bf16 autocast compute
-- Muon optimizer (Newton-Schulz orthogonalized updates) for 2D params
-- AdamW for embeddings and 1D params, with separate LRs
-- Flash Attention for sliding window (SDPA fallback)
-- torch.compile(dynamic=False)
-- DDP multi-GPU via torchrun --nproc_per_node=N
-- Gradient accumulation
-- Linear warmup + cosine warmdown LR schedule (warmdown 0.65, final 0.05x)
-- Logit softcap + QK-norm (fused into fla kernel)
-- PYTORCH_ALLOC_CONF=expandable_segments
-- nanochat recipe: momentum ramp, WD decay, no gradient checkpointing (97GB H20)
-- FP8 via torchao Float8Linear (compile-friendly); FP8_RECIPE=legacy for the hand-rolled path
-- Fused GEMMs: SwiGLU w1|w3, MLA k_up|v_up and q|gate (old checkpoints remapped on load)
-- Attention Residuals (--attn_res, arXiv 2603.15031): softmax over depth instead of residual sum
+Muon (2D params) + AdamW (embeddings/1D), bf16 autocast, optional FP8 via torchao, Flash
+Attention sliding window, torch.compile, DDP, Liger FLCE with logit softcap, and optional
+Attention Residuals (--attn_res, arXiv 2603.15031) in place of the residual sum.
+
+    torchrun --nproc_per_node=8 train.py --fp8 [--attn_res] [--fone] [--name X]
 """
 
 import os
@@ -38,7 +27,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.utils.checkpoint  # used by --grad_ckpt
+import torch.utils.checkpoint  # noqa: F401  (used via torch.utils.checkpoint.checkpoint)
 from tokenizers import Tokenizer
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -48,10 +37,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
 class RunLog:
-    """Tee training prints to runs/<name>.log and plot curves at the end (scripts/plot_curves.py).
-    With track=True, parse the per-step log line and mirror its metrics to trackio (local-first,
-    wandb-API-compatible, SQLite-backed under ~/.cache/huggingface/trackio -- no login, no server).
-    View with `trackio show` or `aupai dashboard`."""
+    """Tee prints to runs/<name>.log; track=True also mirrors parsed metrics to trackio."""
 
     _STEP_RE = re.compile(
         r"step (\d+)/\d+.*?loss ([\d.]+).*?lr ([\d.eE+-]+).*?gnorm ([\d.]+).*?"
@@ -100,7 +86,7 @@ class RunLog:
 
 DATA = os.path.join(ROOT, "data")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
-TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"  # NVMe for fast loading
+TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"
 
 try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
     from fla.ops.kda import chunk_kda
@@ -115,8 +101,7 @@ except ImportError:
     HAS_FA = False
 
 
-# Logit softcap, applied identically in training (Liger FLCE) and inference. SOFTCAP=0 in the
-# environment disables it, which is only there to bisect throughput regressions.
+# Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
 SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 
 
@@ -128,15 +113,14 @@ class Cfg:
     attn_window = 1024
     ffn_hidden = 3072
     vocab = 32773  # 32768 BPE merges + <unk>/<eos> inside them, 4 chat specials, [NUM]
-    fone = False  # --fone: numbers as one [NUM] token carrying a Fourier value embedding
-    num_id = 32772  # [NUM], the last id; always in the vocab so --fone needs no resize
-    fone_loss_w = 1.0  # weight of the per-digit loss relative to the token loss
-    seq = 4096  # recurrent arch handles arbitrary length at inference
+    fone = False
+    num_id = 32772  # [NUM] is the last id, always in the vocab, so --fone resizes nothing
+    fone_loss_w = 1.0
+    seq = 4096  # the recurrent arch handles arbitrary length at inference
     batch = (
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
     )
-    accum = 1  # was 3; no_sync makes accumulation cheap
-    epochs = 3  # mix mode (Cfg.mix) forces epochs=1; this only governs the flat-corpus fallback
+    accum = 1
     warmup = 20
     warmdown = 0.65
     final_lr_frac = 0.05
@@ -145,35 +129,30 @@ class Cfg:
     seed = 42
     compile = True  # model body only; FLCE loss kept outside (Liger compile-incompatible)
     grad_ckpt = False  # costs 25% wall-clock for ~15GB savings; batch 32 fits without it on H20
-    # Attention Residuals (arXiv 2603.15031): softmax over depth replaces the residual sum. Off by default
-    # so SFT/eval stay comparable. blocks=0 -> Full (every sublayer a source; ~+10% HBM traffic at L=24;
-    # layer outputs are already kept for backward, the per-source norms are recomputed under compile);
-    # N>0 -> Block AttnRes with exactly N blocks. dyn_q: low-rank input-dependent query.
-    attn_res = False
+    attn_res = False  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
     attn_res_blocks = 0
     attn_res_dyn_q = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
-    # Document boundaries: <eos> positions become cu_seqlens so KDA state and SWA attention reset per
-    # document instead of leaking across the ~10 docs packed into each 4K row (train/infer mismatch).
+    # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
+    # ~10 docs packed into each 4K row.
     doc_mask = True
-    # Corpus v3 (filtered web_hq + textbook + wiki); mix.json is the v2 mix, whose 88% "web" weight
-    # points at the UNFILTERED corpus. Absent file -> legacy flat corpus.
+    # mix.json is the v2 mix, whose 88% "web" weight points at the UNFILTERED corpus.
     mix = "data/mix_v3.json"  # domain mix (weights / epoch caps / anneal)
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
-    val_every = 500  # steps between fixed-subset validations (0 = epoch end only)
-    val_batches = 20  # batches of the val split used for the periodic check
-    val_batches_full = 100  # batches used for the epoch-end validation (fixed prefix, comparable)
-    val_rows_max = 5000  # cap on val rows kept per mix domain (validation only ever reads a prefix)
+    val_every = 500  # 0 = epoch end only
+    val_batches = 20
+    val_batches_full = 100  # fixed prefix, so the epoch-end number is comparable across runs
+    val_rows_max = 5000  # per mix domain; validation only ever reads a prefix
     # Muon (matrix params) — nanochat recipe
     muon_lr = 0.01
     muon_momentum = 0.95
     muon_ns_steps = 5
     muon_wd = 0.10  # was 0.28; nanochat 1/width² law @ d=1024
-    # AdamW (embedding + 1D params)
-    embed_lr = 0.1  # was 0.05; nanochat batch-scaled
+    # AdamW (embedding + 1D params) — batch-scaled per nanochat
+    embed_lr = 0.1
     embed_betas = (0.8, 0.995)
     embed_wd = 0.001
-    scalar_lr = 0.15  # was 0.05; nanochat batch-scaled
+    scalar_lr = 0.15
     scalar_betas = (0.8, 0.95)
     scalar_wd = 0.0
 
@@ -189,51 +168,39 @@ class RMSNorm(nn.Module):
 
 
 def rms_scale(x, eps=1e-6):
-    """The [B,T,1] factor of a gain-free RMSNorm, without applying it.
-
-    rms_hat(x) . gq == rsqrt(mean(x^2)) * (x . gq), because the rsqrt is a per-position scalar and
-    factors straight out of the dot product. So AttnRes never needs the normalized tensor at all --
-    only this scale. Storing scales instead of normalized copies is 1024x less memory per source
-    (d=1024), and the raw source is already alive as a block representation, so the backward tape
-    grows by nothing."""
+    """The [B,T,1] factor of a gain-free RMSNorm, without applying it: rms_hat(x) . gq ==
+    rsqrt(mean(x^2)) * (x . gq), so AttnRes stores this instead of a normalized [B,T,D] copy
+    per source -- 1024x less memory at d=1024."""
     return torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
 
 
 class DeltaRecurrence(nn.Module):
-    """Kimi Delta Attention (KDA): bounded decay + ShortConv + QK-norm.
-
-    Uses fla.ops.kda.chunk_kda with fused gate (A_log + dt_bias + data-dependent
-    gate input), auto-dispatches to FlashKDA CUTLASS kernel when installed.
-    """
+    """Kimi Delta Attention: bounded decay + ShortConv + QK-norm, via fla.ops.kda.chunk_kda."""
 
     def __init__(self, cfg):
         super().__init__()
         self.h, self.hd = cfg.heads, cfg.d // cfg.heads
         self.qkv = nn.Linear(cfg.d, 3 * cfg.d, bias=False)
         self.o = nn.Linear(cfg.d, cfg.d, bias=False)
-        # K3 KDA gating: data-dependent gate (per-head-per-dim) + beta
         # fused gate|beta GEMM; beta padded to a multiple of 16 output rows so FP8 (_scaled_mm) applies
         self.beta_pad = (-cfg.heads) % 16
         self.gb = nn.Linear(cfg.d, cfg.d + cfg.heads + self.beta_pad, bias=False)
-        # Learned per-head decay and per-head-per-dim gate bias
         self.A_log = nn.Parameter(torch.zeros(cfg.heads))
-        # fla KDA init: dt ~ logU[1e-3, 0.1], dt_bias = inv_softplus(dt) -> mean retention ~0.9 per token.
-        # Zero init gave softplus(0)=0.69 log-decay per token (retention ~0.1), erasing the recurrent state.
+        # fla KDA init: dt ~ logU[1e-3, 0.1] -> mean retention ~0.9 per token. Zero init gave
+        # softplus(0)=0.69 log-decay per token (retention ~0.1), erasing the recurrent state.
         dt = torch.exp(torch.rand(cfg.heads * self.hd) * (math.log(0.1) - math.log(1e-3)) + math.log(1e-3))
         self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
-        # K3: causal short convolution for local pattern before qkv
         self.short_conv = nn.Conv1d(cfg.d, cfg.d, kernel_size=4, padding=0, groups=cfg.d)
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
-        # ShortConv + Swish (K3), causal: left-pad only so output[t] sees only input[:t+1]
+        # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
         h = F.pad(x.transpose(1, 2), (self.short_conv.kernel_size[0] - 1, 0))
         h = F.silu(self.short_conv(h).transpose(1, 2))
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.reshape(B, T, self.h, self.hd).contiguous()
         k = k.reshape(B, T, self.h, self.hd).contiguous()
         v = v.reshape(B, T, self.h, self.hd).contiguous()
-        # K3 KDA: gate computed in-kernel = lower_bound * sigmoid(exp(A_log)*(g+dt_bias))
         gb = self.gb(x)
         g = gb[..., :D].reshape(B, T, self.h, self.hd).contiguous()
         beta = gb[..., D : D + self.h].contiguous()  # raw logits, sigmoid in kernel
@@ -255,7 +222,7 @@ class DeltaRecurrence(nn.Module):
             safe_gate=True,
             lower_bound=-5.0,
             state_v_first=True,  # unblocks FlashKDA at inference (zero training cost)
-            disable_recompute=True,  # save w/u/qg/kg/v_new instead of recomputing in backward (+3GB, 8-15% faster)
+            disable_recompute=True,  # save w/u/qg/kg/v_new rather than recompute: +3GB, 8-15% faster
         )
         return self.o(out.reshape(B, T, D).to(x.dtype))
 
@@ -266,17 +233,16 @@ class SlidingWindowAttention(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.h, self.hd = cfg.heads, cfg.d // cfg.heads
-        self.latent = cfg.d // 4  # KV compression ratio 4:1
+        self.latent = cfg.d // 4
         self.attn_window = cfg.attn_window
-        # Down-project KV to latent, up-project to per-head K,V
         self.kv_down = nn.Linear(cfg.d, self.latent, bias=False)
         self.kv_up = nn.Linear(self.latent, 2 * cfg.d, bias=False)  # fused k_up|v_up
-        self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate (full-rank output gate, K3)
+        self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate
         self.o = nn.Linear(cfg.d, cfg.d, bias=False)
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
-        latent = self.kv_down(x)  # (B, T, latent)
+        latent = self.kv_down(x)
         k, v = self.kv_up(latent).chunk(2, dim=-1)
         q, gate = self.qg(x).chunk(2, dim=-1)
         k = k.view(B, T, self.h, self.hd)
@@ -290,19 +256,17 @@ class SlidingWindowAttention(nn.Module):
                 q, k, v, cu, cu, T, T, causal=True, window_size=(self.attn_window - 1, 0)
             )
         elif HAS_FA:
-            # flash_attn_func wants (B, T, h, hd); sliding window = (left, right)
             y = flash_attn_func(q, k, v, causal=True, window_size=(self.attn_window - 1, 0))
         else:  # CPU fallback: causal only, no document mask (ponytail: block-diag mask if ever needed)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
             y = y.transpose(1, 2)
         y = y.reshape(B, T, D)
-        # Gated output
         return self.o(y * torch.sigmoid(gate))
 
 
 # --- FP8 compute: e4m3 for both forward and backward (e5m2 backward was unstable without grad_ckpt) ---
-_FP8_MAX_E4M3 = 448.0  # forward: weights + activations; backward: grad_output (4-bit mantissa, ~6% error)
+_FP8_MAX_E4M3 = 448.0
 
 
 class FP8LinearFunction(torch.autograd.Function):
@@ -322,8 +286,7 @@ class FP8LinearFunction(torch.autograd.Function):
         )
         if bias is not None:
             out = out + bias
-        # Cache fp8 tensors + scales: backward reuses them (5 quants -> 3; saved
-        # activations drop from bf16 to fp8, ~halving per-linear saved memory)
+        # Cache fp8 + scales for backward: 5 quants -> 3, saved activations bf16 -> fp8
         ctx.save_for_backward(x_fp8, w_fp8, bias, x_scale, w_scale)
         ctx.orig_shape = x.shape
         return out.reshape(*x.shape[:-1], weight.shape[0])
@@ -334,8 +297,8 @@ class FP8LinearFunction(torch.autograd.Function):
         go2d = grad_out.reshape(-1, grad_out.shape[-1])
         go_scale = (go2d.detach().abs().max().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
         go_fp8 = (go2d / go_scale).to(torch.float8_e4m3fn)
-        # w_fp8 is (out, in) contiguous; need (out, in) column-major = .t() of (in, out) contiguous
-        w_t = w_fp8.t().contiguous()  # (in, out) contiguous
+        # _scaled_mm wants mat2 column-major: .t() of an (in, out) contiguous tensor
+        w_t = w_fp8.t().contiguous()
         grad_x = torch._scaled_mm(
             go_fp8,
             w_t.t(),
@@ -343,7 +306,7 @@ class FP8LinearFunction(torch.autograd.Function):
             scale_b=w_scale,
             out_dtype=torch.bfloat16,
         ).reshape(ctx.orig_shape)
-        x_t = x_fp8.t().contiguous()  # [D, M] fp8; .t() below is the column-major mat2
+        x_t = x_fp8.t().contiguous()
         grad_w = torch._scaled_mm(
             go_fp8.t().contiguous(),
             x_t.t(),
@@ -356,8 +319,6 @@ class FP8LinearFunction(torch.autograd.Function):
 
 
 class FP8Linear(nn.Module):
-    """Drop-in replacement for nn.Linear with FP8 forward + bf16 backward."""
-
     def __init__(self, linear):
         super().__init__()
         self.weight = nn.Parameter(linear.weight.data)
@@ -365,32 +326,28 @@ class FP8Linear(nn.Module):
         self.in_features = linear.in_features
         self.out_features = linear.out_features
 
-    # Inductor's min-cut partitioner recomputes FP8LinearFunction's saved fp8 tensors in
-    # the backward graph, re-dividing already-scaled values -> NaN grads at step 1 when
-    # grad_ckpt is off (scripts/nan_probe.py, 2026-08-26). Keep it out of the compiled graph.
+    # Kept out of the compiled graph: Inductor's min-cut partitioner recomputes the saved fp8
+    # tensors, re-dividing already-scaled values -> NaN grads at step 1 without grad_ckpt
+    # (scripts/nan_probe.py, 2026-08-26).
     @torch._dynamo.disable
     def forward(self, x):
         return FP8LinearFunction.apply(x, self.weight, self.bias)
 
 
 def _fp8_ok(mod, name):
-    # num_proj/num_head are the FoNE heads: 16x1024, so FP8 buys nothing, and num_head runs on
-    # hidden[nmask] whose row count is the batch's [NUM] count -- almost never a multiple of 16,
-    # which torch._scaled_mm rejects in the backward. Weight dims can be checked here; that one
-    # cannot, so keep both out by name.
+    # FoNE heads excluded by NAME: num_head runs on hidden[nmask], whose row count is the batch's
+    # [NUM] count -- rarely a multiple of 16, and not visible from the weight shape.
     return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
 
 
 def convert_to_fp8_compute(model):
-    """FP8 linears. Prefers torchao Float8Linear (compile-friendly: no graph break per linear, fused casts);
-    falls back to the hand-rolled FP8Linear (dynamo-disabled -> ~200 graph breaks) if torchao is missing.
+    """FP8 linears via torchao Float8Linear; falls back to FP8Linear (dynamo-disabled -> ~200
+    graph breaks) when torchao is missing. FP8_RECIPE=rowwise|tensorwise|legacy overrides.
 
-    Default recipe is tensorwise scaling but with grad_output cast to e4m3, NOT the stock `tensorwise`
-    recipe's e5m2: e5m2's 2-bit mantissa is the exact unstable backward the legacy path abandoned
-    (line 273). The stock `rowwise` recipe also keeps e4m3 on grad_output, but its axiswise scaling
-    hits `aten.clone.default with axiswise scaling is not supported yet` under torch.compile on the
-    AttnRes .chunk() path -- so we get rowwise's stability with tensorwise's compile-compatibility.
-    FP8_RECIPE=rowwise|tensorwise forces a stock recipe; FP8_RECIPE=legacy forces the hand-rolled path."""
+    Default e4m3_tensorwise = tensorwise scaling with grad_output in e4m3: stock `tensorwise`
+    uses e5m2 there, the unstable backward the legacy path abandoned, and stock `rowwise` keeps
+    e4m3 but raises `aten.clone.default with axiswise scaling is not supported yet` under
+    compile on the AttnRes .chunk() path."""
     try:
         from torchao.float8 import (
             CastConfig,
@@ -407,7 +364,7 @@ def convert_to_fp8_compute(model):
         return _convert_to_fp8_legacy(model)
     if recipe in ("rowwise", "tensorwise"):
         cfg = Float8LinearConfig.from_recipe_name(recipe)
-    else:  # e4m3_tensorwise: tensorwise (compile-safe) + e4m3 grad_output (stable backward)
+    else:
 
         def cc():
             return CastConfig(
@@ -429,7 +386,7 @@ def _convert_to_fp8_legacy(model):
     """Replace nn.Linear with FP8Linear (skip tied LM head and tiny layers not divisible by 16)."""
     for name, module in model.named_children():
         if isinstance(module, nn.Linear) and _fp8_ok(module, name):
-            setattr(model, name, FP8Linear(module))  # torch._scaled_mm needs dims % 16 == 0
+            setattr(model, name, FP8Linear(module))
         else:
             _convert_to_fp8_legacy(module)
     return model
@@ -440,13 +397,12 @@ class SwiGLU(nn.Module):
 
     def __init__(self, cfg):
         super().__init__()
-        self.w13 = nn.Linear(cfg.d, 2 * cfg.ffn_hidden, bias=False)  # fused w1|w3: one GEMM instead of two
+        self.w13 = nn.Linear(cfg.d, 2 * cfg.ffn_hidden, bias=False)  # fused w1|w3
         self.w2 = nn.Linear(cfg.ffn_hidden, cfg.d, bias=False)
         self.beta1 = 4.0
         self.beta2 = 25.0
 
     def forward(self, x):
-        # SiTU-GLU: β1*tanh(W_g x/β1) * σ(W_gate x) * β2*tanh(W_u x/β2)
         a, b = self.w13(x).chunk(2, dim=-1)
         gate = self.beta1 * torch.tanh(a / self.beta1) * torch.sigmoid(b)
         up = self.beta2 * torch.tanh(self.w2(gate) / self.beta2)
@@ -469,22 +425,15 @@ class Source(NamedTuple):
 
 class AttnRes(nn.Module):
     """Attention Residuals (Kimi, arXiv 2603.15031): h_l = sum_i softmax_i(q_l . RMSNorm(v_i)) v_i over
-    previous layer outputs (v_0 = embedding). One zero-init pseudo-query per layer -> starts as uniform mean.
+    previous layer outputs (v_0 = embedding). One zero-init pseudo-query per layer -> uniform mean.
     Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form.
-
-    Two exact rewrites make it affordable. The RMSNorm gain folds into the query, since
-    (v_hat * g) . q == v_hat . (g * q), which leaves the normalization parameter-free and therefore
-    shared by every consumer of a source. And the normalization never has to be applied at all:
-    rsqrt(mean(v^2)) is a per-position scalar, so v_hat . gq == rsqrt(...) * (v . gq). A source
-    carries a [B,T,1] scale rather than a [B,T,D] normalized copy -- 1024x less at d=1024, and the
-    raw source is already alive as a block representation, so the backward tape grows by nothing."""
+    The gain folds into the query ((v_hat * g) . q == v_hat . (g * q)); rms_scale has the rest."""
 
     def __init__(self, d, dyn_q=False, rank=64):
         super().__init__()
         self.g = nn.Parameter(torch.ones(d))  # the RMSNorm gain, applied to the query side
         self.q = nn.Parameter(torch.zeros(d))
-        # Input-dependent query (paper Table 4: 1.731 vs 1.737 Full): q = w + B(A norm(latest source)),
-        # low-rank d->rank->d, B zero-init so training still starts from the uniform mean.
+        # Input-dependent query (paper Table 4: 1.731 vs 1.737 Full); B zero-init.
         self.dyn = (
             nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
         )
@@ -510,8 +459,8 @@ class Block(nn.Module):
         self.ffn = SwiGLU(cfg)
         attn_res = getattr(cfg, "attn_res", False)
         dyn_q = getattr(cfg, "attn_res_dyn_q", False)
-        self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-mixer depth attention
-        self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-ffn depth attention
+        self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-mixer / pre-ffn depth attention
+        self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None
 
     def forward(self, x, cu=None):
         x = x + self.mixer(self.n1(x), cu)
@@ -548,21 +497,17 @@ class HybridLM(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        self.grad_ckpt = cfg.grad_ckpt  # set via --grad_ckpt
+        self.grad_ckpt = cfg.grad_ckpt
         self.padded_vocab = ((cfg.vocab + 63) // 64) * 64
         self.tok = nn.Embedding(self.padded_vocab, cfg.d)
         self.blocks = nn.ModuleList(
-            # Periodic placement: an attention layer every `attn_every` blocks
-            # (was `i == cfg.attn_every - 1`, which created only a single attention layer)
+            # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1)) for i in range(cfg.layers)]
         )
         self.norm = RMSNorm(cfg.d)
         self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
-        self.head.weight = self.tok.weight  # tied
-        # FoNE: numbers arrive as a single [NUM] token whose identity carries no value,
-        # so the value is injected additively from its Fourier features and read back
-        # by a ten-way-per-digit head. Both are tiny (16 x d) next to the tied vocab
-        # head, and opt-in, so a checkpoint trained without them still loads.
+        self.head.weight = self.tok.weight
+        # FoNE: [NUM] carries no value in its identity; injected from Fourier features, read per digit
         self.fone = getattr(cfg, "fone", False)
         if self.fone:
             self.num_proj = nn.Linear(fone.NUM_DIMS, cfg.d, bias=False)
@@ -570,12 +515,12 @@ class HybridLM(nn.Module):
         self.attn_res = getattr(cfg, "attn_res", False)
         n_sub = 2 * cfg.layers
         n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)  # 0 -> Full (every sublayer)
-        self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}  # exactly N blocks
+        self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
         self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
         self.apply(self._init)
         for m in self.modules():
             if isinstance(m, AttnRes) and m.dyn is not None:
-                nn.init.zeros_(m.dyn[1].weight)  # after _init: start as plain zero pseudo-query
+                nn.init.zeros_(m.dyn[1].weight)  # after _init, or it starts non-uniform
 
     def load_state_dict(self, sd, strict=True):
         """Load old checkpoints (fused-key remap); disable AttnRes if the ckpt predates it."""
@@ -594,25 +539,20 @@ class HybridLM(nn.Module):
         if isinstance(m, (nn.Linear, nn.Embedding)):
             nn.init.normal_(m.weight, std=0.02)
         elif isinstance(m, nn.Conv1d):
-            # depthwise short_conv: PyTorch's kaiming default is not what the rest of the model uses
-            nn.init.normal_(m.weight, std=0.02)
+            nn.init.normal_(m.weight, std=0.02)  # not PyTorch's kaiming default
 
     def _body(self, x, cu=None):
         ckpt = self.grad_ckpt and self.training
         if not self.attn_res:
             for b in self.blocks:
-                # Gradient checkpointing: recompute block activations in backward, trading compute for memory
                 x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
             return x
-        # Block AttnRes (Fig. 2 of the paper): `blocks` = completed block reps (embedding first),
-        # `partial` = intra-block running sum. Block size 1 sublayer == Full AttnRes.
+        # Block AttnRes (Fig. 2): `done` = completed block reps, `partial` = intra-block running sum
         done, partial, n = [Source.of(x)], [], 0
         for b in self.blocks:
             for ar, norm, f in b.sublayers(cu):
                 h = ar(done + partial)
-                # The AttnRes call sits outside the checkpoint, so its per-source products stay on
-                # the tape: one [B,T] logit per (consumer, source) pair, which at L=12 is 325 pairs
-                # for Full, 85 for blocks=4, 61 for blocks=2. The [B,T,D] values are not duplicated.
+                # AttnRes stays outside the checkpoint: only [B,T] logits on the tape, never [B,T,D]
                 fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
                 out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
                 partial = [Source.of(partial[0].v + out if partial else out)]
@@ -622,26 +562,14 @@ class HybridLM(nn.Module):
         return self.final_ar(done + partial)
 
     def num_logits(self, hidden):
-        """Hidden states -> (..., digits, 10) per-digit logits at every position.
-
-        Only [NUM] positions are scored against it; the caller masks. Kept separate
-        from forward() because the loss lives in the training loop, next to FLCE.
-
-        Callers hand this fp32 hidden states (the loss wants fp32), but the model body
-        may be bf16 and this runs outside autocast, so match the weight going in and
-        come back out in fp32 for the cross-entropy.
-        """
+        """Per-digit logits (..., digits, 10) at every position; the caller masks to [NUM]. Runs
+        outside autocast, so cast to the weight dtype and back to fp32."""
         return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
 
     def forward(self, idx, targets=None, cu=None, num_vals=None, return_hidden=False):
         """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
-
-        num_vals: (B, T) float, the value at each [NUM] position and anything elsewhere
-        (non-[NUM] contributions are masked out, not trusted).
-
-        return_hidden puts the hidden states in the second slot during inference, which
-        FoNE sampling needs: the state that predicts [NUM] is also the one num_logits()
-        reads the digits from. Off by default -- infer_local.py keeps a cache there."""
+        num_vals: (B, T) float, the value at each [NUM] position; elsewhere masked out, not trusted.
+        return_hidden: FoNE sampling needs the state that predicted [NUM] to read its digits from."""
         emb = self.tok(idx)
         if self.fone and num_vals is not None:
             mask = (idx == self.cfg.num_id).unsqueeze(-1)
@@ -649,13 +577,11 @@ class HybridLM(nn.Module):
             emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
         hidden = self.norm(self._body(emb, cu))
         if targets is None:
-            # Inference: compute logits with softcap
             logits = self.head(hidden)[..., : self.cfg.vocab].float()
             if SOFTCAP:
-                logits = SOFTCAP * torch.tanh(logits / SOFTCAP)  # same cap as training
+                logits = SOFTCAP * torch.tanh(logits / SOFTCAP)
             return logits, (hidden if return_hidden else None)
-        # Training: return hidden states; loss computed eagerly in the loop
-        # (Liger FLCE is compile-incompatible, must stay outside torch.compile)
+        # Training: the loss is computed in the loop -- Liger FLCE is compile-incompatible
         return hidden, None
 
 
@@ -671,14 +597,13 @@ POLAR_EXPRESS = [
 
 
 class Muon(torch.optim.Optimizer):
-    """Muon: Nesterov momentum + Polar Express orthogonalization + cautious weight decay.
-    Stacked by shape for fewer kernel launches + torch.compile."""
+    """Nesterov momentum + Polar Express orthogonalization + cautious weight decay."""
 
     def __init__(self, params, lr=0.02, momentum=0.95, ns_steps=5, weight_decay=0.28):
         defaults = dict(lr=lr, momentum=momentum, ns_steps=ns_steps, weight_decay=weight_decay)
         super().__init__(params, defaults)
         self._compiled = {}  # (shape, ns_steps, tall, device) -> compiled function
-        self._scalar_tensors = {}  # device -> (lr_t, mom_t, wd_t) 0-D CUDA tensors
+        self._scalar_tensors = {}
 
     def _get_scalar_tensors(self, device):
         if device not in self._scalar_tensors:
@@ -690,7 +615,6 @@ class Muon(torch.optim.Optimizer):
         return self._scalar_tensors[device]
 
     def _get_compiled(self, shape, ns_steps, tall, device):
-        """Get or create compiled update function for a given shape."""
         key = (shape, ns_steps, tall, device)
         if key not in self._compiled:
             coeffs = POLAR_EXPRESS[:ns_steps]
@@ -727,15 +651,12 @@ class Muon(torch.optim.Optimizer):
                 weights.sub_(lr * X.to(weights.dtype) + lr * wd * weights * mask)
                 return weights, momentums
 
-            # 0-D tensor hparams are NOT value-specialized -> momentum ramp / WD decay
-            # no longer trigger recompiles (the old float args recompiled every step)
             self._compiled[key] = torch.compile(muon_update, dynamic=False)
         return self._compiled[key]
 
     @torch.no_grad()
     def step(self):
-        # Group params by shape for stacked computation
-        shape_groups = {}
+        shape_groups = {}  # by shape, so same-shape params update in one batched call
         for group in self.param_groups:
             lr = group["lr"]
             momentum = group["momentum"]
@@ -766,15 +687,13 @@ class Muon(torch.optim.Optimizer):
         for shape, sg in shape_groups.items():
             n = len(sg["params"])
             tall = shape[-2] > shape[-1] if len(shape) >= 2 else True
-            # 0-D CUDA tensor hparams: not value-specialized by Dynamo, so momentum
-            # ramp / WD decay don't trigger recompiles every step
+            # 0-D tensors, not floats: Dynamo value-specializes floats and recompiled every step
             device = sg["params"][0].device
             lr_t, mom_t, wd_t = self._get_scalar_tensors(device)
             lr_t.fill_(sg["lr"])
             mom_t.fill_(sg["momentum"])
             wd_t.fill_(sg["wd"])
             if n == 1:
-                # Single param: avoid stacking overhead
                 p, g, mb = sg["params"][0], sg["grads"][0], sg["mbs"][0]
                 fn = self._get_compiled(shape, sg["ns_steps"], tall, device)
                 W = p.unsqueeze(0)
@@ -784,7 +703,6 @@ class Muon(torch.optim.Optimizer):
                 p.data.copy_(W[0])
                 mb.copy_(M[0])
             else:
-                # Stack same-shape params for batched update
                 W = torch.stack(sg["params"])
                 G = torch.stack(sg["grads"])
                 M = torch.stack(sg["mbs"])
@@ -796,9 +714,8 @@ class Muon(torch.optim.Optimizer):
 
 
 def doc_cu_seqlens(idx, eos_id):
-    """cu_seqlens for a (B, T) batch: every row start and every position after an <eos> opens a new
-    document; returned over the flattened B*T stream as int32 [n_docs + 1]. Length varies per batch,
-    so it is marked dynamic for torch.compile."""
+    """cu_seqlens over the flattened B*T stream: every row start and every position after an <eos>
+    opens a document. Length varies per batch, hence mark_dynamic for torch.compile."""
     B, T = idx.shape
     flat = idx.reshape(-1)
     starts = torch.nonzero(flat == eos_id).squeeze(1) + 1
@@ -812,10 +729,8 @@ def doc_cu_seqlens(idx, eos_id):
 def validate(
     model, raw_model, Xva, Yva, batch, device, amp_dtype, eos_id=None, max_batches=None, Vva=None, Wva=None
 ):
-    """Mean FLCE loss over the (fixed, disjoint) validation split. All DDP ranks call it in lockstep.
-
-    Under --fone the number values must ride along, or validation feeds every [NUM]
-    a value of zero and reports a loss the training loop never saw."""
+    """Mean FLCE loss over the fixed validation split; all DDP ranks call it in lockstep. Under
+    --fone the values must ride along, or every [NUM] is fed zero and the loss is not comparable."""
     model.eval()
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
@@ -846,9 +761,9 @@ def validate(
 
 
 def build_optimizers(model, cfg):
-    """Muon for 2D matrices; AdamW for embeddings, for 1D norm gains/biases, and (low lr, wd=0) for the
-    short-conv kernels (3D, were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries.
-    Base LRs only -- lr_scale is applied in set_schedule so a resumed run can't keep a stale scale."""
+    """Muon for 2D matrices; AdamW for embeddings, 1D norm gains, and (low lr, wd=0) for the 3D
+    short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
+    only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
     muon, embed, scalar, arq = [], [], [], []
     for n, p in model.named_parameters():
         if "tok" in n or "head" in n:
@@ -902,8 +817,8 @@ def build_optimizers(model, cfg):
 
 
 def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
-    """LR warmup/warmdown for every group; nanochat momentum ramp and WD decay-to-zero for Muon only
-    (the old loop also overwrote the embedding group's wd 0.001 with muon_wd)."""
+    """LR warmup/warmdown for every group; momentum ramp and WD decay-to-zero for Muon ONLY -- the
+    old loop overwrote the embedding group's wd 0.001 with muon_wd."""
     m = lr_mult(step, total, cfg)
     for opt in optimizers:
         for g in opt.param_groups:
@@ -914,8 +829,8 @@ def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
 
 
 def opt_snapshot(optimizers):
-    """Real CPU copies of optimizer state (state_dict() values are dicts, so cloning at the top level
-    used to alias the live CUDA moments)."""
+    """Real CPU copies of optimizer state: state_dict() values are dicts, so a top-level clone
+    aliases the live CUDA moments."""
     out = []
     for opt in optimizers:
         sd = opt.state_dict()
@@ -932,8 +847,8 @@ def opt_snapshot(optimizers):
 
 
 def ddp_even_len(n, batch, ddp):
-    """Rows every rank can iterate: min over ranks of n//batch*batch, so all ranks take the same number
-    of steps (a strided shard leaves ranks off by one row -> different lr per rank + NCCL hang)."""
+    """Rows every rank can iterate: min over ranks of n//batch*batch, so all take the same number of
+    steps (one row off -> different lr per rank, then an NCCL hang)."""
     if not ddp:
         return n // batch * batch
     t = torch.tensor([n // batch], device="cuda")
@@ -941,24 +856,17 @@ def ddp_even_len(n, batch, ddp):
     return int(t.item()) * batch
 
 
-# --- Data ---
-
-
 def _jsonl_content(path):
-    """The "content" field of every non-blank line in a jsonl file."""
     return [json.loads(ln)["content"] for ln in open(path, encoding="utf-8") if ln.strip()]
 
 
-VOCAB_ID = None  # fingerprint of the id->token map the run trained against; see below
+VOCAB_ID = None  # fingerprint of the id->token map the run trained against
 
 
 def vocab_fingerprint(tok):
-    """Hash of the id->token map, so a checkpoint records WHICH vocabulary it saw.
-
-    Size does not identify a vocabulary: two 32,772-token files can disagree on
-    every id, and a pack built against the wrong one trains at four times the loss
-    without raising (measured 2026-08-28). Consumers compare this instead.
-    """
+    """Hash of the id->token map, so a checkpoint records WHICH vocabulary it saw. Size does not
+    identify one: two 32,773-token files can disagree on every id, and a pack built against the
+    wrong one trained at 4.77 instead of 1.28 without raising (2026-08-28)."""
     import hashlib
 
     h = hashlib.sha256()
@@ -968,15 +876,9 @@ def vocab_fingerprint(tok):
 
 
 def build_tokenizer(texts):
-    """Load data/tokenizer.json. Never build one here.
-
-    This used to train a BPE inline when the file was missing, which is the worst
-    failure this repo can produce: the inline trainer registered only <unk>/<eos>,
-    so the 4 chat specials and [NUM] were absent, yet vocab_size still matched
-    Cfg.vocab and the size assert passed. Every id then meant something different,
-    and a checkpoint loaded against it read scrambled embeddings without an error.
-    The tokenizer is gitignored, so a fresh clone hit exactly that path.
-    """
+    """Load data/tokenizer.json; never build one here. The old inline BPE fallback registered only
+    <unk>/<eos>, dropping the chat specials and [NUM] while still matching Cfg.vocab, so every id
+    shifted and checkpoints read scrambled embeddings with nothing raising."""
     assert os.path.exists(TOK_PATH), (
         f"{TOK_PATH} is missing. Build it with `python scripts/build_tokenizer.py --force`, "
         "which is the only supported path -- it registers the chat specials and [NUM] that "
@@ -994,23 +896,19 @@ def build_tokenizer(texts):
 def encode(texts, tok, chunk=50_000, log=None):
     """Documents -> one <eos>-separated int32 stream.
 
-    Chunked, and one C-level copy per document rather than a per-token python loop. Measured on
-    20K web documents (2026-08-26): the tokenizer itself runs at 6.7M tok/s, but appending through
-    array("i").extend(e.ids) dropped the pipeline to 1.4M tok/s -- 107 minutes for the 9.1B-token
-    web domain. np.asarray per document plus encode_batch_fast (which skips the offsets, word_ids
-    and masks that nothing here reads) gives 3.3M tok/s, 46 minutes. Chunking keeps the Encoding
-    objects and the intermediate arrays bounded."""
+    np.asarray per document + encode_batch_fast, not array("i").extend(e.ids): the latter dropped
+    the pipeline from 3.3M to 1.4M tok/s, 107 min instead of 46 on web (2026-08-26). Chunking
+    keeps the Encoding objects bounded."""
     eos = tok.token_to_id("<eos>")
     batch_fn = getattr(tok, "encode_batch_fast", tok.encode_batch)
     parts, vparts = [], []
     t0 = time.time()
     for i in range(0, len(texts), chunk):
         if Cfg.fone:
-            # Numbers become one [NUM] each; their values ride alongside in stream
-            # order, so the k-th [NUM] in the ids takes the k-th value.
+            # values ride alongside in stream order: the k-th [NUM] takes the k-th value
             pieces, vals = fone.encode_text(texts[i : i + chunk], tok, Cfg.num_id)
-            # np.int32(eos), not eos: a python int promotes the int32 pieces to int64,
-            # and build_mix's int32 destination then refuses the assignment.
+            # np.int32(eos), not eos: a python int promotes the pieces to int64, which
+            # build_mix's int32 destination then refuses.
             parts.append(np.concatenate([np.append(p, np.int32(eos)) for p in pieces]))
             vparts.append(vals)
             if log and (i // chunk) % 4 == 0:
@@ -1024,9 +922,7 @@ def encode(texts, tok, chunk=50_000, log=None):
             continue
         enc = batch_fn(texts[i : i + chunk])
         parts.append(np.concatenate([np.asarray(e.ids + [eos], dtype=np.int32) for e in enc]))
-        if (
-            log and (i // chunk) % 4 == 0
-        ):  # every ~200K docs: sparse enough to be cheap, dense enough to not look hung
+        if log and (i // chunk) % 4 == 0:
             ntok = sum(len(p) for p in parts)
             dt = time.time() - t0
             log(
@@ -1041,17 +937,9 @@ def encode(texts, tok, chunk=50_000, log=None):
 
 
 def scatter_values(ids, vals, num_id):
-    """Compact per-number values -> a dense tensor shaped like ids.
-
-    The cache stores only the numbers, in stream order, because they are a few
-    percent of the tokens; the model wants one value per position. `ids == num_id`
-    marks the [NUM] slots and, read in row-major order, they line up one-for-one
-    with `vals` -- so a masked assignment puts each value where it belongs. Any
-    row-level slicing must happen AFTER this, never between the two.
-
-    Trailing tokens dropped by the reshape leave their values unused, so vals may
-    be the longer of the two; a shortfall the other way is a corrupt cache.
-    """
+    """Compact per-number values -> a dense tensor shaped like ids. The [NUM] slots in row-major
+    order line up one-for-one with `vals`, so any row-level slicing must happen AFTER this. vals
+    may be longer (trailing tokens dropped by the reshape); shorter is a corrupt cache."""
     out = torch.zeros(ids.shape, dtype=torch.float32)
     mask = ids == num_id
     k = int(mask.sum())
@@ -1061,30 +949,18 @@ def scatter_values(ids, vals, num_id):
 
 
 def _domain_cache_path(domain):
-    """Token cache path. --fone is part of the NAME, not just the freshness check: it
-    changes the token stream itself (every number collapses to one [NUM]) while leaving
-    the vocabulary fingerprint identical, so a cache built without it looks perfectly
-    fresh to a run with it. Reuse across the flag is wrong in both directions and loud in
-    neither -- a plain cache read as FoNE unpacks `ids, vals = data` off a 1-D tensor and
-    dies 40 minutes in; a FoNE cache read as plain gives len(data)==2, i.e. zero rows,
-    and trains on nothing without saying so."""
+    """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
+    token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
+    silent both ways -- a plain cache read as FoNE dies 40 minutes in unpacking `ids, vals`, and a
+    FoNE cache read as plain gives len(data)==2, i.e. zero rows, and trains on nothing."""
     return os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
 
 
 def _domain_seqs(domain, tok, is_main, ddp):
-    """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1].
+    """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
-    The cache is reused across runs, but only while it is newer than every corpus shard it was built
-    from AND was built by the same vocabulary. Comparing shard mtimes alone was not enough: ids do
-    not survive a vocabulary rebuild, and rebuilding data/tokenizer.json without touching the corpus
-    left every cache looking fresh while holding the old vocabulary's ids."""
-    # --fone belongs in the cache NAME, not just the freshness check: it changes the token
-    # stream itself (every number collapses to one [NUM]) while leaving the vocabulary
-    # fingerprint identical, so a cache built by a non-FoNE run looks perfectly fresh to a
-    # FoNE one. Reusing it across the flag is wrong in both directions and loud in neither:
-    # a plain cache read as FoNE unpacks `ids, vals = data` off a 1-D tensor and dies 40
-    # minutes in, and a FoNE cache read as plain gives len(data)==2 -> zero rows, which
-    # trains on nothing and says so nowhere. Two names, two caches, no collision.
+    Reused only while newer than every shard AND carrying the same vocabulary fingerprint: ids do
+    not survive a tokenizer rebuild, which leaves every cache looking fresh."""
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
@@ -1114,7 +990,7 @@ def _domain_seqs(domain, tok, is_main, ddp):
         del data
     if ddp:
         dist.barrier()
-    data = torch.load(cache, map_location="cpu", weights_only=True)  # int32; .long() once, per rank
+    data = torch.load(cache, map_location="cpu", weights_only=True)
     if not Cfg.fone:
         n = len(data) // (Cfg.seq + 1)
         return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
@@ -1127,24 +1003,16 @@ def _domain_seqs(domain, tok, is_main, ddp):
 def _assert_mix_domains(names, corpus_dir):
     """Reject a mix that names the unfiltered corpus, or a domain with no shards on disk.
 
-    This guard used to live only in scripts/run_pretrain_v3.sh, while AGENTS.md documents
-    run_ddp.sh as THE pretrain entry point -- run_ddp.sh calls train.py directly, so the
-    documented path was the unguarded one. Both failures are silent: a "web" domain trains
-    happily on the documents the v3 filters removed, and a domain with no shards is simply
-    scheduled at zero rows. Called from main() where the mix json is read, which is the single
-    point run_ddp.sh, a bare `python train.py` and run_pretrain_v3.sh all pass through. Not
-    inside build_mix: scripts/test_arch_compat.py exercises the scheduler with a synthetic
-    in-memory mix whose domains have no corpus at all."""
+    Called from main() where the mix json is read -- the one point run_ddp.sh, a bare
+    `python train.py` and run_pretrain_v3.sh share. Not from build_mix, which
+    test_arch_compat.py drives with a synthetic mix that has no corpus."""
     for name in names:
         assert name != "web", (
             "mix domain 'web' is the UNFILTERED corpus: train.py globs data/corpus/<domain>/*.jsonl, "
             "so this trains on 2,991,648 unfiltered documents and silently discards every quality "
             "filter the corpus-v3 rebuild applied. Use web_hq."
         )
-        # _domain_seqs already refuses an empty domain (the `assert texts` below), so this is not
-        # the only thing standing between a missing shard and a bad run -- it fails before the
-        # 40-minute tokenize instead of during it. Claiming it prevents a silent zero-row schedule
-        # would be documenting an incident that cannot happen.
+        # Redundant with _domain_seqs' `assert texts`, but fails before the 40-minute tokenize.
         assert glob.glob(os.path.join(corpus_dir, name, "*.jsonl")), (
             f"mix domain '{name}' has no shards: {os.path.join(corpus_dir, name)}/*.jsonl matches "
             "nothing. _domain_seqs would raise on this too, but only after tokenizing the domains "
@@ -1153,8 +1021,7 @@ def _assert_mix_domains(names, corpus_dir):
 
 
 def _selftest_mix_guard():
-    """Runs at import, so it fails in CI (scripts/test_arch_compat.py imports train) rather than
-    on the pod 40 minutes into a tokenize. Pure in-memory + a tmpdir; costs microseconds."""
+    """Runs at import, so it fails in CI rather than 40 minutes into a tokenize on the pod."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
@@ -1171,11 +1038,8 @@ def _selftest_mix_guard():
                 continue
             raise AssertionError(f"mix guard accepted {bad}")
 
-    # THE GUARD MUST BE ON THE PATH, and testing its logic does not test that. The bug being
-    # fixed was never that the logic was wrong -- scripts/run_pretrain_v3.sh had correct logic
-    # the whole time -- it was that the logic was not on the path run_ddp.sh takes. Deleting the
-    # call from main() left every logic test above passing. So assert the call site exists, in
-    # the same function that resolves mix_path.
+    # The bug was never wrong logic -- run_pretrain_v3.sh had it right -- but logic that was not
+    # on run_ddp.sh's path. Deleting the main() call leaves every test above passing.
     import ast
     import inspect
 
@@ -1196,27 +1060,23 @@ _selftest_mix_guard()
 
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
-    {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}}
-    weight = share of the main phase; anneal = share of the last Cfg.anneal_frac tokens (default = weight);
-    epochs = max repeats of that domain's data (the schedule is capped, never the filter thresholds).
+    {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}};
+    weight = share of the main phase, anneal = share of the last Cfg.anneal_frac tokens.
 
-    The schedule is built as an index plan -- (domain, row) pairs, ~22MB -- and only this rank's
-    1/world slice of it is turned back into token rows. Materializing the whole schedule on every
-    rank the way the obvious version does costs ~2.3TB of host RAM at 11.5B tokens x 8 ranks, which
-    is more than the box has; it would have died after the 40 minutes spent tokenizing. Rows are
-    pre-shuffled per phase and consumed sequentially, so main -> anneal order is exact."""
+    The schedule is an index plan -- (domain, row) pairs, ~22MB -- and only this rank's 1/world
+    slice becomes token rows: materializing it per rank costs ~2.3TB of host RAM at 11.5B x 8.
+    Rows are pre-shuffled per phase and consumed in order, so main -> anneal is exact."""
     mix = json.load(open(cfg_path, encoding="utf-8"))
     rows = mix["total_tokens"] / Cfg.seq
     phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
     pools, val, used = {}, [], {}
-    vpools, vval = {}, []  # --fone: the per-position number values, shadowing pools/val exactly
+    vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
         seqs, vseq = seqs if Cfg.fone else (seqs, None)
-        # Capped: validation reads at most Cfg.val_batches_full batches, so a 5% split of a 1.9M-row
-        # domain would keep 95K rows alive to look at 4.8K of them.
+        # Capped: an uncapped 5% split of a 1.9M-row domain keeps 95K rows alive to read 4.8K.
         n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), Cfg.val_rows_max)
         val.append(seqs[:n_val])
         pools[name] = seqs[n_val:]
@@ -1255,8 +1115,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
         print(
             f"mix: {plan.shape[1]} rows = {plan.shape[1] * Cfg.seq / 1e9:.2f}B tokens scheduled", flush=True
         )
-    # Truncate to a multiple of world so every rank takes the same number of steps: a strided shard
-    # that leaves one rank a row short gives that rank a different lr and then hangs the all-reduce.
+    # Multiple of world, or a rank left a row short gets a different lr and hangs the all-reduce.
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
@@ -1276,9 +1135,6 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
     return out, vcat
 
 
-# --- LR schedule: linear warmup, constant, cosine warmdown ---
-
-
 def lr_mult(step, total, cfg):
     if step < cfg.warmup:
         return (step + 1) / cfg.warmup
@@ -1286,28 +1142,21 @@ def lr_mult(step, total, cfg):
     wd_start = total - wd_steps
     if step < wd_start:
         return 1.0
-    progress = min(1.0, (step - wd_start) / wd_steps)  # 0.0 → 1.0, clamped past total (resume)
-    cosine = 0.5 * (1 + math.cos(math.pi * progress))  # 1.0 → 0.0
+    progress = min(1.0, (step - wd_start) / wd_steps)  # clamped past total (resume)
+    cosine = 0.5 * (1 + math.cos(math.pi * progress))
     return cfg.final_lr_frac + (1 - cfg.final_lr_frac) * cosine
-
-
-# --- DDP ---
 
 
 def setup_ddp():
     if "RANK" not in os.environ:
         return False, 0, 1, 0
-    # 2h, not NCCL's default 10min: rank 0 does the per-domain tokenization alone while the other
-    # ranks sit on the barrier in _domain_seqs, and the web domain takes ~45 minutes on its own.
+    # 2h, not NCCL's 10min: rank 0 tokenizes alone (~45 min for web) while the others barrier
     dist.init_process_group("nccl", timeout=datetime.timedelta(hours=2))
     rank = dist.get_rank()
     world = dist.get_world_size()
     local = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     return True, rank, world, local
-
-
-# --- Train ---
 
 
 def main():
@@ -1347,14 +1196,12 @@ def main():
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )
-    # The Muon/AdamW learning rates are nanochat's, tuned for a large batch. Cfg.batch is chosen for
-    # what fits in HBM, so the two have to be reconciled by hand: at batch 24 x 8 (786K tokens/step,
-    # 2.25x smaller than the 1.77M these rates came from) the unscaled rates made the loss bottom out
-    # at step 610 and then climb, 3.45 -> 4.36 by step 1060, with val 3.03 -> 3.56.
+    # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
+    # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
     args = parser.parse_args()
     for k, v in vars(args).items():
-        if hasattr(Cfg, k) and v:  # int override or store_true flag; unset/False keeps the Cfg default
+        if hasattr(Cfg, k) and v:
             setattr(Cfg, k, v)
     if args.no_doc_mask:
         Cfg.doc_mask = False
@@ -1372,12 +1219,8 @@ def main():
     )  # always name-derived; pipeline evals ckpt_<name>.pt
     amp = device.startswith("cuda")
 
-    # THE MIX IS THE ONLY DATA PATH. There used to be a flat-corpus fallback, and it was
-    # the branch a named-but-missing mix fell through to -- silently training on whatever
-    # data/corpus/*.jsonl happened to hold (244KB) and reporting nothing. Deleting the
-    # branch removes that failure instead of guarding it: there is nothing to fall back
-    # TO. The sample corpus shipped with the repo is data/mix_sample.json, a mix like any
-    # other, so the getting-started path and the pod path are the same code.
+    # The mix is the only data path. The old flat-corpus fallback was where a named-but-missing
+    # mix landed, silently training on whatever data/corpus/*.jsonl held (244KB).
     assert Cfg.mix, "no mix configured. The flat-corpus fallback is gone; use --mix data/mix_sample.json"
     mix_path = os.path.join(ROOT, Cfg.mix)
     assert os.path.exists(mix_path), (
@@ -1391,10 +1234,8 @@ def main():
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
-    # `vseqs` is the VALIDATION rows; under --fone each half also carries its
-    # per-position number values, which follow the same [:, :-1] input slice.
     (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
-    seqs, vseqs = seqs.long(), vseqs.long()  # int32 on disk and in the pools; long for embedding
+    seqs, vseqs = seqs.long(), vseqs.long()
     Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
     # V* feeds the embedding (aligned with X); W* is the digit target (aligned with Y).
     Vtr = num_tr[:, :-1].contiguous() if Cfg.fone else None
@@ -1403,11 +1244,11 @@ def main():
     Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
     data, X = seqs, seqs  # for the params print below
     Cfg.epochs = 1  # repeats are encoded in the schedule
-    Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()  # nanochat: async H2D
+    Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()
     if Cfg.fone:
         Vtr, Wtr = Vtr.contiguous().pin_memory(), Wtr.contiguous().pin_memory()
-    # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage through two
-    # pinned buffers; each is reused only after the event recorded behind its previous H2D copy completes.
+    # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage
+    # through two pinned buffers, each reused only after its previous H2D copy's event completes.
     pin = [
         (
             torch.empty((Cfg.batch, Cfg.seq), dtype=Xtr.dtype).pin_memory(),
@@ -1423,7 +1264,6 @@ def main():
     if args.resume:
         ck = torch.load(args.resume, map_location="cpu", weights_only=False)
         raw_model.load_state_dict(ck["model"])
-        # parse step from filename like ckpt.pt.step2000
         m = re.search(r"step(\d+)", args.resume)
         if m:
             resume_step = int(m.group(1))
@@ -1441,9 +1281,7 @@ def main():
         n_params = sum(p.numel() for p in raw_model.parameters())
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
-        # Through runlog, not print: runs/<name>.log used to hold only step lines, so a throughput
-        # number from an old log could not be compared against anything -- 90 minutes were spent
-        # chasing a regression that turned out to be a batch-size difference nobody had recorded.
+        # runlog, not print: an unrecorded batch size once cost 90 minutes of regression-chasing
         runlog(
             f"params {n_params / 1e6:.1f}M | tokens {len(data)} | seqs {len(X)} | "
             f"device {device} | world {world} | fa {HAS_FA} | fp8 {fp8}"
@@ -1454,12 +1292,11 @@ def main():
             f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
             f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone}"
         )
-        # param-count assert removed: architecture now scales well beyond the original ~23M target (e.g. 200M)
 
     optimizers = build_optimizers(raw_model, Cfg)
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
-            opt.load_state_dict(sd)  # Muon momentum + Adam moments continue instead of restarting from 0
+            opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
 
     model = raw_model
     if ddp:
@@ -1473,19 +1310,18 @@ def main():
             torch._dynamo.config.suppress_errors = True
         model = torch.compile(model, dynamic=False)
 
-    # Initial good state (before any training, so NaN at step 1 can recover)
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
-    good_opt = [None] * len(optimizers)  # CPU copies of optimizer state_dicts
+    good_opt = [None] * len(optimizers)
     total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
-    n_skip = 0  # consecutive skipped optimizer steps (non-finite gradients)
+    n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
     GOOD_SAVE_INTERVAL = 200
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
-        i0 = step * Cfg.batch * Cfg.accum  # resume continues where the schedule stopped
+        i0 = step * Cfg.batch * Cfg.accum
         t0 = time.time()
         last = 0.0
         t_log = time.time()
@@ -1508,24 +1344,21 @@ def main():
                 ev.record()
             cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
-                hidden, _ = model(xb, yb, cu, vb)  # pass targets so compile traces hidden branch
+                hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
             B, T, D = hidden.shape
             weight = raw_model.head.weight[: raw_model.cfg.vocab]
             loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
                 weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1)
             )
             if Cfg.fone:
-                # Predicting [NUM] says a number comes next but not which one; the
-                # digits are supervised separately, ten-way per place. The target is
-                # the value at the position yb points at, so it comes from the shifted
-                # value slice, not the one fed to the embedding.
+                # [NUM] says a number comes next but not which one, so digits are supervised
+                # separately against the SHIFTED value slice (wb), not the embedding's (vb).
                 nmask = yb == Cfg.num_id
                 if nmask.any():
                     nlog = raw_model.num_logits(hidden[nmask].float())
                     ntgt = fone.digit_targets(wb[nmask])
                     loss = loss + Cfg.fone_loss_w * F.cross_entropy(nlog.reshape(-1, 10), ntgt.reshape(-1))
             loss = loss / Cfg.accum
-            # nanochat: skip DDP all-reduce on non-final microbatches
             if ddp and Cfg.accum > 1 and (i // Cfg.batch + 1) % Cfg.accum != 0:
                 with model.no_sync():
                     loss.backward()
@@ -1542,13 +1375,9 @@ def main():
                 if step % 10 == 9:
                     last = loss.item() * Cfg.accum  # only sync the loss value on log steps
                 if not healthy:
-                    # This check runs BEFORE opt.step(), so the parameters are still the last
-                    # healthy ones and only the gradients are non-finite: dropping the gradients
-                    # is the entire fix. Restoring the snapshot here was strictly worse -- for the
-                    # first GOOD_SAVE_INTERVAL steps it is the pre-training random init, good_opt
-                    # is still empty so the optimizer moments are NOT rolled back with it, and
-                    # `step` is not rewound, so a single non-finite grad at step 300 silently put
-                    # the run back at initialization while the log read "restored last good state".
+                    # Runs BEFORE opt.step(), so the parameters are still healthy and dropping the
+                    # gradients is the whole fix. Restoring the snapshot here instead put a run back
+                    # at random init on one bad grad at step 300, logging "restored last good state".
                     n_skip += 1
                     for opt in optimizers:
                         opt.zero_grad(set_to_none=True)
@@ -1556,9 +1385,7 @@ def main():
                         raw_model.zero_grad(set_to_none=True)
                     if is_main:
                         runlog(f"step {step}/{total_steps} non-finite grad — step skipped ({n_skip})")
-                    if n_skip >= 20 and good_state is not None:
-                        # 20 in a row is not a transient spike; the parameters themselves are
-                        # suspect, so fall back to the last snapshot and its optimizer state.
+                    if n_skip >= 20 and good_state is not None:  # not a transient spike
                         raw_model.load_state_dict(good_state)
                         for j, opt in enumerate(optimizers):
                             if good_opt[j] is not None:
@@ -1576,7 +1403,6 @@ def main():
                     opt.step()
                     opt.zero_grad(set_to_none=True)
                 step += 1
-                # Periodically save a CPU copy of the healthy state
                 if step % GOOD_SAVE_INTERVAL == 0:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
@@ -1591,8 +1417,7 @@ def main():
                             },
                             ckpt_path + f".step{step}",
                         )
-                        # ponytail: cap intermediate sprawl at source — keep newest 3, drop older.
-                        # Resume only needs the latest; `ckpt clean` is the manual override.
+                        # keep the newest 3; resume only needs the latest
                         stale = sorted(
                             glob.glob(ckpt_path + ".step*"),
                             key=lambda p: int(p.rsplit(".step", 1)[1]),
@@ -1618,7 +1443,7 @@ def main():
                 if is_main and step % 10 == 0:
                     now = time.time()
                     dt = now - t_log
-                    tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / dt  # tokens/s per GPU
+                    tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / dt
                     mfu = 6 * n_params * tps / (peak_tflops * 1e12)
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
@@ -1632,16 +1457,13 @@ def main():
                 if step >= total_steps:
                     break
 
-        # Flush leftover gradients from incomplete accumulation at epoch end
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
         if fp8:
             raw_model.zero_grad(set_to_none=True)  # clear bf16 model grads too
 
-        # All ranks run validation to keep DDP in lockstep; only rank 0 prints. Capped at a fixed
-        # prefix of the split: uncapped it is 27.6K sequences (113M tokens) recomputed identically on
-        # every rank, which on a --max_steps ablation costs more wall-clock than the training it is
-        # measuring. A fixed prefix keeps the number comparable across runs.
+        # All ranks validate to keep DDP in lockstep; only rank 0 prints. Fixed prefix: the full
+        # split is 27.6K sequences per rank, more wall-clock than a --max_steps ablation itself.
         v = validate(
             model,
             raw_model,

@@ -26,7 +26,8 @@
   `Cfg.epochs` is forced to 1. **It is the ONLY data path.** The flat-corpus fallback was deleted
   2026-08-29 along with `data/mix.json`, `load_texts()` and `data/corpus/primary`: it was the branch a
   named-but-missing mix fell through to, training on 244KB in silence. There is nothing to fall back to
-  now, so that failure cannot recur. The shipped 4,992-document sample is `data/mix_sample.json` over
+  now, so that failure cannot recur. Git ships a 2,000-document sample (4,992 with the
+  untracked shards, which `.gitignore`'s `data/corpus/*/` hides) as `data/mix_sample.json` over
   `data/corpus/sample/`, a mix like any other -- getting-started and pod use the same code.
 - Numbers (`--fone`): **that "leave it off" verdict was wrong; see the correction below.** BPE splits numbers by
   frequency rather than place value (1640 → `16|40`), and `--fone` fixes that -- one `[NUM]` per
@@ -85,6 +86,53 @@
   the same defect on one afternoon — satisfied by an empty list, by a missing file, or by
   a deleted call site — and every one of their selftests passed. Add a check only with its
   broken world; the selftest fails otherwise.
+- **Build the broken world by MUTATING A REAL ARTIFACT, never by hand-writing one from the
+  check's own source.** All six checks passed `--selftest` while three were dead, because
+  each broken world was synthesised from the check author's memory of the input format and
+  agreed with the check's bug instead of with production. `no_stale_running` read `date`;
+  `exp.py` has only ever written `started`, so every row raised into a bare `except:
+  continue` and the check returned PASS having examined ZERO rows, with five runs up to
+  three days stale — verbatim the incident it cites. Its broken world hand-wrote a `date`
+  key, so both halves believed the same fiction. Both mix worlds wrote `data/mix_test.json`
+  while the checks read `cfg_default("mix")`, so they FAILed on "file does not exist" and
+  the real logic never once ran. The fixes are structural: `_broken_stale_run` now shells
+  out to `scripts/exp.py start` (via `AUPAI_ROOT`) and ages the row it really wrote, and
+  `_tmp_repo` writes the mix at the path the checks actually read.
+- **`cfg_default` raises instead of returning None.** Annotating `mix = "..."` as
+  `mix: str = "..."` makes it an `ast.AnnAssign`; both corpus invariants then reported SKIP
+  with the text "chosen on purpose" — an intent nobody expressed — and `check` exited 0. A
+  one-token edit no reviewer would flag silently retired two checks, in the file whose own
+  thesis is that "could not check" must never read as "checked".
+- **The ledger must take names from the SCORES too, not only from disk and command lines.**
+  `--name X` attributes a score to `ckpt_X` without `ckpt_X.pt` ever appearing in a command,
+  so `ckpt_rl_k4` 4.1% and `ckpt_sft_v5_hard` 3.1% were dropped — and 4.1% is higher than
+  the 3.6% the ledger was calling the best on record. The single place progress is read
+  from was hiding the top of its own table.
+- **CI was RED on a clean checkout at step 4 for the whole checkout's existence**, so no
+  step after it — `test_sft_pack`, `eqcheck`, `holdout`, `harness check` — had ever run.
+  `loader.py selftest` asserted on gitignored `data/tokenizer.json` where every other
+  tokenizer-dependent step prints SKIP. "CI is green" was never evidence of anything.
+  `mix_shards_present` was the second: a checkout ships only `data/corpus/sample`, so it is
+  now SKIP when NONE of the mix's domains resolve and FAIL only when some do and some
+  don't — a permanent red is the same as no signal.
+- **`E2E_GPU=7 python scripts/test_e2e.py` tests the JOINS, which is what no other test does.**
+  Every stage has a unit test and the chain had none, so the defects that survive are the ones
+  between stages: a pack whose fingerprint could never equal any checkpoint's `vocab_id` because
+  `prepare_sft.py` hashed `str(id)` before the token, and an SFT that ran at loss 4.77 instead of
+  1.28 on weights it had silently reinitialised. It carries ONE artifact through
+  mix -> tokenize -> pretrain -> checkpoint -> load -> pack -> SFT -> generate on the sample corpus
+  sample and asserts the seams: checkpoint `vocab_id` == tokenizer fingerprint == pack fingerprint,
+  cfg comes from `ck["cfg"]`, and cos(pretrained embedding, post-SFT embedding) > 0.9.
+- **It also asserts the pretrain actually STEPPED**: cos(fresh init under `Cfg.seed`, checkpoint)
+  < 0.9, measured -0.028 after six real steps. Without it every stage passed on a 206M random init
+  with the training loop stubbed to zero iterations — the chain test could not see that no training
+  had happened, which is the whole class of failure it exists for.
+- **There is no CPU half and `E2E_GPU` is required.** DeltaRecurrence is fla/Triton only, so a
+  cardless run could only re-check the mix and the vocabulary that `harness.py check` already
+  covers, then exit 0 — which reads as "the chain works". It was wired into CI in exactly that
+  shape, so the skip path was DELETED rather than documented. **CI does not run it; only a GPU run
+  covers the joins.** It will not pick a card on its own: the pod's GPUs are shared, and a test that
+  grabs whatever looks free eventually grabs a pretrain's.
 
 ## Before committing model/optimizer changes
 - CI (.github/workflows/ci.yml) runs ruff E9/F, py_compile, test_arch_compat, eqcheck, holdout on every push.
@@ -141,10 +189,7 @@
   `build_tokenizer.py` would have drowned its stratified sample in the very documents
   the filter removed, and a mix naming `web` instead of `web_hq` trains on them
   outright. Both fail silently. Take domains from `data/mix_v3.json`.
-  Two fixes, 2026-08-29: `scripts/quarantine_web.sh` **renames** it to
-  `data/_quarantine/web_unfiltered` (never deletes -- 13GB gone is not recoverable, a
-  rename is one `mv` back), so no glob over `data/corpus/*` can resolve it as a domain;
-  and `train.py` gained its own `web`-not-in-the-mix guard, on the path `main()` takes, so
+  Fixed 2026-08-29: `data/corpus/web` is gone from the pod, and `train.py` gained its own `web`-not-in-the-mix guard, on the path `main()` takes, so
   `run_ddp.sh` and a bare `python train.py` are covered and not just the one wrapper.
   `scripts/run_pretrain_v3.sh` still carries its copy: the two can drift, and train.py's is
   the one that matters. A NAMED-BUT-MISSING mix is now an assertion too -- it used to fall
