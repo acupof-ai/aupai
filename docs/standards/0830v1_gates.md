@@ -5,7 +5,16 @@ evidence exists as an artifact — not when someone reports it done. Update the 
 column in place; do not add a second copy of this table anywhere.
 
 Architecture is fixed for this round: KDA (9 layers) + full causal gated MLA (3 layers,
-latent=d/4) + AttnRes, NoPE throughout. Commit b3cad87. Changing it reopens G3.
+latent=d/4) + AttnRes Full (blocks=0), NoPE throughout. Commit b3cad87. Changing it
+reopens G3.
+
+Run config for all six budget points: `--batch 16 --accum 2`. AttnRes Full OOMs at
+batch 32 on 96GB — the accumulation loop at `train.py:444-446` leaves one [B,T,D]
+temporary per source per sublayer to the backward, 25x24 of them, which the old
+architecture never had. Gradient accumulation keeps the effective batch at 32, so the
+optimizer recipe tuned for batch 32 still applies and the six points stay comparable.
+Block AttnRes and grad_ckpt were both rejected: the first changes the architecture under
+test, the second measured 2.4x slower at batch 72 on 2026-08-27.
 
 | gate | opens when | evidence | owner | status |
 |---|---|---|---|---|
