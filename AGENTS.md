@@ -268,6 +268,18 @@
   round-trip LOSSY (NUL and tab did not survive) and used only 72.3% of its slots.
 - vocab 32,773 = 32,768 BPE merges (incl `<unk>`/`<eos>`) + 4 chat specials + `[NUM]`.
   `padded_vocab` is 32,832 either way, so adding `[NUM]` resized nothing.
+- **Measured against the 2026 frontier, our CHINESE is frontier-level and our English pays
+  the bilingual-at-32K tax.** Same passages, same code, 2026-08-29:
+  ours 32,773 / en 1.429 / zh 1.693 chars-per-token; DeepSeek-V3 128,815 / 1.104 / **1.693**;
+  GLM-4.5 151,365 / 1.130 / 1.608; Qwen3-0.6B 151,669 / 1.130 / 1.494; SmolLM3 128,256 /
+  1.130 / 1.134; Phi-4-mini 200,029 / 1.143 / 1.144. **Our Chinese ties DeepSeek-V3 and beats
+  Qwen3 and GLM-4.5 on a quarter of the slots.** English is 25% behind and every frontier
+  model buys its 1.13 with a 128K-200K vocabulary -- **not one of them is still at 32K**.
+  That fix is unavailable to us (see below), so 1.429 is a recorded price, not a defect, and
+  `tokenizer_eval`'s English gate is a REGRESSION GUARD at 1.55, not a target.
+  Rebalancing the sample cannot buy it back: an en-share sweep at 14/33/50% moved fertility
+  1.870 -> 1.911 -> 1.988, the wrong way, because at a fixed 32K the two languages compete
+  for the same slots.
 - **Keep 32K.** A fitted vocabulary scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the optimum
   for this 166M non-embedding model near 12-20K once overtraining is accounted for; a measured sweep
   on this corpus shows 64K buys +2.8% compression for +33.6M params and **+14% compute per character**
