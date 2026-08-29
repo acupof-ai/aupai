@@ -25,10 +25,13 @@ sys.path.insert(0, ROOT)
 
 from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 
-# The same held-out rows every time, drawn the same way for every checkpoint and every
-# domain. A per-domain number is only comparable across checkpoints if the rows are
-# identical, so the split is a fixed tail of each domain's shards, never a sample.
-HOLDOUT_ROWS = 256
+# train.py:1187 holds out the HEAD of each domain -- seqs[:n_val] is validation, seqs[n_val:]
+# is the training pool -- so the head is unseen for EVERY budget by construction. Scoring the
+# tail instead reads the training pool, and reads more of it the larger the budget: at epoch cap
+# 1 the 3.24B run consumes essentially the whole pool while the 0.2B run barely touches it. That
+# hands larger budgets an easier test set and inflates exactly the deltas this script exists to
+# report. Score the head.
+HOLDOUT_ROWS = 4000  # source lines read from the first shard, packed then truncated to SEQ_CAP
 SEQ_CAP = 64  # sequences per domain: 64 x 4096 = 262K tokens, enough for +-0.01 nat
 
 
@@ -41,21 +44,19 @@ def domain_files(mix_path, root):
         if not files:
             print(f"  {name}: no shards under {d} -- SKIPPED, not scored as zero", flush=True)
             continue
-        # The LAST shard, and the tail of it: train.py consumes shards in order from the
-        # front, so the tail of the last shard is the part a budget-capped run never read.
-        out[name] = os.path.join(d, files[-1])
+        out[name] = os.path.join(d, files[0])  # the head, matching train.py's val split
     return out
 
 
-def tail_texts(path, n):
+def head_texts(path, n):
     rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             rows.append(line)
-            if len(rows) > n * 4:  # keep a rolling tail without holding the whole shard
-                rows = rows[-n * 2 :]
+            if len(rows) >= n:
+                break
     texts = []
-    for line in rows[-n:]:
+    for line in rows:
         try:
             d = json.loads(line)
         except json.JSONDecodeError:
@@ -67,7 +68,7 @@ def tail_texts(path, n):
 
 
 @torch.no_grad()
-def domain_loss(model, tok, texts, seq, device):
+def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP):
     """Mean next-token CE over packed held-out text. Packing matches training, so the
     number is on the same scale as the val figure train.py prints."""
     ids = []
@@ -76,7 +77,7 @@ def domain_loss(model, tok, texts, seq, device):
     n = (len(ids) - 1) // seq
     if n == 0:
         return None, 0
-    n = min(n, SEQ_CAP)
+    n = min(n, cap)
     x = torch.tensor(ids[: n * seq], dtype=torch.long).view(n, seq).to(device)
     y = torch.tensor(ids[1 : n * seq + 1], dtype=torch.long).view(n, seq).to(device)
     tot = cnt = 0.0
@@ -94,18 +95,55 @@ def domain_loss(model, tok, texts, seq, device):
     return tot / cnt, int(cnt)
 
 
+def selftest(model, tok, texts, seq, device):
+    """Three known answers. A metric without one is not a metric -- four numbers in this
+    repo were wrong for a day because nobody had a case where they must fail."""
+    import random
+
+    real, _ = domain_loss(model, tok, texts, seq, device)
+
+    # 1. SHUFFLED text must score far worse. Same tokens, same length, no structure:
+    #    a scorer that reads its input at all cannot be indifferent to this.
+    ids = [i for t in texts for i in tok.encode(t).ids]
+    random.Random(0).shuffle(ids)
+    shuf = ["".join(tok.decode([i]) for i in ids[: len(ids)])]
+    bad, _ = domain_loss(model, tok, shuf, seq, device)
+
+    # 2. Scale invariance across the accumulator: the same text twice, scored over twice as
+    #    many batches, must give the same PER-TOKEN mean. `texts * N` alone cannot test this --
+    #    the cap truncates it back to the same N sequences and the assertion passes vacuously,
+    #    which is how this selftest was first written. The cap has to move with the input.
+    a, _ = domain_loss(model, tok, texts, seq, device, cap=16)
+    b, _ = domain_loss(model, tok, texts * 2, seq, device, cap=32)
+
+    ok = True
+    print(f"  selftest real {real:.4f} | shuffled {bad:.4f} | 16seq {a:.4f} | 32seq(2x) {b:.4f}")
+    if bad - real < 1.0:
+        print(f"  FAIL shuffled text scores {bad - real:+.3f} vs real; must be much worse")
+        ok = False
+    if abs(b - a) > 0.05:
+        print(
+            f"  FAIL doubling the input moved a per-token mean by {b - a:+.3f}; the accumulator "
+            "is size-dependent"
+        )
+        ok = False
+    print("  selftest " + ("OK" if ok else "FAILED"))
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", action="append", required=True)
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
+    ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     a = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     files = domain_files(a.mix, ROOT)
     assert files, f"{a.mix} named domains but none have shards -- nothing to score"
-    cache = {name: tail_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
+    cache = {name: head_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
 
     out = []
     for ck_path in a.ckpt:
@@ -117,6 +155,10 @@ def main():
         tok = load_tokenizer(a.tokenizer, cfg)
         model.eval()
         seq = getattr(cfg, "seq", 4096)  # cfg is a SimpleNamespace, not a dict
+        if a.selftest:
+            probe = next(iter(cache.values()))
+            if not selftest(model, tok, probe, seq, device):
+                sys.exit("selftest failed -- the numbers below would not be measurements")
         row = {"ckpt": os.path.basename(ck_path), "domains": {}}
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
         for name, texts in cache.items():
