@@ -927,10 +927,25 @@ def _demo():
     # mix_shards_present's strict branch runs only on a GPU box; force it so the broken
     # world exercises the branch that runs on the pod.
     os.environ["HARNESS_GPU_PRESENT"] = "1"
+    # A broken world must hold at least one file at a path the real repo also contains. A
+    # world hand-written from the check's own assumptions cannot -- scan_math_contamination's
+    # self-check wrote its own rows with its own field names and never saw a real corpus
+    # shape. no_oversized_blob is the exception: its artifact is a >MAX file that cannot
+    # exist in the repo by design; its reality comes from real git plumbing, not a repo file.
+    # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
+    # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
+    synthetic_world = {"no_oversized_blob"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         root = broken()
         try:
+            if name not in synthetic_world and not any(
+                os.path.exists(os.path.join(ROOT, os.path.relpath(os.path.join(dp, f), root)))
+                for dp, _dn, fns in os.walk(root)
+                for f in fns
+            ):
+                untested.append(f"{name}: broken world holds no file at a repo-real path -- hand-written?")
+                continue
             state, evidence = fn(root)
             if state != FAIL:
                 untested.append(f"{name} reported {state} on its broken world ({evidence})")
