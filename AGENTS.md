@@ -109,6 +109,7 @@ under 5% for sub-1B). Test: are the output's numbers and entities a subset of it
 | An install probe measures teacher-forced AND free-running in the same run | `probe_procedure` scored free-running only: BOTH 0.0 → 0.0 after procedure SFT, which fits "coverage was not the constraint" and would have retired a correct path. Teacher-forced, the digit head went 21.3% → 57.2% (McNemar p=5.7e-62). The procedure was learned and does not survive the model's own rollout |
 | A null landing in a pre-registered cell does not certify that cell | `docs/exp_procedure_sft.md`; its amendment is labelled as written afterwards |
 | A permanent red is the same as no signal | Twice: CI red on a clean checkout at step 4, and `mix_shards_present` red because a checkout ships only `data/corpus/sample` |
+| **Before running a two-arm test, name what ELSE changed with the variable, and ask whether it alone could produce the result you expect.** Then either hold it fixed or add the arm that isolates it | The textbook 36%-vs-5% ablation. `mix_v3_lowtb.json` gives the freed 31% to the real-text domains, so the 5% arm also trained on ~31% more web and wiki -- and the verdict was their held-out loss. It won by 0.097 / 0.109, about what 31% more in-domain data buys. The design guards one direction ("less textbook will of course score worse on textbook") and walks into its mirror. It answers "is web worth more per token than cosmopedia" (yes), not "is synthetic data harmful" |
 
 ### The four wrong numbers, and what catches them
 
