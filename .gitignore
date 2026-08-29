@@ -25,3 +25,9 @@ data/corpus/*/
 !data/corpus/primary/
 data/tokenizer_k5.json
 data/tokenizer_k6.json
+
+# Quarantine: files moved here are the UNFILTERED originals kept for re-cutting, and they
+# are large (rlvr_math 40MB; AGENTS.md's corpus quarantine is 13GB). data/rl/ and
+# data/corpus/*/ are ignored, so MOVING a file to data/_quarantine/ un-ignores it -- which
+# is how a 218,468-line jsonl reached a commit.
+data/_quarantine/
