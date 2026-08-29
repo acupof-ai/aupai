@@ -353,14 +353,14 @@
    "id": "cont.gate",
    "value": {
     "script": "scripts/gate_math_short.sh",
-    "rule": "every math_short_* batch passes scripts/scan_math_contamination.py before ingest; exit 1 = do not ingest",
+    "rule": "every math_short_* batch passes scripts/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
     "wired_into": "scripts/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
     "verified": "gate exits 1 on math_short_v8 (REJECT), 1 on a holdout file"
    },
    "measured": "2026-08-30",
    "source": "scripts/gate_math_short.sh, wired into scripts/build_math_expand.sh",
    "config": {
-    "consequence": "build_math_expand.sh now refuses until the bank is fixed -- intended, not a regression",
+    "consequence": "build_math_expand.sh refuses while any source batch is contaminated. Direction note (aupai-fb 2026-08-30): the refusal means the LOCAL math_short batches overlap math-500 -- the batches are the dirty party, not math-500. math-500 contamination is host-specific: 30.0% by the local corpus (cont.union) but 0.0% by the pod corpus that trained 0830v1 (cont.union_pod).",
     "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"
    },
    "uncertainty": null,
@@ -394,7 +394,14 @@
     "generator": "mathbank/eval_hard_v2_gen.py (every problem constructed FROM its answer; --self-check: 3600 problems + independent recompute)",
     "acceptance_gate": "scanner exit 0 vs ALL 7 math_short batches (local v3/v5/v6/v7/v8/v11 + pod v10) with v2 as holdout: 0 exact, 0 containment>=0.8 (v10 measured on the training pod 2026-08-30, short-bucket p100=0.429)",
     "reverse_gate": "v2 scanned as corpus vs math-500+math-hard-1k: 0 exact, 0 at 0.7/0.8/0.9 -- the new eval contains no old-holdout problem either",
-    "disjointness_argument": "the 943-program L3/L4 bank is 100% arithmetic (grep: zero 方程/设未知数/函数); v2's symbolic-algebra/geometry types are structurally outside the bank's generator paradigm. Type inventory: docs/audits/audit_math_corpus.md#math-hard-v2"
+    "disjointness_argument": "the 943-program L3/L4 bank is 100% arithmetic (grep: zero 方程/设未知数/函数); v2's symbolic-algebra/geometry types are structurally outside the bank's generator paradigm. Type inventory: docs/audits/audit_math_corpus.md#math-hard-v2",
+    "resolution_probe": {
+     "status": "paused 2026-08-30 — training curve has GPU priority (probe slowed 8-card DDP 45%; fb to notify restart when the curve finishes, ~1.7h)",
+     "0830v1_result": "v2 0.0% (18/18 families zero, both stock and family-aware scoring) BUT uninformative: math-500 control also 0/500 — 0830v1 is a pretraining checkpoint, degenerates on instructed evals (boxed rate 23.8%, step-eq 100% wrong). A probe that reads zero under both facts is not a probe.",
+     "informative_target": "ckpt_k8_proc_replay (best remaining instructed ckpt: math-500 2.8%, old math-hard 0.1%); the 51.2% math-500 SFT checkpoints were deleted from the pod",
+     "partial": "97/1080 pred rows from the killed proc_replay run — discarded on restart",
+     "decision": "tiered reporting as default (aupai-fb): arithmetic-gap families (number-line/cryptarithm/number-array/hound-hare) are the primary reading; symbolic algebra/geometry families are headroom — expected zero at this scale, recorded not reported as failure. Full-resolution measurement deferred until a strong SFT checkpoint exists."
+    }
    },
    "measured": "2026-08-30",
    "source": "mathbank/eval_hard_v2_gen.py; scripts/scan_math_contamination.py --holdout",
