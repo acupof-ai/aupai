@@ -610,8 +610,6 @@ def _broken_entrypoints_table():
     SKIP. Deletes the contiguous '|'-block under the '| task | command |' header; if the
     header wording drifts, falls back to deleting every script-citing row, which still
     leaves the check with zero rows."""
-    import shutil
-
     d = _tmp_repo()
     lines = open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read().splitlines(keepends=True)
     out, i, dropped = [], 0, 0
