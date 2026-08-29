@@ -180,10 +180,62 @@
     "scan_mode": "--full-doc"
    },
    "uncertainty": "assumed-clean is not proven-clean, and 2,000 docs is a small sample — a 0.1% FPR would need ~3,000 docs to surface once",
+   "boundary": "SCALE-LIMITED (fb 2026-08-30): a 0/2000 local — or 0/269 pod — hit count on a few hundred web-prose docs CANNOT bound the FPR of 'any doc in a ~500K-doc shard contains >=80% of a holdout's bigrams' (~6e8 holdout-doc pairs per 1.1GB shard). A small clean sample says nothing about large-shard FPR; measured on CCI3-HQ + web_hq (cont.cci3_vs_webhq_rates), the full-doc criterion rejects the in-training web_hq 58% at 0.8 with 0 exact. Absent a scale-free baseline corpus of comparable size this number is a 269/2000-doc FPR on tiny shards, not a general FPR.",
    "status": "measured"
   },
   {
-   "id": "cont.shards",
+   "id": "cont.cci3_vs_webhq_rates",
+   "value": {
+    "metric": "containment >= 0.8 hits, --full-doc, normalized to per-GB and per-million-doc (the only output comparable across unequal corpus sizes; absolute counts are meaningless between a 4.4G and a 101G corpus)",
+    "cci3_hq": {
+     "hits_08": 4377,
+     "docs": 14458147,
+     "gb": 101.0,
+     "per_gb": 43.3,
+     "per_mil_doc": 302.7,
+     "exact": 0,
+     "verdict_per_shard": "84/96 REJECT (12 clean)"
+    },
+    "web_hq": {
+     "hits_08": 592,
+     "docs": 1126846,
+     "gb": 4.4,
+     "per_gb": 134.5,
+     "per_mil_doc": 525.4,
+     "exact": 0,
+     "verdict_per_shard": "72/124 REJECT (52 clean)"
+    },
+    "ratio_cci3_over_webhq": {
+     "per_gb": 0.32,
+     "per_mil_doc": 0.58
+    },
+    "conclusion": "CCI3-HQ per-unit contamination is LOWER than the in-training web_hq (0.32x per GB, 0.58x per mil-doc), both exact=0. Per fb's pre-registered decision rule (accept if CCI3 <= 2x the in-training baseline): ACCEPT CCI3-HQ for ingestion. The in-training web_hq itself is 58% REJECTED by the same criterion with 0 exact -- the 'reject the whole source on any shard hit' policy fails at 1GB-shard scale (cont.cci3_scale_failure).",
+    "decision_by": "aupai-fb 2026-08-30"
+   },
+   "measured": "2026-08-30",
+   "source": "scripts/scan_math_contamination.py --full-doc vs holdout (math-500 + math-hard v1), run on the training pod (iv-yeozpb5g5cbw80bls64e); CCI3-HQ = data/raw/cci3_hq 96 shards, web_hq = data/corpus/web_hq 124 shards",
+   "config": {
+    "host": "training pod, holdout hash 654cfbd7c5efdb84",
+    "field": "cci3 jsonl field 'text' (--q-field text); web_hq field 'content'",
+    "scale_control": "web_hq (the corpus 0830v1 trains on) is the same-scale comparator, NOT an abstract clean population"
+   },
+   "boundary": "rates sum holdout-shard hit incidents per corpus / size; the same holdout can be counted in multiple shards (not a distinct-holdout union). short-holdout bucket (<20 bigrams) excluded from the main count -- known FPR dead-zone ('1+1等于几' class), reported separately, p100=1.0 in both corpora.",
+   "status": "measured"
+  },
+  {
+   "id": "cont.cci3_scale_failure",
+   "value": {
+    "claim": "'reject the whole source if any shard hits' is a scale-dependent policy that rejects everything once shards are large",
+    "evidence": "web_hq (in-training corpus) 72/124 shards REJECTED at 0.8 with 0 exact; CCI3-HQ 84/96 REJECTED with 0 exact. Both corpora ~1GB/shards. At ~500K docs/shard x 1254 holdouts = ~6e8 pairs, even a 1e-5 per-pair FP gives thousands of hits.",
+    "correct_output": "scale-free rates (per GB / per million docs) plus a same-scale in-training baseline corpus. Absolute per-shard hit counts are meaningless across unequal corpus sizes.",
+    "action": "scanner default should emit rates and REQUIRE a baseline corpus; --fpr-baseline should not be optional (assigned to lessons-b0). Known-issues: docs/lessons/token_supply.md.",
+    "data_held": "CCI3-HQ 101G kept untouched pending the accept ruling; awaiting pretokenize + mix weight from fb"
+   },
+   "measured": "2026-08-30",
+   "source": "contrasted scans, same script/parans: CCI3-HQ vs web_hq on the training pod",
+   "boundary": "the OLD cont.fpr 0/1498-on-269/2000-docs would have 'cleared' everything: small-sample FPR has no binding power on 500K-doc-shard FPR -- a second instance of a metric that reads scale-bound as absolute (per project harness rule).",
+   "status": "measured"
+  }
    "value": {
     "ape210k_000": {
      "rows": 53772,
