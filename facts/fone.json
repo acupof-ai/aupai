@@ -19,8 +19,8 @@
       "uncertainty": null,
       "boundary": "establishes the combination exists as checkpoints; says nothing about whether the arithmetic effect replicates on filtered data -- no score is recorded for either checkpoint",
       "status": "retracted",
-      "audit": "aupai-3b read cfg from both checkpoints: fone=True AND mix=mix_v3.json -- the exact combination the claim said never happened",
-      "refuted_by": "un-retracts only if both checkpoints' cfg are shown to lack fone or v3"
+      "audit": "aupai-3b read cfg from both checkpoints: fone=True AND mix=mix_v3.json -- the exact combination the claim said never happened. Original un-retraction condition: un-retracts only if both checkpoints' cfg are shown to lack fone or v3",
+      "refuted_by": "project reset 2026-08-30: conclusions zeroed, byte-level data retained"
     }
   ]
 }
