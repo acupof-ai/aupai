@@ -1,36 +1,14 @@
 #!/usr/bin/env python3
 """The single place this project's progress is checked, recorded, and advanced.
 
-Why this exists. Over one night three experiments produced three write-ups and zero
-runs of `scripts/eval_hard.sh`, the metric of record -- so "which checkpoint is best"
-was unanswerable while the conclusions read as settled. Separately, `Cfg.mix`
-defaulted to the v2 mix (88% unfiltered web) for days, guarded only inside a wrapper
-script that the documented entry point does not call. Both are the same failure: a
-claim resting on a measurement nobody took, with nothing in the system that could
-say so out loud.
-
-So the rule this file enforces is:
+Two rules:
 
     A STAGE IS NOT DONE BECAUSE IT PRODUCED A FILE. IT IS DONE BECAUSE THE
     MEASUREMENT THAT WOULD FALSIFY IT EXISTS AND IS RECORDED.
 
-And the rule this file enforces on ITSELF, because four agents writing guards for
-this repo in one afternoon all shipped the same defect:
-
     A CHECK WITHOUT A FAILING CASE IS NOT A CHECK. Every entry in CHECKS carries a
-    `broken()` that builds a world where the condition is violated, and --selftest
-    asserts the check reports FAIL on it. A check that cannot be made to fail is
-    reported as UNTESTED and counts as a failure of the harness, not a pass of the
-    thing checked.
-
-That rule is not decoration. The defects it exists to stop, all found by review of
-code written for this repo today:
-  - `"web" in domains` PASSing because `domains` parsed to `[]`
-  - a guard living entirely inside `if use_mix:`, so a MISSING mix file skipped it
-  - a selftest that verified a guard's logic while deleting its only call site went
-    undetected
-  - `eval_hard.sh <ckpt>` passing the checkpoint positionally, so every score it
-    produced was dropped and its checkpoints listed as never measured
+    `broken()` world; --selftest asserts the check reports FAIL on it. Reviewers
+    mutated four separately-written guards in this repo and all four still PASSed.
 
     python scripts/harness.py            # check + status
     python scripts/harness.py check      # invariants only; exit 1 on any failure
@@ -47,7 +25,8 @@ import re
 import sys
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 DATA = os.path.join(ROOT, "data")
 CORPUS = os.path.join(DATA, "corpus")
@@ -59,23 +38,27 @@ PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
 
 
 def cfg_default(field):
-    """Read a Cfg field from train.py by AST, without importing torch.
+    """Read a Cfg field from train.py by AST: importing train.py pulls torch/fla/liger,
+    and this file must run on CPU-only CI and laptops.
 
-    Importing train.py pulls in torch, fla and liger; this file has to run in CI on
-    CPU and on a laptop with none of them."""
+    Raises on a field it cannot read. Returning None let a one-token edit retire two
+    checks: annotating `mix = "..."` as `mix: str = "..."` makes it an ast.AnnAssign,
+    cfg_default returned None, and both mix checks reported SKIP with the text 'chosen
+    on purpose' -- an intent nobody expressed -- while main() exited 0."""
     src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
     for node in ast.walk(ast.parse(src)):
         if isinstance(node, ast.ClassDef) and node.name == "Cfg":
             for stmt in node.body:
                 if isinstance(stmt, ast.Assign) and stmt.targets[0].id == field:
                     return ast.literal_eval(stmt.value)
-    return None
+                if isinstance(stmt, ast.AnnAssign) and getattr(stmt.target, "id", None) == field:
+                    return ast.literal_eval(stmt.value)
+    raise KeyError(f"train.py has no Cfg.{field}; the check that reads it cannot run")
 
 
 def read_mix(path):
-    """(domains, error). An unreadable or shapeless mix returns an error rather than
-    an empty dict -- `"web" in {}` is False, which would report a passing guard for a
-    mix nobody could parse."""
+    """(domains, error). Never an empty dict: `"web" in {}` is False, so an unparseable
+    mix would report a passing guard."""
     if not os.path.exists(path):
         return None, f"{os.path.relpath(path, ROOT)} does not exist"
     try:
@@ -104,11 +87,10 @@ def experiments():
 
 
 CKPT_RE = re.compile(r"\bckpt_[A-Za-z0-9_.-]+?\.pt\b")
-# The number must be the one carrying the % sign. "math-hard 37/1032 = 3.6%" holds
-# three numbers and only the last is the score; a class excluding digits cannot even
-# reach it (the fraction blocks the way) and returns nothing at all, which is worse
-# than a wrong score because it reads as "never measured".
-SCORE_RE = re.compile(r"math-hard.{0,40}?(\d+(?:\.\d+)?)\s*%", re.S)
+# Must take the number carrying the %: "math-hard 37/1032 = 3.6%" holds three numbers and
+# only the last is the score. `[^%]` stops the window bleeding into the NEXT metric --
+# "math-hard deferred to bench stage; math-500 44.0%" scored 44.0 as a math-hard result.
+SCORE_RE = re.compile(r"math-hard[^%]{0,40}?(\d+(?:\.\d+)?)\s*%")
 
 
 def score_from(text):
@@ -117,14 +99,11 @@ def score_from(text):
 
 
 def recorded_scores():
-    """checkpoint -> (math-hard %, where it came from), plus the scores that matched
-    no checkpoint at all.
+    """checkpoint -> (math-hard %, source), plus scores that matched no checkpoint.
 
-    Attribution has to cover `scripts/eval_hard.sh <ckpt>`, which takes the
-    checkpoint POSITIONALLY. Matching only `--out ckpt_X.pt` dropped every score the
-    metric of record ever produced -- including k6_fone's 1.7% -- and then listed
-    those checkpoints as never measured, in the section whose whole job is to make a
-    missing measurement visible."""
+    Must cover `scripts/eval_hard.sh <ckpt>`, which takes the checkpoint POSITIONALLY:
+    matching only `--out ckpt_X.pt` dropped every score eval_hard.sh ever produced
+    (k6_fone's 1.7% included) and listed those checkpoints as never measured."""
     scores, orphans = {}, []
     for row in experiments():
         s = score_from(str(row.get("result", "")))
@@ -132,14 +111,9 @@ def recorded_scores():
             continue
         cmd = str(row.get("cmd", ""))
         run = str(row.get("name", "?"))
-        # Priority matters, and every level of it is a real form in this log:
-        #   --out X.pt          sft_math.py names its output
-        #   --name X            train.py derives ckpt_<name>.pt from it
-        #   (empty cmd)         a summary row; its own name IS the checkpoint
-        #   positional X.pt     scripts/eval_hard.sh takes the checkpoint positionally
-        # INPUTS must be excluded or the score lands on the wrong checkpoint: rl_direct
-        # resumed ckpt_k4_11b_lr05.pt and scored the RL OUTPUT, so a naive positional
-        # match credited k4 with a number k4 did not produce.
+        # Priority order; every form below is real in this log. INPUTS are excluded or
+        # the score lands on the wrong checkpoint: rl_direct resumed ckpt_k4_11b_lr05.pt
+        # and scored the RL output, crediting k4 with a number k4 did not produce.
         inputs = set(re.findall(r"--(?:resume|sft_path|tokenizer|ckpt)\s+(\S+)", cmd))
         cand = None
         m = re.search(r"--out\s+(ckpt_[A-Za-z0-9_.-]+)\.pt", cmd)
@@ -158,6 +132,19 @@ def recorded_scores():
             continue
         scores.setdefault(cand, (s, run))
     return scores, orphans
+
+
+def checkpoint_names(scores):
+    """Every checkpoint this repo knows about: on disk, named in a command, OR carrying a
+    score. The last source was missing and it silently dropped two real measurements --
+    ckpt_rl_k4 4.1% and ckpt_sft_v5_hard 3.1% -- because `--name X` attributes a score to
+    ckpt_X without `ckpt_X.pt` ever appearing in a command. 4.1% is HIGHER than the 3.6%
+    the ledger was calling the best on record, so the one place progress is read from was
+    hiding the top of its own table."""
+    names = {os.path.basename(p)[: -len(".pt")] for p in glob.glob(os.path.join(ROOT, "ckpt_*.pt"))}
+    for row in experiments():
+        names.update(n[: -len(".pt")] for n in CKPT_RE.findall(str(row.get("cmd", ""))))
+    return sorted(names | set(scores))
 
 
 def local_tokenizers():
@@ -179,32 +166,31 @@ def local_tokenizers():
 
 # -------------------------------------------------------------------------- checks
 #
-# Each check is (name, asserts, incident, run, broken). `run(root)` returns
-# (state, evidence). `broken()` yields a temporary root where the condition is
-# violated; --selftest asserts run() returns FAIL there.
+# Each check is (name, asserts, incident, run, broken). `run(root)` -> (state, evidence);
+# `broken()` -> a temp root violating the condition, where run() must report FAIL.
 
 
-def _tmp_repo(mix_obj=None, tokenizer_src=None):
-    """A throwaway tree shaped like the repo, for a check to fail against."""
-    import shutil
+def _tmp_repo(mix_obj=None):
+    """A throwaway tree shaped like the repo, for a check to fail against.
+
+    The mix goes at cfg_default("mix") -- the path the checks actually read. Writing it to
+    a made-up data/mix_test.json instead meant both mix checks FAILed on their
+    file-does-not-exist branch and their real logic was never once executed by --selftest."""
     import tempfile
 
     d = tempfile.mkdtemp()
     os.makedirs(os.path.join(d, "data", "corpus"), exist_ok=True)
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     if mix_obj is not None:
-        json.dump(mix_obj, open(os.path.join(d, "data", "mix_test.json"), "w"))
-    if tokenizer_src and os.path.exists(tokenizer_src):
-        shutil.copy(tokenizer_src, os.path.join(d, "data", "tokenizer.json"))
+        p = os.path.join(d, cfg_default("mix"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        json.dump(mix_obj, open(p, "w"))
     return d
 
 
 def _tiny_tokenizer_json(eos_id=1, with_num=True):
-    """A minimal WordLevel tokenizer that is VALID but LOSSY.
-
-    An absent tokenizer only exercises the SKIP path, and a check that has never
-    been seen to FAIL is indistinguishable from `return PASS`. This gives the
-    round-trip and pinned-id checks something real to reject."""
+    """A minimal WordLevel tokenizer that is VALID but LOSSY, so the round-trip and
+    pinned-id checks have something real to reject (an absent file only hits SKIP)."""
     vocab = {"<unk>": 0, "<eos>": eos_id, "a": 2, "b": 3}
     if with_num:
         vocab["[NUM]"] = 4
@@ -231,41 +217,58 @@ def _broken_tokenizer(eos_id=1, with_num=True):
 
 
 def _broken_stale_run():
+    """The row is built by the REAL logger, not hand-written. The old broken world invented
+    a `date` key to match the check's own bug, so both agreed on a schema exp.py has never
+    written and the selftest passed on a check that could not fire."""
+    import subprocess
+
     d = _tmp_repo()
-    with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
-        f.write(json.dumps({"name": "killed_job", "status": "running", "date": "2020-01-01 00:00:00"}) + "\n")
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "start", "--name", "killed_job", "--cmd", "x"],
+        env={**os.environ, "AUPAI_ROOT": d},
+        check=True,
+        capture_output=True,
+    )
+    p = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
+    rows[0]["started"] = "2020-01-01 00:00"
+    open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
     return d
 
 
 def check_mix_not_unfiltered(root):
-    mix = cfg_default("mix")
-    if not mix:
-        return SKIP, 'Cfg.mix is empty (flat corpus chosen on purpose via --mix "")'
-    doms, err = read_mix(os.path.join(root, mix))
+    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
-        # NOT a pass. An unreadable mix means the guard could not run, and the whole
-        # point of this harness is that "could not check" never reads as "checked".
+        # NOT a pass: "could not check" must never read as "checked".
         return FAIL, f"cannot read the default mix: {err}"
     if "web" in doms:
-        return FAIL, f"{mix} names domain 'web' (the unfiltered 2,991,648-doc corpus)"
-    return PASS, f"{mix} domains={doms}"
+        return FAIL, "the default mix names domain 'web' (the unfiltered 2,991,648-doc corpus)"
+    return PASS, f"domains={doms}"
 
 
 def _broken_mix():
-    return _tmp_repo({"total_tokens": 1e9, "domains": {"web": {"weight": 1.0}}})
+    """Names 'web' AND has one domain resolving with the other absent -- the second half is
+    what makes check_mix_shards report FAIL rather than the checkout SKIP."""
+    d = _tmp_repo({"total_tokens": 1e9, "domains": {"web": {"weight": 0.5}, "gone": {"weight": 0.5}}})
+    os.makedirs(os.path.join(d, "data", "corpus", "web"))
+    open(os.path.join(d, "data", "corpus", "web", "a.jsonl"), "w").write("{}\n")
+    return d
 
 
 def check_mix_shards(root):
-    mix = cfg_default("mix")
-    if not mix:
-        return SKIP, "no mix configured"
-    doms, err = read_mix(os.path.join(root, mix))
+    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
         return FAIL, f"cannot read the default mix: {err}"
     corpus = os.path.join(root, "data", "corpus")
-    if not os.path.isdir(corpus):
-        return SKIP, "data/corpus/ is not present (laptop checkout, not the pod)"
-    missing = [d for d in doms if not glob.glob(os.path.join(corpus, d, "*.jsonl"))]
+    present = [d for d in doms if glob.glob(os.path.join(corpus, d, "*.jsonl"))]
+    if not present:
+        # A git checkout ships data/corpus/sample and nothing else, so NONE of the mix's
+        # domains resolving means "not the pod", while SOME resolving means a real gap.
+        # Reporting FAIL here made `harness.py check` red in CI forever, which is the same
+        # as no signal.
+        return SKIP, f"none of {doms} present: this is a checkout, not the pod"
+    missing = [d for d in doms if d not in present]
     if missing:
         return FAIL, f"no shards for {missing}"
     return PASS, f"all {len(doms)} domains have shards"
@@ -321,10 +324,15 @@ def check_no_stale_running(root):
             continue
         if r.get("status") != "running":
             continue
+        # The field is `started`, which is what scripts/exp.py writes, in %Y-%m-%d %H:%M.
+        # This read `date` -- a key exp.py has never emitted -- so every row raised into a
+        # bare `except: continue` and the check returned PASS having examined ZERO rows,
+        # with five runs up to three days stale. An unreadable date is now a FAIL: a check
+        # that cannot see its subject must not report on it.
         try:
-            t = time.mktime(time.strptime(str(r.get("date", ""))[:19], "%Y-%m-%d %H:%M:%S"))
+            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
         except Exception:
-            continue
+            return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
         if age_h > 24:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
@@ -334,10 +342,8 @@ def check_no_stale_running(root):
 
 
 def check_guard_on_path(root):
-    """The guard's logic being right is not the property that failed; its being ON THE
-    PATH is. train.py's own import-time selftest asserts this, and this check makes
-    the same assertion visible here so removing it is reported rather than merely
-    raising somewhere in CI."""
+    """The guard's logic was never what failed; its being ON THE PATH was. Reported here
+    so deleting the call site shows up as a FAIL, not just a raise somewhere in CI."""
     src_path = os.path.join(root, "train.py")
     if not os.path.exists(src_path):
         return SKIP, "train.py not present"
@@ -405,8 +411,7 @@ CHECKS = [
 
 # -------------------------------------------------------------------------- stages
 #
-# A stage is done when its POSTCONDITION -- the measurement that could falsify it --
-# exists. Never when its artifact exists.
+# A stage is done when its POSTCONDITION exists, never when its artifact does.
 
 STAGES = [
     (
@@ -443,11 +448,8 @@ def run_checks(root=ROOT, quiet=False):
 def ledger():
     scores, orphans = recorded_scores()
     toks = local_tokenizers()
-    names = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(ROOT, "ckpt_*.pt"))}
-    for row in experiments():
-        names.update(n[:-3] for n in CKPT_RE.findall(str(row.get("cmd", ""))))
     rows = []
-    for n in sorted(names):
+    for n in checkpoint_names(scores):
         on_disk = os.path.exists(os.path.join(ROOT, f"{n}.pt"))
         s, src = scores.get(n, (None, None))
         rows.append((n, on_disk, s, src))
@@ -456,8 +458,8 @@ def ledger():
         sc = f"{s:.1f}%" if s is not None else "-"
         print(f"  {n:<26}{'yes' if on_disk else 'record':>8}{sc:>11}   {src or ''}")
     if orphans:
-        # Named out loud: a score that matched no checkpoint was previously dropped in
-        # silence, which is how five real measurements became "never measured".
+        # Named out loud: dropping unmatched scores silently is how five real
+        # measurements became "never measured".
         print(f"\n  {len(orphans)} recorded score(s) matched NO checkpoint name:")
         for name, s, cmd in orphans:
             print(f"    {name}: {s:.1f}%   cmd={cmd!r}")
@@ -470,11 +472,7 @@ def ledger():
 
 def gaps():
     scores, _orphans = recorded_scores()
-    names = {os.path.basename(p)[:-3] for p in glob.glob(os.path.join(ROOT, "ckpt_*.pt"))}
-    for row in experiments():
-        names.update(n[: -len(".pt")] for n in CKPT_RE.findall(str(row.get("cmd", ""))))
-    rows = [(n, True, scores.get(n, (None, None))[0], None) for n in sorted(names)]
-    unmeasured = [n for n, _d, s, _src in rows if s is None]
+    unmeasured = [n for n in checkpoint_names(scores) if n not in scores]
     print(f"  {len(unmeasured)} checkpoint(s) with NO math-hard on record:")
     print("    " + ", ".join(unmeasured) if unmeasured else "    (none)")
     md = os.path.join(ROOT, "EXPERIMENTS.md")
@@ -513,18 +511,13 @@ def stages():
 
 
 def _demo():
-    """Every check must FAIL on a world where its condition is violated.
-
-    A check nobody has ever seen fail is indistinguishable from `return PASS`, and
-    that is not hypothetical here: reviewers mutated four separately-written guards
-    for this repo today and every one of them still reported success."""
+    """Every check must FAIL on a world where its condition is violated."""
     import shutil
 
     assert score_from("math-hard 37/1032 = 3.6%") == 3.6, "took the numerator, not the percentage"
     assert score_from("math-hard deferred to the bench stage") is None, "invented a score"
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
 
-    # the positional eval form must attribute, or the metric of record vanishes
     saved = os.path.join(ROOT, "runs", "experiments.jsonl")
     if os.path.exists(saved):
         s, _o = recorded_scores()
@@ -533,7 +526,6 @@ def _demo():
     doms, err = read_mix(os.path.join(DATA, "mix_v3.json"))
     if not err:
         assert "web" not in doms and "web_hq" in doms, doms
-    # an empty domains map is an ERROR, never a quiet pass
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:

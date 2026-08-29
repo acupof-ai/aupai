@@ -16,7 +16,10 @@ import os
 import subprocess
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# AUPAI_ROOT exists so harness.py's broken world can run THIS logger into a temp tree and
+# age the row it really wrote. Its old broken world hand-wrote a `date` key exp.py has
+# never emitted, so the check and its test agreed on a fiction and the check never fired.
+ROOT = os.environ.get("AUPAI_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "runs", "experiments.jsonl")
 MD = os.path.join(ROOT, "EXPERIMENTS.md")
 
