@@ -109,6 +109,15 @@ new.to(DEV)
 again.to(DEV)
 with torch.no_grad(), _amp():
     assert torch.allclose(old(x)[0], new(x)[0]) and torch.allclose(old(x)[0], again(x)[0])
+# GPU legacy load: the remap's pad tensor must be built on the state_dict's
+# device -- a CPU pad made loading any legacy GPU checkpoint fail (mixed-device
+# cat). This guard is the whole point of the fix; on CPU it is vacuous.
+if DEV.startswith("cuda"):
+    legacy_gpu = {k: v.to(DEV) for k, v in legacy.items()}
+    gpu_m = HybridLM(Cfg).to(DEV)
+    gpu_m.load_state_dict(legacy_gpu)
+    with torch.no_grad(), _amp():
+        assert torch.allclose(gpu_m(x)[0], new(x)[0], atol=1e-2), "GPU legacy load diverged"
 # optimizer plumbing: schedule gates wd decay to Muon, snapshot is a real copy, conv kernels off the scalar group
 Cfg.attn_res = False
 m = HybridLM(Cfg).to(DEV)

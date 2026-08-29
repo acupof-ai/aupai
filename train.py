@@ -480,7 +480,7 @@ def remap_legacy_state_dict(sd):
         elif k.endswith("mixer.gate_proj.weight"):
             p = k[: -len("gate_proj.weight")]
             beta = sd.pop(p + "beta_proj.weight")
-            pad = torch.zeros((-beta.shape[0]) % 16, beta.shape[1], dtype=beta.dtype)
+            pad = torch.zeros((-beta.shape[0]) % 16, beta.shape[1], dtype=beta.dtype, device=beta.device)
             sd[p + "gb.weight"] = torch.cat([sd.pop(k), beta, pad])
         elif k.endswith("ar1.norm.g") or k.endswith("ar2.norm.g") or k.endswith("final_ar.norm.g"):
             sd[k[: -len("norm.g")] + "g"] = sd.pop(k)  # AttnRes gain moved onto the query side
