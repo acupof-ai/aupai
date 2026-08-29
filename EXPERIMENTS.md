@@ -298,3 +298,44 @@ from guessing.
 independent judge, and 50% better compressed. Do NOT read the math-500 drop as a
 regression. The next lever is math token volume, not more filtering -- the model
 demonstrably has the format and lacks the arithmetic.
+
+## k6_arith — FoNE plus a learnable arithmetic format (2026-08-29)
+
+**Hypothesis.** AGENTS.md concluded "number representation is not the constraint
+here" after FoNE cut the wrong-equation rate 43.3% -> 32.7% (p~1e-12) without
+moving any score. That reading was wrong: FoNE fixed the *representation* while
+the corpus still contained only `a+b=c`, which Lee et al. (arXiv 2307.03381)
+identify as the one format a small transformer never learns. Two conditions, one
+met.
+
+**Setup.** 200K generated rows (plain / reverse / detailed-scratchpad, every row
+verified line by line against the true value), packed with `--fone` so numbers
+become a single `[NUM]` plus a value channel and never touch BPE. 7.62M tokens,
+22.5% of them `[NUM]`. 8 epochs on ckpt_k6_fone, 7 GPUs, **under 4 minutes**.
+
+**Measured first, on the current BPE model:** the harness shows all six test
+numbers tokenise differently by context and only 3 of 6 are place-value aligned.
+Through FoNE the same six are **0/6 inconsistent** and digits are separated
+explicitly (63 -> [.,.,3,6,...], 1640 -> [.,.,.,4,6,1,...]).
+
+| bare arithmetic, greedy | + | - | x |
+|---|---:|---:|---:|
+| ckpt_k7_v3 through BPE | 0% | 0% | 0% |
+| **ckpt_k6_arith through FoNE** | **20%** | **32%** | **22%** |
+
+**It started computing.** k7_v3 answers `59 + 63 = ` with `00\n答案是：` -- filling
+the slot after the equals sign. k6_arith answers with a number of the right
+magnitude (112 for 122, 126 for 147).
+
+**The 20-32% is bounded by generation, not by arithmetic.** In-distribution
+accuracy is identical across all three formats (24% / 24% / 23%), which cannot be
+an arithmetic-ability result -- the literature has plain never converging and
+scratchpad best. Reading the generations shows why: the FIRST number is right in
+all three sampled cases (`7 - 1 = ` -> `6`, `70 - 67 = ` -> `3`) and everything
+after it is runaway continuation. 1,860 packed rows over 8 epochs does not teach
+the model to stop.
+
+**Decision.** The representation question is answered: FoNE removes the defect
+BPE has, and no vocabulary rebuild is needed for arithmetic. What is not yet
+answered is how high this goes once the model can terminate -- that needs more
+epochs and an EOS the packing actually supervises, not a different encoding.

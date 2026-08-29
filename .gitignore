@@ -24,3 +24,4 @@ data/math/
 data/corpus/*/
 !data/corpus/primary/
 data/tokenizer_k5.json
+data/tokenizer_k6.json
