@@ -196,6 +196,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--full", action="store_true", help="target config; needs a GPU")
     ap.add_argument("--json", default=None, help="write the result here")
+    ap.add_argument("--bench-only", action="store_true", help="skip G1/G2 (the fp64 reference is slow)")
+    ap.add_argument("--eager-only", action="store_true", help="skip the compiled arms (slow to build)")
     args = ap.parse_args()
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -204,18 +206,22 @@ if __name__ == "__main__":
     if dev.type != "cuda":
         cfg = gcfg = dict(cfg, dtype="float32")  # no bf16 arithmetic worth measuring on CPU
 
-    verdict, trials = g1(gcfg, dev)
-    # Relative, not absolute: at D=1024 in bf16 a max|d| of ~4e-2 is just bf16's mantissa.
-    assert trials[0]["baseline"]["fwd_rel"] < 1e-2, trials[0]
-    assert g2(gcfg, dev, one_pass), "one_pass is non-deterministic — G2 floor is broken"
-    out = {"g1": verdict, "g1_config": config_stamp(gcfg, dev), "g2_bit_exact": True}
+    out = {}
+    trials = None
+    if not args.bench_only:
+        verdict, trials = g1(gcfg, dev)
+        # Relative, not absolute: at D=1024 in bf16 a max|d| of ~4e-2 is just bf16's mantissa.
+        assert trials[0]["baseline"]["fwd_rel"] < 1e-2, trials[0]
+        assert g2(gcfg, dev, one_pass), "one_pass is non-deterministic — G2 floor is broken"
+        out = {"g1": verdict, "g1_config": config_stamp(gcfg, dev), "g2_bit_exact": True}
     for name, fn in (("two_pass", two_pass), ("one_pass", one_pass)):
         out[f"bench_{name}"] = bench(cfg, dev, fn)
         # The shipped model runs under torch.compile, so the eager pair is not the
         # baseline a kernel has to beat — compile fuses the two-pass reads too.
-        out[f"bench_{name}_compiled"] = bench(cfg, dev, torch.compile(fn), warmup=5)
+        if not args.eager_only:
+            out[f"bench_{name}_compiled"] = bench(cfg, dev, torch.compile(fn), warmup=5)
         out[f"mem_{name}"] = peak_mem_fwd_bwd(cfg, dev, fn)
     print(json.dumps(out, indent=2))
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(out | {"per_trial": trials}, f, indent=2)
+            json.dump(out if trials is None else out | {"per_trial": trials}, f, indent=2)
