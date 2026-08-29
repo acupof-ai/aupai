@@ -10,6 +10,7 @@ holdout question (scripts/holdout.py), and not a duplicate question.
 
   python scripts/build_math.py [--out data/math/math_all.jsonl]
 """
+
 import argparse
 import hashlib
 import json
@@ -83,8 +84,10 @@ def main():
                 kept += 1
             print(f"  {os.path.basename(path)[:-6]:<22} kept {kept:>7}" + (f"  (cap {cap})" if cap else ""))
             total += kept
-    print(f"TOTAL {total}  |  dropped: holdout {drop_hold}, dup {drop_dup}, "
-          f"no-numeric-answer {drop_ans}, bad-arithmetic {drop_eq}")
+    print(
+        f"TOTAL {total}  |  dropped: holdout {drop_hold}, dup {drop_dup}, "
+        f"no-numeric-answer {drop_ans}, bad-arithmetic {drop_eq}"
+    )
     print(f"saved {a.out}")
 
 

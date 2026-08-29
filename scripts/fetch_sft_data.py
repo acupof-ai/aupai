@@ -15,6 +15,7 @@ Usage:
   python3 scripts/fetch_sft_data.py fetch
   python3 scripts/fetch_sft_data.py [--max_samples 20000] [--output data/sft/sft_all_v2.jsonl]
 """
+
 import json, os, random, re, sys
 
 random.seed(42)
@@ -29,6 +30,7 @@ SFT_SOURCES = {
 
 def fetch_missing():
     from datasets import load_dataset
+
     os.makedirs(OUT, exist_ok=True)
     failed = []
     for name, (repo, split, fname) in SFT_SOURCES.items():
@@ -61,7 +63,9 @@ def load_reasoning(path):
     with open(path) as f:
         for line in f:
             d = json.loads(line)
-            samples.append({"instruction": d["instruction"], "output": d.get("response", d.get("output", ""))})
+            samples.append(
+                {"instruction": d["instruction"], "output": d.get("response", d.get("output", ""))}
+            )
     return samples
 
 
@@ -77,7 +81,7 @@ def load_gsm8k(path):
         q, a = q.strip(), a.strip()
         if not q or not a:
             continue
-        a = re.sub(r'<<[^>]*>>', '', a)
+        a = re.sub(r"<<[^>]*>>", "", a)
         samples.append({"instruction": q, "output": a})
     return samples
 
@@ -86,7 +90,8 @@ def load_qwq_mmlu(path):
     """QwQ-MMLU: prompt/reasoning/response, Traditional→Simplified."""
     from opencc import OpenCC
     import pyarrow.parquet as pq
-    cc = OpenCC('t2s')
+
+    cc = OpenCC("t2s")
     samples = []
     for row in pq.read_table(path).to_pylist():
         q = cc.convert(row["prompt"].strip())
@@ -112,8 +117,11 @@ def load_fable5(path):
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("cmd", nargs="?", choices=["fetch"], help="'fetch' downloads missing raw sources; omit to merge")
+    parser.add_argument(
+        "cmd", nargs="?", choices=["fetch"], help="'fetch' downloads missing raw sources; omit to merge"
+    )
     parser.add_argument("--max_samples", type=int, default=20000)
     parser.add_argument("--output", default=os.path.join(OUT, "sft_all_v2.jsonl"))
     args = parser.parse_args()
@@ -144,7 +152,7 @@ def main():
     # Merge Chinese sources, take subset
     chinese = reasoning + gsm8k + qwq
     random.shuffle(chinese)
-    chinese = chinese[:args.max_samples]
+    chinese = chinese[: args.max_samples]
 
     # Add Fable 5 traces
     merged = chinese + fable5
@@ -165,12 +173,12 @@ def main():
     random.shuffle(deduped)
 
     # Save
-    with open(args.output, 'w', encoding='utf-8') as f:
+    with open(args.output, "w", encoding="utf-8") as f:
         for d in deduped:
-            f.write(json.dumps(d, ensure_ascii=False) + '\n')
+            f.write(json.dumps(d, ensure_ascii=False) + "\n")
 
     size = os.path.getsize(args.output)
-    print(f"Total: {len(deduped)} samples, {size/1024/1024:.1f}MB -> {args.output}")
+    print(f"Total: {len(deduped)} samples, {size / 1024 / 1024:.1f}MB -> {args.output}")
 
 
 if __name__ == "__main__":

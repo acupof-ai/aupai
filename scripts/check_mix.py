@@ -5,7 +5,7 @@ Reads the size of each tokens_<domain>.pt (from its file size, not by loading 36
 build_mix will actually do: rows per phase, epochs per domain, which domains get capped, the anneal
 composition, and the resulting step count. Run this after scripts/pretokenize.py and before launching.
 
-    python scripts/check_mix.py [--mix data/mix.json] [--batch 32] [--world 8]
+    python scripts/check_mix.py [--mix data/mix_v3.json] [--batch 32] [--world 8]
 """
 
 import argparse
@@ -18,13 +18,17 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
+import harness  # single source of truth for the configured mix
+
 import train  # noqa: E402
 from data_overview import cache_tokens  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix.json"))
+    # The configured mix, not a second copy of its name: four scripts each hardcoded
+    # "data/mix.json" and all four went stale the day it was deleted.
+    ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--batch", type=int, default=train.Cfg.batch)
     ap.add_argument("--world", type=int, default=8)
     a = ap.parse_args()

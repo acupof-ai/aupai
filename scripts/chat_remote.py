@@ -3,6 +3,7 @@
 
 Usage: uv run python3 chat_remote.py [prompt]
 """
+
 import json
 import subprocess
 import sys
@@ -19,15 +20,19 @@ def infer_remote(ids):
 
     # Push via base64 to avoid stdin issues
     import base64
+
     b64 = base64.b64encode(ids_json.encode()).decode()
     subprocess.run(
         ["bash", "-c", f"~/bin/pod 'echo {b64} | base64 -d > {tmp_remote}'"],
-        capture_output=True, timeout=30,
+        capture_output=True,
+        timeout=30,
     )
     # Run inference
     result = subprocess.run(
         ["bash", "-c", f"~/bin/pod 'cd /work/aupai && CUDA_VISIBLE_DEVICES=0 python3 infer.py {tmp_remote}'"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr[-300:])
@@ -40,7 +45,7 @@ def main():
         q = " ".join(sys.argv[1:])
         ids = tok.encode(f"问：{q}\n答：").ids
         out = infer_remote(ids)
-        print(tok.decode(out[len(ids):], skip_special_tokens=True))
+        print(tok.decode(out[len(ids) :], skip_special_tokens=True))
         return
     print("(empty line to quit)")
     while True:
@@ -53,7 +58,7 @@ def main():
         ids = tok.encode(f"问：{q}\n答：").ids
         try:
             out = infer_remote(ids)
-            print(tok.decode(out[len(ids):], skip_special_tokens=True))
+            print(tok.decode(out[len(ids) :], skip_special_tokens=True))
         except Exception as e:
             print(f"Error: {e}")
 

@@ -1,0 +1,7 @@
+{
+  "_why": "The 4,992-document sample shipped with the repo, expressed as a mix so it uses the SAME code path as a real corpus. It used to be reached by a flat-corpus fallback inside train.py; that fallback was the branch a named-but-missing mix fell through to, silently training on whatever happened to be on disk. One path cannot do that.",
+  "total_tokens": 9e5,
+  "domains": {
+    "sample": {"weight": 1.0, "epochs": 3, "anneal": 1.0}
+  }
+}

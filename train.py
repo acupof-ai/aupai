@@ -949,25 +949,6 @@ def _jsonl_content(path):
     return [json.loads(ln)["content"] for ln in open(path, encoding="utf-8") if ln.strip()]
 
 
-def load_texts():
-    texts = []
-    for name in ("core.txt", "framework.md", "method.txt"):
-        p = os.path.join(DATA, name)
-        if os.path.exists(p):
-            texts.append(open(p, encoding="utf-8").read())
-    for p in sorted(glob.glob(os.path.join(DATA, "corpus", "*.jsonl"))):
-        texts += _jsonl_content(p)
-    for p in sorted(glob.glob(os.path.join(DATA, "corpus", "primary", "*.jsonl"))):
-        texts += _jsonl_content(p)
-    mix = os.path.join(DATA, "mix", "mixed.jsonl")
-    if os.path.exists(mix):
-        texts += _jsonl_content(mix)
-    p = os.path.join(DATA, "pretrain_full.jsonl")
-    if os.path.exists(p):
-        texts += _jsonl_content(p)
-    return texts
-
-
 VOCAB_ID = None  # fingerprint of the id->token map the run trained against; see below
 
 
@@ -1079,6 +1060,17 @@ def scatter_values(ids, vals, num_id):
     return out
 
 
+def _domain_cache_path(domain):
+    """Token cache path. --fone is part of the NAME, not just the freshness check: it
+    changes the token stream itself (every number collapses to one [NUM]) while leaving
+    the vocabulary fingerprint identical, so a cache built without it looks perfectly
+    fresh to a run with it. Reuse across the flag is wrong in both directions and loud in
+    neither -- a plain cache read as FoNE unpacks `ids, vals = data` off a 1-D tensor and
+    dies 40 minutes in; a FoNE cache read as plain gives len(data)==2, i.e. zero rows,
+    and trains on nothing without saying so."""
+    return os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
+
+
 def _domain_seqs(domain, tok, is_main, ddp):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, return [N, seq+1].
 
@@ -1086,7 +1078,14 @@ def _domain_seqs(domain, tok, is_main, ddp):
     from AND was built by the same vocabulary. Comparing shard mtimes alone was not enough: ids do
     not survive a vocabulary rebuild, and rebuilding data/tokenizer.json without touching the corpus
     left every cache looking fresh while holding the old vocabulary's ids."""
-    cache = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
+    # --fone belongs in the cache NAME, not just the freshness check: it changes the token
+    # stream itself (every number collapses to one [NUM]) while leaving the vocabulary
+    # fingerprint identical, so a cache built by a non-FoNE run looks perfectly fresh to a
+    # FoNE one. Reusing it across the flag is wrong in both directions and loud in neither:
+    # a plain cache read as FoNE unpacks `ids, vals = data` off a 1-D tensor and dies 40
+    # minutes in, and a FoNE cache read as plain gives len(data)==2 -> zero rows, which
+    # trains on nothing and says so nowhere. Two names, two caches, no collision.
+    cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
@@ -1176,7 +1175,7 @@ def _selftest_mix_guard():
     # fixed was never that the logic was wrong -- scripts/run_pretrain_v3.sh had correct logic
     # the whole time -- it was that the logic was not on the path run_ddp.sh takes. Deleting the
     # call from main() left every logic test above passing. So assert the call site exists, in
-    # the same function that decides use_mix.
+    # the same function that resolves mix_path.
     import ast
     import inspect
 
@@ -1187,8 +1186,8 @@ def _selftest_mix_guard():
         "main() no longer calls _assert_mix_domains, so run_ddp.sh is unguarded again -- which is "
         "the exact bug this guard exists to fix, and every logic test above still passes without it."
     )
-    assert "use_mix" in {t.id for n in ast.walk(fn) for t in ast.walk(n) if isinstance(t, ast.Name)}, (
-        "main() no longer computes use_mix; the guard's call site has moved and is unverified here"
+    assert "mix_path" in {t.id for n in ast.walk(fn) for t in ast.walk(n) if isinstance(t, ast.Name)}, (
+        "main() no longer resolves mix_path; the guard's call site has moved and is unverified here"
     )
 
 
@@ -1373,75 +1372,37 @@ def main():
     )  # always name-derived; pipeline evals ckpt_<name>.pt
     amp = device.startswith("cuda")
 
-    mix_path = os.path.join(ROOT, Cfg.mix) if Cfg.mix else None
-    # A NAMED-BUT-MISSING mix is an error, not a fallback. It used to take the flat
-    # corpus branch silently, and repointing the default at data/mix_v3.json made that
-    # far more likely: /work/aupai on the pod is not a git repo, files arrive by hand,
-    # and a pod without the file would have trained on data/corpus/primary -- 244KB --
-    # reporting nothing. `--mix ""` remains the explicit way to ask for the flat path.
-    assert mix_path is None or os.path.exists(mix_path), (
-        f"--mix names {Cfg.mix}, which does not exist. This is NOT a fallback: the flat "
-        f"corpus is a different (and nearly empty) dataset. Push the file, or pass "
-        f'--mix "" to ask for the flat corpus on purpose.'
+    # THE MIX IS THE ONLY DATA PATH. There used to be a flat-corpus fallback, and it was
+    # the branch a named-but-missing mix fell through to -- silently training on whatever
+    # data/corpus/*.jsonl happened to hold (244KB) and reporting nothing. Deleting the
+    # branch removes that failure instead of guarding it: there is nothing to fall back
+    # TO. The sample corpus shipped with the repo is data/mix_sample.json, a mix like any
+    # other, so the getting-started path and the pod path are the same code.
+    assert Cfg.mix, "no mix configured. The flat-corpus fallback is gone; use --mix data/mix_sample.json"
+    mix_path = os.path.join(ROOT, Cfg.mix)
+    assert os.path.exists(mix_path), (
+        f"--mix names {Cfg.mix}, which does not exist. Push the file. There is no fallback "
+        f"corpus to train on instead."
     )
-    use_mix = bool(mix_path)
-    if use_mix:
-        assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
-        _assert_mix_domains(
-            list(json.load(open(mix_path, encoding="utf-8"))["domains"]), os.path.join(DATA, "corpus")
-        )
-        tok = build_tokenizer([])
-        eos_id = tok.token_to_id("<eos>")
-        tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
-        # `vseqs` is the VALIDATION rows; under --fone each half also carries its
-        # per-position number values, which follow the same [:, :-1] input slice.
-        (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
-        seqs, vseqs = seqs.long(), vseqs.long()  # int32 on disk and in the pools; long for embedding
-        Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
-        # V* feeds the embedding (aligned with X); W* is the digit target (aligned with Y).
-        Vtr = num_tr[:, :-1].contiguous() if Cfg.fone else None
-        Wtr = num_tr[:, 1:].contiguous() if Cfg.fone else None
-        Vva = num_va[:, :-1].contiguous() if Cfg.fone else None
-        Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
-        data, X = seqs, seqs  # for the params print below
-        Cfg.epochs = 1  # repeats are encoded in the schedule
-    else:
-        texts = load_texts()
-        random.seed(Cfg.seed)
-        random.shuffle(texts)  # document-level shuffle so sources are well mixed
-        if ddp and rank == 0 and not os.path.exists(TOK_PATH):
-            build_tokenizer(texts)  # rank 0 trains and saves
-        if ddp:
-            dist.barrier()  # all ranks wait for tokenizer to exist
-        tok = build_tokenizer(texts)
-        eos_id = tok.token_to_id("<eos>")
-        # Rank-0-only tokenization + NVMe cache (avoids 8x redundant work)
-        if is_main and not os.path.exists(TOKEN_CACHE):
-            data = encode(texts, tok)
-            torch.save(data, TOKEN_CACHE)
-            print(f"Saved token cache ({len(data) / 1e6:.0f}M tokens) to {TOKEN_CACHE}", flush=True)
-            data = data.long()  # int32 -> long for embedding lookup
-        if ddp:
-            dist.barrier()  # all ranks wait for rank 0
-        if not is_main or (is_main and os.path.exists(TOKEN_CACHE) and "data" not in dir()):
-            data = torch.load(TOKEN_CACHE, map_location="cpu", weights_only=True)
-            data = data.long()  # int32 -> long for embedding lookup
-            if is_main:
-                print(f"Loaded cached tokens from {TOKEN_CACHE} ({len(data) / 1e6:.0f}M)", flush=True)
-        n_seq = len(data) // (Cfg.seq + 1)
-        data = data[: n_seq * (Cfg.seq + 1)]
-        seqs = data.view(-1, Cfg.seq + 1)
-        X, Y = seqs[:, :-1], seqs[:, 1:]
-        n_val = max(1, int(len(X) * Cfg.val_frac))
-        Xtr, Ytr, Xva, Yva = X[n_val:], Y[n_val:], X[:n_val], Y[:n_val]
-        # The flat path exists as the no-mix fallback; rather than carry a second
-        # value pipeline that nothing runs, --fone requires the mix schedule.
-        assert not Cfg.fone, "--fone needs data/mix.json (the flat corpus path carries no values)"
-        Vtr = Wtr = Vva = Wva = None
-
-    if ddp and not use_mix:  # the mix path already handed this rank its own slice, in schedule order
-        n_even = ddp_even_len(len(Xtr[rank::world]), Cfg.batch, ddp)
-        Xtr, Ytr = Xtr[rank::world][:n_even], Ytr[rank::world][:n_even]  # strided: same phase per rank
+    assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
+    _assert_mix_domains(
+        list(json.load(open(mix_path, encoding="utf-8"))["domains"]), os.path.join(DATA, "corpus")
+    )
+    tok = build_tokenizer([])
+    eos_id = tok.token_to_id("<eos>")
+    tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
+    # `vseqs` is the VALIDATION rows; under --fone each half also carries its
+    # per-position number values, which follow the same [:, :-1] input slice.
+    (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
+    seqs, vseqs = seqs.long(), vseqs.long()  # int32 on disk and in the pools; long for embedding
+    Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
+    # V* feeds the embedding (aligned with X); W* is the digit target (aligned with Y).
+    Vtr = num_tr[:, :-1].contiguous() if Cfg.fone else None
+    Wtr = num_tr[:, 1:].contiguous() if Cfg.fone else None
+    Vva = num_va[:, :-1].contiguous() if Cfg.fone else None
+    Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
+    data, X = seqs, seqs  # for the params print below
+    Cfg.epochs = 1  # repeats are encoded in the schedule
     Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()  # nanochat: async H2D
     if Cfg.fone:
         Vtr, Wtr = Vtr.contiguous().pin_memory(), Wtr.contiguous().pin_memory()
@@ -1523,8 +1484,8 @@ def main():
     GOOD_SAVE_INTERVAL = 200
     for ep in range(Cfg.epochs):
         model.train()
-        perm = torch.arange(len(Xtr)) if use_mix else torch.randperm(len(Xtr))  # mix: schedule order
-        i0 = step * Cfg.batch * Cfg.accum if use_mix else 0  # resume continues where the schedule stopped
+        perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
+        i0 = step * Cfg.batch * Cfg.accum  # resume continues where the schedule stopped
         t0 = time.time()
         last = 0.0
         t_log = time.time()
@@ -1660,9 +1621,7 @@ def main():
                     tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / dt  # tokens/s per GPU
                     mfu = 6 * n_params * tps / (peak_tflops * 1e12)
                     t_log = now
-                    phase = ""
-                    if use_mix:
-                        phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
+                    phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
                     eta = (total_steps - step) * dt / 10
                     runlog(
                         f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "

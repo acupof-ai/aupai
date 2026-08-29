@@ -13,6 +13,7 @@ self-validated on hand-built cases BEFORE the full counts are trusted.
   python scripts/repeat_check.py --dir data/corpus/web   # full run, reject histogram
   python scripts/repeat_check.py --selftest              # validate the probes first
 """
+
 import collections
 import json
 import os
@@ -20,14 +21,17 @@ import re
 import sys
 import argparse
 
+
 def _paragraphs(text):
     """Split into blocks on blank-ish lines; a doc with no blank lines stays one block."""
     blocks = [b.strip() for b in re.split(r"\n\s*\n|\n", text) if b.strip()]
     return blocks if len(blocks) > 1 else [text.strip()]
 
+
 def _shingles(s):
     s = "".join(s.split())
-    return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) > 1 else (set(s) if s else set())
+    return {s[i : i + 2] for i in range(len(s) - 1)} if len(s) > 1 else (set(s) if s else set())
+
 
 def _jac(a, b):
     if not a or not b:
@@ -62,6 +66,7 @@ def doc_internal_dup_ratio(text, span=None, thr=0.7):
 
 def doc_paragraph_templates(pargs):
     """Bigram shingles per paragraph, for the cross-doc pass."""
+
 
 def cross_doc_template(texts, thr=0.8):
     """global paragraph pool -> docs sharing near-identical paragraphs (template reuse)."""
@@ -146,14 +151,19 @@ def main():
     med = dup_r[len(dup_r) // 2]
     p90 = dup_r[int(len(dup_r) * 0.9)]
     hi = sum(1 for v in dup_r if v >= 0.3)
-    print(f"doc-internal dup_ratio: median {med:.2f} p90 {p90:.2f} | docs with dup_ratio>=0.3: {hi} ({hi / len(rows):.1%})")
+    print(
+        f"doc-internal dup_ratio: median {med:.2f} p90 {p90:.2f} | docs with dup_ratio>=0.3: {hi} ({hi / len(rows):.1%})"
+    )
     # cross-doc template on a sample
     from random import Random
+
     rng = Random(0)
     sample = rng.sample(rows, min(a.max_docs_prose, len(rows)))
     hits = cross_doc_template([t for _, t in sample], thr=0.8)
     shared_docs = sum(1 for v in hits.values() if v >= 1)
-    print(f"cross-doc template reuse (sample {len(sample)}): docs sharing a near-dup paragraph: {shared_docs} ({shared_docs / len(sample):.1%})")
+    print(
+        f"cross-doc template reuse (sample {len(sample)}): docs sharing a near-dup paragraph: {shared_docs} ({shared_docs / len(sample):.1%})"
+    )
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ Run on pod after SFT data is in place.
 Usage: python3 make_mixed.py
 Output: /work/aupai/data/sft/sft_mixed.jsonl
 """
+
 import json, random
 
 random.seed(42)
@@ -27,7 +28,7 @@ pre = []
 with open(PRETRAIN_PATH) as f:
     lines = f.readlines()
 random.shuffle(lines)
-for line in lines[:len(sft)]:
+for line in lines[: len(sft)]:
     d = json.loads(line)
     pre.append({"content": d["content"]})
 print(f"Pretrain sample: {len(pre)}")
@@ -35,7 +36,7 @@ print(f"Pretrain sample: {len(pre)}")
 # Mix 1:1
 mixed = sft + pre
 random.shuffle(mixed)
-with open(OUT_PATH, 'w') as f:
+with open(OUT_PATH, "w") as f:
     for d in mixed:
-        f.write(json.dumps(d, ensure_ascii=False) + '\n')
+        f.write(json.dumps(d, ensure_ascii=False) + "\n")
 print(f"Mixed: {len(mixed)} → {OUT_PATH}")

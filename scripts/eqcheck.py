@@ -7,6 +7,7 @@ of that bug (docs/review_2026-08-26.md #4): 5.7% of corpus rows dropped as bad_e
 >=41% of those arithmetically correct, and a 15-34% false-positive rate when scoring
 model generations — biased exactly toward the multi-step problems that matter.
 """
+
 import re
 
 EQ = re.compile(

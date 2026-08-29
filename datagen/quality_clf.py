@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Educational-quality classifier for the Chinese web corpus.
 
-Why. `data/mix.json` gives web 88% of an 11.5B-token pretrain, and hand-reading
+Why. The v2 mix (deleted 2026-08-29) gave web 88% of an 11.5B-token pretrain, and hand-reading
 140 random web documents says roughly a quarter of them are worth training on.
 The rest are gambling-SEO pages, product spec sheets, hospital ads, serialized
 web novels, machine translation, and forum fragments spliced together. The

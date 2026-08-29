@@ -7,6 +7,7 @@ the source/score spread.
 
   python3 audit_ocsg.py /work/fwe/000000.parquet
 """
+
 import collections, json, os, re, statistics, sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,55 +38,74 @@ def fragmented(text):
 
 def main():
     import pyarrow.parquet as pq
+
     rows = pq.read_table(sys.argv[1] if len(sys.argv) > 1 else "/work/fwe/000000.parquet").to_pylist()
     n = len(rows)
     print(f"== audit {sys.argv[1]} ({n} rows)")
     scores = sorted(float(r["score"]) for r in rows)
-    print(f"score  med {scores[n // 2]:.3f} p90 {scores[int(n * .9)]:.3f} | >=0.5 {(sum(1 for s in scores if s >= .5) / n):.1%} | >=0.7 {(sum(1 for s in scores if s >= .7) / n):.1%}")
+    print(
+        f"score  med {scores[n // 2]:.3f} p90 {scores[int(n * 0.9)]:.3f} | >=0.5 {(sum(1 for s in scores if s >= 0.5) / n):.1%} | >=0.7 {(sum(1 for s in scores if s >= 0.7) / n):.1%}"
+    )
     print(f"source {dict(collections.Counter(r['source'] for r in rows).most_common(4))}")
     lens = sorted(len(r["text"]) for r in rows)
-    print(f"doclen med {lens[n // 2]} p90 {lens[int(n * .9)]}")
+    print(f"doclen med {lens[n // 2]} p90 {lens[int(n * 0.9)]}")
     spam = sum(1 for r in rows if SPAM.search(r["text"])) / n
     rep = sorted(repetition(r["text"]) for r in rows)
     frags = [fragmented(r["text"]) for r in rows]
     frag_n = sum(1 for ok, _ in frags if ok) / n
     scent = [mean for _, mean in frags if _]
     print(f"SPAM          {spam:.2%}")
-    print(f"repetition    med {rep[n // 2]:.2f} p90 {rep[int(n * .9)]:.2f}")
+    print(f"repetition    med {rep[n // 2]:.2f} p90 {rep[int(n * 0.9)]:.2f}")
     print(f"fragmented(short-sent) {frag_n:.2%} | sentlen med {statistics.median(scent):.1f}")
     # traditional-char rate (t2s table)
     tab = {int(k) for k in json.load(open("/work/aupai/data/t2s_table.json"))}
-    tc = 0; cc = 0
+    tc = 0
+    cc = 0
     for r in rows[:5000]:
-        t = r["text"]; cc += len(t); tc += sum(1 for ch in t if ord(ch) in tab)
+        t = r["text"]
+        cc += len(t)
+        tc += sum(1 for ch in t if ord(ch) in tab)
     print(f"traditional-char {tc / max(1, cc):.2%}")
     # internal dup ratio sample
     dr = [doc_internal_dup_ratio(r["text"], span=6, thr=0.7) for r in rows[:2000]]
     dr = sorted(dr)
-    print(f"doc-internal-dup med {dr[len(dr) // 2]:.2f} p90 {dr[int(len(dr) * .9)]:.2f}")
+    print(f"doc-internal-dup med {dr[len(dr) // 2]:.2f} p90 {dr[int(len(dr) * 0.9)]:.2f}")
     # contamination vs eval holdsets: index OpenCSG shingles, query eval problems >=0.85
     from scripts.repeat_check import _shingles, _jac
+
     ev = []
-    for p in ("/work/aupai/data/synthetic/math_hard_eval_1k.jsonl", "/work/aupai/data/eval/math_test_500.jsonl"):
+    for p in (
+        "/work/aupai/data/synthetic/math_hard_eval_1k.jsonl",
+        "/work/aupai/data/eval/math_test_500.jsonl",
+    ):
         for l in open(p, encoding="utf-8"):
-            try: ev.append(json.loads(l).get("instruction"))
-            except: pass
+            try:
+                ev.append(json.loads(l).get("instruction"))
+            except:
+                pass
     inv = collections.defaultdict(list)
     for i, r in enumerate(rows):
-        for g in _shingles(r["text"]): inv[g].append(i)
-    contam = 0; ex = []
+        for g in _shingles(r["text"]):
+            inv[g].append(i)
+    contam = 0
+    ex = []
     for q in ev:
-        if not q: continue
-        qs = _shingles(q); cnt = collections.Counter()
+        if not q:
+            continue
+        qs = _shingles(q)
+        cnt = collections.Counter()
         for g in qs:
-            for i in inv[g]: cnt[i] += 1
+            for i in inv[g]:
+                cnt[i] += 1
         cand = [i for i, c in cnt.items() if c >= 4]
         best = max((_jac(qs, _shingles(rows[i]["text"])), i) for i in cand) if cand else (0, None)
         if best[0] >= 0.85:
             contam += 1
-            if len(ex) < 5: ex.append((round(best[0], 2), q[:30]))
+            if len(ex) < 5:
+                ex.append((round(best[0], 2), q[:30]))
     print(f"contam: {contam}/{len(ev)} eval problems have a ~verbatim match in OpenCSG text (>=0.85)")
-    for j, q in ex: print(f"   J{j} {q}")
+    for j, q in ex:
+        print(f"   J{j} {q}")
     print("AUDIT_DONE")
 
 

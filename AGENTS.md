@@ -21,9 +21,13 @@
   cap into `data/corpus/<domain>/`; `--dry --limit N` prints the rejects histogram). Sources are
   interchangeable; the filters are the product. Run every domain (incl. mathbank/synthetic via
   `--source jsonl:<glob>`) through it so the eval holdout filter covers all of them.
-- Mix: `data/mix.json` = per-domain weight / epoch cap / anneal weight; when present train.py builds the
-  schedule (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in
-  order, so `Cfg.epochs` is forced to 1. Delete or `--mix ""` to fall back to the flat corpus.
+- Mix: `data/mix_v3.json` = per-domain weight / epoch cap / anneal weight. train.py builds the schedule
+  (main phase, then the last `Cfg.anneal_frac` tokens with anneal weights) and consumes it in order, so
+  `Cfg.epochs` is forced to 1. **It is the ONLY data path.** The flat-corpus fallback was deleted
+  2026-08-29 along with `data/mix.json`, `load_texts()` and `data/corpus/primary`: it was the branch a
+  named-but-missing mix fell through to, training on 244KB in silence. There is nothing to fall back to
+  now, so that failure cannot recur. The shipped 4,992-document sample is `data/mix_sample.json` over
+  `data/corpus/sample/`, a mix like any other -- getting-started and pod use the same code.
 - Numbers (`--fone`): **that "leave it off" verdict was wrong; see the correction below.** BPE splits numbers by
   frequency rather than place value (1640 → `16|40`), and `--fone` fixes that -- one `[NUM]` per
   number carrying a Fourier value, ten-way scored per digit. The mechanism works: k6's digit head

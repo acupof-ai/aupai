@@ -9,6 +9,7 @@ Every GPU run gets a record BEFORE it starts and a result appended when it ends:
 Rows live in runs/experiments.jsonl; `python scripts/exp.py render` rewrites
 EXPERIMENTS.md (newest first) so the table is reviewable in the repo.
 """
+
 import argparse
 import json
 import os
@@ -89,7 +90,9 @@ def main():
     s.add_argument("--name", required=True)
     s.add_argument("--cmd", default="")
     s.add_argument("--notes", default="")
-    s.add_argument("--hypothesis", default="", help="what this run is meant to test, written BEFORE it starts")
+    s.add_argument(
+        "--hypothesis", default="", help="what this run is meant to test, written BEFORE it starts"
+    )
     d = sub.add_parser("done")
     d.add_argument("--name", required=True)
     d.add_argument("--result", default="")
@@ -105,9 +108,19 @@ def main():
     if a.action == "start":
         rs = rows()
         rs.append(
-            {"started": now(), "name": a.name, "status": "running", "cmd": a.cmd,
-             "notes": a.notes, "hypothesis": a.hypothesis, "result": "", "finding": "",
-             "decision": "", "ended": "", "commit": git_commit()}
+            {
+                "started": now(),
+                "name": a.name,
+                "status": "running",
+                "cmd": a.cmd,
+                "notes": a.notes,
+                "hypothesis": a.hypothesis,
+                "result": "",
+                "finding": "",
+                "decision": "",
+                "ended": "",
+                "commit": git_commit(),
+            }
         )
         write(rs)
         print(f"logged start: {a.name}")
@@ -115,13 +128,26 @@ def main():
         rs = rows()
         for r in reversed(rs):
             if r["name"] == a.name and r["status"] == "running":
-                r.update(status=a.status, result=a.result, finding=a.finding,
-                         decision=a.decision, ended=now())
+                r.update(
+                    status=a.status, result=a.result, finding=a.finding, decision=a.decision, ended=now()
+                )
                 break
         else:
-            rs.append({"started": now(), "name": a.name, "status": a.status, "cmd": "", "notes": "",
-                       "hypothesis": "", "result": a.result, "finding": a.finding,
-                       "decision": a.decision, "ended": now(), "commit": git_commit()})
+            rs.append(
+                {
+                    "started": now(),
+                    "name": a.name,
+                    "status": a.status,
+                    "cmd": "",
+                    "notes": "",
+                    "hypothesis": "",
+                    "result": a.result,
+                    "finding": a.finding,
+                    "decision": a.decision,
+                    "ended": now(),
+                    "commit": git_commit(),
+                }
+            )
         write(rs)
         print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "merge":

@@ -6,7 +6,7 @@ tokenizer drops the 4 chat/think specials the model relies on (a known bug). Thi
 single source of truth for the rebuild: ByteLevel BPE, vocab 32768, THEN the specials at their fixed
 ids -> vocab 32772, matching the existing data/tokenizer.json exactly.
 
-    python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix.json]
+    python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix_v3.json]
 
 Trains on the content field of every data/corpus/<domain>/*.jsonl (stratified: an equal per-domain
 byte budget so math/code symbols earn merges instead of drowning in web). Prints a coverage report.
@@ -66,9 +66,13 @@ def domain_texts(corpus, domain, max_bytes):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="overwrite an existing data/tokenizer.json")
-    ap.add_argument("--sample-tokens", type=int, default=DEFAULT_SAMPLE_TOKENS,
-                    help=f"cap the training sample (tokens; default {DEFAULT_SAMPLE_TOKENS:,}, 0 = whole corpus)")
-    ap.add_argument("--mix", default=os.path.join(train.DATA, "mix.json"))
+    ap.add_argument(
+        "--sample-tokens",
+        type=int,
+        default=DEFAULT_SAMPLE_TOKENS,
+        help=f"cap the training sample (tokens; default {DEFAULT_SAMPLE_TOKENS:,}, 0 = whole corpus)",
+    )
+    ap.add_argument("--mix", default=os.path.join(train.DATA, os.path.basename(train.Cfg.mix)))
     a = ap.parse_args()
 
     if os.path.exists(train.TOK_PATH) and not a.force:
@@ -88,7 +92,7 @@ def main():
     # about must be recorded there first.
     domains = [d for d in mix_names if os.path.isdir(os.path.join(corpus, d))]
     if not domains:
-        print("no data/corpus/<domain>/ named by the mix recipe (update data/mix.json domains)", file=sys.stderr)
+        print("no data/corpus/<domain>/ named by the mix recipe (update the mix domains)", file=sys.stderr)
         return 1
 
     budget = a.sample_tokens * BYTES_PER_TOKEN_EST if a.sample_tokens else float("inf")  # 0 -> whole corpus

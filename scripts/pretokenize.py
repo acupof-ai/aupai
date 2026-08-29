@@ -5,7 +5,7 @@ train.py does this itself on rank 0 inside build_mix(), with the other ranks par
 Doing it up front instead means a tokenizer or missing-domain failure shows up in seconds rather
 than after eight ranks have allocated their GPUs, and the training launch starts on warm caches.
 
-    python scripts/pretokenize.py [--mix data/mix.json] [--domains web,math]
+    python scripts/pretokenize.py [--mix data/mix_v3.json] [--domains web,math]
 """
 
 import argparse
@@ -17,12 +17,16 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+import harness  # single source of truth for the configured mix
+
 import train  # noqa: E402
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix.json"))
+    # The configured mix, not a second copy of its name: four scripts each hardcoded
+    # "data/mix.json" and all four went stale the day it was deleted.
+    ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--domains", help="comma-separated subset (default: every domain in the mix)")
     a = ap.parse_args()
 

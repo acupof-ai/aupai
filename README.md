@@ -14,7 +14,7 @@ python scripts/test_arch_compat.py     # CPU 冒烟测试，不需要 GPU
 python scripts/build_tokenizer.py --force
 ```
 
-仓库带一份 5,052 篇、约 0.9M token 的样本语料在 `data/corpus/*.jsonl`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 从原始源构建到 `data/corpus/<domain>/`，`data/mix.json` 存在时 train.py 走分域调度，否则回退到这份样本。
+仓库带一份 4,992 篇、约 0.9M token 的样本语料在 `data/corpus/sample/`，配 `data/mix_sample.json`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 构建到 `data/corpus/<domain>/`，配 `data/mix_v3.json`。**mix 是唯一的数据路径**：扁平回退已于 2026-08-29 删除，样本和真实语料走同一套代码。
 
 `data/tokenizer.json` 不入库。词表必须先建，train.py 缺它会直接报错——它曾经会静默训一个新的，那个词表缺 4 个 chat special 和 `[NUM]`，但 vocab_size 对得上，于是任何已有 checkpoint 配它都是乱码且不报错。
 
@@ -55,7 +55,7 @@ python scripts/check_mix.py        # 干预算主阶段与 anneal 的行数、ep
 
 `build_domains.sh` 做清洗、跨域去重、math 近重去重，以及 holdout 过滤防 eval 污染。
 
-`data/mix.json` 给每个域三个值：权重、epoch cap、anneal 权重。存在时 train.py 按调度消费，先主阶段，最后 `anneal_frac` 换用 anneal 权重，`epochs` 强制为 1。
+mix 给每个域三个值：权重、epoch cap、anneal 权重。train.py 按调度消费，先主阶段，最后 `anneal_frac` 换用 anneal 权重，`epochs` 强制为 1。mix 缺失是硬错误，不是回退。
 
 ## 数字表示
 

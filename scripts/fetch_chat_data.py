@@ -7,6 +7,7 @@ file (never silently swap data).
 
 Reproduce: python scripts/fetch_chat_data.py
 """
+
 import hashlib
 import json
 import os
@@ -16,13 +17,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SOURCES = [
     # (outfile, hf repo, config, expected sha256 from PROVENANCE.md, normalizer)
-    ("alpaca_gpt4_zh.jsonl", "HuggingFaceH4/alpaca_gpt4_data_zh", None,
-     "93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d",
-     lambda row: {"instruction": row["instruction"].strip(),
-                  "output": row["output"].strip()}),
-    ("coig.jsonl", "BAAI/COIG", "instructions",
-     "cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6",
-     None),  # normalizer TBD on first fetch; local file is frozen truth until then
+    (
+        "alpaca_gpt4_zh.jsonl",
+        "HuggingFaceH4/alpaca_gpt4_data_zh",
+        None,
+        "93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d",
+        lambda row: {"instruction": row["instruction"].strip(), "output": row["output"].strip()},
+    ),
+    (
+        "coig.jsonl",
+        "BAAI/COIG",
+        "instructions",
+        "cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6",
+        None,
+    ),  # normalizer TBD on first fetch; local file is frozen truth until then
 ]
 
 
@@ -36,6 +44,7 @@ def sha256(path):
 
 def main():
     from datasets import load_dataset
+
     for fname, repo, cfg, want, norm in SOURCES:
         path = os.path.join(ROOT, "data", fname)
         if os.path.exists(path):
@@ -43,7 +52,9 @@ def main():
             if got == want:
                 print(f"{fname}: sha256 matches PROVENANCE, skip")
                 continue
-            print(f"{fname}: sha MISMATCH (want {want[:12]}, have {got[:12]}) — keeping existing file, NOT re-fetching")
+            print(
+                f"{fname}: sha MISMATCH (want {want[:12]}, have {got[:12]}) — keeping existing file, NOT re-fetching"
+            )
             continue
         try:
             ds = load_dataset(repo, cfg, split="train") if cfg else load_dataset(repo, split="train")

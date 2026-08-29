@@ -20,6 +20,7 @@ Usage:
   python scripts/data_verify.py --scan          # also list data/ files not in manifest
   python scripts/data_verify.py --missing-only  # report just the MISSING set (bootstrap)
 """
+
 import argparse
 import hashlib
 import os
@@ -39,24 +40,28 @@ def selfcheck():
     three files (good/missing/tampered) + a matching manifest and asserts the
     verifier classifies each correctly. Prints PASS/FAIL lines."""
     import shutil
+
     tmp = tempfile.mkdtemp(prefix="dataverify_")
     try:
         # a known-good file
-        good = os.path.join(tmp, "good.txt"); open(good, "w").write("hello")
+        good = os.path.join(tmp, "good.txt")
+        open(good, "w").write("hello")
         good_sha = hashlib.sha256(b"hello").hexdigest()
         # a tampered file (same name, wrong content)
-        tam = os.path.join(tmp, "tam.txt"); open(tam, "w").write("HELLO")
+        tam = os.path.join(tmp, "tam.txt")
+        open(tam, "w").write("HELLO")
         # missing file: never created
         man = os.path.join(tmp, "MANIFEST.tsv")
         with open(man, "w") as f:
             f.write("# test manifest\n")
-            f.write(f"good.txt\t{good_sha}\t5\tfrozen\tx\n")   # ok
-            f.write(f"tam.txt\t{good_sha}\t5\tfrozen\tx\n")    # sha mismatch
-            f.write(f"nope.txt\t{'0'*64}\t9\tfrozen\tx\n")     # missing
+            f.write(f"good.txt\t{good_sha}\t5\tfrozen\tx\n")  # ok
+            f.write(f"tam.txt\t{good_sha}\t5\tfrozen\tx\n")  # sha mismatch
+            f.write(f"nope.txt\t{'0' * 64}\t9\tfrozen\tx\n")  # missing
         rows = []
         for line in open(man):
             line = line.strip()
-            if not line or line.startswith("#"): continue
+            if not line or line.startswith("#"):
+                continue
             p, s, n, t, p2 = line.split("\t")
             rows.append({"path": p, "sha": s, "bytes": int(n), "tier": t, "producer": p2})
         ok = missing = mism = 0
@@ -105,8 +110,7 @@ def load_manifest():
             if not line or line.startswith("#"):
                 continue
             path, sha, nbytes, tier, producer = line.split("\t")
-            rows.append({"path": path, "sha": sha, "bytes": int(nbytes),
-                         "tier": tier, "producer": producer})
+            rows.append({"path": path, "sha": sha, "bytes": int(nbytes), "tier": tier, "producer": producer})
     return rows
 
 
@@ -153,8 +157,10 @@ def main():
     if not os.path.exists(os.path.join(a.root, "data")):
         print(f"WARN: {a.root}/data absent (empty pod?) — {len(missing)} of {len(rows)} missing")
     well = len(ok)
-    print(f"MANIFEST: {len(rows)} entries | ok {well} | missing {len(missing)} | "
-          f"size-mismatch {len(mismatch_sz)} | sha-mismatch {len(mismatch_sha)}")
+    print(
+        f"MANIFEST: {len(rows)} entries | ok {well} | missing {len(missing)} | "
+        f"size-mismatch {len(mismatch_sz)} | sha-mismatch {len(mismatch_sha)}"
+    )
     if a.scan:
         # top-level source files under data/ not in manifest
         known = {r["path"] for r in rows}

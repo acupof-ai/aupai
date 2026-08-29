@@ -348,6 +348,7 @@ else:
 _base = train.Cfg
 _base.attn_res, _base.attn_res_blocks, _base.grad_ckpt, _base.attn_res_dyn_q = False, 0, False, False
 import infer_local  # noqa: E402  (Mac: pure-PyTorch stand-in, no fla import)
+
 _keys_real = set(train.HybridLM(_base).state_dict())
 _keys_local = set(infer_local.HybridLM(_base).state_dict())
 assert _keys_local == _keys_real, (
@@ -355,3 +356,19 @@ assert _keys_local == _keys_real, (
     f"only-in-train={sorted(_keys_real - _keys_local)[:6]} only-in-local={sorted(_keys_local - _keys_real)[:6]}"
 )
 print("infer_local keys == train keys: OK")
+
+
+# A FoNE run and a plain run must not share a token cache: --fone rewrites the token stream
+# but leaves the vocabulary fingerprint untouched, so the freshness check cannot tell them
+# apart, and the two directions fail differently with neither saying why.
+_was_fone = train.Cfg.fone
+try:
+    train.Cfg.fone = False
+    _plain = train._domain_cache_path("web_hq")
+    train.Cfg.fone = True
+    _fone = train._domain_cache_path("web_hq")
+finally:
+    train.Cfg.fone = _was_fone
+assert _plain != _fone, f"both flags map to the same token cache: {_plain}"
+assert "_fone" in _fone and "_fone" not in _plain, (_plain, _fone)
+print("token cache namespaced by --fone: OK")

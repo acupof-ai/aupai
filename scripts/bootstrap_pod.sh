@@ -13,7 +13,7 @@
 #             location is ARCHIVE (below) — fill it in when the storage owner
 #             decides where the 10.6GB go; until then this stage skips frozen.
 #   build   — scripts/build_domains.sh -> data/corpus/<domain>/
-#   vocab   — scripts/build_tokenizer.py --force (needs data/mix.json + the corpus)
+#   vocab   — scripts/build_tokenizer.py --force (needs data/mix_v3.json + the corpus)
 #   check   — scripts/check_mix.py: dry-run the schedule before burning GPUs.
 #
 # NOT included: launching the pretrain. That is a human decision.
@@ -66,7 +66,7 @@ fi
 # --- tokenizer --------------------------------------------------------------
 if want vocab; then
   say "stage vocab"
-  [ -f "data/mix.json" ] || die "vocab (data/mix.json required; build first)"
+  [ -f "data/mix_v3.json" ] || die "vocab (data/mix_v3.json required; build first)"
   python3 scripts/build_tokenizer.py --force || die "build_tokenizer"
   say "stage vocab: done"
 fi
