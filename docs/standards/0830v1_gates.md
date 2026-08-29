@@ -25,7 +25,7 @@ step-by-step loss comparison, `test_arch_compat` coverage, and a working fallbac
 
 | session | owns | does not do |
 |---|---|---|
-| aupai-fb | controller: GPU allocation, `train.py`, launching and recording runs, every gate ruling | |
+| aupai-fb | controller: GPU allocation, gate rulings, launching runs, the experiment record, and the reasoning about what each result means | writes no code |
 | aupai-de | harness, CI gates, doc deletion, code cleanup, pod hygiene | training runs, research |
 | aupai-3b | corpus build, filters, quality head, eval-set construction | kernels, harness |
 | tilerl-bench-harness-plan | kernels and their benchmarks, written in this repo under `scripts/` | changing the architecture's math |
@@ -45,7 +45,15 @@ exact PID, never `pkill -f`. Current plan, in order:
 - **Phase B**: GPU 1-7 run the 0.2b pretrain. GPU 0 goes to aupai-3b for quality-head
   scoring.
 
-Two rules this round does not bend:
+## Rules this round does not bend
 
 - No GPU pretrain while `harness check` is red. A permanent red is the same as no signal.
 - No number enters the repo without its measurement config.
+- Data-side harness runs locally. Every check of the real runtime runs on the pod.
+  `test_arch_compat.py` is the case that set this rule: green locally a dozen times,
+  never once executed on the pod, where fp32 + flash-attn raises before the first
+  assertion. Local green is not evidence about the machine that trains.
+- A harness or kernel improvement that has landed and been reviewed is used by the next
+  run. Improvements are not batched into a later version.
+- `/work/aupai` on the pod is not a git repo. Code arrives by `podput` and drifts
+  unmonitored; a stale pod copy already produced one wrong diagnosis this round.
