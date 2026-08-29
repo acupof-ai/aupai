@@ -34,7 +34,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from domain_loss import HOLDOUT_ROWS, domain_files, head_texts, domain_loss  # noqa: E402
+from domain_loss import HOLDOUT_ROWS, domain_files, domain_loss, head_texts  # noqa: E402
+
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 # Type -> the metrics that apply. Generative evals read zero on a base
@@ -55,7 +56,7 @@ SKIP_REASON = {
 }
 
 
-def classify(cfg, ckpt_name):
+def classify(cfg, ckpt_name, log=None):
     """The checkpoint's type, from cfg with the ledger as the fallback for RL.
 
     cfg carries no kind stamp yet (the entry points predate it); epochs>1 is
@@ -69,20 +70,21 @@ def classify(cfg, ckpt_name):
     epochs = cfg.get("epochs", 1) if isinstance(cfg, dict) else getattr(cfg, "epochs", 1)
     if epochs > 1:
         return "sft"
-    log = os.path.join(ROOT, "runs", "experiments.jsonl")
+    log = log or os.path.join(ROOT, "runs", "experiments.jsonl")
     if os.path.exists(log):
         stem = ckpt_name[: -len(".pt")] if ckpt_name.endswith(".pt") else ckpt_name
-        for line in open(log, encoding="utf-8"):
-            try:
-                row = json.loads(line)
-            except Exception:
-                continue
-            cmd = str(row.get("cmd", ""))
-            if f"--out {stem}" in cmd or f"--name {stem[len('ckpt_'):]}" in cmd:
-                if "rlvr" in cmd:
-                    return "rl"
-                if "sft" in cmd:
-                    return "sft"
+        with open(log, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                cmd = str(row.get("cmd", ""))
+                if f"--out {stem}" in cmd or f"--name {stem[len('ckpt_') :]}" in cmd:
+                    if "rlvr" in cmd:
+                        return "rl"
+                    if "sft" in cmd:
+                        return "sft"
     return "base"
 
 
@@ -121,7 +123,10 @@ def metric_minimal_pairs(ckpt_path):
     try:
         r = subprocess.run(
             [sys.executable, "eval/base_matrix.py", "--ckpt", ckpt_path, "--out", out],
-            capture_output=True, text=True, cwd=ROOT, timeout=1800,
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            timeout=1800,
         )
         if r.returncode != 0:
             tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["no output"]
@@ -156,9 +161,20 @@ def metric_mc(ckpt_path, tok_path, benchmarks):
     than by the benchmark flag."""
     try:
         r = subprocess.run(
-            [sys.executable, "eval/run_eval.py", "--ckpt", ckpt_path, "--tokenizer", tok_path,
-             "--benchmarks", *benchmarks],
-            capture_output=True, text=True, cwd=ROOT, timeout=3600,
+            [
+                sys.executable,
+                "eval/run_eval.py",
+                "--ckpt",
+                ckpt_path,
+                "--tokenizer",
+                tok_path,
+                "--benchmarks",
+                *benchmarks,
+            ],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            timeout=3600,
         )
     except Exception as e:
         return None, f"run_eval.py failed to run: {e}"
@@ -192,6 +208,57 @@ def metric_pass_at_k(ckpt_path):
         [sys.executable, "eval/math_hard.py", "--ckpt", ckpt_path, "--k", "8", "--temperature", "0.8"],
         {"pass_at_1": r"pass@1\(greedy\)\s+([\d.]+)%", "pass_at_8": r"pass@8\s+([\d.]+)%"},
     )
+
+
+def write_records(path, records):
+    """Replace same-ckpt records, keep others and unparseable lines. The matrix
+    is the current state, not a history."""
+    names = {r["ckpt"] for r in records}
+    existing = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    if json.loads(line).get("ckpt") in names:
+                        continue
+                except Exception:
+                    pass
+                existing.append(line)
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(existing)
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def selftest():
+    """Known answers for the logic that breaks silently: type classification,
+    the MC display-name parser, same-ckpt record replacement. A check that
+    fires on correct code is as useless as one that never fires, so every
+    assertion is a case with a known right answer."""
+    import tempfile
+
+    # kind stamp wins over sft epochs; epochs>1 is sft; no stamp, no ledger row -> base
+    assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
+    assert classify({"epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "sft"
+    assert classify({"epochs": 1}, "ckpt_selftest_no_such_row.pt") == "base"
+    # the ledger join is the only RL signal: rlvr in the producing command
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "experiments.jsonl")
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"cmd": "python algorithms/rlvr_trainer.py --out ckpt_rl_one.pt"}) + "\n")
+            f.write(json.dumps({"cmd": "python sft.py --name sft_one"}) + "\n")
+        assert classify({"epochs": 1}, "ckpt_rl_one.pt", log=log) == "rl"
+        assert classify({"epochs": 1}, "ckpt_sft_one.pt", log=log) == "sft"
+        # replacement: same ckpt updated in place, the other ckpt kept
+        p = os.path.join(d, "m.jsonl")
+        write_records(p, [{"ckpt": "a.pt", "v": 1}, {"ckpt": "b.pt", "v": 1}])
+        write_records(p, [{"ckpt": "a.pt", "v": 2}])
+        rows = [json.loads(l) for l in open(p, encoding="utf-8")]  # noqa: SIM115
+        assert {(r["ckpt"], r["v"]) for r in rows} == {("a.pt", 2), ("b.pt", 1)}, rows
+    # the MC parser keys on display name, not flag name (ceval prints "C-Eval (zh)")
+    m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", "  C-Eval (zh)        25.1%")
+    assert m and (m.group(1).strip(), m.group(2)) == ("C-Eval (zh)", "25.1")
+    print("selftest OK")
 
 
 def score(ckpt_path, mix_path, tok_path, device):
@@ -248,11 +315,17 @@ def score(ckpt_path, mix_path, tok_path, device):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", action="append", required=True)
+    ap.add_argument("--ckpt", action="append")
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
+    ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any record")
     a = ap.parse_args()
+    if a.selftest:
+        selftest()
+        return
+    if not a.ckpt:
+        ap.error("--ckpt is required")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     records = []
@@ -264,28 +337,14 @@ def main():
             if "error" in v:
                 print(f"  {m:15s} ERROR: {v['error']}", flush=True)
             elif m == "domain_loss":
-                print(f"  {m:15s} mean={v['unweighted_mean']:.4f} across {len(v)-1} domains", flush=True)
+                print(f"  {m:15s} mean={v['unweighted_mean']:.4f} across {len(v) - 1} domains", flush=True)
             else:
                 print(f"  {m:15s} {v}", flush=True)
         for m, why in rec["skipped"].items():
             print(f"  {m:15s} SKIPPED: {why}", flush=True)
 
     if a.json:
-        # A re-run updates its checkpoint's record, last write wins: the matrix is
-        # the current state, not a history.
-        existing = []
-        if os.path.exists(a.json):
-            for line in open(a.json, encoding="utf-8"):
-                try:
-                    r = json.loads(line)
-                    if r.get("ckpt") not in {x["ckpt"] for x in records}:
-                        existing.append(line)
-                except Exception:
-                    existing.append(line)
-        with open(a.json, "w", encoding="utf-8") as f:
-            f.writelines(existing)
-            for r in records:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        write_records(a.json, records)
         print(f"\nwrote {len(records)} record(s) to {a.json}")
 
 
