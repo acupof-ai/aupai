@@ -280,6 +280,21 @@
   Rebalancing the sample cannot buy it back: an en-share sweep at 14/33/50% moved fertility
   1.870 -> 1.911 -> 1.988, the wrong way, because at a fixed 32K the two languages compete
   for the same slots.
+- **FROZEN 2026-08-29: `data/tokenizer.json`, fingerprint `0bce3584bc24f255`, vocab 32,773.**
+  Backed up as `data/tokenizer_k8.json` on the pod. Every gate in `scripts/tokenizer_eval.py`
+  passes; the two that do not read as targets are regression guards with their cost recorded
+  (English fertility 1.429, unreachable slots 0.70% = 234K parameters = 0.1% of the model).
+  **Three conditions unfreeze it, and nothing else does:**
+  (a) the model grows enough that the fitted optimum leaves 12-20K — the frontier's 128K-200K
+  is right for 7B-100B+, not for a 166M non-embedding model;
+  (b) the corpus distribution changes materially, e.g. a 100x scale-up onto a different source,
+  since the current vocabulary was trained on a 112K-document stratified sample of corpus v3;
+  (c) an extrinsic test — two pretrains differing ONLY in the vocabulary — says a candidate is
+  better. That test has never been run here, and TokEval (arXiv 2608.18062) is explicit that
+  intrinsic metrics screen but do not rank: "adjacent rows of results tables mostly differ by
+  less than seed retraining would move a single model".
+  Unfreezing invalidates every checkpoint: ids do not survive a rebuild, and size does not
+  identify a vocabulary. Copy the live file to `data/tokenizer_<name>.json` FIRST.
 - **Keep 32K.** A fitted vocabulary scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the optimum
   for this 166M non-embedding model near 12-20K once overtraining is accounted for; a measured sweep
   on this corpus shows 64K buys +2.8% compression for +33.6M params and **+14% compute per character**
