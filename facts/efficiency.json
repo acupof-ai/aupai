@@ -99,19 +99,22 @@
   },
   {
    "id": "eff.attnres_internal",
-   "claim": "AttnRes compute tax measured at 200M",
-   "value": "never measured — both AttnRes A/B runs OOM'd; AttnRes is in the recipe by decision, not by measurement",
+   "value": "AttnRes Full costs 13.5% throughput at 200M: 64K tok/s/gpu (MFU 27%) vs 74K (31%) without, relative to the plain residual add",
    "measured": "2026-08-30",
-   "source": "aupai-fb briefing",
+   "source": "0830v1 0.2b run (AttnRes arm) + e1 bench_eff2.py --arm no_attn_res, 2026-08-30",
    "config": {
-    "attempts": "two AttnRes A/B runs, both OOM",
-    "decision": "AttnRes is in the recipe by decision, not measurement"
+    "gpu": "H20",
+    "precision": "fp8",
+    "batch": 16,
+    "accum": 2,
+    "cards": 7,
+    "model": "200M KDA + full causal MLA",
+    "attnres": "Full (blocks=0)",
+    "denominator_tflops": 296
    },
-   "uncertainty": "unmeasured -- both A/B attempts OOM'd; no number exists",
-   "boundary": "OOM is a memory phenomenon; the paper's design predicts the COMPUTE tax is tiny, but unmeasured internally",
-   "status": "unmeasured",
-   "audit": "two A/B attempts, both OOM",
-   "refuted_by": "a memory-feasible A/B (smaller batch or Block AttnRes) with step-time delta"
+   "uncertainty": "single run per arm, no seed repeat; MFU granularity ~1pt, the 14pt delta is ~14x that",
+   "boundary": "Full AttnRes only; Block variant and smaller-batch memory tradeoff unmeasured",
+   "status": "measured"
   },
   {
    "id": "eff.leviathan_tied",
