@@ -1,0 +1,172 @@
+{
+  "facts": [
+    {
+      "id": "tok.fingerprint",
+      "value": "0bce3584bc24f255",
+      "measured": "2026-08-30",
+      "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer.json'))",
+      "config": {"file": "data/tokenizer.json", "frozen": "2026-08-29", "backup": "data/tokenizer_k8.json on the pod"},
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "tok.vocab_size",
+      "value": 32773,
+      "unit": "tokens",
+      "measured": "2026-08-30",
+      "source": "len(Tokenizer.from_file('data/tokenizer.json').get_vocab())",
+      "config": {"composition": "32,768 BPE merges including <unk>/<eos>, 4 chat specials, [NUM]"},
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "tok.padded_vocab",
+      "value": 32832,
+      "measured": "2026-08-30",
+      "source": "train.py: padded_vocab = ceil(vocab/64)*64",
+      "config": {"vocab": 32773, "multiple": 64, "note": "adding [NUM] resized nothing"},
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "tok.gates_correctness",
+      "value": {"roundtrip_lossless": true, "bytes_present": "256/256"},
+      "measured": "2026-08-30",
+      "source": "scripts/tokenizer_eval.py gates; harness check_tokenizer_roundtrip",
+      "config": {"probe": "NUL, tab, hanzi, digits"},
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "tok.gates_thresholds",
+      "value": {"hanzi_whole_char": 0.9913, "ref_fertility": 1.429, "never_used_frac": 0.007, "never_used_naive_counting": 0.0087, "never_used_cost": "234K params = 0.1% of the model"},
+      "measured": "2026-08-29",
+      "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json",
+      "config": {
+        "domains": "web_hq,textbook,wiki,math,chat,code,en",
+        "per_domain": 3000,
+        "shards": 8,
+        "clip": "whole document",
+        "note": "exact flags of the recorded run were not logged; values are the script defaults. never_used excludes the by-design-unreachable entries (byte-fallback alphabet, chat specials, [NUM]); the naive counting includes them"
+      },
+      "uncertainty": null,
+      "boundary": "intrinsic gates; they screen, they do not rank (TokEval, arXiv 2608.18062)",
+      "status": "recorded"
+    },
+    {
+      "id": "tok.frontier",
+      "value": [
+        {"tokenizer": "ours", "vocab": 32773, "en_fertility": 1.429, "zh_chars_per_token": 1.693},
+        {"tokenizer": "DeepSeek-V3", "vocab": 128815, "en_fertility": 1.104, "zh_chars_per_token": 1.693},
+        {"tokenizer": "GLM-4.5", "vocab": 151365, "en_fertility": 1.13, "zh_chars_per_token": 1.608},
+        {"tokenizer": "Qwen3-0.6B", "vocab": 151669, "en_fertility": 1.13, "zh_chars_per_token": 1.494},
+        {"tokenizer": "SmolLM3-3B", "vocab": 128256, "en_fertility": 1.13, "zh_chars_per_token": 1.134},
+        {"tokenizer": "Phi-4-mini", "vocab": 200029, "en_fertility": 1.143, "zh_chars_per_token": 1.144},
+        {"tokenizer": "gpt2", "vocab": 50257, "en_fertility": 1.156, "zh_chars_per_token": 0.465}
+      ],
+      "measured": "2026-08-29",
+      "source": "tokenizers/from_pretrained on the same three passages",
+      "config": {"passages": "one English, one Chinese, one code passage, identical across tokenizers", "context": "2026 frontier models"},
+      "uncertainty": null,
+      "boundary": "fertility and chars/token are intrinsic proxies, not downstream performance; the extrinsic test (two pretrains differing only in vocabulary) was never run",
+      "status": "recorded"
+    },
+    {
+      "id": "tok.scaling_law_optimum",
+      "value": "12-20K vocab for a 166M non-embedding model",
+      "measured": "2026-08-29",
+      "source": "arXiv 2407.13623 (N_v proportional to N_nv^0.83)",
+      "config": {"model_nonembedding_params_M": 166},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.vocab_sweep_32k_64k",
+      "value": {"compression_gain": "+2.8%", "extra_params_M": 33.6, "extra_compute_per_char": "+14%", "output_matmul_share_of_flops_at_32k": 0.17},
+      "measured": "2026-08-29",
+      "source": "measured sweep on this corpus; summary recorded in scripts/tokenizer_report.py; no sweep artifact located",
+      "config": {"sweep": "32K vs 64K", "note": "tying halves the parameters, not the FLOPs; the d x V output matmul runs every forward pass"},
+      "uncertainty": null,
+      "boundary": "intrinsic compression and cost only; no downstream comparison was run",
+      "status": "recorded"
+    },
+    {
+      "id": "tok.en_share_sweep",
+      "value": {"en_share": ["14%", "33%", "50%"], "en_fertility": [1.87, 1.911, 1.988]},
+      "measured": "2026-08-29",
+      "source": "scripts/build_tokenizer.py --weights sweep; no artifact located",
+      "config": {"vocab_budget": "32K fixed", "note": "fertility moved the wrong way: at a fixed budget the two languages compete for slots"},
+      "uncertainty": null,
+      "boundary": "fertility is a proxy; the sweep measured no downstream metric",
+      "status": "recorded"
+    },
+    {
+      "id": "tok.sample_size_sweep",
+      "value": {"sample_docs": [25000, 395000], "chars_per_token": [2.6093, 2.6296], "hanzi_occurrence_coverage": [0.9951, 0.9962], "hanzi_tier_5k_10k_whole_tokens": [0, 0]},
+      "measured": "2026-08-29",
+      "source": "scripts/build_tokenizer.py runs; no artifact located",
+      "config": {"sample": "stratified per domain", "note": "16x data, 6x time; sample balance matters, sample size barely does"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.hanzi_distribution",
+      "value": {"distinct_hanzi_in_sample": 7825, "hanzi_with_whole_tokens": "~1000", "occurrence_coverage_of_top_1000": 0.996},
+      "measured": "2026-08-29",
+      "source": "scripts/build_tokenizer.py analysis; no artifact located",
+      "config": {"vocab": "the frozen 32,773-token vocabulary"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.stratified_vs_all",
+      "value": {
+        "all_9.4M_docs": "web-drowned: web at 1.04 chars/token, no whole token for common traditional characters",
+        "stratified_112K_docs": "5 min instead of 45+ min; 12.5% fewer tokens on held-out text (1.484 vs 1.299 chars/token), better on every domain",
+        "single_char_tokens": [3175, 4706],
+        "five_plus_char_tokens": [4312, 7817]
+      },
+      "measured": "2026-08-29",
+      "source": "scripts/build_tokenizer.py comparison; no artifact located",
+      "config": {"contrast": "all 9.4M documents vs 112K-document stratified equal-byte sample", "note": "every pretrain before 2026-08-28, k5 included, used the weaker vocabulary"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.faster_libraries",
+      "value": {"tokens": "9.49B", "throughput": "2.3M tok/s", "wallclock": "~66 min", "rust_share": 0.75, "cores": "90-143", "gigatoken": "refuses: no single-byte vocab entry for byte 0x00 (needs a complete 256-byte base)", "fastokens": "matches ids on short strings, raises 'character not in vocabulary' on real corpus text instead of falling back to <unk>", "tiktoken": "different regex pretokenizer, cannot reproduce ByteLevel BPE ids"},
+      "measured": "2026-08-28",
+      "source": "evaluation session 2026-08-28; docs/audit_fineweb_edu_v2.md confirms 2.3M tok/s",
+      "config": {"vocab": "the frozen 32,773-token vocabulary", "note": "adopting any of them means retraining the vocabulary, which changes every id; the real win is incremental tokenization, not a faster library"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.byte_alphabet_incident",
+      "value": {"byte_chars_surviving_without_initial_alphabet": "193/256"},
+      "measured": "2026-08-28",
+      "source": "incident during vocabulary builds; scripts/build_tokenizer.py",
+      "config": {"missing_flag": "initial_alphabet=ByteLevel.alphabet()", "consequence": "NUL silently dropped, every fast tokenizer library breaks"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.metric_proxies",
+      "value": {"chars_per_token_correlation_with_downstream": "[-0.77, -0.09] depending on task", "renyi_efficiency_correlation_vs_BPB": -0.8, "compression_rate_correlation": -0.51},
+      "measured": "2026-08-29",
+      "source": "arXiv 2506.03101; TokEval, arXiv 2608.18062",
+      "config": {"note": "TokEval's own conclusion: intrinsic metrics screen but do not rank"},
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "tok.k6_vocab_fingerprint",
+      "value": "d191af789cdbe597",
+      "measured": "2026-08-30",
+      "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer_k6.json'))",
+      "config": {"file": "data/tokenizer_k6.json", "note": "the vocabulary ckpt_k6_fone was trained on; overwritten in place by the corpus-v3 rebuild, so a size check passed while the scores were noise"},
+      "uncertainty": null,
+      "status": "measured"
+    }
+  ]
+}

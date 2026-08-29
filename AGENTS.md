@@ -90,13 +90,24 @@ the loudest a k5 SFT that trained at loss 4.77 instead of 1.28 with nothing rais
 ### Synthetic data
 
 `docs/synthetic_data_standard.md`. One distinction decides the mix weight: **anchored rephrasing**
-(+6.7pp at 1B, ~30% of the mix) versus **from-scratch generation** (ties naive summarisation,
-under 5% for sub-1B). Test: are the output's numbers and entities a subset of its declared source.
+(~30% of the mix) versus **from-scratch generation** (under 5% for sub-1B). Test: are the output's
+numbers and entities a subset of its declared source. Anchored rephrasing's downstream gain at
+200M is **unmeasured** — the source grid and the retracted claims live in
+`facts/synthetic_data.json`.
 
 ## The harness — `python scripts/harness.py`
 
 `check` (invariants, exit 1, in CI) · `ledger` (checkpoint, provenance, math-hard) ·
 `gaps` (what is unmeasured) · `measure` (measures it) · `stages`.
+
+### Fact store — `facts/*.json`
+
+Measurements live here, one file per migrated section, never in prose. Required per entry:
+`id`, `value`, `measured` (YYYY-MM-DD), `source` (command or artifact), `config` (non-empty),
+`uncertainty`, `status` (`measured` / `recorded` / `unmeasured` / `retracted`). `unmeasured`
+and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `unit`,
+`guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot
+answer — a design limit, not uncertainty). `facts_well_formed` enforces the required fields.
 
 ### Rules, and the incident behind each
 
@@ -226,10 +237,10 @@ shared.
   passed `--mix data/mix_v3.json`; nothing else did. Cfg defaults also disagreed with the
   recorded recipe (warmup 20 against `--warmup 150`, `attn_res` False against `--attn_res
   --attn_res_blocks 4`), so a bare `run_ddp.sh` reproduced neither the data nor the arch.
-- **`ckpt_k7_v3` and `ckpt_k6_fone` have never been combined.** k7_v3 is corpus v3
-  (3.29B, filtered) with NO FoNE; k6_fone is corpus v2 (11.33B, unfiltered) WITH FoNE.
-  Every FoNE conclusion on this project therefore rests on a v2 base, measured against a
-  v2 control -- the arithmetic effect is real, but FoNE on filtered data is unmeasured.
+- **FoNE on filtered data exists as checkpoints; the old "never combined" claim is retracted.**
+  ckpt_tb36 and ckpt_tb05 carry `fone=True` on `data/mix_v3.json` (cfg verified 2026-08-29,
+  `facts/fone.json`). No score for either is recorded in `runs/experiments.jsonl`, so whether
+  the arithmetic effect replicates on filtered data is unmeasured here.
 - Traps that cost hours, all silent: `--host_cap` is a web-crawl filter and discarded 83.4% of
   Wikipedia (one host) -- pass `--host_cap 0` for any single-source corpus. Sampling a corpus by
   reading shards in sorted order until the quota is met read 8.5% positive where a shard-stratified
@@ -249,102 +260,33 @@ shared.
 
 ## Tokenizer / vocabulary
 
-**FROZEN 2026-08-29.** `data/tokenizer.json`, fingerprint `0bce3584bc24f255`, vocab 32,773
-(32,768 BPE merges including `<unk>`/`<eos>`, plus 4 chat specials and `[NUM]`; `padded_vocab`
-is 32,832 either way, so adding `[NUM]` resized nothing). Backed up as `data/tokenizer_k8.json`
-on the pod.
+**FROZEN 2026-08-29.** A rebuild is allowed only under the three unfreeze conditions below and
+invalidates every checkpoint trained on the old vocabulary (see Vocabulary identity — a size
+check passes while the scores are noise). Before rebuilding, copy the live file to
+`data/tokenizer_<name>.json`. `scripts/loader.py` compares fingerprints, which is what makes
+this survivable.
 
-### Where we stand against the 2026 frontier
+- **Gates** — `python scripts/tokenizer_eval.py --tokenizers <paths>`: round-trip lossless and all
+  256 bytes are vetoes; hanzi whole-char ≥ 0.95 is a veto; ref fertility ≤ 1.55 and never-used
+  ≤ 0.01 are regression guards. `never used` excludes the by-design-unreachable entries (the
+  byte-fallback alphabet, chat specials, `[NUM]`).
+- **Build** with `scripts/build_tokenizer.py`: always pass `initial_alphabet=ByteLevel.alphabet()`
+  (without it NUL silently drops); stratified equal-byte sample per domain; `--weights`
+  rebalances, `--out` keeps a candidate out of `data/tokenizer.json`. Sample balance matters;
+  sample size barely does — the binding constraint is the 32K budget, not the corpus.
+- **Measure** with `scripts/tokenizer_report.py --selftest` — mandatory before believing any
+  number it prints. chars/token alone is a weak proxy; TokEval (arXiv 2608.18062) is explicit
+  that intrinsic metrics screen but do not rank.
+- **Faster tokenizer libraries do not drop in.** Adopting one means retraining the vocabulary,
+  which changes every id; re-evaluate before adopting.
+- **Unfreeze conditions — three, and nothing else:**
+  1. The model outgrows the fitted 12–20K optimum (arXiv 2407.13623).
+  2. The corpus distribution changes materially.
+  3. An extrinsic test — two pretrains differing only in the vocabulary — says a candidate is better.
 
-Same English passage, same Chinese passage, same code, `tokenizers/from_pretrained`:
-
-| tokenizer | vocab | en fertility | zh chars/token |
-|---|---|---|---|
-| **ours** | **32,773** | **1.429** | **1.693** |
-| DeepSeek-V3 | 128,815 | 1.104 | 1.693 |
-| GLM-4.5 | 151,365 | 1.130 | 1.608 |
-| Qwen3-0.6B | 151,669 | 1.130 | 1.494 |
-| SmolLM3-3B | 128,256 | 1.130 | 1.134 |
-| Phi-4-mini | 200,029 | 1.143 | 1.144 |
-| gpt2 | 50,257 | 1.156 | 0.465 |
-
-Chinese ties DeepSeek-V3 and beats Qwen3 and GLM-4.5 on a quarter of the slots. English is 25%
-behind, and every frontier model buys its 1.13 with 128K–200K — **none is still at 32K in 2026**.
-That fix is unavailable here: the fitted scaling law (arXiv 2407.13623, N_v ∝ N_nv^0.83) puts the
-optimum for a 166M non-embedding model at 12–20K, and a measured sweep showed 32K→64K buys +2.8%
-compression for +33.6M parameters and **+14% compute per character** (the d×V output matmul runs
-every forward pass; tying halves the parameters, not the FLOPs — at 32K it is already ~17% of FLOPs).
-
-Rebalancing cannot buy English back: an en-share sweep at 14/33/50% moved fertility
-1.870 → 1.911 → 1.988, the wrong way, because at a fixed 32K the two languages compete for slots.
-
-### Gates — `python scripts/tokenizer_eval.py --tokenizers <paths>`
-
-| gate | value | threshold | meaning |
-|---|---|---|---|
-| round-trip lossless | pass | — | veto |
-| 256 bytes present | 256/256 | — | veto |
-| hanzi whole-char | 0.9913 | ≥0.95 | veto |
-| ref fertility | 1.429 | ≤1.55 | regression guard, cost recorded |
-| never-used slots | 0.0070 | ≤0.01 | regression guard, 234K params = 0.1% of the model |
-
-`never used` excludes entries unreachable by design: the seeded ByteLevel alphabet is a
-byte-FALLBACK net, and the chat specials and `[NUM]` do not appear in raw corpus text. Counting
-them read 0.87%.
-
-### Unfreeze conditions — three, and nothing else
-
-1. The model outgrows the fitted 12–20K optimum.
-2. The corpus distribution changes materially. The current vocabulary was trained on a
-   112K-document stratified sample of corpus v3.
-3. An extrinsic test — two pretrains differing only in the vocabulary — says a candidate is
-   better. Never run here. TokEval (arXiv 2608.18062) is explicit that intrinsic metrics screen
-   but do not rank: "adjacent rows of results tables mostly differ by less than seed retraining
-   would move a single model."
-
-Unfreezing invalidates every checkpoint. Ids do not survive a rebuild and size does not identify
-a vocabulary: the corpus-v3 rebuild overwrote the 32,773-token file `ckpt_k6_fone` was trained on
-with a **different** 32,773-token file (`d191af789cdbe597` → `0bce3584bc24f255`), so a size check
-passes and the scores are noise. **Copy the live file to `data/tokenizer_<name>.json` first.**
-`scripts/loader.py` compares fingerprints, which is what makes this survivable.
-
-### Building one
-
-`scripts/build_tokenizer.py`, stratified equal-byte sample per domain, `--weights` to change the
-balance, `--out` to keep a candidate out of `data/tokenizer.json`.
-
-- **Always pass `initial_alphabet=ByteLevel.alphabet()`.** Without it only the byte-alphabet
-  characters present in the corpus survive (measured 193/256), which silently drops NUL and
-  breaks every fast tokenizer library.
-- **Sample balance matters, sample size barely does.** 25K documents vs 395K (16x data, 6x time)
-  moved chars/token 2.6093 → 2.6296 and hanzi occurrence-coverage 99.51% → 99.62%; the 5K–10K
-  frequency tier stayed at 0% either way. The binding constraint is the 32K budget, not the corpus.
-  Of 7,825 distinct hanzi only the top ~1K get whole tokens, covering 99.6% of occurrences.
-- Feeding all 9.4M documents let web drown everything else: that vocabulary had no whole token
-  for common traditional characters and scored web at **1.04 chars/token**, worse than one token
-  per character. A 112K-document stratified sample took 5 minutes instead of 45+ and emitted
-  **12.5% fewer tokens** on held-out text (1.484 vs 1.299 chars/token), better on every domain.
-  Single-character tokens 3,175 → 4,706; 5+-character tokens 4,312 → 7,817. Every pretrain before
-  2026-08-28, k5 included, used the weaker vocabulary.
-
-### Measurement — `scripts/tokenizer_report.py`
-
-Four groups: compression, distribution, structure, English. `--selftest` is mandatory before
-believing any number it prints; see the harness section for the four wrong numbers it emitted in
-one day and the scale-stability assertion that catches three of them.
-
-chars/token alone is a weak proxy — arXiv 2506.03101 measures its correlation with downstream
-performance from ρ=−0.77 to −0.09 depending on task. TokEval measures Rényi efficiency as the
-strongest single predictor (ρ=−0.80 against BPB) with compression rate at −0.51.
-
-**Faster tokenizer libraries do not drop in** (evaluated 2026-08-28; 9.49B tokens at 2.3M tok/s,
-~66 min). `gigatoken` refuses this vocabulary ("no single-byte vocab entry for byte 0x00" — it
-needs a complete 256-byte base a Chinese-corpus BPE does not have); `fastokens` matches ids on
-short strings but raises "character not in vocabulary" on real corpus text instead of falling back
-to `<unk>`; `tiktoken` uses a different regex pretokenizer and cannot reproduce ByteLevel BPE ids.
-Adopting any of them means retraining the vocabulary, which changes every id. 75% of the time is
-already in the Rust tokenizer on 90–143 cores. The real win is incremental tokenization, not a
-faster library.
+Facts — fingerprint, sizes, gate values, the frontier table, the sweeps, the faster-library
+evaluation: `facts/tokenizer.json`. Every entry carries its measurement config and its status;
+a number without them does not land.
 
 ## Pod
 - 8×H20, all 8 usable (the 6/7 reservation was lifted 2026-08-26). `/work/aupai` on the pod is not a git repo — push files.

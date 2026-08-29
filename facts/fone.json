@@ -1,0 +1,26 @@
+{
+  "facts": [
+    {
+      "id": "fone.combined_with_v3",
+      "claim": "ckpt_k7_v3 and ckpt_k6_fone have never been combined; every FoNE conclusion rests on a v2 base measured against a v2 control",
+      "value": {
+        "refuted_by_checkpoints": ["ckpt_tb36", "ckpt_tb05"],
+        "matrix": {
+          "ckpt_k7_v3": {"corpus": "v3, 3.29B, filtered", "fone": false},
+          "ckpt_k6_fone": {"corpus": "v2, 11.33B, unfiltered", "fone": true},
+          "ckpt_tb36": {"corpus": "v3 (data/mix_v3.json)", "fone": true},
+          "ckpt_tb05": {"corpus": "v3 (data/mix_v3.json)", "fone": true}
+        },
+        "scores_recorded": "no math-hard score for tb36/tb05 in runs/experiments.jsonl"
+      },
+      "measured": "2026-08-29",
+      "source": "checkpoint cfg inspection (aupai-3b, 2026-08-29); prior AGENTS.md records for k7_v3/k6_fone",
+      "config": {"claim_appeared": "AGENTS.md corpus v3 section, 2026-08-29"},
+      "uncertainty": null,
+      "boundary": "establishes the combination exists as checkpoints; says nothing about whether the arithmetic effect replicates on filtered data -- no score is recorded for either checkpoint",
+      "status": "retracted",
+      "audit": "aupai-3b read cfg from both checkpoints: fone=True AND mix=mix_v3.json -- the exact combination the claim said never happened",
+      "refuted_by": "un-retracts only if both checkpoints' cfg are shown to lack fone or v3"
+    }
+  ]
+}

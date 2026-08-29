@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
-PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
+PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
 
 # --------------------------------------------------------------------------- facts
@@ -270,6 +270,16 @@ def _broken_mix():
     return d
 
 
+def _gpu_present():
+    """Whether this machine can train. The strict branch of mix_shards_present guards the
+    pod; a dev box with a partial corpus is normal. HARNESS_GPU_PRESENT=1/0 overrides -- the
+    selftest forces 1 so the broken world exercises the strict branch."""
+    forced = os.environ.get("HARNESS_GPU_PRESENT")
+    if forced is not None:
+        return forced == "1"
+    return bool(glob.glob("/dev/nvidia[0-9]*"))
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -278,14 +288,12 @@ def check_mix_shards(root):
     missing = [d for d in doms if not glob.glob(os.path.join(corpus, d, "*.jsonl"))]
     if not missing:
         return PASS, f"all {len(doms)} domains have shards"
-    # "No domain resolves" is not evidence of a checkout: a pod whose corpus was wiped,
-    # unmounted or renamed resolves zero domains too, and that is the catastrophe this
-    # check exists for. Discriminate on whether a corpus EXISTS at all -- a git checkout
-    # ships data/corpus/sample and only that -- so the question becomes "is there a corpus
-    # here that the mix fails to point at", which is the real one.
-    other = [d for d in glob.glob(os.path.join(corpus, "*")) if os.path.basename(d) != SAMPLE_DOMAIN]
-    if len(missing) == len(doms) and not any(glob.glob(os.path.join(d, "*.jsonl")) for d in other):
-        return SKIP, "data/corpus holds only the shipped sample: this is a checkout, not the pod"
+    # This guards TRAINING, so strictness follows the ability to train: the pod has 8 GPUs
+    # and the full corpus, and a GPU box with a missing domain is about to tokenize on missing
+    # data. Dev boxes and CI ship no corpus -- on those this was red forever, and a permanent
+    # red is the same as no signal.
+    if not _gpu_present():
+        return SKIP, f"no GPU on this machine: {len(missing)}/{len(doms)} domains lack shards (not the pod)"
     return FAIL, f"no shards for {missing}"
 
 
@@ -421,6 +429,169 @@ def _broken_guard():
     return d
 
 
+# --------------------------------------------------------------------------- facts
+#
+# Measurements live in facts/*.json, one file per migrated AGENTS.md section -- never in
+# AGENTS.md prose. A fact carries its measurement config because a value printed without one
+# is this project's repeated failure class (hanzi 0.00%, utilised 6.4%, undertrained 4.0%,
+# en fertility 2.36 -- the four wrong numbers in the rules section).
+
+FACTS_DIR = os.path.join(ROOT, "facts")
+FACT_REQUIRED = {"id", "value", "measured", "source", "config", "uncertainty", "status"}
+FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
+FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
+FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+FACT_SOURCE_PATH = re.compile(r"(?:scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+")
+
+
+def check_facts_well_formed(root):
+    facts_dir = os.path.join(root, "facts")
+    if not os.path.isdir(facts_dir):
+        return FAIL, "facts/ does not exist -- measurements have nowhere to carry their config"
+    files = sorted(glob.glob(os.path.join(facts_dir, "*.json")))
+    if not files:
+        return FAIL, "facts/ holds no *.json"
+    errors, ids, entries = [], {}, []
+    for p in files:
+        fn = os.path.basename(p)
+        try:
+            lst = json.load(open(p, encoding="utf-8"))["facts"]
+            assert isinstance(lst, list) and lst
+        except Exception as e:
+            errors.append(f"{fn}: no readable non-empty 'facts' list ({e})")
+            continue
+        for e in lst:
+            if not isinstance(e, dict):
+                errors.append(f"{fn}: entry is not an object")
+                continue
+            tag = f"{fn}#{e.get('id', '?')}"
+            if missing := FACT_REQUIRED - e.keys():
+                errors.append(f"{tag}: missing {sorted(missing)}")
+                continue
+            if e["status"] not in FACT_STATUS:
+                errors.append(f"{tag}: bad status {e['status']!r}")
+            if not isinstance(e["config"], dict) or not e["config"]:
+                errors.append(f"{tag}: config must be a non-empty object")
+            if not FACT_DATE_RE.fullmatch(str(e["measured"])):
+                errors.append(f"{tag}: measured must be YYYY-MM-DD, got {e['measured']!r}")
+            if e["status"] in FACT_NEEDS_CLAIM:
+                for k in ("claim", "audit", "refuted_by"):
+                    if not e.get(k):
+                        errors.append(f"{tag}: {e['status']} fact needs {k}")
+            if e["id"] in ids:
+                errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
+            ids[e["id"]] = fn
+            for m in FACT_SOURCE_PATH.findall(str(e["source"])):
+                if not os.path.exists(os.path.join(root, m)):
+                    errors.append(f"{tag}: source path {m} does not exist")
+            entries.append((fn, e))
+    agents = os.path.join(root, "AGENTS.md")
+    prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
+    for fn, e in entries:
+        for phrase in e.get("guard_phrases", []):
+            if phrase in prose:
+                errors.append(f"AGENTS.md asserts {phrase!r}, recorded as {e['status']} in {fn}#{e['id']}")
+    for p in files:
+        if os.path.basename(p) not in prose:
+            errors.append(f"AGENTS.md never mentions {os.path.basename(p)} -- an orphan fact file")
+    for m in re.findall(r"facts/[\w.-]+\.json", prose):
+        if not os.path.exists(os.path.join(root, m)):
+            errors.append(f"AGENTS.md cites {m}, which does not exist")
+    if errors:
+        head = "; ".join(errors[:5])
+        return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
+    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config"
+
+
+def _broken_facts():
+    """The REAL facts files and REAL AGENTS.md, damaged: one entry loses its config.
+    Hand-writing a facts file would repeat the no_stale_running mistake -- the check and
+    its broken world believing the same fiction."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "facts"))
+    for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
+        shutil.copy(f, os.path.join(d, "facts"))
+    obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
+    del obj["facts"][0]["config"]
+    json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
+
+
+ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|py)|run_ddp\.sh")
+
+
+def check_entrypoints_ran(root):
+    """A command in the AGENTS.md entry-point table that was tried and never succeeded is a
+    capability the doc claims and the repo does not have. WARN, not FAIL: it is a to-do that
+    is fixed by running it (run_ablation.sh: killed, then OOM-fail). A script the table cites
+    that does not even exist is FAIL -- the doc is rotten. Wrappers are invisible to the log
+    (run_ddp.sh logs torchrun ... train.py), so a row with zero matches is skipped: never
+    tried is not the same as tried and failed."""
+    agents = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(agents):
+        return SKIP, "AGENTS.md not present"
+    log = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(log):
+        return SKIP, "runs/experiments.jsonl not present"
+    rows = []
+    for line in open(log, encoding="utf-8"):
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            pass
+    missing, stale = [], []
+    for line in open(agents, encoding="utf-8"):
+        if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
+            continue
+        # Distinctive tokens from the TASK cell catch attempts logged under an inner command:
+        # ab2_attnres_vs_base logged `torchrun ... train.py`, never the wrapper, so a
+        # script-name match alone sees only the killed run and misses the OOM failure.
+        task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
+        for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
+            if not os.path.exists(os.path.join(root, s)):
+                missing.append(s)
+                continue
+            matched = [
+                r
+                for r in rows
+                if s in str(r.get("cmd", ""))
+                or any(
+                    t in str(r.get("name", "")).lower() or t in str(r.get("cmd", "")).lower()
+                    for t in task_tokens
+                )
+            ]
+            if matched and not any(r.get("status") == "ok" for r in matched):
+                latest = matched[-1]
+                finding = " ".join(str(latest.get("finding", "")).split())[:120]
+                stale.append(
+                    f"{s}: {len(matched)} run(s), never ok, latest={latest.get('status')!r}"
+                    + (f" -- {finding}" if finding else "")
+                )
+    if missing:
+        return FAIL, f"entry-point table cites script(s) not in the repo: {missing}"
+    if stale:
+        return WARN, "; ".join(stale[:4])
+    return PASS, "every tried entry-point command has at least one ok run"
+
+
+def _broken_entrypoint():
+    """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
+    FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
+    synthetic world. The experiments log is the real one, copied, so every other row resolves
+    exactly as in production."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    with open(os.path.join(d, "AGENTS.md"), "a") as f:
+        f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
+    shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    return d
+
+
 CHECKS = [
     (
         "mix_not_unfiltered",
@@ -473,6 +644,21 @@ CHECKS = [
         check_guard_on_path,
         _broken_guard,
     ),
+    (
+        "facts_well_formed",
+        "every facts/*.json entry carries its measurement config, and AGENTS.md asserts no guarded phrase",
+        "a value printed without its measurement config is the project's repeated failure class "
+        "(hanzi 0.00%, utilised 6.4%, undertrained 4.0%, en fertility 2.36)",
+        check_facts_well_formed,
+        _broken_facts,
+    ),
+    (
+        "entrypoints_ran",
+        "every script the entry-point table cites exists (FAIL); every tried one has an ok run (WARN)",
+        "run_ablation.sh shipped as the AttnRes A/B entry while its rows read killed and OOM-fail",
+        check_entrypoints_ran,
+        _broken_entrypoint,
+    ),
 ]
 
 
@@ -506,8 +692,9 @@ def run_checks(root=ROOT, quiet=False):
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
             print(f"  [{state:^4}] {name:<22} {evidence}")
-            if state == FAIL:
+            if state in (FAIL, WARN):
                 print(f"         asserts: {asserts}")
+            if state == FAIL:
                 print(f"         prevents: {incident}")
     return results
 
@@ -691,6 +878,9 @@ def _demo():
         _d, e = read_mix(p)
         assert e, "an empty domains map read as a valid mix"
 
+    # mix_shards_present's strict branch runs only on a GPU box; force it so the broken
+    # world exercises the branch that runs on the pod.
+    os.environ["HARNESS_GPU_PRESENT"] = "1"
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         root = broken()
@@ -730,8 +920,9 @@ def main():
         print("INVARIANTS  (a check that cannot run is a FAILURE, never a pass)")
         res = run_checks()
         bad = [n for n, s, *_ in res if s == FAIL]
+        warns = [n for n, s, *_ in res if s == WARN]
     else:
-        bad = []
+        bad, warns = [], []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -746,6 +937,8 @@ def main():
     if bad:
         print(f"\n{len(bad)} invariant(s) FAILED: {', '.join(bad)}")
         return 1
+    if warns:
+        print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
     return 0
 
 
