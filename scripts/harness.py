@@ -534,10 +534,23 @@ def ledger():
 
 
 def gaps():
+    """An unmeasured checkpoint whose weights are gone is not a gap, it is history.
+
+    Listing the two together made `gaps` nag about names nobody can ever score, which is
+    how a to-do list stops being read. Only the ones whose weights are here are actionable,
+    and `measure` closes exactly those."""
     scores, _orphans = recorded_scores()
     unmeasured = [n for n in checkpoint_names(scores) if n not in scores]
-    print(f"  {len(unmeasured)} checkpoint(s) with NO math-hard on record:")
-    print("    " + ", ".join(unmeasured) if unmeasured else "    (none)")
+    here = [n for n in unmeasured if os.path.exists(os.path.join(ROOT, f"{n}.pt"))]
+    gone = [n for n in unmeasured if n not in here]
+    print(f"  {len(here)} checkpoint(s) with weights here and NO math-hard -- run `harness.py measure`:")
+    print("    " + (", ".join(here) if here else "(none)"))
+    if gone:
+        print(
+            f"\n  {len(gone)} unmeasured checkpoint(s) whose weights are GONE. Not a to-do: they"
+            "\n  were deleted, and EXPERIMENTS.md is now the whole of what is known about them."
+        )
+        print("    " + ", ".join(gone))
     md = os.path.join(ROOT, "EXPERIMENTS.md")
     if os.path.exists(md):
         markers = (
