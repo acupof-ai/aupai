@@ -6,6 +6,10 @@ data/tokenizer.json
 data/*.jsonl
 data/sft/*.jsonl
 data/sft/*.jsonl.gz
+# ...and every other shape a dataset arrives in. Only *.jsonl was ignored, so
+# qwq_mmlu.parquet (45MB) and gsm8k_zh.json (8.9MB) were committed.
+data/sft/*.parquet
+data/sft/*.json
 data/mix/
 data/**/*.pt
 data/rl/
