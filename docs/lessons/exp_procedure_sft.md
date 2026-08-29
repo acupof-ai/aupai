@@ -1,3 +1,9 @@
+---
+question: Does SFT install procedure execution at 200M, and does it survive free-running?
+status: measured
+source: pre-registered experiment, 2026-08-29; install probe teacher-forced and free-running
+---
+
 # Pre-registration: does SFT install procedure execution at 200M?
 
 Written 2026-08-29, **before ckpt_k8_v3_fone exists** (step 1280/3591 at time of writing).

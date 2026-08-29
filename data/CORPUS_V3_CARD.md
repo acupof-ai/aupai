@@ -1,7 +1,7 @@
 # Corpus v3 — what it is, how it was made, what is wrong with it
 
 Built 2026-08-29 to replace the 11.5B-token corpus behind `ckpt_k5_clean_0827`.
-Recipe and reasoning: `docs/data_recipe_v3.md`. Weights: `data/mix_v3.json`.
+Recipe and reasoning: `docs/standards/data_recipe_v3.md`. Weights: `data/mix_v3.json`.
 
 ## Contents
 

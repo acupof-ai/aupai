@@ -1,7 +1,7 @@
 # Eval split provenance
 
 The two files behind `holdout.EVAL_FILES` are **frozen reference artifacts**. No upstream
-generator survived (docs/review_2026-08-26.md finding #1: nothing in the repo or in
+generator survived (docs/lessons/review_2026-08-26.md finding #1: nothing in the repo or in
 `git log --diff-filter=A` ever created them), so they cannot be faithfully regenerated and
 must not be edited. They are pinned here by checksum instead.
 

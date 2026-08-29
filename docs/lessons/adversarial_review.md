@@ -1,3 +1,9 @@
+---
+question: Is SFT-then-RL the right ladder for a 200M math model?
+status: recorded
+source: 5 parallel evidence sweeps with adversarial verification, 2026-08-29
+---
+
 # Adversarial report: is SFT-then-RL the right ladder for a 200M math model?
 
 Written 2026-08-29. Method: 5 parallel evidence sweeps (overtraining / reasoning floor / reachable targets / distillation economics / eval-harness audit), each adversarially verified by an independent skeptic (11 agents, 1.35M tokens), plus a completeness critic whose 25 gaps are integrated below. Every external number carries a primary source; every internal number was re-verified against the live repo (EXPERIMENTS.md now has 50 runs — the brief's "best post-SFT 3.6%" is stale).
@@ -34,7 +40,7 @@ RL's own precondition is unmet and unquoted in the briefs: rlvr_gspo2's gate —
 - Muennighoff data-constrained laws (400+ runs): repetition safe to ~4 epochs, meaningful gains exhaust ~16 epochs. **30B on the 3.3B unique corpus = 9 epochs — past the safe zone.**
 - TinyLlama plateaued downstream at ~1,800 t/p on their corpus.
 
-**Verdict.** For general capability, the overtraining case is strong and k7_v3 is *under*-Chinchilla. For math-hard, the case is weak: the lever SmolLM2's own data identifies is the anneal/mix (executed-procedure density), not token count. The project's actual v3 plan (docs/data_recipe_v3.md: 4.5B, one epoch, filtered web 40% + cosmopedia 31%) is a **language-modelling bet** — val 2.020 vs 2.086 supports it — and should be defended on those terms, not as a math play. The 30B extension as briefed: not supported as a math intervention; as a capability play it is gated on growing unique supply past the repetition wall first (quarantined web re-filter + textbook; CPU/teacher-bound, parallelizes with everything else). Near-free EV: extending k7_v3 from 16.5 to ~20 t/p is ~0.3h of GPU.
+**Verdict.** For general capability, the overtraining case is strong and k7_v3 is *under*-Chinchilla. For math-hard, the case is weak: the lever SmolLM2's own data identifies is the anneal/mix (executed-procedure density), not token count. The project's actual v3 plan (docs/standards/data_recipe_v3.md: 4.5B, one epoch, filtered web 40% + cosmopedia 31%) is a **language-modelling bet** — val 2.020 vs 2.086 supports it — and should be defended on those terms, not as a math play. The 30B extension as briefed: not supported as a math intervention; as a capability play it is gated on growing unique supply past the repetition wall first (quarantined web re-filter + textbook; CPU/teacher-bound, parallelizes with everything else). Near-free EV: extending k7_v3 from 16.5 to ~20 t/p is ~0.3h of GPU.
 
 ## 2. Smallest model with a credible reasoning result
 
@@ -122,7 +128,7 @@ Cross-tokenizer premise confirmed: logit/KL distillation is undefined across tok
 
 ## 8. Post-script: the procedure-SFT null is an exposure-bias result (2026-08-29, after the report)
 
-aupai-fb ran e1's arm pre-registered (docs/exp_procedure_sft.md): k8_v3_fone (corpus v3 + FoNE, first combination, 3.29B tok) + procedure_v1 SFT (50K rows, answer-last, per-line machine-verifiable, single format per prompt). Probe: probe_procedure held-out, not math-hard.
+aupai-fb ran e1's arm pre-registered (docs/lessons/exp_procedure_sft.md): k8_v3_fone (corpus v3 + FoNE, first combination, 3.29B tok) + procedure_v1 SFT (50K rows, answer-last, per-line machine-verifiable, single format per prompt). Probe: probe_procedure held-out, not math-hard.
 
 | probe_procedure (180 held-out) | base | +procedure SFT |
 |---|---|---|
@@ -147,4 +153,4 @@ Implications, each updating a position in this report:
 
 ## Sources
 
-External (primary unless noted): Hoffmann et al. 2203.15556; Muennighoff et al. 2305.16264; SmolLM2 2502.02737; Qwen3 2505.09388; Qwen2.5 2412.15115; Qwen2.5-Math 2409.12122; MobileLLM 2402.14905; OpenELM 2404.14619; TinyLlama 2401.02385; H2O-Danube 2401.16818; Cerebras-GPT 2304.03208; Pythia 2304.01373; DeepSeek-R1 2501.12948; LFM-1.3B-Math (Liquid AI); MobileLLM-R1 2509.24945; Open-Reasoner-Zero; 0.5B reasoning study 2506.13404; Oat-Zero; DeepScaleR/JustRL/Open-RS 2503.16219; LFM2 2511.23404; Lee et al. 2307.03381; Nye et al. 2112.00114; TinyGSM 2312.09241; Fu et al. 2301.12726; Rho-1 2404.07965; Math-Shepherd 2312.08935; Distilling Step-by-Step 2305.02301; GKD 2306.13649; ULD 2402.12030; RFT 2308.01825; s1 2501.19393; SimpleRL-Zoo 2503.18892; Yu et al. 2504.13837; Kim et al. 2505.14216; SvS 2508.14029; ProRL 2505.24864; Small Model Learnability Gap 2502.12143; PaD 2305.13888. Internal: repo AGENTS.md, EXPERIMENTS.md (50 runs), docs/data_recipe_v3.md, eval/ and scripts/ audit (file:line inline).
+External (primary unless noted): Hoffmann et al. 2203.15556; Muennighoff et al. 2305.16264; SmolLM2 2502.02737; Qwen3 2505.09388; Qwen2.5 2412.15115; Qwen2.5-Math 2409.12122; MobileLLM 2402.14905; OpenELM 2404.14619; TinyLlama 2401.02385; H2O-Danube 2401.16818; Cerebras-GPT 2304.03208; Pythia 2304.01373; DeepSeek-R1 2501.12948; LFM-1.3B-Math (Liquid AI); MobileLLM-R1 2509.24945; Open-Reasoner-Zero; 0.5B reasoning study 2506.13404; Oat-Zero; DeepScaleR/JustRL/Open-RS 2503.16219; LFM2 2511.23404; Lee et al. 2307.03381; Nye et al. 2112.00114; TinyGSM 2312.09241; Fu et al. 2301.12726; Rho-1 2404.07965; Math-Shepherd 2312.08935; Distilling Step-by-Step 2305.02301; GKD 2306.13649; ULD 2402.12030; RFT 2308.01825; s1 2501.19393; SimpleRL-Zoo 2503.18892; Yu et al. 2504.13837; Kim et al. 2505.14216; SvS 2508.14029; ProRL 2505.24864; Small Model Learnability Gap 2502.12143; PaD 2305.13888. Internal: repo AGENTS.md, EXPERIMENTS.md (50 runs), docs/standards/data_recipe_v3.md, eval/ and scripts/ audit (file:line inline).

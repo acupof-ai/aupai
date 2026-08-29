@@ -55,7 +55,7 @@ opencsg/chinese-cosmopedia          cols [text, score, source, data_format]
 
 **cosmopedia is seeded on a real document and then rewritten until most of the document is
 gone.** It is neither of the two categories above, and two hand reads called it from-scratch
-before a census showed otherwise (`docs/audit_cosmopedia.md`):
+before a census showed otherwise (`docs/audits/audit_cosmopedia.md`):
 
 - **2.97% of documents (8,003 / 269,551) name the seed in their own text** — 「网页摘录」
   「上述文本」 — and the content beside those references is the seed's: a chipset model, a
@@ -95,7 +95,7 @@ much of the seed survives, as a rate against a real-text control.
    Rephraser size saturates at ~3B: 1B -> 3B is +1.5pp, 3B -> 8B is +0.4pp. Using the 27B to
    generate is spending 9x for the +0.4.
 4. **No eval leakage.** `scripts/scan_contamination.py` on every new source, before it enters
-   a mix. This is finding #1 of docs/review_2026-08-26.md and it recurs whenever skipped.
+   a mix. This is finding #1 of docs/lessons/review_2026-08-26.md and it recurs whenever skipped.
 5. **A minority of the mix.** ~30% for rephrased, **under 5% for from-scratch at 200M**.
 6. **The verdict is held-out loss on the OTHER domains.** Ours, not borrowed: a model trained
    on 36% textbook will of course score well on textbook. Synthetic data that improves loss on
@@ -152,6 +152,6 @@ quality. Accepting its terms is cheaper than generating it.
 ## On building it ourselves
 
 Still worth doing for the one thing no open set contains: **procedure execution in our own
-format**, the failure measured in `docs/exp_procedure_sft.md`. But not before criterion 6
+format**, the failure measured in `docs/lessons/exp_procedure_sft.md`. But not before criterion 6
 returns, and not with a 27B generator by default — measured, rephraser quality saturates at
 about 3B (1B -> 3B is +1.5pp, 3B -> 8B is +0.4pp, and a 70B often loses to an 8B).

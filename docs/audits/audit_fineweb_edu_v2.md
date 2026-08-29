@@ -1,3 +1,9 @@
+---
+question: Do opencsg/chinese-fineweb-edu-v2 and Fineweb-Edu-Chinese-V2.1 enter the mix, and at what cut?
+status: measured
+source: measured 2026-08-29
+---
+
 # Audit: opencsg/chinese-fineweb-edu-v2 and opencsg/Fineweb-Edu-Chinese-V2.1
 
 Measured 2026-08-29. Scope: whether either enters the mix, and at what cut.
@@ -71,7 +77,7 @@ document and first 60 lines, over **every row of V2 shard 00000**:
 ```
 
 Rule-of-three upper bound 0.001%. Not run on V2.1 (no full shard held locally); **run it before
-ingest** — that is finding #1 of `docs/review_2026-08-26.md`.
+ingest** — that is finding #1 of `docs/lessons/review_2026-08-26.md`.
 
 ## 2. Near-duplication
 
@@ -249,7 +255,7 @@ current corpus and 16x `web_hq`'s 1.42B. Proposal for the next mix, ~25B total:
 |---|---|---|---|
 | `web_edu` (new) | — | **0.55** | real web, filtered; the anchor at scale |
 | `web_hq` | 0.42 | 0.18 | keep, unchanged pool, ~2 epochs |
-| `textbook` | 0.36 | **0.05** | from-scratch synthesis; `docs/synthetic_data_standard.md` puts the sub-1B ceiling at 5% and v3's 36% is above it |
+| `textbook` | 0.36 | **0.05** | from-scratch synthesis; `docs/standards/synthetic_data_standard.md` puts the sub-1B ceiling at 5% and v3's 36% is above it |
 | `wiki` | 0.055 | 0.05 | |
 | `math` | 0.045 | 0.07 | |
 | `chat` | 0.02 | 0.03 | |
@@ -258,7 +264,7 @@ current corpus and 16x `web_hq`'s 1.42B. Proposal for the next mix, ~25B total:
 
 **This table is a proposal and no mix file was edited.** The `textbook` number in particular is
 blocked: criterion 6 (`ckpt_tb36` vs `ckpt_tb05` on a held-out web/wiki/math loss) has not
-reported, and `docs/synthetic_data_standard.md` says not to write a from-scratch weight before it
+reported, and `docs/standards/synthetic_data_standard.md` says not to write a from-scratch weight before it
 does. `web_edu` at 0.55 puts real human web text back at the plurality, which is the property v3
 was designed around.
 

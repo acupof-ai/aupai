@@ -1,3 +1,9 @@
+---
+question: What does the evidence say about SFT at 200M?
+status: recorded
+source: literature with numbers plus the k8_proc_sft internal run, 2026-08-29
+---
+
 # SFT at 200M: what the evidence says
 
 Written for aupai-fb, 2026-08-29. Sources are papers/repos with numbers; where no one has measured at this scale, it says so.

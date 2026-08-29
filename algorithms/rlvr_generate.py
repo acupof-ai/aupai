@@ -35,7 +35,7 @@ def generate(model, prompt_ids, n, max_new, temperature, top_p, device):
     # Truncate each row at its own first <eos>. The loop runs until ALL rows finish,
     # forcing <eos> into rows that stopped early; a rectangular slice would put that
     # padding inside the RL loss mask, and the policy never emitted those tokens
-    # (docs/review_2026-08-26.md #5).
+    # (docs/lessons/review_2026-08-26.md #5).
     out = []
     for row in x[:, len(prompt_ids) :].tolist():
         if eos in row:

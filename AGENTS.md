@@ -89,7 +89,7 @@ the loudest a k5 SFT that trained at loss 4.77 instead of 1.28 with nothing rais
 
 ### Synthetic data
 
-`docs/synthetic_data_standard.md`. One distinction decides the mix weight: **anchored rephrasing**
+`docs/standards/synthetic_data_standard.md`. One distinction decides the mix weight: **anchored rephrasing**
 (~30% of the mix) versus **from-scratch generation** (under 5% for sub-1B). Test: are the output's
 numbers and entities a subset of its declared source. Anchored rephrasing's downstream gain at
 200M is **unmeasured** — the source grid and the retracted claims live in
@@ -109,6 +109,13 @@ and `retracted` entries also need `claim`, `audit`, `refuted_by`. Optional: `uni
 `guard_phrases` (must not reappear in AGENTS.md), `boundary` (what the measurement cannot
 answer — a design limit, not uncertainty). `facts_well_formed` enforces the required fields.
 
+### Research and docs layout — `docs/`
+
+- Research (lessons, experiment writeups, reviews) lands in `docs/lessons/<topic>.md`; source audits in `docs/audits/`; standards and recipes in `docs/standards/`. Zero `.md` files directly under `docs/`.
+- Every `docs/lessons|audits/*.md` (README excepted) opens with frontmatter: `question`, `status` (measured / recorded / open / retracted), `source` (command, artifact path, or arXiv id).
+- A lesson cites a fact as `facts/<file>.json#<id>`; the id must exist. Citing a retracted fact is a WARN, not a silent pointer.
+- Checks: `docs_root_clean`, `lessons_have_frontmatter`, `fact_refs_resolve`.
+
 ### Rules, and the incident behind each
 
 | Rule | What happened without it |
@@ -118,7 +125,7 @@ answer — a design limit, not uncertainty). `facts_well_formed` enforces the re
 | Build the broken world by mutating a real artifact, never by hand-writing one from the check's own source | Three of six checks were dead while `--selftest` passed. `no_stale_running` read `date`; `exp.py` only ever wrote `started`, so every row hit a bare `except: continue` and the check returned PASS on zero rows with five runs three days stale. Its broken world hand-wrote `date` — both halves believed the same fiction |
 | A metric without a known-answer case is not a metric | `tokenizer_report.py` reported four wrong numbers in one day (below) |
 | An install probe measures teacher-forced AND free-running in the same run | `probe_procedure` scored free-running only: BOTH 0.0 → 0.0 after procedure SFT, which fits "coverage was not the constraint" and would have retired a correct path. Teacher-forced, the digit head went 21.3% → 57.2% (McNemar p=5.7e-62). The procedure was learned and does not survive the model's own rollout |
-| A null landing in a pre-registered cell does not certify that cell | `docs/exp_procedure_sft.md`; its amendment is labelled as written afterwards |
+| A null landing in a pre-registered cell does not certify that cell | `docs/lessons/exp_procedure_sft.md`; its amendment is labelled as written afterwards |
 | A permanent red is the same as no signal | Twice: CI red on a clean checkout at step 4, and `mix_shards_present` red because a checkout ships only `data/corpus/sample` |
 | **Before running a two-arm test, name what ELSE changed with the variable, and ask whether it alone could produce the result you expect.** Then either hold it fixed or add the arm that isolates it | The textbook 36%-vs-5% ablation. `mix_v3_lowtb.json` gives the freed 31% to the real-text domains, so the 5% arm also trained on ~31% more web and wiki -- and the verdict was their held-out loss. It won by 0.097 / 0.109, about what 31% more in-domain data buys. The design guards one direction ("less textbook will of course score worse on textbook") and walks into its mirror. It answers "is web worth more per token than cosmopedia" (yes), not "is synthetic data harmful" |
 
@@ -187,7 +194,7 @@ shared.
   --warmup 150 --lr_scale 0.5`. `ckpt_k3-mla_2b_step2000.pt` is the older K3 fallback.
 
 ## Corpus v3 (2026-08-29) — the rebuild
-- Recipe and every measurement behind it: `docs/data_recipe_v3.md`; mix: `data/mix_v3.json`.
+- Recipe and every measurement behind it: `docs/standards/data_recipe_v3.md`; mix: `data/mix_v3.json`.
 - **Hand-reading 180 random web documents found 18% worth training on.** The other 82% is
   gambling/adult SEO (brand names injected mid-sentence), product sheets, hospital ads, web novels,
   machine translation, spliced forum fragments, and synonym-substituted plagiarism (`曩昔五年`).
@@ -199,7 +206,7 @@ shared.
 - New domains: `textbook` (opencsg/chinese-cosmopedia, 1.74B tok, 100% pass through our own
   filters against web's 18% by hand) and `wiki` (zh, 0.23B). Both scanned by
   `scripts/scan_contamination.py`: zero eval questions in 60,000 documents each. **Run that scan on
-  every new source** -- skipping it is finding #1 of docs/review_2026-08-26.md happening again.
+  every new source** -- skipping it is finding #1 of docs/lessons/review_2026-08-26.md happening again.
 - **textbook is synthetic and is capped below web on purpose** (31% against 40%). It could supply
   the whole corpus; SmolLM2 uses Cosmopedia at ~11% against real web, and no benchmark we own could
   detect an overdose -- every MC sits at the 25% chance line.

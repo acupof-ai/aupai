@@ -1,3 +1,9 @@
+---
+question: Does opencsg/chinese-cosmopedia enter the mix as the textbook domain, and at what weight?
+status: measured
+source: audit per .claude/agents/data-auditor.md, 2026-08-29
+---
+
 # Audit — `opencsg/chinese-cosmopedia` (mix domain `textbook`, weight 0.36)
 
 Run 2026-08-29. Protocol: `.claude/agents/data-auditor.md`. No mix was edited.
@@ -112,7 +118,7 @@ of it. A full pass needs the whole index, which `build_corpus.py` builds anyway 
 
 ## 4. Is it anchored, and to what — the load-bearing question
 
-`docs/synthetic_data_standard.md` records this source as from-scratch generation, "no checkable
+`docs/standards/synthetic_data_standard.md` records this source as from-scratch generation, "no checkable
 relationship to its own `source`", on the strength of two sampled titles. That is wrong.
 
 **2.97% of documents (8,003 / 269,551, ±0.06pt) name the seed document in their own text** —
@@ -154,7 +160,7 @@ pedagogical scaffolding.
 
 So it is neither of the two categories the literature measures. It is seeded on a document and
 then rewritten into a register that discards most of the document's specifics and adds framing.
-Per `docs/synthetic_data_standard.md`, the safe share is ~30% for anchored rephrasing (itself an
+Per `docs/standards/synthetic_data_standard.md`, the safe share is ~30% for anchored rephrasing (itself an
 interpolation to 200M, on Pile perplexity, not accuracy) and under 5% for from-scratch. **This
 sits between them and the correct weight cannot be read off either number.** The three
 measurements below set it instead.
@@ -313,7 +319,7 @@ budget means a larger filtered-web pull, not a larger multiplier on the pool tha
 
 Two pretrains identical but for the textbook share (0.36 vs 0.12), scored on **held-out** web /
 wiki / math shards that are in neither mix. If 0.36 wins there, this decision is wrong. Criterion
-6 in `docs/synthetic_data_standard.md` stages exactly this as `ckpt_tb36` / `ckpt_tb05`; both have
+6 in `docs/standards/synthetic_data_standard.md` stages exactly this as `ckpt_tb36` / `ckpt_tb05`; both have
 500 steps but the logged val is a training-shard prefix, so the measurement does not exist yet.
 Cost: one scoring pass over fixed holdout shards with the two existing checkpoints — hours, not a
 retrain.
