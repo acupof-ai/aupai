@@ -132,7 +132,8 @@
     "evidence": "every batch measured REJECTs: v3 28, v5 39, v6 43, v7 37, v8 30, v10 12, v11 33 holdouts at 0.8",
     "known_before": "split_bank.py docstring records 0.3% identical-template sharing -- understated 10x: textual near-duplication (containment >= 0.8) does not require template identity",
     "aggravator": "mathbank/make_v11_band.py deliberately matches v11 batches to math_hard_eval_1k's surface statistics by LP design",
-    "impact": "math-hard is the recorded metric; 3.5% pod contamination means a ~3%-level score has up to half its movement from seen problems"
+    "impact": "math-hard is the recorded metric; 3.5% pod contamination means a ~3%-level score has up to half its movement from seen problems",
+    "resolution": "CLOSED 2026-08-30 by v2's construction, not by a bank fix: math_short batches never contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are mxode's) -- they only ever contaminated math-hard v1, which is retired (cont.math_hard_v1_void). v2 is generated from type-disjoint families and all 7 batches pass the gate (cont.math_hard_v2). 'Fix the bank' is no longer a todo."
    },
    "measured": "2026-08-30",
    "source": "scripts/scan_math_contamination.py over data/synthetic/math_short_v{3,5,6,7,8,11}.jsonl (local) + pod v8/v10; mathbank/split_bank.py, mathbank/make_v11_band.py docstrings",
@@ -140,7 +141,7 @@
     "generator": "mathbank/run_math_short.py instantiating math_programs_l*.py (943 L3/L4 programs)",
     "leak_path": "shared template DNA across two generator generations of the same curriculum -- not seed leakage, not a shared pool"
    },
-   "uncertainty": "the 36 pod holdouts' templates are not yet mapped to specific bank programs; the fix (split the bank, or regenerate math-hard from held-out programs per mathbank/split_bank.py) is designed but not applied",
+   "uncertainty": null,
    "status": "measured"
   },
   {
@@ -416,12 +417,12 @@
     "script": "scripts/gate_math_short.sh",
     "rule": "every math_short_* batch passes scripts/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
     "wired_into": "scripts/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
-    "verified": "gate exits 1 on math_short_v8 (REJECT), 1 on a holdout file"
+    "verified": "gate passes all 6 local math_short batches vs math-500+v2 (2026-08-30, rate-based scanner with gsm8k_zh baseline); still REJECTs mxode (141 math-500 holdouts, 7278 hit rows)"
    },
    "measured": "2026-08-30",
    "source": "scripts/gate_math_short.sh, wired into scripts/build_math_expand.sh",
    "config": {
-    "consequence": "build_math_expand.sh refuses while any source batch is contaminated. Direction note (aupai-fb 2026-08-30): the refusal means the LOCAL math_short batches overlap math-500 -- the batches are the dirty party, not math-500. math-500 contamination is host-specific: 30.0% by the local corpus (cont.union) but 0.0% by the pod corpus that trained 0830v1 (cont.union_pod).",
+    "consequence": "build_math_expand.sh is UNBLOCKED for math_short batches as of 2026-08-30 (they are clean vs the active evals math-500+v2). mxode stays REJECT. The earlier 'refuses until the bank is fixed' state is obsolete -- see cont.math_short_leak.resolution.",
     "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"
    },
    "uncertainty": null,

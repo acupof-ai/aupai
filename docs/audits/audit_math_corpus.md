@@ -105,11 +105,15 @@ types, so hand-written templates converge in surface wording. `split_bank.py`
 recorded 0.3% *identical-template* sharing and understated it 10×: containment ≥0.8
 does not require template identity. `make_v11_band.py` aggravates it by design —
 v11 batches are LP-matched to math_hard_eval_1k's surface statistics. Consequence:
-math-hard is the recorded metric, and 3.5% contamination puts every ~3%-level score
-within contamination noise. The executable gate is `scripts/gate_math_short.sh`,
-wired into `scripts/build_math_expand.sh`: no `math_short_*` batch ingests
-contaminated, and the rebuild refuses until the bank is fixed
-(`facts/contamination.json#cont.gate`).
+math-hard v1 was the recorded metric, and 3.5% contamination puts every ~3%-level
+score within contamination noise. **"Fix the bank" is no longer a todo** — it was
+closed 2026-08-30 not by a fix but by v2's construction: math_short batches never
+contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are
+mxode's), they only ever contaminated math-hard v1, which is retired. The v1
+REJECT records above are history, not open work. The executable gate is
+`scripts/gate_math_short.sh`, wired into `scripts/build_math_expand.sh`: it scans
+against math-500 + v2, and all six local batches pass with 0 hits
+(`facts/contamination.json#cont.gate`, `#cont.math_short_leak`).
 
 The English shards are **not clean** — they are unmeasured: zh surface bigrams cannot
 match them, and the cross-language number-multiset screen flags 6,754 rows (6.3%)
