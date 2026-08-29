@@ -630,6 +630,147 @@ def _broken_entrypoints_table():
     return d
 
 
+# --------------------------------------------------------------------------- docs layout
+#
+# docs/ has three subdirectories and zero .md files at its root. Research docs carry
+# question/status/source frontmatter; lessons cite facts by facts/<file>.json#<id>.
+
+DOCS_SUBDIRS = ("lessons", "audits")
+FRONTMATTER_KEYS = ("question", "status", "source")
+FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
+FACT_REF_RE = re.compile(r"facts/([\w.-]+)\.json#([\w.]+)")
+
+
+def _frontmatter(path):
+    text = open(path, encoding="utf-8").read()
+    if not text.startswith("---\n"):
+        return None
+    end = text.find("\n---", 4)
+    if end == -1:
+        return None
+    fields = {}
+    for line in text[4:end].splitlines():
+        if ":" in line:
+            k, _, v = line.partition(":")
+            fields[k.strip()] = v.strip()
+    return fields
+
+
+def check_docs_root_clean(root):
+    docs = os.path.join(root, "docs")
+    if not os.path.isdir(docs):
+        return FAIL, "docs/ missing"
+    stray = sorted(f for f in os.listdir(docs) if f.endswith(".md") and os.path.isfile(os.path.join(docs, f)))
+    if stray:
+        return FAIL, f"docs/ root holds .md files: {stray[:5]} -- classify into lessons/, audits/, standards/"
+    return PASS, "docs/ root holds no .md files"
+
+
+def check_lessons_frontmatter(root):
+    docs = os.path.join(root, "docs")
+    if not os.path.isdir(docs):
+        return FAIL, "docs/ missing"
+    problems, n = [], 0
+    for sub in DOCS_SUBDIRS:
+        d = os.path.join(docs, sub)
+        if not os.path.isdir(d):
+            problems.append(f"docs/{sub}/ missing")
+            continue
+        for f in sorted(os.listdir(d)):
+            if not f.endswith(".md") or f.startswith("README"):
+                continue
+            n += 1
+            fm = _frontmatter(os.path.join(d, f))
+            if fm is None:
+                problems.append(f"docs/{sub}/{f}: no frontmatter")
+                continue
+            missing = [k for k in FRONTMATTER_KEYS if not fm.get(k)]
+            if missing:
+                problems.append(f"docs/{sub}/{f}: missing {missing}")
+            elif fm["status"] not in FRONTMATTER_STATUS:
+                problems.append(f"docs/{sub}/{f}: bad status {fm['status']!r}")
+    if problems:
+        return FAIL, "; ".join(problems[:5])
+    if n == 0:
+        return FAIL, "no lesson/audit files found -- an empty list silences the guard"
+    return PASS, f"{n} research docs carry question/status/source"
+
+
+def check_fact_refs(root):
+    facts_dir = os.path.join(root, "facts")
+    if not os.path.isdir(facts_dir):
+        return FAIL, "facts/ missing"
+    index = {}
+    for f in glob.glob(os.path.join(facts_dir, "*.json")):
+        try:
+            obj = json.load(open(f, encoding="utf-8"))
+            index[os.path.basename(f)] = {e["id"]: e for e in obj.get("facts", [])}
+        except Exception as e:
+            return FAIL, f"cannot parse {f}: {e}"
+    bad, retracted, n = [], [], 0
+    for sub in DOCS_SUBDIRS:
+        d = os.path.join(root, "docs", sub)
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if not f.endswith(".md"):
+                continue
+            for m in FACT_REF_RE.finditer(open(os.path.join(d, f), encoding="utf-8").read()):
+                n += 1
+                fname, fid = m.group(1), m.group(2)
+                if fname not in index:
+                    bad.append(f"docs/{sub}/{f}: facts/{fname}.json does not exist")
+                elif fid not in index[fname]:
+                    bad.append(f"docs/{sub}/{f}: {fid} not in facts/{fname}.json")
+                elif index[fname][fid].get("status") == "retracted":
+                    retracted.append(f"docs/{sub}/{f} cites retracted {fname}#{fid}")
+    if bad:
+        return FAIL, "; ".join(bad[:5])
+    if retracted:
+        return WARN, f"{n} citation(s); " + "; ".join(retracted[:4])
+    return PASS, f"{n} fact citation(s) all resolve"
+
+
+def _broken_docs_root():
+    """The REAL docs tree plus one stray .md at the root -- the rule is zero .md files
+    directly under docs/, so any new root file FAILs until classified."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    open(os.path.join(d, "docs", "stray.md"), "w").write("# stray\n")
+    return d
+
+
+def _broken_lessons_fm():
+    """The REAL docs tree with rl_at_200m.md's frontmatter stripped -- the check must
+    FAIL on the missing fields, not on a hand-written file sharing the check's own
+    assumptions."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    p = os.path.join(d, "docs", "lessons", "rl_at_200m.md")
+    text = open(p, encoding="utf-8").read()
+    if text.startswith("---\n"):
+        text = text[text.find("\n---", 4) + 4 :].lstrip("\n")
+    open(p, "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_fact_ref():
+    """The REAL lessons and facts trees, with one citation to a nonexistent fact appended
+    to a real lesson."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
+    with open(os.path.join(d, "docs", "lessons", "rl_at_200m.md"), "a", encoding="utf-8") as f:
+        f.write("\n\nSee facts/tokenizer.json#tok.does_not_exist.\n")
+    return d
+
+
 CHECKS = [
     (
         "mix_not_unfiltered",
@@ -704,6 +845,27 @@ CHECKS = [
         "an empty list silences the guard",
         check_entrypoints_table_present,
         _broken_entrypoints_table,
+    ),
+    (
+        "docs_root_clean",
+        "zero .md files directly under docs/ -- research, audits, standards live in subdirs",
+        "docs/ was flat with audit_*/data_recipe*/exp_* mixed at the root, no rule and no check",
+        check_docs_root_clean,
+        _broken_docs_root,
+    ),
+    (
+        "lessons_have_frontmatter",
+        "every docs/lessons|audits/*.md (README excepted) carries question/status/source",
+        "research docs carried no machine-checkable contract; a doc could answer no question and cite nothing",
+        check_lessons_frontmatter,
+        _broken_lessons_fm,
+    ),
+    (
+        "fact_refs_resolve",
+        "every facts/<file>.json#<id> citation resolves; citing a retracted fact WARNs",
+        "the reset zeroed conclusions while scattered docs still cited them -- a retracted fact must be discoverable, not a silent pointer",
+        check_fact_refs,
+        _broken_fact_ref,
     ),
 ]
 
