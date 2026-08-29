@@ -577,6 +577,19 @@ def check_entrypoints_ran(root):
     return PASS, "every tried entry-point command has at least one ok run"
 
 
+def check_entrypoints_table_present(root):
+    """The entry-point table is the doc's contract with the repo. Zero script-citing rows
+    is the cfg_default failure shape: two corpus invariants reported SKIP 'chosen on
+    purpose' and check exited 0 -- an empty list silences the guard. FAIL, never SKIP."""
+    agents = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(agents):
+        return SKIP, "AGENTS.md not present"
+    n = sum(1 for line in open(agents, encoding="utf-8") if "|" in line and ENTRY_SCRIPT_RE.search(line))
+    if n == 0:
+        return FAIL, "no entry-point row cites a script -- an empty list silences the guard (cfg_default shape)"
+    return PASS, f"{n} entry-point row(s) cite scripts"
+
+
 def _broken_entrypoint():
     """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
     FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
@@ -589,6 +602,33 @@ def _broken_entrypoint():
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
     shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    return d
+
+
+def _broken_entrypoints_table():
+    """The REAL AGENTS.md with its entry-point table deleted -- the check must FAIL, not
+    SKIP. Deletes the contiguous '|'-block under the '| task | command |' header; if the
+    header wording drifts, falls back to deleting every script-citing row, which still
+    leaves the check with zero rows."""
+    import shutil
+
+    d = _tmp_repo()
+    lines = open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read().splitlines(keepends=True)
+    out, i, dropped = [], 0, 0
+    while i < len(lines):
+        s = lines[i].strip().lower()
+        if s.startswith("|") and "task" in s and "command" in s:
+            i += 1
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                dropped += 1
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    if dropped == 0:
+        out = [ln for ln in out if not ("|" in ln and ENTRY_SCRIPT_RE.search(ln))]
+    with open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8") as f:
+        f.writelines(out)
     return d
 
 
@@ -658,6 +698,14 @@ CHECKS = [
         "run_ablation.sh shipped as the AttnRes A/B entry while its rows read killed and OOM-fail",
         check_entrypoints_ran,
         _broken_entrypoint,
+    ),
+    (
+        "entrypoints_table_present",
+        "AGENTS.md contains at least one entry-point row citing a script",
+        "cfg_default: two corpus invariants reported SKIP 'chosen on purpose' and check exited 0 -- "
+        "an empty list silences the guard",
+        check_entrypoints_table_present,
+        _broken_entrypoints_table,
     ),
 ]
 
