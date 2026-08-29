@@ -1299,6 +1299,10 @@ def main():
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )
+    parser.add_argument("--profile", action="store_true", help="export a chrome trace of N steps (measurement only, no behavior change)")
+    parser.add_argument("--profile_warmup", type=int, default=15)
+    parser.add_argument("--profile_steps", type=int, default=20)
+    parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
@@ -1308,6 +1312,8 @@ def main():
             setattr(Cfg, k, v)
     if args.no_doc_mask:
         Cfg.doc_mask = False
+    if args.no_attn_res:
+        Cfg.attn_res = False
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
@@ -1420,6 +1426,16 @@ def main():
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
+    _prof = None
+    if getattr(args, "profile", False):
+        import torch.profiler as _tp
+        os.makedirs("/work/aupai/bench_eff", exist_ok=True)
+        _prof = _tp.profile(
+            activities=[_tp.ProfilerActivity.CPU, _tp.ProfilerActivity.CUDA],
+            schedule=_tp.schedule(wait=1, warmup=args.profile_warmup, active=args.profile_steps, repeat=1),
+            on_trace_ready=lambda p: p.export_chrome_trace(f"/work/aupai/bench_eff/ddp_trace_rank{rank}.json"),
+        )
+        _prof.start()
     GOOD_SAVE_INTERVAL = 200
     for ep in range(Cfg.epochs):
         model.train()
@@ -1506,6 +1522,8 @@ def main():
                     opt.step()
                     opt.zero_grad(set_to_none=True)
                 step += 1
+                if _prof is not None:
+                    _prof.step()
                 if step % GOOD_SAVE_INTERVAL == 0:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
