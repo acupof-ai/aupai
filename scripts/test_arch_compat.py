@@ -1,7 +1,11 @@
-"""CPU self-check for train.py architecture changes (no GPU deps needed).
+"""Self-check for train.py architecture changes.
 
-Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-init == uniform mean, and legacy checkpoint
-round-trip: old-key state_dict -> load (remap) -> save -> load, identical key set and outputs.
+Runs on CPU where fla is absent (a shape-preserving stand-in replaces the Triton
+kernel) and on CUDA where fla is present -- the real chunk_kda cannot take CPU
+tensors, so a fla machine without a visible GPU exits loudly instead of silently
+skipping. Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-init == uniform
+mean, and legacy checkpoint round-trip: old-key state_dict -> load (remap) ->
+save -> load, identical key set and outputs.
 Run: python scripts/test_arch_compat.py
 """
 
@@ -16,11 +20,21 @@ import train  # noqa: E402
 
 if train.chunk_kda is None:  # no fla on this machine: shape-preserving stand-in
     train.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)
+    DEV = "cpu"
+elif torch.cuda.is_available():
+    DEV = "cuda:0"  # the real Triton kernel raises on CPU tensors
+else:
+    sys.exit(
+        "fla is installed but no CUDA device is visible: the real chunk_kda is a "
+        "Triton kernel and cannot run on CPU tensors. Set CUDA_VISIBLE_DEVICES, or "
+        "run on a machine without fla. Skipping silently would leave this gate dead "
+        "on the only machine with the real kernel."
+    )
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
 
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.vocab, Cfg.seq = 64, 2, 4, 128, 100, 16
-x = torch.randint(0, 100, (2, 16))
-y = torch.randint(0, 100, (2, 16))
+x = torch.randint(0, 100, (2, 16), device=DEV)
+y = torch.randint(0, 100, (2, 16), device=DEV)
 
 for blocks, ckpt, dyn in [
     (0, False, False),
@@ -30,7 +44,7 @@ for blocks, ckpt, dyn in [
     (0, False, True),
 ]:
     Cfg.attn_res, Cfg.attn_res_blocks, Cfg.grad_ckpt, Cfg.attn_res_dyn_q = True, blocks, ckpt, dyn
-    m = HybridLM(Cfg)
+    m = HybridLM(Cfg).to(DEV)
     h, _ = m(x, y)
     h.sum().backward()
     assert m.final_ar.q.grad is not None and torch.isfinite(h).all()
@@ -47,7 +61,7 @@ Cfg.attn_res_dyn_q = False
 
 # legacy checkpoint: split fused weights back into old keys
 Cfg.attn_res, Cfg.grad_ckpt = False, False
-old = HybridLM(Cfg)
+old = HybridLM(Cfg).to(DEV)
 legacy = {}
 for k, v in old.state_dict().items():
     if k.endswith(".gb.weight"):  # gate|beta|pad -> gate_proj, beta_proj
@@ -63,17 +77,17 @@ for k, v in old.state_dict().items():
     else:
         legacy[k] = v
 Cfg.attn_res = True
-new = HybridLM(Cfg)
+new = HybridLM(Cfg).to(DEV)
 new.load_state_dict(legacy)
 assert new.attn_res is False and Cfg.attn_res is False, "old ckpt must disable AttnRes"
 assert set(new.state_dict()) == set(old.state_dict()), "round-trip key set changed"
-again = HybridLM(Cfg)
+again = HybridLM(Cfg).to(DEV)
 again.load_state_dict(new.state_dict())
 with torch.no_grad():
     assert torch.allclose(old(x)[0], new(x)[0]) and torch.allclose(old(x)[0], again(x)[0])
 # optimizer plumbing: schedule gates wd decay to Muon, snapshot is a real copy, conv kernels off the scalar group
 Cfg.attn_res = False
-m = HybridLM(Cfg)
+m = HybridLM(Cfg).to(DEV)
 opts = build_optimizers(m, Cfg)
 assert all(p.ndim != 3 for p in opts[2].param_groups[0]["params"]), "conv kernels must not be in scalar group"
 train.set_schedule(opts, 0, 100, Cfg)
@@ -100,7 +114,7 @@ assert 0.85 < ret < 0.99, ret
 idx = torch.tensor([[5, 1, 7, 7], [1, 1, 3, 3]])
 cu = train.doc_cu_seqlens(idx, eos_id=1)
 assert cu.tolist() == [0, 2, 4, 5, 6, 8] and cu.dtype == torch.int32, cu
-m = HybridLM(Cfg)
+m = HybridLM(Cfg).to(DEV)
 assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")
 
@@ -239,13 +253,13 @@ import fone  # noqa: E402
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.seq = 64, 2, 4, 128, 16
 Cfg.attn_res, Cfg.grad_ckpt = False, False
 Cfg.fone, Cfg.num_id, Cfg.vocab = True, 100, 101  # [NUM] one past the base vocab
-_m = HybridLM(Cfg)
-_x = torch.randint(0, 100, (2, 16))
+_m = HybridLM(Cfg).to(DEV)
+_x = torch.randint(0, 100, (2, 16), device=DEV)
 _x[0, 3] = _x[1, 5] = Cfg.num_id
-_v = torch.zeros(2, 16)
+_v = torch.zeros(2, 16, device=DEV)
 _v[0, 3], _v[1, 5] = 152.0, 1640.0
 
-_h, _ = _m(_x, torch.zeros(1), num_vals=_v)
+_h, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v)
 _nl = _m.num_logits(_h)
 assert _nl.shape == (2, 16, fone.INT_DIGITS + fone.FRAC_DIGITS, 10), _nl.shape
 
@@ -261,7 +275,7 @@ assert _m.num_head.weight.grad is not None and _m.num_head.weight.grad.abs().sum
 assert _m.num_proj.weight.grad is not None and _m.num_proj.weight.grad.abs().sum() > 0
 
 # The value must reach the hidden state -- same ids, different numbers, different output.
-_h2, _ = _m(_x, torch.zeros(1), num_vals=_v * 0 + 7.0)
+_h2, _ = _m(_x, torch.zeros(1, device=DEV), num_vals=_v * 0 + 7.0)
 assert not torch.allclose(_h, _h2), "num_vals does not affect the forward pass"
 
 # A [NUM] id the model could never predict would make the token useless.
@@ -269,9 +283,9 @@ assert Cfg.num_id < Cfg.vocab, "[NUM] must be inside the logit slice"
 
 # Opt-out is a no-op: no new parameters, forward works without num_vals.
 Cfg.fone, Cfg.vocab = False, 100
-_m0 = HybridLM(Cfg)
+_m0 = HybridLM(Cfg).to(DEV)
 assert not hasattr(_m0, "num_proj") and not hasattr(_m0, "num_head")
-_h0, _ = _m0(_x.clamp(max=99), torch.zeros(1))
+_h0, _ = _m0(_x.clamp(max=99), torch.zeros(1, device=DEV))
 assert torch.isfinite(_h0).all()
 Cfg.fone = False
 print("test_fone OK")
@@ -328,8 +342,8 @@ if os.path.exists(_tok_path):
         assert fone.render(36.0) == "36" and fone.render(3.5) == "3.5" and fone.render(0.0) == "0"
         # return_hidden must not disturb the logits it sits beside.
         train.Cfg.fone, train.Cfg.num_id, train.Cfg.vocab = True, 100, 101
-        _m2 = train.HybridLM(train.Cfg).eval()
-        _x = torch.randint(0, 100, (2, 8))
+        _m2 = train.HybridLM(train.Cfg).to(DEV).eval()
+        _x = torch.randint(0, 100, (2, 8), device=DEV)
         with torch.no_grad():
             _l1, _n1 = _m2(_x)
             _l2, _h2 = _m2(_x, return_hidden=True)
