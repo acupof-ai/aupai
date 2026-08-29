@@ -40,7 +40,8 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 
 - **Tokenizer frozen 2026-08-29.** Rebuild only under the three unfreeze conditions (see Tokenizer), and copy the live file to `data/tokenizer_<name>.json` first. A rebuild invalidates every checkpoint trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
-- **GPUs.** GPU7 is reserved for tileRL. Do not touch running jobs; kill by exact PID, never `pkill -f`.
+- **GPUs.** All 8 cards belong to this repo (GPU7's tileRL reservation was released 2026-08-30). The controller session allocates them; ask before starting a GPU process. Fixed lanes for 0830v1: **GPU 0** = benchmarks, scoring, probes; **GPU 1-7** = training, seven cards for every budget point so the scaling points stay comparable. Kill by exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
+- **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
 - **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
@@ -211,6 +212,7 @@ Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json
 pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null >/dev/null 2>&1 &"
 ```
 
+- **A foreground long task becomes a GPU-holding orphan when the connection drops.** `tn` kills an idle connection after 5 minutes; the process survives, still holding its card, with no session left to kill it (happened 2026-08-30: 100% util on GPU7, nobody attached). Anything longer than a quick check goes through the detached launch above.
 - **`CUDA_VISIBLE_DEVICES`, not `cuda:N`**: fla/Triton kernels launch on the current device; `cuda:1` raises illegal memory access.
 - Large files: `tn push` to the `/work` emptyDir host path, not `podput` (180KB cap).
 - `uv sync` after dependency changes.
