@@ -491,11 +491,17 @@
     "reverse_gate": "v2 scanned as corpus vs math-500+math-hard-1k: 0 exact, 0 at 0.7/0.8/0.9 -- the new eval contains no old-holdout problem either",
     "disjointness_argument": "the 943-program L3/L4 bank is 100% arithmetic (grep: zero 方程/设未知数/函数); v2's symbolic-algebra/geometry types are structurally outside the bank's generator paradigm. Type inventory: docs/audits/audit_math_corpus.md#math-hard-v2",
     "resolution_probe": {
-     "status": "paused 2026-08-30 — training curve has GPU priority (probe slowed 8-card DDP 45%; fb to notify restart when the curve finishes, ~1.7h)",
+     "status": "unmeasured 2026-08-30 (aupai-fb ruling)",
+     "claim": "v2 在 0.8b 尺度的分辨率",
      "0830v1_result": "v2 0.0% (18/18 families zero, both stock and family-aware scoring) BUT uninformative: math-500 control also 0/500 — 0830v1 is a pretraining checkpoint, degenerates on instructed evals (boxed rate 23.8%, step-eq 100% wrong). A probe that reads zero under both facts is not a probe.",
+     "proc_replay_result": "0/1080 (18/18 families 0/60, both scorers; math-500 control 2.8% same ckpt) BUT degenerate: 165-colon repetition loops, token salad, boxed rate 9/1080=0.8%, coherent-attempt 8/1080=0.7%. The zero carries no difficulty information.",
+     "fmt_cue_result": "format-cue rerun (same ckpt, same 1080, explicit '请写出解答过程...\\boxed{}' suffix, max_new 512): coherent-attempt 23/1080=2.1%, boxed 8/1080=0.7%, pass@1 0.0% -- still degenerate (number-repetition loops: '19, 15, 19, 15...', '1 + 1 + 1 + 1...'). The explicit format cue does NOT recover coherent attempts -> fb branch 2: the degeneration is triggered by v2's problem CONTENT (symbolic types the model never saw), not by prompt format. Note: there is no separate 'math-500 template' -- both evals use format_prompt(bare instruction); the suffix was the only format lever. Conclusion: at this checkpoint's scale v2 is unmeasurable, and the reason is content distribution, now established with a valid probe.",
+     "audit": "探针生成退化,零分不携带难度信息;math-500 同 checkpoint 2.8% 证明非全局失能 —— 是对 v2 题面失能。按 fb 探针标准(在两种相反事实下给同一读数的探针不是探针),标 inconclusive(退化),不按字面判据落盘'无分辨率'。",
+     "criterion_lesson": "预注册判据的缺陷(aupai-fb):一个基于分数阈值的判据,必须同时带一个生成有效性的前置条件,否则它会把格式失败读成能力失败。预注册保护我们不做事后选判据,不保护我们不做一个坏测量。",
+     "tiered_reporting": "WITHDRAWN 2026-08-30 (aupai-fb): arithmetic-gap families were 0/240 and equally degenerate —— 不要用一个坏读数去填一个看起来完整的报告结构。",
      "informative_target": "ckpt_k8_proc_replay (best remaining instructed ckpt: math-500 2.8%, old math-hard 0.1%); the 51.2% math-500 SFT checkpoints were deleted from the pod",
-     "partial": "97/1080 pred rows from the killed proc_replay run — discarded on restart",
-     "decision": "tiered reporting as default (aupai-fb): arithmetic-gap families (number-line/cryptarithm/number-array/hound-hare) are the primary reading; symbolic algebra/geometry families are headroom — expected zero at this scale, recorded not reported as failure. Full-resolution measurement deferred until a strong SFT checkpoint exists."
+     "next": "v2 stays a post-SFT instrument. For base-checkpoint math signal at 200M, use the likelihood twin (p(correct solution) vs p(matched wrong)) -- facts/base_eval.json#be.math_v2_likelihood_twin. Full-resolution v2 measurement deferred until a strong SFT checkpoint exists.",
+     "fmt_cue_ran": "2026-08-30, runs/eval_v2_fmt.log on the pod (GPU0)"
     }
    },
    "measured": "2026-08-30",
