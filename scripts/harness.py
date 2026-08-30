@@ -2667,6 +2667,15 @@ def _demo():
     """Every check must FAIL on a world where its condition is violated."""
     import shutil
 
+    # The step gap: a card idle on the first reading and busy on the second is busy.
+    global _busy_once
+    _real, seen = _busy_once, []
+    _busy_once = lambda cards: seen.append(1) or ([] if len(seen) == 1 else ["3"])
+    try:
+        assert _busy_cards(["3", "4"], settle=3) == ["3"], "a one-sample gap let a held card through"
+    finally:
+        _busy_once = _real
+
     assert score_from("math-hard 37/1032 = 3.6%") == 3.6, "took the numerator, not the percentage"
     assert score_from("math-hard deferred to the bench stage") is None, "invented a score"
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
@@ -2896,7 +2905,7 @@ def _run_point(step_args, forced):
     Ladder mixes (mix_scale_*) carry a frozen run config in
     data/mix_scale_run_config.json: run point sets the env + flags from it and refuses
     a disagreeing CLI flag. The six points must differ only in D."""
-    name, mix, passthrough = None, None, []
+    name, mix, hypothesis, passthrough = None, None, None, []
     i = 0
     while i < len(step_args):
         a = step_args[i]
@@ -2908,6 +2917,8 @@ def _run_point(step_args, forced):
             mix, i = step_args[i + 1], i + 2
         elif a.startswith("--mix="):
             mix, i = a.split("=", 1)[1], i + 1
+        elif a == "--hypothesis" and i + 1 < len(step_args):
+            hypothesis, i = step_args[i + 1], i + 2
         else:
             passthrough.append(a)
             i += 1
@@ -2938,7 +2949,9 @@ def _run_point(step_args, forced):
                   f"but the recipe is world={world}. Card COUNT is the ladder; card IDENTITY "
                   f"is not. Reallocate, do not shrink.")
             return 2
-        busy = _busy_cards(cards)
+        # 90 s: a point costs ~10 min of 7 cards, so confirming for 90 s is free, and it
+        # covers the 55 s step gap that made a busy eval_all.sh look idle.
+        busy = _busy_cards(cards, settle=90)
         if busy:
             print(f"run point: refusing -- card(s) {', '.join(busy)} are in use. DDP is "
                   f"synchronous, so one contended rank slows all {world}: a launch here "
@@ -2953,7 +2966,7 @@ def _run_point(step_args, forced):
         )
     cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *frozen_args, *passthrough]
     _exp("start", name=name, cmd=" ".join(cmd),
-         hypothesis=f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
+         hypothesis=hypothesis or f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
     rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
     ckpt = f"ckpt_{name}.pt"
 
@@ -3021,9 +3034,27 @@ def _run_ladder(step_args, forced):
     return 0
 
 
-def _busy_cards(cards):
-    """Which of `cards` already has a compute process. nvidia-smi is the only witness that
-    sees other containers' processes; a torch-side check inside this container cannot."""
+def _busy_cards(cards, settle=0):
+    """Which of `cards` has a compute process, watched over `settle` seconds and unioned.
+
+    One reading is not enough: a card is owned by the script still running, not by the row
+    nvidia-smi prints. 2026-08-30 eval_all.sh showed 0-5 at 0 MiB for 55 s between two of
+    its shard steps and then took all seven cards back. A launch inside that gap would have
+    contended with it for an hour. Watching across a window turns a step gap into a
+    sighting; nothing else here can see another container's process tree.
+    # ponytail: a window only catches gaps shorter than it. The real fix is a claim file the
+    # holder writes and a trap removes, so ownership is declared rather than inferred --
+    # worth it once two sessions launch unattended.
+    """
+    seen, deadline = set(), time.time() + settle
+    while True:
+        seen |= set(_busy_once(cards))
+        if time.time() >= deadline or len(seen) == len(cards):
+            return [c for c in cards if c in seen]
+        time.sleep(min(5, max(1, settle / 12)))
+
+
+def _busy_once(cards):
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=gpu_uuid", "--format=csv,noheader"],
