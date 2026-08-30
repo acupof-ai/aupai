@@ -71,7 +71,11 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **0.2b A/B cancelled (2026-08-30)**: Control arm (4 seeds, `attn_every 4`) ran as ladder's 0.2b point. Measured σ̂ = 0.0516 (3 df), 1.47× the 0.035 design assumption (which came from a fit residual, not seed variance — different quantities). MDE at 4+4 = 0.1021 > b0's 0.08 gate; even 8+8 = 0.0722 still misses. Treatment arm (`attn_every 1`) does not run at 0.2b. Question moves to 3.24b checkpoint comparison (free: control is the ladder's own checkpoint).
 
+**σ̂ = 0.0516 is pure seed variance** (probe 1 confirmed 2026-08-30): same-seed same-arm re-run differs by 0.001 in final val. Nondeterminism (FLA/KDA atomics, NCCL allreduce ordering) causes 0.02–0.05 per-step spread but does NOT accumulate — the optimizer washes it out. σ̂ is not contaminated by nondeterminism.
+
 **σ̂ boundary**: measured at 218 steps. More steps may average seed effects down — 0.0516 may be an upper bound for larger points. Not assumed either way.
+
+**⚠️ Step-by-step loss comparison is not evidence**: per-step training loss spread (0.02–0.05) is 5–50× the final-val effect (0.001). Diffing training curves to argue a change helped reads noise. Only compare final validation loss (or multi-step averages). This applies to any efficiency/architecture comparison in this repo.
 
 **Control arm data** (`ds.seed_variance_0p2b`, `ds.mde_recomputed_from_measured_sigma` in `facts/data_scaling.json`):
 - s0=3.691, s1=3.762, s2=3.679, s3=3.638; mean=3.6925, range=0.1240, σ̂=0.0516
@@ -110,7 +114,7 @@ At 3.24b, the control is the ladder's own checkpoint (`attn_every 4`, already pa
   - σ_paired 2× below σ → 3.24b 1+1 reaches MDE 0.10
   - σ_paired 2.6× below σ → 3.24b 1+1 reaches 0.08 gate at 206 GPU-min
 - **Probes (~18 GPU-min, running 2026-08-30)**:
-  1. Same seed (s2), same arm (`attn_every 4`), re-run vs existing `ckpt_p02_s2` (val 3.679) → pure nondeterminism floor. If diff > ~0.01, CUDA nondeterminism contaminates all σ estimates, σ̂=0.0516 is an upper bound.
+  1. Same seed (s2), same arm (`attn_every 4`), re-run vs existing `ckpt_p02_s2` (val 3.679) → pure nondeterminism floor. **Result: val 3.680 vs 3.679, diff 0.001. Floor negligible. Per-step spread 0.02–0.05 but does not accumulate (optimizer washes out).**
   2. Same seed (s2, s3), both arms (`attn_every 1` vs existing s2, s3 `attn_every 4`) → σ_paired first read.
   - Pairing against s2/s3 (not s0/s1): s0/s1 ran before a train.py edit; s2/s3 are on the same side as new runs.
 - **Corrected bands** (b0's frozen paired t: `(t.975,n-1 + t.80,n-1)·s_d/√n`, not normal approximation):
