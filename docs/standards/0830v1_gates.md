@@ -13,6 +13,24 @@ reopens corpus-ready.
 Settled 2026-08-30. Every point uses the same values; a change to any of them reopens the
 whole ladder.
 
+**This table is executable, not prose.** Its values live in `data/mix_scale_run_config.json`
+— 18 fields, one file rather than six copies — and four checks enforce them, each against a
+different failure mode:
+
+| check | catches |
+|---|---|
+| `_strip_frozen` in `run point` | a launch flag disagreeing with the frozen value — refuses before the run |
+| `frozen_keys_complete` | a `train.py` parser flag in neither the frozen set nor the allow-list, so the list cannot rot |
+| `ladder_cfg_consistent` | a code edit *between* points — compares all 46 recorded `Cfg` fields across ladder checkpoints, excluding only `mix` |
+| `ladder_config_frozen` | a code edit *before the first point* — compares each checkpoint against the recorded intent, including the five constants with no CLI flag |
+
+The last one exists because the table and the JSON once disagreed: `chunk_size` was frozen
+in this prose and absent from the machine-readable config, on the correct reasoning that a
+field with no CLI flag cannot drift via a launch. It can still drift via a code edit, and
+nothing would have noticed — `pod_drift` goes blind the moment the manifest is regenerated,
+which the controller did mid-ladder on 2026-08-30 to clear an unrelated drift. **A rule
+enforced only by someone remembering it had already failed twice that day.**
+
 | setting | value | why |
 |---|---|---|
 | cards | 7 (GPU 1-7) | GPU 0 is the bench/scoring lane |
