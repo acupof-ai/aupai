@@ -298,8 +298,10 @@ def metric_pass_at_k(ckpt_path, tok_path, ngpu=1):
 DEGEN_CONFIG = {
     "ngram_len": 8,
     "repeat_threshold": 3,
-    # == ngram_len: a generation is scored if it can form one n-gram. A 3*ngram_len
-    # floor was used before and missed 3 true positives; deprecated.
+    # The degenerate CONDITION, not the denominator: a generation with < n words cannot
+    # form the n-gram, so it is non-degenerate -- but it stays in N. Canonical is in-N
+    # (fb's first version + b0's recompute); excluding short generations moved math
+    # 0-shot by 5.4pt (16.9% -> 22.3%).
     "min_words": 8,
     "unit": "whitespace",
     # The eval scripts store gen[-300:] (code_zh.py:128, math_zh.py:103, math_hard.py:135),
@@ -312,8 +314,9 @@ def degeneration_rate(path, temperature, greedy=None):
     """Fraction of generations with a repeated n-gram, over one prediction file.
 
     A generation is degenerate if any ngram_len-gram (whitespace tokens) appears
-    >= repeat_threshold times. Generations with < min_words tokens are excluded
-    from N -- they cannot form the n-gram, and counting them would dilute the rate.
+    >= repeat_threshold times. The denominator N is every row: a generation with
+    < min_words tokens cannot form the n-gram, so it is non-degenerate, but it
+    stays in N (canonical in-N; excluding short generations moved math 0-shot 5.4pt).
 
     The report carries the decode temperature because a format metric under greedy
     is a decoder property, not a model property (SFT greedy 55.8% vs t=0.8 20.1%).
@@ -339,10 +342,10 @@ def degeneration_rate(path, temperature, greedy=None):
                 continue
             if greedy is not None and r.get("greedy") != greedy:
                 continue
+            n += 1  # denominator = every row; a short generation is non-degenerate, not absent
             words = r.get("gen", "").split()
             if len(words) < cfg["min_words"]:
-                continue
-            n += 1
+                continue  # cannot form the n-gram -> non-degenerate
             counts = {}
             for i in range(len(words) - cfg["ngram_len"] + 1):
                 ng = tuple(words[i : i + cfg["ngram_len"]])
@@ -448,16 +451,16 @@ def selftest():
     m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", "  C-Eval (zh)        25.1%")
     assert m and (m.group(1).strip(), m.group(2)) == ("C-Eval (zh)", "25.1")
     # degeneration rate: known-answer cases. A repeated 8-gram is degenerate;
-    # a short generation (< min_words) is excluded from N, not counted as clean.
+    # a short generation (< min_words) stays in N as non-degenerate, not excluded.
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
         f.write(json.dumps({"gen": "a b c d e f g h " * 3, "greedy": True}) + "\n")  # 8-gram x3 -> degenerate
         f.write(json.dumps({"gen": " ".join(str(i) for i in range(20)), "greedy": True}) + "\n")  # no repeat
-        f.write(json.dumps({"gen": "a b c", "greedy": True}) + "\n")  # < 8 words -> excluded
+        f.write(json.dumps({"gen": "a b c", "greedy": True}) + "\n")  # < 8 words -> in N, non-degenerate
         p1 = f.name
     try:
         v, err = degeneration_rate(p1, 0)
         assert err is None, err
-        assert v["n"] == 2 and v["degenerate"] == 1 and v["rate"] == 0.5, v
+        assert v["n"] == 3 and v["degenerate"] == 1 and v["rate"] == round(1 / 3, 4), v
     finally:
         os.unlink(p1)
     # the greedy filter selects one arm (pass_at_k's sampled rows are greedy=False)
