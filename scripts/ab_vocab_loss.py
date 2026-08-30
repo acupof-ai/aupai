@@ -4,7 +4,7 @@ two arms that differ in one Cfg field. Pass criterion: max |delta| at the bf16 n
 floor, no growth over steps, no systematic sign. A growing or sign-consistent delta
 means the change leaks into the math.
 
-Axes (AB_AXIS env): vocab (32773 vs 32776, the cuBLAS alignment change) or
+Axes (AB_AXIS env): vocab (32773 vs 32784, the cuBLAS/16-alignment change) or
 chunk (64 vs 32, fla chunk_kda chunk size -- a re-chunking of the same recurrence).
 
 Also prints the dynamo cache_size_limit guard values train.py enforces at startup.
@@ -28,7 +28,7 @@ from train import SOFTCAP, Cfg, HybridLM, build_mix, build_optimizers, doc_cu_se
 STEPS = int(os.environ.get("AB_STEPS", "10"))
 LR_SCALE = float(os.environ.get("AB_LR_SCALE", "1.0"))
 AXIS = os.environ.get("AB_AXIS", "vocab")
-ARMS = {"vocab": (32773, 32776), "chunk": (64, 32)}
+ARMS = {"vocab": (32773, 32784), "chunk": (64, 32)}
 DEVICE = f"cuda:{os.environ.get('E2E_GPU', '0')}"
 
 

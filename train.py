@@ -115,9 +115,12 @@ class Cfg:
     layers = 12
     attn_every = 4
     ffn_hidden = 3072
-    vocab = 32776  # multiple of 8 for the cuBLAS aligned kernel: 32773 fell back to the SM75
-    # align-1 GEMM on Hopper (41% vs 92% of bf16 peak, +13.9% end-to-end, measured 2026-08-30).
-    # The 3 columns above vocab_real are alignment padding: never targets, set to
+    vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
+    # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
+    # 2026-08-30), 16 so _fp8_ok passes and the fp8-head option stays open (same cost: the
+    # extra columns are never targets). 32776 was 8-aligned only; the A/B at 32784 is
+    # eff.vocab_align_parity.
+    # The 11 columns above vocab_real are alignment padding: never targets, set to
     # finfo(dtype).min in lm_logits (finite, so the all-finite E2E assert holds).
     # padded_vocab (32832) is unchanged, so head/embedding shapes and old checkpoints
     # are unaffected -- this is not a tokenizer change and does not touch vocab_id.
