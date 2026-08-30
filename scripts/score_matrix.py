@@ -293,6 +293,81 @@ def metric_pass_at_k(ckpt_path, tok_path, ngpu=1):
     )
 
 
+# Degeneration repeat rate. All parameters live here, not in prose -- a metric
+# config outgrows its name. Source: facts/base_eval.json (be.degeneration_rate).
+DEGEN_CONFIG = {
+    "ngram_len": 8,
+    "repeat_threshold": 3,
+    # == ngram_len: a generation is scored if it can form one n-gram. A 3*ngram_len
+    # floor was used before and missed 3 true positives; deprecated.
+    "min_words": 8,
+    "unit": "whitespace",
+    # The eval scripts store gen[-300:] (code_zh.py:128, math_zh.py:103, math_hard.py:135),
+    # so this metric sees the TAIL, not the full generation. See the two pitfalls below.
+    "window": "gen[-300:]",
+}
+
+
+def degeneration_rate(path, temperature, greedy=None):
+    """Fraction of generations with a repeated n-gram, over one prediction file.
+
+    A generation is degenerate if any ngram_len-gram (whitespace tokens) appears
+    >= repeat_threshold times. Generations with < min_words tokens are excluded
+    from N -- they cannot form the n-gram, and counting them would dilute the rate.
+
+    The report carries the decode temperature because a format metric under greedy
+    is a decoder property, not a model property (SFT greedy 55.8% vs t=0.8 20.1%).
+    A number without a temperature cannot go on the board.
+
+    Two known pitfalls (measured, not theoretical):
+    1. The eval scripts store gen[-300:], so this measures TAIL degeneration. A
+       model that is correct-then-verbose is misjudged. Negligible at 2.2% accuracy;
+       revisit (full storage or online computation) when capability rises.
+    2. The 300-char window holds different token counts across languages (Chinese
+       is dense), so cross-domain absolute values carry a density confound.
+       Within-domain comparison is unaffected.
+    """
+    if not os.path.exists(path):
+        return None, f"no prediction file {os.path.relpath(path, ROOT)}"
+    cfg = DEGEN_CONFIG
+    n = deg = 0
+    for line in open(path, encoding="utf-8"):
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if greedy is not None and r.get("greedy") != greedy:
+            continue
+        words = r.get("gen", "").split()
+        if len(words) < cfg["min_words"]:
+            continue
+        n += 1
+        counts = {}
+        for i in range(len(words) - cfg["ngram_len"] + 1):
+            ng = tuple(words[i : i + cfg["ngram_len"]])
+            c = counts.get(ng, 0) + 1
+            if c >= cfg["repeat_threshold"]:
+                deg += 1
+                break
+            counts[ng] = c
+    if n == 0:
+        return None, "no generations with enough words to form the n-gram"
+    return {
+        "rate": round(deg / n, 4),
+        "degenerate": deg,
+        "n": n,
+        "temperature": temperature,
+        **cfg,
+    }, None
+
+
+def _add_degeneration(record, key, pred_path, temperature, greedy=None):
+    """Compute the degeneration rate from a generative metric's prediction file
+    and store it beside the metric. Runs after the eval, so the file exists."""
+    v, err = degeneration_rate(pred_path, temperature, greedy=greedy)
+    record["metrics"][key] = v if v else {"error": err}
+
+
 def write_records(path, records):
     """Replace same-ckpt records, keep others and unparseable lines. The matrix
     is the current state, not a history.
@@ -371,6 +446,30 @@ def selftest():
     # the MC parser keys on display name, not flag name (ceval prints "C-Eval (zh)")
     m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", "  C-Eval (zh)        25.1%")
     assert m and (m.group(1).strip(), m.group(2)) == ("C-Eval (zh)", "25.1")
+    # degeneration rate: known-answer cases. A repeated 8-gram is degenerate;
+    # a short generation (< min_words) is excluded from N, not counted as clean.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(json.dumps({"gen": "a b c d e f g h " * 3, "greedy": True}) + "\n")  # 8-gram x3 -> degenerate
+        f.write(json.dumps({"gen": " ".join(str(i) for i in range(20)), "greedy": True}) + "\n")  # no repeat
+        f.write(json.dumps({"gen": "a b c", "greedy": True}) + "\n")  # < 8 words -> excluded
+        p1 = f.name
+    try:
+        v, err = degeneration_rate(p1, 0)
+        assert err is None, err
+        assert v["n"] == 2 and v["degenerate"] == 1 and v["rate"] == 0.5, v
+    finally:
+        os.unlink(p1)
+    # the greedy filter selects one arm (pass_at_k's sampled rows are greedy=False)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(json.dumps({"gen": "a b c d e f g h " * 3, "greedy": True}) + "\n")
+        f.write(json.dumps({"gen": " ".join(str(i) for i in range(20)), "greedy": False}) + "\n")
+        p2 = f.name
+    try:
+        v2, err2 = degeneration_rate(p2, 0.8, greedy=False)
+        assert err2 is None, err2
+        assert v2["n"] == 1 and v2["degenerate"] == 0 and v2["temperature"] == 0.8, v2
+    finally:
+        os.unlink(p2)
     print("selftest OK")
 
 
@@ -432,12 +531,22 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1):
         _metric("mc_full", metric_mc, record, ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy"])
     if "math_hard" in wanted:
         _metric("math_hard", metric_math_hard, record, ckpt_path, tok_path, ngpu)
+        _add_degeneration(record, "math_hard_degeneration",
+                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0)
     if "math_500" in wanted:
         _metric("math_500", metric_math_500, record, ckpt_path, tok_path, ngpu)
+        _add_degeneration(record, "math_500_degeneration",
+                          os.path.join(ROOT, f"data/eval/preds_{ckpt_name}.jsonl"), 0)
     if "code_500" in wanted:
         _metric("code_500", metric_code_500, record, ckpt_path, tok_path, ngpu)
+        _add_degeneration(record, "code_500_degeneration",
+                          os.path.join(ROOT, f"data/eval/preds_code_{ckpt_name}.jsonl"), 0)
     if "pass_at_k" in wanted:
         _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, tok_path, ngpu)
+        # The sampled arm (t=0.8): pass_at_k's eval_hard.sh writes greedy + sampled rows
+        # to the same hard_<ckpt>.jsonl, so select greedy=False.
+        _add_degeneration(record, "pass_at_k_degeneration",
+                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0.8, greedy=False)
 
     for m, reason in SKIP_REASON.items():
         if m not in wanted:
