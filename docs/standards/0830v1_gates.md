@@ -434,6 +434,25 @@ appearance of having been checked. Both guards below close that gap.
   segment rather than as a single number, so it cannot be cited without its range: a
   number that cannot be fetched cannot be fetched wrong, which beats a warning that can
   be skipped.
+- **A discrimination instrument built from easy perturbations saturates and stops
+  steering.** `math_v2_like` reads 94.69% at the 0.8b point, up from 76.69% at 0.2b — it
+  moved 18 points across the ladder and then ran out of room. A metric near its ceiling
+  cannot distinguish a good change from a great one, which is the whole job of a steering
+  metric. Build the next one from *hard* perturbations and let it start low: a mutated
+  algorithm or a missing edge case, not a flipped operator. Headroom is a design
+  parameter, not something to discover afterwards.
+- **Where the answer is verifiable, the measurement is a different economics.** Execution
+  gives a binary label with no judge and no seed variance entering it, so the error is
+  binomial: δ = 1.4/√N, or 6.3 points at N=500. Against val NLL's σ̂ = 0.0516 — which
+  made the KDA A/B unresolvable at any affordable n — the same comparison on pass@k may
+  be affordable. **Pivoting to reasoning raises measurability rather than lowering it**,
+  and that is a reason to prefer verifiable targets wherever a choice exists.
+- **A generative metric reading zero on a base checkpoint measures two things at once:
+  absent capability and absent format.** The panel's SKIP rule — "generative; a base
+  checkpoint reads zero" — encodes the conflation. A base model continues text; it does
+  not answer questions, so 0/500 on math-500 cannot separate "cannot solve" from "was
+  never asked in a form it responds to". Few-shot continuation separates them for the
+  price of a prompt.
 - **A number that agrees for the wrong reason is harder to catch than one that
   disagrees** — disagreement starts an investigation, agreement ends one. Two instances
   today: `ds.mde_recomputed_from_measured_sigma` at 0.1021 (two-sided detection, normal
