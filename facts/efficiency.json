@@ -606,7 +606,7 @@
     "softcap": 15.0
    },
    "uncertainty": "tiny-batch short run; parity is at the loss-computation level, not a full-training equivalence claim",
-   "boundary": "kernel speed (+19.1% KDA kernel, ~2% step, tilerl measurement) is separate from this numerical-parity claim",
+   "boundary": "kernel speed (+19.1% KDA kernel, ~2% step) is single-layer isolation (T=4096, tilerl), not seven-card real-model; the merge run must show the throughput gain or this reverts to 64. Parity here is at the loss-computation level, not a full-training equivalence claim",
    "status": "measured"
   }
  ]

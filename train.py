@@ -109,7 +109,9 @@ SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 class Cfg:
     d = 1024
     heads = 8  # hd=128, required for FlashKDA CUTLASS kernel
-    chunk_size = 64  # fla chunk_kda chunk size (fla default); 32 is +19.1% kernel, ~2% step
+    chunk_size = 32  # fla chunk_kda chunk size: +19.1% KDA kernel (~2% step, single-layer
+    # isolation, tilerl 2026-08-30), numerically neutral vs 64 (eff.chunk_size_parity). The
+    # throughput gain is isolated-layer, not seven-card real-model: the merge run must show it.
     layers = 12
     attn_every = 4
     ffn_hidden = 3072
