@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Fetch a named corpus source to data/raw/<source>/ with shard-level resumability.
+
+The corpus-half fetch step under `harness run fetch --source <name> [--target_bytes N]`.
+de owns the harness wrapper; this script owns the substance.
+
+Contract (from de/fb): shard-level resumability (per-shard write, skip completed,
+resume from the first incomplete -- the restartability audit passes because each
+shard's write is inside the per-shard loop), a `source_fp` content-hash fingerprint
+of the actual source manifest (URLs + sizes/etags per shard -- a re-fetch from a
+changed upstream gives a different fp), the disk guard (`data/raw` free >=
+target_bytes * 1.5 or refuse), and `data/raw` on /data00 (a symlink -> /data00/aupai_raw
+is created here if absent). Exit 0 on success, non-zero otherwise.
+
+    python scripts/fetch_corpus.py --source fineweb2 --target_bytes 30e9
+    python scripts/fetch_corpus.py --source cci3_hq --target_bytes 50e9
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RAW = os.path.join(ROOT, "data", "raw")
+BIG_RAW_TARGET = "/data00/aupai_raw"
+CHUNK = 1 << 20
+
+
+def ensure_raw_location():
+    """data/raw lives on /data00 (space), symlinked from data/raw. 36B raw is
+    350G+ per source; /work fills first. Create the target + symlink if absent."""
+    if not os.path.isdir(BIG_RAW_TARGET):
+        os.makedirs(BIG_RAW_TARGET, exist_ok=True)
+    if not os.path.islink(RAW):
+        if os.path.isdir(RAW):
+            # move an existing small data/raw aside rather than clobber
+            shutil.move(RAW, RAW + ".work")
+        os.symlink(BIG_RAW_TARGET, RAW)
+    os.makedirs(RAW, exist_ok=True)
+
+
+def disk_ok(target_bytes):
+    free = shutil.disk_usage(RAW).free
+    need = target_bytes * 1.5
+    ok = free >= need
+    print(f"data/raw free {free / 1e9:.1f}G vs target*1.5 {need / 1e9:.1f}G -> {'ok' if ok else 'REFUSE'}")
+    return ok
+
+
+def _sha1(path):
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(CHUNK), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------- sources
+# Each source resolves to a manifest: list of (relative_shard, url, expected_bytes).
+# The manifest IS the fetch recipe; source_fp = content hash of it, so a changed
+# upstream (new/renamed shard, new size) changes the fingerprint.
+def _manifest_fineweb2():
+    import urllib.request
+
+    base = "https://hf-mirror.com/datasets/HuggingFaceFW/fineweb-2/resolve/main/data/cmn_Hani/train"
+    api = "https://hf-mirror.com/api/datasets/HuggingFaceFW/fineweb-2/tree/main/data/cmn_Hani/train"
+    with urllib.request.urlopen(api, timeout=30) as r:
+        rows = json.loads(r.read())
+    man = []
+    for row in rows:
+        path = row.get("path", "")
+        if path.endswith(".parquet"):
+            name = path.split("/")[-1]
+            man.append((name, f"{base}/{name}", int(row.get("size", 0))))
+    return man
+
+
+def _manifest_cci3_hq():
+    import urllib.request
+
+    api = (
+        "https://www.modelscope.cn/api/v1/datasets/BAAI/CCI3-HQ/repo/tree"
+        "?Revision=master&Root=&Recursive=true"
+    )
+    with urllib.request.urlopen(api, timeout=30) as r:
+        d = json.loads(r.read())
+    base = "https://www.modelscope.cn/api/v1/datasets/BAAI/CCI3-HQ/repo?Revision=master&FilePath="
+    man = []
+    for f in d["Data"]["Files"]:
+        if f.get("Type") == "blob" and f["Path"].startswith("data/"):
+            man.append((f["Path"].split("/")[-1], base + f["Path"], int(f.get("Size", 0))))
+    return man
+
+
+SOURCES = {
+    "fineweb2": _manifest_fineweb2,
+    "cci3_hq": _manifest_cci3_hq,
+}
+
+
+def source_fp(manifest):
+    h = hashlib.sha1()
+    for name, url, size in sorted(manifest):
+        h.update(f"{name}\t{size}\t{url}\n".encode())
+    return h.hexdigest()
+
+
+# ---------------------------------------------------------------- fetch
+def _refuse_prev_fp(source, source_fp):
+    """A resume against a changed upstream must not silently mix two source states:
+    refuse. Same failure class as a token cache reused against a swapped corpus."""
+    for name in ("fetch_stats.json", "fetch_stats.log"):
+        p = os.path.join(RAW, source, name)
+        if not os.path.exists(p):
+            continue
+        try:
+            prev = json.loads(open(p).read()) if name.endswith(".json") else None  # noqa: SIM115
+        except Exception:
+            prev = None
+        if prev and prev.get("source_fp") and prev["source_fp"] != source_fp:
+            return prev["source_fp"]
+    return None
+
+
+def fetch(source, target_bytes):
+    ensure_raw_location()
+    if not disk_ok(target_bytes):
+        print(f"REFUSING: data/raw does not hold {target_bytes * 1.5 / 1e9:.1f}G needed", file=sys.stderr)
+        return 2
+    getter = SOURCES.get(source)
+    if getter is None:
+        print(f"unknown source {source!r}; known: {sorted(SOURCES)}", file=sys.stderr)
+        return 2
+    manifest = getter()
+    if not manifest:
+        print(
+            f"source {source} resolved to an empty manifest -- upstream may be unreachable", file=sys.stderr
+        )
+        return 2
+    outdir = os.path.join(RAW, source)
+    os.makedirs(outdir, exist_ok=True)
+    fp = source_fp(manifest)
+
+    stale = _refuse_prev_fp(source, fp)
+    if stale:
+        print(
+            f"REFUSING: upstream changed since the prior fetch (recorded source_fp {stale} != "
+            f"current {fp}). Shards from two source states would share one fingerprint. "
+            f"Move trust and re-fetch, or reconcile deliberately.",
+            file=sys.stderr,
+        )
+        return 4
+    print(f"{source}: {len(manifest)} shards, source_fp {fp}")
+
+    stats = {"source": source, "source_fp": fp, "target_bytes": target_bytes, "shards": []}
+    log = os.path.join(outdir, "fetch_stats.log")  # per-shard append log: resume evidence
+    got = 0
+    for name, url, expect in manifest:
+        if got >= target_bytes:
+            break
+        dst = os.path.join(outdir, name)
+        part = dst + ".part"  # partial shards use temp name: rename on completion, atomic
+        if os.path.exists(dst):  # a completed shard (final name exists) -- skip, but verify
+            sz = os.path.getsize(dst)
+            if expect and sz != expect:
+                print(f"  {name}: final {sz}B != manifest {expect}B -- corrupt, re-fetch", file=sys.stderr)
+                os.remove(dst)
+            else:
+                rec = {"shard": name, "bytes": sz, "status": "skipped-verified"}
+                with open(log, "a") as f:  # incremental per-shard record
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                stats["shards"].append(rec)
+                got += sz
+                continue
+        # periodic disk re-check: refuse the next shard rather than corrupt a full partition
+        if shutil.disk_usage(RAW).free < target_bytes * 1.5:
+            print(
+                f"  disk low ({shutil.disk_usage(RAW).free / 1e9:.0f}G free); clean stop at {got / 1e9:.1f}G",
+                file=sys.stderr,
+            )
+            break
+        # write to temp name, then atomic rename: existence of dst == completeness
+        subprocess.run(
+            ["curl", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        sz = os.path.getsize(part) if os.path.exists(part) else 0
+        if expect and sz != expect:
+            print(
+                f"  {name}: {sz}B != expected {expect}B -- fetch incomplete, .part kept for resume",
+                file=sys.stderr,
+            )
+            return 3
+        os.rename(part, dst)  # atomic: a partial shard never masquerades as complete
+        rec = {"shard": name, "bytes": sz, "status": "fetched"}
+        with open(log, "a") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        stats["shards"].append(rec)
+        got += sz
+        print(f"  {name}: {sz / 1e6:.0f}MB (total {got / 1e9:.1f}G)")
+
+    sp = os.path.join(outdir, "fetch_stats.json")
+    with open(sp, "w") as f:  # aggregate stats file; the durable record is the shards + log
+        json.dump(stats, f, ensure_ascii=False, indent=1)
+    print(f"{source}: {got / 1e9:.2f}G fetched -> {outdir}; stats {sp}")
+    return 0  # partial target is fine: the harness records it, re-run resumes
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--source", required=True, help="named source (fineweb2, cci3_hq, ...)")
+    ap.add_argument("--target_bytes", type=float, default=None, help="disk bytes to fetch (None = all)")
+    a = ap.parse_args()
+    return fetch(a.source, a.target_bytes or 0)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
