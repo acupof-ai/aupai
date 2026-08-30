@@ -833,4 +833,11 @@ appearance of having been checked. Both guards below close that gap.
   byte-identical across all three, and only `--out` and its JSON write differ — but that
   was established by diffing, after a peer's drift gate flagged the mismatch. Nobody
   noticed on their own, and the session that wrote the flag believed it had verified an
-  integration whose code had never reached the machine it ran on.
+  integration whose code had never reached the machine it ran on. The drift gate that
+  caught it walked the same rule from the other side: it compared `sha256`, found a
+  mismatch, and reported "the pod is running something different" — true of the bytes,
+  unestablished of the behaviour, since a lone `--out` flag and a rewritten prompt look
+  identical to a hash. **A hash difference is not a behavioural difference, and a claim of
+  zero net effect is zero only once someone has read the diff.** Both directions are the
+  same rule as "read the source before trusting the benchmark": identity and behaviour are
+  separate questions, and neither answers the other.
