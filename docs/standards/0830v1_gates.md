@@ -291,6 +291,23 @@ appearance of having been checked. Both guards below close that gap.
 - No kernel proposal without a `torch.compile` baseline. AttnRes measured 42.2ms eager and
   3.85ms compiled for the same work — using the eager number would have made a
   zero-benefit kernel look like a 10x opportunity.
+- **Until σ̂ is measured, every significant/not-significant call this round is
+  provisional.** 0.035 came from a fit residual, which carries model misspecification;
+  seed variance does not. Two experiments were designed against the conflation before
+  anyone noticed they were different quantities. Anything already written that leans on
+  0.035 is re-read when the real number lands, not grandfathered.
+- **The frozen run config is enforced by nothing.** The table above opens with "a change
+  to any of them reopens the whole ladder", and the only thing keeping six points
+  identical is that whoever types the launch remembers eight values. The controller got
+  it wrong on the first attempt, on a run it had specified twice in writing: `Cfg.batch`
+  defaults to 32 and `Cfg.accum` to 1, the frozen values are 16/2, and the launch OOMed
+  in 45 seconds exactly as the table predicted. That was luck. The dangerous member of
+  that table is any value wrong *and still runnable* — `warmup 30`, `bucket_cap_mb 100`,
+  a different `chunk_size` — which yields a completed point, a checkpoint, a
+  score-matrix row, and a curve with one point measured under a different recipe, with
+  `score_matrix_present` green throughout. The fix belongs in the mix files, so the
+  recipe travels with what it is frozen against, and a check compares each ladder
+  checkpoint's stored `cfg` against that block.
 - A per-shard sample of `data/corpus/web_hq` must span the shard range, not a prefix. The
   corpus is ordered by source and is not shuffled: shard 1 alone is 20.9% Traditional
   against a corpus figure of 17.715% ± 0.064% (all 62 shards, 242,048/1,366,324). The
