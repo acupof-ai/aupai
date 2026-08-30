@@ -754,9 +754,9 @@
     },
     {
       "id": "mlm.src.rejected_wikipedia_dupe",
-      "value": "overlaps existing wiki domain (wikipedia zh 20231101 already in mix_v3)",
+      "value": "overlaps existing wiki domain (wikipedia zh 20231101 already in the retired pre-0830v1 mix)",
       "measured": "2026-08-30",
-      "source": "mix_v3.json provenance + agent C (wikimedia/wikipedia 66.9GiB, wikipedia-cn-20230720-filtered 497MiB both reachable)",
+      "source": "the retired pre-0830v1 mix's provenance + agent C (wikimedia/wikipedia 66.9GiB, wikipedia-cn-20230720-filtered 497MiB both reachable)",
       "config": {
         "reject_reason": "duplication"
       },
@@ -818,6 +818,118 @@
       "uncertainty": "exact (integer rows)",
       "status": "measured",
       "boundary": "predicted from the code path and the row counts; the printed scheduled-tokens line of the first 3.24b run is the confirming artifact and has not run yet"
+    },
+    {
+      "id": "mlm.corpus.traditional_rate",
+      "value": 0.17715,
+      "unit": "fraction of docs",
+      "measured": "2026-08-30",
+      "source": "full census of data/corpus/web_hq, all 62 shards, 1,366,324 docs (/tmp/census_web_hq.py v3 on pod; heads reservoir /tmp/census_heads.jsonl)",
+      "config": {
+        "doc_level": 0.17715,
+        "doc_level_ci95": 0.00064,
+        "doc_level_n": "242048/1366324",
+        "char_level": 0.02196,
+        "char_level_n": "36753020/1673388184 CJK chars",
+        "char_level_definition": "fraction of CJK chars in the 110-glyph traditional-only detector set; a LOWER BOUND on traditional-only glyph share (a comprehensive traditional-only set gives a higher number; fb recon 2026-08-30 measured 0.1481 char-level with a larger set)",
+        "detector": "T_CHARS = 110 traditional-only glyphs (forms nonexistent in simplified standard); trad doc = >=10 T-glyphs AND T/CJK density >=0.02; pre-registered before measurement",
+        "seed": 20260830,
+        "corpus_fp": "30838d423348b2e5",
+        "comparison": "fb recon 0.1520 doc-level on first 3 shards x 3000 docs; gap = source ordering (shard 1 alone = 0.209), recon method sound, corpus not shuffled"
+      },
+      "uncertainty": "doc-level CI95 +-0.00064 (exact binomial); char-level exact",
+      "status": "measured"
+    },
+    {
+      "id": "mlm.fertility.traditional",
+      "value": 1.161,
+      "unit": "tok/char ratio trad/simp",
+      "measured": "2026-08-30",
+      "source": "minimal pairs (/tmp/fert_pairs.json, 30 hand-converted script-only pairs from web_000000) + corpus-level pooled on census reservoirs 1000 trad / 1000 simp docs (/tmp/fertility_trad.py on pod)",
+      "config": {
+        "minimal_pair_ratio": 1.161,
+        "minimal_pair_min": 1.0,
+        "minimal_pair_max": 1.5,
+        "minimal_pair_n": 30,
+        "corpus_trad_tok_per_cjk_char": 0.979,
+        "corpus_simp_tok_per_cjk_char": 0.822,
+        "corpus_ratio": 1.191,
+        "corpus_n_docs_per_class": 1000,
+        "mechanism": "merge-segmentation, NOT byte-fallback: trad whole-char (isolated) 0.568 vs simp 0.343 (fewer multi-char merges learned for traditional words); byte-fallback would show ~3x tok/char",
+        "economic_note": "trad docs 17.7% of web_hq at ~1.16-1.19x tok/char -> roughly 2.5-3% extra web_hq tokens; not blocking"
+      },
+      "uncertainty": "minimal-pair mean over 30 pairs (min/max given); corpus pooled counts exact on 2000-doc sample",
+      "status": "measured"
+    },
+    {
+      "id": "mlm.tokenizer.wholechar_gate_check",
+      "value": 0.9682,
+      "unit": "fraction of CJK chars not byte-split (trad)",
+      "measured": "2026-08-30",
+      "source": "/tmp/wholechar_gate.py on census reservoirs, tokenizer /work/aupai/data/tokenizer.json",
+      "config": {
+        "definition_contained": "hanzi whose bytes are not split across tokens (byte-fallback = 3 byte-tokens -> not whole); this reproduces the gate: simp 0.9929 vs gate's own 0.9913, so the gate's unlogged measurement used this definition",
+        "definition_isolated": "hanzi covered by a token spanning exactly that one char; trad 0.5676, simp 0.3432 (merge-segmentation signal, not the gate)",
+        "trad_contained": 0.9682,
+        "simp_contained": 0.9929,
+        "gate_value": 0.9913,
+        "gate_threshold": 0.95,
+        "gate_source": "facts/tokenizer.json tok.gates_thresholds, measured 2026-08-29, measurement script not logged",
+        "verdict": "trad 0.9682 > 0.95 threshold: vocab-unfreeze NOT triggered; but trad byte-fallback rate 3.18% is 4.5x simp 0.71% — the gate's 7-domain sample was simp-dominated"
+      },
+      "uncertainty": "pooled over 893837 trad / 982870 simp CJK chars; exact",
+      "status": "measured"
+    },
+    {
+      "id": "mlm.corpus.step01_hit_rate",
+      "value": 0.00326,
+      "unit": "fraction of web_hq docs",
+      "measured": "2026-08-30",
+      "source": "50000-head reservoir (text[:600], the filter's exact window) from full 62-shard census, three regex arms (/tmp/census_web_hq.py v3)",
+      "config": {
+        "step01_hits": "163/50000 = 0.00326 +- 0.00050 CI95",
+        "pre_df2b774_chain_hits": "0/50000 = 0.00000",
+        "union_hits": "163/50000 = 0.00326",
+        "overlap": 0,
+        "consistency": "union == step01 + pre - overlap (163 = 163+0-0) passes",
+        "pre_chain_prediction": "3b's PROVENANCE build record (full garbage chain ran at build time) predicted pre-chain = 0; predicted zero returned zero -> record confirmed at the deterministic level",
+        "wf_consequence": "0.326% << 2% pre-registered bar -> W/F killed by its own threshold; see mlm.experiment.wf_quality_cut",
+        "two_possibility_note": "pre-chain = 0 is consistent with both (a) build ran the chain with AUPAI_NO_GARBAGE unset and (b) chain never ran but survivors happen to contain no old-chain garbage; the deterministic reading only proves the current survivors are clean of the old chain"
+      },
+      "uncertainty": "CI95 +-0.00050 (binomial on 50000 reservoir heads); pre-chain zero is exact on the sample",
+      "status": "measured"
+    },
+    {
+      "id": "mlm.corpus.web_hq_ordered_by_source",
+      "value": true,
+      "unit": "corpus property",
+      "measured": "2026-08-30",
+      "source": "full 62-shard census (/tmp/census_web_hq.py v3): shard 1 trad doc-rate 0.209 vs corpus 0.177, first 3 shards 0.152 (fb recon) — per-shard rates drift with shard index, so the corpus is ordered by source, not shuffled",
+      "config": {
+        "rule": "any per-shard sample of data/corpus/web_hq must span the shard range (e.g. uniform over shard indices), never a prefix",
+        "failure_mode": "fb's 2026-08-30 recon sampled the first 3 shards x 3000 docs and read 0.152 as representative; the full-corpus value is 0.177. The token-count read over all 62 shards landed within 0.3% — the method was sound, the shard CHOICE was not",
+        "evidence": "shard 1 = 0.209 trad doc-rate; corpus = 0.177; first-3 = 0.152"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.experiment.wf_quality_cut",
+      "value": null,
+      "unit": "experiment decision",
+      "measured": "2026-08-30",
+      "source": "pre-registered kill rule in docs/lessons/quality_ab_design.md (重算 v3, 2026-08-30) vs measured hit rate facts/multilingual.json#mlm.corpus.step01_hit_rate",
+      "config": {
+        "design": "F arm = e1's 4 attn_every seeds at 0.2b (free control); W arm = web_hq_step01/ x 4 seeds; MDE = 1.98 x measured sigma",
+        "kill_rule": "Step 0/1 hit rate on web_hq < 2% -> no contrast (arms 98%+ identical; effect bound p x delta_marginal < 0.02 nat < MDE); rule written BEFORE seeing the number",
+        "measured": "0.00326 +- 0.00050 (163/50000)",
+        "verdict": "killed by its own pre-registered threshold, NOT a null result: the experiment had no contrast to measure; the rule for saying so was set in advance. The surviving finding: the knife is already in the corpus — the old garbage chain cleaned web_hq at build time (pre-df2b774 chain hits 0/50000, confirming 3b's PROVENANCE record), so Step 0/1's marginal capture is 0.33%. Any filter upgrade on this corpus now has a number to beat.",
+        "successor": "weight ablation 32.4%->20% approved as a SEPARATE independent experiment (different question, different reading rules); queues behind the six ladder points; sizing waits on sigma_hat from e1's 0.2b seeds; design to fb before GPU allocation",
+        "precision_read": "100-doc human read (3b) was conditional on p>=2% — cancelled with the experiment",
+        "outcome": "killed_by_threshold -- the experiment was declared unmeasurable by a rule written before the number existed, not refuted and not null. A null says we looked and saw nothing; this says two arms 99.67% identical have no contrast to measure. Kept in config rather than status: the schema's four statuses describe a fact's evidential standing, not an experiment's fate, and adding a fifth would make every consumer learn a value only this entry uses."
+      },
+      "uncertainty": null,
+      "status": "recorded"
     }
   ]
 }
