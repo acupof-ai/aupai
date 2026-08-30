@@ -29,4 +29,23 @@ status=="measured" 的 fact 里抽 20 条。
 
 ## 结果
 
-(抽样后填)
+抽样:总体 98 条 measured(seed 20260830,shuffle 后取前 20)。
+
+**1/20 不成立(5%,Wilson 95% CI [0.9%, 23.6%])**:
+
+- **ds.trainpy_steps(C3)**:写"0.2B 点 = 254 步",用的是 train.py 默认(6 GPU/batch 32/accum 1);
+  实际阶梯跑 7 GPU/batch 16/accum 2 → 218 步。"warmup 20" 也没区分 v1.2 预注册选择与
+  Cfg 默认。**第三种错法(默认值当实际值)在既有 fact 里的又一实例——它是系统性的。**
+  已修:defaults 与 ladder_actual 分列,boundary 用 218 重算。
+
+**其余 19 条成立**:9 条 mlm.src.* 是外部源元数据(版本钉死,构造上不会过期);
+tokenizer/污染/数据质量测量锚固定数据集;eff.fb_mfu、eff.warmup 锚新架构
+(KDA、chunk 32、vocab 32776)。
+
+**限制**:样本 45% 是构造上不会过期的外部元数据;在"可能过期"的 11 条子集里
+比例 1/11 ≈ 9%。CI 宽,不能排除更高比例,但**没有大规模失效的证据——
+六个点的解读不会引用一批失效锚点**。
+
+**给 de 的检查建议(不代改)**:facts_well_formed 查字段在不在,不查字段对不对;
+可加一条软警告——config 里出现旧架构标记(滑窗/32773/chunk 64/attn_res_blocks=4)
+且无 "OLD-arch-only" 标签的 measured fact,列出来人工过。

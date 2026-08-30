@@ -250,15 +250,27 @@
   },
   {
    "id": "ds.trainpy_steps",
-   "value": "warmup 20 steps, batch 32, seq 4096, accum 1; at 6 GPUs = 786,432 tokens/step; warmup = 15.7M tokens; a 0.2B-token point = 254 steps = 12.7x warmup",
+   "value": "train.py Cfg DEFAULTS (read-only inspection of train.py:119-124): warmup 20 steps, batch 32, seq 4096, accum 1; at 6 GPUs = 786,432 tokens/step; warmup = 15.7M tokens; a 0.2B-token point = 254 steps = 12.7x warmup. DEFAULT-AS-ACTUAL CORRECTION (2026-08-30 audit): the ladder runs do NOT use these defaults -- actual is 7 GPUs (GPU1-7), batch 16, accum 2 = 917,504 tokens/step, so the 0.2b point = 218 steps (eff.warmup_absolute_not_fractional, de's smoke test). The ladder's warmup=20 is the v1.2 pre-registered choice, which happens to equal the default -- do not read the default as the run config (third error class: defaults are not actuals).",
    "measured": "2026-08-30",
    "source": "aupai train.py:119-124 (read-only inspection)",
    "config": {
-    "gpus": 6,
-    "per_gpu_batch": 32
+    "defaults": {
+     "gpus": 6,
+     "per_gpu_batch": 32,
+     "accum": 1,
+     "warmup": 20
+    },
+    "ladder_actual": {
+     "gpus": 7,
+     "per_gpu_batch": 16,
+     "accum": 2,
+     "tokens_per_step": 917504,
+     "0.2b_steps": 218
+    },
+    "distinction": "defaults documented as defaults; ladder actual from run configs"
    },
-   "uncertainty": "tokens/step assumes batch 32 per GPU across all 6 GPUs",
-   "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 254 steps is 6.3x that",
+   "uncertainty": "defaults are accurate as of 2026-08-30; ladder actual is from the 0.2b smoke-test config (eff.warmup_absolute_not_fractional)",
+   "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 218 actual steps is 5.5x that",
    "status": "measured"
   },
   {
@@ -321,6 +333,24 @@
    },
    "uncertainty": "s_pooled at df=6 has a 3.4x uncertainty band; a gap inside it is unreadable by construction",
    "status": "recorded"
+  },
+  {
+   "id": "ds.facts_audit_2026_08_30",
+   "value": "sampled audit of facts currency (docs/lessons/facts_audit_2026-08-30.md): 20 measured facts sampled seed 20260830 from a population of 98, criteria pre-registered before sampling (C1 arch anchor on old-arch unlabeled, C2 stale corpus state, C3 changed code defaults treated as actual). 1/20 stale (5%, Wilson 95% CI [0.9%, 23.6%]): ds.trainpy_steps computed 254 steps/0.2b point from train.py defaults (6 GPU/batch 32/accum 1) while the ladder actually runs 7 GPU/batch 16/accum 2 = 218 steps -- the default-as-actual error class again, evidence it is systemic not one-off; fixed (defaults vs ladder_actual split). The other 19 hold: 9 mlm.src.* external metadata (version-pinned, cannot expire by construction), tokenizer/contamination/data-quality measurements anchor fixed datasets, eff.* facts anchor the new arch. Limitation: 45% of the sample is external metadata; among the 11 stale-capable facts the rate is 1/11 ~9%. No evidence of mass staleness -- the six-point reading will not cite a batch of dead anchors. Recommendation to de (not applied): facts_well_formed checks field presence not currency; add a soft warning for measured facts whose config carries old-arch markers without an OLD-arch-only label",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/facts_audit_2026-08-30.md; facts/*.json",
+   "config": {
+    "seed": 20260830,
+    "n_sampled": 20,
+    "population": 98,
+    "criteria": [
+     "C1 old-arch anchor unlabeled",
+     "C2 stale corpus state",
+     "C3 changed defaults as actual"
+    ]
+   },
+   "uncertainty": "Wilson CI wide [0.9%, 23.6%]; sample composition (45% external metadata) limits the staleness rate estimate",
+   "status": "measured"
   }
  ]
 }
