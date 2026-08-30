@@ -278,6 +278,23 @@
    "status": "measured"
   },
   {
+   "id": "be.expressive_ladder_reading_p16",
+   "value": "p16 update: the pre-registered curvature test (near -2.4 power law / near -4.75 small-end artefact) came back at -10.29 pt/e-fold -- a third branch that kills both the power law and the 3-18pt magnitude qualifier; the test had two branches and the data took a third, recorded as such. Decomposition: O1 rate did not decelerate (14.55/11.12/8.37/9.23 per e-fold, flat-to-up in the last segment); the earlier 'deceleration' was L2 rising and eating GAP closure. L2 has now saturated (94.78->94.05, -0.73 inside the 2.5pt threshold), so GAP/ef converges to O1/ef. Ruling 1: Shape A stands, strengthened -- L2 actually saturated, not merely slowing. Magnitude restated: the gap closes at whatever rate O1 sustains, and O1's rate is unresolved; fb's three illustrative scenarios (9.23/6/4 sustained to 36B) leave GAP 29/39/45 -> 35/25/19pt closure of the 64pt gap; no projection licensed (one non-decaying segment refutes decay without establishing its opposite). Ruling 2 (pre-registered): p324 L2 < 94.05 = 'peaked' (non-monotonic, max <=1.6b), >= 94.05 = 'saturated'; either way L2 retires as a steering metric at 94. Ruling 3 (pre-registered): |p324 O1/ef - 9.23| < 3pt (2x secant noise ~1.5pt derived from O1 seed SD 1.02) makes 'flat ~9' the working assumption for the 10x decision; otherwise the rate is unresolved and the 10x flies without a rate estimate, control arm decides. minimal_pairs 81.23->75.09 is unreadable (no seed variance on file); cheap fix is running it on the 4 existing 0.2b seeds, threshold 4.65*s_M. C-Eval 23.7 at chance across five points: floor metric, no information. 44 ruled math-500 contamination hits false positives (0 exact) -> L1 clean to run",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (p16); docs/lessons/scaling_decision_tree.md section 8",
+   "config": {
+    "point": "p16 = 1.6b",
+    "gap_rates_per_efold": [-11.47, -8.93, -4.76, -10.29],
+    "o1_rates_per_efold": [14.55, 11.12, 8.37, 9.23],
+    "l2_rates_per_efold": [3.08, 2.19, 3.61, -1.05],
+    "l2_levels": [94.78, 94.05],
+    "thresholds_pt": {"L2": 2.5, "GAP": 4.2},
+    "p324_prereg": {"l2_peaked_if": "L2 < 94.05", "o1_flat_band_pt": 3.0}
+   },
+   "uncertainty": "the curvature test had two pre-registered branches and the data took a third; the 19-35pt range is fb's illustrative scenarios, not a projection; one segment does not establish a flat rate",
+   "status": "measured"
+  },
+  {
    "id": "be.reasoning_panel_prereg",
    "value": "pre-registered instrument stack for the reasoning-model objective (code+math, ~30B tokens), written before 3.24b lands (docs/lessons/reasoning_panel.md). Core gap: math_v2_like 94.69 is the two-way for math; there is NO open-ended math number -- the generation half does not exist. Stack: L0 math_v2_like (discrimination, exists, moving) + code discrimination by execution-ranked likelihood (GAP, needs building); L1 few-shot continuation math (zero GPU, prompt change, the format bridge -- base models read 0/500 on zero-shot partly for format reasons, not pure capability); L2 light SFT -> pass@k (the real instrument, one SFT run). Q1 verdict experiment: L1 on 3.24b, N>=500 -- non-zero (>2delta, delta=1.4/sqrt(N)=6.3pt@500) means the instrument exists; zero means L2 is the only path, and if L2 also reads zero, reasoning production has NO instrument at 200M (the round's most important conclusion -- changes measurability before achievability). Verifiability asymmetry: math/code answers are execution-checkable -- label error is binomial (1.4/sqrt(N)), no judge, no seed variance in the label, sharper than NLL's sigma-hat=0.0516; A/B on reasoning mixes uses pass@k with binomial+seed error, likely sharper than NLL A/B. Section 8 shapes: the LOGIC carries over (discrimination saturates while generation moves = capacity; discrimination moves, generation flat = composition) but the METRICS do not (lambada is expression, not reasoning) -- section 8 stays, reasoning gets a sibling with its own generation half (L1/L2 pass@k) and discrimination half (math_v2_like + code); the shapes cannot fire until the generation half exists. Code discrimination instrument is a parallel prerequisite for the 30B build",
    "measured": "2026-08-30",
