@@ -611,15 +611,43 @@ appearance of having been checked. Both guards below close that gap.
   both traces were accurate. It is skipping the step that connects the difference to the
   failure. Reading the verifier that refuted hypothesis 2 took two minutes and was available
   before the claim was made.
-- **Under investigation (hypothesis, do not schedule work against it): the Triton disk
-  cache was masking a standing defect.** attempt 7's `/root/.triton` is 1.2 GB; today's is
-  64 MB, rebuilt from empty. The trace runs through `autotuner.py:202 check_disk_cache` →
-  `benchmark` → `_bench`, i.e. the benchmark only runs on a cache *miss*. With a warm cache
-  the selected config is loaded and the crashing candidate is never launched. If this holds,
-  the kernel has been broken the whole time and two weeks of warm cache hid it — and pinning
-  versions would not have helped, because no version ever changed. Falsification: restore
-  attempt 7's `.triton` and rerun the same smoke. Until that runs, this is the controller's
-  and tilerl's third hypothesis on the same failure and is labelled accordingly.
+- **Hypothesis 3, a cold Triton disk cache** (tilerl), was refuted too: attempt 7's 1.2 GB
+  `/root/.triton` restored, crash unchanged. A cache does not change a grid.
+- **The answer came from measuring the failure point, not from enumerating differences.**
+  Wrapping `CudaLauncher.__call__` printed `grid=(2, 78936, 1)` against CUDA's `gridDim.Y`
+  limit of 65535. `cuLaunchKernel` answers an over-limit grid with a bare `invalid
+  argument` and no further detail, which is why it read as a broken environment for an
+  hour. **In an environment where everything changed at once, enumerating differences is
+  the most expensive path available — differences are always plentiful enough to build a
+  self-consistent story from.** Three such stories, three refutations; the fourth approach
+  landed in one step. (tilerl, 2026-08-30.)
+- **A result verified in one configuration is not a result in another, and "it passed" is
+  the easiest place to forget that.** The grid finding came with a falsifiable prediction —
+  smaller batch should pass — and `--batch 8` did pass, on one card. The controller
+  launched seven ranks on it. Rank 2 died on the same `invalid argument`, with ranks 3 and
+  4 reporting NVLink peer-memory errors behind it (secondary: a rank dying inside a
+  collective). Ranks hold different rows, the grid is data-dependent, so a single-card pass
+  says nothing about the unluckiest rank of seven.
+- **The kernel bug was real and we were the ones triggering it: `<eos>` padding became 489
+  documents per row.** `data/sft/sft_all.pt` pads to `seq` with `<eos>` rather than packing
+  — mean 489.4 per 4097-token row, max 3721, p99 2417. `doc_cu_seqlens` opened a document
+  after *every* `<eos>`, so each pad token became its own length-1 document; fla's varlen
+  grid is per-document, and 16 × 489 is how 78936 happens. Fixed at `5e643cb`: a run of
+  `<eos>` opens one document, taking 8 padded rows from 32768 documents to 8, and SFT then
+  ran at the frozen `--batch 16` with no run-config deviation at all. Two things this
+  changes about the reading: the grid arithmetic tilerl measured was exact and the fla
+  gridY-folding bug is real, but it is no longer on our path and drops to lowest priority;
+  and the reason the six ladder points never hit it is that pretrain rows are packed, not
+  padded. **A fix in the first version dropped the unconditional row-start boundary, which
+  would have let one document span two rows of the batch and KDA state flow between them —
+  a silent correctness bug traded for a loud crash.** Row starts are unconditional; the
+  known-answer case moved `[0,2,4,5,6,8]` → `[0,2,4,6,8]` and three cases were added.
+- **30% of every SFT step trains on padding, and the loss mask is what hides it.** 251,155
+  of 255,968 `<eos>` positions carry `-100`, so the objective is correct and the model is
+  not taught to emit `<eos>` forever — which is exactly why nothing complained. Only 70.2%
+  of tokens are supervised. Packing several examples per row instead of padding recovers
+  ~30% of SFT compute at no quality cost, which is 30x `short_conv`'s 1.0%. A correct loss
+  mask makes wasted compute invisible; it does not make it cheap.
 - **"Imports succeed" is not "the runtime works", and a check that asserts the first while
   the second is broken is worse than no check.** After the restart the environment was
   reported repaired on the evidence that `import liger_kernel, fla` succeeds. It does. SFT
