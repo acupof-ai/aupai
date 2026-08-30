@@ -1071,20 +1071,28 @@ def _domain_cache_path(domain):
 def _domain_seqs(domain, tok, is_main, ddp):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
-    Reused only while newer than every shard AND carrying the same vocabulary fingerprint: ids do
-    not survive a tokenizer rebuild, which leaves every cache looking fresh."""
+    Reused only while newer than every shard, carrying the same vocabulary fingerprint, AND
+    carrying the source directory's corpus fingerprint (.srcfp): the 2026-08-30 swap rebuilt
+    the cache from a different corpus and reused it with nothing raising, because mtime and
+    vocab both matched. A stale source fingerprint retokenizes, same as a stale vocabulary."""
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
+    srcfp = cache + ".srcfp"
     shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
+    live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
+    same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
     fresh = (
         os.path.exists(cache)
         and shards
         and same_vocab
+        and same_source
         and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
     )
     if is_main and not fresh and os.path.exists(cache) and not same_vocab:
         print(f"mix: {domain} cache was built by another vocabulary, retokenizing", flush=True)
+    if is_main and not fresh and os.path.exists(cache) and not same_source:
+        print(f"mix: {domain} cache's source changed since caching, retokenizing", flush=True)
     if is_main and not fresh:
         texts = []
         for p in shards:
@@ -1097,6 +1105,8 @@ def _domain_seqs(domain, tok, is_main, ddp):
         torch.save(data, cache)
         with open(stamp, "w") as f:
             f.write(VOCAB_ID or "")
+        with open(srcfp, "w") as f:
+            f.write(live_fp)
         n_tok = len(data[0] if Cfg.fone else data)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
@@ -1391,6 +1401,7 @@ def main():
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
+    parser.add_argument("--bucket_cap_mb", type=int, default=100, help="DDP gradient bucket size in MB")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
@@ -1502,7 +1513,7 @@ def main():
     model = raw_model
     if ddp:
         model = DDP(
-            model, device_ids=[local], bucket_cap_mb=100, gradient_as_bucket_view=True, static_graph=True
+            model, device_ids=[local], bucket_cap_mb=args.bucket_cap_mb, gradient_as_bucket_view=True, static_graph=True
         )
     if Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = 64
