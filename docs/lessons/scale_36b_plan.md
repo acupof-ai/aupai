@@ -4,9 +4,9 @@ status: recorded
 source: "aupai-fb hypothesis (discrimination/generation gap is composition not volume); multilingual.json supply; measured 2026-08-30"
 ---
 
-# 36B 语料计划（语料半）
+# 30B code+math 推理语料计划（语料半）
 
-目标：3.6285B → ~36B。36B/172.51M 非嵌入参数 = 209 tok/param，仍约 30x 低于现代实践。供给不是约束（9.73TB 都在）；**约束是 36B 规模下的打分与跨源去重，不是抓取**。
+目标改为：**推理模型（coding + math 能力）**，~30B（用户方向 2026-08-30 变更）。scaling law 非交付、不需证。前面的通用中文组合（natural 68%/synthetic 32%、zh:en 84:16、~16B 中文 web）为此目标**作废**。新组合 by 能力角色，`run score` 对 math/code 域 = 验证器（答案查得过 / 测试过不过），非质量头。
 
 ## 组合假设（阶梯裁决，密度换表达在减速）
 
@@ -23,21 +23,19 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 
 词表冻结的三个解冻条件之一是「语料分布 material 变化」。0.75%→16% en、54%→10% 合成，material。**在 fetch 提交前**：对提议组合取样本跑 `scripts/tokenizer_eval.py`，验冻结词表仍过闸（round-trip 无损 / 256 字节 / hanzi≥0.95 / en fertility≤1.55 / never-used≤0.01）。过→保持冻结并记录「条件已查非忽略」；不过→重建决策（会作废所有旧 checkpoint）→归属用户。方向有利：`tok.en_share_sweep` 量 14/33/50% 的 fertility，14% 是我们拟合的值；语料现仅 0.75% en = 词表已与语料很不匹配——16% en 反而比 0.75% 更贴合 14% 拟合的词表，是不重建的论据。
 
-## 1. 36B 源组合（自然文本前移）
+## 1. 源组合（code+math 推理 @30B，by 能力角色）
 
-提案：自然 ~68% / 合成 ~32%（当前估反转了——现 46% 合成当道）。zh:en ≈ 84:16。
+**derive ratio 重推**（旧 84:16 zh:en 死于中文 LM 目标）：code/math/papers/CoT 英文压倒性；粗估 en 主导 ~60:40（依 code/math 源落地 token 再定）。**general-Chinese-web 从 ~16B 缩到 ~4B（~13%）**——它是支撑读题的角色，非基底。
 
-| 组 | 量(tok) | 源 | 现状→36B | 为什么 |
-|---|---|---|---|---|
-| 自然 zh web | ~16B | web_hq(fineweb2) 扩到全量 + **CCI3-HQ**(22-24B, 已下 33.9GB) + SkyPile zh / TeleChat-PTD 切片 | 现 ~1.4B → 16B | 真实中文网页=自然文本核心。CCI3-HQ 已污染/去重验证过（0.32x web_hq）、sha 钉死 |
-| 自然 zh wiki | ~1.5B | 现有 wiki 域扩（zh wikipedia） | 0.23B → 1.5B | 实体/结构，人写 |
-| 自然 en | ~5B | **真 en**：WanJuanCC(46B) 或 Ultra-FineWeb en 或 fineweb en 切片 | 现 en 名义 0.16B 实际 85% 中文 | **修 en 域**：现在 en 是 cosmopedia 冒充的，得换成真英文自然文本 |
-| 合成 math | ~4B | 现有 mathbank + NuminaMath/MetaMath(已审) | 现 ~0.08B → 4B | 数值/步骤推理，需保留 |
-| 合成 code | ~4B | 一个真 code 源切片 | 现 ~0.06B | 程序文本结构 |
-| 合成 CoT/en-math | ~3B | en math/CoT 小包(7B 可选) | 0 → 3B | 迁移赌注，zh:en 兼容 |
-| **textbook/cosmopedia 封顶** | ~3.5B(~10%) | opencsg chinese-cosmopedia | 现 1.7B(53.8%)→ **3.5B(**~10%**)** | **关键组合改动**：模板化合成文本**压到 web 之下**（SmolLM2 用 Cosmopedia ~11% 的理据；假设它拖表达能力）。现有 2.26 nat 差距=rec可预测，应减权 |
+| 角色 | 量(tok) | 源 |
+|---|---|---|
+| code（执行信号） | ~10-12B（~35-40%） | The Stack v2 / starcoderdata 真码 + 带测试解题库（train 高峰） |
+| math（可验证） | ~5-6B（~18-20%） | OpenWebMath / DeepSeekMath / proof-pile（英文，可验解） |
+| 长 CoT/推理链 | ~4-5B（~15%） | OpenThoughts / Skywork-OR1 / r1 类（英文） |
+| 通用文本（读题） | ~8-10B（~30%） | 真英文（修 en 更急）~5-6B + 通用中文网页 ~3-4B + wiki/百科少量 |
 
-合成占比从现 ~54% 压到 ~32%；natural:synthetic 从现 ~46:54 反转为 ~68:32。**zh:en 用真 en 修到 ~84:16**（现 en 域是脏的）。
+- **synthetic 轴重组**：math+code 的 synthetic = 机制非瑕疵（`run score` 验证器 = 比一切 filter 好的过滤）。cap 只打**模板化百科散文**（cosmopedia 6.38× 帧浓度），不打 synthetic 推理链——两者我们此前混为一谈，分离。
+- 残余的通用中文从 16B 缩到 ~4B（支撑读题），合成占比升（math+code+CoT ~70%）。
 
 ## 2. 36B 跨源去重（工程主矛盾，`harness run dedup` 第 4 步）
 
