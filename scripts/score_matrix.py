@@ -417,7 +417,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     records = []
     for ck in a.ckpt:
-        rec = score(ck, a.mix, a.tokenizer, device)
+        try:
+            rec = score(ck, a.mix, a.tokenizer, device)
+        except Exception as e:
+            print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
+            continue
         records.append(rec)
         print(f"\n{rec['ckpt']}  type={rec['type']}", flush=True)
         for m, v in rec["metrics"].items():

@@ -283,11 +283,15 @@ def score_mc_tripwire(model, tok, cfg, device, benchmarks=MC_TRIPWIRE):
         if key not in MC_BENCHMARKS:
             continue
         display, loader = MC_BENCHMARKS[key]
-        items = loader()
-        if not items:
-            out[key] = {"error": "no items (dataset absent?)"}
+        try:
+            items = loader()
+            if not items:
+                out[key] = {"error": "no items (dataset absent?)"}
+                continue
+            acc = score_mc(model, tok, items, device, batch_size=32, num_id=num_id)
+        except Exception as e:
+            out[key] = {"error": f"{type(e).__name__}: {str(e)[:90]}"}
             continue
-        acc = score_mc(model, tok, items, device, batch_size=32, num_id=num_id)
         chance = 1.0 / len(items[0]["options"])
         out[key] = {"acc": acc, "z": z_over_chance(acc, chance, len(items)),
                     "chance": chance, "n": len(items)}
