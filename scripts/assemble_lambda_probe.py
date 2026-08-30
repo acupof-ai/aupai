@@ -6,8 +6,14 @@ Workflow returns [{tier, idx, json:<problem-json-string>}]. Fable HTML-escapes
 &gt;/&lt;/&amp; in code + tests, then run each code against its own tests via
 validate_lambda_probe, and split into passing (assembly) vs failing.
 
+# restartable: passes are appended to --out one sample at a time; on resume the
+# script skips anything already in --out and re-processes only the remainder, so
+# an interrupt loses at most the in-flight validations (a cheap replay of local
+# execution), never the already-emitted output. The expensive part (Fable agent
+# calls) happened upstream and is never re-run here.
+
 Usage: python3 scripts/assemble_lambda_probe.py workflow_out.json --out data/sft/lambda_probe_pilot40.jsonl
-      (--out writes only samples whose code passes its own tests; failing ones print)
+      (--out keeps only samples whose code passes its own tests; failing ones print)
 """
 import argparse
 import html
@@ -38,15 +44,27 @@ def main():
     a = ap.parse_args()
 
     rows = [json.loads(l) for l in open(a.workflow_out, encoding="utf-8") if l.strip()]
-    ok, bad = [], []
+    # resume: skip ids already emitted to --out (append-per-pass, per restartable)
+    existing = set()
+    if a.out and os.path.exists(a.out):
+        for l in open(a.out, encoding="utf-8"):
+            try:
+                existing.add(json.loads(l)["id"])
+            except Exception:
+                continue
+    ok, bad, skipped = [], [], []
     for i, entry in enumerate(rows):
+        obj_id = f"{entry.get('tier')}_{entry.get('idx')}"
+        if obj_id in existing:
+            skipped.append(obj_id)
+            continue
         try:
             obj = json.loads(entry["json"]) if isinstance(entry.get("json"), str) else entry
         except Exception as e:
-            bad.append({"id": f"t{entry.get('tier')}_{entry.get('idx')}", "err": f"parse: {e}"})
+            bad.append({"id": obj_id, "err": f"parse: {e}"})
             continue
         obj = unescape_problem(obj)
-        obj["id"] = f"{entry.get('tier')}_{entry.get('idx')}"
+        obj["id"] = obj_id
         obj["tier"] = obj.get("tier") or entry.get("tier")
         v = validate(obj)
         rec = {"id": obj["id"], "tier": obj["tier"], "pass": v["pass"],
@@ -54,19 +72,20 @@ def main():
         if v["pass"]:
             ok.append(obj)
             rec["status"] = "pass"
+            if a.out:  # append per passing sample: an interrupt keeps everything emitted
+                with open(a.out, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(obj, ensure_ascii=False) + "\n")
         else:
             rec["status"] = "fail"
             bad.append(rec)
         print(f"  {rec['status']:4s} {rec['id']:14s} tier={rec['tier']:9s} tests={v['n_tests']} fails={v['fails'][:2]}")
 
     from collections import Counter
-    print(f"\npass {len(ok)} / fail {len(bad)}")
-    print("pass by tier:", Counter(o["tier"] for o in ok))
-    if a.out and ok:
-        with open(a.out, "w", encoding="utf-8") as f:
-            for o in ok:
-                f.write(json.dumps(o, ensure_ascii=False) + "\n")
-        print(f"wrote {len(ok)} passing samples -> {a.out}")
+    print(f"\npass {len(ok)} / fail {len(bad)}" + (f" / skipped {len(skipped)}" if skipped else ""))
+    print("pass by tier:", Counter(o["tier"] for o in ok) if ok else "(resume: none new)")
+    if a.out:
+        n_line = sum(1 for _ in open(a.out, encoding="utf-8")) if os.path.exists(a.out) else 0
+        print(f"emitted {len(ok)} new passing samples -> {a.out} now holds {n_line}")
     return 1 if bad else 0
 
 
