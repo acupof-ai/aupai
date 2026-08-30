@@ -608,6 +608,28 @@
    "uncertainty": "tiny-batch short run; parity is at the loss-computation level, not a full-training equivalence claim",
    "boundary": "kernel speed (+19.1% KDA kernel, ~2% step) is single-layer isolation (T=4096, tilerl), not seven-card real-model; the merge run must show the throughput gain or this reverts to 64. Parity here is at the loss-computation level, not a full-training equivalence claim",
    "status": "measured"
+  },
+  {
+   "id": "eff.bucket_cap_mb_ab",
+   "claim": "DDP bucket_cap_mb 100 vs 50 vs 25 on 3xH20 (default NCCL protocol)",
+   "value": "100MB=64K, 50MB=73K, 25MB=73K tok/s/gpu. 100->50: +14.1%, 50->25: no further gain (overlap saturated at 50MB)",
+   "measured": "2026-08-30",
+   "source": "A/B: nccl_ab_baseline(100) vs nccl_bucket50 vs nccl_bucket25, 3xGPU4-6, batch16/seq4096, fp8, compiled, vocab=32776, default NCCL protocol (RING_LL)",
+   "config": {
+    "gpus": "3xH20 (GPU4,5,6)",
+    "batch": 16,
+    "seq": 4096,
+    "fp8": true,
+    "compiled": true,
+    "nccl_version": "2.27.3",
+    "protocol": "default (RING_LL)",
+    "bucket_100_tok_s_gpu": 64000,
+    "bucket_50_tok_s_gpu": 73000,
+    "bucket_25_tok_s_gpu": 73000
+   },
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K — likely ceiling, may not stack",
+   "boundary": "3-GPU DDP; 7-GPU optimal bucket may differ (more ranks = smaller per-rank chunks)",
+   "status": "recorded"
   }
  ]
 }
