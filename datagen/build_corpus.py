@@ -201,23 +201,32 @@ def iter_jsonl(path):
                 yield text or "", d.get("url")
 
 
-def iter_parquet(path, text_col="text", url_col="url"):
+def iter_parquet(path, text_col="text", url_col="url", rg_mod=None, rg_idx=None):
+    """Yield (text, url) from a parquet file. rg_mod/rg_idx select a shard's row
+    groups (i % rg_mod == rg_idx) so N parallel processes can read one file without
+    rewriting it -- build_corpus is single-threaded, and per-file parallelism is
+    the way to use all cores on one downloaded parquet."""
     import pyarrow.parquet as pq
 
     f = pq.ParquetFile(path)
     cols = [c for c in (text_col, url_col) if c in f.schema_arrow.names]
-    for batch in f.iter_batches(batch_size=4096, columns=cols):
-        d = batch.to_pydict()
+    groups = (
+        range(f.num_row_groups)
+        if not rg_mod
+        else [i for i in range(f.num_row_groups) if i % rg_mod == rg_idx]
+    )
+    for g in groups:
+        d = f.read_row_group(g, columns=cols).to_pydict()
         for i in range(len(d[text_col])):
             yield d[text_col][i] or "", (d[url_col][i] if url_col in d else None)
 
 
-def iter_source(spec, cache_dir):
+def iter_source(spec, cache_dir, rg_mod=None, rg_idx=None):
     """Yield (text, url, source_name)."""
     if spec.startswith("parquet:"):
         for p in sorted(glob.glob(spec[8:])):
             name = os.path.basename(p).split(".")[0]
-            for text, url in iter_parquet(p):
+            for text, url in iter_parquet(p, rg_mod=rg_mod, rg_idx=rg_idx):
                 yield text, url, name
         return
     if spec.startswith("jsonl:"):
@@ -307,6 +316,18 @@ def main():
         "built earlier is not repeated inside this one",
     )
     ap.add_argument("--cache_dir", default=os.path.join(ROOT, "data", "raw"))
+    ap.add_argument(
+        "--rg_mod",
+        type=int,
+        default=None,
+        help="parallelize one parquet source: process only row groups i with i %% rg_mod == rg_idx",
+    )
+    ap.add_argument(
+        "--rg_idx",
+        type=int,
+        default=None,
+        help="parallel row-group index; run the same build with --rg_mod K for i in 0..K-1",
+    )
     a = ap.parse_args()
     a.out = a.out or os.path.join(OUT_DIR, a.domain)
 
@@ -323,7 +344,7 @@ def main():
     kept_chars = seen = 0
     writers = {}
     for spec in a.source:
-        for text, url, src in iter_source(spec, a.cache_dir):
+        for text, url, src in iter_source(spec, a.cache_dir, a.rg_mod, a.rg_idx):
             text = SPECIAL_TOKEN.sub("", text).strip()
             seen += 1
             if a.limit and seen > a.limit:
@@ -378,9 +399,24 @@ def main():
                 f"ERROR: domain '{a.domain}' kept 0 documents from {a.source} -- "
                 f"check the --source glob / HF prefix (nothing written to {a.out})"
             )
+        # Corpus fingerprint (scripts/corpus_fingerprint.py): hash of shard
+        # name+size+mtime, so a checkpoint can name its corpus the way it names
+        # its tokenizer. Stamped here at build time; harness corpus_fp_matches
+        # compares it to the live directory.
+        import hashlib as _hl
+
+        _h = _hl.sha1()
+        for _name in sorted(os.listdir(a.out)):
+            if _name == "build_corpus_stats.json" or _name.startswith("."):
+                continue
+            _st = os.stat(os.path.join(a.out, _name))
+            _h.update(f"{_name}:{_st.st_size}:{int(_st.st_mtime)}\n".encode())
         with open(os.path.join(a.out, "build_corpus_stats.json"), "w") as f:
             json.dump(
-                {"reasons": reasons, "top_hosts": hosts.most_common(50)}, f, ensure_ascii=False, indent=1
+                {"reasons": reasons, "top_hosts": hosts.most_common(50), "fingerprint": _h.hexdigest()[:16]},
+                f,
+                ensure_ascii=False,
+                indent=1,
             )
 
 
