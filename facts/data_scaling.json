@@ -378,6 +378,16 @@
       "boundary": "measured at the 0.2b budget point on this mix and architecture; says nothing about seed variance at larger D, where more steps may average seed effects down"
     },
     {
+      "id": "ds.nondeterminism_washes_out",
+      "value": "same-seed same-arm rerun (s2 vs rerun, attn_every 4, 0.2b, same code/config): per-step losses diverge from step 10 (spread 0.02-0.05 nat through training) but final val converges -- 3.680 vs 3.679, diff 0.001. Nondeterminism enters and does not accumulate; the optimizer washes the perturbation out. sigma_nondet ~ 0.0009 as a point read (E|d|=1.128*sigma for a single paired difference; n=1, no df -- a magnitude read, not an estimate). Three consequences: (1) sigma-hat=0.0516 (ds.seed_variance_0p2b) is essentially PURE seed variance -- the gate number measures what it claims; (2) a step-by-step loss diff between two runs is NOT evidence of a real difference at this magnitude -- run comparisons read final val only, anyone diffing training curves to argue for a change would be fooled; (3) paired-design lower bound sigma_d >= sqrt(2)*sigma_nondet ~ 0.0014, not binding at any n (attn_ab_read_protocol section 6)",
+      "measured": "2026-08-30",
+      "source": "fb probe 1: rerun of seed 2 attn_every 4 vs existing ckpt_p02_s2; runs/p02_seeds*.log",
+      "config": "0.2b, attn_every 4, seed 2, same code revision for both runs",
+      "uncertainty": "n=1 -- magnitude read only, no df; supports 'floor is two orders below thresholds', not a precise sigma_nondet",
+      "status": "measured",
+      "boundary": "measured at 0.2b/218 steps; whether nondeterminism accumulates at larger D is untested"
+    },
+    {
       "id": "ds.mde_recomputed_from_measured_sigma",
       "value": 0.1021,
       "unit": "nat (MDE for a symmetric 4-vs-4 comparison at 0.2b)",
