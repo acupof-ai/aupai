@@ -296,6 +296,11 @@ appearance of having been checked. Both guards below close that gap.
   seed variance does not. Two experiments were designed against the conflation before
   anyone noticed they were different quantities. Anything already written that leans on
   0.035 is re-read when the real number lands, not grandfathered.
+  **Scope, and it is narrow:** provisional means *judgments that passed through an MDE*.
+  Direct readings did not — 75K tok/s/gpu, MFU 31-32%, 206.13M, the corpus counts, the
+  census hit rates. Widening this rule to the whole round would be worse than the
+  grandfathering it replaces: it would put a measurement and an inference under the same
+  caveat, which is the distinction the rule exists to enforce.
 - **The frozen run config is enforced by nothing.** The table above opens with "a change
   to any of them reopens the whole ladder", and the only thing keeping six points
   identical is that whoever types the launch remembers eight values. The controller got
