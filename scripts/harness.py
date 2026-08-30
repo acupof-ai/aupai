@@ -2410,6 +2410,12 @@ def check_lane_respected(root):
     preventing it would need process identity, which is unavailable in a
     container (nvidia-smi reports host PIDs that ps cannot resolve).
 
+    Selftest ceiling: the broken world injects HARNESS_BUSY_CARDS /
+    HARNESS_TRAINING_PROC, bypassing the real nvidia-smi and ps reads. The
+    selftest validates the decision logic, not the data acquisition — if the
+    real nvidia-smi parse degrades to always-empty, selftest stays green. The
+    only validation of the real read path is a manual run on the pod.
+
     Cardless machines SKIP. A GPU machine with a broken nvidia-smi FAILs.
     """
     if not _gpu_present():
@@ -3160,8 +3166,21 @@ def _demo():
     # counts ALL of which are zero verified nothing. (A legal zero -- "0 new (170 checked)" --
     # passes because not every count is zero.) A check with nothing to examine on this machine
     # must SKIP, not PASS.
+    #
+    # Ceiling: this only covers checks whose evidence happens to contain "digit space letter".
+    # A check that degrades to `return PASS, "ok"` -- no digits at all -- is invisible here, and
+    # so is a zero written as a fraction ("0/36 hits", sft_pack_uncontaminated's format) or with
+    # "=" ("checked=0"). The lower-entropy fix is structured counts (a check returns n_examined
+    # alongside evidence), not a smarter regex -- that is an arms race with string formats. Not
+    # done; the next person should know this green does not cover a no-digit PASS.
+    #
+    # The meta-check carries its own failing case: a fake check whose PASS is vacuous. Without
+    # it nothing proves the meta-check fires -- the exact defect it guards against.
+    def _vacuous_pass(_root):
+        return PASS, "0 domain(s) match filters abc"
+
     vacuous = []
-    for name, _a, _i, fn, _b in CHECKS:
+    for name, _a, _i, fn, _b in list(CHECKS) + [("fake_vacuous_pass", "", "", _vacuous_pass, None)]:
         try:
             state, evidence = fn(ROOT)
         except Exception:
@@ -3171,7 +3190,11 @@ def _demo():
         counts = [int(m.group(1)) for m in re.finditer(r"(\d+)\s+[a-zA-Z]", str(evidence))]
         if counts and all(c == 0 for c in counts):
             vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
-    assert not vacuous, "PASS with nothing verified:\n  " + "\n  ".join(vacuous)
+    assert any(v.startswith("fake_vacuous_pass") for v in vacuous), (
+        "meta-check did not catch its own deliberately-vacuous PASS -- the regex or loop regressed"
+    )
+    real = [v for v in vacuous if not v.startswith("fake_vacuous_pass")]
+    assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
 
