@@ -1,0 +1,36 @@
+{
+ "total_tokens": 200000000.0,
+ "domains": {
+  "textbook": {
+   "weight": 0.733872,
+   "epochs": 1,
+   "anneal": 0.733872
+  },
+  "wiki": {
+   "weight": 0.111988,
+   "epochs": 1,
+   "anneal": 0.111988
+  },
+  "en": {
+   "weight": 0.073272,
+   "epochs": 1,
+   "anneal": 0.073272
+  },
+  "math": {
+   "weight": 0.037227,
+   "epochs": 1,
+   "anneal": 0.037227
+  },
+  "code": {
+   "weight": 0.026237,
+   "epochs": 1,
+   "anneal": 0.026237
+  },
+  "chat": {
+   "weight": 0.017404,
+   "epochs": 1,
+   "anneal": 0.017404
+  }
+ },
+ "_comment": "warmup smoke only: mix_scale_0.2b minus web_hq (its CCI3 shards are symlinks, the guard refuses), weights renormalized. Content is irrelevant to optimizer stability. Do not use for the budget points."
+}
