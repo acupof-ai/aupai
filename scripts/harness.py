@@ -1124,15 +1124,20 @@ def check_facts_well_formed(root):
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
-            for m in FACT_SOURCE_PATH.findall(str(e["source"])):
-                if os.path.exists(os.path.join(root, m)):
-                    continue
-                if _is_gitignored(m, root):
-                    continue  # pod-only artifact; this machine doesn't have it
-                if m in source_baseline:
-                    baselined.append(m)
-                    continue  # registered debt; gaps reports it
-                errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
+            # Source-path half: a full-checkout check. The pod is a partial checkout (the
+            # manifest's executing files, not the repo), so a path missing there is not rot
+            # -- it was never there. CI and dev run this fully; the pod skips it. The config
+            # half above runs everywhere.
+            if not pod_drift.is_pod(root):
+                for m in FACT_SOURCE_PATH.findall(str(e["source"])):
+                    if os.path.exists(os.path.join(root, m)):
+                        continue
+                    if _is_gitignored(m, root):
+                        continue  # pod-only artifact; this machine doesn't have it
+                    if m in source_baseline:
+                        baselined.append(m)
+                        continue  # registered debt; gaps reports it
+                    errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
             entries.append((fn, e))
     agents = os.path.join(root, "AGENTS.md")
     prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
@@ -1166,6 +1171,7 @@ def _broken_facts():
     import shutil
 
     d = _tmp_repo()
+    os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod skips the path half
     os.makedirs(os.path.join(d, "facts"))
     for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
         shutil.copy(f, os.path.join(d, "facts"))
@@ -1477,7 +1483,14 @@ def check_doc_commands(root):
     cited in any doc exists. A documented path that does not resolve is worse than none:
     README once recommended data/mix_v3.json, which has never existed, and a session ran
     a wrong fingerprint because of it. Only fenced blocks are scanned for scripts; prose
-    citations of data files are scanned across all docs."""
+    citations of data files are scanned across all docs.
+
+    Pod SKIP: the pod is a partial checkout (the manifest's executing files, not the
+    repo), so a path missing there is not rot -- it was never there. CI and dev run
+    this fully, where the files actually exist."""
+    if pod_drift.is_pod(root):
+        return SKIP, ("partial checkout: the pod holds the manifest's executing files, "
+                      "not the repo -- doc-cited paths are checked on dev/CI, not here")
     agents = os.path.join(root, "AGENTS.md")
     missing = set()
     if os.path.exists(agents):
@@ -1502,6 +1515,7 @@ def _broken_doc_commands():
     import shutil
 
     d = _tmp_repo()
+    os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod SKIPs this check
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     p = os.path.join(d, "README.md")
     s = open(p, encoding="utf-8").read()
