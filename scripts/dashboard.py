@@ -149,9 +149,13 @@ def live_log(name):
 
 
 def gpu_state():
+    # no --nounits: this container's nvidia-smi returns all zeros with it
+    def _num(s):
+        m = re.search(r"\d+", s)
+        return int(m.group()) if m else 0
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=index,memory.used,utilization.gpu", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=index,memory.used,utilization.gpu", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=10,
         ).stdout
     except Exception:
@@ -160,7 +164,7 @@ def gpu_state():
     for ln in out.strip().splitlines():
         parts = [p.strip() for p in ln.split(",")]
         if len(parts) == 3:
-            cards.append({"idx": parts[0], "mem": int(float(parts[1])), "util": int(float(parts[2]))})
+            cards.append({"idx": _num(parts[0]), "mem": _num(parts[1]), "util": _num(parts[2])})
     try:
         procs = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
@@ -179,13 +183,22 @@ def gpu_state():
 
 
 def corpus_freeze():
-    """Stamped fingerprint vs live content fingerprint per corpus domain."""
+    """Stamped fingerprint vs live content fingerprint, for the domains the six-point
+    mixes name (the rest of data/corpus/ is stale-stamped noise)."""
+    mix_path = os.path.join(ROOT, "data", "mix_scale_0.2b.json")
+    try:
+        domains = set(json.load(open(mix_path)).get("domains", {}))
+    except (OSError, json.JSONDecodeError):
+        domains = None
     rows = []
     for d in sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "*/"))):
+        domain = os.path.basename(d.rstrip("/"))
+        if domains is not None and domain not in domains:
+            continue
         stats = os.path.join(d, "build_corpus_stats.json")
         if not os.path.exists(stats):
+            rows.append({"domain": domain, "stamped": "", "live": fp_dir(d), "match": False})
             continue
-        domain = os.path.basename(d.rstrip("/"))
         try:
             stamped = json.load(open(stats)).get("fingerprint", "")
         except json.JSONDecodeError:
