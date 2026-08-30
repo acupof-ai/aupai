@@ -85,11 +85,16 @@ def shape(a):
 
 
 def cluster_instructions(questions):
-    """Union-find cluster over MinHash band keys -> list[cid] per question."""
+    """Union-find cluster over MinHash band keys -> list[cid] per question.
+
+    Memory-lean: only the FIRST owner index per band key is kept (union-find
+    links through one representative; a set per key across 8M band keys OOMs).
+    Band keys are computed per row on the fly; nothing is stored per row."""
     lsh = MinHashLSH(perms=128, bands=16)
+    import struct
+
     parent = list(range(len(questions)))
-    # band_key -> (question_idx, band_idx) representative
-    key_owner = defaultdict(set)
+    key_owner = {}  # band_key -> first owner index (int)
 
     def find(x):
         while parent[x] != x:
@@ -102,32 +107,33 @@ def cluster_instructions(questions):
         if ra != rb:
             parent[ra] = rb
 
-    # store signatures hashed by band
-    sig_of = []
     for i, q in enumerate(questions):
-        import struct
-
         sig = lsh.signature(q)
-        bands = [
-            struct.pack(f"{lsh.rows}Q", *sig[lsh.rows * b : lsh.rows * (b + 1)])
-            for b in range(lsh.bands)
-        ]
-        sig_of.append(bands)
-    for i, bands in enumerate(sig_of):
-        for b, key in enumerate(bands):
-            if key in key_owner:
-                union(i, next(iter(key_owner[key])))
-            key_owner[key].add(i)
+        for b in range(lsh.bands):
+            key = struct.pack(f"{lsh.rows}Q", *sig[lsh.rows * b : lsh.rows * (b + 1)])
+            owner = key_owner.get(key)
+            if owner is not None:
+                union(owner, i)
+            else:
+                key_owner[key] = i
     return [find(i) for i in range(len(questions))]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--per_source", type=int, default=8000,
+                    help="max pairs per source (so the sample spans ALL sources -- a global --limit "
+                         "drains into the first source and misses the code/math surface fb flagged)")
+    ap.add_argument("--sources", default="",
+                    help="comma-separated subset of source basenames to include (default: all)")
     a = ap.parse_args()
 
-    pairs = []  # (q, out)
+    want = set(x.strip() for x in a.sources.split(",")) if a.sources else None
+    pairs = []  # (q, out, source)
     for path in SOURCES:
+        base = os.path.basename(path)
+        if want is not None and base not in want:
+            continue
         if not os.path.exists(path):
             print(f"SKIP missing {path}", file=sys.stderr)
             continue
@@ -144,14 +150,17 @@ def main():
                     q = f"{q}\n{d['input']}"
                 if not q or not out:
                     continue
-                pairs.append((q, out))
+                pairs.append((q, out, base))
                 n += 1
-                if a.limit and len(pairs) >= a.limit:
+                if n >= a.per_source:
                     break
-        print(f"  {os.path.basename(path)}: {n}", flush=True)
+        print(f"  {base}: {n}", flush=True)
 
-    print(f"total pairs: {len(pairs)}", flush=True)
-    qs = [q for q, _ in pairs]
+    src_counter = {}
+    for _, _, s in pairs:
+        src_counter[s] = src_counter.get(s, 0) + 1
+    print(f"total pairs: {len(pairs)} by source: {src_counter}", flush=True)
+    qs = [q for q, _, _ in pairs]
     cids = cluster_instructions(qs)
     print(f"clustered: {len(cids)} questions, {len(set(cids))} clusters", flush=True)
 
@@ -181,6 +190,23 @@ def main():
     # per-feature diversity
     term_div = sum(1 for v in shapes_per.values() if len({s[5] for s in v[1]}) > 1)
     print(f"  families with >1 terminal family: {term_div}")
+
+    # which sources do the underdetermined families come from? (code/math vs general)
+    from collections import Counter
+    under_src = Counter()
+    for c, (m, sh) in under.items():
+        srcs = {pairs[i][2] for i in families[c]}
+        under_src.update(list(srcs))
+    print(f"  >1-shape families by source: {dict(under_src)}")
+    # per-source family underdetermination rate (context for fb's code-focused symptom)
+    src_fam = defaultdict(lambda: [0, 0])  # (families, under)
+    for c, (m, sh) in shapes_per.items():
+        for s in {pairs[i][2] for i in families[c]}:
+            src_fam[s][0] += 1
+            if len(sh) > 1:
+                src_fam[s][1] += 1
+    for s, (nf, nu) in sorted(src_fam.items()):
+        print(f"    source {s}: {nu}/{nf} families underdetermined ({nu/max(1,nf):.0%})")
 
 
 if __name__ == "__main__":
