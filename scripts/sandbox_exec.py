@@ -26,14 +26,22 @@ import tempfile
 _SETUP = r"""set -e
 ROOT="$1"
 mount --make-rprivate /
-for d in usr lib lib64 bin sbin; do
-  if [ -d "/$d" ]; then
+mkdir -p "$ROOT/usr" "$ROOT/dev" "$ROOT/proc" "$ROOT/tmp" "$ROOT/work"
+mount --bind /usr "$ROOT/usr"
+mount -o remount,ro,bind "$ROOT/usr"
+# merged-/usr: /lib /bin /sbin are symlinks into /usr. Replicate the symlink;
+# do NOT bind-mount a symlink source (silent failure leaves an empty dir and
+# the dynamic loader chain breaks with a confusing ENOENT). Real dirs (/lib64
+# on some systems) get the read-only bind.
+for d in lib lib64 bin sbin; do
+  if [ -L "/$d" ]; then
+    ln -s "$(readlink "/$d")" "$ROOT/$d"
+  elif [ -d "/$d" ]; then
     mkdir -p "$ROOT/$d"
     mount --bind "/$d" "$ROOT/$d"
     mount -o remount,ro,bind "$ROOT/$d"
   fi
 done
-mkdir -p "$ROOT/dev" "$ROOT/proc" "$ROOT/tmp" "$ROOT/work"
 mount --bind /dev "$ROOT/dev"
 mount -o remount,ro,bind "$ROOT/dev"
 mount -t proc proc "$ROOT/proc"
