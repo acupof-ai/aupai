@@ -51,7 +51,15 @@ detour: four of them are the ladder's own 0.2b point plus its seed replicates.
 | runs | what | serves |
 |---|---|---|
 | 4 | current arch, `attn_every 4`, seeds 0-3 | ladder's 0.2b point (seed 0); the seed-variance measurement; lessons-e1's control arm; lessons-44's F arm |
-| 4 | `attn_every 1`, seeds 0-3 | lessons-e1's KDA-vs-full-attention arm |
+| 4 | `attn_every 1`, seeds 0-3 | lessons-e1's KDA-vs-full-attention arm — **conditional, see below** |
+
+The first four are unconditional. The second four run only if the measured seed variance
+says a 4-vs-4 comparison can resolve anything: lessons-b0 computes `s_pooled` from the
+first four and pre-registers, before seeing it, the MDE range that licenses the second
+four. If the MDE lands above that range, the A/B moves to the 3.24b checkpoint, where it
+is free, rather than spending 24 minutes to produce a null that was predictable in
+advance. An experiment whose lack of resolution is computable beforehand should be
+declared beforehand.
 
 Seed variance has never been measured in this repo, and two experiments had already
 been designed against an assumed value — lessons-e1 assumed 0.035 as seed variance,
