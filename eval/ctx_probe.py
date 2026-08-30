@@ -30,6 +30,12 @@ Two readings, PRE-REGISTERED before running (2026-08-31):
 Data: the same held-out head as score_matrix domain_loss (domain_files + head_texts,
 packed with EOS), so within-4096 numbers are comparable to the ladder val figure.
 
+# restartable: per-batch NLL rows are appended (flushed) to --out JSONL as
+# {"phase": "fresh"|"paired", "batch": i, "nll": [[...], ...]}; on rerun, completed
+# (phase, batch) pairs are skipped, so an interrupt loses at most one batch
+# (~15s of the ~15min run). The final summary JSON (--summary) is rewritten after
+# every batch with the partial curves, so even the aggregate survives a kill.
+
 Usage: CUDA_VISIBLE_DEVICES=7 python3 eval/ctx_probe.py --ckpt ckpt_p324.pt --mix data/mix_scale_3.24b.json
 """
 import argparse
@@ -63,7 +69,7 @@ def pack_tokens(tok, texts):
 
 
 def per_token_nll(model, x, bs):
-    """Per-token next-token CE, [n, seq]. Plain CE (no softcap), same as domain_loss.
+    """Per-token next-token CE, [n, seq-1]. Plain CE (no softcap), same as domain_loss.
     no_grad is mandatory: at seq=8192 the autograd graph alone blows past 95GB."""
     outs = []
     for i in range(0, len(x), bs):
@@ -91,6 +97,16 @@ def bin_means(mat, bin_size):
     return bins
 
 
+def load_done(path):
+    """Completed (phase, batch) pairs and their NLL rows, from the JSONL."""
+    done = {}
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            r = json.loads(line)
+            done[(r["phase"], r["batch"])] = r["nll"]
+    return done
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
@@ -98,8 +114,65 @@ def main():
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--bs", type=int, default=2)
-    ap.add_argument("--out", default=None)
+    ap.add_argument("--out", default=os.path.join(ROOT, "runs", "ctx_probe.jsonl"))
+    ap.add_argument("--summary", default=os.path.join(ROOT, "runs", "ctx_probe_p324.json"))
     args = ap.parse_args()
+
+    done = load_done(args.out)
+    fout = open(args.out, "a", encoding="utf-8")
+
+    def run_phase(model, x, phase, bs):
+        """Per-token NLL with resume: skip batches already in the JSONL."""
+        outs = [None] * ((len(x) + bs - 1) // bs)
+        for (ph, b), nll in done.items():
+            if ph == phase:
+                outs[b] = torch.tensor(nll)
+        for i in range(0, len(x), bs):
+            b = i // bs
+            if outs[b] is not None:
+                continue
+            nll = per_token_nll(model, x[i : i + bs], bs)
+            outs[b] = nll
+            fout.write(json.dumps({"phase": phase, "batch": b,
+                                   "nll": nll.tolist()}) + "\n")
+            fout.flush()
+        return torch.cat(outs, 0)
+
+    def write_summary(fresh_nll, paired_nll, n_pairs):
+        within = bin_means(fresh_nll, BIN)
+        mn, mni = within.min().item(), within.argmin().item()
+        eff = SEQ
+        for i in range(mni + 1, len(within)):
+            if within[i] > mn + DELTA_SEAM_NAT and all(
+                within[j] > mn + DELTA_SEAM_NAT for j in range(i, len(within))
+            ):
+                eff = i * BIN
+                break
+        out = {"n_pairs": n_pairs, "within_4096_bins": within.tolist(),
+               "effective_budget": eff}
+        if paired_nll is not None:
+            delta = paired_nll[:, SEQ:] - fresh_nll[1::2][:n_pairs]
+            delta_bins = bin_means(delta, BIN)
+            win = torch.stack([paired_nll[:, a:b].mean() for a, b in
+                               [(0, 2048), (2048, 4096), (4096, 6144), (6144, 8192)]])
+            seam = delta_bins[0].item()
+            tail = delta_bins[-1].item()
+            slope = (delta_bins[-1] - delta_bins[0]).item() / 3.0
+            if seam > DELTA_SEAM_NAT:
+                r1 = (f"HARD BOUNDARY: seam delta {seam:+.4f} > +{DELTA_SEAM_NAT} nat "
+                      f"-- context past 4096 hurts at the seam; agent loop must close within 4096")
+            else:
+                r1 = (f"SMOOTH DEGRADATION: seam delta {seam:+.4f} <= +{DELTA_SEAM_NAT} nat, "
+                      f"slope {slope:+.4f} nat/1024tok, tail {tail:+.4f} "
+                      f"-- usable past 4096, solvable with training length")
+            out.update({"delta_bins": delta_bins.tolist(), "window_nll": win.tolist(),
+                        "seam_delta": seam, "tail_delta": tail,
+                        "slope_nat_per_1024": slope, "reading1": r1})
+        with open(args.summary, "w", encoding="utf-8") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        if paired_nll is None:
+            return within, None, None, None, eff, mn, mni
+        return within, delta_bins, win, r1, eff, mn, mni
 
     model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
@@ -116,64 +189,29 @@ def main():
     print(f"{n_rows} rows = {n_pairs} pairs, {n_rows * SEQ / 1e6:.2f}M tokens", flush=True)
 
     rows = torch.tensor(ids[: n_rows * SEQ], dtype=torch.long).view(n_rows, SEQ).to(args.device)
-    paired = torch.cat([rows[0::2][:n_pairs], rows[1::2][:n_pairs]], dim=1)  # [n_pairs, 8192]
+    paired = torch.cat([rows[0::2][:n_pairs], rows[1::2][:n_pairs]], dim=1)
 
-    bs = args.bs
-    try:
-        fresh_nll = per_token_nll(model, rows, bs)
-        paired_nll = per_token_nll(model, paired, bs)
-    except torch.cuda.OutOfMemoryError:
-        print(f"OOM at bs={bs}, retrying at bs=1", flush=True)
-        torch.cuda.empty_cache()
-        fresh_nll = per_token_nll(model, rows, 1)
-        paired_nll = per_token_nll(model, paired, 1)
+    fresh_nll = run_phase(model, rows, "fresh", args.bs)
+    write_summary(fresh_nll, None, n_pairs)  # partial: within-4096 curve only
+    paired_nll = run_phase(model, paired, "paired", args.bs)
 
-    # Reading 2: within-4096 curve (fresh rows, all n_rows)
-    within = bin_means(fresh_nll, BIN)  # 16 bins
-    # Reading 1: paired delta over the second half
-    delta = paired_nll[:, SEQ:] - fresh_nll[1::2][:n_pairs]  # [n_pairs, 4096]
-    delta_bins = bin_means(delta, BIN)  # 16 bins over positions-in-b
-    # Window aggregates: mean NLL per 2048-window of the 8192 run (last window 2047 wide)
-    win = torch.stack([paired_nll[:, a:b].mean() for a, b in
-                       [(0, 2048), (2048, 4096), (4096, 6144), (6144, 8192)]])
+    within, delta_bins, win, r1, eff, mn, mni = write_summary(fresh_nll, paired_nll, n_pairs)
+    fout.close()
 
-    print("\n=== within-4096 per-position NLL (256-token bins, last = 255-token tail) ===")
-    spans = [(i * BIN, i * BIN + BIN - 1) for i in range(len(within) - 1)] + [(len(within) * BIN - BIN, 4095 - 1)]
+    spans = [(i * BIN, i * BIN + BIN - 1) for i in range(len(within) - 1)] + [((len(within) - 1) * BIN, 4095 - 1)]
+    print("\n=== within-4096 per-position NLL (256-token bins, last = tail) ===")
     for (a, b), v in zip(spans, within.tolist()):
         print(f"  pos {a:5d}-{b:5d}: {v:.4f}")
     print("\n=== paired delta-NLL beyond 4096 (bins over positions-in-b) ===")
-    dspans = [(4096 + a, 4096 + b) for a, b in spans]
-    for (a, b), v in zip(dspans, delta_bins.tolist()):
+    for (a, b), v in zip([(4096 + x, 4096 + y) for x, y in spans], delta_bins.tolist()):
         print(f"  dist {a:5d}-{b:5d}: {v:+.4f}")
     print("\n=== mean NLL per 2048-window of the 8192 run ===")
     for i, v in enumerate(win.tolist()):
         print(f"  win {i*2048:5d}-{i*2048+2047:5d}: {v:.4f}")
-
-    seam = delta_bins[0].item()  # distance 4096-4352
-    tail = delta_bins[-1].item()  # distance 7936-8192
-    slope = (delta_bins[-1] - delta_bins[0]).item() / 3.0  # nat per 1024 tokens (3072 span)
-    if seam > DELTA_SEAM_NAT:
-        r1 = f"HARD BOUNDARY: seam delta {seam:+.4f} > +{DELTA_SEAM_NAT} nat -- context past 4096 hurts at the seam; agent loop must close within 4096"
-    else:
-        r1 = f"SMOOTH DEGRADATION: seam delta {seam:+.4f} <= +{DELTA_SEAM_NAT} nat, slope {slope:+.4f} nat/1024tok, tail {tail:+.4f} -- usable past 4096, solvable with training length"
     print(f"\nREADING 1: {r1}")
-
-    mn, mni = within.min().item(), within.argmin().item()
-    eff = SEQ
-    for i in range(mni + 1, len(within)):
-        if within[i] > mn + DELTA_SEAM_NAT and all(within[j] > mn + DELTA_SEAM_NAT for j in range(i, len(within))):
-            eff = i * BIN
-            break
     print(f"READING 2: min bin {mn:.4f} at pos {mni*BIN}; effective budget = {eff}"
           f"{' (nominal, no sustained rise)' if eff == SEQ else ''}")
-
-    if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            json.dump({"n_pairs": n_pairs, "within_4096_bins": within.tolist(),
-                       "delta_bins": delta_bins.tolist(), "window_nll": win.tolist(),
-                       "seam_delta": seam, "tail_delta": tail, "slope_nat_per_1024": slope,
-                       "reading1": r1, "effective_budget": eff}, f, ensure_ascii=False, indent=2)
-        print(f"\nsaved: {args.out}")
+    print(f"\nsummary: {args.summary}\nrows: {args.out}")
 
 
 if __name__ == "__main__":
