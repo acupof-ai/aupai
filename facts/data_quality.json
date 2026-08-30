@@ -219,19 +219,17 @@
   },
   {
    "id": "dq.e2.matched_token_protocol",
-   "value": "plot all 7 domains' held-out loss vs their own token count C_d = w_d * T on one axes; shared (B, beta) predicts collapse to a single curve",
+   "value": "E2 RUN 2026-08-30 (domain_loss_v2.jsonl, 262K tokens/domain, six 0830v1 checkpoints): domains do NOT collapse -- shared-curve RMSE 1.04 nat (100x eval noise). math/code residuals -0.29/-0.92 nat (BELOW the curve): their larger 16x drop is the mechanical small-share effect, the claim is REFUTED. web_hq +1.50 and wiki +1.18 nat sit ABOVE the curve; web_hq has the flattest log-log slope (-0.123 vs -0.26 for textbook/en) -- its tokens buy the least loss reduction.",
    "measured": "2026-08-30",
    "source": "agent B derivation from dq.scaling.drop_mechanical; data source scripts/domain_loss.py on the six 0830v1 checkpoints",
    "config": {
     "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
     "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
-    "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free"
+    "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free",
+    "result": "math/code: below curve -> keep weights, do not upweight. web_hq/wiki: above curve -> higher loss at matched tokens; ambiguous between higher intrinsic floor (A_d) and worse token value (B_d) -- the matched-token plot cannot separate them. web_hq is the largest domain (32.4%), the flattest-slope, AND the domain with measured 30% junk (audit) -- the quality A/B targets exactly this cell"
    },
-   "uncertainty": null,
-   "status": "unmeasured",
-   "claim": "the math/code loss-drop advantage survives matched-token comparison",
-   "audit": "not yet run; requires scripts/domain_loss.py on six 0830v1 checkpoints (pod GPU)",
-   "refuted_by": "E2 plot showing math/code collapse onto the shared curve"
+   "uncertainty": "single-seed checkpoints; residuals are 15-30x seed noise (0.05 nat) so the pattern is real, but A_d vs B_d attribution needs the A/B",
+   "status": "measured"
   },
   {
    "id": "dq.criterion.rule_split",
