@@ -8,22 +8,34 @@ Architecture is fixed for this round: KDA (9 layers) + full causal gated MLA (3 
 latent=d/4) + AttnRes Full (blocks=0), NoPE throughout. Commit b3cad87. Changing it
 reopens G3.
 
-Run config for all six budget points: `--batch 16 --accum 2`. AttnRes Full OOMs at
-batch 32 on 96GB — the accumulation loop at `train.py:444-446` leaves one [B,T,D]
-temporary per source per sublayer to the backward, 25x24 of them, which the old
-architecture never had. Gradient accumulation keeps the effective batch at 32, so the
-optimizer recipe tuned for batch 32 still applies and the six points stay comparable.
-Block AttnRes and grad_ckpt were both rejected: the first changes the architecture under
-test, the second measured 2.4x slower at batch 72 on 2026-08-27.
+## Run config for all six budget points
+
+Settled 2026-08-30. Every point uses the same values; a change to any of them reopens the
+whole ladder.
+
+| setting | value | why |
+|---|---|---|
+| cards | 7 (GPU 1-7) | GPU 0 is the bench/scoring lane |
+| batch / accum | 16 / 2 | effective 32. AttnRes Full OOMs at batch 32 on 96GB; accumulation keeps the optimizer recipe valid. Block AttnRes changes the architecture under test; grad_ckpt measured 2.4x slower at batch 72 |
+| `vocab` | 32776 | 32773 is 2-byte aligned, so cuBLAS falls back to an SM75 align-1 kernel at 41% of bf16 peak. Padding to a multiple of 8 reaches 92%: +14-16% end to end, tokenizer untouched |
+| `chunk_size` | 32 | fla KDA default 64; halved chunks measured 19.1% faster on the kernel, numerically neutral (max delta 0.0017 on loss ~8) |
+| `bucket_cap_mb` | 50 | 100 leaves DDP communication unhidden. 50 and 25 tie at 75K tok/s/gpu on both 3 and 7 cards, so 50 wins on fewer allreduces |
+| NCCL protocol | default | forcing `PROTO=Simple` adds 2K tok/s but depends on an env var that a launch can silently omit |
+| warmup | 1% of steps, floor 2 | `max(20, 1%)` left the 0.2b point at 9.2% and the 3.24b point at 1.0% — a 9.2x systematic difference that would read as monotonic drift in the fit residuals |
+
+## Gates
 
 | gate | opens when | evidence | owner | status |
 |---|---|---|---|---|
-| G0 harness green | `scripts/harness.py check` exits 0 AND `--selftest` exits 0 | both exit codes | aupai-de | GREEN 2026-08-30 (73cef7b, 16/16 selftest) |
-| G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_at_200m.md` + 12 `facts/base_eval.json` entries | lessons-b0 | GREEN 2026-08-30, frozen; reporting the panel is now mandatory per run |
-| G1b zh minimal pairs | the eval set built to `be.minimal_pair_rules`, n>=277 | the set + its build script | aupai-3b | open; needed before the panel's minimal-pair row can be read, not before G3 |
-| G2 profile | step time split by source, percentages summing to ~100 | `facts/efficiency.json` | lessons-e1 | open work; also selects the kernel target |
-| G3 first run | 0.2b budget point trained on the new arch | `ckpt_*`, one `experiments.jsonl` row, one `score_matrix.jsonl` row | aupai-fb | waits on the pod cleanup report and on G2 |
-| G4 scaling curve | all six `mix_scale_*` points scored | six score-matrix rows, fitted E + B/D^beta with residuals | aupai-fb | waits on G3 |
+| G0 harness green | `harness.py check` and `--selftest` both exit 0, on the pod | both exit codes | aupai-de | GREEN; pod 6/7, only `web_hq` red by design |
+| G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_panel.md` + `facts/base_eval.json` | lessons-b0 | GREEN, frozen |
+| G1b panel runners | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; #3 LAMBADA-zh needs the held-out slice from the rebuilt corpus. #6 generative SKIPs by rule |
+| G2 profile | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | GREEN; roofline table landed, kernel line closed |
+| G2b fit protocol | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` v1.1 + `scripts/fit_scaling.py` | lessons-b0 | GREEN, frozen |
+| G3 corpus | `web_hq` rebuilt from fineweb2, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | in progress, 36-way build |
+| G3b warmup | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | running |
+| G4 six points | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | blocked on G3, G3b |
+| G5 scaling curve | the fit runs and its verdict is recorded | `fit_scaling.py` output with RMS and the beta profile interval | aupai-fb | blocked on G4 |
 
 Kernel work (tilerl-bench-harness-plan) runs alongside and gates on G2 for target
 selection, not on G0. It lands only through the five correctness gates in its brief:
