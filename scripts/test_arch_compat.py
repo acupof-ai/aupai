@@ -148,7 +148,10 @@ assert 0.85 < ret < 0.99, ret
 # doc boundaries: row starts + positions after <eos>, over the flattened stream
 idx = torch.tensor([[5, 1, 7, 7], [1, 1, 3, 3]])
 cu = train.doc_cu_seqlens(idx, eos_id=1)
-assert cu.tolist() == [0, 2, 4, 5, 6, 8] and cu.dtype == torch.int32, cu
+# 5 is gone against the pre-2026-08-30 expectation: flat[4:6] is <eos><eos>, one padding
+# region, not two length-1 documents. Row starts (0 and 4) are unconditional -- dropping 4
+# would let a document span two rows of the batch.
+assert cu.tolist() == [0, 2, 4, 6, 8] and cu.dtype == torch.int32, cu
 m = HybridLM(Cfg).to(DEV)
 with _amp():
     assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
@@ -457,3 +460,20 @@ if os.path.exists(_tok_path):
     print("vocab_fingerprint: train == loader OK")
 else:
     print("vocab_fingerprint SKIP (no data/tokenizer.json)")
+
+# doc_cu_seqlens: a run of <eos> is padding and opens ONE document, not one per token.
+# SFT rows are <eos>-padded to seq (mean 489 per 4097 row); one boundary per pad made every
+# pad a length-1 document, fla's varlen grid is per-document, and batch 16 launched
+# grid=(2, 78936, 1) against CUDA's gridDim.Y limit of 65535 -- surfacing as a bare
+# `Triton Error [CUDA]: invalid argument` that read as a broken environment for an hour.
+_E = 1
+_packed = _train.doc_cu_seqlens(torch.tensor([[7, 8, _E, 9, 9], [6, 6, _E, 5, 5]]), _E).tolist()
+assert _packed == [0, 3, 5, 8, 10], f"packed rows must be unchanged, got {_packed}"
+_padded = _train.doc_cu_seqlens(torch.tensor([[7, 8, _E, _E, _E], [6, 6, 6, 6, _E]]), _E).tolist()
+assert _padded == [0, 5, 10], f"an <eos> run must open one document, got {_padded}"
+_rows = _train.doc_cu_seqlens(torch.tensor([[7, _E, _E, _E], [_E, _E, 3, 3]]), _E).tolist()
+assert _rows == [0, 4, 6, 8], f"a row start survives even when its first token is <eos>, got {_rows}"
+_wide = torch.cat([torch.tensor([[7, 8]]), torch.full((1, 4095), _E)], 1).repeat(8, 1)
+_ndoc = len(_train.doc_cu_seqlens(_wide, _E)) - 1
+assert _ndoc == 8, f"8 padded rows must be 8 documents, got {_ndoc} (grid overflows past 65535)"
+print(f"doc_cu_seqlens: packed unchanged, {_ndoc} docs for 8 padded rows (was 32768) OK")

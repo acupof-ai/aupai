@@ -235,8 +235,15 @@ class DeltaRecurrence(nn.Module):
     def forward(self, x, cu=None):
         B, T, D = x.shape
         # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
-        h = F.pad(x.transpose(1, 2), (self.short_conv.kernel_size[0] - 1, 0))
-        h = F.silu(self.short_conv(h).transpose(1, 2))
+        # Four shifted multiply-adds, not nn.Conv1d: ATen routes a depthwise k=4 conv to
+        # conv_depthwise2d_generic at ~6% of bandwidth, while inductor fuses the arithmetic
+        # form. Weights stay on self.short_conv, so checkpoints load unchanged.
+        w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
+        h = F.pad(x.transpose(1, 2), (K - 1, 0))
+        y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
+        for i in range(1, K):
+            y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
+        h = F.silu((y + self.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.reshape(B, T, self.h, self.hd).contiguous()
         k = k.reshape(B, T, self.h, self.hd).contiguous()
@@ -794,13 +801,22 @@ class Muon(torch.optim.Optimizer):
 
 def doc_cu_seqlens(idx, eos_id):
     """cu_seqlens over the flattened B*T stream: every row start and every position after an <eos>
-    opens a document. Length varies per batch, hence mark_dynamic for torch.compile."""
+    opens a document. Length varies per batch, hence mark_dynamic for torch.compile.
+
+    A *run* of <eos> opens one document, not one per token. SFT rows are padded to seq with
+    <eos> (mean 489 per 4097-token row, max 3721), and one boundary per pad token made every
+    pad its own length-1 document: fla's varlen grid is per-document, so batch 16 produced
+    grid=(2, 78936, 1) against CUDA's gridDim.Y limit of 65535 and cuLaunchKernel returned a
+    bare `invalid argument`. Zero-length documents are meaningless everywhere, so this is a
+    correctness fix, not an SFT workaround."""
     B, T = idx.shape
     flat = idx.reshape(-1)
     starts = torch.nonzero(flat == eos_id).squeeze(1) + 1
-    starts = torch.cat([torch.arange(0, B * T, T, device=idx.device), starts])
     starts = starts[starts < B * T]
-    cu = torch.cat([starts.unique(), torch.tensor([B * T], device=idx.device)]).to(torch.int32)
+    starts = starts[flat[starts] != eos_id]
+    rows = torch.arange(0, B * T, T, device=idx.device)  # every row start, always: rows must not merge
+    end = torch.tensor([B * T], dtype=starts.dtype, device=idx.device)
+    cu = torch.cat([rows, starts, end]).unique().to(torch.int32)
     torch._dynamo.mark_dynamic(cu, 0)
     return cu
 
