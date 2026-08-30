@@ -232,6 +232,21 @@
    },
    "uncertainty": "the 3.9pt's origin could not be reconstructed; recorded as not reproducible under the frozen formula rather than guessing the wrong formula that produced it",
    "status": "recorded"
+  },
+  {
+   "id": "be.panel_expressive_seed_variance",
+   "value": "seed variance of the expressive-ability panel metrics at 0.2b (new arch, attn_every 4), the noise floor for the decision-tree section 8 ladder read. PARTIAL n=2 (s0/s1, df=1 -- s2/s3 panel scores exist on the pod but are not synced to runs/score_matrix.jsonl, which holds only 2 old-arch rows; the df=3 values below are placeholders pending them): L2 two-way 90.4/89.1 -> s~1.2pt; O1 open acc@1 16.0/14.4 -> s~1.4pt; C-Eval 24.3/23.9 -> s~0.4pt (near chance, seed SD less meaningful); GAP=L2-O1 74.4/74.7 -> s~0.3pt (remarkably stable). Readable-move threshold (tree section 8): |Delta M| >= 4.65*s_M (t-based, df=3, 4-seed mean vs 1-seed). At the partial SDs: O1 threshold ~6.5pt, GAP threshold ~1.4pt -- the 74pt gap is measurable to ~1pt, so gap-narrowing across the ladder is a high-precision steering signal. The threshold rule is frozen; only the s_M inputs await s2/s3",
+   "measured": "2026-08-30",
+   "source": "fb cross-session messages 2026-08-30 (s0/s1 panel readings); runs/score_matrix.jsonl (stale, 2 old-arch rows only); pod runs/p02_seeds*.log for s2/s3 (not synced)",
+   "config": {
+    "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
+    "metrics": "lambada-zh two-way / open acc@1 / acc@5, C-Eval, GAP=L2-O1",
+    "n_seeds_scored": 4,
+    "n_seeds_synced": 2,
+    "threshold_formula": "4.65*s_M = (t_0.975,3 + t_0.8,3)*sqrt(1/4+1)*s_M"
+   },
+   "uncertainty": "n=2 partial -- SD from range/1.128 has df=1; the df=3 values may move when s2/s3 land",
+   "status": "measured"
   }
  ]
 }
