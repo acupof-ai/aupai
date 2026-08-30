@@ -648,7 +648,7 @@
   },
   {
    "id": "dq.head.recal_step2_failed",
-   "value": "Quality-head retrain on 3b's 150 hand labels: locked-400 AUC 0.555 vs the deployed head's 0.541; at recall>=0.5 the best precision either head reaches is 0.37 -- the recall>=0.5 AND precision>=0.8 bar is UNREACHABLE in this feature space. Bottleneck is the architecture, not the labels: 20K teacher labels (0.541) ~= 150 hand labels (0.555), and head-512 pooling (0.541) ~= tail-512 (0.542).",
+   "value": "Quality-head retrain on 3b's 150 hand labels: locked-400 (CCI3) AUC 0.555 vs the deployed head's 0.541 on CCI3; at recall>=0.5 the best precision either head reaches is 0.37 -- the recall>=0.5 AND precision>=0.8 bar is UNREACHABLE in this feature space ON CCI3. Bottleneck is the architecture, not the labels: 20K teacher labels ~= 150 hand labels (0.541 vs 0.555), head-512 ~= tail-512 pooling (0.541 vs 0.542). Same deployed head on web_labels (fineweb2 distribution): AUC 0.823 vs hand -- the 0.28 AUC gap between distributions is the no-transfer criterion itself, not a broken head: the fineweb2 rebuild runs on the distribution where the head is strong and is unaffected.",
    "unit": "AUC / 2x2 of the distilled quality head on the locked 400",
    "measured": "2026-08-30",
    "source": "agent C ran datagen/train_quality_head.py on the pod (GPU 7, ckpt retired_pre0830v2/ckpt_k5_clean_0827.pt == local base, md5 b5eb6f206d02) with /tmp/head_labels_150.jsonl (150 full texts from data/raw/cci3_hq, s=1 usable); eval on /tmp/head_check_400.jsonl (400 full texts by id)",
@@ -656,9 +656,9 @@
     "new_head_curve": "in-sample held-out-teacher AUC plateaued at 0.66 (15 docs) -- weak even in-sample; locked-400 AUC 0.555",
     "old_head_curve": "deployed data/quality_head.pt on the same 400: AUC 0.541; drop-50% gives recall 0.512 / precision 0.310",
     "pooling_check": "tail-512 pooling with the old head: AUC 0.542 -- feature location is not the bottleneck",
-    "implication": "3b's running web_hq rebuild scores with the old head at AUC 0.541 on CCI3 -- the top-40% cut is near-chance on this register; input to fb's web_hq ruling",
+    "implication": "0.541's role is to reinforce the CCI3 exclusion ruling (quality judgements do not transfer across corpora), NOT to question the fineweb2 rebuild -- that rebuild scores with the head at AUC 0.823 on its own distribution. 3b's running web_hq rebuild: continue, no stop",
     "hygiene": "new head saved as /tmp/quality_head_recal.pt on the pod, NOT deployed; data/quality_head.pt untouched (swap timing is fb's call, now moot -- the new head is not better)",
-    "next_levers": "DCLM-style fastText (zero LLM labels, CPU, documented to beat AskLLM -- docs/lessons/data_quality_methods.md section 1) or 27B teacher directly on CCI3 (0.739 on web_labels, register transfer unmeasured); more hand labels will NOT help -- the sample-complexity floor is the feature space"
+    "next_levers": "DCLM-style fastText (fb's call 2026-08-30: CPU-only, zero LLM labels, start from the 550 existing labels, not on the critical path; deliverable = recall/precision on the locked 400 AND no degradation on web_labels/fineweb2 vs the old head's 0.823). 27B-direct on CCI3 deferred (cross-register transfer unmeasured, GPU contented)"
    },
    "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
    "status": "measured"
