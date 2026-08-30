@@ -45,12 +45,13 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 # gets ceval only as a z-score tripwire.
 APPLIES = {
     "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like", "l1_fewshot"],
-    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
-    "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
+    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "pass_at_k"],
+    "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "pass_at_k"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
     "math_500": "generative; a base checkpoint reads zero",
+    "code_500": "generative; a base checkpoint reads zero",
     "pass_at_k": "needs a policy (SFT or RL); a base checkpoint has none",
     "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
@@ -270,6 +271,13 @@ def metric_math_500(ckpt_path, tok_path):
     )
 
 
+def metric_code_500(ckpt_path, tok_path):
+    return _run(
+        ["bash", "scripts/eval_code.sh", ckpt_path, "1", tok_path],
+        {"code_500": r"=\s*([\d.]+)\s*%"},
+    )
+
+
 def metric_pass_at_k(ckpt_path):
     return _run(
         [sys.executable, "eval/math_hard.py", "--ckpt", ckpt_path, "--k", "8", "--temperature", "0.8"],
@@ -380,6 +388,9 @@ def score(ckpt_path, mix_path, tok_path, device):
     if "math_500" in wanted:
         v, err = metric_math_500(ckpt_path, tok_path)
         record["metrics"]["math_500"] = v if v else {"error": err}
+    if "code_500" in wanted:
+        v, err = metric_code_500(ckpt_path, tok_path)
+        record["metrics"]["code_500"] = v if v else {"error": err}
     if "pass_at_k" in wanted:
         v, err = metric_pass_at_k(ckpt_path)
         record["metrics"]["pass_at_k"] = v if v else {"error": err}
