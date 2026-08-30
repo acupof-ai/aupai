@@ -926,3 +926,16 @@ A review reports what it *ran*, not what it read.
   mechanical form of this rule is its missing half: **no check may return PASS with every
   count in its evidence at zero.** This is one level below the banner the harness already
   prints — that one covers "could not run", this one covers "ran and looked at nothing".
+- **An injection that feeds the real code path is a legitimate broken world; one that
+  replaces it is a hand-written world wearing a hook.** Audit of all 32 `broken()` builders,
+  2026-08-30: 16 copy a real artifact, 13 write a small file whose surroundings are real, and
+  3 inject through an environment variable. Two of the three are sound — `HARNESS_REQUIRE_EXTRA`
+  adds a package name to the requirement list and the real read-then-import still runs;
+  `_broken_mix_supply` copies the real 0.2b mix and builds genuinely undersized caches. The
+  third, `HARNESS_GPU_PROCS`, supplied `(gpu, cmdline)` pairs directly and thereby skipped the
+  one step that was broken — the host-PID-to-container-`ps` resolution — which is how a check
+  that could never fail shipped with a green self-test. **The test to apply: after the
+  injection, does the step that can break still execute?** Note the trap survives the fix:
+  the rewritten occupancy check still self-tests through the same hook, so it is verified
+  against reality only by the one manual run a person did. A regression in its real
+  `nvidia-smi` read would still pass `--selftest`.
