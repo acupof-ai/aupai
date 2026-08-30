@@ -114,8 +114,9 @@ class Cfg:
     ffn_hidden = 3072
     vocab = 32776  # multiple of 8 for the cuBLAS aligned kernel: 32773 fell back to the SM75
     # align-1 GEMM on Hopper (41% vs 92% of bf16 peak, +13.9% end-to-end, measured 2026-08-30).
-    # The 3 columns above vocab_real are alignment padding: never targets, masked to -inf in
-    # lm_logits. padded_vocab (32832) is unchanged, so head/embedding shapes and old checkpoints
+    # The 3 columns above vocab_real are alignment padding: never targets, set to
+    # finfo(dtype).min in lm_logits (finite, so the all-finite E2E assert holds).
+    # padded_vocab (32832) is unchanged, so head/embedding shapes and old checkpoints
     # are unaffected -- this is not a tokenizer change and does not touch vocab_id.
     vocab_real = 32773  # the frozen tokenizer's size (2026-08-29): 32768 BPE merges + 4 chat
     # specials + [NUM], with <unk>/<eos> inside the merges; vocab - vocab_real is padding
@@ -572,13 +573,15 @@ class HybridLM(nn.Module):
     def lm_logits(self, hidden):
         """The vocabulary head plus the softcap, split out so a decoder can apply it to the
         handful of positions it actually reads instead of to the whole prefix. Columns at or
-        past vocab_real are alignment padding (never targets): masked to -inf AFTER the
-        softcap, since tanh would compress -inf to -SOFTCAP."""
+        past vocab_real are alignment padding (never targets): set to the dtype's most negative
+        finite value AFTER the softcap, since tanh would compress it to -SOFTCAP. Finite, not
+        -inf: the E2E asserts every logit is finite, and a real -inf must stay distinguishable
+        from padding."""
         logits = self.head(hidden)[..., : self.cfg.vocab].float()
         out = SOFTCAP * torch.tanh(logits / SOFTCAP) if SOFTCAP else logits
         real = getattr(self.cfg, "vocab_real", self.cfg.vocab)
         if real < out.shape[-1]:
-            out[..., real:] = float("-inf")
+            out[..., real:] = torch.finfo(out.dtype).min
         return out
 
     def num_logits(self, hidden):
