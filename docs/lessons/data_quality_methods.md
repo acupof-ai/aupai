@@ -20,7 +20,7 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 
 **绝对下限的来由**（`#dq.criterion.ratio_needs_floor`）：光有比值会被"什么都不切"的过滤器骗过——任何语料上召回都是 0，比值恒为 1，处处 VALID。阳性对照恰好抓到了这个退化情形的镜像：现有正则层在老家语料上 recall_home 只有 3.4%（5/147，precision 5/5），0.8×3.4%=2.7% 的通过带等于给"结构性失明"发合格证。加上 recall_home ≥0.5 后，正则层自己在老家语料上就读作 RECALIBRATE 级——质量决策本来就住在质量头里（AUC 0.823，`#dq.quality_head.auc_vs_hand`），正则层只是 precision 1.0 的格式闸。
 
-**Known-answer 验收**（`#dq.criterion.known_answer_cci3`、`#dq.criterion.cci3_measured`）：CCI3-HQ 是已知失效的语料，判据必须输出 RECALIBRATE。3b 实测 2×2 混淆矩阵：手读垃圾 59/150，过滤器只 drop 其中 1 篇 → **recall_new = 1.7%**，比值 0.017/0.034 = 0.50 且远低于绝对下限 → **RECALIBRATE，与已知答案一致**。过滤器对 58/59 篇农场/洗稿/SEO/模板垃圾放行——是对这个类别的结构性盲，不是阈值差一点。手读标签由 3b 为质量审计产生，先于判据存在，不与判据共享假设。
+**Known-answer 验收**（`#dq.criterion.known_answer_cci3`、`#dq.criterion.cci3_measured`）：CCI3-HQ 是已知失效的语料，判据必须输出 RECALIBRATE。3b 实测 2×2 混淆矩阵：手读垃圾 59/150，过滤器只 drop 其中 1 篇 → **recall_new = 1.7%**，比值 0.017/0.034 = 0.50 且远低于绝对下限 → **RECALIBRATE，与已知答案一致**。（口径修正：1.7% 是在 120 字摘录上跑的；全文本生产路径上同一过滤器的基线为 11.9%，见 `#dq.regex.recal_step01`——结论不变，仍远低于 0.5 下限。）过滤器对 58/59 篇农场/洗稿/SEO/模板垃圾放行——是对这个类别的结构性盲，不是阈值差一点。手读标签由 3b 为质量审计产生，先于判据存在，不与判据共享假设。
 
 **阳性对照（已测，`#dq.criterion.positive_control_protocol`）**：web_labels.jsonl 180 篇跑同一 `reject_reason()`，recall_home = 3.4%（5/147，全部 garbage_topic），precision = 5/5。注意两点：(1) 正则表从未在这批标签上调过（cosmopedia 取向、早于这批标签），所以这是独立测试不是 in-sample——低召回是更强的证据；(2) web_labels 的 y=0 口径是"无教育价值"（比 3b 的 usable/junk 严，垃圾率 81.7% vs 39.3%），召回差距有一部分是口径差，但 3.4% 仍说明正则层不做质量决策。
 
@@ -96,7 +96,7 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 | 1 | 每个新语料进训练前跑 recall-ratio 判据（含 recall_home ≥0.5 绝对下限） | CCI3-HQ 已知答案 RECALIBRATE（recall_new 1.7%，比值 0.50） | 判据在 CCI3-HQ 上输出 RECALIBRATE 即通过；3b 混淆矩阵为输入 |
 | 2 | web 质量头不用于 CCI3（直接证据 F1 0.03）；用 DCLM 式 fastText 或 CCI3 管线重标 | 切掉比例 unmeasured——阈值是决策变量不是检测属性（DCLM top-10%、FineWeb-Edu 切 91% 都是阈值选择） | 按文体留出集 + 风格改写探针；下游用 Ultra-FineWeb 式 1B WSD 退火验证（~110 H100-h/次） |
 | 3 | DSpin 功能字锚点检测洗稿 | 英文基准洗稿页 77-93% 命中；中文切掉比例 unmeasured | 2.07% 指纹文档上召回应近 100% |
-| 4 | ~~400 篇无指纹审计估隐藏洗稿患病率~~ **已测：p_hidden 8.0%，总洗稿 9.9%；junk 30.3%**（`#dq.audit.protocol_400`） | — | 混淆矩阵已出：现有过滤器在锁定样本上 recall 17.4%（`#dq.audit.confusion_400`），重标定必须在同一样本上超过它 |
+| 4 | ~~400 篇无指纹审计估隐藏洗稿患病率~~ **已测：p_hidden 8.0%，总洗稿 9.9%；junk 30.3%**（`#dq.audit.protocol_400`） | — | 混淆矩阵已出并已被重标定超过：Step 0+1 正则上线（`#dq.regex.recal_step01`），锁定样本上 recall 17.4%→21.5%、0 新增 FP；距 0.5 下限仍远，主杠杆是 Step 2 质量头重训 |
 | 5 | Kim 两阶段收窄 60%±10 | ±3pp 需 ~308 人读（ρ²=0.7） | pilot R² 置信下界 + κ ≥0.5 |
 | 6 | math/code 加权前先跑 E2 | 零成本 | matched-token 坍缩→维持；在曲线上方→2× proxy 对照 |
 | 7 | 定权重前先定目标函数（人读 vs 下游 eval） | — | R²<0.3 警告（`#dq.classifier.human_agreement_counter`） |

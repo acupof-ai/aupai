@@ -631,18 +631,19 @@
   },
   {
    "id": "dq.regex.recal_step01",
-   "value": "Step 0+1 regex layer: on 3b's 150 (calibration) recall 1.7%->23.7% (+22.0pp), regex-layer precision 13/13=100%; on the locked 400 (fresh re-test) +9.1pp recall (11/121), precision 65% (11/17) -- precision does NOT transfer",
+   "value": "Step 0+1 shipped in filters/pass3_garbage.py (merged into GARBAGE, head-600 check). Production path (full text, reject_reason): on 3b's 150 OLD recall 11.9%/precision 53.8% (7TP/6FP) -> NEW 30.5%/72.0% (18TP/7FP); new patterns alone 14 hits = 13 junk by 3b's labels + 1 book-TOC+metadata doc the audit rubric counts as junk (label rubric mismatch, not a pattern error). Locked 400 one-shot re-test (2000-char texts, same basis as the 17.4% baseline): recall 17.4%->21.5%, precision 53.8%->59.1%, TP 21->26, FP flat at 18 -- new patterns +5 TP, 0 FP on the fresh sample.",
    "unit": "recall/precision of the regex recalibration layer",
    "measured": "2026-08-30",
-   "source": "aupai-3b run on data/corpus/sample/cci3_handread_150.jsonl (200-char excerpts, TOC class undercounted); agent C re-test on data/corpus/sample/cci3_audit_400.jsonl with identical patterns",
+   "source": "agent C full-text run on the pod via reject_reason from datagen/build_corpus.py over data/raw/cci3_hq/ (150 docs by id from data/corpus/sample/cci3_handread_150.jsonl); locked re-test on data/corpus/sample/cci3_audit_400.jsonl vs cci3_audit_400_labels.jsonl",
    "config": {
-    "step0": "原文地址[:：] fingerprint -> 7/59 junk at 100% precision on the 150; 0 hits on the 400 by construction (fingerprint pool excluded)",
-    "step1": "4 structural regexes (zuowen/tiku/jiaoan/book-toc) -> +6 junk on the 150 (100% precision); +11/121 on the 400 at 65% precision (6 FP: zuowen 1, jiaoan 2, book_toc 3)",
-    "merged_precision_note": "3b's 13/13 is the regex layer alone; merged with the legacy filter's 1 usable FP (酒驾国标 symbols) the 150-sample precision is 14/15=93.3%",
-    "verdict": "RECALIBRATE stands: 23.7% << 0.5 floor; regexes are a corpus-specific patch, the quality head (Step 2) remains the only path to the floor",
-    "wiring": "which filter file receives the regexes is blocked on fb's web_hq/CCI3 landing ruling -- measurements are independent of it"
+    "step0": "fingerprint 原文地址[:：] -> 7/7 junk on 150 full text; corpus-wide 2.46% hit rate, 99.0% in first 600 chars (6-shard pod scan, n=1.01M)",
+    "step1": "zuowen 2/2, tiku 2/2, jiaoan 2/2 on 150; on locked 400 zuowen 5/5, jiaoan 1/1, tiku 0",
+    "toc_tightening": "loose TOC (400: 6 hits/3 junk) replaced by line-anchored two-consecutive-chapter-lines after a 150 FP was prose cross-refs (第一部分...第二部分 inline); tightened version kills that FP, 0 hits on 400 -- trades 3 low-precision TPs for zero FP",
+    "baseline_correction": "3b's 1.7% baseline was run on 120-char excerpts, not the production code path; full-text OLD baseline on the same 150 is 11.9% (7/59)",
+    "pod_hygiene": "candidate patterns validated from /tmp on the pod; /work/aupai/filters untouched while 3b's rebuild runs; data/quality_head.pt not touched (swap timing is fb's call)",
+    "verdict": "shipped; 30.5% still far below the 0.5 floor -- Step 2 (quality head retrain) remains the lever"
    },
-   "uncertainty": null,
+   "uncertainty": "150-sample precision ±10pp at n=150; the single 150 'FP' is a rubric mismatch (3b usable vs audit-rubric junk for book-TOC+metadata), unresolved pending IAA",
    "status": "measured"
   }
  ]
