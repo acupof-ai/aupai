@@ -40,7 +40,7 @@ os.environ["FLA_FLASH_KDA"] = "0"
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-V2_PATH = os.path.join(ROOT, "data", "synthetic", "math_hard_eval_v2_1k.jsonl")
+V2_PATH = os.path.join(ROOT, "data", "synthetic", "math_hard_eval_v2_5k.jsonl")
 
 _DIGIT = re.compile(r"\d")
 
