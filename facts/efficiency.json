@@ -889,7 +889,7 @@
       },
       "uncertainty": "Measured on a pretrained checkpoint with SFT data; gradient magnitudes at the midpoint of a fresh 30B pretrain may differ. The 32% floor at full LR includes parameters whose gradient is legitimately zero (never-used vocabulary rows among them), so the absolute level is an upper bound on discarded WORK; the 32% -> 91% movement with LR is the signal and is unambiguous.",
       "status": "measured",
-      "boundary": "Counts discarded updates, not the quality they would have bought. The loss cost needs an A/B against fp32 master weights."
+      "boundary": "Counts discarded updates, not the quality they would have bought. The loss cost needs an A/B against fp32 master weights. READING RULE, or this number is misread as its own refutation: fp32 master weights do NOT lower this figure. The model stays bf16, so a single small update is still rounded away on write-back; what changes is that the optimizer's fp32 copy RETAINS it and it accumulates until it crosses the bf16 threshold. So the A/B must report two lines -- frozen[model bf16], high in both arms and not a failure, and frozen[optimizer], equal to the first in the control and ~0% with masters. Mechanism confirmed on CPU (tilerl): same seed, same data, lr=1e-5, 400 steps, bf16 elements whose bit pattern actually moved was 1/144 without masters and 126/144 with them."
     }
   ]
 }
