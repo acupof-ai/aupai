@@ -911,3 +911,18 @@ A review reports what it *ran*, not what it read.
   rollback path (`train.py:1853-1855`) and only the optimizer's on the normal path. That
   asymmetry is visible without understanding either path, and it located the bug faster than
   reading the code did. Look for it first.
+- **A PASS must be able to say how many things it verified, and that number cannot be zero.**
+  Both of 2026-08-30's dead guards were the same shape, and it is not the empty-world shape:
+  `score_matrix_present` went green locally because the ledger held **zero** ok runs, so its
+  filter produced nothing to check; `lane_respected` went green always because `nvidia-smi`
+  returns host PIDs the container cannot resolve, so **zero** processes were examined. An
+  audit of all 35 checks against an empty repo found 34 correctly FAIL or SKIP — the class is
+  not "no repo", it is "nothing matched". Two more still carry it: `corpus_filters_fp` and
+  `score_input_fresh` both report PASS at `0 domain(s)`, which is right on a dev checkout and
+  would be silently wrong on the pod the day `data/corpus/*` vanishes — exactly how the token
+  cache vanished. Zero items must SKIP (the inputs are not on this machine) or FAIL (they are,
+  and none matched); today those two cases give the same answer. `--selftest` asserts every
+  check FAILs on a broken world and never asserts that a PASS examined anything, so the
+  mechanical form of this rule is its missing half: **no check may return PASS with every
+  count in its evidence at zero.** This is one level below the banner the harness already
+  prints — that one covers "could not run", this one covers "ran and looked at nothing".
