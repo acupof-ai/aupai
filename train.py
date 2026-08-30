@@ -1523,6 +1523,22 @@ def main():
                 f"pod code drift vs the committed manifest: {_evidence}. Sync the pod to "
                 "HEAD (scripts/pod_sync_check.sh) or pass --allow_pod_drift for a known hotfix."
             )
+    if is_main:
+        # GEMM-hostile dimensions (vocab 32773 ran the LM head at 41% of bf16 peak) must
+        # fail before tokenizing 40 minutes of corpus. Static, CPU-only, seconds. Canonical
+        # implementation: scripts/shape_audit.py -- a subprocess so train.py imports nothing
+        # from scripts/, same pattern as the corpus_fingerprint.py parity assertion.
+        import subprocess
+        import sys
+
+        _audit = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "scripts", "shape_audit.py")],
+            capture_output=True,
+            text=True,
+        )
+        if _audit.returncode != 0:
+            print(_audit.stdout, _audit.stderr)
+            raise RuntimeError("shape_audit FAIL: GEMM-hostile Cfg dimensions, see above")
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
