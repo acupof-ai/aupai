@@ -2311,6 +2311,128 @@ def _broken_tasks_stale():
     return d
 
 
+# --------------------------------------------------------------------------- lane
+
+_TRAINING_PROCS = ("train.py", "sft.py", "sft_math.py", "torchrun", "run_ddp.sh")
+
+
+def _is_training_proc(cmdline):
+    return any(k in cmdline for k in _TRAINING_PROCS)
+
+
+def _gpu_procs():
+    """(gpu_idx, cmdline) for every GPU compute process visible from this container.
+
+    HARNESS_GPU_PROCS points to a JSON file of [gpu_idx, cmdline] pairs — the
+    selftest's injection point, same pattern as HARNESS_REQUIRE_EXTRA.
+    """
+    fake = os.environ.get("HARNESS_GPU_PROCS")
+    if fake:
+        try:
+            with open(fake, encoding="utf-8") as f:
+                return [(str(p[0]), p[1]) for p in json.load(f)]
+        except (json.JSONDecodeError, OSError, IndexError, TypeError):
+            return None
+    try:
+        apps = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20,
+        )
+        gpus = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,gpu_uuid", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None  # no nvidia-smi: a dev box
+    if apps.returncode != 0 or gpus.returncode != 0:
+        return None
+    uuid_to_idx = {}
+    for line in gpus.stdout.splitlines():
+        if "," in line:
+            i, u = line.split(",", 1)
+            uuid_to_idx[u.strip()] = i.strip()
+    procs = []
+    for line in apps.stdout.splitlines():
+        if "," not in line:
+            continue
+        pid, uuid = line.split(",", 1)
+        gpu_idx = uuid_to_idx.get(uuid.strip())
+        if gpu_idx is None:
+            continue
+        try:
+            ps = subprocess.run(
+                ["ps", "-p", pid.strip(), "-o", "args="],
+                capture_output=True, text=True, timeout=5,
+            )
+            cmdline = ps.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            cmdline = ""
+        if cmdline:  # a PID from another container's namespace: ps finds nothing
+            procs.append((gpu_idx, cmdline))
+    return procs
+
+
+def check_lane_respected(root):
+    """Non-training processes must not occupy training cards.
+
+    Detection only — the ceiling, not a gate. Loose `python3 eval/...` commands
+    are not wrapped by harness, so this check can see a violation after the fact
+    but cannot prevent one. A wrapper around every eval would be enforcement;
+    this is a tripwire.
+
+    A training card is one named in data/mix_scale_run_config.json's `cards`.
+    A process belongs to training if its command line contains train.py, sft.py,
+    sft_math.py, torchrun, or run_ddp.sh. Everything else on a training card is
+    a violation: a 10-minute eval on one training card blocks a 55-minute
+    7-card run, because DDP is synchronous.
+
+    Cardless machines SKIP.
+    """
+    if not _gpu_present():
+        return SKIP, "no GPUs on this machine"
+    config_path = os.path.join(root, "data", "mix_scale_run_config.json")
+    if not os.path.isfile(config_path):
+        return SKIP, "no mix_scale_run_config.json"
+    try:
+        config = json.load(open(config_path, encoding="utf-8"))
+        train_cards = {c.strip() for c in config["cards"].split(",") if c.strip()}
+    except (json.JSONDecodeError, KeyError):
+        return SKIP, "cannot read cards from mix_scale_run_config.json"
+    procs = _gpu_procs()
+    if procs is None:
+        return SKIP, "nvidia-smi not available"
+    violations = []
+    for gpu_idx, cmdline in procs:
+        if gpu_idx in train_cards and not _is_training_proc(cmdline):
+            violations.append(f"GPU {gpu_idx}: {cmdline[:80]}")
+    if violations:
+        return FAIL, (
+            f"{len(violations)} non-training process(es) on training cards "
+            f"(cards {sorted(train_cards)}): {'; '.join(violations[:3])}"
+        )
+    return PASS, f"training cards {sorted(train_cards)}: no non-training processes"
+
+
+def _broken_lane_respected():
+    """An eval process on a training card — the violation this check exists to catch."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    # Real config so the training card set is real, not hand-written.
+    shutil.copy(
+        os.path.join(ROOT, "data", "mix_scale_run_config.json"),
+        os.path.join(d, "data", "mix_scale_run_config.json"),
+    )
+    config = json.load(open(os.path.join(ROOT, "data", "mix_scale_run_config.json"), encoding="utf-8"))
+    first_card = config["cards"].split(",")[0].strip()
+    fake_path = os.path.join(d, "gpu_procs.json")
+    with open(fake_path, "w", encoding="utf-8") as f:
+        json.dump([[first_card, "python3 eval/math_hard.py --ckpt ckpt_test.pt --k 8"]], f)
+    os.environ["HARNESS_GPU_PROCS"] = fake_path
+    return d
+
+
 CHECKS = [
     (
         "env_importable",
@@ -2550,6 +2672,13 @@ CHECKS = [
         "a task blocked on a done task sat idle for days; the controller assigns work and the register is the only place that remembers it",
         check_tasks_stale,
         _broken_tasks_stale,
+    ),
+    (
+        "lane_respected",
+        "non-training processes do not occupy training cards",
+        "a 10-min eval on one training card blocks a 55-min 7-card run; the lane rule was announced in docs but nothing enforced it",
+        check_lane_respected,
+        _broken_lane_respected,
     ),
 ]
 
