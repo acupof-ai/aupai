@@ -47,6 +47,9 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 # rather than comparing against durable ones. When the migration mounts /data00
 # inside the container, add it to a durable list and invert the check.
 EPHEMERAL_MOUNTS = ("/work",)
+#: Host NVMe that survives a pod deletion. Not visible inside the container today -- that
+#: absence is exactly what makes root_durable a WARN rather than a FAIL.
+DURABLE_MOUNTS = ("/data00", "/data01", "/data02", "/data03")
 
 
 def aupai_root():
@@ -68,9 +71,22 @@ def check_root_durable(root):
         ephemeral = [l.strip() for l in open(ef) if l.strip()]
     else:
         ephemeral = list(EPHEMERAL_MOUNTS)
+    # Severity tracks whether a fix EXISTS, not whether the risk is real. With no durable
+    # mount inside the container there is nothing any run can do about this, and a check no
+    # run can turn green gets --force'd along with the real reds. It still speaks every time.
+    # REVIVAL: the moment a durable drive is mounted in the container, moving AUPAI_ROOT
+    # becomes an executable fix and this goes back to FAIL. That is what DURABLE_MOUNTS tests.
+    df = os.path.join(root, ".durable_mounts")
+    if os.path.exists(df):
+        durable = [l.strip() for l in open(df) if l.strip()]
+    else:
+        durable = [m for m in DURABLE_MOUNTS if os.path.isdir(m)]
     for m in ephemeral:
         if aupai == m or aupai.startswith(m + os.sep):
-            return FAIL, f"root {aupai} is on {m}, a Kubernetes emptyDir -- a pod deletion erases it"
+            note = f"root {aupai} is on {m}, a Kubernetes emptyDir -- a pod deletion erases it"
+            if durable:
+                return FAIL, f"{note}; move AUPAI_ROOT to {durable[0]}"
+            return WARN, f"{note}; no durable mount is visible in the container, so nothing to move to"
     return PASS, f"root {aupai} is not on a known-ephemeral mount"
 
 
@@ -83,6 +99,10 @@ def _broken_root_durable():
     # The root (d) is under its parent -- name the parent as the ephemeral mount.
     with open(os.path.join(d, ".ephemeral_mounts"), "w") as f:
         f.write(os.path.dirname(d) + "\n")
+    # A durable mount exists here, so the violation is fixable and the check must FAIL.
+    # Without one it is a WARN, which is the whole point of the severity split.
+    with open(os.path.join(d, ".durable_mounts"), "w") as f:
+        f.write(d + "\n")
     return d
 
 
@@ -2650,9 +2670,23 @@ def _run_point(step_args, forced):
             print(f"run point: refusing -- frozen config disagrees: {'; '.join(conflicts)}")
             print("  edit data/mix_scale_run_config.json to change the ladder recipe (reopens the ladder)")
             return 2
-        env = dict(
-            os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(len(frozen["cards"].split(",")))
-        )
+        cards = [c.strip() for c in frozen["cards"].split(",") if c.strip()]
+        world = frozen.get("world", len(cards))
+        # `world` is the recipe (card count moves the effective batch and the gradient
+        # noise); `cards` is only which H20s. They used to be one string with NGPU split
+        # out of it, so dropping a card to dodge a busy one silently changed the recipe.
+        if len(cards) != world:
+            print(f"run point: refusing -- cards={frozen['cards']} is {len(cards)} cards, "
+                  f"but the recipe is world={world}. Card COUNT is the ladder; card IDENTITY "
+                  f"is not. Reallocate, do not shrink.")
+            return 2
+        busy = _busy_cards(cards)
+        if busy:
+            print(f"run point: refusing -- card(s) {', '.join(busy)} are in use. DDP is "
+                  f"synchronous, so one contended rank slows all {world}: a launch here "
+                  f"forges a regression rather than measuring one.")
+            return 2
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(world))
         frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
                        for v in (f"--{k}", str(frozen[k]))]
         print(
@@ -2727,6 +2761,27 @@ def _run_ladder(step_args, forced):
     _board_event("ladder_complete", "all six points scored")
     _refresh_board()
     return 0
+
+
+def _busy_cards(cards):
+    """Which of `cards` already has a compute process. nvidia-smi is the only witness that
+    sees other containers' processes; a torch-side check inside this container cannot."""
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=gpu_uuid", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20)
+        uuids = {l.strip() for l in out.stdout.splitlines() if l.strip()}
+        idx = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,uuid", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []  # no nvidia-smi: a dev box, nothing to protect
+    by_uuid = {}
+    for line in idx.stdout.splitlines():
+        if "," in line:
+            i, u = line.split(",", 1)
+            by_uuid[u.strip()] = i.strip()
+    return [c for c in cards if any(by_uuid.get(u) == c for u in uuids)]
 
 
 def run_dispatch(rest):
