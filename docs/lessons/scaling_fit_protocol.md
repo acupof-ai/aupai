@@ -9,7 +9,7 @@ source: "project measurements 2026-08-30 (mix weights, train.py schedule) + Chin
 定稿于六个预算点重跑之前。拟合方式事后挑 = 指标事后挑的孪生问题,所以这份协议和评估面板同规则:
 **第一个点跑完之后不许改,只许发新版并说明。**
 
-**版本**:v1.8(2026-08-30)——§10 修订:ΔE 双测(per-token + per-char),符号规则预注册;补 D 轴重复事实。v1.7 同日。
+**版本**:v1.9(2026-08-30)——D 必须取自 run 日志的 `tokens scheduled` 行(§1 修订);新增 D 偏差容忍度与曲线边界规则。v1.8 同日。
 
 形式:L(D) = E + B/D^β,N 固定(~200M),D = 该点实际调度的训练 token 数。
 六个点 D = 0.2 / 0.3 / 0.4 / 0.8 / 1.6 / 3.24B(×16.2 跨度,五点 ×2 几何级数)。
@@ -21,7 +21,18 @@ source: "project measurements 2026-08-30 (mix weights, train.py schedule) + Chin
 - **val 集 = 每个域 shuffle 后的前 5000 行**(train.py 的 `val_rows_max=5000` 已实现),七点共用同一份。域内 shuffle 是 §6 的硬性前置条件。
 - 同一个语料快照(指纹钉死,3b 重建落地后快照,六点全部在它上面训)、同一个 tokenizer/vocab、bf16 权重、确定性 eval(无采样)。
 - **不用**训练 loss、不用分域 NLL 做主拟合。分域 NLL(面板指标 1)作为二级报告,不进主拟合。
-- D = 实际调度 token 数(`plan.shape[1] × seq`,world-size 取整会切掉几行,按 run 日志的实际值,不按 mix json 的 total_tokens)。
+- D = 实际调度 token 数(**v1.9 修订:必须取自该 run 日志的 `mix: <n> rows = <x>B tokens scheduled` 行,
+  train.py:1384;不按 mix json 的 total_tokens**)。mix json 是预算,不是供给:
+  精确行数实测(harness.py run pretokenize,fb 2026-08-30)总供给 3.6285B,
+  冻结权重下 3.24b 点的需求六域落到行、web_hq 补余量——**真正的缺口在 val 切分**:
+  train.py:1348 在 pool 存在之前先切 n_val(`seqs[n_val:]`),1362 的 epoch cap
+  按 `len(pool)` 量,六个域各被自己的 n_val 封顶(textbook 20.49M / wiki 12.29M /
+  en 8.04M / math 4.08M / code 2.88M / chat 1.91M,合计 49.7M = 预算的 **1.53%**),
+  web_hq 的 +383.6M 余量不重分。**只有 3.24b 点绑定**(五个小点已查,无 cap)——
+  误差全部落在对 β 杠杆最大的点上,把它往左推 1.53%,而 mix 文件声称它在请求位置。
+  每个点记录三个数:D_requested(mix json)、D_scheduled(日志)、gap,并排可见。
+  确认凭证:首个 3.24b run 的 `wants N rows, epoch cap leaves M -> capped` 行
+  (1.53% 是代码路径+行数的预测值,非观测值;fact mlm.mix.val_split_caps_the_largest_point)。
 
 ## 2. 拟合方法(照搬 Chinchilla,一处不改)
 
@@ -241,8 +252,45 @@ SE < 0.2%。"顺序取 + 繁体分布不均 → c 随 D 变" 的情形被代码�
 3.24b 点按 32.4% 权重需 ~1.05B → **epoch 0.73,六个点里没有任何一个把 web_hq
 重复一遍**,重复混杂在 D 轴上不存在。
 
+## 11. D 偏差容忍度与曲线边界(v1.9,看到 3.24b 日志之前写死)
+
+**推导(门槛的依据,先于测量)**:D 误差对拟合的杠杆 = 曲线斜率 × 相对误差。
+最大点每倍增收益 Δ_double ≈ 0.059 nat(β≈0.5、R≈0.2 的量级),相对误差 ε 的
+损失移动 ≈ 0.059·ε/ln2 ≈ 0.085ε nat。达到噪声地板 0.05 需要 ε ≈ 59%——
+**D 误差要到 ~60% 才够格移动拟合**,y 噪声在很宽的范围内压过 x 误差。
+
+**规则**:
+- **|D_scheduled − D_requested| / D_requested ≤ 10%**:吸收为舍入。
+  10% 的杠杆 < 0.01 nat(噪声的 1/5),且远在已知测量值(6.4%)之上。
+  gap 仍逐点记录(§1),不静默。
+- **> 10%**:宣布**曲线边界**——曲线的有效定义域到 D_scheduled 为止,
+  禁止向请求预算方向外推;该点在拟合图上按 D_scheduled 画,误差棒标 gap。
+  这是边界声明,不是舍入吸收。
+- **mix 偏移条款(独立于 D 偏差)**:任何域的 epoch cap 使该域实际份额偏离
+  声明权重 >1pt(总 mix 的 1%),无论 D 差多少都宣布——六点的 mix 恒定是
+  §6 的前置条件,份额偏移是另一个维度的违规。当前已知:3.24b 点 wiki 若 cap,
+  份额偏移 ~0.5pt,在条款内。
+
+**v1.9.1 勘误(fb 2026-08-30 精确行数,同日)**:门槛选定后 fb 更正了供给事实——
+wiki 不缺(早先 6.4% 缺口是采样 bytes/token 估计的误差,±2% 误差棒被用来做了
+细于误差棒的断言);精确行数下六域需求落到行,真正的 cap 是 val 切分(§1 已改写)。
+**预测 gap = 1.53%,在 10% 门槛内 → 吸收为舍入,逐点记 gap,不宣布边界。**
+mix 偏移条款复核:六域各被 n_val 封顶后,份额偏移最大的是 web_hq(+0.51pt,
+因总量缩水而相对上升),全部 <1pt,条款不触发。门槛本身在看到 1.53% 之前选定,
+不受影响;1.53% 是预测值,确认凭证是首个 3.24b run 的 capped 行。
+
 ## Changelog
 
+- **v1.9(2026-08-30,fb 实测供给 + 日志行)**:§1 修订——D 必须取自 run 日志的
+  `tokens scheduled` 行(train.py:1384),不按 mix json 的 total_tokens;逐点记录
+  D_requested/D_scheduled/gap。新增 §11:D 偏差容忍度 10%(杠杆 < 噪声 1/5,
+  按噪声地板反推的 ~59% 取圆整值),超 10% 宣布曲线边界、禁止外推;
+  mix 偏移条款:域份额偏离 >1pt 独立宣布。背景:语料供给 3.619B,3.24b 点
+  wiki 需求超 6.4%,误差全落在 β 杠杆最大的点上。
+  **v1.9.1 勘误(同日,fb 精确行数)**:wiki 不缺——6.4% 是采样估计误差;
+  真正的 cap 是 val 切分(train.py:1348 先切 n_val,六域各被自身 n_val 封顶,
+  合计 1.53%,只绑 3.24b 点)。预测 gap 1.53% < 10% 门槛 → 吸收记 gap,不宣布边界;
+  mix 偏移复核全 <1pt,条款不触发。门槛在看到 1.53% 之前选定,不变。
 - **v1.8(2026-08-30,fb 侦察值 + 方向陷阱)**:§10 修订——
   ΔE 双测(per-token 与 per-char,ΔE_char = E_trad_token·k_trad − E_simp_token·k_simp);
   符号规则预注册(ΔE_token < 0 是切碎伪影,不得读成"繁体更好",信息层只看 ΔE_char);

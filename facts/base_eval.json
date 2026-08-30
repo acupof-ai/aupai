@@ -106,13 +106,16 @@
   },
   {
    "id": "be.mc_language_confound",
-   "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire",
+   "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire. Recheck 2026-08-30 against measured English share 0.75% of tokens (en domain is 85% Chinese-cosmopedia, mlm.corpus.en_domain_is_mostly_chinese; analysis was built against declared 4.95%): conclusions unchanged and strengthened — lower English exposure makes chance-level English MC even more expected, language-confound explanation stronger relative to size. Corollary: the `en` domain NLL row is a second Chinese-cosmopedia sample, NOT an English-ability signal; its steep E2 slope (-0.26, same as textbook) is source-confounded with textbook (same source). Cause traced 2026-08-30: scripts/build_domains.sh:32 builds `--domain en` from cosmopedia_extra.jsonl + en_textbook.jsonl, the larger source is Chinese -- the directory name was a container label that everything downstream read as a language label",
    "measured": "2026-08-30",
-   "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis)",
+   "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis); recheck vs mlm.corpus.en_domain_is_mostly_chinese (fb 2026-08-30)",
    "config": {
     "suite": "5 MC benchmarks, 4 English + ceval",
     "model": "0830v1 ladder, 200M-class",
-    "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale"
+    "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale",
+    "english_share_assumed_original": "4.95% of tokens (declared mix weight)",
+    "english_share_measured": "0.75% of tokens (en domain 85% Chinese-cosmopedia)",
+    "recheck_2026_08_30": "conclusions unchanged, strengthened; en-domain NLL relabeled as Chinese-cosmopedia"
    },
    "uncertainty": null,
    "status": "recorded"
