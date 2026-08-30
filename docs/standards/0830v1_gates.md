@@ -74,6 +74,21 @@ English is 0.75% of training tokens, not the declared 4.95%, and chinese-cosmope
 over-read. The curve is unaffected — all six points share the composition — so the fix is
 the six `_comment` strings, not any weight (`mlm.corpus.en_domain_is_mostly_chinese`).
 
+The cause is not a mystery and does not need to be recorded as one. `scripts/build_domains.sh:32`
+builds the domain from two sources in one command:
+
+```
+has en && "${BC[@]}" --domain en --filters light --target_tokens 1e9 --no_near_dedup \
+  --source jsonl:data/cosmopedia_extra.jsonl \
+  --source jsonl:data/en_textbook.jsonl
+```
+
+`scripts/rebuild_corpus.sh:37` repeats it. So `en` never meant "English" — it meant "the
+domain holding these two files", and the larger of the two is Chinese. The name was read as
+a language label by everyone downstream, including the mix `_comment`. Nothing was
+misfiled; a directory name was trusted as a content claim. The general form is already a
+rule here: metadata is a claim about provenance, not about content.
+
 ### What runs before the ladder
 
 Tokenization is paid once. Then eight 0.2b runs, then the ladder. The eight are not a
@@ -115,7 +130,7 @@ information the name doesn't.
 
 | gate | opens when | evidence | owner | status |
 |---|---|---|---|---|
-| **harness-green** | `harness.py check` and `--selftest` both exit 0, on the pod | both exit codes | aupai-de | RED: `restartability` flags `scripts/_audit_anchor.py` and `algorithms/rl.py`. Neither is on the training path |
+| **harness-green** | `harness.py check` and `--selftest` both exit 0, on the pod | both exit codes | aupai-de | **OPEN** 2026-08-30: pod `check` exit 0, `--selftest` exit 0 (21 checks each verified to FAIL on a broken world). Both verified by the controller, not reported |
 | **metric-panel** | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_panel.md` + `facts/base_eval.json` | lessons-b0 | OPEN, frozen |
 | **panel-runners** | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; LAMBADA-zh needs the held-out slice from the rebuilt corpus. The generative metric SKIPs by rule |
 | **step-time-profile** | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | OPEN; roofline table landed, kernel line closed |

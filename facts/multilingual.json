@@ -778,11 +778,12 @@
           "chinese_cosmopedia_share": 0.538,
           "mix_comment_claims": 0.496
         },
-        "curve_impact": "none -- all six budget points share the composition, so L(D) is measured at a fixed mix; only the DESCRIPTION of that mix was wrong"
+        "curve_impact": "none -- all six budget points share the composition, so L(D) is measured at a fixed mix; only the DESCRIPTION of that mix was wrong",
+        "cause": "scripts/build_domains.sh:32 builds --domain en from two sources, jsonl:data/cosmopedia_extra.jsonl and jsonl:data/en_textbook.jsonl; scripts/rebuild_corpus.sh:37 repeats it. The domain name was a container label, read downstream as a language label."
       },
       "uncertainty": "+-1pp (400 docs/shard)",
       "status": "measured",
-      "boundary": "says what the en directory contains, not why cosmopedia_extra was filed there"
+      "boundary": "says what the en directory contains and which command built it; does not say whether the two sources were meant to be one domain"
     }
   ]
 }
