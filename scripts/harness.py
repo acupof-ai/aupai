@@ -1989,7 +1989,7 @@ def _run_ladder(step_args, forced):
     done = set()
     if os.path.exists(rec):
         for line in open(rec, encoding="utf-8"):
-            m = re.search(r'"ckpt": "ckpt_(.+)\.pt"', line)
+            m = re.search(r'"ckpt": "ckpt_(.+?)\.pt"', line)
             if m:
                 done.add(m.group(1))
     for name, mix in LADDER:
