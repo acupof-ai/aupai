@@ -14,6 +14,8 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **Per-component time (4-GPU bucket50 profile, 5 active steps) and FLOPS (architecture-derived):**
 
+> **⚠️ Profiler bias warning (2026-08-30)**: These numbers are from profiled traces. Profiler inflation is **non-uniform across kernels** — overall step 1.85×, LM head bf16 GEMM 2.1× (226ms profiled vs 105ms no-profiler, CUDA event). Component percentages below are **biased and should not be cited** until recalculated with no-profiler measurements. Total MFU (31%) is from wall-clock and is unaffected.
+
 | Component | ms/step | Time % | FLOPS % | Efficiency |
 |---|---|---|---|---|
 | FP8 GEMM (`_scaled_mm`, `nvjet_qqtst_*`) | 533 | 29% | ~84% | **93% of FP8 peak** (tilerl, exact FLOP from shapes) |
@@ -31,9 +33,16 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 **Key findings**:
 - FP8 GEMMs at 93% of peak (no headroom — tilerl's exact measurement)
 - bf16 226ms is **LM head** (Liger FLCE internal matmul), not attention — confirmed by kernel name prefix (`nvjet_tst_*` = bf16, `nvjet_qqtst_*` = FP8; tilerl GPU7 实测)
+- **No-profiler LM head: 104.7 ms/step** (CUDA event, GPU0, 2026-08-30) — profiled 226ms was 2.1× inflation
 - Flash attention confirmed in use (68.8ms/step, matches tilerl's 69ms)
 - KDA kernel at ~3% of FP8 peak (240ms for ~2% of FLOPS)
 - Non-GEMM time = 53% of step, contributes ~3% of FLOPS
+
+**64K→75K throughput gain decomposition** (three confounded changes, not additive — ceiling at 75K):
+- bucket_cap_mb 100→50: +14.1% (3-GPU isolated A/B)
+- vocab padding 32773→32776: LM head saves 80ms/982ms = 8.1% (single-kernel isolated)
+- chunk_size 64→32: ~2% (tilerl)
+- Combined effect is bounded by the 75K ceiling; individual effects overlap and are not additive
 
 **MFU scenarios** (corrected 2026-08-30 after GEMM efficiency reconciliation):
 - Current: 31%
