@@ -6,7 +6,7 @@ column in place; do not add a second copy of this table anywhere.
 
 Architecture is fixed for this round: KDA (9 layers) + full causal gated MLA (3 layers,
 latent=d/4) + AttnRes Full (blocks=0), NoPE throughout. Commit b3cad87. Changing it
-reopens G3.
+reopens corpus-ready.
 
 ## Run config for all six budget points
 
@@ -78,20 +78,24 @@ no resolution, and the question is re-asked for free on the 3.24b checkpoint.
 
 ## Gates
 
+Gates are named for what they gate. The old G0-G5 labels are gone: a reader had to hold
+a lookup table in their head to follow a status line, and the labels carried no
+information the name doesn't.
+
 | gate | opens when | evidence | owner | status |
 |---|---|---|---|---|
-| G0 harness green | `harness.py check` and `--selftest` both exit 0, on the pod | both exit codes | aupai-de | GREEN; pod 6/7, only `web_hq` red by design |
-| G1 metric panel | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_panel.md` + `facts/base_eval.json` | lessons-b0 | GREEN, frozen |
-| G1b panel runners | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; #3 LAMBADA-zh needs the held-out slice from the rebuilt corpus. #6 generative SKIPs by rule |
-| G2 profile | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | GREEN; roofline table landed, kernel line closed |
-| G2b fit protocol | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` v1.1 + `scripts/fit_scaling.py` | lessons-b0 | GREEN, frozen |
-| G3 corpus | `web_hq` rebuilt, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | 62 real shards on the pod (5.5GB, no symlinks); token count, holdout order, fingerprint and the PROVENANCE block are all still missing |
-| G3b warmup | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | GREEN; fixed warmup=20, `eff.warmup_absolute_not_fractional` |
-| G4 six points | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | blocked on G3, G3b |
-| G5 scaling curve | the fit runs and its verdict is recorded | `fit_scaling.py` output with RMS and the beta profile interval | aupai-fb | blocked on G4 |
+| **harness-green** | `harness.py check` and `--selftest` both exit 0, on the pod | both exit codes | aupai-de | RED: `restartability` flags `scripts/_audit_anchor.py` and `algorithms/rl.py`. Neither is on the training path |
+| **metric-panel** | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_panel.md` + `facts/base_eval.json` | lessons-b0 | OPEN, frozen |
+| **panel-runners** | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; LAMBADA-zh needs the held-out slice from the rebuilt corpus. The generative metric SKIPs by rule |
+| **step-time-profile** | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | OPEN; roofline table landed, kernel line closed |
+| **fit-protocol** | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` + `scripts/fit_scaling.py` | lessons-b0 | OPEN, frozen at v1.8 |
+| **corpus-ready** | `web_hq` rebuilt, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | **OPEN** 2026-08-30: fp `30838d423348b2e5`, 1,366,324 docs, 5.91GB, 1.434B tokens; `corpus_fp_matches` 7/7 on the pod |
+| **warmup-stable** | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | OPEN; fixed warmup=20, `eff.warmup_absolute_not_fractional` |
+| **six-points** | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | waiting on harness-green |
+| **scaling-curve** | the fit runs and its verdict is recorded | `fit_scaling.py` output with RMS and the beta profile interval | aupai-fb | waiting on six-points |
 
-Kernel work (tilerl-bench-harness-plan) runs alongside and gates on G2 for target
-selection, not on G0. It lands only through the five correctness gates in its brief:
+Kernel work (tilerl-bench-harness-plan) runs alongside and gates on step-time-profile for target
+selection, not on harness-green. It lands only through the five correctness gates in its brief:
 fp64 reference no worse than the kernel it replaces, bit-exact reruns, 200-step
 step-by-step loss comparison, `test_arch_compat` coverage, and a working fallback.
 
