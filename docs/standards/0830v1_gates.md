@@ -96,6 +96,19 @@ show wiki is not short of corpus at all. The sampled number was used to make a c
 than its own error bar — the same shape as two earlier errors this round. The finding
 survives with a different cause and a larger magnitude, but it was luck, not method.
 
+A retracted number does not stop travelling when it is retracted. fit-protocol v1.9
+(`f77310b`) justifies its 10% tolerance as "far above the known measured value (6.4%)" —
+positioning a threshold above a quantity that no longer exists. The threshold itself is
+sound and independent: leverage < 0.01 nat, one fifth of the noise floor, from a ~59%
+back-derivation that never references the observed gap. The citation is the defect, not the
+number. Two consequences, both cheap: the 6.4% clause comes out, and the tolerance is
+labelled as derived-and-written-after rather than pre-registered, because 1.53% was known
+to its author before it was written. The call is identical either way — 1.53% is 6.5x
+inside 10% — so the only thing at stake is whether a later reader can tell a derived
+threshold from a fitted one. This repo has paid for that distinction once already: a
+pre-registered null was written up as settled, and its amendment is labelled as written
+afterwards.
+
 **The `en` domain is 85% Chinese.** Per-shard Han census, 400 docs per shard:
 `cosmopedia_extra_000..006` is 690.3MB at 82.9–84.1% Han (chinese-cosmopedia, the same
 source as `textbook`); `en_textbook_000..001` is 122.9MB at 0.0%. At the frozen weights
@@ -164,7 +177,7 @@ information the name doesn't.
 | **metric-panel** | the 200M resolution panel is committed and frozen | `docs/lessons/base_eval_panel.md` + `facts/base_eval.json` | lessons-b0 | OPEN, frozen |
 | **panel-runners** | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; LAMBADA-zh needs the held-out slice from the rebuilt corpus. The generative metric SKIPs by rule |
 | **step-time-profile** | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | OPEN; roofline table landed, kernel line closed |
-| **fit-protocol** | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` + `scripts/fit_scaling.py` | lessons-b0 | OPEN, frozen at v1.8 |
+| **fit-protocol** | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` + `scripts/fit_scaling.py` | lessons-b0 | OPEN, frozen at v1.9 (`f77310b`): D from `train.py:1384`, 10% tolerance, val-split correction. One line still cites the retracted 6.4% |
 | **corpus-ready** | `web_hq` rebuilt, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | **OPEN** 2026-08-30: fp `30838d423348b2e5`, 1,366,324 docs, 5.91GB, 1.434B tokens; `corpus_fp_matches` 7/7 on the pod |
 | **warmup-stable** | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | OPEN; fixed warmup=20, `eff.warmup_absolute_not_fractional` |
 | **six-points** | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | waiting on harness-green |
