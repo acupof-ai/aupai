@@ -1448,6 +1448,8 @@ def main():
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1% vs 100, eff.bucket_cap_mb_ab)")
+    parser.add_argument("--no_static_graph", action="store_true", help="disable DDP static_graph (A/B: 5K overhead hunt)")
+    parser.add_argument("--no_bucket_view", action="store_true", help="disable DDP gradient_as_bucket_view (A/B: 5K overhead hunt)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
@@ -1573,7 +1575,8 @@ def main():
     model = raw_model
     if ddp:
         model = DDP(
-            model, device_ids=[local], bucket_cap_mb=args.bucket_cap_mb, gradient_as_bucket_view=True, static_graph=True
+            model, device_ids=[local], bucket_cap_mb=args.bucket_cap_mb,
+            gradient_as_bucket_view=not args.no_bucket_view, static_graph=not args.no_static_graph
         )
     if Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = 64
