@@ -71,6 +71,7 @@ def main():
                          "both zero => the zero is not a prompt-format artefact)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
+    ap.add_argument("--out", default=None, help="write JSON summary to this path")
     args = ap.parse_args()
 
     # dtype goes through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to
@@ -111,11 +112,18 @@ def main():
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
 
     delta = 1.4 / (total ** 0.5)
-    print(f"L1 math-500 few-shot: {correct}/{total} = {correct / total:.1%}")
+    acc = correct / total
+    print(f"L1 math-500 few-shot: {correct}/{total} = {acc:.1%}")
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
           f"instrument exists iff acc > {2 * delta:.1%}")
     print(f"answer-present rate {n_box / total:.1%}")
     print(f"preds saved: {preds_path}")
+
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump({"correct": correct, "total": total, "acc": acc,
+                        "binomial_delta": delta, "answer_present_rate": n_box / total,
+                        "demos": args.demos, "preds_path": preds_path}, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":

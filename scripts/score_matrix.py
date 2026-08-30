@@ -56,7 +56,7 @@ SKIP_REASON = {
     "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
-    "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); script pending b0 hand-run",
+    "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); few-shot continuation math",
 }
 
 # Seed variance (sd) per metric at 0.2b, df=3, from ckpt_p02_s0..s3.
@@ -195,12 +195,11 @@ def metric_math_v2_like(ckpt_path):
 
 def metric_l1_fewshot(ckpt_path):
     """Reasoning panel L1: few-shot continuation math (docs/lessons/reasoning_panel.md §2).
-    2-3 solved examples in prompt, model continues, exact-match on boxed/last number.
-    N>=500, binomial delta=1.4/sqrt(N)≈6.3pt. Zero GPU cost (prompt engineering only).
-    Script pending b0 hand-run; returns error until eval/l1_fewshot.py lands."""
+    3 solved demos in prompt, model continues, exact-match on boxed/last number.
+    N=497, binomial delta=1.4/sqrt(N)≈6.3pt. Script: eval/l1_fewshot.py."""
     script = os.path.join(ROOT, "eval", "l1_fewshot.py")
     if not os.path.exists(script):
-        return None, "eval/l1_fewshot.py not yet written (b0 hand-running, 2026-08-30)"
+        return None, "eval/l1_fewshot.py not found"
     return _run_eval_json("l1_fewshot.py", ckpt_path)
 
 
