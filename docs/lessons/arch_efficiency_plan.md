@@ -53,24 +53,32 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **Biggest lever**: KDA (240ms, 2% FLOPS, 3% peak) and generic overhead (~256ms, was 478ms — 222ms LM head misattributed to generic, corrected 2026-08-30). GEMM efficiency is not a lever.
 
-## 2. Controlled Architecture A/B (old vs new)
+## 2. KDA vs More Attention A/B (approved 2026-08-30, runs before six points)
 
-**Design**: Old architecture (sliding window + blocks=4) vs new (full causal MLA + AttnRes Full), same config, same corpus.
+**Design**: `--attn_every 1` (12 GatedMLA, all-attention) vs `--attn_every 4` (9 KDA + 3 GatedMLA, current), same config, same corpus.
 
-**Confounds controlled**: vocab (32776), chunk_size (32), bucket_cap_mb (50), warmup (1% floor 2), lr_scale (1.0), batch (16/accum2), corpus (same shards).
+**Why not old-vs-new (b)**: Sliding window was deleted in b3cad87. It was never a valid control — `infer_local.py` never implemented the window (train/infer inconsistency). Re-adding it would reproduce a bug. tilerl already measured the +17.2% decomposition item-by-item. (b) is out, not queued.
 
-**Confounds NOT controlled** (in the old-vs-new six-point comparison): lr_scale (0.5→1.0), warmup (150→2), corpus shards. The controlled A/B fixes these.
+**Config (both arms)**: vocab=32784, chunk_size=32, bucket_cap_mb=50, warmup=20, batch=32/accum1, same corpus shards, same mix.
 
-**Cost**: 0.2b point = 218 steps = ~6 min/run (75K tok/s/gpu, 7 GPUs). Tokenization shared, already paid.
+**Param difference**: Current 206M vs all-attention 194M (-5.8%). KDA 5.26M/layer vs GatedMLA 3.93M/layer.
 
-**Seed requirement** (anchor: `ds.kaplan_noise`, σ=0.05 nat):
-- 1 seed: MDE ≈ 0.05 — only detects large effects
-- **4 seeds × 2 arms: ~50 min, MDE ≈ 0.035** ← minimum
-- 8 seeds × 2 arms: ~100 min, MDE ≈ 0.025
+**Param matching**: Primary test does NOT match. If KDA wins ≥ MDE, MUST run `--ffn_hidden 3392` matched arm (3392 = 16×212, FP8-compatible; 3400 breaks `_fp8_ok` 16-alignment). If all-attention wins, no matched arm needed (fewer params and still wins = strong result).
 
-**Rule**: Never interpret a single-seed difference < 0.05 as a conclusion. If result is at MDE boundary, add seeds.
+**Long dependency**: Full causal attention covers 4096 positions. KDA's long-range rationale (carry beyond attention window) is already covered. KDA may still provide compression, different inductive bias, or chunk-level features (short_conv). This test answers whether KDA adds value at 4096 context.
 
-**What it answers**: Architecture effect on loss at 0.2b tokens. If significant, validate at 0.3b/0.4b (interleave with six points, ~30 min total).
+**Metrics**: Primary = per-domain NLL (4 seed × 2 arm, MDE≈0.035). Secondary = CLiMP/LAMBADA/math v2 (may lack resolution at 0.2b, trend only). Throughput also reported (expected +2% for all-attention).
+
+**Cost**: 4 seeds × 2 arms × ~6 min = ~48 min (0.2b, 7 GPUs). Tokenization shared with six points, paid once.
+
+**Pre-registered decision rules** (b0 writes pre-registration doc):
+- All-attention wins ≥ MDE → ladder switches to `attn_every 1`. Corpus unchanged, G3 not re-opened.
+- KDA wins ≥ MDE → **unreadable** until `--ffn_hidden 3392` matched arm runs.
+- |gap| < MDE → KDA stays, recorded as "0.2b no resolution", re-asked at 3.24b checkpoint (free, no extra run).
+
+**Prerequisite**: tilerl measures `attn_every 1` memory at batch 32/accum1 (60-step probe). If arms need different batch sizes, that's a confound — must know before the 8 formal runs.
+
+**Scheduling**: Runs BEFORE six points, right after tokenize. (c) first = +48min fixed; ladder first = one branch might need 3.5h re-run.
 
 ## 3. Old-vs-New Six-Point Comparison (zero-cost, post six-points)
 
@@ -93,11 +101,12 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 | Choice | Cost | Benefit | Experiment |
 |---|---|---|---|
 | AttnRes | 13.4% e2e | never measured | `--no_attn_res` vs default, same tokens, compare val loss |
-| KDA vs attention | 11.7% kernel | never measured | Replace KDA with standard attention, same params, compare loss + throughput |
+
+Note: KDA vs attention (section 2) moved to BEFORE six points (fb approved 2026-08-30).
 
 ## Priority
 
-1. **Controlled A/B** (4 seed × 2 arm, ~50 min) — can interleave with six points
-2. **MFU upper bound refinement** — per-GEMM-size efficiency microbenchmarks
+1. **KDA vs attention A/B** (4 seed × 2 arm, ~48 min) — runs BEFORE six points, after tilerl memory probe
+2. **Post-padding 7-GPU efficiency baseline** — when six points start (current baseline is stale: single-GPU, pre-compile, pre-fp8, pre-padding)
 3. **Old-vs-new comparison** — zero-cost, post six-points
-4. **AttnRes/KDA A/B** — post six-points, needs checkpoints
+4. **AttnRes A/B** — post six-points, needs checkpoints
