@@ -202,8 +202,8 @@ def main():
             f"a '# restartable: <why>' line saying why an interrupt is cheap"
         )
     print(
-        f"restartability_audit: {len(risky)} at risk ({len(new)} new), {len(exempt)} exempt, "
-        f"{len(rows)} scanned, {len(known)} in baseline"
+        f"restartability_audit: {len(risky)} at risk ({len(new)} new, {len(known)} SILENCED by baseline), "
+        f"{len(exempt)} exempt, {len(rows)} scanned"
     )
     if args.json:
         with open(args.json, "w") as f:

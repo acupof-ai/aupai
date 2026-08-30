@@ -7,6 +7,7 @@ Two rules:
 
 python scripts/harness.py            # check + status
 python scripts/harness.py check      # invariants only; exit 1 on any failure
+python scripts/harness.py run <step> # the only verb that executes; refuses while check is red
 python scripts/harness.py ledger     # provenance and score, one row per checkpoint
 python scripts/harness.py gaps       # what is NOT measured, stated out loud
 python scripts/harness.py measure    # ...then GO MEASURE IT (full matrix, records itself)
@@ -1495,6 +1496,9 @@ def _demo():
     assert score_from("math-hard deferred to the bench stage") is None, "invented a score"
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
 
+    # run dispatch: a missing or unknown step is a usage error, not a silent exit 0
+    assert run_dispatch([]) == 2 and run_dispatch(["bogus"]) == 2
+
     saved = os.path.join(ROOT, "runs", "experiments.jsonl")
     if os.path.exists(saved) and os.path.getsize(saved):
         # Only when the log carries math-hard-shaped results: a fresh log (the 0830v1 reset
@@ -1547,10 +1551,66 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
+STEPS = ("pretokenize",)  # point and ladder land next, behind the same gate
+
+
+def _gate(force):
+    """The red invariants, by name and evidence. A runnable step needs none: 'no GPU
+    pretraining while harness is red' was a doc line nothing executed until this."""
+    reds = [(n, ev) for n, s, ev, _a, _i in run_checks(ROOT, quiet=True) if s == FAIL]
+    for n, ev in reds:
+        print(f"  RED {n}: {ev}")
+    if reds and not force:
+        print("REFUSING to run while harness is red. Pass --force to override "
+              "(the reds are recorded in the exp row).")
+    return reds
+
+
+def _exp(action, **kw):
+    cmd = [sys.executable, os.path.join(HERE, "exp.py"), action]
+    for k, v in kw.items():
+        cmd += [f"--{k}", str(v)]
+    subprocess.run(cmd, cwd=ROOT, check=False)
+
+
+def _run_pretokenize(step_args, forced):
+    cmd = [sys.executable, os.path.join(HERE, "pretokenize.py"), *step_args]
+    _exp("start", name="pretokenize", cmd=" ".join(cmd),
+         hypothesis=f"tokenize every mix domain into its cache before training{forced}")
+    r = subprocess.run(cmd, cwd=ROOT)
+    _exp("done", name="pretokenize", result=f"exit {r.returncode}",
+         finding="caches warm" if r.returncode == 0 else "pretokenize failed",
+         decision="training can launch on warm caches" if r.returncode == 0 else "fix the failure before launching",
+         status="ok" if r.returncode == 0 else "fail")
+    return r.returncode
+
+
+def run_dispatch(rest):
+    """`harness run <step>` -- the only verb that executes. Thin dispatch, no new logic:
+    every step refuses while check is red (--force records the reds in the exp row),
+    writes its own exp.py start/done, and scores what it produced."""
+    if not rest or rest[0] not in STEPS:
+        print(f"usage: harness.py run <{'|'.join(STEPS)}> [step flags] [--force]")
+        return 2
+    step, step_args = rest[0], list(rest[1:])
+    force = "--force" in step_args
+    if force:
+        step_args.remove("--force")
+    reds = _gate(force)
+    if reds and not force:
+        return 1
+    forced = f" [FORCED, red: {', '.join(n for n, _ in reds)}]" if reds else ""
+    if step == "pretokenize":
+        return _run_pretokenize(step_args, forced)
+    return 2
+
+
 def main():
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
     # failure mode this file exists to prevent.
+    if len(sys.argv) > 1 and sys.argv[1] == "run":
+        return run_dispatch(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages"]
