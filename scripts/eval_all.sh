@@ -22,7 +22,7 @@ VOCAB=$(python3 -c "
 import torch, sys
 ck = torch.load('$CKPT', map_location='cpu', weights_only=False)
 c = ck['cfg']
-print(c.get('vocab'), bool(c.get('fone')))
+print(c.get('vocab_real', c.get('vocab')), bool(c.get('fone')))
 ")
 read -r CKPT_VOCAB IS_FONE <<< "$VOCAB"
 TOK_VOCAB=$(python3 -c "from tokenizers import Tokenizer; print(Tokenizer.from_file('$TOK').get_vocab_size())")
