@@ -67,7 +67,15 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **Long dependency**: Full causal attention covers 4096 positions. KDA's long-range rationale (carry beyond attention window) is already covered. KDA may still provide compression, different inductive bias, or chunk-level features (short_conv). This test answers whether KDA adds value at 4096 context.
 
-**Metrics**: Primary = per-domain NLL (4 seed × 2 arm, MDE≈0.035). Secondary = CLiMP/LAMBADA/math v2 (may lack resolution at 0.2b, trend only). Throughput also reported.
+**Metrics**: Primary = per-domain NLL. Secondary = CLiMP/LAMBADA/math v2 (may lack resolution at 0.2b, trend only). Throughput also reported.
+
+**0.2b A/B cancelled (2026-08-30)**: Control arm (4 seeds, `attn_every 4`) ran as ladder's 0.2b point. Measured σ̂ = 0.0516 (3 df), 1.47× the 0.035 design assumption (which came from a fit residual, not seed variance — different quantities). MDE at 4+4 = 0.1021 > b0's 0.08 gate; even 8+8 = 0.0722 still misses. Treatment arm (`attn_every 1`) does not run at 0.2b. Question moves to 3.24b checkpoint comparison (free: control is the ladder's own checkpoint).
+
+**σ̂ boundary**: measured at 218 steps. More steps may average seed effects down — 0.0516 may be an upper bound for larger points. Not assumed either way.
+
+**Control arm data** (`ds.seed_variance_0p2b`, `ds.mde_recomputed_from_measured_sigma` in `facts/data_scaling.json`):
+- s0=3.691, s1=3.762, s2=3.679, s3=3.638; mean=3.6925, range=0.1240, σ̂=0.0516
+- Throughput: 75K tok/s/gpu flat across 217 steps, MFU 31-32% (prediction held)
 
 **Memory probe** (tilerl, H20 GPU0, batch 16, seq 4096, bf16, no compile, no fp8, 3-step avg):
 - `attn_every 4` (current): 66.3GB peak, 1537.8ms/step, 42616 tok/s
@@ -77,16 +85,37 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 - Both arms at batch 16 are memory-safe. The constrained arm is `attn_every 4` (66.3GB), not all-attention.
 - 66.3GB is a lower bound (single-process, no compile, no fp8); not comparable to the 50.8GB measured with fp8+compile.
 
-**Cost**: 4 seeds × 2 arms × ~6 min = ~48 min (0.2b, 7 GPUs). Tokenization shared with six points, paid once.
+**Cost**: 0.2b A/B cancelled (MDE > gate). 3.24b comparison: ~103 GPU-minutes for 1 treatment seed (control is ladder's own checkpoint, free).
 
-**Pre-registered decision rules** (b0 writes pre-registration doc):
-- All-attention wins ≥ MDE → ladder switches to `attn_every 1`. Corpus unchanged, G3 not re-opened.
-- KDA wins ≥ MDE → **unreadable** until `--ffn_hidden 3392` matched arm runs.
-- |gap| < MDE → KDA stays, recorded as "0.2b no resolution", re-asked at 3.24b checkpoint (free, no extra run).
+**Pre-registered decision rules (0.2b, superseded)**:
+- ~~All-attention wins ≥ MDE → ladder switches to `attn_every 1`~~ — cancelled, MDE > gate
+- ~~KDA wins ≥ MDE → unreadable until matched arm~~ — cancelled
+- ~~|gap| < MDE → KDA stays~~ — cancelled, question moves to 3.24b
 
-**Prerequisite**: tilerl measures `attn_every 1` memory at batch 32/accum1 (60-step probe). If arms need different batch sizes, that's a confound — must know before the 8 formal runs.
+**3.24b checkpoint comparison design** (draft, b0 pre-registers reading rules):
 
-**Scheduling**: Runs BEFORE six points, right after tokenize. (c) first = +48min fixed; ladder first = one branch might need 3.5h re-run.
+At 3.24b, the control is the ladder's own checkpoint (`attn_every 4`, already paid for). The treatment requires a `attn_every 1` run at 3.24b tokens.
+
+**Option A — Direct comparison (clean, costs one 3.24b run ~103 min)**:
+- Run `attn_every 1` at 3.24b, 1 seed (add seeds if σ̂ at 3.24b requires)
+- Evaluate both checkpoints on same val set (same val_batches, same val prefix)
+- Compare per-domain NLL
+- Reading: |gap| vs MDE (calculated from σ̂ at 3.24b, measured from ladder seeds if available)
+- If all-attention wins ≥ MDE → switch. If KDA wins ≥ MDE → param-matched arm. If < MDE → no resolution at 3.24b either.
+
+**Option B — Scaling law residual (free, indirect)**:
+- Fit scaling law to ladder data (0.2b → 1.6b, `attn_every 4`)
+- Predict 3.24b loss, compare with actual
+- If actual >> predicted → architecture may be bottleneck (but doesn't distinguish KDA vs other causes)
+- Does NOT directly compare `attn_every 1` vs `attn_every 4`
+
+**Recommendation**: Option A. Option B is a free sanity check but can't answer the KDA question. The 3.24b run is expensive but it's the only clean comparison. If σ̂ at 3.24b is lower (fb: "may be an upper bound"), 1 seed may suffice.
+
+**Key difference from 0.2b reading rules**: At 3.24b, the comparison is between checkpoints, not fresh runs. The reading rules must account for: (1) σ̂ at 3.24b may differ from 0.0516, (2) the treatment checkpoint starts from random init (not warm-started from KDA), (3) the val evaluation must be identical (same batches, same prefix, same scoring script).
+
+**Prerequisite**: ~~tilerl memory probe~~ DONE (2026-08-30): both arms memory-safe at batch 16, all-attention saves 12.4GB but 3.3% slower.
+
+**Scheduling**: 0.2b A/B cancelled (σ̂ too high). Question moves to 3.24b checkpoint comparison. Control arm (4 seeds at 0.2b) already ran as ladder's 0.2b point — σ̂ measurement was free.
 
 ## 3. Old-vs-New Six-Point Comparison (zero-cost, post six-points)
 
@@ -114,7 +143,7 @@ Note: KDA vs attention (section 2) moved to BEFORE six points (fb approved 2026-
 
 ## Priority
 
-1. **KDA vs attention A/B** (4 seed × 2 arm, ~48 min) — runs BEFORE six points, after tilerl memory probe
+1. **KDA vs attention at 3.24b** — checkpoint comparison, design drafted above, b0 pre-registers reading rules
 2. **Post-padding 7-GPU efficiency baseline** — when six points start (current baseline is stale: single-GPU, pre-compile, pre-fp8, pre-padding)
 3. **Old-vs-new comparison** — zero-cost, post six-points
 4. **AttnRes A/B** — post six-points, needs checkpoints
