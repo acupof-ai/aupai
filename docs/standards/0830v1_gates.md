@@ -43,6 +43,31 @@ score-matrix record when it ends. A point that dies is rerun once at the same co
 a second failure escalates. Per the frozen fit protocol, a point is never dropped
 because it fits badly.
 
+### What runs before the ladder
+
+Tokenization is paid once. Then eight 0.2b runs, then the ladder. The eight are not a
+detour: four of them are the ladder's own 0.2b point plus its seed replicates.
+
+| runs | what | serves |
+|---|---|---|
+| 4 | current arch, `attn_every 4`, seeds 0-3 | ladder's 0.2b point (seed 0); the seed-variance measurement; lessons-e1's control arm; lessons-44's F arm |
+| 4 | `attn_every 1`, seeds 0-3 | lessons-e1's KDA-vs-full-attention arm |
+
+Seed variance has never been measured in this repo, and two experiments had already
+been designed against an assumed value — lessons-e1 assumed 0.035 as seed variance,
+lessons-44 assumed the same 0.035 taken from a fit residual. Those are different
+quantities: a residual carries model misspecification, seed variance does not. The four
+replicate runs give the real number with 3 degrees of freedom, and every MDE in this
+round is recomputed from it.
+
+The KDA A/B runs before the ladder because only one of its outcomes is expensive to
+learn late: if full attention wins, the ladder is measuring an architecture we are about
+to change, and re-running it costs 3.5 hours. The A/B costs 48 minutes.
+
+Reading rules for the A/B are pre-registered by lessons-b0 before any of it runs, not by
+the session that designed it. A null does not delete KDA — a null at 0.2b says 0.2b has
+no resolution, and the question is re-asked for free on the 3.24b checkpoint.
+
 ## Gates
 
 | gate | opens when | evidence | owner | status |
@@ -52,7 +77,7 @@ because it fits badly.
 | G1b panel runners | every panel metric has a runner that passes its known-answer gate | `eval/` runners + `be.known_answer_panel_3_4` | lessons-b0 | 5 of 6; #3 LAMBADA-zh needs the held-out slice from the rebuilt corpus. #6 generative SKIPs by rule |
 | G2 profile | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | GREEN; roofline table landed, kernel line closed |
 | G2b fit protocol | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` v1.1 + `scripts/fit_scaling.py` | lessons-b0 | GREEN, frozen |
-| G3 corpus | `web_hq` rebuilt from fineweb2, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | in progress, 36-way build |
+| G3 corpus | `web_hq` rebuilt, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | 62 real shards on the pod (5.5GB, no symlinks); token count, holdout order, fingerprint and the PROVENANCE block are all still missing |
 | G3b warmup | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | GREEN; fixed warmup=20, `eff.warmup_absolute_not_fractional` |
 | G4 six points | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | blocked on G3, G3b |
 | G5 scaling curve | the fit runs and its verdict is recorded | `fit_scaling.py` output with RMS and the beta profile interval | aupai-fb | blocked on G4 |
@@ -77,14 +102,20 @@ step-by-step loss comparison, `test_arch_compat` coverage, and a working fallbac
 ## GPU allocation
 
 aupai-fb allocates all 8 cards. Nobody starts a GPU process without asking; kill only by
-exact PID, never `pkill -f`. Current plan, in order:
+exact PID, never `pkill -f`.
 
-- **Phase A (now)**: GPU 0-7 free. lessons-e1 profiles the real 7-card DDP config for G2;
-  tilerl runs `attn_res_bench.py --full` and `bench_gated_mla.py --full` on GPU 0.
-  Both are minutes, and the profile must precede the long run — a 5-hour run started
-  before we know where its time goes cannot be re-decided afterwards.
-- **Phase B**: GPU 1-7 run the 0.2b pretrain. GPU 0 goes to aupai-3b for quality-head
-  scoring.
+All 8 cards are idle as of 2026-08-30 05:00 (the 27B service and the quality-head scoring
+were both killed by exact PID). The lanes for the rest of this round:
+
+- **GPU 1-7**: the six budget points, sequentially. Nothing else runs there while a point
+  is training — card count is part of the run config, so a competing process invalidates
+  the point it overlaps.
+- **GPU 0**: benchmarks, `score_matrix`, probes. Ask before starting; a run there is
+  minutes, not hours.
+
+There is no quality-head scoring lane this round. The six points train on `web_hq` built
+without the quality cut; that cut becomes the W arm of 44's W/F experiment instead of a
+prerequisite for training.
 
 ## The 0.2b point, 2026-08-30: trained on the wrong corpus
 
@@ -120,6 +151,14 @@ appearance of having been checked. Both guards below close that gap.
   mix by name, never by repointing an existing domain.
 - A partial check that reports PASS is a defect. State the coverage in the evidence
   string, and FAIL when coverage is incomplete.
+- A check must not pass for a reason unrelated to what it checks. The restartability
+  check was built because `train_quality_head.py` loses everything on interrupt, and its
+  first version silenced that exact script: a substring heuristic saw `glob(` and
+  `checkpoint` in the file and read them as evidence of resumability. Same shape as the
+  27B service reporting healthy on `/v1/models` while its engine was dead. A heuristic
+  over substrings is not evidence; the only exemption is an explicit marker next to the
+  code, and the selftest carries a decoy that would re-silence the check if anyone adds
+  the heuristic back.
 - A number the controller derived rather than measured is labelled "hypothesis, do not
   schedule work against it" and carries its falsification test. On 2026-08-30 three
   unmeasured AttnRes attributions from this session were each overturned by measurement,
