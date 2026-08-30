@@ -657,6 +657,32 @@
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); combo and single-GPU ran simultaneously (possible CPU/disk contention during warmup only)",
    "boundary": "3-GPU DDP; 7-GPU per-rank chunk size differs, may change overlap dynamics",
    "status": "recorded"
+  },
+  {
+   "id": "eff.bucket_cap_mb_7gpu_ab",
+   "claim": "bucket50 vs bucket25 on 7xH20: tie at 75K, optimal bucket does not shift with ring size",
+   "value": "bucket50=75K, bucket25=75K tok/s/gpu (stable step 20-40). Same tie as 3-GPU. 50 stays as default (fewer allreduce calls). 7-GPU comm residue = 6.25% (80K single vs 75K 7-GPU), same as 3-GPU.",
+   "measured": "2026-08-30",
+   "source": "A/B: b7_bucket50 vs b7_bucket25, 7xGPU1-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32 (Cfg default), mix_scale_0.2b, 40 steps, default NCCL protocol (RING_LL)",
+   "config": {
+    "gpus": "7xH20 (GPU1-7)",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "fp8": true,
+    "compiled": true,
+    "vocab": 32776,
+    "chunk_size": 32,
+    "mix": "data/mix_scale_0.2b.json",
+    "bucket_50_tok_s_gpu": 75000,
+    "bucket_25_tok_s_gpu": 75000,
+    "single_gpu_tok_s_gpu": 80000,
+    "nccl_protocol": "default (RING_LL)",
+    "nccl_algo": "default"
+   },
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) — NCCL auto-selects good protocol at smaller per-rank chunks",
+   "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU — not ring-length-dependent in this regime",
+   "status": "recorded"
   }
  ]
 }
