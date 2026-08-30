@@ -323,7 +323,7 @@
         "script": "scripts/attn_res_cpu_gap.py, scripts/lm_head_gemm.py",
         "note": "microbenchmark predicted 215.6 ms, the real model measured 216.07 ms"
       },
-      "uncertainty": "single GPU; the DDP figure is unmeasured. Padding adds 3 logit columns (ids 32773-32775) that never appear as targets but do enter the softmax denominator and need masking at sampling time.",
+      "uncertainty": "single GPU; the DDP figure is unmeasured. Padding adds 3 logit columns (ids 32773-32775) that never appear as targets but do enter the softmax denominator and need masking at sampling time. CALIBER: this row is a model-internal trace (216 -> ~97 ms/step). A separate CUDA-event microbenchmark of the bare GEMM on another card reports 184.5 -> ~104 ms/step. The two differ by ~17% in absolute time and agree on the ratio (1.77-1.78x). They are two different quantities -- bare GEMM vs the same GEMM inside the model -- not a disagreement, and were deliberately not reconciled further: nothing depends on the absolute value.",
       "boundary": "cause is memory alignment of the logits' leading dimension, not precision, tile occupancy, or launch overhead. fp8 would be a further ~2x but requires patching Liger FLCE, which does the matmul internally; _fp8_ok also rejects the head on 32773%16=5.",
       "status": "recorded",
       "refuted_by": "padding landing in train.py without the measured throughput gain appearing in a 7-card run"
