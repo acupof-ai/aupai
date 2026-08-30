@@ -640,6 +640,53 @@
    },
    "uncertainty": null,
    "status": "measured"
+  },
+  {
+   "id": "cont.code_holdout_carved",
+   "value": {
+    "n": 500,
+    "source": "synthetic/code_python_zh.jsonl (3,000 rows -> 2,844 unique by instruction)",
+    "hardcode_excluded": 394,
+    "hardcode_pct": 13.9,
+    "seed": 42,
+    "composition": {
+     "int": 143,
+     "list": 189,
+     "str": 151,
+     "float": 6,
+     "other": 11
+    },
+    "sha1_manifest": "data/eval/code_holdout_500.sha1",
+    "note": "hardcode class (expected output derivable by copying a span of the instruction) excluded from the main slice per fb constraint; carve before anything touched the data"
+   },
+   "measured": "2026-08-30",
+   "source": "/tmp/carve_code_eval.py",
+   "config": {
+    "instrument": "random.sample over eligible (non-hardcode) unique rows"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "cont.code_crawl_scan",
+   "value": {
+    "candidates": "code_raw.jsonl (200,000 rows, 0.225 GB) + corpus/code/code_filtered_000..002.jsonl (200,000 rows, training form)",
+    "hit_rows": 0,
+    "exact": 0,
+    "baseline_per_gb": 0.0,
+    "verdict": "clean - crawled code corpus does not contain the code eval; code-500 numbers are not inflated by crawl leakage",
+    "number_multiset_flags_review_only": 614,
+    "note": "490/490 holdout bigrams present in IDF background; number-multiset flags are review-only cross-language screen, 0 containment among them"
+   },
+   "measured": "2026-08-30",
+   "source": "runs/scan_code_holdout.log",
+   "config": {
+    "threshold": 0.8,
+    "instrument": "IDF-weighted containment",
+    "baseline": "web_hq 62 shards, 1,366,324 rows"
+   },
+   "uncertainty": null,
+   "status": "measured"
   }
  ]
 }
