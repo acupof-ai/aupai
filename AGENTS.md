@@ -216,6 +216,8 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **`CUDA_VISIBLE_DEVICES`, not `cuda:N`**: fla/Triton kernels launch on the current device; `cuda:1` raises illegal memory access.
 - Large files: `tn push` to the `/work` emptyDir host path, not `podput` (180KB cap).
 - `uv sync` after dependency changes.
+- **Only `/work/aupai/` persists across `pod` sessions.** `/work/*.log` and `/tmp/*` are gone on the next entry — put run logs under `runs/`.
+- **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 
 ## Rules kept from before the reset
 
