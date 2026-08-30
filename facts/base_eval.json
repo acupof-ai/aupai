@@ -418,6 +418,92 @@
       },
       "uncertainty": "n=6 correlation CIs are wide; the weak-vs-strong distinction is load-bearing for the deletion question and the weak reading is deliberately all that is claimed",
       "status": "recorded"
+    },
+    {
+      "id": "be.l1_fewshot_p324",
+      "value": "L1 verdict (pre-registered 2026-08-30 before p324 landed): base p324 + 3-shot plain-text continuation, math-500, exact-match: 1/497 = 0.2%, binomial delta=6.3%, instrument-exists threshold 2*delta=12.6% -> INSTRUMENT DOES NOT EXIST on this axis. The zero is VALID, not degenerate: answer-present rate 63.6% (model emits boxed/答案是 answers in coherent Chinese math text) but the answers are wrong -- generations continue the demo pattern instead of binding to the target question; a capability/instruction gap, not a format gap, not token salad. dtype verified clean: 44's direct measurement logit diff 0.00000 (A_log/dt_bias were always bf16 in training, train.py:1626 whole-model cast, --fp8 no fp32 master; the inference .to(bf16) was a no-op; loader a3a0de0 upcasts to fp32 for the Triton path regardless). Second leg: base 3-shot code-500 = 0/497 = 0.0% (fb, code_fewshot_p324.log) -- both domains below the 12.6pt instrument threshold. SFT axis CLEAN reading (final 2026-08-30): code_zh.py on ckpt_sft_p324_v2.pt = 11/500 = 2.2% -- still below the 12.6pt instrument threshold, reads zero; the 11 correct are all simplest-template problems (9 list-sum/mean, 2 sum/diff, 1 list-find), single-template pattern completion not generalization, no-fence rate 87.8%; pack verified clean (de's sft_pack_uncontaminated 0/36 on code_holdout_500 + fb manual per-token probe 0/40). v1 (contaminated pack, 19/20 code holdout inside) is void; its code-500 = 83/500 = 16.6% (runs/code_zero_sft_v1.log) is contamination-contrast only, with the caveat that v1 vs v2 also differ in a short_conv implementation (v1 inside the 12:42-13:25 multiply-add window, v2 outside; mathematically equivalent, bf16 accumulation order differs, seed-noise magnitude, cannot move 13 points, but the caveat is carried). Post-SFT math_zh is a retired metric (30% containment) and takes no part in the verdict. Demo-count sweep (--demos 0|1|3): 0-shot = 0/497 = 0.0% (empty-continuation 2.2%), 1-shot = 0/497 = 0.0% (empty-continuation 0.0%), 3-shot = 0/497 = 0.0% (non-empty 98.4%) -- demo-interference hypothesis FALSIFIED: 0-shot does not beat 3-shot, the failure is not demo regurgitation, base has no code generation in this regime with or without demos. Present rate 97.8% / 100% / 98.4% -- ceiling-pinned, no range, cannot confirm or falsify the demo-gain prediction (same disease as the accuracy floor: one at ceiling, one at floor, neither has resolution; a probe that cannot give the opposite result is not evidence). The pre-registered present-rate branch landed: 0-shot present 97.8% ~= 3-shot 98.4% => format comes from pretraining, demos added nothing (code side; math side 0-shot 25.4% vs 3-shot 63.6%, demos +38.2pt -- unified in the mechanism below). Math-arm accuracies 0.4%/1.4%/0.2% all floor, 2delta=12.6pt: no difference between them is interpretable; accuracy criterion labelled floor-unjudgeable, pre-registered text retained. 1-shot final: 7/497 = 1.4% accuracy (floor), present rate 53.5% -- math dose-response 25.4%/53.5%/63.6% across 0/1/3 demos, monotone with diminishing returns (+28.1pt then +10.1pt), consistent with saturation as the format gap closes. Zero-mechanism asymmetry (fb 2026-08-30): base 0-shot 97.8% writes code-shaped text all wrong (shape right, content wrong); SFT v2 no-fence 87.8% (shape degraded) -- both read zero but SFT made the code shape WORSE; 'shape improves monotonically after SFT' is falsified at the only place it was measured -- a law with a counterexample cannot be a default. SFT's format effect direction is measured negative on code; whether it is also negative on L2 is unmeasured, therefore L2 prompt format is verified separately (counterexample = fact, extrapolation = extrapolation, kept apart). Demo-gain mechanism (b0 math numbers merged 2026-08-30, written as prediction not summary): the math side (25.4->53.5->63.6, monotone, diminishing, 38pt span) is the EVIDENCE -- a dose-response curve that can falsify the mechanism; the code side (97.8-100%) is ceiling, boundary condition only. PREDICTION: in any domain, the higher the present-rate baseline, the smaller the demo gain; the next test needs a domain with baseline present-rate in the middle range (30-70%). CONCLUSION (fb 2026-08-30, written into the panel): 200M has no measurable code generation in this regime -- base zero at all three demo doses, clean SFT also reads zero. L2 (pass@k) is the only remaining path, and the SFT-shape-degradation counterexample means L2 prompt format must be verified separately, not inherited from SFT assumptions.",
+      "measured": "2026-08-30",
+      "source": "eval/l1_fewshot.py run on pod GPU 7, runs/l1_p324.log, preds_l1_d3.jsonl (497 lines); code legs eval/code_fewshot.py runs/code_base_0shot.log + code_fewshot_p324.log, eval/code_zh.py runs/codezh_sft_v2.log (GPU 6 shared with eval_all, no timing numbers); dtype 44 direct measurement 2026-08-30",
+      "config": {
+        "n": 497,
+        "demos": 3,
+        "delta_pt": 6.3,
+        "threshold_pt": 12.6,
+        "acc": 0.002,
+        "answer_present_rate": 0.636,
+        "format": "plain-text continuation, no ChatML (base saw 1.18% chat domain)",
+        "code_leg": "0/497 = 0.0%",
+        "code_0shot": "0/497 = 0.0%, empty-cont 2.2%",
+        "code_1shot": "0/497 = 0.0%, empty-cont 0.0%",
+        "code_sft_v2": "11/500 = 2.2% (reads zero; 11 correct all simplest-template; no-fence 87.8%)",
+        "demo_interference": "falsified (0-shot == 3-shot == 0/497)",
+        "math_0shot_answer_present": 0.254,
+        "demo_gain_prediction": "higher baseline present-rate => smaller demo gain; math dose-response 25.4->53.5->63.6 is the evidence, code 97.8-100% ceiling-pinned (no range, cannot confirm/falsify); next test needs a 30-70% baseline domain"
+      },
+      "uncertainty": "single greedy run per prompt, no seed variance estimated; the 1/497 correct item is within noise of zero",
+      "status": "measured"
+    },
+    {
+      "id": "be.degeneration_rate",
+      "value": "Degenerate-repetition rate (8-gram occurring >=3 times, whitespace-tokenized, on the stored gen tail): code base 3-shot 6.6% (33/497), code base 0-shot 25.4% (126/497), code SFT v2 greedy 55.8% (279/500), code SFT v2 t=0.8 17.0% (85/500, final; fb's 20.1% was the 60/299 interim) -- under greedy decoding SFT MORE THAN DOUBLES degeneration vs the zero-shot base (+30.4pt, ~5 delta), but at t=0.8 degeneration drops to 17.0%, BELOW base 0-shot 25.4%: the loop is a property of greedy decoding on this model, not something SFT installed; format-class metrics (fence rate, degeneration) must be reported WITH TEMPERATURE. Capability-class metrics are unaffected and now firmer: t=0.8 accuracy 0.5% vs greedy 2.2%, both floor -- the loop disappeared and the answers are still wrong, the loop was not hiding anything; the suspicion that floor accuracy is a bad-decoder artefact was checked and rejected. Math side (L1 preds, same definition): 0-shot 16.9%, 1-shot 9.3%, 3-shot 8.9% -- demos SUPPRESS degeneration in both domains (code 0->3 shot -18.8pt, math -8.0pt); demos and sampling both break loops, SFT does not -- all three act on the same thing (greedy's deterministic attractors), itself evidence. Cross-domain at 3-shot: math 8.9% vs code 6.6%, comparable. Why the metric belongs: it was measurable all along and stayed invisible for five checkpoints because the panel only recorded accuracy, which reads zero at this scale -- a metric that always reads zero is no metric (the measurement version of the gate rule 'a PASS must say how many things it verified'). History: 363c491 attributed degeneration to 'content, not format'; that attribution was untestable because degeneration was never measured, and it is wrong in spirit -- SFT corpus answers are 89% fenced (model saw the format) yet SFT raised degeneration 2x; format and content are not separable by assertion. Replication note (resolved): fb's first implementation carried a len>=3n floor guard that excluded 3 true positives (a fully-overlapping 8-gram x3 fits in 10 words); fb's 24.7% vs the 25.4% (126/497) canonical value. Guard removed; the other three figures replicate exactly. Lesson (4th this year): a metric's config is bigger than its name -- n=8/k=3 did not define the metric, the min-length guard was part of the definition and went unsaid. KNOWN CEILING: code_zh.py:128 stores gen[-300:] (characters), so the metric measures TAIL degeneration -- a model that answers correctly first and rambles after is misjudged; negligible at 2.2% accuracy but the bias grows as capability rises, then switch to full-storage or online computation. Cross-language caveat: the 300-char window contains different token counts per language (Chinese is denser), so cross-domain absolute levels carry a window-density confound; within-domain comparisons (the SFT-vs-base and demo-dose readings) are unaffected.",
+      "measured": "2026-08-30",
+      "source": "fb report 2026-08-30 (code figures); re-computed on pod: data/eval/preds_code_fewshot.jsonl, data/eval/preds_code_fewshot_0shot.jsonl, data/eval/preds_code_ckpt_sft_p324_v2.pt.jsonl, data/eval/preds_l1_d0.jsonl, data/eval/preds_l1_d1.jsonl, data/eval/preds_l1_d3.jsonl, whitespace-token 8-gram >=3 (definition replicated: 6.6% and 55.8% exact)",
+      "config": {
+        "ngram_len": 8,
+        "repeat_threshold": 3,
+        "min_words": "n -- flag condition only: a generation shorter than n words cannot be degenerate and is counted as non-degenerate IN the denominator (denominator = all rows; de's first implementation excluded short rows from N, which moves math 0-shot from 16.9% to 22.3% -- rejected). A 3n floor was used in fb's first implementation and excluded 3 true positives (24.7% vs 25.4%); a metric's config is bigger than its name",
+        "unit": "whitespace tokens",
+        "window": "gen[-300:] characters (stored tail)",
+        "n": "497 (base code, math arms) / 500 (SFT v2 greedy, SFT v2 t=0.8)",
+        "delta_pt": 6.3,
+        "verdict_rule": "any 8-gram with count >= 3 flags the generation; rate = flagged/N"
+      },
+      "uncertainty": "base-0shot code 24.7/25.4 gap resolved (3n floor guard, removed); SFT greedy canonical 55.8% from the completed 14:04 run, a rerun was in progress at record time (51/85 consistent); single greedy run per arm; gen[-300:] tail window biases against correct-then-ramble models (negligible now, grows with capability)",
+      "guard_phrases": ["退化是内容问题", "content, not format"],
+      "status": "measured"
+    },
+    {
+      "id": "be.agentic_loop_tokens",
+      "value": "Agentic loop token cost under our frozen vocab (t19, 2026-08-31, 44; e1's two-turn format byte-exact, real answers from sft_all.pt rendered): code call turns (Thought prose + code block, sandbox execution as tool) cost p50=994 / p90=1729 / p99=2608 tokens, so 4096 fits only 1.9 rounds at p90 -- a HARD CONSTRAINT under the current data shape; math call turns (GSM8K expression = call, result = tool) cost p50=18 / p90=21 / p99=22, 188 rounds fit, no constraint. The constraint comes from long Thought prose in the call turn (SFT source shape), not from the context itself -- tool turns are cheap (400 real executions: p50=35 chars, p90=327). Conditional conclusion: try short-call-turn rendering first (nanochat-style '12/60 = ' stops after a few tokens; touches neither architecture nor the frozen recipe); extend context only if that fails. Untested half: whether the model can still reason with short call turns -- a capability question, not a context question, kept separate. zh-en prompt asymmetry: an equivalent-meaning agentic system prompt costs 33 tokens in Chinese vs 36 in English -- per-character more expensive != per-instruction more expensive (Chinese is denser); the 35:65 zh:en token cost is asymmetric. Tool output length is a known upper bound (400 samples; code printing large lists raises it) -- usable in reverse for 30B corpus mining: filter impl+test pairs by tool output length.",
+      "measured": "2026-08-31",
+      "source": "sft_all.pt answer spans (16,543 code / 3,357 gsm with expressions), e1's verified two-turn format (im_start=32768, im_end=32769), 400 sandbox executions for tool output sizing; docs/lessons/scale_36b_plan.md t19 section",
+      "config": {
+        "code_round_tokens_p50": 994,
+        "code_round_tokens_p90": 1729,
+        "code_round_tokens_p99": 2608,
+        "code_rounds_fit_4096_p90": 1.9,
+        "gsm_round_tokens_p90": 21,
+        "gsm_rounds_fit_4096_p90": 188,
+        "tool_output_chars_p50": 35,
+        "tool_output_chars_p90": 327,
+        "zh_prompt_tokens": 33,
+        "en_prompt_tokens": 36,
+        "zh_en_prompt_delta": -3,
+        "zh_en_note": "per-char more expensive != per-instruction more expensive; Chinese denser"
+      },
+      "uncertainty": "tool output sized on 400 random code spans (long-output code is rare but unbounded); code spans come from a Thought-reasoning source -- short-call rendering changes the call-turn length distribution, unmeasured; user question tokens sampled every 11th row",
+      "status": "measured"
+    },
+    {
+      "id": "be.ctx_length_p324",
+      "value": "NoPE context-length probe on ckpt_p324 (eval/ctx_probe.py, pre-registered 2026-08-31 before running): (1) BEYOND 4096 -- paired delta-NLL, each held-out row b scored fresh (4096) and after a (8192); seam delta (distance 4096-4352) = -0.198 nat: extra context HELPS past the training length, no hard boundary. Degradation is SMOOTH: +0.10 nat per 1024 tokens of distance, tail (7936-8190) +0.104 nat; zero-crossing ~6.2K absolute distance -- carried context is useful to ~6K, neutral to ~8K, harmful past that. Reading per pre-registration: SMOOTH DEGRADATION, usable past 4096, solvable with training length -- NOT a hard 4096 wall for the agent loop. (2) WITHIN 4096 -- per-position curve flat after the cold-start bin (pos 0-255 = 3.72, steady state 3.46-3.57, min 3.4575 at 3072-3327, no sustained rise > +0.10 nat): effective budget = 4096, the full nominal context is usable, no hidden shortening. Window NLL over the 8192 run: 3.52/3.49/3.51/3.64. Architecture note: NoPE (no RoPE, no learned positions; 3 gated-MLA full-causal layers mechanically length-free, 9 KDA layers carry position in fixed-size recurrent state) generalizes to unseen distances smoothly -- the two legs' per-leg attribution (which one degrades) is unmeasured, whole-model only; ablation is the follow-up. Design implication: agent loops may exceed 4096 with graceful degradation (~0.1 nat/1024tok); the 30B design is not walled at training length, but context beyond ~6K should be compressed/summarized rather than carried raw.",
+      "measured": "2026-08-31",
+      "source": "eval/ctx_probe.py (commits 847c8da, 95902eb, b34cdd7); pod GPU 7 run, runs/ctx_probe.log + runs/ctx_probe_p324.json; same held-out head as score_matrix domain_loss (domain_files + head_texts, packed with EOS)",
+      "config": {
+        "ckpt": "ckpt_p324.pt",
+        "train_seq": 4096,
+        "probe_seq": 8192,
+        "n_pairs": 256,
+        "bin_tokens": 256,
+        "seam_threshold_nat": 0.10,
+        "seam_delta_nat": -0.1984,
+        "slope_nat_per_1024": 0.1007,
+        "tail_delta_nat": 0.1038,
+        "effective_budget": 4096,
+        "zero_crossing_distance": "~6200 tokens (linear interpolation of the delta curve)"
+      },
+      "uncertainty": "single greedy run, single checkpoint; per-leg KDA-vs-MLA attribution not measured; zero-crossing is a linear interpolation of binned means, not a direct measurement; held-out head is the score_matrix domain_loss data, comparable to the ladder val figure",
+      "status": "measured"
     }
   ]
 }
