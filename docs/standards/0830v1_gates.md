@@ -4,6 +4,37 @@ The controller session (aupai-fb) drives these in order. A gate opens only when 
 evidence exists as an artifact — not when someone reports it done. Update the status
 column in place; do not add a second copy of this table anywhere.
 
+## Objective changed 2026-08-30: a reasoning model, coding and math
+
+**The scaling law is no longer the deliverable and does not need proving.** The target is
+a reasoning model with coding and math capability, trained on ~30B tokens. The six-point
+ladder finishes because p324 is the largest checkpoint we will have and nothing else needs
+those cards; the curve will exist and is no longer what the round is judged on. The local
+slope at 3.24b is still consumed by tilerl's tolerance derivation, so the fit is not
+wasted.
+
+What this changes, and what it does not:
+
+| survives | superseded |
+|---|---|
+| σ̂ = 0.0516 and every MDE recomputed from it | the natural-vs-synthetic ratio as the organising data decision |
+| the pre-registration practice — four experiments retired before spending a card | zh:en 84:16, set for a Chinese-LM target |
+| the harness, its 25 checks, the four-layer frozen-config enforcement | the ~16B Chinese-web base of the 36B plan |
+| the fetch/clean/dedup/score contract and the MinHash known answer | the scorer funnel's prevalence bands, priced against a general corpus |
+| §8's logic — "does output move when discrimination saturates" | §8's metrics; lambada measures expression, not reasoning |
+
+Three consequences worth stating because they invert assumptions this round was built on:
+
+- **Measurability rises rather than falls.** Verifiable answers give a binomial label
+  error — 6.3pt at N=500 — against val NLL's σ̂ = 0.0516, which made the KDA A/B
+  unresolvable at any affordable n.
+- **Synthetic stops being a defect.** The 10% cap on templated encyclopedic prose stands
+  on its own reasoning. Verifiable synthetic math with worked solutions, and code with
+  tests, are the mechanism rather than a compromise.
+- **Code cannot currently be measured at all** — no discrimination instrument, no
+  generation instrument, no dataset carrying execution signal. That is the blocking gap,
+  ahead of any corpus decision.
+
 Architecture is fixed for this round: KDA (9 layers) + full causal gated MLA (3 layers,
 latent=d/4) + AttnRes Full (blocks=0), NoPE throughout. Commit b3cad87. Changing it
 reopens corpus-ready.
