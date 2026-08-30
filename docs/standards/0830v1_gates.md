@@ -939,3 +939,21 @@ A review reports what it *ran*, not what it read.
   the rewritten occupancy check still self-tests through the same hook, so it is verified
   against reality only by the one manual run a person did. A regression in its real
   `nvidia-smi` read would still pass `--selftest`.
+- **A `broken()` proves one of a check's assertions fires, not all of them.**
+  `check_facts_well_formed` asserts two different things: that every entry carries its
+  config, and that every source path it cites exists. Its broken world only ever deleted a
+  config — so the source-path half was never verified, and it turned out to be dead: the
+  path regex had no left anchor, so `data/eval/x.jsonl` matched from the middle as
+  `eval/x.jsonl`, reported "does not exist", and FAILed a correct fact. The author's
+  response was to rewrite the source as prose without slashes, which passes the check by
+  removing the thing the check exists to verify — **a guard that forces people to write
+  un-checkable text is worse than no guard.** Repairing the regex (add the left anchor,
+  add the `data` and `runs` prefixes that were never scanned at all) then surfaced 32
+  citations that had never been checked in the history of the repo. Rule: when a check
+  asserts N things, its broken world must break each of them, or say in a comment which
+  ones it does not cover.
+- **A log file is not a source.** Of those 32, most cite `runs/*.log` — deleted, or
+  overwritten by the next run of the same name. A fact whose source has rotted is a number
+  nobody can reproduce, and it reads exactly like one that can. A fact's source is the
+  command that produced it plus a durable artifact: a score-matrix record, a preds file, a
+  commit sha. Never the log.
