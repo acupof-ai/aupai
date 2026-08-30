@@ -63,10 +63,11 @@ def pack_tokens(tok, texts):
 
 
 def per_token_nll(model, x, bs):
-    """Per-token next-token CE, [n, seq]. Plain CE (no softcap), same as domain_loss."""
+    """Per-token next-token CE, [n, seq]. Plain CE (no softcap), same as domain_loss.
+    no_grad is mandatory: at seq=8192 the autograd graph alone blows past 95GB."""
     outs = []
     for i in range(0, len(x), bs):
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             logits = model(x[i : i + bs])
         if isinstance(logits, tuple):
             logits = logits[0]
@@ -92,7 +93,7 @@ def main():
     ap.add_argument("--mix", required=True)
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--bs", type=int, default=4)
+    ap.add_argument("--bs", type=int, default=2)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
