@@ -123,6 +123,9 @@ class Cfg:
     chunk_size = 32  # fla chunk_kda chunk size: +19.1% KDA kernel (~2% step, single-layer
     # isolation, tilerl 2026-08-30), numerically neutral vs 64 (eff.chunk_size_parity). The
     # throughput gain is isolated-layer, not seven-card real-model: the merge run must show it.
+    bucket_cap_mb = 50  # DDP gradient bucket: 50 ties 25 at 75K tok/s/gpu, wins on fewer
+    # allreduces; 100 leaves comm unhidden (eff.bucket_cap_mb_ab). A Cfg field (not just an
+    # argparse arg) so the checkpoint records what it trained under.
     layers = 12
     attn_every = 4
     ffn_hidden = 3072

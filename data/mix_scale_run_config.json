@@ -1,0 +1,9 @@
+{
+  "cards": "1,2,3,4,5,6,7",
+  "batch": 16,
+  "accum": 2,
+  "warmup": 20,
+  "vocab": 32784,
+  "bucket_cap_mb": 50,
+  "_comment": "Frozen run config for the six mix_scale_* budget points (2026-08-30). One file, not six copies: the six points must differ only in D. `harness run point` reads this and refuses a disagreeing CLI flag; check_ladder_config compares every ladder checkpoint's cfg against it. A change to any value reopens the whole ladder. chunk_size is a code constant (Cfg.chunk_size=32, no CLI flag) and cannot drift via a launch; NCCL protocol is default. See docs/standards/0830v1_gates.md."
+}

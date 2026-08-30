@@ -1058,6 +1058,83 @@ def _broken_score_matrix():
     return d
 
 
+def _read_ckpt_cfg(path):
+    """Read the cfg dict from a torch.save checkpoint without importing torch.
+    The .pt is a zip; cfg is a plain dict pickled in data.pkl. Tensor storages
+    are referenced via persistent_load, which we stub, and torch rebuild
+    functions resolve to dummies -- the cfg survives because it is plain data."""
+    import pickle
+    import zipfile
+
+    class _Stub(pickle.Unpickler):
+        def find_class(self, module, name):
+            if module.startswith("torch"):
+                return lambda *a, **kw: None
+            try:
+                return super().find_class(module, name)
+            except (ImportError, AttributeError):
+                return lambda *a, **kw: None
+
+        def persistent_load(self, pid):
+            return None
+
+    with zipfile.ZipFile(path) as z:
+        pkl_name = next(n for n in z.namelist() if n.endswith("data.pkl"))
+        with z.open(pkl_name) as f:
+            data = _Stub(f).load()
+    return data.get("cfg", {})
+
+
+def check_ladder_config(root):
+    """Every ladder checkpoint's cfg matches the single frozen run config.
+    The six mix_scale_* points must differ only in D; a silent recipe drift
+    (wrong warmup, wrong bucket) produces a completed point that poisons the
+    curve. SKIP without checkpoints or the frozen config file."""
+    fpath = os.path.join(root, "data", "mix_scale_run_config.json")
+    if not os.path.exists(fpath):
+        return SKIP, "data/mix_scale_run_config.json not present"
+    frozen = json.load(open(fpath, encoding="utf-8"))
+    ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
+    if not ckpts:
+        return SKIP, "no checkpoints"
+    bad = []
+    for p in ckpts:
+        try:
+            cfg = _read_ckpt_cfg(p)
+        except Exception as e:
+            return FAIL, f"{os.path.basename(p)}: cannot read cfg: {e}"
+        if not os.path.basename(cfg.get("mix", "")).startswith("mix_scale_"):
+            continue
+        for k in _FROZEN_KEYS:
+            if cfg.get(k) != frozen[k]:
+                bad.append(f"{os.path.basename(p)}: {k}={cfg.get(k)} != frozen {frozen[k]}")
+    if bad:
+        return FAIL, "; ".join(bad)
+    return PASS, f"{len(ckpts)} checkpoint(s) match the frozen config"
+
+
+def _broken_ladder_config():
+    """A checkpoint with warmup changed from the frozen 20 to 30 -- the silent
+    recipe drift that produces a completed point under a different config."""
+    import io
+    import pickle
+    import shutil
+    import zipfile
+
+    d = _tmp_repo()
+    shutil.copy(
+        os.path.join(ROOT, "data", "mix_scale_run_config.json"),
+        os.path.join(d, "data", "mix_scale_run_config.json"),
+    )
+    cfg = {"mix": "data/mix_scale_0.2b.json", "warmup": 30, "batch": 16, "accum": 2,
+           "vocab": 32784, "bucket_cap_mb": 50}
+    buf = io.BytesIO()
+    pickle.dump({"cfg": cfg, "vocab_id": "fake"}, buf)
+    with zipfile.ZipFile(os.path.join(d, "ckpt_test.pt"), "w") as z:
+        z.writestr("data.pkl", buf.getvalue())
+    return d
+
+
 def _provenance_fingerprints(path, domains):
     """{domain: fingerprint} parsed from data/PROVENANCE.md. A domain block is a heading
     whose text contains the domain as a whole token; its fingerprint is a
@@ -1346,6 +1423,13 @@ CHECKS = [
         "a base checkpoint reads zero on every generative eval, and an unscored ok run is invisible -- the matrix is the only score that moves on a base",
         check_score_matrix,
         _broken_score_matrix,
+    ),
+    (
+        "ladder_config_frozen",
+        "every ladder checkpoint's cfg matches data/mix_scale_run_config.json",
+        "a silent recipe drift (wrong warmup, wrong bucket) produces a completed point that poisons the curve; the OOM was loud, the wrong-but-valid case is not",
+        check_ladder_config,
+        _broken_ladder_config,
     ),
 ]
 
@@ -1637,10 +1721,43 @@ def _run_pretokenize(step_args, forced):
     return r.returncode
 
 
+_FROZEN_KEYS = ("batch", "accum", "warmup", "vocab", "bucket_cap_mb")
+
+
+def _strip_frozen(passthrough, frozen):
+    """Drop agreeing frozen flags from passthrough; refuse disagreeing ones.
+    Returns (clean_passthrough, conflicts). An agreeing flag is accepted, not
+    refused -- fb launched four runs with explicit --batch 16 --accum 2 that
+    matched; refusing presence would block a correct launch."""
+    s = set(_FROZEN_KEYS)
+    clean, conflicts = [], []
+    i = 0
+    while i < len(passthrough):
+        a = passthrough[i]
+        if a.startswith("--") and "=" in a and a[2:].split("=", 1)[0] in s:
+            k, v = a[2:].split("=", 1)
+            if int(v) != frozen[k]:
+                conflicts.append(f"--{k}={v} (frozen {frozen[k]})")
+            i += 1
+        elif a.startswith("--") and a[2:] in s and i + 1 < len(passthrough):
+            k = a[2:]
+            if int(passthrough[i + 1]) != frozen[k]:
+                conflicts.append(f"--{k} {passthrough[i + 1]} (frozen {frozen[k]})")
+            i += 2
+        else:
+            clean.append(a)
+            i += 1
+    return clean, conflicts
+
+
 def _run_point(step_args, forced):
     """One 0830v1 budget point. run_ddp.sh already scores the checkpoint on success,
     so this only has to launch it and record the row. --name is required; --mix defaults
-    to train.py's default; everything else passes through to train.py."""
+    to train.py's default; everything else passes through to train.py.
+
+    Ladder mixes (mix_scale_*) carry a frozen run config in
+    data/mix_scale_run_config.json: run point sets the env + flags from it and refuses
+    a disagreeing CLI flag. The six points must differ only in D."""
     name, mix, passthrough = None, None, []
     i = 0
     while i < len(step_args):
@@ -1660,7 +1777,28 @@ def _run_point(step_args, forced):
         print("run point: --name <n> is required")
         return 2
     mix = mix or cfg_default("mix")
-    cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *passthrough]
+    env = None
+    frozen_args = []
+    if os.path.basename(mix).startswith("mix_scale_"):
+        fpath = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+        if not os.path.exists(fpath):
+            print(f"run point: {fpath} missing -- the ladder recipe is not optional")
+            return 2
+        frozen = json.load(open(fpath, encoding="utf-8"))
+        passthrough, conflicts = _strip_frozen(passthrough, frozen)
+        if conflicts:
+            print(f"run point: refusing -- frozen config disagrees: {'; '.join(conflicts)}")
+            print("  edit data/mix_scale_run_config.json to change the ladder recipe (reopens the ladder)")
+            return 2
+        env = dict(
+            os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(len(frozen["cards"].split(",")))
+        )
+        frozen_args = [v for k in _FROZEN_KEYS for v in (f"--{k}", str(frozen[k]))]
+        print(
+            f"run point: frozen config -> cards={frozen['cards']} "
+            + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
+        )
+    cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *frozen_args, *passthrough]
     _exp("start", name=name, cmd=" ".join(cmd),
          hypothesis=f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
     rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
@@ -1675,7 +1813,7 @@ def _run_point(step_args, forced):
         return None
 
     before = _ckpt_record()
-    r = subprocess.run(cmd, cwd=ROOT)
+    r = subprocess.run(cmd, cwd=ROOT, env=env)
     # A rerun of the same ckpt must not pass on the FIRST run's record: the line has to
     # have changed, not merely be present (score_matrix --json replaces same-ckpt lines,
     # and only on success -- a failed rescore leaves the stale line in place).
