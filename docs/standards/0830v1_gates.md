@@ -740,3 +740,24 @@ appearance of having been checked. Both guards below close that gap.
   pack. A base model reading exactly zero and a fine-tune clearing the bar on the first try
   is the signature of memorisation, and it deserved suspicion in proportion to how much it
   was wanted.
+- **A check that no run's behaviour can turn green is not a gate, it is a fact.** The
+  practical harm is not the red itself: a suite that is normally red gets `--force`d as
+  routine, and that is exactly how a real red gets ignored. `env_fp_present` demonstrated
+  it the hour it landed — permanently red against every pre-existing checkpoint, and it
+  blocked a launch immediately. Rulings: `root_durable` becomes a WARN, because no run can
+  fix `/work` being an emptyDir — with a revival condition in the comment, that it returns
+  to FAIL once durable storage is mounted in the container and a root under `/work` is
+  again a fixable violation. `ladder_config_frozen` gets an exemption list, because
+  `ckpt_p02_a1_s2.pt` is the KDA-vs-attention A/B arm and is *supposed* to deviate; a check
+  that reports a deliberate experiment arm as a violation teaches people to ignore it.
+  **Every exemption carries `{checkpoint, deviating_flag, experiment_name}`, never a bare
+  name** — an exemption that cannot state why it exists is worth the same as no check.
+  Deriving it from the run's own `experiments.jsonl` row beats hand-writing it, for the
+  same reason a hand-written package list omits exactly what nobody wrote down. And a new
+  gate that must FAIL against existing artifacts ships **with** its ratchet, rather than
+  landing red and being patched afterwards. (tilerl, 2026-08-30.)
+- **A baseline about artifacts must be generated on the machine that holds them.** The
+  first `env_fp` grandfather list was written from the local checkout, which has 3
+  checkpoints; the pod has 28. Local PASS, pod entirely FAIL. This is the same rule as
+  "broken worlds mutate a real artifact, never a hand-written one", seen from the other
+  side: both are **an assertion about one world, written from inside another**.
