@@ -9,6 +9,9 @@ corpus is being rebuilt. That makes this a LOWER BOUND -- DDP adds gradient buck
 buffers this does not measure, so a result close to the card is a fail, not a pass.
 
 Run: CUDA_VISIBLE_DEVICES=0 python -u scripts/attn_every_probe.py --batch 16
+
+# restartable: each arm's row is printed with flush as soon as it finishes, so an interrupt
+# costs at most the arm in flight; --json is a convenience, not the only copy.
 """
 
 import argparse

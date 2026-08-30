@@ -46,6 +46,25 @@ def _shard_line(name, path):
     return f"{name}:{size}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}\n".encode()
 
 
+def fp_filters(root=ROOT):
+    """Hash of the filter sources that produced a corpus. Content-based, not the git sha: an
+    uncommitted edit to filters/ changes what a build keeps, and a commit sha would not see it.
+
+    The gap this closes: PROVENANCE records the Build COMMAND, and the same command run before
+    and after a filter change produces different corpora that nothing distinguishes.
+    corpus_fingerprint says the content changed; this says what produced it."""
+    h = hashlib.sha1()
+    d = os.path.join(root, "filters")
+    if not os.path.isdir(d):
+        return None
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(d, name), "rb") as f:
+            h.update(name.encode() + b"\0" + hashlib.sha256(f.read()).digest())
+    return h.hexdigest()[:16]
+
+
 def fp_dir(d):
     """Hash of sorted shard lines for one domain directory. The workhorse: fp_domain
     and build_corpus.py both call this, so the stamper cannot diverge from the guard."""

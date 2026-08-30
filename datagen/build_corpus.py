@@ -405,10 +405,19 @@ def main():
 
         _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
         from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+        from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
 
         with open(os.path.join(a.out, "build_corpus_stats.json"), "w") as f:
             json.dump(
-                {"reasons": reasons, "top_hosts": hosts.most_common(50), "fingerprint": _fp_dir(a.out)},
+                {
+                    "reasons": reasons,
+                    "top_hosts": hosts.most_common(50),
+                    "fingerprint": _fp_dir(a.out),
+                    # What produced this corpus, not just what it contains: the same Build
+                    # command before and after a filters/ edit yields different shards, and
+                    # PROVENANCE records only the command.
+                    "filters_fp": _fp_filters(),
+                },
                 f,
                 ensure_ascii=False,
                 indent=1,

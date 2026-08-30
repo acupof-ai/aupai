@@ -485,6 +485,57 @@ def check_restartability(root):
     return FAIL, "; ".join(new)[:300] or "restartability_audit failed"
 
 
+def check_corpus_filters_fp(root):
+    """A domain must record WHICH filters built it, not only what it contains.
+
+    The gap: PROVENANCE records the Build command, and the same command run before and after a
+    filters/ edit produces different corpora. corpus_fp_matches sees that the content changed;
+    it cannot say why, and cannot answer 'did this batch go through pass3'. build_corpus.py now
+    stamps filters_fp beside the content fingerprint.
+
+    Domains built before the stamp existed carry no filters_fp. That is reported, not failed --
+    it is unrecoverable, nothing wrote it down. A MISMATCH is a failure: it means the shards
+    predate the filters currently in the tree."""
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    import corpus_fingerprint as cf
+
+    live = cf.fp_filters(root)
+    if live is None:
+        return SKIP, "no filters/ directory"
+    corpus = os.path.join(root, "data", "corpus")
+    if not os.path.isdir(corpus):
+        return SKIP, "no data/corpus"
+    stale, unrecorded, ok = [], [], 0
+    for dom in sorted(os.listdir(corpus)):
+        stats = os.path.join(corpus, dom, "build_corpus_stats.json")
+        if not os.path.isfile(stats):
+            continue
+        with open(stats) as f:
+            got = json.load(f).get("filters_fp")
+        if got is None:
+            unrecorded.append(dom)
+        elif got != live:
+            stale.append(f"{dom} built with filters {got}, tree is {live}")
+        else:
+            ok += 1
+    if stale:
+        return FAIL, "; ".join(stale)
+    note = f", {len(unrecorded)} predate the stamp ({', '.join(unrecorded)})" if unrecorded else ""
+    return PASS, f"{ok} domain(s) match filters {live}{note}"
+
+
+def _broken_corpus_filters_fp():
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "filters"), exist_ok=True)
+    with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
+        fh.write("# a filter\n")
+    dom = os.path.join(d, "data", "corpus", "web_hq")
+    os.makedirs(dom, exist_ok=True)
+    with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
+        json.dump({"fingerprint": "deadbeef", "filters_fp": "0000000000000000"}, fh)
+    return d
+
+
 def _broken_restartability():
     """The real regression: a new script that accumulates in a loop and saves once at the end."""
     import shutil
@@ -1139,6 +1190,13 @@ CHECKS = [
         _broken_ghost_running,
     ),
     (
+        "corpus_filters_fp",
+        "every stamped corpus domain records the filters that built it, and they still match",
+        "PROVENANCE recorded the build command but not the filter version; the same command before and after a filters/ edit yields different corpora",
+        check_corpus_filters_fp,
+        _broken_corpus_filters_fp,
+    ),
+    (
         "restartability",
         "no NEW script accumulates in a loop and writes only at the end",
         "a two-hour scoring job wrote once at the end; killed at 50% it lost 100% of the work",
@@ -1243,7 +1301,7 @@ STAGES = [
         ["tokenizer_roundtrip", "pinned_ids"],
         "a tokenizer_<name>.json pinned per live checkpoint",
     ),
-    ("corpus", ["mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
+    ("corpus", ["corpus_filters_fp", "mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
     ("pretrain", ["restartability", "gemm_dims_aligned", "guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
     ("sft", ["pinned_ids"], "pack fingerprint == checkpoint vocab_id; loss-mask test passes"),
     ("eval", [], "math-hard recorded in runs/experiments.jsonl"),
