@@ -9,7 +9,7 @@ chunk (64 vs 32, fla chunk_kda chunk size -- a re-chunking of the same recurrenc
 
 Also prints the dynamo cache_size_limit guard values train.py enforces at startup.
 
-Usage: E2E_GPU=0 AB_AXIS=chunk AB_STEPS=10 AB_LR_SCALE=0.1 python scripts/ab_vocab_loss.py
+Usage: E2E_GPU=0 AB_AXIS=chunk AB_STEPS=10 python scripts/ab_vocab_loss.py
 """
 import os
 import sys
@@ -26,7 +26,9 @@ import train  # noqa: E402
 from train import SOFTCAP, Cfg, HybridLM, build_mix, build_optimizers, doc_cu_seqlens  # noqa: E402
 
 STEPS = int(os.environ.get("AB_STEPS", "10"))
-LR_SCALE = float(os.environ.get("AB_LR_SCALE", "1.0"))
+# 0.03 is the stable regime on the current sample: 0.1 swings +-1.7 and the parity criteria
+# become uninformative (eff.vocab_padding_softmax_defect). At 0.03, max |delta| = 0.0016.
+LR_SCALE = float(os.environ.get("AB_LR_SCALE", "0.03"))
 AXIS = os.environ.get("AB_AXIS", "vocab")
 ARMS = {"vocab": (32773, 32784), "chunk": (64, 32)}
 DEVICE = f"cuda:{os.environ.get('E2E_GPU', '0')}"
