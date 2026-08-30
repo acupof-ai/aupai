@@ -372,6 +372,7 @@
         "n_seeds": 4,
         "df": 3
       },
+      "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
       "status": "measured",
       "boundary": "277 pairs is a de-risked prototype, not the 1000-pairs-per-dimension target. sd may shrink with more pairs. Per-dimension sd not computed (some dimensions have n<50)."
     },
@@ -386,6 +387,7 @@
         "n_seeds": 4,
         "df": 3
       },
+      "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
       "status": "measured",
       "boundary": "s2 is an outlier (83.53 vs mean 79.05); with only 4 seeds, one outlier inflates sd. Per-family sd not computed."
     },
