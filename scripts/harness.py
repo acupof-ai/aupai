@@ -26,6 +26,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import corpus_fingerprint as cfp  # noqa: E402
 DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
@@ -834,58 +835,63 @@ def _broken_score_matrix():
 
 
 def check_corpus_fp(root):
-    """Every built domain's stamped fingerprint (build_corpus.py writes it into
-    build_corpus_stats.json) matches the live directory. Drift since build = FAIL."""
+    """Every domain the default mix names must carry a build-time fingerprint (build_corpus.py
+    stamps build_corpus_stats.json) that matches the live directory. A missing stamp is FAIL,
+    not SKIP: an unstamped domain cannot be distinguished from a swapped-in one -- the voided
+    0.2b run trained on CCI3 shards under web_hq's name, and no fingerprint existed to say so.
+    Domains with no directory on this machine are mix_shards_present's beat, not this one."""
+    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
+    if err:
+        return FAIL, f"cannot read the default mix: {err}"
     corpus = os.path.join(root, "data", "corpus")
-    if not os.path.isdir(corpus):
-        return SKIP, "no data/corpus"
-    mismatches, stamped = [], 0
-    for dom in sorted(os.listdir(corpus)):
+    present = [d for d in doms if os.path.isdir(os.path.join(corpus, d))]
+    if not present:
+        return SKIP, "no mix domain has a directory on this machine"
+    problems, ok = [], 0
+    for dom in present:
         stats = os.path.join(corpus, dom, "build_corpus_stats.json")
-        if not os.path.isfile(stats):
-            continue
         try:
-            fp = json.load(open(stats, encoding="utf-8")).get("fingerprint")
+            with open(stats, encoding="utf-8") as f:
+                stamped = json.load(f).get("fingerprint")
         except Exception:
+            stamped = None
+        if not stamped:
+            problems.append(f"{dom}: no build-time fingerprint")
             continue
-        if not fp:
-            continue
-        stamped += 1
-        live = _fp_dir(os.path.join(corpus, dom))
-        if live != fp:
-            mismatches.append(f"{dom}: stamped {fp} != live {live}")
-    if not stamped:
-        return SKIP, "no domain carries a stamped fingerprint"
-    if mismatches:
-        return FAIL, "; ".join(mismatches[:3])
-    return PASS, f"{stamped} domain(s) match their build-time fingerprint"
-
-
-def _fp_dir(d):
-    import hashlib
-    h = hashlib.sha1()
-    for name in sorted(os.listdir(d)):
-        if name == "build_corpus_stats.json" or name.startswith("."):
-            continue
-        st = os.stat(os.path.join(d, name))
-        h.update(f"{name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
-    return h.hexdigest()[:16]
+        live = cfp.fp_domain(dom, corpus)
+        if live != stamped:
+            problems.append(f"{dom}: stamped {stamped} != live {live}")
+        else:
+            ok += 1
+    if problems:
+        return FAIL, f"{ok}/{len(present)} match; " + "; ".join(problems[:3])
+    return PASS, f"{ok}/{len(present)} mix domains match their build-time fingerprint"
 
 
 def _broken_corpus_fp():
-    """A REAL shard in a temp corpus, stamped correctly, then one line appended --
-    the live fingerprint must stop matching the stamp."""
+    """The REAL default mix copied into the broken world, with two of its real-named domains
+    present: one stamped correctly and then drifted, one carrying no stamp at all. Both tiers
+    must report FAIL, and the evidence must carry the denominator -- '1 domain(s) match' once
+    read as all-green when it was 1 of 7."""
     import shutil
+
     d = _tmp_repo()
-    dom = os.path.join(d, "data", "corpus", "math")
-    os.makedirs(dom)
-    real = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "math", "*.jsonl")))
+    mix_rel = cfg_default("mix")
+    shutil.copy(os.path.join(ROOT, mix_rel), os.path.join(d, mix_rel))
+    doms, _ = read_mix(os.path.join(ROOT, mix_rel))
+    corpus = os.path.join(d, "data", "corpus")
+    real = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", doms[0], "*.jsonl")))
     real = real or sorted(glob.glob(os.path.join(ROOT, "data", "**", "*.jsonl"), recursive=True))
-    shutil.copy(real[0], os.path.join(dom, "real_shard.jsonl"))
-    json.dump({"fingerprint": _fp_dir(dom)},
-              open(os.path.join(dom, "build_corpus_stats.json"), "w"))
-    with open(os.path.join(dom, "real_shard.jsonl"), "a", encoding="utf-8") as f:
+    drifted = os.path.join(corpus, doms[0])
+    os.makedirs(drifted)
+    shutil.copy(real[0], os.path.join(drifted, "real_shard.jsonl"))
+    with open(os.path.join(drifted, "build_corpus_stats.json"), "w") as f:
+        json.dump({"fingerprint": cfp.fp_domain(doms[0], corpus)}, f)
+    with open(os.path.join(drifted, "real_shard.jsonl"), "a", encoding="utf-8") as f:
         f.write('{"question": "broken world drift", "output": "1"}\n')
+    unstamped = os.path.join(corpus, doms[1])
+    os.makedirs(unstamped)
+    shutil.copy(real[0], os.path.join(unstamped, "real_shard.jsonl"))
     return d
 
 
@@ -984,8 +990,8 @@ CHECKS = [
     ),
     (
         "corpus_fp_matches",
-        "every built domain's stamped fingerprint matches its live directory",
-        "two corpora both called data/corpus/math (0.0% vs 30.0% contaminated) were indistinguishable until 2026-08-30 -- a checkpoint must name its corpus like it names its tokenizer",
+        "every domain the default mix names carries a build-time fingerprint matching its live directory; a missing stamp is FAIL, not SKIP",
+        "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
         check_corpus_fp,
         _broken_corpus_fp,
     ),
