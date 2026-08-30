@@ -30,8 +30,18 @@ when the fingerprint matches, not when the files appear.
 ## Rules
 
 - **Download on the pod, never upload from a laptop.** A path that runs through one
-  person's machine cannot be reproduced by anyone else. `/work` is a 2TB block device
-  and `/data00` is 3.5TB NVMe; both survive container restarts.
+  person's machine cannot be reproduced by anyone else. **`/work` is the only durable
+  path inside the container.** It is a real ext4 mount (`/dev/vda2`, `st_dev` 65026);
+  `/data00` *inside the container* is not a mount at all — it shares `st_dev` with `/`,
+  so it is the container's own overlay and a restart erases it. The durable
+  `/data00`–`/data03` NVMe live on the **host** and are not mounted in the container
+  (`scripts/harness.py:45`). Both paths report the same free space, because the overlay's
+  upper layer sits on the same underlying filesystem — **free space is not evidence of a
+  separate disk**, and that is what fooled this document and the fetch target below.
+  Verify a target with `os.stat(p).st_dev != os.stat("/").st_dev`, never with
+  `disk_usage().free`. (`/work` itself is a Kubernetes emptyDir: it survives a container
+  restart but not a pod deletion. Durable-to-durable it is not; durable enough for a
+  fetch it is.)
 - **Read `data/PROVENANCE.md` before fetching anything.** The hf-mirror workaround was
   recorded there on 2026-08-28 and independently re-derived, wrongly, on 2026-08-30.
   Knowledge that is not read is not knowledge.

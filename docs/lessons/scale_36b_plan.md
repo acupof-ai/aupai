@@ -60,7 +60,8 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 ## 3. "scoring" 在 36B 该指什么 + 磁盘守卫
 
 现有质量头在 cosmopedia 上打低于原始 web——**跨 register 不迁移**（facts/data_quality.json），不照它规划。打分 = 格式/编码闸（现，precision 高）+ 跨源去重（dedup_fp）+ 组合权（mix 定）+ register 校准（44 研究定）。`harness run score --scorer` 可换后端，不硬编码今日质量头。44 拥研究问题，我拥管线实际跑什么。
-- **磁盘**：`data/raw` symlink → `/data00/aupai_raw/`（fetch 脚本建 target+symlink；`/data00` 1.9T 余）；语料 `data/corpus` 留 /work（866G 余）。`fetch_corpus.py` 起前 `shutil.disk_usage("data/raw").free >= target_bytes*1.5`，不足即拒（便宜上检，贵在小时六凑）。`--target_bytes` = 磁盘字节非 token（中文 UTF-8 未知则估 3-4 B/tok）。
+- **磁盘（2026-08-30 更正，前一版把语料指向了一个会消失的层）**：`data/raw` 和 `data/corpus` 都留在 **`/work`** 下。容器里的 `/data00` **不是挂载点**——它和 `/` 同一个 `st_dev`，就是容器自己的 overlay，重启即清空；真正耐久的 `/data00`–`/data03` NVMe 在**宿主机**上，容器里看不到（`scripts/harness.py:45`）。两条路径报同样的可用空间，因为 overlay 的上层落在同一个底层文件系统上——**可用空间从来不是"另一块盘"的证据**，这就是上一版和 `fetch_corpus.py:29 BIG_RAW_TARGET` 一起被骗的地方。证据是 token cache：`TOKEN_CACHE = /data00/pretrain_1b_tokens.pt`，六个阶梯点跑完之后全库找不到任何 `tokens_*.pt`，而它消失时没有任何东西报错。
+  磁盘守卫因此要查两件事，不是一件：`shutil.disk_usage(target).free >= target_bytes*1.5`（够不够），**且** `os.stat(target).st_dev != os.stat("/").st_dev`（是不是真盘）。只查前者的守卫会在一个会消失的层上愉快地放行 260GB。`--target_bytes` = 磁盘字节非 token（code 实测 3.04 B/tok，中文 UTF-8 未知则估 3-4）。
 
 ## 5. harness 契约（与 de 协同，一条管线）
 
