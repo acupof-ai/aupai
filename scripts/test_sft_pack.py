@@ -101,7 +101,7 @@ def main():
         {"role": "user", "content": "12/60 是多少？用计算器"},
         {"role": "assistant", "content": "12/60 = "},
         {"role": "tool", "content": "0.2"},
-        {"role": "assistant", "content": "12/60 = 0.2"},
+        {"role": "assistant", "content": "0.2 per minute"},
     ]
     apairs = format_agentic(conv)
     assert len(apairs) == 2, f"{len(apairs)} pairs for 2 assistant turns"

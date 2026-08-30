@@ -148,6 +148,16 @@ def format_agentic(messages):
     the agent loop waits on, and masking it trains a model that never stops
     calling. Tool output is never supervised: teaching the model to write tool
     output trains the opposite of an agent.
+
+    The assistant turn after a tool turn is a CONTINUATION, not a restatement:
+    it picks up from the tool result, never repeats the expression. A
+    restatement-trained model re-narrates history on every loop, and the context
+    is only 4096 tokens.
+
+        user:      "12/60 是多少？用计算器"
+        assistant: "12/60 = "        <- tool call, supervised on stopping here
+        tool:      "0.2"             <- given, masked
+        assistant: "0.2 per minute"  <- continuation from the result, supervised
     """
     for i, m in enumerate(messages):
         if m["role"] == "tool" and (i == 0 or messages[i - 1]["role"] != "assistant"):
