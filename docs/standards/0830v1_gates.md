@@ -569,12 +569,35 @@ appearance of having been checked. Both guards below close that gap.
   `opencc`, `trackio`) — the rest of the stack lives in the image and never moved; the
   Triton autotune cache; and the entire token cache, because `/data00` was never a mount
   inside the container, only a directory on the writable layer. A 0.2b smoke run re-encodes
-  `web_hq`'s 1,366,324 documents from scratch to discover this. **The reinstall pinned
-  nothing** — `pyproject.toml` declares `flash-linear-attention`, `triton`, `torch` with no
-  version — so the box came back on fla 0.5.2 / triton 3.6.0, and the version the six-point
-  ladder actually ran on is recorded nowhere. This is the `vocab_id` / `.srcfp` /
-  `filters_fp` failure class with site-packages as the source and every checkpoint as the
-  derived artifact.
+  `web_hq`'s 1,366,324 documents from scratch to discover this. This is the `vocab_id` /
+  `.srcfp` / `filters_fp` failure class with site-packages as the source and every
+  checkpoint as the derived artifact — and `ckpt_p324.pt` carries `model`, `cfg`,
+  `vocab_id`, `corpus_fp` and **no environment field at all**, so nothing could have raised.
+- **The recovery path for a container incident is the exited container's own writable
+  layer, and it is on a clock.** `crictl stop` leaves the previous attempt's container
+  object and its overlayfs snapshot in place. Attempt 7 — created 2026-08-14, the container
+  that actually ran the six-point ladder — was still readable at
+  `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/<id>/fs`. **An upper
+  layer contains, by definition, exactly what was hand-installed on top of the image**, so
+  it *is* the list nobody remembered: 60 packages, read off rather than recalled, plus the
+  binaries themselves. Same image sha, same Python, same CUDA, so the recovered `.so` is
+  binary-exact — better than recompiling from a source tree whose commit is also unrecorded.
+  The clock: one `crictl rmp` or one GC pass and the only surviving record of the working
+  environment is gone with no second snapshot behind it. **Copy the whole upperdir out
+  before anything else.**
+- **A hypothesis built on a correct stack trace can still be wrong, when the trace is of
+  the fallback path.** The controller read `fla/ops/common/chunk_delta_h.py` →
+  `Triton Error [CUDA]: invalid argument` and concluded fla version drift, since
+  `pyproject.toml` pins no version and the ladder's version is recorded nowhere. Refuted by
+  the attempt-7 snapshot: `flash_linear_attention` 0.5.2, `fla_core` 0.5.2, `liger_kernel`
+  0.8.2 — **identical on both sides**; torch and triton never moved because they live in the
+  image layer. The one difference is a package the controller never named: `flash_kda`
+  0.0.1+1ce47ea, present in attempt 7, absent in attempt 8. `fla` registers KDA through a
+  backend registry with `FlashKDABackend` ahead of Triton; with `flash_kda` gone
+  `is_available()` returns False and the whole thing falls back to `chunk_delta_h`, which
+  autotunes, which fails. Every frame of the trace was real and every frame was the wrong
+  path. It also explains why `FLA_CI_ENV=1` did nothing: shrinking the config space of a
+  path that should never be taken cannot fix it.
 - **"Imports succeed" is not "the runtime works", and a check that asserts the first while
   the second is broken is worse than no check.** After the restart the environment was
   reported repaired on the evidence that `import liger_kernel, fla` succeeds. It does. SFT
@@ -583,10 +606,16 @@ appearance of having been checked. Both guards below close that gap.
   seven ranks, and identically at the frozen `--batch 16` on one card, so it is neither
   shape nor scale. `FLA_CI_ENV=1` (which shrinks the autotune config space) and
   `FLA_USE_TMA=0` both fail unchanged. An `env_importable` gate reads green through all of
-  it. The gate that would have caught this asserts the *versions* match what the checkpoint
-  was trained under, not that the names import. Corollary: two sessions each measured half
-  of this and neither half was the answer — the import check and the kernel launch are
-  different claims about the same word "environment".
+  it. **And it would have stayed green after a correct repair too, because it checks a
+  hand-written list and no such list contains `flash_kda` — nobody remembered installing
+  it.** That is the general defect: a list written from memory omits exactly the packages
+  whose installation was never written down, which is the same set that a restart destroys.
+  The gate that catches this compares a *fingerprint* of the live site-packages against the
+  one stored in the checkpoint, and covers what takes effect rather than the nominal version
+  — `flash_kda` is a locally built wheel whose `.so` can change while `0.0.1+1ce47ea` does
+  not. Corollary: two sessions each measured half of this and neither half was the answer —
+  the import check and the kernel launch are different claims about the same word
+  "environment".
 - **A refit at equal budget is the decision; a comparison against a larger vocabulary is
   not.** Our 32K vocabulary, fitted on Chinese web before the objective changed, reads
   3.7073 code chars/token against Qwen2.5-Coder's 4.3806 — an 18% gap that was never a
