@@ -34,22 +34,17 @@ source: "aupai-fb hypothesis (discrimination/generation gap is composition not v
 
 合成占比从现 ~54% 压到 ~32%；natural:synthetic 从现 ~46:54 反转为 ~68:32。**zh:en 用真 en 修到 ~84:16**（现 en 域是脏的）。
 
-## 2. 36B 跨源去重（工程主矛盾）
+## 2. 36B 跨源去重（工程主矛盾，`harness run dedup` 第 4 步）
 
-现有 near-dup O(n²) 在 36B 跨源不可行。设计：
-- **exact**：全源 content-hash（现有 exact_key），O(n) 流式。
-- **near-dup**：MinHash **带状 LSH**（build_corpus 已内嵌 MinHashLSH 128-perm/16-band），跨源分桶——shard 并行，每 band 一张表。36B/文档 ~10^9 级：按 100M doc 分片 + banded 表并行进，跨源桶碰撞即候选、verify Jaccard。降到近 O(n)。
-- 源间重复的优先对：CCI3-HQ vs fineweb2（不同上游，但都抓中文网页）、Skypile(是 fineweb-edu 上游) vs 别的。
-- 和 de 协调 harness `clean` 步的去重子步（harness run clean 契约、指纹输出）。
+现有 near-dup O(n²) 在 36B 跨源不可行。设计：**exact content-hash O(n) + MinHash 带状 LSH**（build_corpus 内嵌 MinHashLSH 128-perm/16-band），shard 并行、跨源分桶→候选 verify Jaccard，近 O(n)。优先对：CCI3-HQ vs fineweb2（不同上游）、SkyPile vs fineweb-edu（**SkyPile 是它上游，最可能 embarrass**）。
+- **`harness run dedup --domains <a,b,c>` → `scripts/dedup_corpus.py`**（de 第 4 步，a535cca 包裹）。**全局跨源 pass**，dedup 后 clean、score 前（打重浪费贵步）。输出 `data/dedup/dedup_manifest.json`（doc IDs 标记重复 + 重复自哪个源，mix/训练查 manifest 跳过）+ `dedup_stats.json` 带 `dedup_fp`（算法+参数哈希，算法变则变）。CPU-only、按域续跑。
 
-## 3. "scoring" 在 36B 该指什么
+## 3. "scoring" 在 36B 该指什么 + 磁盘守卫
 
-现有质量头在 cosmopedia 上打低于原始 web——**跨 register 不迁移**（facts/data_quality.json），不照它规划。44 拥研究问题。管线实际跑什么（我拥）：
-- 不依赖单一 curriculum 头。分段打分：**register 感知**——一个 register 一档（web/散文/百科/wiki/代码/数学），各 register 内用对应判据，不全局一刀。
-- 或者把"打分"退化为三层：格式/编码闸（现有，precision 高）+ 跨源去重 + 组合权（mix 定，不用头）+ 一层 register 校准（44 研究定）。打分的目标从"评单文档质量"改为"评 register 能否被当前模型学"——即选择性更高 LOSS 的自然文本，而非 cosmetic。
-- 36B 的 scoring 是否还需 GPU 头，取决于 44 的最新研究；管线留接口（harness run score 可换后端）。
+现有质量头在 cosmopedia 上打低于原始 web——**跨 register 不迁移**（facts/data_quality.json），不照它规划。打分 = 格式/编码闸（现，precision 高）+ 跨源去重（dedup_fp）+ 组合权（mix 定）+ register 校准（44 研究定）。`harness run score --scorer` 可换后端，不硬编码今日质量头。44 拥研究问题，我拥管线实际跑什么。
+- **磁盘**：`data/raw` symlink → `/data00/aupai_raw/`（fetch 脚本建 target+symlink；`/data00` 1.9T 余）；语料 `data/corpus` 留 /work（866G 余）。`fetch_corpus.py` 起前 `shutil.disk_usage("data/raw").free >= target_bytes*1.5`，不足即拒（便宜上检，贵在小时六凑）。`--target_bytes` = 磁盘字节非 token（中文 UTF-8 未知则估 3-4 B/tok）。
 
-## 4. harness 契约（与 de 协同，一条管线）
+## 5. harness 契约（与 de 协同，一条管线）
 
 所有步走 `harness run {fetch,clean,score}`，同 run pretokenize 契约：check 红即拒、写 exp 行、产物钉指纹、可重跑。我供实质（源/组合/去重/scoring 逻辑），de 供 step（harness 集成/缓存/增量）。fetch+正则清洗是 CPU，GPU 先按 44 的 register 研究再定。
 
