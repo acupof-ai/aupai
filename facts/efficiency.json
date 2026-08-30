@@ -851,16 +851,24 @@
     {
       "id": "eff.throughput_quality_exchange_rate",
       "claim": "how much val NLL a throughput saving is allowed to cost before it stops paying for itself",
-      "value": 0.91,
+      "value": {
+        "0.2b-0.3b": 0.91,
+        "0.3b-0.4b": 0.567
+      },
       "unit": "nat of val NLL per e-fold of training tokens (local slope, 0.2b-0.3b segment)",
       "measured": "2026-08-30",
-      "source": "ladder points p02 (0.2b, val 3.691) and p03 (0.3b, val 3.322); (3.691-3.322)/ln(1.5)",
+      "source": "ladder points p02 (0.2b, 3.691), p03 (0.3b, 3.322), p04 (0.4b, 3.159); each entry is a secant slope over its own segment",
       "config": {
         "use": "A saving of x fraction of step time buys 1/(1-x) times the tokens in the same wall clock, so it is worth up to slope*ln(1/(1-x)) nat of quality. Worked: Block AttnRes saves 10.7% of step -> 1.120x tokens -> tolerance 0.103 nat. Below that the time it buys back more than covers the quality it costs.",
-        "block_attnres_tolerance_nat": 0.103,
-        "why_this_matters": "Names the tolerance BEFORE the sample size, so n cannot be chosen for affordability and the tolerance backfilled to match."
+        "block_attnres_tolerance_nat": {
+          "from 0.2b-0.3b": 0.103,
+          "from 0.3b-0.4b": 0.0641
+        },
+        "why_this_matters": "Names the tolerance BEFORE the sample size, so n cannot be chosen for affordability and the tolerance backfilled to match.",
+        "measured_drift": "The rate is not a constant and the drift is fast: one point later the slope had fallen 38% and the tolerance with it, 0.103 -> 0.064. A tolerance quoted without the segment it came from is wrong within one budget point. Always recompute at the budget being decided.",
+        "which_changes_this_binds": "Only changes that COST quality. A throughput change that costs none (short_conv, an fp8 recipe) is a pure wall-clock win and keeps its full value as D grows -- there the conversion is 1% of step ~ 20 min per 34h ladder. The two currencies move in OPPOSITE directions as D grows: absolute time saved rises, quality-equivalent value falls. Do not use one rate for both."
       },
-      "uncertainty": "A two-point slope. Loss curves flatten, so this OVERSTATES the slope at larger D: at 3.24b the same 12% more tokens buys less, the tolerance is TIGHTER than 0.103, and every campaign priced against it needs finer resolution than computed here. The direction is certain; the magnitude needs the six-point fit, which the running ladder produces for free.",
+      "uncertainty": "Every entry is a secant, so each overestimates the local slope at the right edge of its own segment. Two secants imply a curvature that would put the 3.24b slope far below 0.567 -- but that is the chained extrapolation this fact exists to discourage, so it is a reason to expect the fitted answer to be severe, not a number to cite. The six-point fit supplies the local slope; until then quote the segment, never a single rate.",
       "boundary": "the 0.2b-0.3b segment of this mix and architecture; recompute the local slope at the budget being decided",
       "status": "measured",
       "refuted_by": "the six-point ladder fit giving a local slope at 3.24b that this two-point estimate misses by more than its own uncertainty"
