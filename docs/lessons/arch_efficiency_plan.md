@@ -16,8 +16,8 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 | Component | ms/step | Time % | FLOPS % | Efficiency |
 |---|---|---|---|---|
-| FP8 GEMM (`_scaled_mm`) | 533 | 29% | ~84% | **93% of FP8 peak** (tilerl, exact FLOP from shapes) |
-| bf16 GEMM (attention QK^T etc.) | 222 | 12% | ~3% | ~58% (FA2 Hopper) |
+| FP8 GEMM (`_scaled_mm`, `nvjet_qqtst_*`) | 533 | 29% | ~84% | **93% of FP8 peak** (tilerl, exact FLOP from shapes) |
+| bf16 GEMM (LM head via Liger FLCE, `nvjet_tst_*`) | 226 | 13% | ~13-20% | memory-bound (vocab=32776) |
 | FP8 quant fusions | 112 | 6% | — | — |
 | KDA kernel | 240 | 13% | ~2% | **~3%** (latency-bound; ncu occupancy 6-12% confirms) |
 | inductor fusions | 290 | 16% | — | — |
@@ -30,6 +30,8 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **Key findings**:
 - FP8 GEMMs at 93% of peak (no headroom — tilerl's exact measurement)
+- bf16 226ms is **LM head** (Liger FLCE internal matmul), not attention — confirmed by kernel name prefix (`nvjet_tst_*` = bf16, `nvjet_qqtst_*` = FP8; tilerl GPU7 实测)
+- Flash attention confirmed in use (68.8ms/step, matches tilerl's 69ms)
 - KDA kernel at ~3% of FP8 peak (240ms for ~2% of FLOPS)
 - Non-GEMM time = 53% of step, contributes ~3% of FLOPS
 
@@ -40,7 +42,7 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 - KDA 2× + generic overhead 50%: ~39%
 - Absolute upper bound: **~39%**
 
-**Biggest lever**: KDA (240ms, 2% FLOPS, 3% peak) and generic overhead (478ms). GEMM efficiency is not a lever.
+**Biggest lever**: KDA (240ms, 2% FLOPS, 3% peak) and generic overhead (~256ms, was 478ms — 222ms LM head misattributed to generic, corrected 2026-08-30). GEMM efficiency is not a lever.
 
 ## 2. Controlled Architecture A/B (old vs new)
 
