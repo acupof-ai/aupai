@@ -537,7 +537,7 @@
    "id": "dq.web_hq.build_path",
    "value": "web_hq is NOT built through build_corpus.py's regex-only path. Its pipeline: scripts/score_corpus.sh scores every web shard with the distilled quality head (data/quality_head.pt, 231 docs/s) -> scripts/build_web_hq.sh keeps top 40% by score -> datagen/clean_web.py applies four hard filters (spam/short/repetitive/fragmented) plus the score cut (cut = 60th percentile). The 3.4% regex-layer recall_home (dq.criterion.positive_control_protocol) therefore does NOT represent web_hq's actual quality gate -- the head is the gate; the regex layer is a format pre-filter. Resolved 2026-08-30 in response to fb's blocking question before the first pretrain (web_hq = 32.4% of mix_scale_0.2b).",
    "measured": "2026-08-30",
-   "source": "code-verified: scripts/build_web_hq.sh, scripts/score_corpus.sh, datagen/clean_web.py (repo has no second web_hq builder); pod-side run inferred from data/corpus/web_hq existing in mix_v3 -- the actual pod run log was not inspected",
+   "source": "code-verified: scripts/build_web_hq.sh, scripts/score_corpus.sh, datagen/clean_web.py (repo has no second web_hq builder); pod-side run inferred from data/corpus/web_hq existing in the retired pre-0830v1 mix -- the actual pod run log was not inspected",
    "config": {
     "keep_fraction": 0.4,
     "head_auc_vs_hand": 0.823,

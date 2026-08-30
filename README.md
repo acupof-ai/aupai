@@ -14,7 +14,7 @@ python scripts/test_arch_compat.py     # CPU 冒烟测试，不需要 GPU
 python scripts/build_tokenizer.py --force
 ```
 
-仓库带一份 4,992 篇、约 0.9M token 的样本语料在 `data/corpus/sample/`，配 `data/mix_sample.json`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 构建到 `data/corpus/<domain>/`，配 `data/mix_v3.json`。**mix 是唯一的数据路径**：扁平回退已于 2026-08-29 删除，样本和真实语料走同一套代码。
+仓库带一份 4,992 篇、约 0.9M token 的样本语料在 `data/corpus/sample/`，配 `data/mix_sample.json`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 构建到 `data/corpus/<domain>/`，配 `data/mix_scale_3.24b.json`（默认 mix；六个预算点见 `data/mix_scale_*.json`）。**mix 是唯一的数据路径**：扁平回退已于 2026-08-29 删除，样本和真实语料走同一套代码。
 
 `data/tokenizer.json` 不入库。词表必须先建，train.py 缺它会直接报错——它曾经会静默训一个新的，那个词表缺 4 个 chat special 和 `[NUM]`，但 vocab_size 对得上，于是任何已有 checkpoint 配它都是乱码且不报错。
 

@@ -41,7 +41,7 @@ en 小包 = NuminaMath-CoT 1.23GB + MetaMathQA 0.23GB + DAPO-Math 0.30GB + Skywo
 - 与现有 web_hq（fineweb2 zh）不同上游，预期重复低
 - 传输：ModelScope 直连实测 **22.9 MiB/s**（训练节点 115.190.184.36）→ 108GB ≈ **80 分钟**，非 32h 悲观上界
 - 磁盘 108GB + 解压/去重工作空间（`/work` 2.0T，余 1.1T，非约束）
-- 入库前 MinHash vs mix_v3 去重 + b0 污染扫描（重复率未实测）
+- 入库前 MinHash vs 语料去重 + b0 污染扫描（重复率未实测）
 
 **可选加购（en 迁移赌注，~8h / 31GB / ~7B token）**：en math/CoT 小包，按需截取使 en 占比 ≤10%。理由见 `multilingual_mix.md` P3。
 
@@ -68,7 +68,7 @@ en 小包 = NuminaMath-CoT 1.23GB + MetaMathQA 0.23GB + DAPO-Math 0.30GB + Skywo
 ## 未闭合数字
 
 - ~~ModelScope 直连带宽~~ **已测 2026-08-30：22.9 MiB/s**（训练节点 115.190.184.36，CCI3-HQ part_000059 45s 拉 1.08GiB；与服务节点 Qwen weights 23.1 MiB/s 一致）
-- CCI3-HQ vs mix_v3 重复率（MinHash，入库时跑）
+- CCI3-HQ vs 语料重复率（MinHash，入库时跑）
 - ~~pod 可用磁盘~~ **已测**：/work 2.0T，余 1.1T
 
 ## Known issues（实测记录 2026-08-30）

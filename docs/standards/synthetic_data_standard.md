@@ -34,7 +34,7 @@ opencsg/chinese-cosmopedia          cols [text, score, source, data_format]
 
 **cosmopedia's output has no checkable relationship to its own `source`.** Its samples — "正丙基
 亚砜", "速写概述" — could have been written from any source with the same title. That is
-from-scratch generation, and `data/mix_v3.json` gives it **36%** of a 3.3B-token budget.
+from-scratch generation, and `data/mix_scale_3.24b.json` gives it **49.6%** of a 3.24B-token budget.
 
 ## The six criteria
 
@@ -57,7 +57,7 @@ from-scratch generation, and `data/mix_v3.json` gives it **36%** of a 3.3B-token
    the synthetic share, compared on web / wiki / math.
 
 Criterion 6 is running as `runs/ab_tb36.log` vs `runs/ab_tb05.log` — 500 steps each, identical
-seed and card count, `data/mix_v3.json` (textbook 36%) against `data/mix_v3_lowtb.json` (5%).
+seed and card count, the default mix (textbook 49.6%) against a 5%-textbook variant.
 
 ## Where the open data actually is
 
