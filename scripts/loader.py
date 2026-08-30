@@ -37,10 +37,16 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
     load_tokenizer to cross-check."""
     import torch
 
-    from train import HybridLM  # delayed: this pulls torch; consumers already require it
+    from train import Cfg, HybridLM  # delayed: this pulls torch; consumers already require it
 
     ck = torch.load(path, map_location=device, weights_only=False)
     cfg = SimpleNamespace(**ck["cfg"])
+    # Old checkpoints predate newer Cfg keys (e.g. chunk_size, added 2026-08-30):
+    # backfill live defaults so they still load. Safe only where the default is
+    # numerically neutral at inference -- chunk_size 32 vs 64 is (eff.chunk_size_parity).
+    for _k in vars(Cfg):
+        if not _k.startswith("_") and not hasattr(cfg, _k):
+            setattr(cfg, _k, getattr(Cfg, _k))
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
     # A caller without a FoNE encode/decode path reads every number as zero and scores
