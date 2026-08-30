@@ -468,7 +468,7 @@
   },
   {
    "id": "ds.code_fertility_redpajama",
-   "value": "frozen-vocab ratios measured on DECODED text (denominator pinned in name): tok/decoded-text-byte=0.329, chars/token=3.03. RedPajama-1T github sample file (first of 98), first ~300MB region, 47,028 docs; content-hash shuffled manifest => sample ~ whole. TOTAL IS A PROJECTION, NOT EXACT: 85.7B (0.329 x file-bytes x 98) requires the file-interan homogeneity assumption; the exact count is a full-file token count x 98 (exactcnt running). Files are uncompressed jsonl, so tok/decoded-byte x file bytes is not the parquet-compression error class fb flagged (that applies to codeparrot parquet, a different source).",
+   "value": "frozen-vocab on RedPajama-1T github, EXACT full-file token count (no extrapolation within file): file_0 (uncompressed jsonl, 2,658,456,835 B, 334,662 docs) = 751,303,817 tokens, 2.287B chars => chars/token=3.04, tok/file-byte=0.283. x98 files => 73.6B tokens total (content-hash-shuffled manifests => files homogeneous). EARLIER 85.7B was tok/text-byte(0.329) x file-bytes -- the cross-denominator error fb flagged (meta+jsonl overhead makes file-bytes > text bytes); corrected to the exact 73.6B. Branch >=8B firm; code cell not supply-limited.",
    "measured": "2026-08-30",
    "source": "pod 实测: /data00/aupai_raw/code_supply/github_00.sampled.jsonl + tokenizers.Tokenizer.from_file(data/tokenizer.json); measure3.py; curl -4 从 data.together.xyz",
    "config": {
@@ -479,7 +479,7 @@
     "sampling_note": "content-hash 打散文件名,n=1 文件采样近全体",
     "sampling_uncertainty": "n=1 文件;跨语言(Python/C)tok/byte 有差异但打散使单文件≈混合"
    },
-   "uncertainty": "n=1 file; total is a projection pending exact full-file count; gate (tokens/word on code) unmeasured",
+   "uncertainty": "x98 assumes within-file token count ~ file-interian; gate (tokens/word on code) unmeasured",
    "status": "measured"
   }
  ]
