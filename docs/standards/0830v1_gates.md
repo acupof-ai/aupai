@@ -562,3 +562,39 @@ appearance of having been checked. Both guards below close that gap.
   controller's first-three-shard scout read 15.20% and was wrong by 2.5pt for that reason
   alone — the same run's token count read all 62 shards and landed within 0.3%. The method
   was sound; the shard selection was not.
+- **A container restart is a source change, and every derived artifact under it is stale
+  with nothing raising.** 2026-08-30, the shared container was restarted to recover from a
+  bind-mount incident. The writable layer went with it; the image layer did not. What that
+  cost, measured rather than assumed: five packages (`liger_kernel`, `fla`, `flask`,
+  `opencc`, `trackio`) — the rest of the stack lives in the image and never moved; the
+  Triton autotune cache; and the entire token cache, because `/data00` was never a mount
+  inside the container, only a directory on the writable layer. A 0.2b smoke run re-encodes
+  `web_hq`'s 1,366,324 documents from scratch to discover this. **The reinstall pinned
+  nothing** — `pyproject.toml` declares `flash-linear-attention`, `triton`, `torch` with no
+  version — so the box came back on fla 0.5.2 / triton 3.6.0, and the version the six-point
+  ladder actually ran on is recorded nowhere. This is the `vocab_id` / `.srcfp` /
+  `filters_fp` failure class with site-packages as the source and every checkpoint as the
+  derived artifact.
+- **"Imports succeed" is not "the runtime works", and a check that asserts the first while
+  the second is broken is worse than no check.** After the restart the environment was
+  reported repaired on the evidence that `import liger_kernel, fla` succeeds. It does. SFT
+  then dies in the *first forward*, inside Triton's autotune benchmark of
+  `fla/ops/common/chunk_delta_h.py`, with `Triton Error [CUDA]: invalid argument` — on all
+  seven ranks, and identically at the frozen `--batch 16` on one card, so it is neither
+  shape nor scale. `FLA_CI_ENV=1` (which shrinks the autotune config space) and
+  `FLA_USE_TMA=0` both fail unchanged. An `env_importable` gate reads green through all of
+  it. The gate that would have caught this asserts the *versions* match what the checkpoint
+  was trained under, not that the names import. Corollary: two sessions each measured half
+  of this and neither half was the answer — the import check and the kernel launch are
+  different claims about the same word "environment".
+- **A refit at equal budget is the decision; a comparison against a larger vocabulary is
+  not.** Our 32K vocabulary, fitted on Chinese web before the objective changed, reads
+  3.7073 code chars/token against Qwen2.5-Coder's 4.3806 — an 18% gap that was never a
+  decision anyone faced, because that vocabulary is 151,665 slots, 4.6x the embedding
+  parameters. The comparison that decides is our 32K against a *32K refitted with code*:
+  3.7073 -> 3.8765, **4.6% of the code token budget recovered at zero parameter cost**
+  (`facts/tokenizer.json`, aupai-3b). Against unfreeze condition 2 (the corpus distribution
+  changed materially) the arithmetic is: 4.6% of code, which is a minority of a 30B mix,
+  against invalidating every checkpoint including `ckpt_p324` and the six-point ladder.
+  **Declined.** The 151K number stays as the ceiling it is: reaching it is a parameter-budget
+  decision about the embedding table, not a tokenizer decision.
