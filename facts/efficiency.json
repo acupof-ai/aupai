@@ -327,6 +327,154 @@
       "boundary": "cause is memory alignment of the logits' leading dimension, not precision, tile occupancy, or launch overhead. fp8 would be a further ~2x but requires patching Liger FLCE, which does the matmul internally; _fp8_ok also rejects the head on 32773%16=5.",
       "status": "recorded",
       "refuted_by": "padding landing in train.py without the measured throughput gain appearing in a 7-card run"
+    },
+    {
+      "id": "eff.step_time_by_operator_complete",
+      "claim": "the complete per-operator breakdown of one training step, summed by kernel name",
+      "value": [
+        {
+          "ms_per_step": 247.25,
+          "pct_step": 25.3,
+          "operator": "fp8 linear GEMMs (189 _scaled_mm)"
+        },
+        {
+          "ms_per_step": 215.84,
+          "pct_step": 22.1,
+          "operator": "LM head GEMMs (96 cutlass align-1) -> ~97 after vocab padding"
+        },
+        {
+          "ms_per_step": 132.19,
+          "pct_step": 13.5,
+          "operator": "AttnRes total (grad accum 45.5 + bwd reductions 46.5 + softmax/logits 30.9 + rms_scale 9.3)"
+        },
+        {
+          "ms_per_step": 128.1,
+          "pct_step": 13.1,
+          "operator": "DeltaRecurrence total (fla chunk 82.8 + chunk_gated_delta_rule_*/l2norm 19.6 + short_conv 25.7)"
+        },
+        {
+          "ms_per_step": 69.03,
+          "pct_step": 7.1,
+          "operator": "flash attention"
+        },
+        {
+          "ms_per_step": 60.93,
+          "pct_step": 6.2,
+          "operator": "fp8 quantize / amax (inductor, 279 launches, 218 us/call)"
+        },
+        {
+          "ms_per_step": 36.99,
+          "pct_step": 3.8,
+          "operator": "SwiGLU activation"
+        },
+        {
+          "ms_per_step": 29.05,
+          "pct_step": 3.0,
+          "operator": "layout copy / cat / cast"
+        },
+        {
+          "ms_per_step": 22.44,
+          "pct_step": 2.3,
+          "operator": "Liger CE kernel"
+        },
+        {
+          "ms_per_step": 36.67,
+          "pct_step": 3.7,
+          "operator": "other pointwise / norms / misc"
+        }
+      ],
+      "measured": "2026-08-30",
+      "source": "kernel-name grouping of the full trace; supersedes the 17.2% 'remainder' row in eff.roofline_per_operator_prepad",
+      "config": {
+        "gpu": "NVIDIA H20, single GPU, no DDP",
+        "batch": 16,
+        "seq": 4096,
+        "d": 1024,
+        "heads": 8,
+        "hd": 128,
+        "layers": 12,
+        "attn_every": 4,
+        "ffn_hidden": 3072,
+        "vocab": 32773,
+        "dtype": "bf16 + fp8 linear",
+        "compile": "torch.compile on model body; Liger FLCE outside",
+        "grad_ckpt": false,
+        "attn_res": "Full (attn_res_blocks=0, 25 sources)",
+        "iters": "3 warmup + 3 measured",
+        "step_kernel_ms": 978.5,
+        "launches_per_step": 3427,
+        "distinct_kernels": 323,
+        "gpu_idle_ms": 1.3
+      },
+      "uncertainty": "AttnRes's 132.19 ms summed by kernel name matches the independently measured +132.1 ms A/B delta to 0.1 ms, which cross-validates the grouping. DeltaRecurrence is 13.1%, not the 10.8% first reported -- the earlier figure missed short_conv and the chunk_gated_delta_rule_*/l2norm kernels hidden under aten-level rows.",
+      "boundary": "single GPU, no DDP, vocab pre-padding. The LM head row collapses to ~97 ms once vocab is padded, moving every percentage.",
+      "status": "recorded",
+      "refuted_by": "a post-padding 7-card trace disagreeing outside noise"
+    },
+    {
+      "id": "eff.launch_overhead_is_not_a_cost",
+      "claim": "kernel launch overhead and fragmentation cost measurable wall time in this model",
+      "value": "REFUTED. GPU idle is 1.3 ms out of 984 ms; the CPU runs ahead of the GPU (Command Buffer Full, 171.6 ms of CPU blocked on a full queue). At ~3-5 us per launch, 3427 launches is ~15 ms of CPU work fully hidden behind a saturated GPU. memset -- the classic fragmentation suspect -- is 251 launches for 0.90 ms total, 0.09% of the step.",
+      "measured": "2026-08-30",
+      "source": "same trace",
+      "config": {
+        "gpu": "NVIDIA H20, single GPU, no DDP",
+        "batch": 16,
+        "seq": 4096,
+        "d": 1024,
+        "heads": 8,
+        "hd": 128,
+        "layers": 12,
+        "attn_every": 4,
+        "ffn_hidden": 3072,
+        "vocab": 32773,
+        "dtype": "bf16 + fp8 linear",
+        "compile": "torch.compile on model body; Liger FLCE outside",
+        "grad_ckpt": false,
+        "attn_res": "Full (attn_res_blocks=0, 25 sources)",
+        "iters": "3 warmup + 3 measured",
+        "step_kernel_ms": 978.5,
+        "launches_per_step": 3427,
+        "distinct_kernels": 323,
+        "gpu_idle_ms": 1.3
+      },
+      "uncertainty": "holds at this batch size on one GPU; a smaller batch or a slower GPU could expose launch cost",
+      "boundary": "the recoverable waste is un-fused HBM round-trips, not kernel count. Cutting launches without cutting traffic buys nothing here.",
+      "status": "recorded",
+      "refuted_by": "a configuration where GPU idle time is a material fraction of the step"
+    },
+    {
+      "id": "eff.kda_parallelism_not_the_bottleneck",
+      "claim": "KDA's chunk kernel is starved for parallelism at the training batch size",
+      "value": "REFUTED at production batch. scripts/kda_probe.py, direct chunk_kda with train.py's arguments, H20, bf16, hd=128, fwd+bwd, 10 iters, one layer: B=1 2.11 ms, B=2 2.15 (work-scaled 0.51), B=4 3.23 (0.75), B=8 6.18 (0.96), B=16 12.10 (0.98), B=32 23.68 (0.98). Sub-linear only up to B*h~32; flat linear from B=8 on.",
+      "measured": "2026-08-30",
+      "source": "scripts/kda_probe.py",
+      "config": {
+        "gpu": "NVIDIA H20, single GPU, no DDP",
+        "batch": 16,
+        "seq": 4096,
+        "d": 1024,
+        "heads": 8,
+        "hd": 128,
+        "layers": 12,
+        "attn_every": 4,
+        "ffn_hidden": 3072,
+        "vocab": 32773,
+        "dtype": "bf16 + fp8 linear",
+        "compile": "torch.compile on model body; Liger FLCE outside",
+        "grad_ckpt": false,
+        "attn_res": "Full (attn_res_blocks=0, 25 sources)",
+        "iters": "3 warmup + 3 measured",
+        "step_kernel_ms": 978.5,
+        "launches_per_step": 3427,
+        "distinct_kernels": 323,
+        "gpu_idle_ms": 1.3,
+        "note": "isolated kernel probe: no compile, no fp8, single layer"
+      },
+      "uncertainty": "rules out SM starvation and, given ~1023 us/call for the main chunk_kda group, kernel fragmentation. It does NOT separate a serial dependency chain from bandwidth -- the head-axis sweep aborted on fla's ~30s per-head-count JIT. Unproven either way.",
+      "boundary": "applies at B>=8; at B<=4 the card genuinely is empty, which is an inference concern, not a training one",
+      "status": "measured",
+      "refuted_by": "a completed head-axis sweep showing sub-linear scaling at production B"
     }
   ]
 }
