@@ -57,8 +57,9 @@ exec chroot "$ROOT" /usr/bin/env -i PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
 """
 
 
-def run_sandboxed(code, timeout=10):
-    """Run code in the sandbox. Returns (rc, stdout, stderr_tail)."""
+def run_sandboxed(code, timeout=10, stdin=None):
+    """Run code in the sandbox. Returns (rc, stdout, stderr_tail).
+    stdin: optional string fed to the process's stdin (example-based tests)."""
     if os.geteuid() != 0:
         raise RuntimeError("sandbox_exec needs root (chroot + namespaces); run on the pod")
     root = tempfile.mkdtemp(prefix="sandbox.", dir="/tmp")
@@ -70,6 +71,7 @@ def run_sandboxed(code, timeout=10):
             ["unshare", "-nmp", "--fork", "bash", "-c", _SETUP, "bash", root],
             capture_output=True,
             timeout=timeout,
+            input=stdin.encode("utf-8") if stdin is not None else None,
         )
         return (p.returncode,
                 p.stdout.decode("utf-8", "replace"),
@@ -96,10 +98,12 @@ def _self_check():
         ("print(open('/work/aupai/data/eval/code_holdout_500.jsonl').read()[:10])",
          1, "", "filesystem isolation (eval answers invisible)"),
         ("import os\nprint(os.listdir('/work'))", 0, "code.py", "only the tmpfs workdir is visible"),
+        ("import sys\nprint(sys.stdin.read().strip())", 0, "hello", "stdin passthrough (example-based tests)"),
     ]
     fails = 0
     for code, exp_rc, exp_out, label in cases:
-        rc, out, err = run_sandboxed(code, timeout=15)
+        kw = {"stdin": "hello"} if label.startswith("stdin") else {}
+        rc, out, err = run_sandboxed(code, timeout=15, **kw)
         ok = (rc == exp_rc or (exp_rc == -1 and rc < 0)) and exp_out in out
         if not ok:
             fails += 1
