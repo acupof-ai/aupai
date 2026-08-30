@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build data/corpus/<domain>/ for data/mix_v3.json, from the sources that exist on the pod.
+# Build data/corpus/<domain>/ for the default mix (train.py Cfg.mix), from the sources that exist on the pod.
 #
 #   bash scripts/build_domains.sh          # all domains
 #   DOMAINS="math chat" bash scripts/build_domains.sh

@@ -50,5 +50,5 @@ for f in rng.sample(files, min(6, len(files))):
 toks = sum(len(e.ids) for e in tok.encode_batch(sample))
 per = toks / len(sample)
 print(f"\n{out}: {len(files)} shards, {n:,} documents, ~{n * per / 1e9:.2f}B tokens ({per:.0f} tok/doc)")
-print("Now: python3 scripts/check_mix.py --mix data/mix_v3.json  (it names any domain the epoch cap truncates)")
+print("Now: python3 scripts/check_mix.py --mix data/mix_scale_3.24b.json  (it names any domain the epoch cap truncates)")
 PY

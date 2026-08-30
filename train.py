@@ -1210,7 +1210,7 @@ def _assert_mix_domains(names, corpus_dir, allow_drift=False):
     """Reject a mix that names the unfiltered corpus, a domain with no shards on disk, a
     domain reached through symlinks, or a domain whose live bytes no longer match its
     build-time fingerprint. Called from main() where the mix json is read -- the one point
-    run_ddp.sh, a bare `python train.py` and run_pretrain_v3.sh share. Not from build_mix,
+    run_ddp.sh and a bare `python train.py` share. Not from build_mix,
     which test_arch_compat.py drives with a synthetic mix that has no corpus.
 
     Returns {domain: live_fp} so main() can log data identity next to the mix line.

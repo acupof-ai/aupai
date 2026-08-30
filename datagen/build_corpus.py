@@ -284,7 +284,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", action="append", required=True, help="fineweb2 | skypile | jsonl:<glob>")
     ap.add_argument("--target_tokens", type=float, default=8e9)
-    ap.add_argument("--domain", required=True, help="data/mix_v3.json domain -> data/corpus/<domain>/")
+    ap.add_argument("--domain", required=True, help="a default-mix domain -> data/corpus/<domain>/")
     ap.add_argument("--out", default=None, help="output dir (default data/corpus/<domain>)")
     ap.add_argument(
         "--host_cap",

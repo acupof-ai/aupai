@@ -75,11 +75,14 @@ def main():
         # train.py has no knob for the token-cache location (_domain_cache_path writes
         # /data00/tokens_<domain>[_fone].pt), so the domain NAME is the only thing keeping
         # this six-step run out of a multi-day pretrain's cache file.
-        v3 = os.path.join(ROOT, "data", "mix_v3.json")
-        if os.path.exists(v3):
-            real = list(json.load(open(v3, encoding="utf-8"))["domains"])
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import harness
+
+        real_mix = os.path.join(ROOT, harness.cfg_default("mix"))
+        if os.path.exists(real_mix):
+            real = list(json.load(open(real_mix, encoding="utf-8"))["domains"])
             assert DOMAIN not in real, (
-                f"domain {DOMAIN!r} is also in mix_v3.json; both would share the token cache "
+                f"domain {DOMAIN!r} is also in the default mix; both would share the token cache "
                 f"/data00/tokens_{DOMAIN}.pt and this test would clobber a pretrain's."
             )
         print(f"    {n_shard} shards, domains={doms}")

@@ -5,7 +5,7 @@ train.py does this itself on rank 0 inside build_mix(), with the other ranks par
 Doing it up front instead means a tokenizer or missing-domain failure shows up in seconds rather
 than after eight ranks have allocated their GPUs, and the training launch starts on warm caches.
 
-    python scripts/pretokenize.py [--mix data/mix_v3.json] [--domains web,math]
+    python scripts/pretokenize.py [--mix data/mix_scale_3.24b.json] [--domains web,math]
 """
 
 import argparse

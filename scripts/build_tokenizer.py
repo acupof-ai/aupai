@@ -6,7 +6,7 @@ drops the chat/think specials the model relies on.
 Stratified equal per-domain byte budget, so math/code symbols earn merges instead
 of drowning in web.
 
-    python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix_v3.json]
+    python scripts/build_tokenizer.py [--force] [--sample-tokens N] [--mix data/mix_scale_3.24b.json]
 """
 
 import argparse

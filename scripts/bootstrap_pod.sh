@@ -11,7 +11,7 @@
 #   fetch   — fetched tier via the fetchers; frozen tier from $ARCHIVE (skipped
 #             until ARCHIVE points at a real archive).
 #   build   — scripts/build_domains.sh -> data/corpus/<domain>/
-#   vocab   — scripts/build_tokenizer.py --force (needs data/mix_v3.json + the corpus)
+#   vocab   — scripts/build_tokenizer.py --force (needs the default mix + the corpus)
 #   check   — scripts/check_mix.py: dry-run the schedule before burning GPUs.
 #
 # NOT included: launching the pretrain. That is a human decision.
@@ -63,7 +63,8 @@ fi
 # --- tokenizer --------------------------------------------------------------
 if want vocab; then
   say "stage vocab"
-  [ -f "data/mix_v3.json" ] || die "vocab (data/mix_v3.json required; build first)"
+  MIX=$(python3 -c "import sys; sys.path.insert(0,'scripts'); import harness; print(harness.cfg_default('mix'))")
+  [ -f "$MIX" ] || die "vocab ($MIX required; build first)"
   python3 scripts/build_tokenizer.py --force || die "build_tokenizer"
   say "stage vocab: done"
 fi
