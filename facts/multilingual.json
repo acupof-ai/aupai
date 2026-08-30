@@ -1,0 +1,788 @@
+{
+  "facts": [
+    {
+      "id": "mlm.corpus.tokens_total",
+      "value": 3619000000,
+      "unit": "tokens",
+      "measured": "2026-08-30",
+      "source": "python /tmp/tokcount.py on the pod, /work/aupai/data/corpus",
+      "config": {
+        "method": "sampled bytes/token against data/tokenizer.json, scaled by total .jsonl bytes x measured text/file byte ratio",
+        "sample": "80 docs per shard per domain; ratio reproduced within 1% on a 2x sample (code 2.1%, chat 2.7% -- those two are soft)",
+        "per_domain_tokens_B": {
+          "web_hq": 1.432,
+          "textbook": 1.608,
+          "wiki": 0.231,
+          "en": 0.158,
+          "math": 0.082,
+          "code": 0.062,
+          "chat": 0.044
+        },
+        "domains": "the 7 named in data/mix_scale_3.24b.json; web_cci3_p* and sample excluded",
+        "corpus_fp": {
+          "web_hq": "30838d423348b2e5"
+        },
+        "supersedes": "the prior 3.24e9 value, whose source was a relay ('aupai-3b 实测 (fb 转述)') with no artifact and which was byte-identical to mix_scale_3.24b.json total_tokens=3244941863 -- a training budget recorded as a corpus supply"
+      },
+      "uncertainty": "+-2% (sampling); code and chat +-3%",
+      "status": "measured"
+    },
+    {
+      "id": "mlm.corpus.tokens_per_param",
+      "value": 20.98,
+      "unit": "tokens/param",
+      "measured": "2026-08-30",
+      "source": "3.619B tokens / 172.51M non-embedding params",
+      "config": {
+        "non_embed_params": 172510000,
+        "tokens": 3619000000,
+        "comparison": "modern sub-1B ~6000 (SmolLM2-1.7B: 11T/1.7B)",
+        "note": "prior 19.5 used 3.24e9 tokens and the retired 166M estimate; both corrected"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.fertility.en_project",
+      "value": 1.87,
+      "unit": "tokens/word",
+      "measured": "2026-08-29",
+      "source": "project measurement (fb), unclipped",
+      "config": {
+        "vocab": "frozen 32,773, Chinese-trained"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.fertility.en_native32k",
+      "value": 1.32,
+      "unit": "tokens/word",
+      "measured": "2026-08-30",
+      "source": "arXiv:2504.17025 Table 2",
+      "config": {
+        "tokenizer": "Mistral-7B-v0.1 / Llama-2 family SentencePiece 32k",
+        "domain": "CulturaX EN",
+        "note": "same-vocab-size comparison, cleanest control"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.fertility.multiplier_vs_native32k",
+      "value": 1.42,
+      "unit": "x",
+      "measured": "2026-08-30",
+      "source": "1.87 / 1.32 (computed from mlm.fertility.en_project and mlm.fertility.en_native32k)",
+      "config": {
+        "domain_match": "CulturaX EN; project's 1.87 measured on different text, +-10% uncertainty"
+      },
+      "uncertainty": 0.1,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.fertility.multiplier_vs_modern_mean",
+      "value": 1.52,
+      "unit": "x",
+      "measured": "2026-08-30",
+      "source": "1.87 / 1.23, modern-tokenizer mean from arXiv:2605.24718 Table 4 (6 tokenizers, min 1.21 max 1.25)",
+      "config": {
+        "tokenizers": "6 modern tokenizers, fertility min 1.21 max 1.25 (arXiv:2605.24718 Table 4)",
+        "note": "literature config; project's 1.87 measured on different text, +-10% uncertainty"
+      },
+      "uncertainty": 0.1,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.fertility.harm_causal",
+      "value": -4.43,
+      "unit": "percent BPB",
+      "measured": "2026-08-30",
+      "source": "arXiv:2608.26449",
+      "config": {
+        "intervention": "fixed pre-tokenization regex, Nepali fertility 4.78->1.58",
+        "scale": "not 200M, 外推",
+        "note": "causal evidence fertility improvement improves LM quality"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.fertility.harm_cost",
+      "value": 68,
+      "unit": "percent max training-cost increase",
+      "measured": "2026-08-30",
+      "source": "arXiv:2310.08754",
+      "config": {
+        "setup": "24x 2.6B models, English-centric tokenizer on German",
+        "scale": "2.6B, 外推",
+        "note": "same paper: fertility not consistently correlated with downstream quality"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.fertility.null_result",
+      "value": "2.3x fertility difference does not predict cross-lingual accuracy (r=-0.14, p=0.24)",
+      "measured": "2026-08-30",
+      "source": "arXiv:2605.29738 (legal domain)",
+      "config": {
+        "scale": "外推",
+        "note": "counter-evidence: architecture and pretrain data dominate"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.ratio.sub1b_optimum",
+      "value": "no measured sub-1B zh:en optimum exists",
+      "measured": "2026-08-30",
+      "source": "literature search (agent A)",
+      "config": {
+        "closest": "He et al. arXiv:2410.12883 family-level optima 85M-1.2B, Chinese-family ~0.22 of mixture; Climb arXiv:2509.15556 en-zh sweep at 1.2B, optima graphical only"
+      },
+      "uncertainty": null,
+      "status": "unmeasured",
+      "claim": "a measured zh:en mixture optimum exists at sub-1B scale",
+      "audit": "literature search 2026-08-30 (agent A): no sub-1B zh:en sweep found; closest evidence is family-level and 1.2B",
+      "refuted_by": "0/10/30 en-share sweep at 200M (queued with e1's 0/30 sweep)"
+    },
+    {
+      "id": "mlm.curse.sub1b_measured",
+      "value": -4.1,
+      "unit": "XNLI points (7 langs -> 100 langs)",
+      "measured": "2026-08-30",
+      "source": "arXiv:1911.02116 XLM-R (270M encoder)",
+      "config": {
+        "scale": "270M encoder, 外推 to causal LM",
+        "note": "curse of multilinguality is real at sub-1B; mT5 300M SQuAD -2.5 vs monolingual (arXiv:2010.11934)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.transfer.enzh_math_200m",
+      "value": "unmeasured at 200M; zero direct en->zh math-transfer measurements at any scale",
+      "measured": "2026-08-30",
+      "source": "literature search (agent A)",
+      "config": {
+        "closest": "MathOctopus arXiv:2310.20246 7B: en-only LLaMA2-7B zh MGSM 22.4 -> +zh SFT 34.4; UST arXiv:2501.02448 1.5B en->ko +28.5 HRM8K; MGSM arXiv:2210.03057 test-time CoT transfer emergent only above ~8B"
+      },
+      "uncertainty": null,
+      "status": "unmeasured",
+      "claim": "en math/CoT pretrain data transfers to zh math performance at 200M",
+      "audit": "literature search 2026-08-30 (agent A): zero direct en->zh math-transfer measurements at any scale; nearest evidence 1.5B and 7B",
+      "refuted_by": "0/10/30 en-share sweep at 200M with zh math eval (queued with e1's 0/30 sweep)"
+    },
+    {
+      "id": "mlm.transfer.testtime_emergence",
+      "value": "multilingual CoT transfer emerges only at scale (PaLM-62B class); PaLM-8B zh MGSM 4.0",
+      "measured": "2026-08-30",
+      "source": "arXiv:2210.03057 MGSM",
+      "config": {
+        "scale": "8B-540B, 外推 to 200M: expect near-zero test-time EN-CoT transfer"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.calib.zh_chars_per_token",
+      "value": 1.5,
+      "unit": "chars/token",
+      "measured": "2026-08-30",
+      "source": "frozen tokenizer on local zh math corpus (gsm8k_zh 1.539, ape210k 1.414, mxode 1.615)",
+      "config": {
+        "tokenizer": "data/tokenizer.json frozen",
+        "sample": "3000 lines each"
+      },
+      "uncertainty": 0.1,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.calib.en_chars_per_token",
+      "value": 4.51,
+      "unit": "chars/token",
+      "measured": "2026-08-30",
+      "source": "frozen tokenizer on 48-word English sample",
+      "config": {
+        "sample_small": true,
+        "note": "consistent with 1.87 tok/word x ~5.2 chars/word = 2.8 chars/token on web text; use 4.5 for prose"
+      },
+      "uncertainty": 0.5,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.numina_math_cot",
+      "value": 1234356910,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-MO/NuminaMath-CoT StorageSize",
+      "config": {
+        "license": "Apache-2.0 (HF); mirror AI-ModelScope/NuminaMath-CoT labeled cc-by-nc-4.0 - license conflict",
+        "rows": 859594,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.openmathinstruct2",
+      "value": 12628474650,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/OpenMathInstruct-2 StorageSize",
+      "config": {
+        "license": "cc-by-4.0",
+        "rows": 21972791,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.openmathreasoning",
+      "value": 49525407904,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/OpenMathReasoning StorageSize",
+      "config": {
+        "license": "cc-by-4.0 (HF); mirror labeled Apache-2.0 - conflict",
+        "rows": 5678317,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.openr1_math_220k",
+      "value": 12649352651,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/open-r1/OpenR1-Math-220k StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "rows": 450258,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.openthoughts_114k",
+      "value": 3549265979,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/OpenThoughts-114k StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "rows": 227914,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.metamathqa",
+      "value": 235466456,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/MetaMathQA StorageSize",
+      "config": {
+        "license": "MIT",
+        "rows": 395000,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.dapo_math_17k",
+      "value": 299368084,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/DAPO-Math-17k StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "rows": 1791700,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.skywork_or1",
+      "value": 823114808,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/Skywork-OR1-RL-Data StorageSize",
+      "config": {
+        "license": "Apache-2.0 (mirror)",
+        "rows": 119112,
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cosmopedia",
+      "value": 92200826665,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/HuggingFaceTB/cosmopedia StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "rows": 31064744,
+        "note": "EN synthetic textbook; project already uses zh cosmopedia - duplication check needed",
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.fineweb_edu",
+      "value": 5835742723075,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/fineweb-edu StorageSize",
+      "config": {
+        "license": "odc-by",
+        "note": "EN web, edu-filtered; 5.84TB total, take a slice",
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.fineweb_full",
+      "value": 47629386409680,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/swift/fineweb StorageSize",
+      "config": {
+        "license": "odc-by",
+        "note": "47.6TB full mirror",
+        "reachable": true
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.rejected_openwebmath",
+      "value": "not on ModelScope (AI-ModelScope 404); HF page 401",
+      "measured": "2026-08-30",
+      "source": "agent B availability check",
+      "config": {
+        "paper_size": "arXiv:2310.06786 claims 14.7B tokens",
+        "reject_reason": "unreachable from pod"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_deepseekmath",
+      "value": "not on ModelScope; HF page 401",
+      "measured": "2026-08-30",
+      "source": "agent B availability check",
+      "config": {
+        "paper_size": "arXiv:2402.03300 claims 120B math-related tokens",
+        "reject_reason": "unreachable from pod"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_nemotron_cc",
+      "value": "not on ModelScope (nvidia/ 404, only 4.2KB pointer files)",
+      "measured": "2026-08-30",
+      "source": "agent B availability check",
+      "config": {
+        "paper_size": "arXiv:2412.02595 claims 6.3T tokens",
+        "reject_reason": "unreachable from pod"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.calib.zh_bytes_per_token",
+      "value": 4.5,
+      "unit": "bytes/token",
+      "measured": "2026-08-30",
+      "source": "computed: 3 bytes/char UTF-8 zh x 1.5 chars/token (mlm.calib.zh_chars_per_token); validated against SkyPile self-report 620GB/150B = 4.13",
+      "config": {
+        "usage": "ModelScope StorageSize bytes -> token estimate; en prose also ~4.5 bytes/token"
+      },
+      "uncertainty": 0.5,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.bandwidth.measured_relay",
+      "value": 1.16,
+      "unit": "MB/s",
+      "measured": "2026-08-30",
+      "source": "project measurement (fb): HF via tn relay",
+      "config": {
+        "modelscope_direct": "unmeasured; transfer_h = decimal_GB x 0.24 at this rate"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cci3_hq",
+      "value": 517900000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/BAAI/CCI3-HQ StorageSize; arXiv:2410.18505",
+      "config": {
+        "license": "Apache-2.0",
+        "gated": false,
+        "token_est_billion": 115,
+        "self_report": "100B tokens, 500GB",
+        "transfer_h": 124,
+        "dup": "low vs fineweb2 (different crawl), unmeasured"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cci3_data",
+      "value": 1090000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/BAAI/CCI3-Data StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "gated": false,
+        "token_est_billion": 242,
+        "self_report": "1000GB",
+        "transfer_h": 261,
+        "note": "full crawl, lower quality than HQ"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cci4_m2_base",
+      "value": 5720000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/BAAI/CCI4.0-M2-Base-v1 StorageSize; arXiv:2506.07463",
+      "config": {
+        "license": "Apache-2.0",
+        "gated": false,
+        "token_est_billion": 1271,
+        "zh_fraction": 0.15,
+        "zh_token_est_billion": 191,
+        "transfer_h": 1371,
+        "note": "bilingual; no pure-zh 'BAAI/CCI4' path exists"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cci4_m2_cot",
+      "value": 2570000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/BAAI/CCI4.0-M2-CoT-v1 StorageSize",
+      "config": {
+        "license": "Apache-2.0",
+        "gated": false,
+        "token_est_billion": 571,
+        "self_report": "4200GB, 430M CoT samples",
+        "transfer_h": 616,
+        "dup": "may overlap existing math/chat domains"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.ultra_fineweb",
+      "value": 9730000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/OpenBMB/Ultra-FineWeb StorageSize; arXiv:2505.05427",
+      "config": {
+        "license": "apache-2.0 (upstream licenses vary)",
+        "gated": false,
+        "token_est_billion": 2162,
+        "self_report": "1T en + 120B zh tokens",
+        "transfer_h": 2332,
+        "correction": "filtered corpus (fastText), NOT 'anchored rewrite'; zh is 120B not 200B"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.fineweb_edu_zh_v21",
+      "value": 2420000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/opencsg/Fineweb-Edu-Chinese-V2.1 StorageSize; arXiv:2501.08197",
+      "config": {
+        "license": "Apache-2.0 (commercial use requires email contact)",
+        "gated": false,
+        "token_est_billion": 538,
+        "self_report": "~1.5T tokens",
+        "transfer_h": 580,
+        "upstream": "CCI2/SkyPile/IndustryCorpus/TeleChat-PTD/MAP-CC"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.skypile",
+      "value": 665300000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/modelscope/SkyPile-150B StorageSize",
+      "config": {
+        "license": "Apache-2.0 + Skywork Community License",
+        "gated": false,
+        "token_est_billion": 148,
+        "self_report": "150B tokens, 620GB, 233M web pages",
+        "transfer_h": 160,
+        "dup": "upstream of chinese-fineweb-edu; distinct from fineweb2"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.mnbvc",
+      "value": 3780000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/liwu/MNBVC StorageSize",
+      "config": {
+        "license": "MIT",
+        "gated": true,
+        "approval_mode": 1,
+        "token_est_billion": 840,
+        "note": "REJECT on access; revivable if application approved"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.wanjuan1",
+      "value": 333600000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/Shanghai_AI_Laboratory/WanJuan1_dot_0 StorageSize (text only)",
+      "config": {
+        "license": "CC-BY-NC-4.0",
+        "gated": false,
+        "token_est_billion": 74,
+        "transfer_h": 80,
+        "note": "commercial use barred"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.wanjuancc",
+      "value": 207200000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/Shanghai_AI_Laboratory/WanJuanCC StorageSize (193 GiB)",
+      "config": {
+        "license": "CC-BY-4.0",
+        "gated": false,
+        "lang": "en",
+        "token_est_billion": 46,
+        "transfer_h": 50,
+        "note": "README self-contradictory: 1T vs 100B tokens"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.wudao",
+      "value": 96000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/whynlp/WuDaoCorpus-200G-shuffled StorageSize (unofficial upload)",
+      "config": {
+        "license": "CC-BY-NC-SA-4.0",
+        "gated": false,
+        "token_est_billion": 21,
+        "transfer_h": 23,
+        "note": "commercial use barred"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.map_cc",
+      "value": 1610000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/m-a-p/MAP-CC StorageSize",
+      "config": {
+        "license": "CC-BY-NC-ND-4.0",
+        "gated": false,
+        "token_est_billion": 358,
+        "self_report": "800B tokens",
+        "transfer_h": 386,
+        "note": "no commercial, no derivatives"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.telechat_ptd",
+      "value": 497000000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/TeleAI/TeleChat-PTD StorageSize; arXiv:2401.03804",
+      "config": {
+        "license": "Apache-2.0",
+        "gated": false,
+        "token_est_billion": 110,
+        "self_report": "270M docs, ~1TB raw",
+        "transfer_h": 119
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.michao",
+      "value": 88100000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/Shanghai_AI_Laboratory/MiChao StorageSize",
+      "config": {
+        "license": "CC-BY-NC-SA-4.0",
+        "gated": false,
+        "token_est_billion": 20,
+        "transfer_h": 21,
+        "note": "news/gov crawl; commercial use barred"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.rejected_chinese_fineweb",
+      "value": "not on ModelScope (404, 0 search results); HF page unreachable from pod",
+      "measured": "2026-08-30",
+      "source": "agent C availability check",
+      "config": {
+        "reject_reason": "unreachable",
+        "onshore_alternative": "opencsg/Fineweb-Edu-Chinese-V2.1"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_chinesewebtext",
+      "value": "not on ModelScope; HF page unreachable from pod",
+      "measured": "2026-08-30",
+      "source": "agent C availability check",
+      "config": {
+        "reject_reason": "unreachable",
+        "paper_size": "arXiv:2311.01149 1.42TB; v2 arXiv:2411.19668 3.8TB"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_nemotron_cc_zh",
+      "value": "no zh subset on ModelScope; nv-community/Nemotron-CC-v2 is a 4.2KB gated stub; HF unreachable",
+      "measured": "2026-08-30",
+      "source": "agent C availability check",
+      "config": {
+        "reject_reason": "unreachable"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_fineweb_edu_zh_v22",
+      "value": "ApprovalMode=1 (application required); StorageSize=null",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/opencsg/Fineweb-Edu-Chinese-V2.2",
+      "config": {
+        "reject_reason": "gated"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.src.rejected_coig_cqia",
+      "value": "SFT/instruction data, not pretrain crawl (48k rows, 285MB)",
+      "measured": "2026-08-30",
+      "source": "modelscope.cn/api/v1/datasets/AI-ModelScope/COIG-CQIA; arXiv:2403.18058",
+      "config": {
+        "reject_reason": "wrong type for pretrain extension"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.bandwidth.modelscope_direct",
+      "value": 22.9,
+      "unit": "MiB/s",
+      "measured": "2026-08-30",
+      "source": "aupai-3b measured on training node 115.190.184.36: CCI3-HQ part_000059, 1.08GiB in 45s; consistent with Qwen weights 23.1 MiB/s on service node",
+      "config": {
+        "contrast": "relay bound 1.16 MB/s (mlm.bandwidth.measured_relay); direct is ~20x",
+        "implication": "108GB in ~80 min, not 32h"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.cci3_hq_actual",
+      "value": 108030000000,
+      "unit": "bytes",
+      "measured": "2026-08-30",
+      "source": "aupai-3b full download: 96 LFS shards, 108.03GB",
+      "config": {
+        "discrepancy": "ModelScope API StorageSize reported 517.9GB (mlm.src.cci3_hq) -- likely includes revision history; actual checkout 108GB",
+        "token_est_billion": "22-24 (4.5-5.0 bytes/token)",
+        "note": "fb confirmed: not 30B"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "mlm.src.rejected_wikipedia_dupe",
+      "value": "overlaps existing wiki domain (wikipedia zh 20231101 already in mix_v3)",
+      "measured": "2026-08-30",
+      "source": "mix_v3.json provenance + agent C (wikimedia/wikipedia 66.9GiB, wikipedia-cn-20230720-filtered 497MiB both reachable)",
+      "config": {
+        "reject_reason": "duplication"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "mlm.corpus.en_domain_is_mostly_chinese",
+      "value": 0.151,
+      "unit": "fraction of data/corpus/en bytes that are English",
+      "measured": "2026-08-30",
+      "source": "per-shard Han-character census, 400 docs per shard, /work/aupai/data/corpus/en",
+      "config": {
+        "shards": {
+          "cosmopedia_extra_000..006": {
+            "MB": 690.3,
+            "han_pct": "82.9-84.1"
+          },
+          "en_textbook_000..001": {
+            "MB": 122.9,
+            "han_pct": 0.0
+          }
+        },
+        "consequence_at_mix_weights": {
+          "english_share_of_training_tokens": 0.0075,
+          "declared_en_weight": 0.0495,
+          "chinese_cosmopedia_share": 0.538,
+          "mix_comment_claims": 0.496
+        },
+        "curve_impact": "none -- all six budget points share the composition, so L(D) is measured at a fixed mix; only the DESCRIPTION of that mix was wrong"
+      },
+      "uncertainty": "+-1pp (400 docs/shard)",
+      "status": "measured",
+      "boundary": "says what the en directory contains, not why cosmopedia_extra was filed there"
+    }
+  ]
+}

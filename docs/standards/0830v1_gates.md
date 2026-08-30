@@ -43,6 +43,37 @@ score-matrix record when it ends. A point that dies is rerun once at the same co
 a second failure escalates. Per the frozen fit protocol, a point is never dropped
 because it fits badly.
 
+**D comes from the log, not the mix.** Corpus supply measured 2026-08-30 is 3.619B tokens
+(`mlm.corpus.tokens_total`). At the frozen weights with `epochs: 1`, the 3.24b point asks
+for more than four domains hold:
+
+| domain | supply | demand at 3.24b | headroom |
+|---|---|---|---|
+| textbook | 1.608B | 1.610B | −0.1%, inside the ±2% sampling error |
+| web_hq | 1.432B | 1.051B | +36% |
+| wiki | 0.231B | 0.246B | **−6.4%, the only deficit outside the error bar** |
+| en | 0.158B | 0.161B | −1.8%, inside the error |
+| math | 0.082B | 0.082B | 0.0%, at the line |
+| code | 0.062B | 0.058B | +8% |
+| chat | 0.044B | 0.038B | +15% |
+
+`train.py:1363` caps at the epoch limit and prints `wants N rows, epoch cap leaves M ->
+capped`, then prints the scheduled token count at line 1384. Nothing repeats silently, so
+this is not a data defect and no weight changes. It is an x-axis defect: taking D from
+`mix_scale_3.24b.json`'s `total_tokens` puts the largest point ~0.6% right of where it
+trained, and the largest point has the most leverage over beta. The five smaller points do
+not bind, so the error does not cancel across the curve. fit-protocol v1.9 reads D from
+each run's scheduled-tokens line and pre-registers a tolerance above which the gap is a
+declared curve boundary rather than rounding.
+
+**The `en` domain is 85% Chinese.** Per-shard Han census, 400 docs per shard:
+`cosmopedia_extra_000..006` is 690.3MB at 82.9–84.1% Han (chinese-cosmopedia, the same
+source as `textbook`); `en_textbook_000..001` is 122.9MB at 0.0%. At the frozen weights
+English is 0.75% of training tokens, not the declared 4.95%, and chinese-cosmopedia is
+53.8%, not the 49.6% the mix `_comment` names as the figure a reader is warned not to
+over-read. The curve is unaffected — all six points share the composition — so the fix is
+the six `_comment` strings, not any weight (`mlm.corpus.en_domain_is_mostly_chinese`).
+
 ### What runs before the ladder
 
 Tokenization is paid once. Then eight 0.2b runs, then the ladder. The eight are not a
