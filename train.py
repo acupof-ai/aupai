@@ -1440,6 +1440,8 @@ def main():
         "val_every": "steps between fixed-subset validations (0 = epoch end only)",
         "val_batches": "val batches per periodic check",
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
+        "seed": "RNG seed for init, data order and dropout",
+        "attn_every": "one attention layer every N blocks",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -1476,7 +1478,7 @@ def main():
         help="train on a pod whose code is behind the committed manifest (known hotfix only)",
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
-    parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1% vs 100, eff.bucket_cap_mb_ab)")
+    parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1%% vs 100, eff.bucket_cap_mb_ab)")
     parser.add_argument("--no_static_graph", action="store_true", help="disable DDP static_graph (A/B: 5K overhead hunt)")
     parser.add_argument("--no_bucket_view", action="store_true", help="disable DDP gradient_as_bucket_view (A/B: 5K overhead hunt)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
