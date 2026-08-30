@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EVAL_FILES = [
     os.path.join(ROOT, "data", "eval", "math_test_500.jsonl"),
     os.path.join(ROOT, "data", "synthetic", "math_hard_eval_1k.jsonl"),
+    os.path.join(ROOT, "data", "eval", "code_holdout_500.jsonl"),
 ]
 HASH_PATH = os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
 
