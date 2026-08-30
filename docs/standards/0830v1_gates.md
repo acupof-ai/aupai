@@ -301,6 +301,16 @@ appearance of having been checked. Both guards below close that gap.
   census hit rates. Widening this rule to the whole round would be worse than the
   grandfathering it replaces: it would put a measurement and an inference under the same
   caveat, which is the distinction the rule exists to enforce.
+- **Nothing lands on the pod between the first and last run of a series.** `train.py`
+  changed at 06:30:37 on 2026-08-30, after `p02_s0` (06:15:07) and `p02_s1` (06:25:06)
+  had loaded it and before s2 and s3 would — four runs that must differ only in seed,
+  produced by two revisions. This instance was verified clean afterwards: the frozen
+  values are exactly what s0 logged, and the change added a `Cfg` class attribute
+  carrying the value argparse already supplied, so it moved the recorded metadata and
+  not the computation. σ̂ stands. But "harmless" was established after the fact, and the
+  controller allocates the cards, so the missing instruction was the controller's. A
+  code change during a series is a change to the thing under measurement until someone
+  proves otherwise.
 - **The frozen run config is enforced by nothing.** The table above opens with "a change
   to any of them reopens the whole ladder", and the only thing keeping six points
   identical is that whoever types the launch remembers eight values. The controller got
