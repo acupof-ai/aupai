@@ -165,6 +165,25 @@ argparse is strict. The doc claim was the defect that produced the launch. Same 
 `en` directory: a label read as a claim about what is underneath it. AGENTS.md now states the
 whitelist explicitly; a `Cfg` field without a parser entry cannot be set from the CLI.
 
+**What σ̂ decides, written before s2 and s3 finished.** Two of four are in: s0 val 3.691,
+s1 val 3.762, spread 0.071. σ̂ from four seeds carries 3 degrees of freedom and lands on
+two decisions that are already specified, so neither is chosen after seeing the number:
+
+| σ̂ | MDE at 4+4 = 1.98σ̂ | consequence |
+|---|---|---|
+| ≤ 0.040 | ≤ 0.079 | inside b0's pre-registered 0.08 gate — the second four runs happen |
+| > 0.040 | > 0.079 | outside it — the KDA A/B moves to the 3.24b checkpoint, where it is free |
+
+The fit gate moves too. b0's ACCEPT is RMS ≤ 1.14σ̂, and the expected RMS of a 3-parameter
+fit through 6 points is 0.71σ̂. The `RMS ≤ 0.05` figure quoted around this round assumed
+σ = 0.035. If σ̂ comes back materially larger, that threshold is renegotiated **before the
+ladder runs**, not after a fit misses it — a threshold moved after seeing a fit is a
+fitted threshold.
+
+The two-seed spread of 0.071 is not σ̂ and is not evidence for either branch. It is
+recorded here so that the number, when it arrives, cannot be read as having been chosen
+to fit a conclusion already written.
+
 The first four are unconditional. The second four run only if the measured seed variance
 says a 4-vs-4 comparison can resolve anything: lessons-b0 computes `s_pooled` from the
 first four and pre-registers, before seeing it, the MDE range that licenses the second
