@@ -2158,6 +2158,42 @@ def cmd_task(argv):
     return 0
 
 
+def _task_open_run(name, hypothesis):
+    """Auto-open a task row for a pipeline run. A run that nobody assigned still
+    needs a row, or its landing closes nothing."""
+    rows = _read_tasks()
+    n = max([int(r["id"][1:]) for r in rows if re.fullmatch(r"t\d+", r.get("id", ""))] or [0]) + 1
+    row = {
+        "id": f"t{n:02d}",
+        "owner": "pipeline",
+        "state": "open",
+        "task": f"run point {name}",
+        "why": hypothesis or f"0830v1 budget point {name}",
+        "reading": "score_matrix record is the result; the fit interprets",
+        "blocked_on": None,
+        "opened": time.strftime("%Y-%m-%d %H:%M"),
+        "evidence": None,
+    }
+    _write_tasks(rows + [row])
+    return row["id"]
+
+
+def _task_close_run(name, evidence):
+    """Auto-close the pipeline-opened task for a run that landed. Returns the
+    closed task id, or None if no matching open row exists."""
+    rows = _read_tasks()
+    for r in reversed(rows):  # most recent first: a rerun opens a second row
+        if (
+            r.get("state") == "open"
+            and r.get("owner") == "pipeline"
+            and r.get("task") == f"run point {name}"
+        ):
+            r.update(state="done", evidence=evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+            _write_tasks(rows)
+            return r["id"]
+    return None
+
+
 def check_tasks_well_formed(root):
     """A closed task carries an artifact; an open one carries an owner and a reason."""
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
@@ -2186,6 +2222,79 @@ def _broken_tasks_well_formed():
     if not rows:  # nothing real to mutate; the check SKIPs and the selftest would be a fiction
         return None
     rows[0] = dict(rows[0], state="done", evidence=None)
+    _write_tasks(rows, p)
+    return d
+
+
+#: A task open longer than this without movement is forgotten. 3 days: sessions are
+#: hours-long, so a task surviving 3 days has crossed multiple session boundaries;
+#: no_stale_running uses 24h because experiments have a shorter lifecycle.
+_TASK_STALE_DAYS = 3
+
+
+def check_tasks_stale(root):
+    """Open tasks that are forgotten: unblocked but not picked up, or untouched for days.
+
+    Two failure modes, same disease as no_stale_running:
+    - blocked_on points to a done task — the work is unblocked, nobody moved it. FAIL.
+    - open and unblocked for > _TASK_STALE_DAYS days — the owner or controller forgot. WARN.
+    """
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    if not rows:
+        return SKIP, "no task register"
+    done_ids = {r["id"] for r in rows if r.get("state") == "done"}
+    stale = []
+    for r in rows:
+        if r.get("state") != "open":
+            continue
+        tid = r.get("id", "?")
+        blocked = r.get("blocked_on")
+        if blocked and blocked in done_ids:
+            stale.append(
+                (FAIL, f"{tid} blocked on {blocked} which is done — unblocked, not picked up")
+            )
+        elif not blocked:
+            opened = r.get("opened", "")
+            if opened:
+                try:
+                    t = time.strptime(opened, "%Y-%m-%d %H:%M")
+                    age_days = (time.time() - time.mktime(t)) / 86400
+                    if age_days > _TASK_STALE_DAYS:
+                        stale.append(
+                            (WARN, f"{tid} open {age_days:.0f}d (owner {r.get('owner', '?')})")
+                        )
+                except (ValueError, OverflowError):
+                    pass
+    if not stale:
+        return PASS, "no stale open tasks"
+    worst = FAIL if any(s == FAIL for s, _ in stale) else WARN
+    return worst, "; ".join(ev for _, ev in stale[:5])
+
+
+def _broken_tasks_stale():
+    """An open task blocked on a done task — unblocked but not picked up."""
+    d = _tmp_repo()
+    p = os.path.join(d, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    rows = _read_tasks()
+    if not rows:
+        return None
+    done = next((r for r in rows if r.get("state") == "done"), None)
+    if not done:
+        return None
+    rows.append(
+        {
+            "id": "t99",
+            "owner": "test",
+            "state": "open",
+            "task": "stale: blocked on a done task",
+            "why": "selftest",
+            "reading": None,
+            "blocked_on": done["id"],
+            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "evidence": None,
+        }
+    )
     _write_tasks(rows, p)
     return d
 
@@ -2422,6 +2531,13 @@ CHECKS = [
         "the controller's assignments lived only in chat. Compaction ate them, and a task closed on a session's word is the same self-report the board footer forbids",
         check_tasks_well_formed,
         _broken_tasks_well_formed,
+    ),
+    (
+        "tasks_stale",
+        "open tasks are not forgotten: unblocked ones are picked up, old ones are flagged",
+        "a task blocked on a done task sat idle for days; the controller assigns work and the register is the only place that remembers it",
+        check_tasks_stale,
+        _broken_tasks_stale,
     ),
 ]
 
@@ -3101,6 +3217,7 @@ def _run_point(step_args, forced):
     cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *frozen_args, *passthrough]
     _exp("start", name=name, cmd=" ".join(cmd),
          hypothesis=hypothesis or f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
+    _task_open_run(name, hypothesis)
     rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
     ckpt = f"ckpt_{name}.pt"
 
@@ -3125,6 +3242,7 @@ def _run_point(step_args, forced):
          decision="proceed to next point" if r.returncode == 0 else "investigate before next point",
          status="ok" if r.returncode == 0 else "fail")
     if r.returncode == 0 and scored:
+        _task_close_run(name, f"ckpt_{name}.pt; score_matrix record")
         val = _val_nll(name)
         _board_event("point_landed", f"{name} scored: val {val:.3f}" if val else f"{name} scored")
     elif r.returncode != 0:
