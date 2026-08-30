@@ -630,6 +630,33 @@
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K — likely ceiling, may not stack",
    "boundary": "3-GPU DDP; 7-GPU optimal bucket may differ (more ranks = smaller per-rank chunks)",
    "status": "recorded"
+  },
+  {
+   "id": "eff.combo_b50_simple_3gpu",
+   "claim": "bucket50 + NCCL Simple combo on 3xH20: weak stacking, DDP overhead not zero",
+   "value": "combo=75K vs either-alone=73K (+2K, +2.7%). Single-GPU (no comm)=80K, 5K (6.25%) above combo. DDP overhead not zero even with bucket50+Simple.",
+   "measured": "2026-08-30",
+   "source": "A/B: combo_b50_simple (3xGPU4-6, bucket50+NCCL_ALGO=Ring NCCL_PROTO=Simple) vs single_gpu (1xGPU1, no DDP comm), batch16/seq4096, fp8, compiled, vocab=32776, mix_scale_0.2b, 40 steps",
+   "config": {
+    "gpus": "3xH20 (GPU4,5,6) + 1xH20 (GPU1)",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "fp8": true,
+    "compiled": true,
+    "vocab": 32776,
+    "mix": "data/mix_scale_0.2b.json",
+    "bucket_cap_mb": 50,
+    "nccl_algo": "Ring",
+    "nccl_proto": "Simple",
+    "combo_tok_s_gpu": 75000,
+    "single_tok_s_gpu": 80000,
+    "either_alone_tok_s_gpu": 73000,
+    "baseline_tok_s_gpu": 64000
+   },
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); combo and single-GPU ran simultaneously (possible CPU/disk contention during warmup only)",
+   "boundary": "3-GPU DDP; 7-GPU per-rank chunk size differs, may change overlap dynamics",
+   "status": "recorded"
   }
  ]
 }
