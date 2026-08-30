@@ -461,7 +461,10 @@ def check_gemm_dims(root):
     bad = [f"{k}={v} (%8={v % 8})" for k, v in dims.items() if v % 8]
     if bad:
         return FAIL, f"GEMM dims not 8-aligned: {', '.join(bad)} -- cuBLAS drops to an align-1 kernel"
-    return PASS, f"{', '.join(f'{k}={v}' for k, v in sorted(dims.items()))} all 8-aligned"
+    bad16 = [f"{k}={v} (%16={v % 16})" for k, v in dims.items() if v % 16]
+    if bad16:
+        return FAIL, f"GEMM dims not 16-aligned: {', '.join(bad16)} -- _fp8_ok rejects them, the run silently stays bf16"
+    return PASS, f"{', '.join(f'{k}={v}' for k, v in sorted(dims.items()))} all 8/16-aligned"
 
 
 def check_restartability(root):
@@ -498,8 +501,17 @@ def _broken_restartability():
 
 
 def _broken_gemm_dims():
+    # The REAL train.py with ffn_hidden 3072 -> 3400: 8-aligned (passes the cuBLAS
+    # tier) but not 16-aligned, so _fp8_ok silently drops FP8. Mutated, not hand-written.
+    import shutil
+
     d = _tmp_repo()
-    open(os.path.join(d, "train.py"), "w").write("class Cfg:\n    vocab = 32773\n    d = 1024\n")
+    p = os.path.join(d, "train.py")
+    shutil.copy(os.path.join(ROOT, "train.py"), p)
+    src = open(p, encoding="utf-8").read()
+    src = src.replace("ffn_hidden = 3072", "ffn_hidden = 3400", 1)
+    assert "ffn_hidden = 3400" in src, "real train.py no longer has 'ffn_hidden = 3072'; update _broken_gemm_dims"
+    open(p, "w", encoding="utf-8").write(src)
     return d
 
 
@@ -1135,7 +1147,7 @@ CHECKS = [
     ),
     (
         "gemm_dims_aligned",
-        "Cfg's GEMM dimensions are multiples of 8",
+        "Cfg's GEMM dimensions are multiples of 16 (8 for cuBLAS fast kernels, 16 for _fp8_ok)",
         "vocab 32773 made cuBLAS pick an SM75 align-1 kernel on Hopper; the LM head ran at 41% of bf16 peak, unnoticed",
         check_gemm_dims,
         _broken_gemm_dims,
