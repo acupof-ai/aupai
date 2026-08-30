@@ -109,6 +109,7 @@ SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 class Cfg:
     d = 1024
     heads = 8  # hd=128, required for FlashKDA CUTLASS kernel
+    chunk_size = 64  # fla chunk_kda chunk size (fla default); 32 is +19.1% kernel, ~2% step
     layers = 12
     attn_every = 4
     ffn_hidden = 3072
@@ -192,6 +193,7 @@ class DeltaRecurrence(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.h, self.hd = cfg.heads, cfg.d // cfg.heads
+        self.chunk_size = cfg.chunk_size
         self.qkv = nn.Linear(cfg.d, 3 * cfg.d, bias=False)
         self.o = nn.Linear(cfg.d, cfg.d, bias=False)
         # fused gate|beta GEMM; beta padded to a multiple of 16 output rows so FP8 (_scaled_mm) applies
@@ -235,6 +237,7 @@ class DeltaRecurrence(nn.Module):
             lower_bound=-5.0,
             state_v_first=True,  # unblocks FlashKDA at inference (zero training cost)
             disable_recompute=True,  # save w/u/qg/kg/v_new rather than recompute: +3GB, 8-15% faster
+            chunk_size=self.chunk_size,
         )
         return self.o(out.reshape(B, T, D).to(x.dtype))
 

@@ -1,13 +1,15 @@
 #!/usr/bin/env python
-"""A/B sanity for the vocab 32773 -> 32776 alignment change: same seed, same data,
-per-step loss. The 32776 arm adds 3 alignment-padding columns to the FLCE softmax;
-they are never targets, so the expected result is a small step-1 delta that shrinks
-as their logits train down. A diverging or growing delta means the padding leaks.
+"""Per-step loss parity A/B for a numerically-sensitive change: same seed, same data,
+two arms that differ in one Cfg field. Pass criterion: max |delta| at the bf16 noise
+floor, no growth over steps, no systematic sign. A growing or sign-consistent delta
+means the change leaks into the math.
 
-Also prints the effective dynamo cache_size_limit next to the AttnRes source count,
-the guard train.py asserts at startup.
+Axes (AB_AXIS env): vocab (32773 vs 32776, the cuBLAS alignment change) or
+chunk (64 vs 32, fla chunk_kda chunk size -- a re-chunking of the same recurrence).
 
-Usage: E2E_GPU=0 AB_STEPS=10 python scripts/ab_vocab_loss.py
+Also prints the dynamo cache_size_limit guard values train.py enforces at startup.
+
+Usage: E2E_GPU=0 AB_AXIS=chunk AB_STEPS=10 AB_LR_SCALE=0.1 python scripts/ab_vocab_loss.py
 """
 import os
 import sys
@@ -25,11 +27,13 @@ from train import SOFTCAP, Cfg, HybridLM, build_mix, build_optimizers, doc_cu_se
 
 STEPS = int(os.environ.get("AB_STEPS", "10"))
 LR_SCALE = float(os.environ.get("AB_LR_SCALE", "1.0"))
+AXIS = os.environ.get("AB_AXIS", "vocab")
+ARMS = {"vocab": (32773, 32776), "chunk": (64, 32)}
 DEVICE = f"cuda:{os.environ.get('E2E_GPU', '0')}"
 
 
-def run_arm(vocab, Xtr, Ytr, eos_id):
-    Cfg.vocab = vocab
+def run_arm(value, Xtr, Ytr, eos_id):
+    setattr(Cfg, AXIS, value)
     torch.manual_seed(Cfg.seed)
     model = HybridLM(Cfg).to(DEVICE)
     opts = build_optimizers(model, Cfg)
@@ -46,7 +50,7 @@ def run_arm(vocab, Xtr, Ytr, eos_id):
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             hidden, _ = model(xb, yb, cu, None)
         B, T, D = hidden.shape
-        weight = model.head.weight[:vocab]
+        weight = model.head.weight[: Cfg.vocab]
         loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
             weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1)
         )
@@ -73,10 +77,13 @@ def main():
     eos_id = tok.token_to_id("<eos>")
     assert len(Xtr) >= STEPS * Cfg.batch, f"sample mix has {len(Xtr)} seqs, need {STEPS * Cfg.batch}"
 
-    results = {v: run_arm(v, Xtr, Ytr, eos_id) for v in (32773, 32776)}
-    print(f"{'step':>4} {'v=32773':>10} {'v=32776':>10} {'delta':>10}")
+    assert AXIS in ARMS, f"unknown AB_AXIS={AXIS!r}; want one of {sorted(ARMS)}"
+    lo, hi = ARMS[AXIS]
+    results = {v: run_arm(v, Xtr, Ytr, eos_id) for v in (lo, hi)}
+    print(f"axis={AXIS} (arms: {AXIS}={lo} baseline, {AXIS}={hi} candidate)")
+    print(f"{'step':>4} {f'={lo}':>10} {f'={hi}':>10} {'delta':>10}")
     for i in range(STEPS):
-        a, b = results[32773][i], results[32776][i]
+        a, b = results[lo][i], results[hi][i]
         print(f"{i:>4} {a:>10.4f} {b:>10.4f} {b - a:>+10.4f}")
 
     import torch._dynamo as _dynamo
