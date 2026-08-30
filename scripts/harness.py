@@ -1683,7 +1683,7 @@ def check_ladder_cfg_consistent(root):
             cfgs[p] = _read_ckpt_cfg(p)
         except Exception as e:
             return FAIL, f"{os.path.basename(p)}: cannot read cfg: {e}"
-    base_p, base = ckpts[0], cfgs[ckpts[0]]
+    base = cfgs[ckpts[0]]
     diffs, unknown = [], []
     for p in ckpts[1:]:
         cfg = cfgs[p]
@@ -1758,8 +1758,6 @@ def check_frozen_keys_complete(root):
 def _broken_frozen_keys_complete():
     """The real train.py with a new architecture flag added to the parser --
     exactly how the eight missing fields escaped notice."""
-    import shutil
-
     d = _tmp_repo()
     src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
     # Add a new add_argument call inside the parser section, before parse_args.
@@ -2079,6 +2077,119 @@ def _broken_env():
     return _tmp_repo()
 
 
+# --------------------------------------------------------------------------- tasks
+
+TASKS_PATH = os.path.join(ROOT, "runs", "tasks.jsonl")
+
+
+def _read_tasks(path=None):
+    p = path or TASKS_PATH
+    if not os.path.exists(p):
+        return []
+    return [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
+
+
+def _write_tasks(rows, path=None):
+    p = path or TASKS_PATH
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def cmd_task(argv):
+    """harness task {add,done,list}. The controller's assignments, in a file rather than
+    in a conversation -- a conversation gets compacted and the assignment goes with it.
+
+      harness task add  --owner b0 --task "..." --why "..." [--reading "..."] [--blocked-on t03]
+      harness task done t07 --evidence "runs/l1_p324_d0.log: 0-shot answer-present 41.2%"
+      harness task list [--all]
+
+    `done` REQUIRES evidence, and the check enforces it: a task closed without an artifact
+    is a session reporting itself complete, which is the one thing the board footer forbids.
+    """
+    ap = argparse.ArgumentParser(prog="harness task")
+    sub = ap.add_subparsers(dest="op", required=True)
+    a = sub.add_parser("add")
+    a.add_argument("--owner", required=True)
+    a.add_argument("--task", required=True)
+    a.add_argument("--why", required=True, help="why this is worth a session's time")
+    a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--blocked-on", dest="blocked_on", default=None)
+    d = sub.add_parser("done")
+    d.add_argument("id")
+    d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
+    sub.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
+    args = ap.parse_args(argv)
+    rows = _read_tasks()
+
+    if args.op == "add":
+        n = max([int(r["id"][1:]) for r in rows if re.fullmatch(r"t\d+", r.get("id", ""))] or [0]) + 1
+        row = {
+            "id": f"t{n:02d}",
+            "owner": args.owner,
+            "state": "open",
+            "task": args.task,
+            "why": args.why,
+            "reading": args.reading,
+            "blocked_on": args.blocked_on,
+            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "evidence": None,
+        }
+        _write_tasks(rows + [row])
+        print(f"{row['id']} -> {args.owner}: {args.task[:70]}")
+        return 0
+
+    if args.op == "done":
+        hit = [r for r in rows if r.get("id") == args.id]
+        if not hit:
+            print(f"no task {args.id}; `harness task list` shows what is open")
+            return 1
+        hit[0].update(state="done", evidence=args.evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+        _write_tasks(rows)
+        print(f"{args.id} done: {args.evidence[:80]}")
+        return 0
+
+    show = rows if args.all else [r for r in rows if r.get("state") == "open"]
+    for r in show:
+        blocked = f"  [blocked on {r['blocked_on']}]" if r.get("blocked_on") else ""
+        print(f"{r['id']} {r.get('state', '?'):5} {r.get('owner', '?'):8} {r.get('task', '')[:78]}{blocked}")
+    print(f"\n{len(show)} task(s); {sum(1 for r in rows if r.get('state') == 'open')} open of {len(rows)}")
+    return 0
+
+
+def check_tasks_well_formed(root):
+    """A closed task carries an artifact; an open one carries an owner and a reason."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    if not rows:
+        return SKIP, "no task register"
+    bad = []
+    for r in rows:
+        if r.get("state") == "done" and not (r.get("evidence") or "").strip():
+            bad.append(f"{r.get('id')} done without evidence")
+        if r.get("state") == "open" and not (r.get("owner") or "").strip():
+            bad.append(f"{r.get('id')} open without an owner")
+        if not (r.get("why") or "").strip():
+            bad.append(f"{r.get('id')} has no why")
+    if bad:
+        return FAIL, "; ".join(bad[:3])
+    n_open = sum(1 for r in rows if r.get("state") == "open")
+    return PASS, f"{len(rows)} task(s), {n_open} open, every closed one carries an artifact"
+
+
+def _broken_tasks_well_formed():
+    """The REAL register with one row closed and its evidence emptied -- mutated, not written."""
+    d = _tmp_repo()
+    p = os.path.join(d, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    rows = _read_tasks()
+    if not rows:  # nothing real to mutate; the check SKIPs and the selftest would be a fiction
+        return None
+    rows[0] = dict(rows[0], state="done", evidence=None)
+    _write_tasks(rows, p)
+    return d
+
+
 CHECKS = [
     (
         "env_importable",
@@ -2304,6 +2415,13 @@ CHECKS = [
         "resuming from a checkpoint with step but no opt zeroes Muon momentum and AdamW moments; the loss dips and recovers, looking like noise",
         check_opt_state_present,
         _broken_opt_state_present,
+    ),
+    (
+        "tasks_well_formed",
+        "a closed task carries an artifact; an open one carries an owner and a reason",
+        "the controller's assignments lived only in chat. Compaction ate them, and a task closed on a session's word is the same self-report the board footer forbids",
+        check_tasks_well_formed,
+        _broken_tasks_well_formed,
     ),
 ]
 
@@ -2579,6 +2697,7 @@ def _board_data():
         "ladder": ladder,
         "experiments": exps,
         "events": events,
+        "tasks": _read_tasks(),
     }
 
 
@@ -2612,6 +2731,18 @@ def _render_board_html(d):
     for x in d["experiments"]:
         xprows += f'<tr><td>{x["name"]}</td><td>{x["status"]}</td><td>{x["started"]}</td></tr>\n'
 
+    trows = ""
+    for t in sorted(d["tasks"], key=lambda r: (r.get("state") != "open", r.get("id", ""))):
+        colour = "#c62828" if t.get("state") == "open" else "#2d7d32"
+        # `reading` is the pre-registration: how to read the result, written before it
+        # exists. It is shown here because a reading rule that lives only in a session's
+        # context is gone before the number it governs is read.
+        note = t.get("reading") or t.get("evidence") or ""
+        blocked = f' <i>blocked on {t["blocked_on"]}</i>' if t.get("blocked_on") else ""
+        trows += (f'<tr><td>{t.get("id")}</td><td>{t.get("owner")}</td>'
+                  f'<td style="color:{colour};font-weight:600">{t.get("state")}</td>'
+                  f'<td>{t.get("task", "")}{blocked}<br><span class="meta">{note[:220]}</span></td></tr>\n')
+
     st = d["staleness"]
     stale_warn = ""
     if st["fail_count"]:
@@ -2630,6 +2761,9 @@ th{{color:#666;font-weight:600}} .meta{{color:#888;font-size:12px}}
 <h1>aupai monitoring board</h1>
 <p class="meta">rendered {d["timestamp"]} · newest artifact {st["newest_artifact"] or "—"}</p>
 {stale_warn}
+<h2>tasks</h2><p class="meta">assignments and their reading rules, from runs/tasks.jsonl. A closed
+task carries an artifact, never a session's word for it.</p>
+<table><tr><th>id</th><th>owner</th><th>state</th><th>task / reading rule</th></tr>{trows}</table>
 <h2>checks</h2><table><tr><th>check</th><th>state</th><th>evidence</th></tr>{rows}</table>
 <h2>ladder points</h2><table><tr><th>point</th><th>mix</th><th>val NLL</th><th>domain loss</th>
 <th>min pairs</th><th>lambada</th><th>math v2</th><th>ceval</th><th>status</th></tr>{lrows}</table>
@@ -3112,6 +3246,8 @@ def main():
     # failure mode this file exists to prevent.
     if len(sys.argv) > 1 and sys.argv[1] == "run":
         return run_dispatch(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "task":
+        return cmd_task(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
