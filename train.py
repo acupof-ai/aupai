@@ -1425,7 +1425,7 @@ def main():
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
-    parser.add_argument("--bucket_cap_mb", type=int, default=100, help="DDP gradient bucket size in MB")
+    parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1% vs 100, eff.bucket_cap_mb_ab)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
