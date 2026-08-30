@@ -1825,7 +1825,7 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
-STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score")
+STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score", "dedup")
 
 # The six 0830v1 budget points, in order. Each is a mix_scale_* mix at the
 # frozen run config. Names double as checkpoint names: ckpt_<name>.pt.
@@ -2063,6 +2063,8 @@ def run_dispatch(rest):
     if step == "score":
         return _run_pipeline_step("score", "score_corpus.py", step_args, forced,
                                    env=dict(os.environ, CUDA_VISIBLE_DEVICES="0"))
+    if step == "dedup":
+        return _run_pipeline_step("dedup", "dedup_corpus.py", step_args, forced)
     return 2
 
 
