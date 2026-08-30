@@ -834,12 +834,37 @@ def _broken_score_matrix():
     return d
 
 
+def _provenance_fingerprints(path, domains):
+    """{domain: fingerprint} parsed from data/PROVENANCE.md. A domain block is a heading
+    whose text contains the domain as a whole token; its fingerprint is a
+    `fingerprint: <16-hex>` line in that section. Only mix domains are attributed, so a
+    fingerprint under an unrelated heading ('SFT-math candidates') cannot hijack 'math'."""
+    if not os.path.isfile(path):
+        return {}
+    domset = {d.lower() for d in domains}
+    out, section = {}, None
+    for line in open(path, encoding="utf-8"):
+        m = re.match(r"^#{1,4}\s+(.*)", line)
+        if m:
+            section = m.group(1)
+            continue
+        fp = re.search(r"fingerprint[:\s=]+([0-9a-f]{16})", line, re.I)
+        if fp and section:
+            for tok in re.findall(r"[A-Za-z0-9_]+", section):
+                if tok.lower() in domset:
+                    out[tok.lower()] = fp.group(1)
+    return out
+
+
 def check_corpus_fp(root):
-    """Every domain the default mix names must carry a build-time fingerprint (build_corpus.py
-    stamps build_corpus_stats.json) that matches the live directory. A missing stamp is FAIL,
-    not SKIP: an unstamped domain cannot be distinguished from a swapped-in one -- the voided
-    0.2b run trained on CCI3 shards under web_hq's name, and no fingerprint existed to say so.
-    Domains with no directory on this machine are mix_shards_present's beat, not this one."""
+    """Every domain the default mix names must (a) carry a build-time fingerprint
+    (build_corpus.py stamps build_corpus_stats.json) matching the live directory, and
+    (b) have a provenance block in data/PROVENANCE.md whose recorded fingerprint also
+    matches. A missing stamp or a missing block is FAIL, not SKIP: an unstamped or
+    unrecorded domain cannot be distinguished from a swapped-in one -- the voided 0.2b
+    run trained on CCI3 shards under web_hq's name, and fineweb2 web_hq was lost with no
+    record of how it was built. Domains with no directory on this machine are
+    mix_shards_present's beat, not this one."""
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
         return FAIL, f"cannot read the default mix: {err}"
@@ -847,6 +872,7 @@ def check_corpus_fp(root):
     present = [d for d in doms if os.path.isdir(os.path.join(corpus, d))]
     if not present:
         return SKIP, "no mix domain has a directory on this machine"
+    prov = _provenance_fingerprints(os.path.join(root, "data", "PROVENANCE.md"), doms)
     problems, ok = [], 0
     for dom in present:
         stats = os.path.join(corpus, dom, "build_corpus_stats.json")
@@ -855,17 +881,25 @@ def check_corpus_fp(root):
                 stamped = json.load(f).get("fingerprint")
         except Exception:
             stamped = None
+        live = cfp.fp_domain(dom, corpus)
+        dom_ok = True
         if not stamped:
             problems.append(f"{dom}: no build-time fingerprint")
-            continue
-        live = cfp.fp_domain(dom, corpus)
-        if live != stamped:
+            dom_ok = False
+        elif live != stamped:
             problems.append(f"{dom}: stamped {stamped} != live {live}")
-        else:
+            dom_ok = False
+        if dom not in prov:
+            problems.append(f"{dom}: no PROVENANCE.md block")
+            dom_ok = False
+        elif prov[dom] != live:
+            problems.append(f"{dom}: PROVENANCE.md {prov[dom]} != live {live}")
+            dom_ok = False
+        if dom_ok:
             ok += 1
     if problems:
         return FAIL, f"{ok}/{len(present)} match; " + "; ".join(problems[:3])
-    return PASS, f"{ok}/{len(present)} mix domains match their build-time fingerprint"
+    return PASS, f"{ok}/{len(present)} mix domains match their build-time and PROVENANCE.md fingerprints"
 
 
 def _broken_corpus_fp():
@@ -892,6 +926,10 @@ def _broken_corpus_fp():
     unstamped = os.path.join(corpus, doms[1])
     os.makedirs(unstamped)
     shutil.copy(real[0], os.path.join(unstamped, "real_shard.jsonl"))
+    # A PROVENANCE.md at the real path: doms[0]'s block records a WRONG fingerprint
+    # (the mismatched-block tier), doms[1] has no block at all.
+    with open(os.path.join(d, "data", "PROVENANCE.md"), "w") as f:
+        f.write(f"# provenance\n\n## {doms[0]}\n\nfingerprint: 0000000000000000\n")
     return d
 
 
