@@ -11,7 +11,12 @@ source: "aupai-fb hypothesis (discrimination/generation gap is composition not v
 ## 组合假设（fb，待阶梯验证，不据此排工）
 
 当前 53.8% chinese-cosmopedia（模板化合成，loss 2.79 vs web_hq 5.05，**2.26 nat 差距**）——语料中最易预测的文本。假设：判别/生成 gap 是**组合问题而非体积问题**；10x 同 mix 提知识不提表达能力。阶梯的 six-point loss + lambada 开放/双向 gap 测它：gap 随 D 收窄则体积修复；平台则组合。
-**若成立，36B 应把组合移向自然文本，而非复刻当前权重。**
+
+**cap 的理由不建立在上述假设上**（fb 明示假设未测、不据它排工）。cap 的理由是：**54% 合成从不是被选择的数** —— 它 = 49.6% textbook 权重 + 85% 一个大家都以为是英文的域（today 才发现的意外）。没人决定建一个过半模板化合成文本的语料。~10% 是把意外校正到标准做法：SmolLM2 用 Cosmopedia ~11%，没有任何认真的预训练语料停在 54%。**若阶梯显示 gap 随体积收窄，证伪 fb 的机制，但这不改变「54% 合成曾被用来训」这件事本身不可辩护。**
+
+## 词表解冻条件 2（material，需自主裁，非默认）
+
+词表冻结的三个解冻条件之一是「语料分布 material 变化」。0.75%→16% en、54%→10% 合成，material。**在 fetch 提交前**：对提议组合取样本跑 `scripts/tokenizer_eval.py`，验冻结词表仍过闸（round-trip 无损 / 256 字节 / hanzi≥0.95 / en fertility≤1.55 / never-used≤0.01）。过→保持冻结并记录「条件已查非忽略」；不过→重建决策（会作废所有旧 checkpoint）→归属用户。方向有利：`tok.en_share_sweep` 量 14/33/50% 的 fertility，14% 是我们拟合的值；语料现仅 0.75% en = 词表已与语料很不匹配——16% en 反而比 0.75% 更贴合 14% 拟合的词表，是不重建的论据。
 
 ## 1. 36B 源组合（自然文本前移）
 

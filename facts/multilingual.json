@@ -930,6 +930,29 @@
       },
       "uncertainty": null,
       "status": "recorded"
+    },
+    {
+      "id": "mlm.corpus.cosmopedia_template_concentration",
+      "value": 6.38,
+      "unit": "ratio top-100 frame coverage cosmopedia/web_hq",
+      "measured": "2026-08-30",
+      "source": "/tmp/template_concentration.py on pod; reservoir 10k docs per class, seed 20260830",
+      "config": {
+        "metric": "fraction of docs containing >=1 of the 100 most frequent normalized sentence frames (digits->#, latin runs->_, split on sentence punctuation; frames <8 chars dropped)",
+        "cosmopedia_top100_coverage": 0.4821,
+        "cosmopedia_df10_coverage": 0.562,
+        "cosmopedia_8gram_diversity": 0.8529,
+        "webhq_top100_coverage": 0.0756,
+        "webhq_df10_coverage": 0.076,
+        "webhq_8gram_diversity": 0.9468,
+        "cosmopedia_docs_sampled": "10000 from 86515 (cosmopedia_extra_000..006)",
+        "webhq_docs_sampled": "10000 from 1366324 (all 62 shards, reservoir — web_hq is source-ordered)",
+        "preregistered_kill": "ratio < 2x -> templated-synthetic premise FAILS (docs/lessons/quality_36b_prereg.md)",
+        "verdict": "PREMISE HOLDS at 6.38x: 48% of cosmopedia docs share top-100 frames vs 7.6% of web_hq. Necessary condition for the 'templated synthetic teaches pattern-matching over production' hypothesis; the training-outcome claim still needs b0's mix-ablation runs",
+        "caveat": "measures frame repetition, not the teaching mechanism directly; web_hq's 7.6% is nonzero (natural boilerplate) — the contrast is the signal, not the absolute"
+      },
+      "uncertainty": "reservoir 10k/class; coverage SE ~0.005 at p=0.5",
+      "status": "measured"
     }
   ]
 }
