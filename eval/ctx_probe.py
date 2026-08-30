@@ -82,9 +82,13 @@ def per_token_nll(model, x, bs):
 
 
 def bin_means(mat, bin_size):
-    """mat [n, seq] -> [seq//bin_size] mean per position bin."""
+    """mat [n, seq] -> bin means; a leftover tail (< bin_size) becomes its own bin."""
     n, seq = mat.shape
-    return mat.view(n, seq // bin_size, bin_size).mean(dim=(0, 2))
+    full = (seq // bin_size) * bin_size
+    bins = mat[:, :full].view(n, full // bin_size, bin_size).mean(dim=(0, 2))
+    if full < seq:
+        bins = torch.cat([bins, mat[:, full:].mean().unsqueeze(0)])
+    return bins
 
 
 def main():
@@ -129,15 +133,18 @@ def main():
     # Reading 1: paired delta over the second half
     delta = paired_nll[:, SEQ:] - fresh_nll[1::2][:n_pairs]  # [n_pairs, 4096]
     delta_bins = bin_means(delta, BIN)  # 16 bins over positions-in-b
-    # Window aggregates: mean NLL per 2048-window of the 8192 run
-    win = paired_nll.view(n_pairs, 4, 2048).mean(dim=(0, 2))
+    # Window aggregates: mean NLL per 2048-window of the 8192 run (last window 2047 wide)
+    win = torch.stack([paired_nll[:, a:b].mean() for a, b in
+                       [(0, 2048), (2048, 4096), (4096, 6144), (6144, 8192)]])
 
-    print("\n=== within-4096 per-position NLL (256-token bins) ===")
-    for i, v in enumerate(within.tolist()):
-        print(f"  pos {i*BIN:5d}-{i*BIN+BIN-1:5d}: {v:.4f}")
+    print("\n=== within-4096 per-position NLL (256-token bins, last = 255-token tail) ===")
+    spans = [(i * BIN, i * BIN + BIN - 1) for i in range(len(within) - 1)] + [(len(within) * BIN - BIN, 4095 - 1)]
+    for (a, b), v in zip(spans, within.tolist()):
+        print(f"  pos {a:5d}-{b:5d}: {v:.4f}")
     print("\n=== paired delta-NLL beyond 4096 (bins over positions-in-b) ===")
-    for i, v in enumerate(delta_bins.tolist()):
-        print(f"  dist {4096+i*BIN:5d}-{4096+i*BIN+BIN-1:5d}: {v:+.4f}")
+    dspans = [(4096 + a, 4096 + b) for a, b in spans]
+    for (a, b), v in zip(dspans, delta_bins.tolist()):
+        print(f"  dist {a:5d}-{b:5d}: {v:+.4f}")
     print("\n=== mean NLL per 2048-window of the 8192 run ===")
     for i, v in enumerate(win.tolist()):
         print(f"  win {i*2048:5d}-{i*2048+2047:5d}: {v:.4f}")
