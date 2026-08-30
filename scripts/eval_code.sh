@@ -29,7 +29,8 @@ python3 - "$CKPT" "$N" "$EXPECTED" <<'PY'
 import json, os, sys
 ck, n, expected = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 base = f"data/eval/preds_code_{os.path.basename(ck)}"
-rows = [json.loads(l) for i in range(n) for l in open(f"{base}.{i}.jsonl", encoding="utf-8")]
+suffix = lambda i: f".{i}" if n > 1 else ""
+rows = [json.loads(l) for i in range(n) for l in open(f"{base}{suffix(i)}.jsonl", encoding="utf-8")]
 assert len(rows) == expected, f"merged {len(rows)} preds, expected {expected} — a shard is short"
 ok = sum(r["ok"] for r in rows)
 with open(f"{base}.jsonl", "w", encoding="utf-8") as f:
