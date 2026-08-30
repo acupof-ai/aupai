@@ -71,6 +71,16 @@ def score(domain, scorer_name, out_dir):
     if not shards:
         print(f"no cleaned shards for domain {domain!r} under {corp}", file=sys.stderr)
         return 2
+    # The corpus must carry its build fingerprint: without it, a re-cleaned corpus
+    # leaves stale scores with nothing raising. Same principle as clean_corpus.py
+    # refusing to clean without filters_fp.
+    stats_path = os.path.join(corp, "build_corpus_stats.json")
+    try:
+        with open(stats_path) as f:
+            input_fp = json.load(f)["fingerprint"]
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        print(f"cannot read corpus fingerprint from {stats_path}: {e}", file=sys.stderr)
+        return 2
     spec = SCORERS.get(scorer_name)
     if spec is None:
         print(f"unknown scorer {scorer_name!r}; known: {sorted(SCORERS)}", file=sys.stderr)
@@ -84,6 +94,7 @@ def score(domain, scorer_name, out_dir):
         "domain": domain,
         "scorer": scorer_name,
         "scorer_fp": fp,
+        "input_fp": input_fp,
         "params": params,
         "shards_scored": len(shards),
     }

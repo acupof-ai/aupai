@@ -616,6 +616,64 @@ def _broken_corpus_filters_fp():
     return d
 
 
+def check_score_input_fresh(root):
+    """A score must record which corpus it scored, and that corpus must be the current one.
+
+    The gap: re-running clean changes the corpus but leaves stale scores with nothing
+    raising. score_corpus.py stamps input_fp (the corpus fingerprint at score time);
+    this check compares it against the corpus's current fingerprint. A mismatch means
+    the scores describe a corpus that no longer exists."""
+    scores_dir = os.path.join(root, "data", "scores")
+    if not os.path.isdir(scores_dir):
+        return SKIP, "no data/scores"
+    stale, unrecorded, ok = [], [], 0
+    for dom in sorted(os.listdir(scores_dir)):
+        sp = os.path.join(scores_dir, dom, "score_stats.json")
+        if not os.path.isfile(sp):
+            continue
+        with open(sp) as f:
+            score_stats = json.load(f)
+        input_fp = score_stats.get("input_fp")
+        if input_fp is None:
+            unrecorded.append(dom)
+            continue
+        cp = os.path.join(root, "data", "corpus", dom, "build_corpus_stats.json")
+        if not os.path.isfile(cp):
+            stale.append(f"{dom}: scores exist but corpus is gone")
+            continue
+        with open(cp) as f:
+            current_fp = json.load(f).get("fingerprint")
+        if current_fp != input_fp:
+            stale.append(f"{dom}: scored {input_fp[:8]}, corpus is now {current_fp[:8] if current_fp else 'MISSING'}")
+        else:
+            ok += 1
+    if stale:
+        return FAIL, "; ".join(stale)
+    if unrecorded:
+        note = (f"; UNKNOWN, not verified: {len(unrecorded)} domain(s) predate input_fp "
+                f"({', '.join(unrecorded)}) -- re-score to stamp them")
+    else:
+        note = ""
+    return PASS, f"{ok} domain(s) fresh{note}"
+
+
+def _broken_score_input_fresh():
+    """A domain whose scores were taken against a corpus that has since changed."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    dom = "web_hq"
+    corp = os.path.join(d, "data", "corpus", dom)
+    scor = os.path.join(d, "data", "scores", dom)
+    os.makedirs(corp, exist_ok=True)
+    os.makedirs(scor, exist_ok=True)
+    with open(os.path.join(corp, "build_corpus_stats.json"), "w") as f:
+        json.dump({"fingerprint": "aaaa1111", "filters_fp": "x"}, f)
+    with open(os.path.join(scor, "score_stats.json"), "w") as f:
+        json.dump({"domain": dom, "input_fp": "bbbb2222", "scorer_fp": "y"}, f)
+    return d
+
+
 def _broken_restartability():
     """The real regression: a new script that accumulates in a loop and saves once at the end."""
     import shutil
@@ -1820,6 +1878,13 @@ CHECKS = [
         "PROVENANCE recorded the build command but not the filter version; the same command before and after a filters/ edit yields different corpora",
         check_corpus_filters_fp,
         _broken_corpus_filters_fp,
+    ),
+    (
+        "score_input_fresh",
+        "a score records which corpus it scored, and that corpus is still the current one",
+        "re-running clean changes the corpus but leaves stale scores with nothing raising",
+        check_score_input_fresh,
+        _broken_score_input_fresh,
     ),
     (
         "restartability",
