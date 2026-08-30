@@ -85,6 +85,11 @@ def main():
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH)
+    parser.add_argument(
+        "--temperature", type=float, default=0.0,
+        help="0.0 = greedy, the default every published number used. Raised only to test whether "
+             "the degenerate repetition loop (55.8% of SFT generations repeat an 8-gram 3+ times, "
+             "vs 24.7% for base 0-shot) is produced by greedy decoding rather than by the model.")
     parser.add_argument("--selfcheck", action="store_true",
                         help="known-answer round-trip, no model")
     args = parser.parse_args()
@@ -105,6 +110,7 @@ def main():
     rows = rows[args.shard :: args.shards]
     preds_path = os.path.join(
         ROOT, "data", "eval", f"preds_code_{os.path.basename(args.ckpt)}"
+        + (f".t{args.temperature}" if args.temperature else "")
         + (f".{args.shard}" if args.shards > 1 else "")
         + ".jsonl"
     )
@@ -114,7 +120,7 @@ def main():
             batch = rows[s : s + args.batch]
             prompts = [tok.encode(format_prompt(r["instruction"])).ids for r in batch]
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, 0.0, None)
+                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, None)
             for r, ids in zip(batch, out):
                 gen = tok.decode(ids)
                 code = extract_code(gen)
