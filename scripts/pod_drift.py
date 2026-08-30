@@ -40,6 +40,7 @@ SCOPE = [
     "data/mix_scale_*.json",
     "data/tokenizer.json",
     "scripts/*.json",
+    "runs/*.jsonl",
     "AGENTS.md",
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
@@ -92,25 +93,35 @@ def read_manifest(path=MANIFEST):
 def check_pod(root=ROOT):
     """Every file the manifest names must exist here and match. The pod runs this.
     Also reports .py files no manifest entry names -- the forward check cannot see
-    them, and a bare-podput script otherwise runs unregistered indefinitely."""
+    them, and a bare-podput script otherwise runs unregistered indefinitely.
+
+    runs/*.jsonl drift is expected (the pod produces rows; the committed copy lags).
+    It is reported, not failed -- a permanent red is no signal. Code drift FAILs."""
     manifest_path = os.path.join(root, "data", "pod_head_manifest.txt")
     if not os.path.exists(manifest_path):
         return False, f"no manifest at {os.path.relpath(manifest_path, root)}"
     manifest = read_manifest(manifest_path)
     bad = []
+    runs_div = []
     for p, want in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
             bad.append(f"missing {p}")
         elif sha_disk(fp) != want:
-            bad.append(f"diff {p}")
+            if p.startswith("runs/"):
+                runs_div.append(p)
+            else:
+                bad.append(f"diff {p}")
     if bad:
-        return False, f"{len(bad)} drifted (first: {bad[0]})"
+        return False, f"{len(bad)} drifted: {'; '.join(bad)}"
     extra = unregistered_py(root, manifest)
+    parts = [f"{len(manifest)} files match"]
+    if runs_div:
+        parts.append(f"{len(runs_div)} runs file(s) diverged (pod produces rows; sync to commit): {'; '.join(sorted(runs_div))}")
     if extra:
         shown = ", ".join(extra[:5]) + ("..." if len(extra) > 5 else "")
-        return True, f"{len(manifest)} files match; {len(extra)} UNREGISTERED .py not in manifest: {shown}"
-    return True, f"{len(manifest)} files match the manifest"
+        parts.append(f"{len(extra)} UNREGISTERED .py not in manifest: {shown}")
+    return True, "; ".join(parts)
 
 
 def unregistered_py(root, manifest=None):
