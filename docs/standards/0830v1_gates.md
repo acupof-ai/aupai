@@ -88,6 +88,11 @@ appearance of having been checked. Both guards below close that gap.
   mix by name, never by repointing an existing domain.
 - A partial check that reports PASS is a defect. State the coverage in the evidence
   string, and FAIL when coverage is incomplete.
+- A number the controller derived rather than measured is labelled "hypothesis, do not
+  schedule work against it" and carries its falsification test. On 2026-08-30 three
+  unmeasured AttnRes attributions from this session were each overturned by measurement,
+  and two sessions had already scheduled work against them. The controller's output is
+  who measures what and which reading counts, not an estimate.
 - No kernel proposal without a `torch.compile` baseline. AttnRes measured 42.2ms eager and
   3.85ms compiled for the same work — using the eager number would have made a
   zero-benefit kernel look like a 10x opportunity.
