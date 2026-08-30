@@ -1012,16 +1012,82 @@ FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+"
 )
+# Debt register for tracked-missing sources: each entry carries a reason. Can only
+# shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
+FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
+
+
+def _is_gitignored(path, root):
+    """True if path is covered by .gitignore. Tries `git check-ignore` (dev/CI);
+    on the pod (no .git) falls back to a minimal .gitignore reader. The fallback
+    handles this repo's patterns (directory globs, file globs); it skips negation,
+    which this repo uses only for !data/corpus/primary/ (no fact source points there).
+
+    Tries both path and path+/ so a directory pattern (data/corpus/*/) matches a
+    source written without a trailing slash (data/corpus/web_hq)."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["git", "check-ignore", path, path + "/"], capture_output=True, text=True, cwd=root, timeout=5
+        )
+        if r.returncode == 0:
+            return True
+        if r.returncode == 1:
+            return False
+        # 128: git unavailable or not a repo (pod) -> fall through to the reader
+    except (OSError, subprocess.SubprocessError):
+        pass
+    gi = os.path.join(root, ".gitignore")
+    if not os.path.exists(gi):
+        return False
+    import fnmatch
+
+    for line in open(gi, encoding="utf-8"):
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("!"):
+            continue
+        dir_only = line.endswith("/")
+        pat = line[:-1] if dir_only else line
+        if dir_only:
+            if path == pat or path.startswith(pat + "/"):
+                return True
+        elif fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path + "/", pat):
+            return True
+    return False
 
 
 def check_facts_well_formed(root):
+    """Every fact carries its measurement config, and its source path must exist.
+
+    Source standard: a fact's source is the command that produced it PLUS a durable
+    artifact (score_matrix record / preds file / commit sha). runs/*.log is NOT a
+    qualified source -- logs are deleted, overwritten, or replaced by the next
+    same-named run. A fact that cites only a log becomes unreproducible the moment
+    the log is cleaned.
+
+    Three-state source check (same shape as corpus_filters_fp):
+    - path exists -> OK
+    - path missing AND gitignored -> SKIP (pod-only artifact; this machine doesn't
+      have it, the pod does)
+    - path missing AND in the baseline -> registered debt, reported in `gaps`
+    - path missing AND not in baseline -> FAIL (new rot)
+
+    The baseline is a ratchet: it can only shrink. A new missing source is a FAIL,
+    never a silent baseline addition."""
     facts_dir = os.path.join(root, "facts")
     if not os.path.isdir(facts_dir):
         return FAIL, "facts/ does not exist -- measurements have nowhere to carry their config"
-    files = sorted(glob.glob(os.path.join(facts_dir, "*.json")))
+    files = sorted(
+        p for p in glob.glob(os.path.join(facts_dir, "*.json"))
+        if os.path.basename(p) != os.path.basename(FACT_SOURCE_BASELINE)
+    )
     if not files:
         return FAIL, "facts/ holds no *.json"
+    baseline_path = os.path.join(root, FACT_SOURCE_BASELINE)
+    source_baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
     errors, ids, entries = [], {}, []
+    baselined = []
     for p in files:
         fn = os.path.basename(p)
         try:
@@ -1052,8 +1118,14 @@ def check_facts_well_formed(root):
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
             for m in FACT_SOURCE_PATH.findall(str(e["source"])):
-                if not os.path.exists(os.path.join(root, m)):
-                    errors.append(f"{tag}: source path {m} does not exist")
+                if os.path.exists(os.path.join(root, m)):
+                    continue
+                if _is_gitignored(m, root):
+                    continue  # pod-only artifact; this machine doesn't have it
+                if m in source_baseline:
+                    baselined.append(m)
+                    continue  # registered debt; gaps reports it
+                errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
             entries.append((fn, e))
     agents = os.path.join(root, "AGENTS.md")
     prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
@@ -1070,7 +1142,8 @@ def check_facts_well_formed(root):
     if errors:
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config"
+    note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
+    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
 
 
 def _broken_facts():
@@ -1091,7 +1164,10 @@ def _broken_facts():
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
-    obj["facts"][0]["source"] = "data/does_not_exist.jsonl"
+    # A source under scripts/ (not gitignored, not in the baseline) that does not
+    # exist. A data/ path would be gitignored by data/*.jsonl and silently SKIPped --
+    # the source-path mutation must use a path the three-state check treats as FAIL.
+    obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
@@ -1624,6 +1700,18 @@ def _broken_opt_state_present():
     return d
 
 
+def _is_ladder_mix(mix):
+    """The frozen recipe binds the six ladder points and nothing else.
+
+    Membership was the filename prefix `mix_scale_`, which asks "is this named like a
+    ladder point" rather than "is this a ladder point". The 30B delivery run has no
+    ladder to be comparable with -- nothing is measured against it -- and its natural
+    name, mix_scale_30b.json, would have silently put it under a recipe frozen for a
+    purpose that does not apply to it, including warmup 20 (0.06% of a 32,697-step run).
+    LADDER is the list, so ask LADDER."""
+    return os.path.basename(mix) in {os.path.basename(m) for _, m in LADDER}
+
+
 def check_ladder_config(root):
     """Every ladder checkpoint's cfg matches the single frozen run config.
     Scope: checkpoints whose experiments row was launched via run_ddp.sh
@@ -1665,7 +1753,7 @@ def check_ladder_config(root):
             cfg = _read_ckpt_cfg(p)
         except Exception as e:
             return FAIL, f"{os.path.basename(p)}: cannot read cfg: {e}"
-        if not os.path.basename(cfg.get("mix", "")).startswith("mix_scale_"):
+        if not _is_ladder_mix(cfg.get("mix", "")):
             continue
         checked += 1
         for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS):
@@ -2827,6 +2915,12 @@ def gaps():
         print(f"\n  {len(hits)} claim(s) EXPERIMENTS.md marks as uncontrolled or unmeasured:")
         for i, ln in hits[:12]:
             print(f"    EXPERIMENTS.md:{i}  {ln[:96]}")
+    bp = os.path.join(ROOT, FACT_SOURCE_BASELINE)
+    if os.path.exists(bp):
+        debt = json.load(open(bp, encoding="utf-8"))
+        print(f"\n  {len(debt)} baselined fact source(s) -- debt register, can only shrink:")
+        for path, reason in sorted(debt.items()):
+            print(f"    {path}: {reason[:90]}")
 
 
 def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
@@ -3417,7 +3511,7 @@ def _run_point(step_args, forced):
     mix = mix or cfg_default("mix")
     env = None
     frozen_args = []
-    if os.path.basename(mix).startswith("mix_scale_"):
+    if _is_ladder_mix(mix):
         fpath = os.path.join(ROOT, "data", "mix_scale_run_config.json")
         if not os.path.exists(fpath):
             print(f"run point: {fpath} missing -- the ladder recipe is not optional")
