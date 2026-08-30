@@ -1202,6 +1202,46 @@ def _broken_env_fp_present():
     return d
 
 
+def check_opt_state_present(root):
+    """A checkpoint that records a training step must carry optimizer state.
+
+    A checkpoint with `step` but no `opt` cannot be safely resumed: Muon momentum
+    and AdamW moments are zeroed, the loss dips and recovers, and it reads as
+    noise rather than a bug. The ladder's short runs from scratch never resumed,
+    so the gap stayed hidden. The 30B run will."""
+    ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
+    if not ckpts:
+        return SKIP, "no checkpoints"
+    missing, resumable = [], 0
+    for p in ckpts:
+        try:
+            d = _read_ckpt_dict(p)
+        except Exception:
+            continue  # unreadable checkpoint is a different check's problem
+        if "step" not in d:
+            continue  # final/eval checkpoint, not claiming to be resumable
+        resumable += 1
+        if "opt" not in d:
+            missing.append(os.path.basename(p))
+    if missing:
+        return FAIL, f"{len(missing)} checkpoint(s) with step but no opt: {', '.join(missing[:5])}"
+    return PASS, f"all {resumable} resumable checkpoints carry opt state"
+
+
+def _broken_opt_state_present():
+    """A real torch checkpoint with step but no opt state."""
+    import torch
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    torch.save(
+        {"model": {}, "cfg": {}, "vocab_id": "test", "corpus_fp": {}, "env_fp": "x", "step": 100},
+        os.path.join(d, "ckpt_test.pt"),
+    )
+    return d
+
+
 def check_ladder_config(root):
     """Every ladder checkpoint's cfg matches the single frozen run config.
     Scope: checkpoints whose experiments row was launched via run_ddp.sh
@@ -1889,6 +1929,13 @@ CHECKS = [
         "a container restart changed the effective environment and three sessions chased wrong hypotheses for an hour because nothing recorded what the environment WAS",
         check_env_fp_present,
         _broken_env_fp_present,
+    ),
+    (
+        "opt_state_present",
+        "a checkpoint with a step number carries optimizer state",
+        "resuming from a checkpoint with step but no opt zeroes Muon momentum and AdamW moments; the loss dips and recovers, looking like noise",
+        check_opt_state_present,
+        _broken_opt_state_present,
     ),
 ]
 

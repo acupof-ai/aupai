@@ -1683,6 +1683,12 @@ def main():
         )
 
     optimizers = build_optimizers(raw_model, Cfg)
+    if args.resume and "step" in ck and "opt" not in ck:
+        raise RuntimeError(
+            f"{args.resume} records step {ck['step']} but carries no optimizer state. "
+            f"Resuming would zero Muon momentum and AdamW moments -- the loss would dip "
+            f"and recover, looking like noise. This checkpoint cannot be safely resumed."
+        )
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
             opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
