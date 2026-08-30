@@ -1162,27 +1162,37 @@ def _read_ckpt_cfg(path):
     return _read_ckpt_dict(path).get("cfg", {})
 
 
+#: Checkpoints written before train.py stamped env_fp. They can never grow one, so failing
+#: on them is a permanent red, and a permanent red is no signal -- it blocked a launch the
+#: hour it landed. A RATCHET, like scripts/restartability_baseline.json: only a NEW
+#: checkpoint without env_fp fails. The list may shrink, never grow.
+_PRE_ENV_FP = {"ckpt_k4_11b_lr05.pt", "ckpt_k5_clean_0827.pt", "ckpt_k6_fone.pt"}
+
+
 def check_env_fp_present(root):
-    """Every checkpoint carries an environment fingerprint.
+    """Every checkpoint written since the guard landed carries an environment fingerprint.
 
     A container restart can change the effective environment (dropping
     hand-installed packages) without anyone noticing. The fingerprint is
-    compared on resume; a checkpoint without one predates the guard and
-    cannot be safely resumed."""
+    compared on resume; a checkpoint without one cannot be safely resumed."""
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
-    missing = []
+    missing, grandfathered = [], 0
     for p in ckpts:
         try:
             d = _read_ckpt_dict(p)
         except Exception:
             continue  # unreadable checkpoint is a different check's problem
-        if "env_fp" not in d:
+        if "env_fp" in d:
+            continue
+        if os.path.basename(p) in _PRE_ENV_FP:
+            grandfathered += 1
+        else:
             missing.append(os.path.basename(p))
     if missing:
         return FAIL, f"{len(missing)} checkpoint(s) without env_fp: {', '.join(missing[:5])}"
-    return PASS, f"all {len(ckpts)} checkpoints carry env_fp"
+    return PASS, f"all {len(ckpts) - grandfathered} post-guard checkpoints carry env_fp ({grandfathered} grandfathered)"
 
 
 def _broken_env_fp_present():
@@ -2464,6 +2474,12 @@ _UNFROZEN_ALLOWLIST = {
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
     "val_every", "val_batches",  # validation cadence, not architecture
+    # An A/B arm, like no_attn_res: it exists to take two values, so freezing it would
+    # declare settled the very thing the experiment is run to settle. MOVE IT INTO
+    # _FROZEN_KEYS the day the A/B says fp32 masters ship -- a decided setting left here
+    # is one a launch can silently omit.
+    "fp32_master",
+    "frozen_probe",       # measurement switch; does not change what is measured
 }
 
 

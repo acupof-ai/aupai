@@ -239,15 +239,8 @@ class DeltaRecurrence(nn.Module):
     def forward(self, x, cu=None):
         B, T, D = x.shape
         # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
-        # Four shifted multiply-adds, not nn.Conv1d: ATen routes a depthwise k=4 conv to
-        # conv_depthwise2d_generic at ~6% of bandwidth, while inductor fuses the arithmetic
-        # form. Weights stay on self.short_conv, so checkpoints load unchanged.
-        w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
-        h = F.pad(x.transpose(1, 2), (K - 1, 0))
-        y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
-        for i in range(1, K):
-            y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
-        h = F.silu((y + self.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
+        h = F.pad(x.transpose(1, 2), (self.short_conv.kernel_size[0] - 1, 0))
+        h = F.silu(self.short_conv(h).transpose(1, 2))
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.reshape(B, T, self.h, self.hd).contiguous()
         k = k.reshape(B, T, self.h, self.hd).contiguous()
@@ -859,16 +852,54 @@ def validate(
     return sum(vl) / len(vl)
 
 
-def build_optimizers(model, cfg):
+class MasterWeights:
+    """fp32 copies of the bf16 parameters for the optimizer to own and step.
+
+    Measured 2026-08-30: at the schedule's own LR floor (final_lr_frac 0.05) 91% of parameter
+    elements came back from step() bit-identical -- bf16 has 8 mantissa bits, so an update
+    ~2^-9 below the parameter cannot change it. The work was computed, applied and discarded
+    with nothing raising. Keeping the optimizer's copy in fp32 lets those updates accumulate
+    until they are large enough to move the bf16 weight.
+
+    Only the optimizer changes. The model, DDP's gradient traffic, torchao's fp8 cast and the
+    fla kernels all keep bf16 -- autocast would not have: chunk_kda is a custom op, so autocast
+    leaves its inputs in whatever dtype the parameters are.
+    """
+
+    def __init__(self, model):
+        self.pairs = [(p, p.detach().float().clone().requires_grad_(True)) for p in model.parameters()]
+        self.map = {p: m for p, m in self.pairs}
+
+    def pull_grads(self):
+        for p, m in self.pairs:
+            m.grad = None if p.grad is None else p.grad.float()
+
+    def push(self):
+        with torch.no_grad():
+            for p, m in self.pairs:
+                p.copy_(m)
+
+    def resync(self):
+        """After a rollback the model is the truth again; the fp32 copies must follow or the
+        next step would push the pre-rollback weights straight back in."""
+        with torch.no_grad():
+            for p, m in self.pairs:
+                m.copy_(p)
+
+
+def build_optimizers(model, cfg, master=None):
     """Muon for 2D matrices; AdamW for embeddings, 1D norm gains, and (low lr, wd=0) for the 3D
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
     muon, embed, scalar, arq = [], [], [], []
     for n, p in model.named_parameters():
+        # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
+        # fp32 master when there is one, so every group keeps its own lr and weight decay.
+        q = p if master is None else master[p]
         if "tok" in n or "head" in n:
-            embed.append(p)
+            embed.append(q)
         elif p.ndim == 2:
-            muon.append(p)
+            muon.append(q)
         elif (
             p.ndim == 3
             or ".dyn." in n
@@ -876,9 +907,9 @@ def build_optimizers(model, cfg):
             or n.endswith("ar2.q")
             or n.endswith("final_ar.q")
         ):
-            arq.append(p)
+            arq.append(q)
         else:
-            scalar.append(p)
+            scalar.append(q)
     opts = [
         Muon(
             muon,
@@ -1503,6 +1534,16 @@ def main():
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
+    parser.add_argument(
+        "--fp32_master",
+        action="store_true",
+        help="optimizer owns fp32 copies of the bf16 weights (see MasterWeights)",
+    )
+    parser.add_argument(
+        "--frozen_probe",
+        action="store_true",
+        help="report what fraction of elements step() left bit-identical, on the last step",
+    )
     parser.add_argument("--no_doc_mask", action="store_true", help="let KDA state / attention cross <eos>")
     parser.add_argument(
         "--mix", type=str, default=None, help='domain mix json (default Cfg.mix; "" = flat corpus)'
@@ -1682,7 +1723,10 @@ def main():
             f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone}"
         )
 
-    optimizers = build_optimizers(raw_model, Cfg)
+    master = MasterWeights(raw_model) if args.fp32_master else None
+    optimizers = build_optimizers(raw_model, Cfg, master.map if master else None)
+    if master is not None and is_main:
+        print(f"fp32 master weights: {sum(m.numel() for _, m in master.pairs) * 4 / 1e9:.2f} GB", flush=True)
     if args.resume and "step" in ck and "opt" not in ck:
         raise RuntimeError(
             f"{args.resume} records step {ck['step']} but carries no optimizer state. "
@@ -1816,6 +1860,8 @@ def main():
                         for j, opt in enumerate(optimizers):
                             if good_opt[j] is not None:
                                 opt.load_state_dict(good_opt[j])
+                        if master is not None:
+                            master.resync()
                         n_skip = 0
                         if is_main:
                             runlog(f"step {step}/{total_steps} 20 skips in a row — rolled back to snapshot")
@@ -1825,9 +1871,28 @@ def main():
                     continue
                 n_skip = 0
                 set_schedule(optimizers, step, total_steps, Cfg, args.lr_scale)
+                # Two readings, because the fix does NOT lower the first one: the model stays
+                # bf16, so a small step still rounds away there. What changes is that the
+                # optimizer's own copy keeps it, and it accumulates until the weight moves.
+                probe = None
+                if args.frozen_probe and step == total_steps - 1:
+                    probe = ([(p, p.detach().clone()) for p in raw_model.parameters()],
+                             [(m, m.detach().clone()) for _, m in master.pairs] if master else None)
+                if master is not None:
+                    master.pull_grads()
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
+                if master is not None:
+                    master.push()
+                if probe is not None and is_main:
+                    for tag, pairs, bits in (("model bf16", probe[0], torch.int16),
+                                             ("optimizer", probe[1], torch.int32)):
+                        if pairs is None:
+                            continue
+                        same = sum(int((a.view(bits) == b.view(bits)).sum()) for a, b in pairs)
+                        tot = sum(a.numel() for a, _ in pairs)
+                        runlog(f"frozen[{tag}] {100 * same / tot:.1f}% of {tot / 1e6:.1f}M elements")
                 step += 1
                 if _prof is not None:
                     _prof.step()

@@ -15,6 +15,7 @@ import json
 import os
 import random
 import sys
+from collections import deque
 
 import torch
 from tokenizers import Tokenizer
@@ -33,6 +34,10 @@ OUT_PATH = os.path.join(DATA, "sft", "sft_all.pt")
 
 SEQ = 4096  # model context; rows are SEQ+1 (input + 1 to predict)
 MAX_EXAMPLES = 500_000
+#: examples the packer may look past to fill a row's tail. Large enough that some
+#: example fits almost any remaining room, small enough that order stays locally
+#: shuffled -- length-sorted packing would bias what the model sees first.
+LOOKAHEAD = 512
 ENC_BATCH = 8192
 
 SOURCES = [
@@ -140,6 +145,14 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
         rows_val.append(cur_val + [0.0] * pad)
         cur_ids, cur_lab, cur_val = [], [], []
 
+    def place(item):
+        ids_f, plen, dense = item
+        cur_ids.extend(ids_f)
+        cur_lab.extend([-100] * plen + ids_f[plen:])
+        if num_id is not None:
+            cur_val.extend(dense)
+
+    pending = deque()
     for i in range(0, len(examples), ENC_BATCH):
         batch = examples[i : i + ENC_BATCH]
         for ids_p, ids_f, vals_f in _encode_pairs(batch, tok, num_id):
@@ -156,10 +169,7 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
             if len(ids_f) > row_len:
                 n_drop += 1  # drop rather than truncate: a truncated head has no question
                 continue
-            if len(cur_ids) + len(ids_f) > row_len:
-                flush()
-            cur_ids.extend(ids_f)
-            cur_lab.extend([-100] * plen + ids_f[plen:])
+            dense = None
             if num_id is not None:
                 # values back onto their own positions: the k-th [NUM] takes the k-th value
                 dense, k = [], 0
@@ -167,9 +177,33 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
                     dense.append(vals_f[k] if t == num_id else 0.0)
                     k += t == num_id
                 assert k == len(vals_f), f"{k} [NUM] but {len(vals_f)} values"
-                cur_val.extend(dense)
+            pending.append((ids_f, plen, dense))
+        # Pack with a bounded lookahead. Plain first-fit closes a row as soon as the NEXT
+        # example does not fit, so the leftover is whatever that example's length happened
+        # to be -- 11.8% of the 3.24b pack was tail padding, all of it forward and backward
+        # on nothing. Scanning ahead for one that fits recovers most of it. Sorting by
+        # length (classic FFD) would pack tighter still, but it puts every long example at
+        # the front of training, so the shuffle has to survive: a window keeps the order
+        # locally random. Drain only what a full window can see, so the tail of one encode
+        # batch still packs against the head of the next.
+        while len(pending) > LOOKAHEAD:
+            room = row_len - len(cur_ids)
+            j = next((k for k in range(min(LOOKAHEAD, len(pending))) if len(pending[k][0]) <= room), None)
+            if j is None:
+                flush()
+                continue
+            place(pending[j])
+            del pending[j]
         if (i // ENC_BATCH) % 10 == 0:
             print(f"  tokenized {min(i + ENC_BATCH, len(examples))}/{len(examples)}", flush=True)
+    while pending:
+        room = row_len - len(cur_ids)
+        j = next((k for k in range(len(pending)) if len(pending[k][0]) <= room), None)
+        if j is None:
+            flush()
+            continue
+        place(pending[j])
+        del pending[j]
     flush()
 
     n_rows = len(rows_ids)
@@ -204,6 +238,54 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     print(f"saved {out_path} ({os.path.getsize(out_path) / 1e9:.2f} GB)", flush=True)
 
 
+
+def _selftest():
+    """The packer reorders examples to fill row tails; the failure it can hide is losing or
+    duplicating one, so assert conservation on real pack_and_save output, not on a model of it."""
+    import tempfile
+
+    class _Enc:
+        def __init__(self, ids):
+            self.ids = ids
+
+    class _FakeTok:  # ids are lengths made unique per example, so conservation is checkable
+        def encode_batch(self, texts):
+            return [_Enc([hash(t) % 900 + 100] * len(t)) for t in texts]
+
+    global _vocab_fingerprint
+    real_fp, _vocab_fingerprint = _vocab_fingerprint, lambda _t: "selftest"
+    random.seed(0)
+    pairs = [("q" * random.randint(5, 60), "a" * random.randint(5, 400)) for _ in range(4000)]
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "p.pt")
+            pack_and_save(pairs, _FakeTok(), 0, out, 511)
+            blob = torch.load(out, weights_only=True)
+    finally:
+        _vocab_fingerprint = real_fp
+
+    ids, lab = blob["input_ids"], blob["labels"]
+    assert ids.shape == lab.shape and ids.shape[1] == 512, ids.shape
+    # Every example is one contiguous run of a single id; count runs per id and compare to
+    # how many examples carry that id. A dropped or duplicated example moves a count.
+    from collections import Counter
+
+    want = Counter()
+    for q, a in pairs:
+        want[hash(q + a) % 900 + 100] += 1
+    got = Counter()
+    for row in ids.tolist():
+        prev = None
+        for t in row:
+            if t != prev and t != 0:
+                got[t] += 1
+            prev = t
+    assert got == want, f"packing lost or duplicated examples: {len(want - got)} missing"
+    pad = int((lab == -100).sum()) - int(((lab == -100) & (ids != 0)).sum())
+    assert pad >= 0
+    return f"{len(pairs)} examples conserved across {ids.shape[0]} rows"
+
+
 def main():
     random.seed(42)
     tok = Tokenizer.from_file(TOK_PATH)
@@ -220,4 +302,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        print("prepare_sft selftest OK:", _selftest())
+    else:
+        main()
