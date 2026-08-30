@@ -687,6 +687,41 @@
    },
    "uncertainty": null,
    "status": "measured"
+  },
+  {
+   "id": "cont.code_sft_scan",
+   "value": {
+    "sft_math_code": {
+     "rows": 15471,
+     "hit_rows": 0,
+     "exact": 0,
+     "verdict": "clean"
+    },
+    "evol_code": {
+     "rows": 8000,
+     "hit_rows": 0,
+     "exact": 0,
+     "verdict": "clean"
+    },
+    "synthetic_code": {
+     "rows": 3000,
+     "hit_rows": 1652,
+     "exact_normalized": 587,
+     "verdict": "REJECT",
+     "note": "by construction: this IS the carve source (3,000 rows -> 500 held out). Positive control: the scanner sees the held-out rows. Excluded from training by data/eval/code_holdout_500.sha1 manifest; no current build script references the file (verified 2026-08-30)"
+    },
+    "headline": "every code-bearing TRAINING file is clean (sft_math_code 0, evol_code 0, code_raw 0, corpus/code 0); the only REJECT is the carve source itself"
+   },
+   "measured": "2026-08-30",
+   "source": "runs/scan_code_holdout_sft.log",
+   "config": {
+    "threshold": 0.8,
+    "instrument": "IDF-weighted containment",
+    "baseline": "web_hq 62 shards, 1,366,324 rows",
+    "q_field": "instruction"
+   },
+   "uncertainty": null,
+   "status": "measured"
   }
  ]
 }
