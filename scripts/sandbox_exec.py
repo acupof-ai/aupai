@@ -4,8 +4,8 @@
 Model-generated code is untrusted code executed in a loop. Isolation:
   - new mount namespace, root made rprivate, chroot into a minimal root:
     read-only bind of /usr and /dev, merged-/usr symlinks replicated, tmpfs
-    for /tmp /work. The process cannot see /work/aupai (eval answers,
-    training data) or anything outside the minimal root.
+    for /tmp. The process cannot see /work/aupai (eval answers, training
+    data) or anything outside the minimal root.
   - network namespace (-n): no sockets.
   - pid namespace (-p): the whole tree dies with the runner on timeout.
   - rlimits: CPU 5s, address space 2GB, no core dumps.
@@ -46,7 +46,8 @@ mount --bind /dev "$ROOT/dev"
 mount -o remount,ro,bind "$ROOT/dev"
 mount -t proc proc "$ROOT/proc"
 mount -t tmpfs -o size=64m tmpfs "$ROOT/tmp"
-mount -t tmpfs -o size=64m tmpfs "$ROOT/work"
+# /work is the per-run mkdtemp with code.py already written by the runner;
+# a tmpfs here would shadow it. chroot confines visibility to this tree.
 ulimit -t 5 -v 2097152 -c 0
 # /usr/bin/python3 is a symlink through /etc/alternatives, which the chroot
 # deliberately does not contain; resolve to the real binary on the host.
