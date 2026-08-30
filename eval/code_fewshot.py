@@ -101,6 +101,8 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature; 0 = greedy")
     ap.add_argument("--selfcheck", action="store_true")
     ap.add_argument("--demos", type=int, default=N_DEMOS, choices=[0, 1, 3],
                     help="number of few-shot demos (0 = pure continuation, tests whether "
@@ -129,7 +131,9 @@ def main():
     evals = rows[DEMO_POOL:]
     print(f"code few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
-    preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot.jsonl")
+    preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot"
+                              + (f".t{args.temperature}" if args.temperature else "")
+                              + ".jsonl")
     correct = total = no_fence = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
         for s in range(0, len(evals), args.batch):
@@ -140,7 +144,7 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, 0.0, pvals)
+                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs, pr in zip(batch, out_ids, out_vals, prompts):
                 # slice the continuation off the prompt BEFORE decode: the
@@ -162,7 +166,7 @@ def main():
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
 
     delta = 1.4 / (total ** 0.5)
-    print(f"code-500 few-shot ({args.demos}-shot): {correct}/{total} = {correct / total:.1%}")
+    print(f"code-500 few-shot ({args.demos}-shot, t={args.temperature}): {correct}/{total} = {correct / total:.1%}")
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
           f"instrument exists iff acc > {2 * delta:.1%}")
     print(f"empty-continuation rate {no_fence / total:.1%}")

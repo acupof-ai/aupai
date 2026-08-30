@@ -35,7 +35,7 @@ def extract_number(text):
 
 
 @torch.no_grad()
-def evaluate(model, tok, device, batch_size=8):
+def evaluate(model, tok, device, batch_size=8, temperature=0.0):
     rows = list(load_dataset())
     correct = total = 0
 
@@ -44,7 +44,7 @@ def evaluate(model, tok, device, batch_size=8):
         p_ids = [tok.encode(format_prompt(r["question"])).ids for r in batch]
         golds = [float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in batch]
 
-        for out_ids, gold in zip(generate_batch(model, p_ids, 256, device), golds, strict=True):
+        for out_ids, gold in zip(generate_batch(model, p_ids, 256, device, temperature), golds, strict=True):
             pred = extract_number(tok.decode(out_ids))
             total += 1
             if pred is not None and abs(pred - gold) < 1e-4:
@@ -54,7 +54,7 @@ def evaluate(model, tok, device, batch_size=8):
             print(f"  {total}/{len(rows)} acc={correct / total:.2%}", flush=True)
 
     acc = correct / total
-    print(f"GSM8K: {correct}/{total} = {acc:.2%}")
+    print(f"GSM8K: {correct}/{total} = {acc:.2%} (t={temperature})")
     return acc
 
 

@@ -52,6 +52,8 @@ def main():
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="sampling temperature; 0 = greedy")
     args = parser.parse_args()
 
     # dtype through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to fp32
@@ -67,6 +69,7 @@ def main():
     rows = rows[args.shard :: args.shards]
     preds_path = os.path.join(
         ROOT, "data", "eval", f"preds_{os.path.basename(args.ckpt)}"
+        + (f".t{args.temperature}" if args.temperature else "")
         + (f".{args.shard}" if args.shards > 1 else "")
         + ".jsonl"
     )
@@ -82,7 +85,7 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, 0.0, pvals)
+                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
@@ -101,7 +104,7 @@ def main():
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)
 
-    print(f"math-500: {correct}/{total} = {correct / total:.1%}")
+    print(f"math-500: {correct}/{total} = {correct / total:.1%} (t={args.temperature})")
     print(f"boxed rate {n_box / total:.1%} | rewrite('解答') rate {n_rewrite / total:.1%} | "
           f"avg gen tokens {tot_len / total:.0f} | step-eq wrong {n_bad}/{n_eq} = {n_bad / max(n_eq, 1):.1%}")
     print("acc by gold steps: " + ", ".join(f"{k}{'+' if k == 3 else ''}: {c}/{n}={c / n:.0%}" for k, (c, n) in sorted(by_steps.items())))

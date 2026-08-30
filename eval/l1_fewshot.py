@@ -71,6 +71,8 @@ def main():
                          "both zero => the zero is not a prompt-format artefact)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature; 0 = greedy")
     ap.add_argument("--out", default=None, help="write JSON summary to this path")
     args = ap.parse_args()
 
@@ -86,7 +88,10 @@ def main():
     evals = rows[N_DEMOS:]
     print(f"L1 few-shot: {args.demos} demos, {len(evals)} eval problems", flush=True)
 
-    preds_path = os.path.join(ROOT, "data", "eval", f"preds_l1_d{args.demos}.jsonl")
+    preds_path = os.path.join(ROOT, "data", "eval",
+                              f"preds_l1_d{args.demos}"
+                              + (f".t{args.temperature}" if args.temperature else "")
+                              + ".jsonl")
     correct = total = 0
     n_box = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
@@ -98,7 +103,7 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, 0.0, pvals)
+                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
@@ -123,7 +128,8 @@ def main():
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump({"correct": correct, "total": total, "acc": acc,
                         "binomial_delta": delta, "answer_present_rate": n_box / total,
-                        "demos": args.demos, "preds_path": preds_path}, f, ensure_ascii=False)
+                        "demos": args.demos, "temperature": args.temperature,
+                        "preds_path": preds_path}, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":

@@ -237,7 +237,7 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
 # --- GSM8K: the only generation benchmark (batched greedy decoding) ---
 
 @torch.no_grad()
-def run_gsm8k(model, tok, device, batch_size=GEN_BATCH):
+def run_gsm8k(model, tok, device, batch_size=GEN_BATCH, temperature=0.0):
     """Greedy generation, exact match on the last number. Reuses gsm8k.py's
     generator/extractor; prompts are pre-tokenized here before decoding."""
     m = _load_module("gsm8k")
@@ -249,7 +249,7 @@ def run_gsm8k(model, tok, device, batch_size=GEN_BATCH):
 
     correct = total = 0
     for s in range(0, len(rows), batch_size):
-        out_ids = m.generate_batch(model, prompts[s : s + batch_size], GEN_MAX_NEW, device)
+        out_ids = m.generate_batch(model, prompts[s : s + batch_size], GEN_MAX_NEW, device, temperature)
         for ids, gold in zip(out_ids, golds[s : s + batch_size]):
             pred = m.extract_number(tok.decode(ids))
             total += 1
@@ -275,6 +275,8 @@ def main():
         help=f"subset to run (default: all). Choices: {', '.join(ALL_BENCHMARKS)}",
     )
     parser.add_argument("--batch", type=int, default=MC_BATCH, help="MC scoring batch size")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="GSM8K sampling temperature; 0 = greedy")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     args = parser.parse_args()
@@ -306,9 +308,9 @@ def main():
                 # the number it stands for; eval/math_hard.py has the FoNE decode.
                 print("  GSM8K: skipped on a FoNE checkpoint (use eval/math_hard.py)")
                 continue
-            display = "GSM8K"
+            display = f"GSM8K (t={args.temperature})"
             t0 = time.perf_counter()
-            acc = run_gsm8k(model, tok, device)
+            acc = run_gsm8k(model, tok, device, temperature=args.temperature)
         else:
             display, loader = MC_BENCHMARKS[key]
             t0 = time.perf_counter()
