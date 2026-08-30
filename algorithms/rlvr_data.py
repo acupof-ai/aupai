@@ -12,6 +12,12 @@ Usage: python algorithms/rlvr_data.py
 import json
 import os
 import re
+import sys
+
+try:
+    from .rlvr_reward import reward_fn
+except ImportError:
+    from rlvr_reward import reward_fn
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -64,9 +70,29 @@ def normalize(ans):
 
 
 def load_problems(path=RLVR_PATH):
-    """Load prepared RLVR problems: [{prompt, answer, source}, ...]."""
-    with open(path, encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
+    """Load prepared RLVR problems: [{prompt, answer, source}, ...].
+
+    Data boundary: a row is refused unless its GT round-trips through the
+    reward (reward_fn(\\boxed{gt}, gt) == 1.0) and its braces balance.
+    Tolerance at the reward boundary is invisible; a refusal here is loud.
+    """
+    rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
+    good, bad = [], 0
+    for d in rows:
+        gt = str(d.get("answer") or "")
+        if gt.count("{") != gt.count("}") or reward_fn(f"\\boxed{{{gt}}}", gt) != 1.0:
+            bad += 1
+            continue
+        good.append(d)
+    if bad:
+        print(
+            f"[load_problems] REFUSED {bad}/{len(rows)} rows from {path}: "
+            f"GT does not round-trip through reward_fn (unbalanced braces or "
+            f"unrewardable answer form)",
+            file=sys.stderr,
+            flush=True,
+        )
+    return good
 
 
 def prepare(data_dir=DATA, out_path=RLVR_PATH):
