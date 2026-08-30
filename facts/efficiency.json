@@ -747,6 +747,26 @@
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
    "boundary": "按时间盒关闭,不是因为查清了。已排除 —— NCCL 传输(18.2% 已重叠)、GPU 空闲(1.5%)、static_graph、gradient_as_bucket_view。未排除 —— CPU 侧 reducer hook 的 launch 拖慢、DDP 引入的额外小 kernel。模型变大时应被摊薄;若不降则此归因需重开。",
    "status": "recorded"
+  },
+  {
+   "id": "eff.vocab_padding_softmax_defect",
+   "value": "The training loss path slices head.weight[:Cfg.vocab] into Liger FLCE, which has no per-class mask: the alignment-padding rows (vocab_real:vocab) entered the softmax denominator at their random-init values. Inference (lm_logits) masks at vocab_real; the training path never did. Fixed 2026-08-30 by zero-initializing the padding rows after self.apply(self._init) (commit 06d52cd): padding logits stay 0, and the rows are never targets so CE gradient only pushes them down. The padding's measured contribution is the constant offset log(32784/32773) = 0.00034 (step-0 delta in every run). The 32776 A/B passed not because the defect was absent but because 3 random columns rarely spike; the defect existed there too, and the zero-init fix is what makes both configs clean.",
+   "measured": "2026-08-30",
+   "source": "runs/ab_vocab.log (32773 vs 32776), runs/ab_vocab_32784.log, runs/ab_vocab_32784_zeroinit.log, runs/ab_vocab_32784_lr003.log (pod); train.py FLCE slice head.weight[:Cfg.vocab]; fix commit 06d52cd",
+   "config": {
+    "arms": "vocab 32773 (baseline) vs 32784 (candidate); same seed, same data, 10 steps, batch 4, seq 512, eager",
+    "step0_delta": 0.0003,
+    "lr_scale_0.1_max_delta": 1.816,
+    "lr_scale_0.1_trajectory": "chaotic (loss 10.6 -> 17.4 -> 12.6, both arms including baseline 32773)",
+    "lr_scale_0.03_max_delta": 0.0016,
+    "lr_scale_0.03_trajectory": "smooth (10.63 -> 7.22), signs 7+/2- with mean +0.0004 = the constant denominator offset",
+    "prior_32776_run_max_delta": 0.0046,
+    "prior_32776_run_regime": "stable, old sample content",
+    "fix": "zero-init head.weight[vocab_real:vocab] after self.apply(self._init); tied embedding rows zeroed too (their ids never appear as inputs)"
+   },
+   "uncertainty": "The +-1.7 swings at LR_SCALE=0.1 were first misattributed to the padding rows; the zero-init run swung identically, proving the swings are chaotic-regime compounding of the width difference itself (the baseline arm 32773 trains smoothly on the old sample in the 32776 A/B but chaotically on the rebuilt sample at LR 0.1). The padding rows' own contribution is the 0.0003 constant offset, isolated at step 0. Single run per cell.",
+   "boundary": "The A/B's three criteria (max |delta| at noise floor, no growth, no systematic sign) are only meaningful in a STABLE training regime; in a chaotic regime they fail for any width change. The 32776 pass was regime-luck as much as column-count luck. This is the criteria's ceiling, not an execution failure -- same family as b0's 8.4pt (formula right, wrong source) and corpus_fp_matches reporting 1/7 yet PASS: a check that passes for reasons unrelated to what it checks. Run the vocab A/B at AB_LR_SCALE=0.03 (the stable regime on the current sample; 0.1 swings +-1.7).",
+   "status": "measured"
   }
  ]
 }
