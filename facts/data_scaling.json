@@ -468,7 +468,7 @@
   },
   {
    "id": "ds.code_fertility_redpajama",
-   "value": "冻结词表对 code 的 chars/token(config 定义):tok/byte=0.329,3.04 B/token,chars/token=3.03。RedPajama-1T github 采样文件(98 里第一个)前 ~300MB 连续段,47,028 文档,content-hash 打散=>采样≈全体。标称全量 98x2.66GB=~85.7B raw tokens,高 fb 早前 ~30B 估 2.8x,分支 >=8B 定死,code 格不缺。**闸口未在自身量纲测**:3.03 是 chars/token(高好,> zh 1.693),不能与 en tokens/word 1.43(低好)比;'ref fertility<=1.55'是 tokens/word 量,非 chars/token。解冻条件 2 需用 tok.frontier 同段 code 对比(同一 code passage,我们的 vs 前沿词表,同量纲)才可判读。",
+   "value": "frozen-vocab ratios measured on DECODED text (denominator pinned in name): tok/decoded-text-byte=0.329, chars/token=3.03. RedPajama-1T github sample file (first of 98), first ~300MB region, 47,028 docs; content-hash shuffled manifest => sample ~ whole. TOTAL IS A PROJECTION, NOT EXACT: 85.7B (0.329 x file-bytes x 98) requires the file-interan homogeneity assumption; the exact count is a full-file token count x 98 (exactcnt running). Files are uncompressed jsonl, so tok/decoded-byte x file bytes is not the parquet-compression error class fb flagged (that applies to codeparrot parquet, a different source).",
    "measured": "2026-08-30",
    "source": "pod 实测: /data00/aupai_raw/code_supply/github_00.sampled.jsonl + tokenizers.Tokenizer.from_file(data/tokenizer.json); measure3.py; curl -4 从 data.together.xyz",
    "config": {
@@ -479,7 +479,7 @@
     "sampling_note": "content-hash 打散文件名,n=1 文件采样近全体",
     "sampling_uncertainty": "n=1 文件;跨语言(Python/C)tok/byte 有差异但打散使单文件≈混合"
    },
-   "uncertainty": "n=1 采样文件;nominal 85.7B raw 未去重;闸口(tokens/word on code)未测,待 frontier 同段对比",
+   "uncertainty": "n=1 file; total is a projection pending exact full-file count; gate (tokens/word on code) unmeasured",
    "status": "measured"
   }
  ]

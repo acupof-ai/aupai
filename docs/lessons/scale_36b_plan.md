@@ -41,7 +41,7 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 **具体源 + 许可（2026-08-30 实测可达）：**
 | 域 | 候选源 | 可达/许可 | 状态 |
 |---|---|---|---|
-| code | 见 `ds.code_source_reachability` + `ds.code_fertility_redpajama`（2026-08-30 实测） | **直达 host 可达、必须 `curl -4`**（IPv6 出口坏）。RedPajama-1T github **260GB raw / ~85.7B raw tok**（0.329 tok/byte 实测）可达；hf-mirror resolve 通、API 403 反爬；huggingface.co 真堵；the_pile 证书过期需 -k 不可信 | **预训练 code 格可测且量够**：~85.7B raw 远超 10-12B 格，分支 ≥8B 定死。真码走预训练（code-SFT 实测 200M 只 0.0%→~3%，装不下能力，见 fb 2026-08-30）；Fable+沙箱主供 SFT/RL 验证式 |
+| code | 见 `ds.code_source_reachability` + `ds.code_fertility_redpajama`（2026-08-30 实测） | **直达 host 可达、必须 `curl -4`**（IPv6 出口坏）。RedPajama-1T github 未压缩 jsonl（每文件 2.66GB，98 个）可达；hf-mirror resolve 通、API 403 反爬；huggingface.co 真堵；the_pile 证书过期需 -k 不可信 | **预训练 code 格量够（分支 ≥8B 定）**：token 总量待精确（全文件精确计数×98 在跑），总量足够是确定的；真码走预训练（code-SFT 实测 200M 只 0.0%→~3%，装不下能力，见 fb 2026-08-30）。格闸口未测 |
 | math | OpenWebMath / DeepSeekMath / proof-pile | 开放/开源 | 语义以中文刷卡；英文为主，可验证 |
 | CoT | OpenThoughts / Skywork-OR1 / r1 类 | Apache 系 | 英文长链 |
 | en 通用 | WanJuanCC(46B en) / Ultra-FineWeb en / fineweb en | Apache/CC | 修 en 域（现 85% 中文） |
