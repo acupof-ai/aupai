@@ -1087,33 +1087,32 @@ def _read_ckpt_cfg(path):
 
 def check_ladder_config(root):
     """Every ladder checkpoint's cfg matches the single frozen run config.
-    Scope: checkpoints with an experiments row started after the frozen config
-    was written -- runs that predate the config cannot be bound by it.
+    Scope: checkpoints whose experiments row was launched via run_ddp.sh
+    (harness run point or a bare launch that landed in the ledger). A/B runs
+    use torchrun directly and are not bound by the frozen config.
     A missing field (None) is UNKNOWN, not divergence: the checkpoint predates
     the stamp. SKIP without checkpoints or the frozen config file."""
     fpath = os.path.join(root, "data", "mix_scale_run_config.json")
     if not os.path.exists(fpath):
         return SKIP, "data/mix_scale_run_config.json not present"
     frozen = json.load(open(fpath, encoding="utf-8"))
-    config_when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(fpath)))
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
-    # Exp rows: name -> started. Only checkpoints with a row started on/after
-    # the config date are in scope (the config binds runs launched after it).
-    started = {}
+    # Ladder points are launched via run_ddp.sh; A/B runs use torchrun directly.
+    ladder_names = set()
     exp_path = os.path.join(root, "runs", "experiments.jsonl")
     if os.path.exists(exp_path):
         for line in open(exp_path, encoding="utf-8"):
             if line.strip():
                 r = json.loads(line)
-                started[r.get("name", "")] = r.get("started", "")
+                if "run_ddp.sh" in r.get("cmd", ""):
+                    ladder_names.add(r.get("name", ""))
     bad, unknown, checked = [], [], 0
     for p in ckpts:
         name = os.path.basename(p)[5:-3]  # ckpt_<name>.pt
-        when = started.get(name, "")
-        if when < config_when:
-            continue  # predates the frozen config
+        if name not in ladder_names:
+            continue
         try:
             cfg = _read_ckpt_cfg(p)
         except Exception as e:
@@ -1130,7 +1129,7 @@ def check_ladder_config(root):
     if bad:
         return FAIL, "; ".join(bad)
     if not checked:
-        return SKIP, "no checkpoints in scope (all predate the frozen config)"
+        return SKIP, "no ladder checkpoints (no exp row with run_ddp.sh)"
     msg = f"{checked} checkpoint(s) match the frozen config"
     if unknown:
         msg += f"; {len(unknown)} field(s) unverifiable (pre-stamp): {', '.join(sorted(set(unknown)))}"
@@ -1156,10 +1155,10 @@ def _broken_ladder_config():
     pickle.dump({"cfg": cfg, "vocab_id": "fake"}, buf)
     with zipfile.ZipFile(os.path.join(d, "ckpt_test.pt"), "w") as z:
         z.writestr("data.pkl", buf.getvalue())
-    # An exp row started after the config was written -- the scope filter.
+    # An exp row launched via run_ddp.sh -- the scope filter.
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
         f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M"),
-                            "status": "ok"}) + "\n")
+                            "status": "ok", "cmd": "bash run_ddp.sh --name test"}) + "\n")
     return d
 
 
@@ -1218,7 +1217,9 @@ def check_mix_supply(root):
             for frac, key in ((1 - anneal_frac, "weight"), (anneal_frac, "anneal")):
                 want = int(rows * frac * d.get(key, d["weight"]))
                 cap = int(cache_rows * d.get("epochs", 1)) - used
-                if want > cap:
+                # 0.5% tolerance: weight->row rounding leaves sub-0.1% residue
+                # at 3.24b (documented in the gate doc). Real oversupply FAILs.
+                if want > cap * 1.005:
                     bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want}, cache supplies {cap}")
                     break
                 used += want
