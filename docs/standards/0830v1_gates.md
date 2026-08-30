@@ -585,19 +585,41 @@ appearance of having been checked. Both guards below close that gap.
   The clock: one `crictl rmp` or one GC pass and the only surviving record of the working
   environment is gone with no second snapshot behind it. **Copy the whole upperdir out
   before anything else.**
-- **A hypothesis built on a correct stack trace can still be wrong, when the trace is of
-  the fallback path.** The controller read `fla/ops/common/chunk_delta_h.py` →
-  `Triton Error [CUDA]: invalid argument` and concluded fla version drift, since
-  `pyproject.toml` pins no version and the ladder's version is recorded nowhere. Refuted by
-  the attempt-7 snapshot: `flash_linear_attention` 0.5.2, `fla_core` 0.5.2, `liger_kernel`
-  0.8.2 — **identical on both sides**; torch and triton never moved because they live in the
-  image layer. The one difference is a package the controller never named: `flash_kda`
-  0.0.1+1ce47ea, present in attempt 7, absent in attempt 8. `fla` registers KDA through a
-  backend registry with `FlashKDABackend` ahead of Triton; with `flash_kda` gone
-  `is_available()` returns False and the whole thing falls back to `chunk_delta_h`, which
-  autotunes, which fails. Every frame of the trace was real and every frame was the wrong
-  path. It also explains why `FLA_CI_ENV=1` did nothing: shrinking the config space of a
-  path that should never be taken cannot fix it.
+- **A real difference is not a cause until it is shown to be on the path. Two sessions made
+  this mistake on the same failure within an hour, in opposite directions.** The failure:
+  `fla/ops/common/chunk_delta_h.py` → Triton autotune → `Triton Error [CUDA]: invalid
+  argument`, on the first forward, on every rank, identically at the frozen `--batch 16` on
+  one card.
+  - **Hypothesis 1, fla version drift** (controller). `pyproject.toml` pins no version and
+    the ladder's version is recorded nowhere, so the reinstall plausibly moved it.
+    **Refuted by the attempt-7 snapshot**: `flash_linear_attention` 0.5.2, `fla_core` 0.5.2,
+    `liger_kernel` 0.8.2 — identical on both sides; torch and triton live in the image layer
+    and never moved. The reasoning was self-consistent and the trace was real; the trace was
+    of the fallback path, not the intended one.
+  - **Hypothesis 2, missing `flash_kda`** (tilerl). A genuine difference, found by reading
+    the exited container rather than by recall: `flash_kda` 0.0.1+1ce47ea present in attempt
+    7, absent in attempt 8, hand-built before the ladder. **Refuted by installing it**: the
+    crash is byte-identical. `fla/ops/kda/backends/flash_kda.py` opens its verifier with
+    `if torch.is_grad_enabled(): return False, "FlashKDA only supports inference mode"` —
+    **it is an inference-only backend and was never on the training path**, so its absence
+    could not be the cause. It does explain a real observation: b0's L1 probe runs fine on
+    GPU 7 while training dies, because inference and training take different dispatch
+    branches — which is also why "the environment works, imports succeed" was never evidence
+    about training.
+
+  The shared defect is not carelessness about the evidence; both differences were real and
+  both traces were accurate. It is skipping the step that connects the difference to the
+  failure. Reading the verifier that refuted hypothesis 2 took two minutes and was available
+  before the claim was made.
+- **Under investigation (hypothesis, do not schedule work against it): the Triton disk
+  cache was masking a standing defect.** attempt 7's `/root/.triton` is 1.2 GB; today's is
+  64 MB, rebuilt from empty. The trace runs through `autotuner.py:202 check_disk_cache` →
+  `benchmark` → `_bench`, i.e. the benchmark only runs on a cache *miss*. With a warm cache
+  the selected config is loaded and the crashing candidate is never launched. If this holds,
+  the kernel has been broken the whole time and two weeks of warm cache hid it — and pinning
+  versions would not have helped, because no version ever changed. Falsification: restore
+  attempt 7's `.triton` and rerun the same smoke. Until that runs, this is the controller's
+  and tilerl's third hypothesis on the same failure and is labelled accordingly.
 - **"Imports succeed" is not "the runtime works", and a check that asserts the first while
   the second is broken is worse than no check.** After the restart the environment was
   reported repaired on the evidence that `import liger_kernel, fla` succeeds. It does. SFT
@@ -610,12 +632,28 @@ appearance of having been checked. Both guards below close that gap.
   hand-written list and no such list contains `flash_kda` — nobody remembered installing
   it.** That is the general defect: a list written from memory omits exactly the packages
   whose installation was never written down, which is the same set that a restart destroys.
-  The gate that catches this compares a *fingerprint* of the live site-packages against the
+  The gate that catches this compares a *fingerprint* of the live environment against the
   one stored in the checkpoint, and covers what takes effect rather than the nominal version
   — `flash_kda` is a locally built wheel whose `.so` can change while `0.0.1+1ce47ea` does
   not. Corollary: two sessions each measured half of this and neither half was the answer —
   the import check and the kernel launch are different claims about the same word
   "environment".
+- **`uv sync` cannot rebuild this environment, and the blocker is one unresolvable
+  source.** uv 0.11.21 is installed, `pyproject.toml` and a 231KB `uv.lock` are both
+  present — and `/work/aupai/.venv` does not exist, so every package lives in system
+  `dist-packages` and the lock describes an environment that has never trained anything.
+  `flash_kda` appears in neither file, and its `direct_url.json` records
+  `{"dir_info": {}, "url": "file:///tmp/flash-kda"}` — installed from a source tree in
+  `/tmp` that is gone, with no index, no git URL, and a commit suffix (`1ce47ea`) whose
+  repository is unrecorded. There is nothing for uv to resolve. What makes it resolvable:
+  the recovered files *are* a wheel minus the zip (`RECORD`, `WHEEL` with
+  `Tag: cp312-cp312-linux_x86_64`, `METADATA` all present), so re-packing them into a real
+  `.whl` under a durable project root and pointing `[tool.uv.sources]` at it converts a
+  package nobody remembered into a pinned artifact. **Do not let a uv venv inherit the
+  image layer's torch to save the download** — that only moves the unrecorded state from
+  the writable layer to the image layer, and the same incident returns when the image is
+  rebuilt. The split that holds: `pyproject.toml` + `uv.lock` in git, vendored wheels on
+  durable storage inside the project root, `.venv` disposable and rebuilt by one command.
 - **A refit at equal budget is the decision; a comparison against a larger vocabulary is
   not.** Our 32K vocabulary, fitted on Chinese web before the objective changed, reads
   3.7073 code chars/token against Qwen2.5-Coder's 4.3806 — an 18% gap that was never a
