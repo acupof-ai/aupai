@@ -41,8 +41,12 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 
 ## 2. 36B 跨源去重（工程主矛盾，`harness run dedup` 第 4 步）
 
-现有 near-dup O(n²) 在 36B 跨源不可行。设计：**exact content-hash O(n) + MinHash 带状 LSH**（build_corpus 内嵌 MinHashLSH 128-perm/16-band），shard 并行、跨源分桶→候选 verify Jaccard，近 O(n)。优先对：CCI3-HQ vs fineweb2（不同上游）、SkyPile vs fineweb-edu（**SkyPile 是它上游，最可能 embarrass**）。
-- **`harness run dedup --domains <a,b,c>` → `scripts/dedup_corpus.py`**（de 第 4 步，a535cca 包裹）。**全局跨源 pass**，dedup 后 clean、score 前（打重浪费贵步）。输出 `data/dedup/dedup_manifest.json`（doc IDs 标记重复 + 重复自哪个源，mix/训练查 manifest 跳过）+ `dedup_stats.json` 带 `dedup_fp`（算法+参数哈希，算法变则变）。CPU-only、按域续跑。
+设计：**exact content-hash O(n) + MinHash 带状 LSH**（build_corpus 内嵌 MinHashLSH）。**实测修正（2026-08-30）**：
+- **exact 独立对（fineweb2-cmn vs CCI3-HQ）= 0.00%**（15K×2 采样全 0）。**对「两爬是否重叠」无信息**——已知答案已示 exact 对现实重复（whitespace/boilerplate/truncation/encoding 变体）盲，0.00% 只证无字节相同、恰非现实形式。**答案重叠的数 = MinHash 测独立对**（同 15K×2、同已验代码，决定 36B 多少 fetch 被浪费，待跑）。
+- **MinHash 已知答案 = 100% 召回 / 0% 假阳**：构造 4 类现实变体（whitespace 折叠/boilerplate 剥离/截断/编码空格）× 74 原 doc = 296 近重全抓到，异 doc 0/72 错。**exact 对这些 ~0。** 即 near-dup 抓的正是 exact 抓不到的现实类。
+- **结论：near-dup 进 v1（非 v2）**——已知答案证 exact alone 做不了现实跨源去重。派生对（SkyPile vs fineweb-edu，上游关系保证重叠）仍要跑定两派生源实际重叠，但已不负责证「exact 足够」。
+- 优先对：CCI3-HQ vs fineweb2（已测 0% exact，测 near-dup）、SkyPile vs fineweb-edu（**SkyPile 是它上游，最可能 embarrass**，derived-pair 测试用）。
+- **`harness run dedup --domains <a,b,c>` → `scripts/dedup_corpus.py`**（de 第 4 步）。**全局跨源 pass**（dedup 后 clean、score 前）。输出 `data/dedup/dedup_manifest.json` + `dedup_stats.json` 带 `dedup_fp`。CPU-only、按域续跑。
 
 ## 3. "scoring" 在 36B 该指什么 + 磁盘守卫
 

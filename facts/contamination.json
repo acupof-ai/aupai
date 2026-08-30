@@ -554,6 +554,34 @@
    },
    "uncertainty": null,
    "status": "recorded"
+  },
+  {
+   "id": "cont.minhash_known_answer",
+   "value": {
+    "recall": "296/296 (100%)",
+    "false_positive": "0/72",
+    "variant_taxonomy": [
+     "whitespace folding",
+     "boilerplate line strip",
+     "3% truncation",
+     "encoding/space variants"
+    ],
+    "instrument": "build_corpus.MinHashLSH (128-perm, 16-band, ~0.8 Jaccard)",
+    "exact_content_hash": "catches ~0 of these variants (by construction)",
+    "construction": "74 base docs x 4 realistic near-dup transforms = 296 variants; clean instrument validation that EXACT-only cannot do realistic cross-source dedup"
+   },
+   "measured": "2026-08-30",
+   "source": "constructed known-answer pair (74 local docs -> 296 variants), run off the 36B dedup design",
+   "config": {
+    "n_docs": 74,
+    "n_variants": 296,
+    "namespace": "cross-source corpus dedup (36B)",
+    "decision": "near-dup -> v1, not v2 (exact alone cannot)",
+    "teammate": "aupai-fb 2026-08-30"
+   },
+   "boundary": "a construction, not a comparison: the variant classes are author-chosen realistic transforms, not a measured source-pair value. A source pair's true overlap needs MinHash run ON that pair.",
+   "uncertainty": "recall is on constructed variants, not real cross-source text; real pipelines may introduce other transform classes (HTML unescape, tokenization changes) not in this taxonomy.",
+   "status": "measured"
   }
  ]
 }
