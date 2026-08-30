@@ -481,6 +481,24 @@
    },
    "uncertainty": "x98 assumes within-file token count ~ file-interian; gate (tokens/word on code) unmeasured",
    "status": "measured"
+  },
+  {
+   "id": "ds.code_cross_source_dup_unmeasured",
+   "value": "codeparrot 与 RedPajama-1T github 的跨源近重率 NOT MEASURED (status unmeasured). 合并可用 token 因此是上界 (UPPER bound), 不是净值。",
+   "claim": "codeparrot-clean 与 RedPajama-1T github 的跨源近重率 (决定合并可用 token 是净值还是上界)",
+   "audit": "纯 Python MinHash (build_corpus MinHashLSH 128-perm/16-band) 在 1.81GB(codeparrot) x 2.66GB(RedPajama 采样) 上跑 >1h 未完成 codeparrot 种子段, 故停。停因: 73.6B code 格需求 8.0B 的 9 倍, 且 codeparrot 预期贡献 <=0.6B, 该近重率只微调一个 不影响任何分支的数; 为它花一小时是错误优先级 (fb 2026-08-30 批准停)。",
+   "measured": "2026-08-30",
+   "source": "minhash2.py on pod (stopped); datagen/build_corpus.py MinHashLSH",
+   "config": {
+    "lsh": "MinHashLSH 128-perm/16-band ~0.8 Jaccard",
+    "input": "codeparrot 1.81GB parquet + RedPajama-1T github 2.66GB jsonl",
+    "elapsed_before_stop": ">1h on codeparrot seed phase",
+    "stopped": "2026-08-30, does not change any branch"
+   },
+   "uncertainty": "该数未测; 若日后需要, 改用矢量化 MinHash 或采样池",
+   "status": "unmeasured",
+   "refuted_by": "the stopped cross-source MinHash run would produce the number; until it runs the upper-bound claim stands",
+   "boundary": "合并可用 token 是上界非净值; '73.6B+0.6B' 不得当净值引用"
   }
  ]
 }
