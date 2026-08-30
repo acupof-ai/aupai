@@ -96,7 +96,7 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 | 1 | 每个新语料进训练前跑 recall-ratio 判据（含 recall_home ≥0.5 绝对下限） | CCI3-HQ 已知答案 RECALIBRATE（recall_new 1.7%，比值 0.50） | 判据在 CCI3-HQ 上输出 RECALIBRATE 即通过；3b 混淆矩阵为输入 |
 | 2 | web 质量头不用于 CCI3（直接证据 F1 0.03）；用 DCLM 式 fastText 或 CCI3 管线重标 | 切掉比例 unmeasured——阈值是决策变量不是检测属性（DCLM top-10%、FineWeb-Edu 切 91% 都是阈值选择） | 按文体留出集 + 风格改写探针；下游用 Ultra-FineWeb 式 1B WSD 退火验证（~110 H100-h/次） |
 | 3 | DSpin 功能字锚点检测洗稿 | 英文基准洗稿页 77-93% 命中；中文切掉比例 unmeasured | 2.07% 指纹文档上召回应近 100% |
-| 4 | ~~400 篇无指纹审计估隐藏洗稿患病率~~ **已测：p_hidden 8.0%，总洗稿 9.9%；junk 30.3%**（`#dq.audit.protocol_400`） | — | 混淆矩阵已出并已被重标定超过：Step 0+1 正则上线（`#dq.regex.recal_step01`），锁定样本上 recall 17.4%→21.5%、0 新增 FP；距 0.5 下限仍远，主杠杆是 Step 2 质量头重训 |
+| 4 | ~~400 篇无指纹审计估隐藏洗稿患病率~~ **已测：p_hidden 8.0%，总洗稿 9.9%；junk 30.3%**（`#dq.audit.protocol_400`） | — | 混淆矩阵已出并已被重标定超过：Step 0+1 正则上线（`#dq.regex.recal_step01`），锁定样本上 recall 17.4%→21.5%、0 新增 FP；Step 2 质量头重训失败（`#dq.head.recal_step2_failed`）——特征空间是瓶颈，正则层是当前唯一有实测的垃圾过滤器 |
 | 5 | Kim 两阶段收窄 60%±10 | ±3pp 需 ~308 人读（ρ²=0.7） | pilot R² 置信下界 + κ ≥0.5 |
 | 6 | math/code 加权前先跑 E2 | 零成本 | matched-token 坍缩→维持；在曲线上方→2× proxy 对照 |
 | 7 | 定权重前先定目标函数（人读 vs 下游 eval） | — | R²<0.3 警告（`#dq.classifier.human_agreement_counter`） |
@@ -108,6 +108,6 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 - ~~隐藏洗稿患病率 p_hidden~~——已测 8.0%，总洗稿 9.9%（`#dq.hidden.prevalence`）
 - ~~400 篇审计混淆矩阵~~——已测：recall 17.4%、precision 53.8%（FP 中 10/18 是 not_zh 英文文档，语言门正常工作）；该样本锁定为重标定的 fresh re-test（`#dq.audit.confusion_400`）
 - IAA（与 3b 的 150 篇）——两样本零重叠，未测；如需 κ，3b 需从 400 篇中抽读 ~50 篇
-- 质量头标注量下限——无文献，需自己跑学习曲线
+- ~~质量头标注量下限~~——已测：150 手读标签训出的头 AUC 0.555，与 20K 教师标签的旧头 0.541 无差异；头/尾池化都是 0.54。下限不在标签量，在 mean-hidden 特征空间本身（`#dq.head.recal_step2_failed`）——recall≥0.5 且 precision≥0.8 的门槛在此架构下不可达，下一步杠杆是 DCLM 式 fastText 或 27B 直打
 - E2 六 checkpoint 分域损失——pod 上跑 domain_loss.py
 - 语义去重在中文网页的切掉率——无公开实测
