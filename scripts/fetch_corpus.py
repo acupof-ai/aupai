@@ -114,9 +114,21 @@ def _manifest_cci3_hq():
     return man
 
 
+def _manifest_rp1t_github():
+    """RedPajama-1T github slice : ``filtered_<sha>.sampled.jsonl`` on
+    data.together.xyz (uncompressed jsonl, 2.66GB each; ~0.283 tok/byte frozen-
+    vocab exact). The manifest is the shipped names file; its content hash is the
+    source_fp. Reachable ONLY via IPv4 (the pod's IPv6 egress is broken -> curl -4).
+    """
+    names = open(os.path.join(ROOT, "data", "raw", "rp1t_github_manifest.txt")).read().split()
+    base = "https://data.together.xyz/redpajama-data-1T/v1.0.0/github/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
+    "rp1t_github": _manifest_rp1t_github,
 }
 
 
@@ -209,7 +221,7 @@ def fetch(source, target_bytes):
             break
         # write to temp name, then atomic rename: existence of dst == completeness
         subprocess.run(
-            ["curl", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
+            ["curl", "-4", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
             check=True,
             stdout=subprocess.DEVNULL,
         )
