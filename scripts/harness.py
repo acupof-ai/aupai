@@ -1830,7 +1830,10 @@ STEPS = ("pretokenize", "point", "ladder")
 # The six 0830v1 budget points, in order. Each is a mix_scale_* mix at the
 # frozen run config. Names double as checkpoint names: ckpt_<name>.pt.
 LADDER = [
-    ("p02", "data/mix_scale_0.2b.json"),
+    # p02_s0, not p02: the 0.2b point is the seed-0 run (ckpt_p02_s0.pt), already
+    # scored. Naming the entry p02_s0 makes the skip regex match it -- the curve's
+    # 0.2b point and the sigma-hat measurement come from the same checkpoint.
+    ("p02_s0", "data/mix_scale_0.2b.json"),
     ("p03", "data/mix_scale_0.3b.json"),
     ("p04", "data/mix_scale_0.4b.json"),
     ("p08", "data/mix_scale_0.8b.json"),
@@ -1979,7 +1982,9 @@ def _run_point(step_args, forced):
 def _run_ladder(step_args, forced):
     """All six budget points, sequential, resumable. A point with a
     score-matrix record is skipped; a failed point stops the ladder.
-    Each point runs through _run_point, which enforces the frozen config."""
+    Each point runs through _run_point, which enforces the frozen config.
+    The gate re-fires before every point: a red at hour two banks the points
+    already done and stops, rather than launching the next point blind."""
     rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
     done = set()
     if os.path.exists(rec):
@@ -1991,6 +1996,9 @@ def _run_ladder(step_args, forced):
         if name in done:
             print(f"ladder: {name} already scored, skipping")
             continue
+        if _gate(bool(forced)) and not forced:
+            print(f"ladder: harness red, stopping with {len(done)} point(s) banked")
+            return 1
         print(f"ladder: starting {name} ({mix})")
         rc = _run_point(["--name", name, "--mix", mix], forced)
         if rc != 0:
