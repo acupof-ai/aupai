@@ -180,12 +180,14 @@
   },
   {
    "id": "be.math_v2_5k_known_answer",
-   "value": "math-hard v2 likelihood twin on the expanded bank (ckpt_0830v1_3.24b.pt.ep1, GPU7, 2026-08-30; OLD architecture, runner calibration only): gold-win 94.92% vs wrong-win 5.08%, spread 89.8pt, swap-stable (0.9492/0.9492), 3012 pairs, 149/3161 token-length skips (4.7%). Bank expansion: generator at 280/family yields 5040 rows but only 3161 unique -- 9 families saturate their parameter spaces (number_array_cross 3 unique of 280, perfect_square_pattern 10, right_triangle_3060 26, quadratic_func 79, factorize 95, quadratic 138, inverse_prop 142, pythagoras 168, similar_triangle 124); the 1k bank itself had 848/1080 unique (232 dups). 3161 pairs resolves ~2.5pt at 80% power (vs 8.4pt at 1040); the panel's 5000-pair/3.9pt target needs generator widening (number_array_cross needs a new problem type, not just a wider range) -- reported to fb, not silently shipped",
+   "value": "math-hard v2 likelihood twin on the expanded bank (ckpt_0830v1_3.24b.pt.ep1, GPU7, 2026-08-30; OLD architecture, runner calibration only): gold-win 94.92% vs wrong-win 5.08%, spread 89.8pt, swap-stable (0.9492/0.9492), 3012 pairs, 149/3161 token-length skips (4.7%). Bank expansion: generator at 280/family yields 5040 rows but only 3161 unique -- 9 families saturate their parameter spaces (number_array_cross 3 unique of 280, perfect_square_pattern 10, right_triangle_3060 26, quadratic_func 79, factorize 95, quadratic 138, inverse_prop 142, pythagoras 168, similar_triangle 124); the 1k bank itself had 848/1080 unique (232 dups). 3161 pairs -> MDE 2.5pt at 80% power under the panel's frozen formula delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n) (two-sided alpha=0.05, z_b=0.84, p=0.5 worst case): n=1040 -> 4.3pt, n=3161 -> 2.5pt, n=5000 -> 2.0pt. Reconciliation: the '8.4pt at 1040' quoted earlier was the n=277 minimal-pairs MDE (be.sample_size_math) misattributed to this metric; 8.4/1.74 != 2.5 exposed it. The 5000-pair/3.9pt target was also off-formula (true 2.0pt) -- 3161 pairs already beats it -- reported to fb, generator not widened (fb ruling 2026-08-30: accepted, metric no longer the bottleneck)",
    "measured": "2026-08-30",
    "source": "eval/math_v2_like.py; mathbank/eval_hard_v2_gen.py; pod runs /tmp/ka5k_{norm,swap}.json",
    "config": {
     "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
-    "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)"
+    "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)",
+    "resolution_formula": "delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n); z_a=1.96 two-sided alpha=0.05, z_b=0.84 power=0.8, p=0.5 worst case",
+    "mde_pt": {"1040": 4.3, "3161": 2.5, "5000": 2.0}
    },
    "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
    "status": "recorded"
