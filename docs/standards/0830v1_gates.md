@@ -142,6 +142,28 @@ detour: four of them are the ladder's own 0.2b point plus its seed replicates.
 | 4 | current arch, `attn_every 4`, seeds 0-3 | ladder's 0.2b point (seed 0); the seed-variance measurement; lessons-e1's control arm; lessons-44's F arm |
 | 4 | `attn_every 1`, seeds 0-3 | lessons-e1's KDA-vs-full-attention arm — **conditional, see below** |
 
+44's F arm left this table on 2026-08-30. The W/F quality-cut experiment is **killed by its
+own pre-registered threshold**, not null: the union hit rate of the Step 0/1 filters on
+web_hq is 0.326% ± 0.050% (163/50,000, reservoir sample over 1,366,324 docs, `text[:600]`,
+the filters' exact window) against a 2% line written before the number existed. Two arms
+99.67% identical have no contrast to measure. That is what the pre-registration was for —
+it says the experiment cannot resolve anything, rather than reporting that we looked and
+saw nothing. The surviving finding is more useful than the experiment: the old chain had
+already cleaned web_hq, so a filter upgrade now has 0.33% to beat. The old-chain arm
+returned 0/50,000 — a predicted zero that came back zero, with 163 = 163 + 0 − 0 closing —
+which settles at the determinism level that 3b's build record was accurate. The weight
+ablation (32.4% → 20%) proceeds as an independent experiment, queued behind the six points,
+not as a replacement arm.
+
+**Blocked 2026-08-30: `train.py` rejects `--seed`.** Line 1433 describes the parser as
+"any --flag below overrides Cfg.<flag>" and AGENTS.md repeats it as a general rule. It is
+not: line 1434 is an explicit whitelist of eight int fields, and `seed` and `attn_every`
+are absent although both are real `Cfg` fields. Without the flag all four runs train the
+identical model — four checkpoints, four scores, σ̂ = 0, nothing raising. It surfaced only
+because argparse is strict. The fix is two entries in that dict; the doc claim is the
+defect that produced the launch. Same shape as the `en` directory: a label read as a claim
+about what is underneath it.
+
 The first four are unconditional. The second four run only if the measured seed variance
 says a 4-vs-4 comparison can resolve anything: lessons-b0 computes `s_pooled` from the
 first four and pre-registers, before seeing it, the MDE range that licenses the second
@@ -268,3 +290,9 @@ appearance of having been checked. Both guards below close that gap.
 - No kernel proposal without a `torch.compile` baseline. AttnRes measured 42.2ms eager and
   3.85ms compiled for the same work — using the eager number would have made a
   zero-benefit kernel look like a 10x opportunity.
+- A per-shard sample of `data/corpus/web_hq` must span the shard range, not a prefix. The
+  corpus is ordered by source and is not shuffled: shard 1 alone is 20.9% Traditional
+  against a corpus figure of 17.715% ± 0.064% (all 62 shards, 242,048/1,366,324). The
+  controller's first-three-shard scout read 15.20% and was wrong by 2.5pt for that reason
+  alone — the same run's token count read all 62 shards and landed within 0.3%. The method
+  was sound; the shard selection was not.
