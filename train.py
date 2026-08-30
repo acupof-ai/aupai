@@ -131,7 +131,7 @@ class Cfg:
         32  # throughput_bisect 2026-08-27: 90K tok/s at batch 32 no-ckpt; 72 needs grad_ckpt (2.4x slower)
     )
     accum = 1
-    warmup = 20
+    warmup = 20  # floor only; main() raises to max(20, 1% of total_steps) unless --warmup is passed
     warmdown = 0.65
     final_lr_frac = 0.05
     clip = 1.0
@@ -1407,7 +1407,7 @@ def main():
         "attn_res_blocks": "Block AttnRes with N blocks (0 = Full)",
         "val_every": "steps between fixed-subset validations (0 = epoch end only)",
         "val_batches": "val batches per periodic check",
-        "warmup": "linear warmup steps (scale with total steps; 20 is a rounding error at 20K steps)",
+        "warmup": "warmup steps (default: max(20, 1% of total_steps), horizon-matched -- a fixed 20 was 7.9% of the 0.2b run vs 0.5% of 3.24b)",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -1513,6 +1513,14 @@ def main():
     Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
     data, X = seqs, seqs  # for the params print below
     Cfg.epochs = 1  # repeats are encoded in the schedule
+    total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))
+    if args.max_steps:
+        total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
+    # Warmup matched to horizon, not a fixed 20: at 20 the 0.2b point spent 7.9% of its
+    # steps in warmup, the 3.24b point 0.5% -- a systematic confound in the old ladder's
+    # beta (b0 fitting protocol, 2026-08-30). An explicit --warmup still wins.
+    if args.warmup is None:
+        Cfg.warmup = max(20, total_steps // 100)
     Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()
     if Cfg.fone:
         Vtr, Wtr = Vtr.contiguous().pin_memory(), Wtr.contiguous().pin_memory()
@@ -1601,9 +1609,6 @@ def main():
 
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
     good_opt = [None] * len(optimizers)
-    total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))
-    if args.max_steps:
-        total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
     _prof = None
