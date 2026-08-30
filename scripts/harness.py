@@ -1825,7 +1825,7 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
-STEPS = ("pretokenize", "point", "ladder")
+STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score")
 
 # The six 0830v1 budget points, in order. Each is a mix_scale_* mix at the
 # frozen run config. Names double as checkpoint names: ckpt_<name>.pt.
@@ -1870,6 +1870,33 @@ def _run_pretokenize(step_args, forced):
          finding="caches warm" if r.returncode == 0 else "pretokenize failed",
          decision="training can launch on warm caches" if r.returncode == 0 else "fix the failure before launching",
          status="ok" if r.returncode == 0 else "fail")
+    return r.returncode
+
+
+def _step_name(step, step_args):
+    """fetch --source web_hq -> fetch_web_hq; bare step name when no source/domain."""
+    for i, a in enumerate(step_args):
+        if a in ("--source", "--domain") and i + 1 < len(step_args):
+            return f"{step}_{step_args[i + 1]}"
+        if a.startswith(("--source=", "--domain=")):
+            return f"{step}_{a.split('=', 1)[1]}"
+    return step
+
+
+def _run_pipeline_step(step, script, step_args, forced, env=None):
+    """fetch/clean/score: gate (in dispatch) + exp start/done + run the script.
+    The script owns the work, the output fingerprint, and shard-level resumability.
+    Score pins CUDA_VISIBLE_DEVICES=0 -- a collision on GPU 0 is visible (benchmarks
+    fail), a collision on 1-7 is silent (training corrupted)."""
+    cmd = [sys.executable, os.path.join(HERE, script), *step_args]
+    name = _step_name(step, step_args)
+    _exp("start", name=name, cmd=" ".join(cmd), hypothesis=f"{step} step{forced}")
+    r = subprocess.run(cmd, cwd=ROOT, env=env)
+    ok = r.returncode == 0
+    _exp("done", name=name, result=f"exit {r.returncode}",
+         finding=f"{step} complete" if ok else f"{step} failed",
+         decision="next step can run" if ok else "fix the failure before next step",
+         status="ok" if ok else "fail")
     return r.returncode
 
 
@@ -2029,6 +2056,13 @@ def run_dispatch(rest):
         return _run_point(step_args, forced)
     if step == "ladder":
         return _run_ladder(step_args, forced)
+    if step == "fetch":
+        return _run_pipeline_step("fetch", "fetch_corpus.py", step_args, forced)
+    if step == "clean":
+        return _run_pipeline_step("clean", "clean_corpus.py", step_args, forced)
+    if step == "score":
+        return _run_pipeline_step("score", "score_corpus.py", step_args, forced,
+                                   env=dict(os.environ, CUDA_VISIBLE_DEVICES="0"))
     return 2
 
 
