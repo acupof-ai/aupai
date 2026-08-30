@@ -746,6 +746,126 @@ def _broken_sft_pack_holdout():
     return d
 
 
+# Must match scripts/holdout.py EVAL_FILES. Kept here (not imported) so the check
+# reads from `root`, not from holdout.py's module-level ROOT.
+_SFT_EVAL_FILES = [
+    os.path.join("data", "eval", "math_test_500.jsonl"),
+    os.path.join("data", "synthetic", "math_hard_eval_1k.jsonl"),
+    os.path.join("data", "eval", "code_holdout_500.jsonl"),
+]
+
+
+def check_sft_pack_uncontaminated(root):
+    """Directly test the pack for holdout contamination, not just the process that built it.
+
+    Complements sft_pack_holdout: that proves the guard was alive at pack time; this
+    proves the questions are not in the pack. Samples 40 questions per eval file,
+    encodes the first 24 tokens, and searches for exact subsequence matches in the
+    pack's flattened input_ids. Catches both a stale hash set and a missing EVAL_FILES
+    entry -- the two cases the fingerprint check cannot see.
+
+    Verbatim matching only. Paraphrased questions (near-dup, not exact) need MinHash,
+    the next layer. The 2026-08-30 contamination was 19/20 verbatim, so this covers
+    the observed failure mode."""
+    pack_path = os.path.join(root, "data", "sft", "sft_all.pt")
+    if not os.path.isfile(pack_path):
+        return SKIP, "no SFT pack"
+    try:
+        import numpy as np
+        import torch
+        from tokenizers import Tokenizer
+    except ImportError:
+        return SKIP, "torch/tokenizers not available"
+    tok_path = os.path.join(root, "data", "tokenizer.json")
+    if not os.path.isfile(tok_path):
+        return SKIP, "no tokenizer"
+
+    # Sample 40 questions per eval file, deterministically (every Nth line).
+    questions = []
+    for rel in _SFT_EVAL_FILES:
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue
+        lines = [l for l in open(p, encoding="utf-8") if l.strip()]
+        step = max(1, len(lines) // 40)
+        for line in lines[::step][:40]:
+            try:
+                questions.append(json.loads(line)["instruction"])
+            except (json.JSONDecodeError, KeyError):
+                continue
+    if not questions:
+        return SKIP, "no eval questions found"
+
+    tok = Tokenizer.from_file(tok_path)
+    NTOK = 24
+    probes = []
+    for q in questions:
+        ids = tok.encode(q).ids[:NTOK]
+        if len(ids) >= 8:  # too short to be a meaningful fingerprint
+            probes.append(ids)
+    if not probes:
+        return SKIP, "no encodable questions"
+
+    d = torch.load(pack_path, map_location="cpu", weights_only=True)
+    flat = d["input_ids"].numpy().flatten()
+    del d
+
+    # Narrow candidates token by token: after 3-4 tokens, almost nothing survives.
+    hits = 0
+    for probe in probes:
+        plen = len(probe)
+        candidates = np.where(flat[: -plen + 1] == probe[0])[0]
+        for i, t in enumerate(probe[1:], 1):
+            if len(candidates) == 0:
+                break
+            candidates = candidates[flat[candidates + i] == t]
+        if len(candidates) > 0:
+            hits += 1
+    if hits:
+        return FAIL, f"{hits}/{len(probes)} holdout probes found verbatim in pack"
+    return PASS, (
+        f"0/{len(probes)} holdout probes found in {len(flat) / 1e6:.0f}M tokens "
+        f"(verbatim only; paraphrased questions not detected)"
+    )
+
+
+def _broken_sft_pack_uncontaminated():
+    """A pack that contains a real holdout question's tokens verbatim."""
+    import shutil
+
+    import torch
+    from tokenizers import Tokenizer
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+
+    # Real tokenizer and one real eval file, so the probe encodes a real question.
+    shutil.copy(os.path.join(ROOT, "data", "tokenizer.json"), os.path.join(d, "data", "tokenizer.json"))
+    eval_dir = os.path.join(d, "data", "eval")
+    os.makedirs(eval_dir, exist_ok=True)
+    eval_src = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
+    shutil.copy(eval_src, os.path.join(eval_dir, "math_test_500.jsonl"))
+
+    tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+    q = json.loads(open(eval_src, encoding="utf-8").readline())["instruction"]
+    ids = tok.encode(q).ids[:24]
+
+    # Plant the question's tokens in the pack.
+    os.makedirs(os.path.join(d, "data", "sft"), exist_ok=True)
+    row = ids + [0] * (4097 - len(ids))
+    torch.save(
+        {
+            "input_ids": torch.tensor([row], dtype=torch.int32),
+            "labels": torch.full((1, 4097), -100, dtype=torch.int32),
+            "vocab_id": "test",
+            "holdout_fp": "x",
+        },
+        os.path.join(d, "data", "sft", "sft_all.pt"),
+    )
+    return d
+
+
 def _broken_restartability():
     """The real regression: a new script that accumulates in a loop and saves once at the end."""
     import shutil
@@ -1978,6 +2098,13 @@ CHECKS = [
         "a pack built before a holdout regeneration leaks held-out questions into training",
         check_sft_pack_holdout,
         _broken_sft_pack_holdout,
+    ),
+    (
+        "sft_pack_uncontaminated",
+        "no holdout question appears verbatim in the SFT pack",
+        "a pack can pass the holdout fingerprint check yet still contain held-out questions (stale hash set, missing EVAL_FILES entry)",
+        check_sft_pack_uncontaminated,
+        _broken_sft_pack_uncontaminated,
     ),
     (
         "restartability",
