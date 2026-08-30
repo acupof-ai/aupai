@@ -675,7 +675,8 @@
     "feature_family_scoreboard": "mean-hidden head (20K teacher labels) 0.541; head (150 hand) 0.555; tail-512 pooling 0.542; hashed n-gram fastText 0.574 -- all on the locked 400, all far below the bar",
     "overfitting_evidence": "in-sample 1.000 vs CV 0.682 vs transfer 0.574; more labels would narrow the CV gap but the transfer gap says the 150 and 400 differ in junk composition",
     "fineweb2_transfer": "0.577 on web_labels vs 0.823 for the old head -- a CCI3-trained classifier is a net loss for the fineweb2 domain, consistent with the no-transfer criterion",
-    "verdict": "quality-classifier route at n=150 exhausted; regex layer (dq.regex.recal_step01) remains the only measured junk filter on CCI3; CCI3 stays excluded from training"
+    "verdict": "quality-classifier route at n=150 exhausted; regex layer (dq.regex.recal_step01) remains the only measured junk filter on CCI3; CCI3 stays excluded from training",
+    "reproduction": "repo version (datagen/fasttext_junk.py) re-run on the pod: locked-400 AUC 0.579, web_labels 0.573 -- same conclusion within +-0.005 (Python hash() salt differs per process, exact scores not bit-reproducible)"
    },
    "uncertainty": "n=400 AUC +/-0.035; CV-AUC +/-0.05 at 5-fold on 150; a larger label budget (1000+) might lift the CV ceiling but cannot fix the fineweb2 transfer failure",
    "status": "measured"
