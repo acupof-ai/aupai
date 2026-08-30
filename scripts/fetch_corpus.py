@@ -9,8 +9,10 @@ resume from the first incomplete -- the restartability audit passes because each
 shard's write is inside the per-shard loop), a `source_fp` content-hash fingerprint
 of the actual source manifest (URLs + sizes/etags per shard -- a re-fetch from a
 changed upstream gives a different fp), the disk guard (`data/raw` free >=
-target_bytes * 1.5 or refuse), and `data/raw` on /data00 (a symlink -> /data00/aupai_raw
-is created here if absent). Exit 0 on success, non-zero otherwise.
+target_bytes * 1.5 AND not on the container overlay -- an overlay reports the
+free bytes of its backing fs but is wiped on restart, so free space alone is
+not a guard), and data/raw as a real dir on /work (never a symlink to an
+overlay). Exit 0 on success, non-zero otherwise.
 
     python scripts/fetch_corpus.py --source fineweb2 --target_bytes 30e9
     python scripts/fetch_corpus.py --source cci3_hq --target_bytes 50e9
@@ -26,28 +28,44 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, "data", "raw")
-BIG_RAW_TARGET = "/data00/aupai_raw"
 CHUNK = 1 << 20
 
 
 def ensure_raw_location():
-    """data/raw lives on /data00 (space), symlinked from data/raw. 36B raw is
-    350G+ per source; /work fills first. Create the target + symlink if absent."""
-    if not os.path.isdir(BIG_RAW_TARGET):
-        os.makedirs(BIG_RAW_TARGET, exist_ok=True)
-    if not os.path.islink(RAW):
-        if os.path.isdir(RAW):
-            # move an existing small data/raw aside rather than clobber
-            shutil.move(RAW, RAW + ".work")
-        os.symlink(BIG_RAW_TARGET, RAW)
+    """data/raw is a real directory on the container's disk (/work), never a
+    symlink to an overlay layer. /data00 is NOT a disk: it is the container's
+    overlay root (same st_dev as /), wiped on restart — it swallowed the
+    token-cache once already with no error. 36B raw fits /work if measured
+    before pulling (900G free); if /work cannot hold it, that is a refusal,
+    not a relocation to an overlay."""
     os.makedirs(RAW, exist_ok=True)
 
 
+def _on_overlay(path):
+    """True if path lives on the container overlay (same device as /), which
+    disappears on restart. The st_dev check is what free-space never catches:
+    an overlay reports the free bytes of its backing file system, so a guard
+    that only checks capacity approves 260GB on a layer that will vanish."""
+    root_dev = os.stat("/").st_dev
+    return os.stat(path).st_dev == root_dev
+
+
 def disk_ok(target_bytes):
+    if _on_overlay(RAW):
+        print(
+            f"REFUSING: data/raw ({RAW}) is on the container overlay (st_dev "
+            f"{os.stat(RAW).st_dev} == root's {os.stat('/').st_dev}), which is "
+            f"wiped on restart. Move data/raw onto a real disk (/work) first.",
+            file=sys.stderr,
+        )
+        return False
     free = shutil.disk_usage(RAW).free
     need = target_bytes * 1.5
     ok = free >= need
-    print(f"data/raw free {free / 1e9:.1f}G vs target*1.5 {need / 1e9:.1f}G -> {'ok' if ok else 'REFUSE'}")
+    print(
+        f"data/raw free {free / 1e9:.1f}G vs target*1.5 {need / 1e9:.1f}G -> "
+        f"{'ok' if ok else 'REFUSE'}"
+    )
     return ok
 
 
