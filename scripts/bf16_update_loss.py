@@ -25,7 +25,16 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from train import Cfg, HybridLM, build_optimizers, convert_to_fp8_compute, doc_cu_seqlens  # noqa: E402
+from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss  # noqa: E402
+
+from train import (  # noqa: E402
+    SOFTCAP,
+    Cfg,
+    HybridLM,
+    build_optimizers,
+    convert_to_fp8_compute,
+    doc_cu_seqlens,
+)
 
 
 def frozen_fraction(before, after):
@@ -70,6 +79,7 @@ def main():
 
     print(f"ckpt {args.ckpt} | batch {args.batch} | steps {args.steps} | rows {len(X)}")
     print(f"param dtype as trained: {next(iter(ck['model'].values())).dtype}")
+    flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
 
     for scale in [float(s) for s in args.lr_scales.split(",")]:
         m = HybridLM(Cfg).to(dev)
@@ -89,7 +99,12 @@ def main():
             yb = Y[i : i + args.batch].to(dev)
             before = {n: p.detach().clone() for n, p in m.named_parameters()}
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                _, loss = m(xb, yb, doc_cu_seqlens(xb, 1) if Cfg.doc_mask else None)
+                hidden, _ = m(xb, yb, doc_cu_seqlens(xb, 1) if Cfg.doc_mask else None)
+            # same loss as sft_math.py: forward returns hidden, FLCE runs outside autocast
+            B, T, D = hidden.shape
+            loss = flce(
+                m.head.weight[: Cfg.vocab], hidden.to(m.head.weight.dtype).reshape(-1, D), yb.reshape(-1)
+            )
             loss.backward()
             for o in opts:
                 o.step()
