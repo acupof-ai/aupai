@@ -2,42 +2,50 @@
   "facts": [
     {
       "id": "mlm.corpus.tokens_total",
-      "value": 3619000000,
+      "value": 3628516244,
       "unit": "tokens",
       "measured": "2026-08-30",
-      "source": "python /tmp/tokcount.py on the pod, /work/aupai/data/corpus",
+      "source": "python3 scripts/harness.py run pretokenize on the pod; exact row counts x seq 4097",
       "config": {
-        "method": "sampled bytes/token against data/tokenizer.json, scaled by total .jsonl bytes x measured text/file byte ratio",
-        "sample": "80 docs per shard per domain; ratio reproduced within 1% on a 2x sample (code 2.1%, chat 2.7% -- those two are soft)",
-        "per_domain_tokens_B": {
-          "web_hq": 1.432,
-          "textbook": 1.608,
-          "wiki": 0.231,
-          "en": 0.158,
-          "math": 0.082,
-          "code": 0.062,
-          "chat": 0.044
+        "method": "exact: the tokenizer's own row counts, rows x (seq+1)=4097",
+        "rows": {
+          "web_hq": 350110,
+          "textbook": 393021,
+          "wiki": 59974,
+          "en": 39240,
+          "math": 19936,
+          "code": 14051,
+          "chat": 9320
         },
-        "domains": "the 7 named in data/mix_scale_3.24b.json; web_cci3_p* and sample excluded",
+        "per_domain_tokens_B": {
+          "web_hq": 1.4344,
+          "textbook": 1.61021,
+          "wiki": 0.24571,
+          "en": 0.16077,
+          "math": 0.08168,
+          "code": 0.05757,
+          "chat": 0.03818
+        },
+        "domains": "the 7 named in data/mix_scale_3.24b.json",
         "corpus_fp": {
           "web_hq": "30838d423348b2e5"
         },
-        "supersedes": "the prior 3.24e9 value, whose source was a relay ('aupai-3b 实测 (fb 转述)') with no artifact and which was byte-identical to mix_scale_3.24b.json total_tokens=3244941863 -- a training budget recorded as a corpus supply"
+        "supersedes": "two values. (1) 3.24e9, source 'aupai-3b 实测 (fb 转述)' -- a relay with no artifact, byte-identical to mix_scale_3.24b.json total_tokens=3244941863, i.e. a training budget recorded as a corpus supply; aupai-3b confirms it never made that measurement, so the attribution was also wrong. (2) 3.619e9, the controller's own sampled bytes/token estimate, +-2%; correct to within 0.3% in total but 6% low on wiki, which produced a false deficit claim."
       },
-      "uncertainty": "+-2% (sampling); code and chat +-3%",
+      "uncertainty": "exact (integer row counts)",
       "status": "measured"
     },
     {
       "id": "mlm.corpus.tokens_per_param",
-      "value": 20.98,
+      "value": 21.03,
       "unit": "tokens/param",
       "measured": "2026-08-30",
-      "source": "3.619B tokens / 172.51M non-embedding params",
+      "source": "3.6285B tokens / 172.51M non-embedding params",
       "config": {
         "non_embed_params": 172510000,
-        "tokens": 3619000000,
+        "tokens": 3628516244,
         "comparison": "modern sub-1B ~6000 (SmolLM2-1.7B: 11T/1.7B)",
-        "note": "prior 19.5 used 3.24e9 tokens and the retired 166M estimate; both corrected"
+        "note": "prior 19.5 used the 3.24e9 relay and the retired 166M estimate"
       },
       "uncertainty": null,
       "status": "measured"
@@ -784,6 +792,32 @@
       "uncertainty": "+-1pp (400 docs/shard)",
       "status": "measured",
       "boundary": "says what the en directory contains and which command built it; does not say whether the two sources were meant to be one domain"
+    },
+    {
+      "id": "mlm.mix.val_split_caps_the_largest_point",
+      "value": 0.0153,
+      "unit": "fraction of the 3.24b budget lost to the epoch cap",
+      "measured": "2026-08-30",
+      "source": "exact arithmetic on the pretokenize row counts against train.py:1348/1362/1363",
+      "config": {
+        "cause": "the mix consumes six of seven domains exactly once (demand = supply to the row); train.py:1348 removes n_val = min(max(1,int(rows*0.05)),5000) BEFORE building the pool, and the epoch cap at line 1362 measures len(pool), so each of the six is capped by exactly its own n_val",
+        "lost_Mtok": {
+          "textbook": 20.49,
+          "wiki": 12.29,
+          "en": 8.04,
+          "math": 4.08,
+          "code": 2.88,
+          "chat": 1.91,
+          "total": 49.7
+        },
+        "web_hq_surplus_Mtok": 383.6,
+        "why_surplus_does_not_help": "want is computed per domain from its own weight; nothing redistributes",
+        "binds_only_at": "3.24b -- checked at 0.2b/0.3b/0.4b/0.8b/1.6b, no domain caps at any",
+        "not_silent": "train.py:1363 prints 'wants N rows, epoch cap leaves M -> capped'; line 1384 prints the true scheduled total"
+      },
+      "uncertainty": "exact (integer rows)",
+      "status": "measured",
+      "boundary": "predicted from the code path and the row counts; the printed scheduled-tokens line of the first 3.24b run is the confirming artifact and has not run yet"
     }
   ]
 }

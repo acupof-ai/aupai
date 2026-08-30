@@ -43,28 +43,58 @@ score-matrix record when it ends. A point that dies is rerun once at the same co
 a second failure escalates. Per the frozen fit protocol, a point is never dropped
 because it fits badly.
 
-**D comes from the log, not the mix.** Corpus supply measured 2026-08-30 is 3.619B tokens
-(`mlm.corpus.tokens_total`). At the frozen weights with `epochs: 1`, the 3.24b point asks
-for more than four domains hold:
+**D comes from the log, not the mix. The 3.24b point loses 1.53% of its budget to the
+validation split.** Exact row counts from the tokenizer (`harness.py run pretokenize`,
+2026-08-30): 3.6285B tokens over 7 domains.
 
-| domain | supply | demand at 3.24b | headroom |
-|---|---|---|---|
-| textbook | 1.608B | 1.610B | −0.1%, inside the ±2% sampling error |
-| web_hq | 1.432B | 1.051B | +36% |
-| wiki | 0.231B | 0.246B | **−6.4%, the only deficit outside the error bar** |
-| en | 0.158B | 0.161B | −1.8%, inside the error |
-| math | 0.082B | 0.082B | 0.0%, at the line |
-| code | 0.062B | 0.058B | +8% |
-| chat | 0.044B | 0.038B | +15% |
+The mix is not weighted by corpus share, whatever the `_comment` says. It is built so that
+six of seven domains are consumed **exactly once** and web_hq fills the remainder:
 
-`train.py:1363` caps at the epoch limit and prints `wants N rows, epoch cap leaves M ->
-capped`, then prints the scheduled token count at line 1384. Nothing repeats silently, so
-this is not a data defect and no weight changes. It is an x-axis defect: taking D from
-`mix_scale_3.24b.json`'s `total_tokens` puts the largest point ~0.6% right of where it
-trained, and the largest point has the most leverage over beta. The five smaller points do
-not bind, so the error does not cancel across the curve. fit-protocol v1.9 reads D from
-each run's scheduled-tokens line and pre-registers a tolerance above which the gap is a
-declared curve boundary rather than rounding.
+| domain | rows | supply | demand at 3.24b | delta |
+|---|---|---|---|---|
+| web_hq | 350,110 | 1.4344B | 1.0508B | +383.6M |
+| textbook | 393,021 | 1.61021B | 1.61021B | −0.00M |
+| wiki | 59,974 | 0.24571B | 0.24572B | −0.00M |
+| en | 39,240 | 0.16077B | 0.16077B | −0.00M |
+| math | 19,936 | 0.08168B | 0.08168B | −0.00M |
+| code | 14,051 | 0.05757B | 0.05757B | −0.00M |
+| chat | 9,320 | 0.03818B | 0.03819B | −0.00M |
+
+Six domains land on their supply to the row. That is a deliberate design, not an accident —
+but it leaves no margin, and `train.py:1348` takes the validation split off the top before
+the pool exists: `n_val = min(max(1, int(len(seqs) * 0.05)), 5000)`, then
+`pools[name] = seqs[n_val:]`. The epoch cap at line 1362 measures `len(pool)`, so every one
+of the six is capped by exactly its own `n_val`:
+
+| domain | n_val | pool | want | lost |
+|---|---|---|---|---|
+| textbook | 5,000 | 388,021 | 393,022 | 20.49M |
+| wiki | 2,998 | 56,976 | 59,975 | 12.29M |
+| en | 1,962 | 37,278 | 39,240 | 8.04M |
+| math | 996 | 18,940 | 19,937 | 4.08M |
+| code | 702 | 13,349 | 14,051 | 2.88M |
+| chat | 466 | 8,854 | 9,321 | 1.91M |
+| | | | **total** | **49.7M = 1.53%** |
+
+web_hq's 383.6M surplus does not cover it: `want` is computed per domain from its own
+weight and nothing redistributes.
+
+Only the 3.24b point binds — checked at 0.2b/0.3b/0.4b/0.8b/1.6b, no domain caps at any of
+them. So the loss lands entirely on the point with the most leverage over beta and does not
+cancel across the curve.
+
+`train.py:1363` handles it correctly and loudly: it caps, prints `wants N rows, epoch cap
+leaves M -> capped`, then prints the true scheduled total at line 1384. Nothing repeats
+silently. This is not a data defect and no weight changes. It is an x-axis defect, and the
+fix is free: **fit-protocol v1.9 reads D for every point from that scheduled-tokens line,
+never from the mix file**, and pre-registers a tolerance above which the gap is a declared
+curve boundary rather than rounding.
+
+Correction to the record: the controller first reported this as a 6.4% wiki corpus deficit,
+derived from a sampled bytes/token estimate with a stated ±2% uncertainty. The exact counts
+show wiki is not short of corpus at all. The sampled number was used to make a claim finer
+than its own error bar — the same shape as two earlier errors this round. The finding
+survives with a different cause and a larger magnitude, but it was luck, not method.
 
 **The `en` domain is 85% Chinese.** Per-shard Han census, 400 docs per shard:
 `cosmopedia_extra_000..006` is 690.3MB at 82.9–84.1% Han (chinese-cosmopedia, the same
