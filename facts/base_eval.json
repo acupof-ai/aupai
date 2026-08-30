@@ -166,6 +166,19 @@
    "status": "recorded"
   },
   {
+   "id": "be.lambada_zh_heldout_3p24b",
+   "value": "first held-out LAMBADA-zh reading on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30): open-vocab top-1 0.356, top-5 0.598, two-way (real target vs same-length distractor) 0.960, swap-stable (0.9603/0.9603). 1000 items built from 523 held-out fineweb2 docs (data/eval/holdout_v2/lambada_zh_src.jsonl, carved by 3b: sha1(content[:100]) split, removed from data/corpus/web before fingerprinting). Independent acceptance check (b0): 0/523 holdout ids found in 4,731,988 remaining web docs (exact-match, one streaming pass); holdout ids round-trip. The earlier 0.24 reading was training-domain calibration and is superseded",
+   "measured": "2026-08-30",
+   "source": "eval/lambada_zh.py; held-out item bank at data/eval (lambada_zh.jsonl); pod runs /tmp/lzh_holdout_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "items": "1000, single-token targets, distractor = another item's same-char-length target",
+    "acceptance": "0/523 exact-match hits in data/corpus/web (4,731,988 docs), 2026-08-30"
+   },
+   "uncertainty": "acceptance is exact-match only; near-duplicates of holdout docs could survive in the corpus (the scanner has near-dedup machinery, not run for this acceptance)",
+   "status": "recorded"
+  },
+  {
    "id": "be.panel_resolution_rules",
    "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
    "measured": "2026-08-30",
