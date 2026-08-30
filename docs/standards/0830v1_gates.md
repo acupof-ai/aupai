@@ -693,3 +693,24 @@ appearance of having been checked. Both guards below close that gap.
   against invalidating every checkpoint including `ckpt_p324` and the six-point ladder.
   **Declined.** The 151K number stays as the ceiling it is: reaching it is a parameter-budget
   decision about the embedding table, not a tokenizer decision.
+- **A pass with 0.2% of margin and a pass with 97% look identical in the log.** tilerl's
+  gridY sweep, run across the `doc_cu_seqlens` fix, gives the cleanest measurement of the
+  day — same card, same batch, one commit apart: batch 13 reads `grid=(2, 65400, 1)` before
+  and `(2, 1718, 8)` after, a 38x drop, and gridZ moves off 1 because fla picks a normal
+  layout once the document count falls. The part worth keeping is the *before*: 65400
+  against a limit of 65535 is 135 of headroom. Anyone who had tried batch 13 first would
+  have seen it work and written it into the run config, and the next batch of data would
+  have killed it. **A near-limit success reports the same thing as a comfortable one, so a
+  ceiling has to be measured rather than inferred from a green run.**
+- **"I said where I measured it" is not "I said where I did not."** The grid finding came
+  with a correct falsifiable prediction and a correct report — `--batch 8` passes, on GPU 2.
+  The controller read that as a result and launched seven ranks; rank 2 died on the same
+  error. The sentence that was missing is the one the reader needs: *not verified under
+  DDP*. Naming the configuration you tested leaves the reader to notice the ones you did
+  not, and under time pressure they will not. (tilerl, 2026-08-30.)
+- **The controller made the recoverable-fraction error inside an hour of writing the rule
+  against it.** "30% of every SFT step is padding" is the size of the unsupervised block,
+  not what packing recovers: 29.9% of tokens carry `-100`, but only **11.8%** is trailing
+  `<eos>` padding — the other ~18% is prompt, masked on purpose and needed as context.
+  Same shape as short_conv 3.1% → 1.0%, one rule and one afternoon later. The ranking is
+  unchanged (11.8% is still 12x short_conv, at no quality cost); the number was wrong.
