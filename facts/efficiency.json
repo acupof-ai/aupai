@@ -587,6 +587,27 @@
    "uncertainty": "tiny-batch short run; parity is at the loss-computation level, not a full-training equivalence claim",
    "boundary": "at base LR (designed for ~1.77M tokens/step) batch-4 dynamics are chaotic and deltas amplify to 0.2; the controlled comparison needs the 0.1x LR",
    "status": "measured"
+  },
+  {
+   "id": "eff.chunk_size_parity",
+   "claim": "fla chunk_kda chunk_size 32 is numerically neutral vs the default 64 in training",
+   "value": "per-step loss delta <= 0.0017 across 10 steps (loss ~8-10), no growth, sign-oscillating; step-0 delta 0.0000",
+   "measured": "2026-08-30",
+   "source": "scripts/ab_vocab_loss.py AB_AXIS=chunk on GPU0, pod; runs/ab_chunk.log",
+   "config": {
+    "mix": "data/mix_sample.json",
+    "batch": 4,
+    "seq": 512,
+    "steps": 10,
+    "lr_scale": 0.1,
+    "seed": 42,
+    "arms": "chunk_size 64 vs 32, same init/data",
+    "dtype": "bf16",
+    "softcap": 15.0
+   },
+   "uncertainty": "tiny-batch short run; parity is at the loss-computation level, not a full-training equivalence claim",
+   "boundary": "kernel speed (+19.1% KDA kernel, ~2% step, tilerl measurement) is separate from this numerical-parity claim",
+   "status": "measured"
   }
  ]
 }
