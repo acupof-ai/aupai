@@ -18,7 +18,7 @@ source: "aupai-fb 2026-08-30：code 用 Fable 生成、沙箱执行作独立信�
 
 ## 多样性分布（语言/难度/主题）
 
-- 语言：**Python 为主（~80%）**，少量 C++（~15%）/JS（~5%）（C++ 的 STL/template 是 Codeforces 主流）。
+- 语言：**v1 纯 Python（44 review a）**——沙箱 `run_sandboxed` 的 chroot 只有 python3，无 g++/node；C++/JS 生成没有执行门（要么门漏、要么扩沙箱涨攻击面）。等沙箱支持再加。（C++ 的 STL/template 是 Codeforces 主流）。
 - 难度分层（~权重）：简单热身（15%）/ 中等算法（45%）/ 难构造+复杂（30%）/ 极难竞赛（10%）。
 - 主题带权（从 LeetCode pattern 加权 + 我们 code_holdout 未覆盖的）：
   arrays/hashing(20%)  two-pointers/sliding(10%)  string(10%)  linked-list/tree/图(15%)
@@ -28,7 +28,7 @@ source: "aupai-fb 2026-08-30：code 用 Fable 生成、沙箱执行作独立信�
 - 每题的测试集：1 黄金解 + 3-8 测试（含边界/极端/随机），测试需要独立于实现（输入→期望输出的 example-based，非比"答案字符串"）。
 
 ## 注入的多样性防塌缩度量
-每个种子模板的生成配额 cap（防单一模板过生成）；生成的 prompt 多样性用 n-gram/结构哈希测（若同模板的下游题目高相似 → 降该模板配weight + 换组合）。**多样性门 = 每批 code_holdout pass + 模板熵不塌缩**。
+每个种子模板的生成配额 cap（防单一模板过生成）；生成的 prompt 多样性用 n-gram/结构哈希测（若同模板的下游题目高相似 → 降该模板配weight + 换组合）。**多样性门（44 review b/c/d 定量化）**：①熵门 = 第一批 1000 探针实测模板熵的 80%（低于→降该模板权重+换组合），没有数门只是装饰；②per-theme cap：任一主题占通过样本 >15% → 降权（per-template cap 拦不住主题级塌缩）；③near-dup：`is_holdout` 抓重排不抓换数字（结构哈希 follow-up，第一批探针先看 exact 命中率）。每批过 code_holdout_500（is_holdout 扫题面文本，非代码，每批必过非抽样）。
 
 ## 与 44/沙箱/管线配合
 - 生成 → `sandbox_exec.run_sandboxed`（44，硬前提）→ 只留 rc==0 且实测与黄金解一致的。
