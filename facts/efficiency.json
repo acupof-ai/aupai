@@ -228,7 +228,7 @@
           "ms_per_step": 106.4,
           "pct_step": 10.8,
           "work": "~33 GB (est), negligible FLOP",
-          "achieved": "~0.31 TB/s",
+          "achieved": "~0.31 TB/s (est) — CORRECTED to 1.16 TB/s measured by ncu, see eff.kda_occupancy_bound",
           "peak": "4 TB/s",
           "verdict": "neither roof — latency/occupancy bound, 8% of HBM"
         },
@@ -291,7 +291,7 @@
         "peaks": "HBM 4.0 TB/s; bf16 148 TFLOPS; fp8 296 TFLOPS",
         "script": "scripts/attn_res_cpu_gap.py, scripts/lm_head_gemm.py"
       },
-      "uncertainty": "GEMM FLOP counts are exact; every GB/s figure is an analytic estimate from tensor shapes, not a measured byte count. Do not read the two as equally reliable.",
+      "uncertainty": "GEMM FLOP counts are exact; every GB/s figure is an analytic estimate from tensor shapes, not a measured byte count. Do not read the two as equally reliable. CORRECTION 2026-08-30: the KDA row's 0.31 TB/s was 3.7x too low; ncu measures 14.79 GB in 12.77 ms = 1.16 TB/s (29% of peak). It was flagged est and it deserved to be.",
       "boundary": "single GPU, no DDP, and vocab is pre-padding (32773). The LM head row collapses from 216.1 to ~96.9 ms once vocab is padded, which changes every other row's percentage. The AttnRes row is a DELTA against the plain-residual path, not that operator's standalone cost.",
       "status": "recorded",
       "refuted_by": "a per-kernel trace on the post-padding, 7-card DDP configuration disagreeing outside measurement noise"
@@ -471,10 +471,60 @@
         "gpu_idle_ms": 1.3,
         "note": "isolated kernel probe: no compile, no fp8, single layer"
       },
-      "uncertainty": "rules out SM starvation and, given ~1023 us/call for the main chunk_kda group, kernel fragmentation. It does NOT separate a serial dependency chain from bandwidth -- the head-axis sweep aborted on fla's ~30s per-head-count JIT. Unproven either way.",
+      "uncertainty": "Rules out SM starvation and kernel fragmentation. The serial-dependency vs bandwidth separation is now DONE -- see eff.kda_occupancy_bound. The answer was neither.",
       "boundary": "applies at B>=8; at B<=4 the card genuinely is empty, which is an inference concern, not a training one",
       "status": "measured",
       "refuted_by": "a completed head-axis sweep showing sub-linear scaling at production B"
+    },
+    {
+      "id": "eff.kda_occupancy_bound",
+      "claim": "KDA's chunk kernels are slow because of an inter-chunk serial dependency",
+      "value": "REFUTED. Three independent measurements: (1) time scales LINEARLY with B*h (work-scaled 0.98 from B=8) -- a chain's latency does not grow with batch; (2) halving chunk_size to 32 DOUBLES the chain length and is 19% FASTER (T=4096: 12.12 -> 9.81 ms), the reverse of the chain prediction; (3) the genuinely sequential kernels (fwd_kernel_h grid 512, bwd_kernel_dhu grid 256) are 1.51 of 12.77 ms = 11.9% of KDA time. The real cause is OCCUPANCY: the four dominant kernels achieve 6-12% occupancy and run at 15-29% of HBM and 16-42% of SM, while every kernel above 80% occupancy runs at 85-93% of HBM peak. Grid size is ample (8192-131072 blocks on 78 SMs); the kernels burn too many registers/shared memory per block, leaving ~4-8 resident warps with nothing to hide memory latency. Latency-bound, not chain-bound, not bandwidth-bound, not grid-bound. Measured DRAM traffic: 14.79 GB in 12.77 ms = 1.16 TB/s, 29% of the 4 TB/s peak.",
+      "measured": "2026-08-30",
+      "source": "scripts/kda_probe.py plus ncu per-kernel counters",
+      "config": {
+        "gpu": "NVIDIA H20 GPU7",
+        "batch": 16,
+        "seq": 4096,
+        "heads": 8,
+        "hd": 128,
+        "dtype": "bf16",
+        "layers_measured": "one DeltaRecurrence layer, fwd+bwd",
+        "compile": false,
+        "fp8": false,
+        "iters": 10,
+        "call": "direct chunk_kda with train.py's arguments",
+        "tool": "ncu --profile-from-start off"
+      },
+      "uncertainty": "one layer in isolation, uncompiled and without fp8; the in-model kernels could differ. The T-sweep criterion (ns/token flat from T=1024) is weak on its own -- proofs 1 and 2 are what discriminate.",
+      "boundary": "the occupancy lives inside fla's Triton/TileLang kernels. Fixing it means editing or rewriting fla, and rewriting is already refuted (tileRL measured its own TileLang GDN 9.3x slower than fla on H20).",
+      "status": "measured",
+      "refuted_by": "an ncu run showing high occupancy in the dominant KDA kernels"
+    },
+    {
+      "id": "eff.kda_chunk_size_32",
+      "claim": "passing chunk_size=32 to chunk_kda is faster than the default 64",
+      "value": "Measured -19.1% on the fla kernels at T=4096 (12.12 -> 9.81 ms), -17.8% at T=1024, -18.2% at T=2048. chunk_size is a supported fla kwarg accepting {32, 64}; train.py does not pass it, so it defaults to 64. Applied to the in-model fla group (~102 of the 128.1 ms DeltaRecurrence total; short_conv is unaffected) that is ~19.5 ms/step, 2.0% of the 978.5 ms step.",
+      "measured": "2026-08-30",
+      "source": "scripts/kda_probe.py",
+      "config": {
+        "gpu": "NVIDIA H20 GPU7",
+        "batch": 16,
+        "seq": 4096,
+        "heads": 8,
+        "hd": 128,
+        "dtype": "bf16",
+        "layers_measured": "one DeltaRecurrence layer, fwd+bwd",
+        "compile": false,
+        "fp8": false,
+        "iters": 10,
+        "call": "direct chunk_kda with train.py's arguments",
+        "tool": "ncu --profile-from-start off"
+      },
+      "uncertainty": "the intra-chunk work is O(chunk^2) so halving it halves that term, which is why more serial steps still wins. NOT tested: chunk_size changes the chunking of the same math, so numerics shift slightly.",
+      "boundary": "adoption gated on a short loss A/B; it is a supported fla config, not a hack",
+      "status": "measured",
+      "refuted_by": "a loss A/B showing the numerics shift matters, or no speedup in the compiled in-model path"
     }
   ]
 }
