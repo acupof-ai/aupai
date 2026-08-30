@@ -27,6 +27,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import corpus_fingerprint as cfp  # noqa: E402
+import pod_drift  # noqa: E402
 DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
@@ -902,6 +903,35 @@ def check_corpus_fp(root):
     return PASS, f"{ok}/{len(present)} mix domains match their build-time and PROVENANCE.md fingerprints"
 
 
+def check_pod_drift(root):
+    # The pod is not a git repo: its files must match the committed manifest. CI gates the
+    # manifest against HEAD. A dev checkout skips both -- uncommitted changes are normal there.
+    if pod_drift.is_pod(root):
+        ok, evidence = pod_drift.check_pod(root)
+        return (PASS if ok else FAIL), evidence
+    if os.environ.get("CI") == "true":
+        ok, evidence = pod_drift.check_head(root)
+        return (PASS if ok else FAIL), evidence
+    return SKIP, "dev checkout; CI gates manifest freshness, the pod gates file drift"
+
+
+def _broken_pod_drift():
+    """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
+    mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"))
+    shutil.copy(
+        os.path.join(ROOT, "data", "pod_head_manifest.txt"),
+        os.path.join(d, "data", "pod_head_manifest.txt"),
+    )
+    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"), os.path.join(d, "scripts", "harness.py"))
+    with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
+        f.write("\n# broken world drift\n")
+    return d
+
+
 def _broken_corpus_fp():
     """The REAL default mix copied into the broken world, with two of its real-named domains
     present: one stamped correctly and then drifted, one carrying no stamp at all. Both tiers
@@ -1032,6 +1062,13 @@ CHECKS = [
         "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
         check_corpus_fp,
         _broken_corpus_fp,
+    ),
+    (
+        "pod_drift",
+        "pod files match the committed manifest; in CI, the manifest matches HEAD",
+        "the pod ran 142 files behind HEAD and its harness had never run the full check set -- training happened under rules the repo no longer had",
+        check_pod_drift,
+        _broken_pod_drift,
     ),
     (
         "doc_commands_exist",

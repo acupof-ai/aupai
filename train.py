@@ -153,6 +153,10 @@ class Cfg:
     # (the voided 0.2b run: CCI3 shards under web_hq's name). The flag pardons known,
     # intended byte drift; it never pardons a symlink.
     allow_corpus_drift = False
+    # Pod code must match the committed manifest (scripts/pod_drift.py). The flag pardons a
+    # known, intended hotfix; the default refuses, because a pod behind HEAD trains under
+    # rules the repo no longer has (142 files drifted before this guard existed).
+    allow_pod_drift = False
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
     val_batches = 20
@@ -1424,6 +1428,10 @@ def main():
         "--allow_corpus_drift", action="store_true",
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
     )
+    parser.add_argument(
+        "--allow_pod_drift", action="store_true",
+        help="train on a pod whose code is behind the committed manifest (known hotfix only)",
+    )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1% vs 100, eff.bucket_cap_mb_ab)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
@@ -1467,6 +1475,20 @@ def main():
     )
     if is_main:
         print(f"corpus_fp: {fps}", flush=True)
+    if not os.path.isdir(os.path.join(ROOT, ".git")) and not Cfg.allow_pod_drift:
+        # The pod is not a git repo: its code must match the committed manifest, or it
+        # trains under rules the repo no longer has (142 files drifted before this guard).
+        import sys
+
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import pod_drift
+
+        _ok, _evidence = pod_drift.check_pod(ROOT)
+        if not _ok:
+            raise RuntimeError(
+                f"pod code drift vs the committed manifest: {_evidence}. Sync the pod to "
+                "HEAD (scripts/pod_sync_check.sh) or pass --allow_pod_drift for a known hotfix."
+            )
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)

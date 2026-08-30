@@ -2,12 +2,10 @@
 # Minimal drift check: sha256 of the files that execute on the pod (pretrain ->
 # score flow), local working tree vs /work/aupai. The pod is not a git repo and
 # code arrives by hand-push, so without this the two diverge silently.
-# Exit 1 on any DIFF or MISSING. Scope: root + scripts/ + eval/ + algorithms/
-# (datagen, filters, mathbank, workflows do not run on the pod in this flow).
+# Exit 1 on any DIFF or MISSING. The file set comes from scripts/pod_drift.py
+# (the same set the pod's manifest gate enforces) -- one scope, two directions.
 cd "$(dirname "$0")/.."
-FILES=$(git ls-files '*.py' '*.sh' 'data/mix_scale_*.json' 'data/tokenizer.json' \
-  'AGENTS.md' 'docs/standards/*.md' ':!scripts/pod_sync_check.sh' \
-  | grep -v -E '^(datagen|filters|mathbank|workflows)/' | tr '\n' ' ')
+FILES=$(python scripts/pod_drift.py --list-scoped | tr '\n' ' ')
 REMOTE=$(~/bin/pod "cd /work/aupai && sha256sum $FILES 2>/dev/null" < /dev/null)
 fail=0
 for f in $FILES; do
