@@ -301,7 +301,14 @@ def main():
         else:
             display, loader = MC_BENCHMARKS[key]
             t0 = time.perf_counter()
-            acc = score_mc(model, tok, loader(), device, args.batch, num_id)
+            try:
+                acc = score_mc(model, tok, loader(), device, args.batch, num_id)
+            except Exception as e:
+                # One benchmark's fetch must not take the rest of the suite with it: the pod
+                # cannot reach the HF Hub, so hellaswag's ReadTimeout aborted run_eval.py
+                # before piqa ran, and the caller saw a single "FAILED" for two missing sets.
+                print(f"  {display}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
+                continue
         elapsed = time.perf_counter() - t0
         results[display] = (acc, elapsed)
         print(f"  {display}: {acc:.1%} ({elapsed:.1f}s)", flush=True)
