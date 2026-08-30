@@ -1611,10 +1611,24 @@ def _run_point(step_args, forced):
     cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *passthrough]
     _exp("start", name=name, cmd=" ".join(cmd),
          hypothesis=f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
-    r = subprocess.run(cmd, cwd=ROOT)
-    ckpt = f"ckpt_{name}.pt"
     rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
-    scored = r.returncode == 0 and os.path.exists(rec) and ckpt in open(rec, encoding="utf-8").read()
+    ckpt = f"ckpt_{name}.pt"
+
+    def _ckpt_record():
+        if not os.path.exists(rec):
+            return None
+        for line in open(rec, encoding="utf-8"):
+            if f'"ckpt": "{ckpt}"' in line:
+                return line
+        return None
+
+    before = _ckpt_record()
+    r = subprocess.run(cmd, cwd=ROOT)
+    # A rerun of the same ckpt must not pass on the FIRST run's record: the line has to
+    # have changed, not merely be present (score_matrix --json replaces same-ckpt lines,
+    # and only on success -- a failed rescore leaves the stale line in place).
+    after = _ckpt_record()
+    scored = r.returncode == 0 and after is not None and after != before
     _exp("done", name=name,
          result=f"exit {r.returncode}; {ckpt} scored in score_matrix" if scored else f"exit {r.returncode}",
          finding="score_matrix record is the result; the fit interprets" if scored else "run failed before scoring",
