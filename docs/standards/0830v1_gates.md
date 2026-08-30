@@ -188,10 +188,32 @@ It fires:
 | **> 0.040** | **0.1021** | **outside it — the KDA A/B moves to the 3.24b checkpoint** |
 
 **Ruling: the second four runs (`attn_every 1`, seeds 0-3) do not happen.** At 0.2b a
-4-vs-4 resolves 0.1021 nat, and an experiment whose lack of resolution is computable
-beforehand should be declared beforehand rather than spending 24 GPU-minutes to produce a
-null. 8+8 would reach 0.0722 and still miss the gate; only the 3.24b checkpoint, where the
-comparison is free, is worth asking on.
+4-vs-4 resolves 0.1021 nat (normal approximation) or 0.1223 (b0's frozen t-version, df=6),
+and an experiment whose lack of resolution is computable beforehand should be declared
+beforehand rather than spending 24 GPU-minutes to produce a null. The ruling is robust to
+which formula is used; both exceed 0.08.
+
+**Correction: "the question is re-asked for free on the 3.24b checkpoint" is false, and
+the controller repeated it twice.** The ladder produces `attn_every 4` at 3.24b. Comparing
+it to `attn_every 1` means *training a second 3.24b model*. lessons-e1 priced it and the
+arithmetic is worse than the experiment just cancelled:
+
+| design | MDE at σ̂ 0.0516 | vs 0.08 gate | cost |
+|---|---|---|---|
+| 0.2b 4+4 — cancelled | 0.1022 | MISS | ~48 GPU-min |
+| 3.24b 1+1 | **0.2043** | MISS | ~206 GPU-min |
+| 3.24b 2+2 | 0.1445 | MISS | ~412 GPU-min |
+| 3.24b 4+4 | 0.1022 | MISS | ~824 GPU-min |
+
+Moving to 3.24b makes the comparison **worse at four times the cost**, or equal at
+seventeen times. Nothing about a larger D improves an independent-samples MDE; only σ or
+n do. For 1+1 to reach the gate, σ at 3.24b would have to be 2.6× below 0.0516; for 2+2,
+1.8× below. Both are possible — more steps may average seed effects down — but neither is
+measured, and "free" was never true for the isolating form of the experiment.
+
+What is genuinely free is the scaling-law residual: fit 0.2b–1.6b, predict 3.24b, compare.
+That detects whether the architecture is the bottleneck but cannot attribute a gap to KDA
+rather than anything else. It runs as a sanity check, not as the A/B.
 
 **The fit gate moves and must be renegotiated before the ladder runs.** ACCEPT is
 RMS ≤ 1.14σ̂ = **0.0588**, not the 0.05 quoted this round — that figure assumed σ = 0.035
