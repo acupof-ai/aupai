@@ -847,6 +847,23 @@
       "boundary": "torchao 0.17.0. A future version that fuses the transposed cast into the GEMM epilogue, or a grad_weight kernel that reads a non-transposed operand, reopens this.",
       "status": "measured",
       "refuted_by": "a measured ROWWISE_WITH_GW_HP run that is net faster end to end"
+    },
+    {
+      "id": "eff.throughput_quality_exchange_rate",
+      "claim": "how much val NLL a throughput saving is allowed to cost before it stops paying for itself",
+      "value": 0.91,
+      "unit": "nat of val NLL per e-fold of training tokens (local slope, 0.2b-0.3b segment)",
+      "measured": "2026-08-30",
+      "source": "ladder points p02 (0.2b, val 3.691) and p03 (0.3b, val 3.322); (3.691-3.322)/ln(1.5)",
+      "config": {
+        "use": "A saving of x fraction of step time buys 1/(1-x) times the tokens in the same wall clock, so it is worth up to slope*ln(1/(1-x)) nat of quality. Worked: Block AttnRes saves 10.7% of step -> 1.120x tokens -> tolerance 0.103 nat. Below that the time it buys back more than covers the quality it costs.",
+        "block_attnres_tolerance_nat": 0.103,
+        "why_this_matters": "Names the tolerance BEFORE the sample size, so n cannot be chosen for affordability and the tolerance backfilled to match."
+      },
+      "uncertainty": "A two-point slope. Loss curves flatten, so this OVERSTATES the slope at larger D: at 3.24b the same 12% more tokens buys less, the tolerance is TIGHTER than 0.103, and every campaign priced against it needs finer resolution than computed here. The direction is certain; the magnitude needs the six-point fit, which the running ladder produces for free.",
+      "boundary": "the 0.2b-0.3b segment of this mix and architecture; recompute the local slope at the budget being decided",
+      "status": "measured",
+      "refuted_by": "the six-point ladder fit giving a local slope at 3.24b that this two-point estimate misses by more than its own uncertainty"
     }
   ]
 }
