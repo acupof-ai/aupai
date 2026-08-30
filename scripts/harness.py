@@ -35,6 +35,79 @@ SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
+# --------------------------------------------------------------------------- workspace root
+# One root, configured once. AUPAI_ROOT resolves to an absolute path; every data
+# location the pipeline steps write derives from it. Default: the repo root.
+# The harness refuses a pipeline step whose data path escapes the root, and
+# check_root_durable verifies the root is not on a Kubernetes emptyDir.
+#
+# /work is a Kubernetes emptyDir on the host's root disk -- a pod deletion erases
+# it. The durable NVMe drives (/data00-/data03, ~11 TB) are on the host but NOT
+# mounted inside the container, so the check detects known-ephemeral mounts
+# rather than comparing against durable ones. When the migration mounts /data00
+# inside the container, add it to a durable list and invert the check.
+EPHEMERAL_MOUNTS = ("/work",)
+
+
+def aupai_root():
+    """Resolve AUPAI_ROOT to an absolute path. Default: the repo root."""
+    env = os.environ.get("AUPAI_ROOT")
+    return os.path.abspath(env) if env else ROOT
+
+
+def check_root_durable(root):
+    """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys
+    everything on /work; the durable NVMe drives are not visible inside the
+    container, so this detects known-ephemeral mounts rather than comparing
+    against durable ones. Reports FAIL on the pod today (root is /work/aupai)."""
+    env = os.environ.get("AUPAI_ROOT")
+    aupai = os.path.abspath(env) if env else root
+    # Selftest override: a .ephemeral_mounts file in the root names the ephemeral list.
+    ef = os.path.join(root, ".ephemeral_mounts")
+    if os.path.exists(ef):
+        ephemeral = [l.strip() for l in open(ef) if l.strip()]
+    else:
+        ephemeral = list(EPHEMERAL_MOUNTS)
+    for m in ephemeral:
+        if aupai == m or aupai.startswith(m + os.sep):
+            return FAIL, f"root {aupai} is on {m}, a Kubernetes emptyDir -- a pod deletion erases it"
+    return PASS, f"root {aupai} is not on a known-ephemeral mount"
+
+
+def _broken_root_durable():
+    """A root that IS under a (fake) ephemeral mount."""
+    d = _tmp_repo()
+    # A repo-real file so selftest does not skip this check as hand-written.
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    # The root (d) is under its parent -- name the parent as the ephemeral mount.
+    with open(os.path.join(d, ".ephemeral_mounts"), "w") as f:
+        f.write(os.path.dirname(d) + "\n")
+    return d
+
+
+# Pipeline step -> the data paths it writes, relative to the repo root.
+# The harness refuses to run a step whose path escapes AUPAI_ROOT.
+_PIPELINE_DATA_PATHS = {
+    "fetch": ("data/raw",),
+    "clean": ("data/corpus",),
+    "score": ("data/scores",),
+    "dedup": ("data/corpus",),
+}
+
+
+def _check_data_under_root(step):
+    """Refuse if the step's data paths escape AUPAI_ROOT. Symlinks are allowed --
+    they are the migration mechanism (data/raw -> /data00/aupai_raw)."""
+    aupai = aupai_root()
+    for name in _PIPELINE_DATA_PATHS.get(step, ()):
+        target = os.path.normpath(os.path.join(ROOT, name))
+        if target != aupai and not target.startswith(aupai + os.sep):
+            raise ValueError(
+                f"{step} writes to {target}, outside AUPAI_ROOT {aupai}. "
+                f"Set AUPAI_ROOT or move the data under it."
+            )
+
 
 # --------------------------------------------------------------------------- facts
 
@@ -1691,6 +1764,13 @@ CHECKS = [
         check_mix_supply,
         _broken_mix_supply,
     ),
+    (
+        "root_durable",
+        "AUPAI_ROOT is on a durable mount (/data00-/data03), not a Kubernetes emptyDir",
+        "the 94 GB corpus, every checkpoint, and the repo lived in a 365 GB emptyDir for weeks; a pod deletion would erase all of it",
+        check_root_durable,
+        _broken_root_durable,
+    ),
 ]
 
 
@@ -2175,6 +2255,7 @@ def _run_pipeline_step(step, script, step_args, forced, env=None):
     The script owns the work, the output fingerprint, and shard-level resumability.
     Score pins CUDA_VISIBLE_DEVICES=0 -- a collision on GPU 0 is visible (benchmarks
     fail), a collision on 1-7 is silent (training corrupted)."""
+    _check_data_under_root(step)
     cmd = [sys.executable, os.path.join(HERE, script), *step_args]
     name = _step_name(step, step_args)
     _exp("start", name=name, cmd=" ".join(cmd), hypothesis=f"{step} step{forced}")
