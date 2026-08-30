@@ -714,3 +714,29 @@ appearance of having been checked. Both guards below close that gap.
   `<eos>` padding — the other ~18% is prompt, masked on purpose and needed as context.
   Same shape as short_conv 3.1% → 1.0%, one rule and one afternoon later. The ranking is
   unchanged (11.8% is still 12x short_conv, at no quality cost); the number was wrong.
+- **The round's first positive generative result was contamination, and the guard that
+  should have caught it ran and filtered nothing.** SFT zero-shot code-500 read
+  83/500 = 16.6% against a 2δ instrument threshold of 12.5%, with base few-shot at 0.0% —
+  a clean story about a format bridge. Then a direct check of the pack: **19 of the first
+  20 `code_holdout_500` questions appear verbatim as exact token subsequences inside
+  `data/sft/sft_all.pt`**, and the holdout was carved from `data/synthetic/code_python_zh.jsonl`,
+  which is `SOURCES[7]` in `prepare_sft.py`. Questions and solutions both. The reading is void.
+  The mechanism is three timestamps: `code_holdout_500.jsonl` carved 11:41:25,
+  `sft_all.pt` packed 11:46:57, `holdout_hashes.txt` regenerated 13:18:44 — an hour and a
+  half late. `prepare_sft.py:75` does call `is_holdout(q)` and `holdout.py:16` does list the
+  file in `EVAL_FILES`; the filter excluded nothing because **the hash file it reads is
+  itself a derived artifact and was stale at pack time.** The math holdouts were already in
+  the set and this same probe finds them clean (0/15 each), which is what makes the
+  diagnosis exact rather than a suspicion. Same failure class as `vocab_id`, `.srcfp` and
+  `filters_fp` — a derived artifact staying valid-looking after its source changed — now
+  with the eval holdout as the derived artifact. Two rules follow. **`is_holdout()` must
+  raise on a stale fingerprint, never return False**: today "there is no guard" and "the
+  guard says this question is clean" are indistinguishable to the caller. And **a
+  contamination scan of the source files is not a scan of the pack** — the source scans
+  that read 0 hit were correct about the sources, and the leak entered between them and
+  the artifact that was trained on.
+- **A jump that clean is a symptom, not a result.** 0.0% to 16.6% in one step, straight
+  through the instrument threshold, was the shape of the evidence before anyone checked the
+  pack. A base model reading exactly zero and a fine-tune clearing the bar on the first try
+  is the signature of memorisation, and it deserved suspicion in proportion to how much it
+  was wanted.
