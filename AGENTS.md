@@ -45,6 +45,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 - **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
+- **Derived artifacts carry the fingerprint of what produced them.** The failure mode: a derived artifact stays valid after its source changes, and nothing raises. Three instances, each bought with an incident: checkpoints carry `vocab_id` (a k5 SFT trained at loss 4.77 instead of 1.28 with nothing raising); token caches carry `.srcfp` of their source directory (the 0.2b run — source swapped, cache rebuilt against the new source, training kept reusing it); corpus shards carry `filters_fp`, a content hash of the `filters/*.py` that produced them. The fingerprint covers what actually takes effect, not the nominal version: content hash, not git sha — uncommitted edits still change what a build keeps, and a sha cannot see them (same reasoning as `corpus_fingerprint`'s "content-based, not mtime-based").
 
 ## Entry points
 
