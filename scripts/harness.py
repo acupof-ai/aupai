@@ -520,7 +520,13 @@ def check_corpus_filters_fp(root):
             ok += 1
     if stale:
         return FAIL, "; ".join(stale)
-    note = f", {len(unrecorded)} predate the stamp ({', '.join(unrecorded)})" if unrecorded else ""
+    if unrecorded:
+        # This is an honest unknown, not a green light: nothing recorded which filters built
+        # those shards and nothing can recover it. Rebuild stamps them.
+        note = (f"; UNKNOWN, not verified: {len(unrecorded)} domain(s) predate the stamp "
+                f"({', '.join(unrecorded)}) -- rebuild to stamp them")
+    else:
+        note = ""
     return PASS, f"{ok} domain(s) match filters {live}{note}"
 
 
