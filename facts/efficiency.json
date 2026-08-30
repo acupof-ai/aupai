@@ -721,9 +721,9 @@
    "status": "measured"
   },
   {
-   "id": "eff.ddp_5k_intrinsic_overhead",
-   "claim": "The 5K (6.25%) DDP overhead is intrinsic to gradient synchronization, not static_graph or gradient_as_bucket_view bookkeeping",
-   "value": "static_graph=False: 74-75K (no change). bucket_view=False: 74-75K (no change). Baseline: 75K. Both DDP features exonerated. The overhead is the cost of gradient sync itself, constant across 3/4/7 GPUs (6.25% in all cases).",
+   "id": "eff.ddp_5k_not_identified",
+   "claim": "7-GPU vs single-GPU 6.25% throughput gap: two candidates (static_graph, gradient_as_bucket_view) both exonerated, source not identified",
+   "value": "7-GPU vs single-GPU 6.25% gap. static_graph=False: no change. bucket_view=False: no change. Not proven intrinsic — two candidates excluded, others remain.",
    "measured": "2026-08-30",
    "source": "A/B: b4_no_sg (static_graph=False) vs b4_no_bv (bucket_view=False) vs baseline, 4xGPU4-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32, mix_scale_0.2b, 40 steps, bucket50, default NCCL protocol. Profile: GPU idle only 1.5% (27.7ms/step), NCCL 18.2% (overlapped with compute), GPU 98.5% busy.",
    "config": {
@@ -745,8 +745,8 @@
     "nccl_pct": 18.2
    },
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
-   "boundary": "DDP intrinsic overhead; not worth further pursuit (6.25% = 13min on 3.5h six-point runs); closed per fb timebox",
-   "status": "closed"
+   "boundary": "Excluded: transmission (NCCL 18.2% overlapped), GPU idle (1.5%), static_graph, gradient_as_bucket_view. Not excluded: CPU-side reducer hook launch slowdown, DDP-introduced extra small kernels (6400 elementwise + 2960 reduction). Closed by timebox, not by identification. 3-GPU and 7-GPU both 6.25% — constant across ring size, but may vary with model size (re-test at 2B).",
+   "status": "closed (unresolved)"
   }
  ]
 }
