@@ -641,7 +641,8 @@
     "toc_tightening": "loose TOC (400: 6 hits/3 junk) replaced by line-anchored two-consecutive-chapter-lines after a 150 FP was prose cross-refs; tightened version kills that FP; its 150 hit (0cf1eb8fa4ae) was relabeled junk by 3b (book-TOC+metadata), so TOC ends at 14/14 on the 150; 0 hits on the locked 400",
     "baseline_correction": "3b's 1.7% baseline was run on 120-char excerpts, not the production code path; full-text OLD baseline on the same 150 is 11.9% (7/59)",
     "pod_hygiene": "candidate patterns validated from /tmp on the pod; /work/aupai/filters untouched while 3b's rebuild runs; data/quality_head.pt not touched (swap timing is fb's call)",
-    "verdict": "shipped; Step 2 (quality head retrain) FAILED the bar -- see dq.head.recal_step2_failed; the regex layer is now the only measured junk filter on CCI3"
+    "verdict": "shipped; Step 2 (quality head retrain) FAILED the bar -- see dq.head.recal_step2_failed; the regex layer is now the only measured junk filter on CCI3",
+    "label_version": "all 150 numbers are on label_set_version v2 (0cf1eb8fa4ae=junk, commit 88a31f1); v1 had it usable -- v1 would read NEW recall 30.5%/precision 72.0%, new-pattern precision 13/14"
    },
    "uncertainty": "150-sample precision +/-9pp at n=150; rubric on book-TOC+metadata pages now aligned between 3b and agent C (3b conceded 2026-08-30)",
    "status": "measured"
@@ -658,7 +659,8 @@
     "pooling_check": "tail-512 pooling with the old head: AUC 0.542 -- feature location is not the bottleneck",
     "implication": "0.541's role is to reinforce the CCI3 exclusion ruling (quality judgements do not transfer across corpora), NOT to question the fineweb2 rebuild -- that rebuild scores with the head at AUC 0.823 on its own distribution. 3b's running web_hq rebuild: continue, no stop",
     "hygiene": "new head saved as /tmp/quality_head_recal.pt on the pod, NOT deployed; data/quality_head.pt untouched (swap timing is fb's call, now moot -- the new head is not better)",
-    "next_levers": "DCLM-style fastText (fb's call 2026-08-30: CPU-only, zero LLM labels, start from the 550 existing labels, not on the critical path; deliverable = recall/precision on the locked 400 AND no degradation on web_labels/fineweb2 vs the old head's 0.823). 27B-direct on CCI3 deferred (cross-register transfer unmeasured, GPU contented)"
+    "next_levers": "DCLM-style fastText (fb's call 2026-08-30: CPU-only, zero LLM labels, start from the 550 existing labels, not on the critical path; deliverable = recall/precision on the locked 400 AND no degradation on web_labels/fineweb2 vs the old head's 0.823). 27B-direct on CCI3 deferred (cross-register transfer unmeasured, GPU contented)",
+    "label_version": "head trained on v1 labels (0cf1eb8fa4ae=usable); the v2 flip of one training doc does not move the locked-400 result (400 never touched); fastText follow-up trains on v2"
    },
    "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
    "status": "measured"
