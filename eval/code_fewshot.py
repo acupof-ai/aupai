@@ -120,9 +120,13 @@ def main():
     num_id = getattr(cfg, "num_id", None)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
+    # Rows 0-2 are the demo pool, always excluded from eval -- so every arm
+    # (0/1/3-shot) scores on the same 497 problems. fb 2026-08-30: a comparison
+    # that needs a "N differs slightly" footnote is not the same comparison.
+    DEMO_POOL = 3
     demos = [(r["instruction"], r["reference_code"], r["expected_output"])
              for r in rows[:args.demos]]
-    evals = rows[args.demos:]
+    evals = rows[DEMO_POOL:]
     print(f"code few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
     preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot.jsonl")
