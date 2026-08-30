@@ -599,9 +599,10 @@ def check_corpus_filters_fp(root):
     it cannot say why, and cannot answer 'did this batch go through pass3'. build_corpus.py now
     stamps filters_fp beside the content fingerprint.
 
-    Domains built before the stamp existed carry no filters_fp. That is reported, not failed --
-    it is unrecoverable, nothing wrote it down. A MISMATCH is a failure: it means the shards
-    predate the filters currently in the tree."""
+    Domains built before the stamp existed carry no filters_fp. That is baselined debt
+    (facts/corpus_filters_baseline.json, only shrinks): a no-stamp domain NOT in the baseline
+    is new debt and FAILs; a no-stamp domain IN the baseline is reported in gaps. A MISMATCH
+    is always a failure: it means the shards predate the filters currently in the tree."""
     sys.path.insert(0, os.path.join(root, "scripts"))
     import corpus_fingerprint as cf
 
@@ -619,42 +620,44 @@ def check_corpus_filters_fp(root):
         # never built corpus has nothing to verify; mix_shards_present owns "corpus vanished
         # on a GPU box".
         return SKIP, "no mix-domain corpus on this machine"
-    stale, unrecorded, ok = [], [], 0
+    baseline_path = os.path.join(root, CORPUS_FILTERS_BASELINE)
+    baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
+    stale, new_unstamped, baselined, ok = [], [], [], 0
     for dom in present:
         stats = os.path.join(corpus, dom, "build_corpus_stats.json")
-        if not os.path.isfile(stats):
-            unrecorded.append(dom)
-            continue
-        with open(stats) as f:
-            got = json.load(f).get("filters_fp")
+        got = None
+        if os.path.isfile(stats):
+            with open(stats, encoding="utf-8") as f:
+                got = json.load(f).get("filters_fp")
         if got is None:
-            unrecorded.append(dom)
+            if dom in baseline:
+                baselined.append(dom)
+            else:
+                new_unstamped.append(dom)
         elif got != live:
             stale.append(f"{dom} built with filters {got}, tree is {live}")
         else:
             ok += 1
     if stale:
         return FAIL, "; ".join(stale)
-    if ok == 0:
-        # Mix-domain corpus exists but nothing matches the live filters fingerprint. The
-        # check verified nothing; a PASS here would be vacuous -- the shape that let token
-        # caches vanish silently.
+    if new_unstamped:
         return FAIL, (
-            f"0/{len(present)} mix domain(s) match filters {live}; "
-            f"{len(unrecorded)} have no stamp ({', '.join(unrecorded)}) -- rebuild to stamp them"
+            f"{len(new_unstamped)} domain(s) have no filters_fp and are not in the baseline "
+            f"({', '.join(new_unstamped)}) -- rebuild to stamp, or register in {CORPUS_FILTERS_BASELINE}"
         )
-    if unrecorded:
-        # This is an honest unknown, not a green light: nothing recorded which filters built
-        # those shards and nothing can recover it. Rebuild stamps them.
-        note = (f"; UNKNOWN, not verified: {len(unrecorded)} domain(s) predate the stamp "
-                f"({', '.join(unrecorded)}) -- rebuild to stamp them")
-    else:
-        note = ""
-    return PASS, f"{ok} domain(s) match filters {live}{note}"
+    if ok == 0 and not baselined:
+        return FAIL, f"0/{len(present)} mix domain(s) match filters {live}"
+    note = ""
+    if baselined:
+        note = (f"; BASELINED debt: {len(baselined)} domain(s) built before filters_fp existed "
+                f"({', '.join(baselined)}) -- rebuild to stamp and shrink the baseline")
+    return PASS, f"{ok}/{len(present)} domain(s) match filters {live}{note}"
 
 
 def _broken_corpus_filters_fp():
-    d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0}})
+    """Two failure modes: a stale stamp (mismatch with live filters) and a no-stamp
+    domain that is NOT in the baseline (new debt). Both must FAIL."""
+    d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
     with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
         fh.write("# a filter\n")
@@ -662,6 +665,8 @@ def _broken_corpus_filters_fp():
     os.makedirs(dom, exist_ok=True)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
         json.dump({"fingerprint": "deadbeef", "filters_fp": "0000000000000000"}, fh)
+    # en: no stamp at all, no baseline file in this world -> new unstamped domain
+    os.makedirs(os.path.join(d, "data", "corpus", "en"), exist_ok=True)
     return d
 
 
@@ -1015,6 +1020,7 @@ FACT_SOURCE_PATH = re.compile(
 # Debt register for tracked-missing sources: each entry carries a reason. Can only
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
 FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
+CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
 
 
 def _is_gitignored(path, root):
@@ -1080,7 +1086,8 @@ def check_facts_well_formed(root):
         return FAIL, "facts/ does not exist -- measurements have nowhere to carry their config"
     files = sorted(
         p for p in glob.glob(os.path.join(facts_dir, "*.json"))
-        if os.path.basename(p) != os.path.basename(FACT_SOURCE_BASELINE)
+        if os.path.basename(p)
+        not in (os.path.basename(FACT_SOURCE_BASELINE), os.path.basename(CORPUS_FILTERS_BASELINE))
     )
     if not files:
         return FAIL, "facts/ holds no *.json"
@@ -2921,6 +2928,12 @@ def gaps():
         print(f"\n  {len(debt)} baselined fact source(s) -- debt register, can only shrink:")
         for path, reason in sorted(debt.items()):
             print(f"    {path}: {reason[:90]}")
+    cfb = os.path.join(ROOT, CORPUS_FILTERS_BASELINE)
+    if os.path.exists(cfb):
+        debt = json.load(open(cfb, encoding="utf-8"))
+        print(f"\n  {len(debt)} baselined corpus domain(s) without filters_fp -- debt register, can only shrink:")
+        for dom, reason in sorted(debt.items()):
+            print(f"    {dom}: {reason[:90]}")
 
 
 def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
@@ -3332,7 +3345,19 @@ LADDER = [
 # token caches, and mix_supply is red precisely because they are missing -- gating one on
 # the other is a deadlock with no way out but --force, which then also waves through the
 # reds that DO matter.
-_REPAIRS = {"pretokenize": {"mix_supply"}}
+#
+# fetch -> clean -> score -> dedup: each step makes the next step's precondition green.
+# fetch is step 1, so every corpus-chain red is red because the chain hasn't run yet --
+# blocking fetch on any of them deadlocks the chain. clean rebuilds the corpus and clears
+# mix_shards_present / corpus_filters_fp / corpus_fp directly. score re-scores and clears
+# score_input_fresh. dedup writes a manifest without touching shards, so no check goes
+# red because of it and it needs no exemption.
+_REPAIRS = {
+    "pretokenize": {"mix_supply"},
+    "fetch": {"mix_shards_present", "corpus_filters_fp", "corpus_fp", "score_input_fresh"},
+    "clean": {"mix_shards_present", "corpus_filters_fp", "corpus_fp"},
+    "score": {"score_input_fresh"},
+}
 
 
 def _gate(force, step=None):
@@ -3376,6 +3401,24 @@ def _step_name(step, step_args):
         if a.startswith(("--source=", "--domain=")):
             return f"{step}_{a.split('=', 1)[1]}"
     return step
+
+
+def _preflight_fetch(step_args):
+    """Disk guard at the harness entry, before the exp row. A fetch that cannot fit
+    must refuse here, not 200GB into the pull. The script keeps its own guard for
+    direct invocation (defense-in-depth); this is the one that blocks the pipeline."""
+    target = 0.0
+    for i, a in enumerate(step_args):
+        if a == "--target_bytes" and i + 1 < len(step_args):
+            target = float(step_args[i + 1])
+            break
+        if a.startswith("--target_bytes="):
+            target = float(a.split("=", 1)[1])
+            break
+    sys.path.insert(0, HERE)
+    import fetch_corpus
+    fetch_corpus.ensure_raw_location()
+    return fetch_corpus.disk_ok(target)
 
 
 def _run_pipeline_step(step, script, step_args, forced, env=None):
@@ -3680,6 +3723,8 @@ def run_dispatch(rest):
     if step == "ladder":
         return _run_ladder(step_args, forced)
     if step == "fetch":
+        if not _preflight_fetch(step_args):
+            return 2
         return _run_pipeline_step("fetch", "fetch_corpus.py", step_args, forced)
     if step == "clean":
         return _run_pipeline_step("clean", "clean_corpus.py", step_args, forced)
