@@ -15,6 +15,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+from loader import IM_END, IM_START  # noqa: E402
+
 
 def runs(labels):
     """[(kind, start, end)] spans of masked / supervised positions."""
@@ -27,9 +29,27 @@ def runs(labels):
     return out
 
 
+def tool_spans_masked(row, labels, tok):
+    """True iff every token from <|im_start|>tool through its <|im_end|> is -100.
+    Stronger than the 'no role marker supervised' check in main(): it also catches
+    a tool turn whose MARKERS are masked but whose CONTENT is supervised -- the
+    pack that teaches the model to fabricate tool output."""
+    open_ids = tok.encode(IM_START + "tool\n", add_special_tokens=False).ids
+    im_end = tok.token_to_id(IM_END)
+    L = len(open_ids)
+    for i in range(len(row) - L + 1):
+        if list(row[i : i + L]) == open_ids:
+            j = i + L
+            while j < len(row) and row[j] != im_end:
+                j += 1
+            if j >= len(row) or any(y != -100 for y in labels[i : j + 1]):
+                return False
+    return True
+
+
 def main():
     import torch
-    from loader import IM_END, format_example
+    from loader import format_agentic, format_example, format_prompt
     from prepare_sft import pack_and_save
     from tokenizers import Tokenizer
 
@@ -75,6 +95,50 @@ def main():
     sup = [t for t, y in zip(row, la, strict=True) if y != -100]
     assert im_end in sup, "the turn terminator is never supervised; the model cannot learn to stop"
     print(f"test_sft_pack OK ({len(pairs)} examples -> {ids.shape[0]} rows, {len(spans)} mask spans)")
+
+    # --- agentic (tool-call) packs: the tool turn is given, never generated ---
+    conv = [
+        {"role": "user", "content": "12/60 是多少？用计算器"},
+        {"role": "assistant", "content": "12/60 = "},
+        {"role": "tool", "content": "0.2"},
+        {"role": "assistant", "content": "12/60 = 0.2"},
+    ]
+    apairs = format_agentic(conv)
+    assert len(apairs) == 2, f"{len(apairs)} pairs for 2 assistant turns"
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "agentic.pt")
+        pack_and_save(apairs, tok, eos, out, 255)
+        d = torch.load(out, weights_only=True)
+    ids, lab = d["input_ids"], d["labels"]
+    for r in range(ids.shape[0]):
+        assert tool_spans_masked(ids[r].tolist(), lab[r].tolist(), tok), (
+            f"row {r}: a tool-turn token is supervised -- the model is taught to write tool output"
+        )
+    # the assistant's <|im_end|> on the tool call is supervised: the pivot of the loop
+    row0, la0 = ids[0].tolist(), lab[0].tolist()
+    assert im_end in [t for t, y in zip(row0, la0) if y != -100], "call's stop token is masked"
+
+    # failing case: tool CONTENT supervised with its markers masked -- the exact pack
+    # that trains a model to fabricate tool output, invisible to the marker check above.
+    bad_pairs = [(format_prompt("q") + f"{IM_START}tool\n", f"0.2{IM_END}")]
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "bad.pt")
+        pack_and_save(bad_pairs, tok, eos, out, 255)
+        d = torch.load(out, weights_only=True)
+    assert not tool_spans_masked(d["input_ids"][0].tolist(), d["labels"][0].tolist(), tok), (
+        "guard did not fire: a pack with supervised tool content passed the tool-mask check"
+    )
+
+    # deliverable: one real rendered agentic sample, -100 spans marked
+    print("\nagentic sample (masked=-100, supervised=loss):")
+    for r in range(ids.shape[0]):
+        rr, ll = ids[r].tolist(), lab[r].tolist()
+        for kind, a, b in runs(ll):
+            if set(rr[a:b]) == {eos}:
+                continue  # right padding
+            print(f"  row {r} {kind:10s} {tok.decode(rr[a:b], skip_special_tokens=False)!r}")
+
+    print(f"test_sft_pack agentic OK ({len(apairs)} pairs -> {ids.shape[0]} rows; tool spans masked, failing case caught)")
 
 
 if __name__ == "__main__":

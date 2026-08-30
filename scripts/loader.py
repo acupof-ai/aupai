@@ -135,6 +135,30 @@ def format_history(messages):
     return out + f"{IM_START}assistant\n"
 
 
+def format_agentic(messages):
+    """Multi-turn conversation with tool calls -> [(prompt, completion)], one pair
+    per assistant turn. Each assistant turn is supervised exactly once: as its own
+    pair's completion, with every prior turn (user/assistant/tool) masked in the
+    prompt. The packer's single mask boundary is what makes this a list of pairs
+    rather than one sequence with holes.
+
+    Tool turns are plain-text role turns (<|im_start|>tool\\n...<|im_end|>): no new
+    special tokens, lossless under skip_special_tokens=False. The assistant's
+    <|im_end|> on a tool call is supervised like any other stop -- it is the pivot
+    the agent loop waits on, and masking it trains a model that never stops
+    calling. Tool output is never supervised: teaching the model to write tool
+    output trains the opposite of an agent.
+    """
+    for i, m in enumerate(messages):
+        if m["role"] == "tool" and (i == 0 or messages[i - 1]["role"] != "assistant"):
+            raise ValueError(f"tool turn at index {i} does not follow an assistant turn")
+    return [
+        (format_history(messages[:i]), f"{m['content']}{IM_END}")
+        for i, m in enumerate(messages)
+        if m["role"] == "assistant"
+    ]
+
+
 def _demo():
     """Each way this loader is supposed to fail, actually provoked -- a self-test that
     never builds a wrong tokenizer proves nothing about the fingerprint."""
@@ -179,6 +203,35 @@ def _demo():
     assert (pr + comp).count("<|im_start|>user") == 1, "the prompt appears twice in one example"
     assert format_prompt("x", system="s").startswith("<|im_start|>system\ns<|im_end|>")
     assert format_history([{"role": "user", "content": "a"}]) == format_prompt("a")
+    # agentic: one pair per assistant turn; the tool turn and the prior assistant
+    # turn both land in the masked prompt.
+    conv = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": "call"},
+        {"role": "tool", "content": "0.2"},
+        {"role": "assistant", "content": "ans"},
+    ]
+    ap = format_agentic(conv)
+    assert len(ap) == 2, f"{len(ap)} pairs for 2 assistant turns"
+    assert ap[0] == (format_prompt("q"), "call" + IM_END)
+    assert ap[1][0] == (
+        f"{IM_START}user\nq{IM_END}\n"
+        f"{IM_START}assistant\ncall{IM_END}\n"
+        f"{IM_START}tool\n0.2{IM_END}\n"
+        f"{IM_START}assistant\n"
+    ), ap[1][0]
+    assert ap[1][1] == "ans" + IM_END
+    # the tool turn renders losslessly (8 tokens without the trailing newline)
+    tool_turn = f"{IM_START}tool\n0.2{IM_END}"
+    assert tok.decode(tok.encode(tool_turn, add_special_tokens=False).ids,
+                      skip_special_tokens=False) == tool_turn
+    for bad in ([{"role": "tool", "content": "x"}],
+                [{"role": "user", "content": "q"}, {"role": "tool", "content": "x"}]):
+        try:
+            format_agentic(bad)
+            raise AssertionError(f"malformed conversation accepted: {bad}")
+        except ValueError:
+            pass
     # one token each, or the format costs 8 tokens a turn
     for sp in (IM_START, IM_END):
         assert len(tok.encode(sp, add_special_tokens=False).ids) == 1, (
