@@ -20,6 +20,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 
@@ -461,6 +462,39 @@ def check_gemm_dims(root):
     if bad:
         return FAIL, f"GEMM dims not 8-aligned: {', '.join(bad)} -- cuBLAS drops to an align-1 kernel"
     return PASS, f"{', '.join(f'{k}={v}' for k, v in sorted(dims.items()))} all 8-aligned"
+
+
+def check_restartability(root):
+    """A two-hour job that writes once at the end loses everything when interrupted
+    (datagen/train_quality_head.py, killed at 50%, lost 100%). Ratcheted against
+    scripts/restartability_baseline.json: only a NEW offender fails. Full report:
+    scripts/restartability_audit.py."""
+    audit = os.path.join(root, "scripts", "restartability_audit.py")
+    base = os.path.join(root, "scripts", "restartability_baseline.json")
+    if not os.path.exists(audit):
+        return FAIL, "scripts/restartability_audit.py missing -- the check cannot run"
+    if not os.path.exists(base):
+        return FAIL, "scripts/restartability_baseline.json missing -- every script would read as new"
+    out = subprocess.run([sys.executable, audit], cwd=root, capture_output=True, text=True)
+    if out.returncode == 0:
+        return PASS, out.stdout.strip().splitlines()[-1] if out.stdout.strip() else "no new offenders"
+    new = [ln for ln in out.stdout.splitlines() if ln.startswith("[NEW]")]
+    return FAIL, "; ".join(new)[:300] or "restartability_audit failed"
+
+
+def _broken_restartability():
+    """The real regression: a new script that accumulates in a loop and saves once at the end."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    for f in ("restartability_audit.py", "restartability_baseline.json"):
+        shutil.copy(os.path.join(ROOT, "scripts", f), os.path.join(d, "scripts", f))
+    os.makedirs(os.path.join(d, "datagen"), exist_ok=True)
+    with open(os.path.join(d, "datagen", "new_long_job.py"), "w") as fh:
+        fh.write("import numpy as np\nxs = []\nfor i in range(10):\n    xs.append(i)\n"
+                 "np.save('out.npy', xs)\n")
+    return d
 
 
 def _broken_gemm_dims():
@@ -1093,6 +1127,13 @@ CHECKS = [
         _broken_ghost_running,
     ),
     (
+        "restartability",
+        "no NEW script accumulates in a loop and writes only at the end",
+        "a two-hour scoring job wrote once at the end; killed at 50% it lost 100% of the work",
+        check_restartability,
+        _broken_restartability,
+    ),
+    (
         "gemm_dims_aligned",
         "Cfg's GEMM dimensions are multiples of 8",
         "vocab 32773 made cuBLAS pick an SM75 align-1 kernel on Hopper; the LM head ran at 41% of bf16 peak, unnoticed",
@@ -1191,7 +1232,7 @@ STAGES = [
         "a tokenizer_<name>.json pinned per live checkpoint",
     ),
     ("corpus", ["mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
-    ("pretrain", ["gemm_dims_aligned", "guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
+    ("pretrain", ["restartability", "gemm_dims_aligned", "guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
     ("sft", ["pinned_ids"], "pack fingerprint == checkpoint vocab_id; loss-mask test passes"),
     ("eval", [], "math-hard recorded in runs/experiments.jsonl"),
 ]
