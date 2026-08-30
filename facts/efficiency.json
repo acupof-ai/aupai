@@ -771,20 +771,20 @@
     {
       "id": "eff.qwen38_27b_scoring_service",
       "claim": "how the 27B scoring service is started, so the next person does not have to rediscover it",
-      "value": "Up and answering on the pod, http://127.0.0.1:8100, OpenAI-compatible. Smoke test: prompt 'The capital of France is', max_tokens 24, temperature 0 -> a coherent completion, 13 prompt / 24 completion tokens. GPU4 26.7 GB resident, GPU5 26.7 GB. NOTE FOR CALLERS: the model emits a <think> block first (Qwen3.8 thinking mode), so a scorer must either disable thinking in the prompt or parse past it before reading the answer.",
+      "value": "Two INDEPENDENT single-card servers, one process each: http://127.0.0.1:8100 (GPU4) and http://127.0.0.1:8101 (GPU5), OpenAI-compatible, 28.4 GB each. NOTE FOR CALLERS: the model emits a <think> block first (Qwen3.8 thinking mode), so a scorer must either disable thinking in the prompt or parse past it before reading the answer. READINESS: probe with a real 1-token completion, never /v1/models -- the first deployment answered /v1/models while its engine was dead.",
       "measured": "2026-08-30",
       "source": "started by the tileRL session; command recorded below verbatim",
       "config": {
         "weights": "/data00/Qwen3.8-27B-NVFP4 (NVFP4 only -- the bf16 copy is broken, MMLU 0.0%)",
         "tilerl_commit": "5be4085 (synced to /work/tilerl by scripts/pod_sync.sh)",
-        "command": "setsid nohup bash -c 'cd /work/tilerl && export PYTHONPATH=/work/tilerl/src:/work/tilerl/packages/tilerl-kernels/src TILELANG_CACHE_DIR=/work/tilelang_cache TILERL_TARGET=cuda TILERL_QWEN38_SOURCE=/data00/Qwen3.8-27B-NVFP4 CUDA_VISIBLE_DEVICES=4,5 && python -m tilerl.cli serve --model qwen38-27b --host 0.0.0.0 --port 8100 --devices 0,1 >> /work/tilerl/serve27b.log 2>&1' </dev/null >/dev/null 2>&1 &",
-        "devices": "CUDA_VISIBLE_DEVICES=4,5 then --devices 0,1 (one engine replica per visible card)",
+        "command": "per card, two separate processes: setsid nohup bash -c 'cd /work/tilerl && export PYTHONPATH=/work/tilerl/src:/work/tilerl/packages/tilerl-kernels/src TILELANG_CACHE_DIR=/work/tilelang_cache TILERL_TARGET=cuda TILERL_QWEN38_SOURCE=/data00/Qwen3.8-27B-NVFP4 CUDA_VISIBLE_DEVICES=<4|5> && python -m tilerl.cli serve --model qwen38-27b --host 0.0.0.0 --port <8100|8101>' &",
+        "devices": "ONE CARD PER PROCESS, and --devices is deliberately NOT passed. cli.py:56-81: --devices builds a DataParallelEngine, which is replicas inside ONE process; a CUDA error in one replica is sticky for the whole process, so one card's failure takes the other down while HTTP keeps answering. Omitting --devices takes the plain build_engine path, pinned by CUDA_VISIBLE_DEVICES.",
         "port": 8100,
-        "log": "/work/tilerl/serve27b.log",
+        "log": "/work/tilerl/serve27b_g4.log and serve27b_g5.log",
         "cuda_graph": "ON. Engine.__init__ sets _decode_graph_on = decode_graph and draft is None; serve takes no --draft, so the graph stays on. Passing a draft would silently disable it and cost 7.9x at B=1 (11.6 -> 91.6 ms/tick).",
         "startup_time": "about 4 minutes to first ready /v1/models"
       },
-      "uncertainty": "only a single-request smoke test; no throughput or concurrency measurement. Sized for the 400-document validation, not for the full 216-shard corpus.",
+      "uncertainty": "First deployment used --devices 0,1 and died before serving any scoring traffic: /v1/chat/completions returned cudaErrorStreamCaptureInvalidated and engine.py:717 _make_kv threw AcceleratorError in a loop, while /v1/models still answered. GPU4 had dropped 26.7 -> 11.2 GB, GPU5 held 26.8 -- one replica dead, one alive, same PID. VERIFIED: --devices means one process (code plus the single PID across both cards). INFERRED, NOT PROVEN: that concurrent CUDA-graph capture between the two replicas is what invalidated the capture. The single-card split removes the shared-process failure mode either way. No throughput or concurrency measurement; sized for 400 documents.",
       "boundary": "the service is this session's; scoring prompts, acceptance criteria and their facts belong to the scoring session",
       "status": "measured",
       "refuted_by": "the recorded command failing to bring the service up on a clean pod"
