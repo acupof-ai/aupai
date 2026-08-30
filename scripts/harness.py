@@ -1206,8 +1206,14 @@ def _demo():
 
     saved = os.path.join(ROOT, "runs", "experiments.jsonl")
     if os.path.exists(saved) and os.path.getsize(saved):
-        s, _o = recorded_scores()
-        assert s, "no scores attributed at all from a non-empty experiments.jsonl"
+        # Only when the log carries math-hard-shaped results: a fresh log (the 0830v1 reset
+        # wiped it) legitimately has none, and an empty parse of an empty-of-scores log is
+        # not a parser regression. A ceval percentage in a row does not count -- recorded_scores
+        # is the math-hard ledger.
+        rows = [json.loads(l) for l in open(saved, encoding="utf-8") if l.strip()]
+        if any(SCORE_RE.search(str(r.get("result", ""))) for r in rows):
+            s, _o = recorded_scores()
+            assert s, "math-hard-shaped results exist but none attributed: score_from stopped parsing"
 
     import tempfile
 
