@@ -67,7 +67,15 @@ source: "project measurements 2026-08-30; facts in facts/efficiency.json; profil
 
 **Long dependency**: Full causal attention covers 4096 positions. KDA's long-range rationale (carry beyond attention window) is already covered. KDA may still provide compression, different inductive bias, or chunk-level features (short_conv). This test answers whether KDA adds value at 4096 context.
 
-**Metrics**: Primary = per-domain NLL (4 seed × 2 arm, MDE≈0.035). Secondary = CLiMP/LAMBADA/math v2 (may lack resolution at 0.2b, trend only). Throughput also reported (expected +2% for all-attention).
+**Metrics**: Primary = per-domain NLL (4 seed × 2 arm, MDE≈0.035). Secondary = CLiMP/LAMBADA/math v2 (may lack resolution at 0.2b, trend only). Throughput also reported.
+
+**Memory probe** (tilerl, H20 GPU0, batch 16, seq 4096, bf16, no compile, no fp8, 3-step avg):
+- `attn_every 4` (current): 66.3GB peak, 1537.8ms/step, 42616 tok/s
+- `attn_every 1` (all-attention): 53.9GB peak, 1590.9ms/step, 41195 tok/s
+- All-attention **saves 12.4GB (-18.8%)** but is **3.3% slower** (not +2% as initially predicted)
+- Mechanism: KDA's `disable_recompute=True` trades memory for speed (+3GB, 8-15% faster, train.py:262). Replacing 9 KDA layers loses this trade-off — saved activation memory and lost throughput are two sides of the same coin.
+- Both arms at batch 16 are memory-safe. The constrained arm is `attn_every 4` (66.3GB), not all-attention.
+- 66.3GB is a lower bound (single-process, no compile, no fp8); not comparable to the 50.8GB measured with fp8+compile.
 
 **Cost**: 4 seeds × 2 arms × ~6 min = ~48 min (0.2b, 7 GPUs). Tokenization shared with six points, paid once.
 
