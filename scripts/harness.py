@@ -1881,6 +1881,171 @@ def stages(res=None):
     print(f"\n  eval postcondition: {len(scores)} checkpoint(s) carry a math-hard score.")
 
 
+# --------------------------------------------------------------------------- board
+
+
+def _val_nll(name):
+    """Last val NLL from runs/<name>.log, or None. The log line is
+    'ep 1/1 train 3.281 val 3.322 615s'."""
+    log = os.path.join(ROOT, "runs", f"{name}.log")
+    if not os.path.exists(log):
+        return None
+    val = None
+    for line in open(log, encoding="utf-8", errors="replace"):
+        m = re.search(r"val (\d+\.\d+)", line)
+        if m:
+            val = float(m.group(1))
+    return val
+
+
+def _board_event(kind, msg):
+    """Append an event to runs/events.jsonl. The harness knows when things
+    happen; this is how it stops staying silent."""
+    path = os.path.join(ROOT, "runs", "events.jsonl")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M"), "kind": kind, "msg": msg}) + "\n")
+
+
+def _board_data():
+    """All board state, gathered from the same artifacts the checks read."""
+    res = run_checks(ROOT, quiet=True)
+    checks = [{"name": n, "state": s, "evidence": e} for n, s, e, _a, _i in res]
+    n_skip = sum(1 for c in checks if c["state"] == SKIP)
+    n_fail = sum(1 for c in checks if c["state"] == FAIL)
+    # score matrix: ckpt -> metrics
+    sm = {}
+    sm_path = os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    if os.path.exists(sm_path):
+        for line in open(sm_path, encoding="utf-8"):
+            if line.strip():
+                r = json.loads(line)
+                sm[r["ckpt"]] = r.get("metrics", {})
+    # ladder points
+    ladder = []
+    for name, mix in LADDER:
+        ckpt = f"ckpt_{name}.pt"
+        m = sm.get(ckpt, {})
+        dl = m.get("domain_loss", {})
+        ladder.append({
+            "name": name,
+            "mix": os.path.basename(mix),
+            "val_nll": _val_nll(name),
+            "domain_loss": dl.get("unweighted_mean"),
+            "minimal_pairs": m.get("minimal_pairs", {}).get("overall"),
+            "lambada_zh": m.get("lambada_zh", {}).get("two_way_acc"),
+            "math_v2_like": m.get("math_v2_like", {}).get("acc") or m.get("math_v2_like", {}).get("pass1"),
+            "ceval": m.get("mc_ceval", {}).get("Average"),
+            "scored": ckpt in sm,
+        })
+    # recent experiments (last 8)
+    exps = []
+    exp_path = os.path.join(ROOT, "runs", "experiments.jsonl")
+    if os.path.exists(exp_path):
+        rows = [json.loads(l) for l in open(exp_path, encoding="utf-8") if l.strip()]
+        for r in rows[-8:]:
+            exps.append({"name": r.get("name"), "status": r.get("status"),
+                         "started": r.get("started"), "cmd": r.get("cmd", "")[:80]})
+    # events (last 10)
+    events = []
+    ev_path = os.path.join(ROOT, "runs", "events.jsonl")
+    if os.path.exists(ev_path):
+        rows = [json.loads(l) for l in open(ev_path, encoding="utf-8") if l.strip()]
+        events = rows[-10:]
+    # staleness: newest artifact mtime
+    newest = 0.0
+    for p in [sm_path, exp_path, os.path.join(ROOT, "train.py")]:
+        if os.path.exists(p):
+            newest = max(newest, os.path.getmtime(p))
+    return {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else None,
+                      "skip_count": n_skip, "fail_count": n_fail},
+        "checks": checks,
+        "ladder": ladder,
+        "experiments": exps,
+        "events": events,
+    }
+
+
+def _render_board_html(d):
+    """Self-contained HTML: inline CSS, system fonts, no external deps."""
+    def pct(v):
+        return f"{v*100:.1f}%" if isinstance(v, (int, float)) and v <= 1 else (f"{v}" if v is not None else "—")
+
+    def num(v, fmt="{:.3f}"):
+        return fmt.format(v) if isinstance(v, (int, float)) else "—"
+
+    colors = {PASS: "#2d7d32", FAIL: "#c62828", SKIP: "#888", WARN: "#f9a825"}
+    rows = ""
+    for c in d["checks"]:
+        color = colors.get(c["state"], "#888")
+        rows += f'<tr><td>{c["name"]}</td><td style="color:{color};font-weight:600">{c["state"]}</td><td>{c["evidence"][:100]}</td></tr>\n'
+
+    lrows = ""
+    for p in d["ladder"]:
+        status = "✓ scored" if p["scored"] else "…"
+        lrows += (f'<tr><td>{p["name"]}</td><td>{p["mix"]}</td><td>{num(p["val_nll"])}</td>'
+                  f'<td>{num(p["domain_loss"])}</td><td>{pct(p["minimal_pairs"])}</td>'
+                  f'<td>{pct(p["lambada_zh"])}</td><td>{pct(p["math_v2_like"])}</td>'
+                  f'<td>{num(p["ceval"], "{:.1f}")}</td><td>{status}</td></tr>\n')
+
+    erows = ""
+    for e in d["events"]:
+        erows += f'<tr><td>{e["ts"]}</td><td>{e["kind"]}</td><td>{e["msg"]}</td></tr>\n'
+
+    xprows = ""
+    for x in d["experiments"]:
+        xprows += f'<tr><td>{x["name"]}</td><td>{x["status"]}</td><td>{x["started"]}</td></tr>\n'
+
+    st = d["staleness"]
+    stale_warn = ""
+    if st["fail_count"]:
+        stale_warn = f'<p style="color:#c62828;font-weight:700">{st["fail_count"]} CHECK(S) RED</p>'
+    if st["skip_count"]:
+        stale_warn += f'<p style="color:#888">{st["skip_count"]} check(s) SKIPped — guard not running, not guard passed</p>'
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>aupai board</title><style>
+body{{font:14px/1.5 system-ui,sans-serif;margin:2em;background:#fafafa;color:#222}}
+h1{{font-size:1.3em}} h2{{font-size:1.1em;margin-top:1.5em;border-bottom:1px solid #ddd;padding-bottom:3px}}
+table{{border-collapse:collapse;width:100%;margin:.5em 0}}
+th,td{{text-align:left;padding:4px 8px;border-bottom:1px solid #eee;font-size:13px}}
+th{{color:#666;font-weight:600}} .meta{{color:#888;font-size:12px}}
+</style></head><body>
+<h1>aupai monitoring board</h1>
+<p class="meta">rendered {d["timestamp"]} · newest artifact {st["newest_artifact"] or "—"}</p>
+{stale_warn}
+<h2>checks</h2><table><tr><th>check</th><th>state</th><th>evidence</th></tr>{rows}</table>
+<h2>ladder points</h2><table><tr><th>point</th><th>mix</th><th>val NLL</th><th>domain loss</th>
+<th>min pairs</th><th>lambada</th><th>math v2</th><th>ceval</th><th>status</th></tr>{lrows}</table>
+<h2>recent experiments</h2><table><tr><th>name</th><th>status</th><th>started</th></tr>{xprows}</table>
+<h2>events</h2><table><tr><th>time</th><th>kind</th><th>message</th></tr>{erows}</table>
+</body></html>"""
+
+
+def cmd_board(as_json=False, html_path=None):
+    """harness board [--json | --html <path>]. Renders harness state as JSON or HTML.
+    Default: writes runs/board.html. Every number is read at render time — nothing typed."""
+    d = _board_data()
+    if as_json:
+        print(json.dumps(d, indent=2, ensure_ascii=False))
+        return 0
+    path = html_path or os.path.join(ROOT, "runs", "board.html")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_render_board_html(d))
+    print(f"board written to {path} ({len(d['checks'])} checks, {len(d['ladder'])} ladder points)")
+    return 0
+
+
+def _refresh_board():
+    """Refresh runs/board.html after a state-changing step. Never blocks the step."""
+    try:
+        cmd_board(html_path=os.path.join(ROOT, "runs", "board.html"))
+    except Exception as e:
+        print(f"board refresh failed (non-blocking): {e}")
+
+
 # ------------------------------------------------------------------------ selftest
 
 
@@ -2175,6 +2340,12 @@ def _run_point(step_args, forced):
          finding="score_matrix record is the result; the fit interprets" if scored else "run failed before scoring",
          decision="proceed to next point" if r.returncode == 0 else "investigate before next point",
          status="ok" if r.returncode == 0 else "fail")
+    if r.returncode == 0 and scored:
+        val = _val_nll(name)
+        _board_event("point_landed", f"{name} scored: val {val:.3f}" if val else f"{name} scored")
+    elif r.returncode != 0:
+        _board_event("point_failed", f"{name} exited {r.returncode}")
+    _refresh_board()
     return r.returncode
 
 
@@ -2197,13 +2368,19 @@ def _run_ladder(step_args, forced):
             continue
         if _gate(bool(forced)) and not forced:
             print(f"ladder: harness red, stopping with {len(done)} point(s) banked")
+            _board_event("check_red", f"ladder stopped at {name}: harness red, {len(done)} point(s) banked")
+            _refresh_board()
             return 1
         print(f"ladder: starting {name} ({mix})")
         rc = _run_point(["--name", name, "--mix", mix], forced)
         if rc != 0:
             print(f"ladder: {name} failed (exit {rc}), stopping")
+            _board_event("ladder_stopped", f"{name} failed (exit {rc}), {len(done)} point(s) banked")
+            _refresh_board()
             return rc
     print("ladder: all six points complete")
+    _board_event("ladder_complete", "all six points scored")
+    _refresh_board()
     return 0
 
 
@@ -2248,8 +2425,10 @@ def main():
         return run_dispatch(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
-        "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages"]
+        "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
     )
+    ap.add_argument("--json", action="store_true", help="board: emit state as JSON instead of HTML")
+    ap.add_argument("--html", default=None, help="board: output path (default runs/board.html)")
     ap.add_argument("--only", help="measure: substring filter on the checkpoint name")
     ap.add_argument("--ngpu", help="measure: shards for eval_all.sh")
     ap.add_argument("--tokenizer", help="measure: the vocabulary these checkpoints were trained on")
@@ -2276,6 +2455,8 @@ def main():
         gaps()
     if cmd == "measure":
         return measure(only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry, full=a.full)
+    if cmd == "board":
+        return cmd_board(as_json=a.json, html_path=a.html)
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)
