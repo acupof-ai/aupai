@@ -582,6 +582,64 @@
    "boundary": "a construction, not a comparison: the variant classes are author-chosen realistic transforms, not a measured source-pair value. A source pair's true overlap needs MinHash run ON that pair.",
    "uncertainty": "recall is on constructed variants, not real cross-source text; real pipelines may introduce other transform classes (HTML unescape, tokenization changes) not in this taxonomy.",
    "status": "measured"
+  },
+  {
+   "id": "cont.scanner_idf_weighting",
+   "value": {
+    "instrument": "scan_math_contamination.py with IDF-weighted containment (two-pass: DF over scanned corpus, then weighted scoring); sparse csc H for large holdout sets",
+    "validation_fp": "12/12 known math-500 FP pairs (unweighted 0.800-0.857) drop below 0.8 weighted, max 0.789; 0 weighted hits across the 11 FP shards",
+    "validation_recall": "verbatim injections of holdout text into clean docs score 1.000 (6/6)",
+    "limitation": "no-punct/whitespace-stripped injections score 0.490-0.886 (4/6 below 0.8) - char-bigram format sensitivity, pre-existing (unweighted fails identically), separate instrument upgrade queued",
+    "residual_fp_class": "mojibake docs share rare bigrams by coincidence and IDF UPweights them (cont.gsm8k_zh_webhq_scan hit #1)"
+   },
+   "measured": "2026-08-30",
+   "source": "scripts/scan_math_contamination.py self-check + /tmp/harden_scan.py validation on math-500 vs web_hq",
+   "config": {
+    "threshold": 0.8,
+    "idf": "log((N+1)/(df+1))+1 over scanned corpus",
+    "min_bigrams": 20
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "cont.gsm8k_zh_webhq_scan",
+   "value": {
+    "hit_rows": 1,
+    "docs": 1366324,
+    "per_gb": 0.2,
+    "exact_hits": 0,
+    "verdict": "clean (ratio 0.00x vs self-baseline, no exact)",
+    "the_hit": "web_000044 doc 698 (mojibake stock-analysis doc, Big5-as-GBK) vs holdout 1870 (triangle angle problem): weighted 0.826, unweighted 0.854 - FALSE POSITIVE, rare-bigram IDF blowup on garbled text; doc is a format-chain miss, not leakage",
+    "holdout_split": "train (7,473 rows); test split would need fetching for the actual eval - train serves as the canary"
+   },
+   "measured": "2026-08-30",
+   "source": "scripts/scan_math_contamination.py (IDF-weighted) + /tmp/gsm_hit_detail.py",
+   "config": {
+    "threshold": 0.8,
+    "baseline": "web_hq self-baseline",
+    "holdout": "data/eval/gsm8k_zh_holdout.jsonl"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "cont.math500_webhq_fp_explained",
+   "value": {
+    "unweighted_hits": 11,
+    "exact": 0,
+    "explanation": "all 11 are common-vocabulary false positives: short template word problems (24-28 bigrams, e.g. 某班有20个学生12个男生几个女生) whose bigrams are generic education vocabulary; hits cluster on 6 of the shortest most generic holdouts (439x2, 227x3, 299x4, 208, 192, 50) - real contamination spreads across holdouts, artefacts cluster where the instrument is weakest",
+    "weighted_hits": 0,
+    "verdict": "math-500 is NOT inflated by web_hq; L1 numbers stand"
+   },
+   "measured": "2026-08-30",
+   "source": "/tmp/contam_details.py + /tmp/harden_scan.py",
+   "config": {
+    "threshold": 0.8,
+    "instrument": "unweighted + IDF-weighted containment"
+   },
+   "uncertainty": null,
+   "status": "measured"
   }
  ]
 }

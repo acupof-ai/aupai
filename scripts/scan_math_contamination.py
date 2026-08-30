@@ -9,26 +9,33 @@ this one adds containment and a cross-language screen.
 
 Screens, cheapest first:
   1. exact-normalized match (same key as scripts/holdout.py: whitespace/punctuation-insensitive)
-  2. containment: |holdout bigrams ∩ text bigrams| / |holdout bigrams| >= threshold.
-     Jaccard is the wrong metric here: a verbatim question embedded in an 841-char
-     document scores Jaccard 0.339. Containment answers the right question -- how much
-     of the holdout is present in the text -- and is monotone in text length.
+  2. containment: |holdout bigrams ∩ text bigrams| / |holdout bigrams| >= threshold,
+     IDF-WEIGHTED over the scanned corpus (pass 1 accumulates document frequency per
+     holdout bigram; pass 2 scores). Without weighting, generic bigrams (学生/班级)
+     dominate short generic holdouts: the 2026-08-30 math-500 scan produced 11 false
+     hits at 0.80-0.86, all education-vocabulary overlap on 24-28-bigram template
+     problems, 0 exact. Weighted, all 12 pairs dropped below 0.8 (max 0.789) while
+     verbatim injections stayed at 1.000. Jaccard is the wrong metric here: a verbatim
+     question embedded in an 841-char document scores Jaccard 0.339. Containment
+     answers the right question -- how much of the holdout is present in the text --
+     and is monotone in text length.
   3. cross-language number-multiset screen (for en sources vs zh holdouts, where surface
      bigrams cannot match): identical number multiset with >= 2 numbers -> flagged for
      human review. Same-language precision is ~1% (2M flags on the math corpus), so use
      it ONLY across languages.
 
-Containment is one sparse matmul: R (rows x vocab) @ H (vocab x holdouts), exact, in C.
-Measured 2026-08-30 on the 245 MB math corpus (530k rows, ~73M tok): 0.74M tok/s with
+Containment is one sparse matmul per pass (pass 1: document frequency for IDF;
+pass 2: scoring). Measured 2026-08-30 on the 245 MB math corpus (530k rows, ~73M tok): 0.74M tok/s with
 the old Python postings loop, 6.8M tok/s single-process matmul, 22M tok/s with 9 fork
 workers -- 100B tok rescans in 1.26h. LSH was considered and rejected: it is approximate
 (needs a recall proof against the 223 known hits) where the exact scan already clears
 the 2h budget. Deps: numpy, scipy (the pod needs both).
 
-Incremental: data/scan_ledger.jsonl records (path, bytes, mtime, holdout_hash, threshold)
--> verdict. A re-run skips shards whose fingerprint, holdout set, and threshold are
-unchanged; a holdout-set change invalidates every entry and forces a full rescan.
---force bypasses.
+Incremental: data/scan_ledger.jsonl records (path, bytes, mtime, holdout_hash, threshold,
+idf) -> verdict. A re-run skips shards whose fingerprint, holdout set, threshold, and
+weighting are unchanged; a holdout-set change invalidates every entry and forces a full
+rescan. Pre-IDF ledger rows (idf absent) never match -- the 0.8 threshold means a
+different quantity weighted. --force bypasses.
 ponytail: bytes+mtime is a make-style fingerprint -- content-hash if a shard can be
 replaced in place adversarially.
 
@@ -178,7 +185,14 @@ def iter_texts(path, qfield, full_doc):
 
 
 class HoldoutIndex:
-    """Sparse matmul containment: R (rows x V) @ H (V x holdouts), exact, in C."""
+    """Sparse matmul containment: R (rows x V) @ H (V x holdouts), exact, in C.
+
+    H is sparse csc: a dense 75K-vocab x 7.5K-holdout H would be 2.2GB; the
+    sparse form is ~6MB. With set_idf, containment is IDF-weighted over the
+    scanned corpus -- generic bigrams stop dominating short generic holdouts
+    (the 2026-08-30 math-500 FP class: 12/12 known FP pairs dropped below 0.8
+    weighted, verbatim injections stayed at 1.000).
+    """
 
     def __init__(self, holdouts):
         self.holdouts = holdouts
@@ -187,81 +201,115 @@ class HoldoutIndex:
         self.sizes = np.array([len(b) for b in h_bigrams], dtype=np.float64)
         vocab = sorted({g for bg in h_bigrams for g in bg})
         self.g2i = {g: i for i, g in enumerate(vocab)}
-        self.H = np.zeros((len(vocab), len(holdouts)), dtype=np.int16)
+        rows, cols = [], []
         for j, bg in enumerate(h_bigrams):
             for g in bg:
-                self.H[self.g2i[g], j] = 1
+                rows.append(self.g2i[g])
+                cols.append(j)
+        self.H = sparse.csc_matrix(
+            (np.ones(len(rows), dtype=np.int8), (rows, cols)),
+            shape=(len(vocab), len(holdouts)),
+        )
+        # column-normalised forms: cont = R @ Hn
+        self.Hn = (self.H @ sparse.diags(1.0 / self.sizes)).tocsr()
         self.short = [i for i, b in enumerate(h_bigrams) if len(b) < MIN_BIGRAMS]
         self.short_set = set(self.short)
+        self.long_cols = [i for i in range(len(holdouts)) if i not in self.short_set]
+        self.idf = None
+        self.Hw_n = None
         self.nums = defaultdict(list)
         for i, q in enumerate(holdouts):
             nums = numbers(q)
             if len(nums) >= 2:
                 self.nums[nums].append(i)
 
-    def scan_chunk(self, texts, threshold):
-        """One batch. Exact-hit rows are excluded from containment (same as the old
-        per-row path: an exact hit returned early, contributing no bigrams)."""
+    def set_idf(self, df, n_docs):
+        """Enable IDF-weighted containment. df: document frequency per vocab
+        bigram over the scanned corpus; n_docs: corpus size."""
+        self.idf = np.log((n_docs + 1) / (df + 1)) + 1.0
+        Hw = self.H.T.multiply(self.idf).T.tocsc()
+        mass = np.asarray(Hw.sum(axis=0)).ravel()
+        self.Hw_n = (Hw @ sparse.diags(1.0 / mass)).tocsr()
+
+    def _matrix(self, texts, skip=()):
+        """Binary doc-bigram matrix R for one batch (bigrams() is a set, so R
+        is binary by construction). `skip` rows contribute no bigrams
+        (exact hits -- same exclusion as the old per-row early return)."""
         ridx, cidx = [], []
-        exact_hits, num_flags = [], 0
-        max_cont = np.zeros(len(self.holdouts), dtype=np.float64)
         for r, text in enumerate(texts):
-            if not text:
-                continue
-            if qhash(text) in self.h_norm:
-                exact_hits.append((r, str(text)[:120]))
+            if not text or r in skip:
                 continue
             for g in bigrams(text):
                 i = self.g2i.get(g)
                 if i is not None:
                     ridx.append(r)
                     cidx.append(i)
+        if not ridx:
+            return None
+        return sparse.csr_matrix(
+            (np.ones(len(ridx), dtype=np.int8), (ridx, cidx)),
+            shape=(len(texts), self.H.shape[0]),
+        )
+
+    def df_chunk(self, texts):
+        """Document-frequency contribution of one batch (column sums of R)."""
+        R = self._matrix(texts)
+        if R is None:
+            return np.zeros(self.H.shape[0], dtype=np.float64)
+        return np.asarray(R.sum(axis=0)).ravel()
+
+    def scan_chunk(self, texts, threshold):
+        """One batch. Exact-hit rows are excluded from containment (same as the
+        old per-row path: an exact hit returned early, contributing no bigrams)."""
+        exact_hits, num_flags = [], 0
+        for r, text in enumerate(texts):
+            if not text:
+                continue
+            if qhash(text) in self.h_norm:
+                exact_hits.append((r, str(text)[:120]))
+                continue
             nums = numbers(text)
             if len(nums) >= 2:
                 num_flags += len(self.nums.get(nums, ()))
-        if ridx:
-            R = sparse.csr_matrix(
-                (np.ones(len(ridx), dtype=np.int16), (ridx, cidx)),
-                shape=(len(texts), self.H.shape[0]),
-            )
-            cont = np.asarray(R @ self.H, dtype=np.float64) / self.sizes
-            max_cont = np.maximum(max_cont, cont.max(axis=0))
-            # per-ROW hits over LONG holdouts only: the additive unit for
-            # scale-free rates (short holdouts saturate and stay a separate bucket)
-            long_cols = [i for i in range(cont.shape[1]) if i not in self.short_set]
-            hit_rows = int((cont[:, long_cols].max(axis=1) >= threshold).sum()) if long_cols else 0
-        else:
-            hit_rows = 0
+        R = self._matrix(texts, skip=frozenset(r for r, _ in exact_hits))
+        if R is None:
+            return exact_hits, np.zeros(len(self.holdouts)), num_flags, 0
+        M = R @ (self.Hw_n if self.idf is not None else self.Hn)
+        max_cont = np.asarray(M.max(axis=0).todense()).ravel()
+        hit_rows = 0
+        if self.long_cols:
+            rowmax = np.asarray(M[:, self.long_cols].max(axis=1).todense()).ravel()
+            hit_rows = int((rowmax >= threshold).sum())
         return exact_hits, max_cont, num_flags, hit_rows
+
+
+def _iter_chunks(path, qfield, full_doc):
+    """Yield text chunks of CHUNK from a path."""
+    chunk = []
+    for text in iter_texts(path, qfield, full_doc):
+        chunk.append(text)
+        if len(chunk) >= CHUNK:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
 
 
 def scan_path(path, idx, qfield, full_doc, threshold):
     n = empty = 0
     hit_rows = 0
-    max_cont = np.zeros(len(idx.holdouts), dtype=np.float32)
+    max_cont = np.zeros(len(idx.holdouts), dtype=np.float64)
     exact_hits, num_flags = [], 0
-    chunk = []
     chunk_start = 0
-    for text in iter_texts(path, qfield, full_doc):
-        n += 1
-        if not text:
-            empty += 1
-            continue
-        chunk.append(text)
-        if len(chunk) >= CHUNK:
-            ex, mc, nf, hr = idx.scan_chunk(chunk, threshold)
-            exact_hits += [(chunk_start + r, t) for r, t in ex]
-            max_cont = np.maximum(max_cont, mc)
-            num_flags += nf
-            hit_rows += hr
-            chunk_start += len(chunk)
-            chunk = []
-    if chunk:
+    for chunk in _iter_chunks(path, qfield, full_doc):
+        n += len(chunk)
+        empty += sum(1 for t in chunk if not t)
         ex, mc, nf, hr = idx.scan_chunk(chunk, threshold)
         exact_hits += [(chunk_start + r, t) for r, t in ex]
         max_cont = np.maximum(max_cont, mc)
         num_flags += nf
         hit_rows += hr
+        chunk_start += len(chunk)
     if n and empty / n > 0.01:
         sys.exit(f"REFUSED: {empty}/{n} rows ({empty/n:.1%}) extracted empty -- "
                  f"field name mismatch? Pass --q-field. Not reporting clean on empty text.")
@@ -275,6 +323,18 @@ def _worker(args):
     path, idx, qfield, full_doc, threshold = args
     idx = _WORKER_IDX if _WORKER_IDX is not None else idx
     return path, *scan_path(path, idx, qfield, full_doc, threshold)
+
+
+def _df_worker(args):
+    """Per-path document-frequency contribution (IDF pass, fork pool)."""
+    path, qfield, full_doc = args
+    idx = _WORKER_IDX
+    df = np.zeros(idx.H.shape[0], dtype=np.float64)
+    n = 0
+    for chunk in _iter_chunks(path, qfield, full_doc):
+        df += idx.df_chunk(chunk)
+        n += len(chunk)
+    return df, n
 
 
 _WORKER_IDX = None
@@ -349,7 +409,8 @@ def ledger_cached(ledger, path, hhash, threshold, baseline_id):
     for row in ledger:
         if (row.get("path") == path and row.get("bytes") == st.st_size
                 and row.get("mtime") == int(st.st_mtime) and row.get("holdout_hash") == hhash
-                and row.get("threshold") == threshold and row.get("baseline_id") == baseline_id):
+                and row.get("threshold") == threshold and row.get("baseline_id") == baseline_id
+                and bool(row.get("idf"))):
             return row
     return None
 
@@ -360,6 +421,7 @@ def ledger_append(path, hhash, threshold, baseline_id, n, hit_rows, exact, per_g
         f.write(json.dumps({
             "path": path, "bytes": st.st_size, "mtime": int(st.st_mtime),
             "holdout_hash": hhash, "threshold": threshold, "baseline_id": baseline_id,
+            "idf": True,
             "scanned_at": int(time.time()),
             "rows": n, "hit_rows": hit_rows, "per_gb": round(per_gb, 2),
             "exact": exact, "verdict": verdict,
@@ -375,9 +437,15 @@ def self_check():
     _, mc1, _, hr1 = idx.scan_chunk([contaminated], 0.8)
     _, mc2, _, hr2 = idx.scan_chunk([clean], 0.8)
     v1, v2 = float(mc1[0]), float(mc2[0])
-    assert v1 == 1.0, f"verbatim embed must be containment 1.0, got {v1}"
+    assert abs(v1 - 1.0) < 1e-9, f"verbatim embed must be containment 1.0, got {v1}"
     assert v1 - v2 >= 0.6, f"known-answer pair must differ by >= 0.6, got {v1} vs {v2}"
     assert hr1 == 1 and hr2 == 0, f"hit-row counting wrong: {hr1}/{hr2}"
+    # IDF-weighted path: uniform IDF must reproduce unweighted containment
+    idx.set_idf(np.ones(len(idx.g2i)), 10)
+    _, mc1w, _, hr1w = idx.scan_chunk([contaminated], 0.8)
+    assert abs(float(mc1w[0]) - v1) < 1e-9, \
+        f"weighted containment must match unweighted under uniform IDF, got {mc1w[0]} vs {v1}"
+    assert hr1w == hr1
     # field fall-through must not pass as clean
     import tempfile
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as f:
@@ -450,6 +518,25 @@ def main():
             rc |= 1 if row["verdict"] == "REJECT" else 0
         else:
             fresh.append(p)
+
+    # IDF pass: document frequency per holdout bigram over the corpus being
+    # scanned (baseline + candidate). Without it, generic bigrams dominate
+    # short generic holdouts (math-500 FP class, 2026-08-30).
+    idf_paths = sorted(set(base_paths) | set(fresh))
+    global _WORKER_IDX
+    _WORKER_IDX = idx
+    if args.jobs > 1 and len(idf_paths) > 1:
+        with get_context("fork").Pool(min(args.jobs, len(idf_paths))) as pool:
+            parts = pool.map(_df_worker, [(p, args.q_field, args.full_doc) for p in idf_paths])
+    else:
+        parts = [_df_worker((p, args.q_field, args.full_doc)) for p in idf_paths]
+    df = np.zeros(len(idx.g2i), dtype=np.float64)
+    for part, _ in parts:
+        df += part
+    n_idf = sum(n for _, n in parts)
+    idx.set_idf(df, n_idf)
+    print(f"IDF pass: {n_idf} docs over {len(idf_paths)} paths, "
+          f"{int((df > 0).sum())}/{len(df)} holdout bigrams present in corpus")
 
     # baseline first: its rate is the verdict's reference. Same mode as the candidate.
     b_results = scan_many(base_paths, idx, args)
