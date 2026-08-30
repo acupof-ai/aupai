@@ -566,6 +566,27 @@
    "uncertainty": "synthetic GEMM, not training; 6-GPU profile showed rank4 +83ms compute (likely transient interference, not hardware)",
    "boundary": "peak compute, not memory bandwidth",
    "status": "recorded"
+  },
+  {
+   "id": "eff.vocab_align_parity",
+   "claim": "vocab 32776 (cuBLAS aligned) is numerically neutral vs 32773 in training",
+   "value": "per-step loss delta <= 0.0046 across 10 steps (loss ~8-10), no growth, no sign bias; step-0 delta 1e-4",
+   "measured": "2026-08-30",
+   "source": "scripts/ab_vocab_loss.py on GPU0, pod; runs/ab_vocab.log",
+   "config": {
+    "mix": "data/mix_sample.json",
+    "batch": 4,
+    "seq": 512,
+    "steps": 10,
+    "lr_scale": 0.1,
+    "seed": 42,
+    "arms": "32773 vs 32776, same init/data",
+    "dtype": "bf16",
+    "softcap": 15.0
+   },
+   "uncertainty": "tiny-batch short run; parity is at the loss-computation level, not a full-training equivalence claim",
+   "boundary": "at base LR (designed for ~1.77M tokens/step) batch-4 dynamics are chaotic and deltas amplify to 0.2; the controlled comparison needs the 0.1x LR",
+   "status": "measured"
   }
  ]
 }
