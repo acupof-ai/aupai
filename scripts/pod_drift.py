@@ -10,6 +10,11 @@ Two gates read it:
   - CI (has .git, CI=1): the committed manifest must match HEAD, so a scoped change
     cannot land without regenerating it.
 
+The pod gate also scans in reverse: a .py file under the repo root that no manifest
+entry names is reported (scripts/_audit_anchor.py arrived by bare podput and ran
+unregistered for a day before anything noticed). Reported, not failed -- the pod
+legitimately holds throwaway probes -- but it must appear in the output.
+
 A dev checkout (has .git, no CI) skips both: uncommitted changes are normal there.
 
 Usage:
@@ -17,6 +22,7 @@ Usage:
   python scripts/pod_drift.py --check        # pod gate: files here vs the manifest
   python scripts/pod_drift.py --check-head   # CI gate: manifest vs HEAD
   python scripts/pod_drift.py --list-scoped  # the file set, one per line
+  python scripts/pod_drift.py --selftest     # reverse scan on a real-shaped world
 """
 import hashlib
 import os
@@ -84,12 +90,15 @@ def read_manifest(path=MANIFEST):
 
 
 def check_pod(root=ROOT):
-    """Every file the manifest names must exist here and match. The pod runs this."""
+    """Every file the manifest names must exist here and match. The pod runs this.
+    Also reports .py files no manifest entry names -- the forward check cannot see
+    them, and a bare-podput script otherwise runs unregistered indefinitely."""
     manifest_path = os.path.join(root, "data", "pod_head_manifest.txt")
     if not os.path.exists(manifest_path):
         return False, f"no manifest at {os.path.relpath(manifest_path, root)}"
+    manifest = read_manifest(manifest_path)
     bad = []
-    for p, want in read_manifest(manifest_path).items():
+    for p, want in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
             bad.append(f"missing {p}")
@@ -97,7 +106,30 @@ def check_pod(root=ROOT):
             bad.append(f"diff {p}")
     if bad:
         return False, f"{len(bad)} drifted (first: {bad[0]})"
-    return True, f"{len(read_manifest(manifest_path))} files match the manifest"
+    extra = unregistered_py(root, manifest)
+    if extra:
+        shown = ", ".join(extra[:5]) + ("..." if len(extra) > 5 else "")
+        return True, f"{len(manifest)} files match; {len(extra)} UNREGISTERED .py not in manifest: {shown}"
+    return True, f"{len(manifest)} files match the manifest"
+
+
+def unregistered_py(root, manifest=None):
+    """.py files under root that no manifest entry names. Same scope as scoped_paths:
+    EXCLUDE_DIRS and data//runs/ are not manifest territory. Reported, not failed --
+    the pod legitimately holds throwaway probes -- but the output must name them."""
+    if manifest is None:
+        manifest = read_manifest(os.path.join(root, "data", "pod_head_manifest.txt"))
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in EXCLUDE_DIRS]
+        if os.path.relpath(dirpath, root).split(os.sep)[0] in ("data", "runs"):
+            continue
+        for fn in filenames:
+            if fn.endswith(".py"):
+                p = os.path.relpath(os.path.join(dirpath, fn), root)
+                if p not in manifest:
+                    out.append(p)
+    return sorted(out)
 
 
 def check_head(root=ROOT):
@@ -118,11 +150,36 @@ def is_pod(root=ROOT):
     return not os.path.isdir(os.path.join(root, ".git"))
 
 
+def selftest():
+    """The reverse scan on a real-shaped world: one registered script, one unregistered
+    probe at root, one .py in an excluded dir and one under data/ -- only the probe is
+    unregistered, and check_pod still passes while naming it."""
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    for sub in ("scripts", "datagen", "data"):
+        os.makedirs(os.path.join(d, sub), exist_ok=True)
+    open(os.path.join(d, "scripts", "real.py"), "w").write("# registered\n")
+    open(os.path.join(d, "probe.py"), "w").write("# throwaway\n")
+    open(os.path.join(d, "datagen", "gen.py"), "w").write("# excluded dir\n")
+    open(os.path.join(d, "data", "tool.py"), "w").write("# data dir\n")
+    manifest = {"scripts/real.py": sha_disk(os.path.join(d, "scripts", "real.py"))}
+    found = unregistered_py(d, manifest)
+    assert found == ["probe.py"], found
+    with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
+        f.write("".join(f"{sha}  {p}\n" for p, sha in manifest.items()))
+    ok, evidence = check_pod(d)
+    assert ok and "UNREGISTERED" in evidence, evidence
+    print("pod_drift selftest OK:", evidence)
+
+
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "--check"
     if mode == "--write":
         n = write_manifest()
         print(f"wrote {n} entries to {os.path.relpath(MANIFEST, ROOT)}")
+    elif mode == "--selftest":
+        selftest()
     elif mode == "--list-scoped":
         print("\n".join(scoped_paths()))
     elif mode == "--check":

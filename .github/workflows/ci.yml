@@ -14,6 +14,7 @@ jobs:
       - run: python scripts/test_arch_compat.py
       - run: python scripts/shape_audit.py --selftest
       - run: python scripts/shape_audit.py
+      - run: python scripts/pod_drift.py --selftest
       - run: python scripts/loader.py selftest
       - run: python scripts/test_sft_pack.py
       - run: python scripts/eqcheck.py
