@@ -1131,11 +1131,11 @@ def _broken_score_matrix():
     return d
 
 
-def _read_ckpt_cfg(path):
-    """Read the cfg dict from a torch.save checkpoint without importing torch.
-    The .pt is a zip; cfg is a plain dict pickled in data.pkl. Tensor storages
+def _read_ckpt_dict(path):
+    """Read the full dict from a torch.save checkpoint without loading tensors.
+    The .pt is a zip; the dict is plain data pickled in data.pkl. Tensor storages
     are referenced via persistent_load, which we stub, and torch rebuild
-    functions resolve to dummies -- the cfg survives because it is plain data."""
+    functions resolve to dummies."""
     import pickle
     import zipfile
 
@@ -1154,8 +1154,52 @@ def _read_ckpt_cfg(path):
     with zipfile.ZipFile(path) as z:
         pkl_name = next(n for n in z.namelist() if n.endswith("data.pkl"))
         with z.open(pkl_name) as f:
-            data = _Stub(f).load()
-    return data.get("cfg", {})
+            return _Stub(f).load()
+
+
+def _read_ckpt_cfg(path):
+    """Read the cfg dict from a torch.save checkpoint without importing torch."""
+    return _read_ckpt_dict(path).get("cfg", {})
+
+
+def check_env_fp_present(root):
+    """Every checkpoint carries an environment fingerprint.
+
+    A container restart can change the effective environment (dropping
+    hand-installed packages) without anyone noticing. The fingerprint is
+    compared on resume; a checkpoint without one predates the guard and
+    cannot be safely resumed."""
+    ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
+    if not ckpts:
+        return SKIP, "no checkpoints"
+    missing = []
+    for p in ckpts:
+        try:
+            d = _read_ckpt_dict(p)
+        except Exception:
+            continue  # unreadable checkpoint is a different check's problem
+        if "env_fp" not in d:
+            missing.append(os.path.basename(p))
+    if missing:
+        return FAIL, f"{len(missing)} checkpoint(s) without env_fp: {', '.join(missing[:5])}"
+    return PASS, f"all {len(ckpts)} checkpoints carry env_fp"
+
+
+def _broken_env_fp_present():
+    """A real torch checkpoint without env_fp."""
+    import torch
+
+    d = _tmp_repo()
+    # A repo-real file so selftest does not skip this check as hand-written.
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    # A REAL torch checkpoint (torch.save), just without env_fp -- the check
+    # reads it the same way it reads a production one.
+    torch.save(
+        {"model": {}, "cfg": {}, "vocab_id": "test", "corpus_fp": {}},
+        os.path.join(d, "ckpt_test.pt"),
+    )
+    return d
 
 
 def check_ladder_config(root):
@@ -1587,7 +1631,75 @@ def _broken_corpus_fp():
     return d
 
 
+# Every third-party module this repo imports, and the pip name that supplies it. The
+# container's image already carries most of them; a restart keeps /work but drops the
+# writable layer, so only the hand-installed ones vanish -- and which ones those are is
+# not knowable without a written list. That is the whole reason this exists.
+_REQUIRED = {
+    "torch": "torch", "numpy": "numpy", "scipy": "scipy", "matplotlib": "matplotlib",
+    "pyarrow": "pyarrow", "tokenizers": "tokenizers", "transformers": "transformers",
+    "datasets": "datasets", "huggingface_hub": "huggingface_hub", "flask": "flask",
+    "opencc": "opencc", "trackio": "trackio", "liger_kernel": "liger-kernel",
+    "fla": "flash-linear-attention", "torchao": "torchao", "triton": "triton",
+    "flash_attn": "flash-attn",
+}
+# Absent on a dev Mac by design; only a box that can train is expected to have them.
+_LINUX_ONLY = {"liger_kernel", "fla", "torchao", "triton", "flash_attn"}
+
+
+def check_env_importable(root):
+    """Every third-party module the repo imports is importable.
+
+    2026-08-30: a container restart dropped the writable layer and with it liger_kernel,
+    fla, flask, opencc and trackio. The code was untouched, so the first symptom was a
+    ModuleNotFoundError on a line that had worked an hour earlier -- which reads as a
+    broken import, not as missing infrastructure, and sends the next person to debug the
+    wrong thing. This check names the cause and prints the command that fixes it.
+    """
+    import importlib.util
+
+    extra = os.environ.get("HARNESS_REQUIRE_EXTRA")  # selftest injects an unsatisfiable name
+    req = dict(_REQUIRED, **({extra: extra} if extra else {}))
+    missing = []
+    for mod in sorted(req):
+        try:
+            if importlib.util.find_spec(mod) is None:
+                missing.append(mod)
+        except (ImportError, ValueError):
+            missing.append(mod)
+    if not missing:
+        return PASS, f"all {len(req)} imported packages present"
+    # Strictness follows the ability to train, as in check_mix_shards: a dev box ships
+    # none of the CUDA half and a permanent red there is no signal. The incident this
+    # guards is a pod restart, and the pod has cards.
+    if not _gpu_present():
+        return SKIP, f"{len(missing)} absent on a box that cannot train: {', '.join(missing)}"
+    # pip refuses to uninstall Debian's blinker (no RECORD file), which is what flask
+    # pulls on; --ignore-installed is the difference between a working command and a
+    # half-applied one, so it goes in only when flask is actually among the missing.
+    pre = "--ignore-installed blinker " if "flask" in missing else ""
+    pkgs = " ".join(req[m] for m in missing)
+    return FAIL, (
+        f"{len(missing)} package(s) missing: {', '.join(missing)} -- if this box worked "
+        f"before, the container restarted and lost its writable layer (/work survives, "
+        f"installed packages do not). Restore: python3 -m pip install {pre}{pkgs}"
+    )
+
+
+def _broken_env():
+    """A world whose requirement list names a package that cannot exist."""
+    os.environ["HARNESS_REQUIRE_EXTRA"] = "aupai_no_such_module"
+    return _tmp_repo()
+
+
 CHECKS = [
+    (
+        "env_importable",
+        "every third-party module the repo imports is installed",
+        "a container restart dropped the writable layer; SFT died on ModuleNotFoundError and read as a code bug",
+        check_env_importable,
+        _broken_env,
+    ),
     (
         "mix_not_unfiltered",
         "the mix train.py defaults to does not name 'web'",
@@ -1770,6 +1882,13 @@ CHECKS = [
         "the 94 GB corpus, every checkpoint, and the repo lived in a 365 GB emptyDir for weeks; a pod deletion would erase all of it",
         check_root_durable,
         _broken_root_durable,
+    ),
+    (
+        "env_fp_present",
+        "every checkpoint carries an environment fingerprint",
+        "a container restart changed the effective environment and three sessions chased wrong hypotheses for an hour because nothing recorded what the environment WAS",
+        check_env_fp_present,
+        _broken_env_fp_present,
     ),
 ]
 
@@ -2169,7 +2288,9 @@ def _demo():
     # exist in the repo by design; its reality comes from real git plumbing, not a repo file.
     # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
     # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
-    synthetic_world = {"no_oversized_blob"}
+    # env_importable joins it for the same reason: its artifact is process import state,
+    # not a tree, so no world it builds can hold a repo file.
+    synthetic_world = {"no_oversized_blob", "env_importable"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         root = broken()
@@ -2292,7 +2413,7 @@ _UNFROZEN_ALLOWLIST = {
     "name", "mix", "resume", "max_steps",  # run management
     "fp8",                # training precision, not architecture
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
-    "allow_corpus_drift", "allow_pod_drift",  # safety overrides
+    "allow_corpus_drift", "allow_pod_drift", "allow_env_drift",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
     "val_every", "val_batches",  # validation cadence, not architecture

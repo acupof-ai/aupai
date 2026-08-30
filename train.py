@@ -177,6 +177,10 @@ class Cfg:
     # known, intended hotfix; the default refuses, because a pod behind HEAD trains under
     # rules the repo no longer has (142 files drifted before this guard existed).
     allow_pod_drift = False
+    # Environment fingerprint mismatch on resume: the checkpoint's env differs from
+    # the current one (container restart, package update). Default refuses -- a resume
+    # under a changed environment is not the same run.
+    allow_env_drift = False
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
     val_batches = 20
@@ -1024,6 +1028,21 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
     return ids, vals
 
 
+def _env_fp():
+    """The effective training environment fingerprint (scripts/env_fp.py).
+
+    Stored in every checkpoint and compared on resume. A container restart can
+    change the environment -- dropping hand-installed packages -- without anyone
+    noticing. Three sessions spent an hour chasing three wrong hypotheses because
+    nothing recorded what the environment WAS. This is the record."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from env_fp import env_fingerprint
+
+    return env_fingerprint()
+
+
 def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     """The ONLY way a checkpoint is written, so no writer can forget the vocabulary.
 
@@ -1048,6 +1067,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         "cfg": {k: v for k, v in cfg.items() if not k.startswith("_")},
         "vocab_id": vocab_id,
         "corpus_fp": corpus_fp,
+        "env_fp": _env_fp(),
     }
     if opt is not None:
         ck["opt"] = opt
@@ -1506,6 +1526,10 @@ def main():
         "--allow_pod_drift", action="store_true",
         help="train on a pod whose code is behind the committed manifest (known hotfix only)",
     )
+    parser.add_argument(
+        "--allow_env_drift", action="store_true",
+        help="resume even if the checkpoint's environment fingerprint differs (container restart, package change)",
+    )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1%% vs 100, eff.bucket_cap_mb_ab)")
     parser.add_argument("--no_static_graph", action="store_true", help="disable DDP static_graph (A/B: 5K overhead hunt)")
@@ -1613,6 +1637,21 @@ def main():
     resume_step = 0
     if args.resume:
         ck = torch.load(args.resume, map_location="cpu", weights_only=False)
+        # Environment fingerprint: a container restart can change the effective
+        # environment (dropping hand-installed packages) without anyone noticing.
+        # A mismatch means this is not the same run -- refuse unless overridden.
+        ck_fp = ck.get("env_fp")
+        if ck_fp:
+            live_fp = _env_fp()
+            if ck_fp != live_fp and not args.allow_env_drift:
+                raise RuntimeError(
+                    f"env fingerprint mismatch: {args.resume} trained in env {ck_fp}, "
+                    f"current env is {live_fp}. The environment changed (container "
+                    f"restart? package update?). Refusing to resume -- this is not the "
+                    f"same run. Pass --allow_env_drift to override."
+                )
+            if is_main:
+                print(f"env fingerprint {'OK' if ck_fp == live_fp else 'DRIFT (overridden)'} ({live_fp})", flush=True)
         raw_model.load_state_dict(ck["model"])
         m = re.search(r"step(\d+)", args.resume)
         if m:
