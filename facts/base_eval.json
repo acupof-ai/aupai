@@ -276,6 +276,20 @@
    },
    "uncertainty": "3 secants estimating curvature from 4 points; the power-law form was not pre-registered; the 3-18pt range spans the constant-rate-from-0.8b and aggressive-deceleration ends",
    "status": "measured"
+  },
+  {
+   "id": "be.reasoning_panel_prereg",
+   "value": "pre-registered instrument stack for the reasoning-model objective (code+math, ~30B tokens), written before 3.24b lands (docs/lessons/reasoning_panel.md). Core gap: math_v2_like 94.69 is the two-way for math; there is NO open-ended math number -- the generation half does not exist. Stack: L0 math_v2_like (discrimination, exists, moving) + code discrimination by execution-ranked likelihood (GAP, needs building); L1 few-shot continuation math (zero GPU, prompt change, the format bridge -- base models read 0/500 on zero-shot partly for format reasons, not pure capability); L2 light SFT -> pass@k (the real instrument, one SFT run). Q1 verdict experiment: L1 on 3.24b, N>=500 -- non-zero (>2delta, delta=1.4/sqrt(N)=6.3pt@500) means the instrument exists; zero means L2 is the only path, and if L2 also reads zero, reasoning production has NO instrument at 200M (the round's most important conclusion -- changes measurability before achievability). Verifiability asymmetry: math/code answers are execution-checkable -- label error is binomial (1.4/sqrt(N)), no judge, no seed variance in the label, sharper than NLL's sigma-hat=0.0516; A/B on reasoning mixes uses pass@k with binomial+seed error, likely sharper than NLL A/B. Section 8 shapes: the LOGIC carries over (discrimination saturates while generation moves = capacity; discrimination moves, generation flat = composition) but the METRICS do not (lambada is expression, not reasoning) -- section 8 stays, reasoning gets a sibling with its own generation half (L1/L2 pass@k) and discrimination half (math_v2_like + code); the shapes cannot fire until the generation half exists. Code discrimination instrument is a parallel prerequisite for the 30B build",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/reasoning_panel.md; aupai-fb task 2026-08-30 (objective change)",
+   "config": {
+    "objective": "reasoning model (code+math, ~30B tokens)",
+    "instruments": ["L0 math_v2_like", "L0' code discrimination (gap)", "L1 few-shot continuation", "L2 SFT pass@k"],
+    "q1_test": "L1 few-shot math on 3.24b, N>=500, delta=6.3pt",
+    "binomial_resolution": "delta=1.4/sqrt(N), 500->6.3pt, 1000->4.4pt"
+   },
+   "uncertainty": "L1 is a prompt bridge, not a capability guarantee -- non-zero is necessary but not sufficient for L2; the format/capability decomposition is itself uncertain",
+   "status": "recorded"
   }
  ]
 }
