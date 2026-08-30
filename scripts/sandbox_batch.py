@@ -129,6 +129,9 @@ def main():
     with open(args.out, "a", encoding="utf-8") as fout:
         with ThreadPoolExecutor(max_workers=args.workers) as ex:
             for i, r in enumerate(ex.map(lambda s: run_sample(s, args.timeout), todo)):
+                # restartable: one flushed JSON line per completed sample; a rerun
+                # skips ids already in --out, so an interrupt costs at most the
+                # in-flight thread-pool chunk (<= workers samples).
                 fout.write(json.dumps(r, ensure_ascii=False) + "\n")
                 fout.flush()
                 if (i + 1) % 100 == 0 or i + 1 == len(todo):
