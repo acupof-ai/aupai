@@ -206,17 +206,16 @@ Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json
 
 - `pod` is at `~/bin/pod` — **not in the default PATH**. A session once misjudged "no pod access" for this reason.
 - 8×H20, all usable. `/work/aupai` is not a git repo — push files.
+- **`tn exec` and `~/bin/pod` are two different filesystem views with the same hostname.** `tn exec` runs on the host (where `crictl` lives); `~/bin/pod` runs inside the container. A file present in one view is not necessarily present in the other. Read and write container artifacts — code, logs, checkpoints, corpus — with `~/bin/pod` only. Use `tn exec` for host-level queries (`nvidia-smi`, `ps`, `crictl`). GPU and process state are machine-wide, so those queries agree on both sides — that is why the confusion survived for days.
 - **`setsid`, not `nohup`**: `pod` runs through `crictl exec`; when that session ends the kernel kills the whole process group, and `nohup` only blocks SIGHUP. Launch:
 
 ```bash
 pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null >/dev/null 2>&1 &"
 ```
 
-- **A foreground long task becomes a GPU-holding orphan when the connection drops.** `tn` kills an idle connection after 5 minutes; the process survives, still holding its card, with no session left to kill it (happened 2026-08-30: 100% util on GPU7, nobody attached). Anything longer than a quick check goes through the detached launch above.
 - **`CUDA_VISIBLE_DEVICES`, not `cuda:N`**: fla/Triton kernels launch on the current device; `cuda:1` raises illegal memory access.
-- Large files: `tn push` to the `/work` emptyDir host path, not `podput` (180KB cap).
+- **File transfer into the container: `podput <local> <remote-abs-path>`** (gzip+base64, 180KB cap). `tn push` lands on the HOST filesystem and is invisible inside the container — never use it to deliver code or data to the repo.
 - `uv sync` after dependency changes.
-- **Only `/work/aupai/` persists across `pod` sessions.** `/work/*.log` and `/tmp/*` are gone on the next entry — put run logs under `runs/`.
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 
 ## Rules kept from before the reset
