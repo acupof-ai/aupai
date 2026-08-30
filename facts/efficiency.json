@@ -38,10 +38,10 @@
       "measured": "2026-08-30",
       "source": "aupai-fb briefing",
       "config": {
-        "model": "166M non-embedding, 12 layers (3 KDA + 1 gated MLA)x3, d=1024"
+        "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024"
       },
       "uncertainty": null,
-      "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing",
+      "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing; 166M in earlier drafts was an unmeasured estimate (e7c55e5), corrected to 172.5M non-embedding 2026-08-30. MFU uses 206M total (train.py:1790), not 166M — 31% is correct.",
       "status": "measured"
     },
     {
@@ -55,7 +55,7 @@
         "ratio_ablation": "1:3 vs 1:7"
       },
       "uncertainty": "as reported in the paper; no error bars in Table 4",
-      "boundary": "1.3B scale; fb's 166M is 8x smaller — [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
+      "boundary": "1.3B scale; fb's 172.5M non-embedding is 7.5x smaller — [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
       "status": "recorded"
     },
     {
@@ -69,7 +69,7 @@
         "ratios_tested": "1:0, 1:1, 1:3, 1:5, 1:12, 0:1"
       },
       "uncertainty": "as reported; no per-seed variance given",
-      "boundary": "350M smallest ablation scale — 2.1x fb's 166M [extrapolation]; SWA/Mamba primitives, not KDA",
+      "boundary": "350M smallest ablation scale — 2.0x fb's 172.5M [extrapolation]; SWA/Mamba primitives, not KDA",
       "status": "recorded"
     },
     {
@@ -163,7 +163,7 @@
       "measured": "2026-08-30",
       "source": "aupai-fb briefing (6-point fit)",
       "config": {
-        "model": "166M non-embedding",
+        "model": "206M total (172.5M non-embedding), measured",
         "points": "6 geometric",
         "corpus": "3.24B unique"
       },
