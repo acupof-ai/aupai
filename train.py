@@ -556,6 +556,17 @@ class HybridLM(nn.Module):
         for m in self.modules():
             if isinstance(m, AttnRes) and m.dyn is not None:
                 nn.init.zeros_(m.dyn[1].weight)  # after _init, or it starts non-uniform
+        # Alignment padding (vocab_real:vocab) must stay neutral in the softmax. The training
+        # path slices head.weight[:vocab] into Liger FLCE, which has no per-class mask, so
+        # random-init padding logits steal denominator mass: 11 columns spiked the vocab A/B
+        # to |delta| 1.8 (eff.vocab_padding_softmax_defect). Zero keeps their logits at 0;
+        # they are never targets, so CE gradient only pushes them down. The tied embedding
+        # rows are zeroed too -- their ids never appear as inputs. After _init, or _init
+        # re-fills them.
+        _real = getattr(cfg, "vocab_real", cfg.vocab)
+        if _real < cfg.vocab:
+            with torch.no_grad():
+                self.head.weight[_real : cfg.vocab].zero_()
 
     def load_state_dict(self, sd, strict=True):
         """Load old checkpoints (fused-key remap); disable AttnRes if the ckpt predates it."""
