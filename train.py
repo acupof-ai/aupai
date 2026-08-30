@@ -538,6 +538,16 @@ class HybridLM(nn.Module):
         self.grad_ckpt = cfg.grad_ckpt
         self.padded_vocab = ((cfg.vocab + 63) // 64) * 64
         self.tok = nn.Embedding(self.padded_vocab, cfg.d)
+        # GatedMLA is NoPE (position comes from KDA's recurrent state). Zero KDA layers
+        # = no position information = not a valid model (attn_every=1 gave 21-sigma worse
+        # val loss, 2026-08-30). Refuse rather than produce a plausible-looking wrong number.
+        n_kda = sum(1 for i in range(cfg.layers) if i % cfg.attn_every != cfg.attn_every - 1)
+        if n_kda == 0:
+            raise ValueError(
+                f"attn_every={cfg.attn_every} produces 0 KDA layers, but GatedMLA is NoPE "
+                f"(KDA handles position). The model would have no position information. "
+                f"Use attn_every >= 2, or add RoPE to GatedMLA first."
+            )
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1)) for i in range(cfg.layers)]
