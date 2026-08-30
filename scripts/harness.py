@@ -1162,6 +1162,57 @@ def _broken_ladder_config():
     return d
 
 
+def _train_parser_flags(train_py):
+    """CLI flag names from train.py's argparse section. Two shapes: direct
+    add_argument("--flag", ...) and the loop over a dict whose keys are flag names."""
+    src = open(train_py, encoding="utf-8").read()
+    section = src[src.index("ArgumentParser"):src.index("parse_args")]
+    flags = set()
+    for m in re.finditer(r'add_argument\(\s*["\']--(\w+)["\']', section):
+        flags.add(m.group(1))
+    for m in re.finditer(r'^\s+"(\w+)":\s*"', section, re.M):
+        flags.add(m.group(1))
+    return flags
+
+
+def check_frozen_keys_complete(root):
+    """Every train.py parser flag that changes a Cfg field is either in _FROZEN_KEYS
+    or in _UNFROZEN_ALLOWLIST. The frozen set rotted once: eight architecture/recipe
+    flags were missing and nothing noticed. This check is the tripwire."""
+    train_py = os.path.join(root, "train.py")
+    if not os.path.exists(train_py):
+        return SKIP, "train.py missing"
+    flags = _train_parser_flags(train_py)
+    known = set(_FROZEN_KEYS) | _UNFROZEN_ALLOWLIST
+    missing = []
+    for f in sorted(flags):
+        cfg_key = _FLAG_TO_CFG.get(f, f)
+        if cfg_key not in known:
+            missing.append(f"--{f} (Cfg.{cfg_key})")
+    if missing:
+        return FAIL, f"{len(missing)} flag(s) in neither frozen set nor allow-list: {'; '.join(missing)}"
+    return PASS, f"{len(flags)} parser flags, all in frozen set or allow-list"
+
+
+def _broken_frozen_keys_complete():
+    """The real train.py with a new architecture flag added to the parser --
+    exactly how the eight missing fields escaped notice."""
+    import shutil
+
+    d = _tmp_repo()
+    src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    # Add a new add_argument call inside the parser section, before parse_args.
+    patched = src.replace(
+        'args = parser.parse_args()',
+        '    parser.add_argument("--new_arch_flag", action="store_true",\n'
+        '                        help="a new architecture flag the frozen set does not know about")\n'
+        '    args = parser.parse_args()',
+    )
+    with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as fh:
+        fh.write(patched)
+    return d
+
+
 def _token_cache_dir():
     """The directory holding token caches, from train.py's TOKEN_CACHE constant.
     HARNESS_TOKEN_CACHE_DIR overrides (selftest)."""
@@ -1563,6 +1614,13 @@ CHECKS = [
         _broken_ladder_config,
     ),
     (
+        "frozen_keys_complete",
+        "every train.py parser flag is in _FROZEN_KEYS or _UNFROZEN_ALLOWLIST",
+        "eight architecture/recipe flags escaped the frozen set and nothing noticed; the list rots the moment someone adds a flag",
+        check_frozen_keys_complete,
+        _broken_frozen_keys_complete,
+    ),
+    (
         "mix_supply",
         "per-domain demand does not exceed epoch-capped pool at any budget point",
         "a mix that wants more rows than its pool allows trains on repeated data with nothing raising",
@@ -1900,32 +1958,74 @@ def _run_pipeline_step(step, script, step_args, forced, env=None):
     return r.returncode
 
 
-_FROZEN_KEYS = ("batch", "accum", "warmup", "vocab", "bucket_cap_mb")
+_FROZEN_KEYS = (
+    "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
+    "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
+)
+
+# CLI flags whose name differs from their Cfg field (--no_doc_mask sets Cfg.doc_mask).
+_FLAG_TO_CFG = {"no_doc_mask": "doc_mask", "no_attn_res": "attn_res"}
+
+# Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
+# architecture or the recipe is frozen; these are run-management, measurement, or
+# deliberately variable. check_frozen_keys_complete forces a decision when a new flag lands.
+_UNFROZEN_ALLOWLIST = {
+    "seed",               # the quantity that is supposed to vary
+    "name", "mix", "resume", "max_steps",  # run management
+    "fp8",                # training precision, not architecture
+    "track", "profile", "profile_warmup", "profile_steps",  # measurement
+    "allow_corpus_drift", "allow_pod_drift",  # safety overrides
+    "lr_scale",           # optimizer multiplier, varies by experiment
+    "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
+    "val_every", "val_batches",  # validation cadence, not architecture
+}
 
 
 def _strip_frozen(passthrough, frozen):
     """Drop agreeing frozen flags from passthrough; refuse disagreeing ones.
     Returns (clean_passthrough, conflicts). An agreeing flag is accepted, not
     refused -- fb launched four runs with explicit --batch 16 --accum 2 that
-    matched; refusing presence would block a correct launch."""
+    matched; refusing presence would block a correct launch.
+    Bool flags: presence of --<bool> sets True; --no_<bool> sets False. An
+    agreeing bool flag is kept (Cfg default may differ from frozen); a
+    conflicting one is refused."""
     s = set(_FROZEN_KEYS)
     clean, conflicts = [], []
     i = 0
     while i < len(passthrough):
         a = passthrough[i]
-        if a.startswith("--") and "=" in a and a[2:].split("=", 1)[0] in s:
-            k, v = a[2:].split("=", 1)
-            if int(v) != frozen[k]:
-                conflicts.append(f"--{k}={v} (frozen {frozen[k]})")
-            i += 1
-        elif a.startswith("--") and a[2:] in s and i + 1 < len(passthrough):
-            k = a[2:]
-            if int(passthrough[i + 1]) != frozen[k]:
-                conflicts.append(f"--{k} {passthrough[i + 1]} (frozen {frozen[k]})")
-            i += 2
-        else:
+        if not a.startswith("--"):
             clean.append(a)
             i += 1
+            continue
+        flag = a[2:].split("=", 1)[0]
+        cfg_key = _FLAG_TO_CFG.get(flag, flag)
+        if cfg_key not in s:
+            clean.append(a)
+            i += 1
+            continue
+        fv = frozen[cfg_key]
+        if isinstance(fv, bool):
+            sets_true = flag == cfg_key  # --attn_res, --fone, etc.
+            sets_false = flag in _FLAG_TO_CFG  # --no_attn_res, --no_doc_mask
+            if (sets_true and not fv) or (sets_false and fv):
+                conflicts.append(f"{a} (frozen {cfg_key}={fv})")
+            else:
+                clean.append(a)
+            i += 1
+        else:
+            if "=" in a:
+                v = a.split("=", 1)[1]
+                i += 1
+            elif i + 1 < len(passthrough):
+                v = passthrough[i + 1]
+                i += 2
+            else:
+                conflicts.append(f"{a} (no value)")
+                continue
+            if int(v) != fv:
+                conflicts.append(f"{a} {v} (frozen {fv})")
     return clean, conflicts
 
 
@@ -1972,7 +2072,8 @@ def _run_point(step_args, forced):
         env = dict(
             os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(len(frozen["cards"].split(",")))
         )
-        frozen_args = [v for k in _FROZEN_KEYS for v in (f"--{k}", str(frozen[k]))]
+        frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
+                       for v in (f"--{k}", str(frozen[k]))]
         print(
             f"run point: frozen config -> cards={frozen['cards']} "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
