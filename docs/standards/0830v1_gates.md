@@ -403,6 +403,25 @@ appearance of having been checked. Both guards below close that gap.
   short_conv 3.1% → 1.0% (51.19ms is the block; 1.46x on fwd+bwd is what is recoverable),
   and the fp8 amax hypothesis, where cost turned out to scale with bytes rather than
   launches so fusing buys nothing.
+- **A throughput change is priced in two currencies that move in opposite directions as
+  D grows.** Wall-clock: the same 1% of step time saves more absolute hours at a larger
+  budget — 1% is ~20 minutes of a 34-hour ladder. Quality: the same 1% buys 1.12× the
+  tokens, and those tokens buy *less* loss as the curve flattens — the exchange rate fell
+  from 0.910 to 0.567 nat per e-fold between the 0.2b→0.3b and 0.3b→0.4b segments, taking
+  the tolerance for a 10.7% saving from 0.103 to 0.064 in a single point. **So a
+  quality-neutral change (short_conv, an fp8 recipe) becomes more worth doing at 10×,
+  while a quality-costing change (Block AttnRes) becomes harder to justify** — the budget
+  it must fit inside is collapsing while its wall-clock prize grows. Never price one with
+  the other's rate. `eff.throughput_quality_exchange_rate` stores the rate keyed by
+  segment rather than as a single number, so it cannot be cited without its range: a
+  number that cannot be fetched cannot be fetched wrong, which beats a warning that can
+  be skipped.
+- **A number that agrees for the wrong reason is harder to catch than one that
+  disagrees** — disagreement starts an investigation, agreement ends one. Two instances
+  today: `ds.mde_recomputed_from_measured_sigma` at 0.1021 (two-sided detection, normal
+  approximation) sitting next to §7's δ_res at 0.104 (one-sided non-inferiority, t-form),
+  which answer different questions and match by coincidence; and `profile_step.py`
+  printing `compile True` over a half-eager model.
 - **When the upper bound on the benefit is below the lower bound on the cost, the
   experiment is redundant — decline it in arithmetic, not on a card.** Three retirements
   in one day on this shape, in three unrelated domains: W/F on prevalence × Δ_marginal
