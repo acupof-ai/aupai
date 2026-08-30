@@ -155,14 +155,15 @@ which settles at the determinism level that 3b's build record was accurate. The 
 ablation (32.4% → 20%) proceeds as an independent experiment, queued behind the six points,
 not as a replacement arm.
 
-**Blocked 2026-08-30: `train.py` rejects `--seed`.** Line 1433 describes the parser as
-"any --flag below overrides Cfg.<flag>" and AGENTS.md repeats it as a general rule. It is
-not: line 1434 is an explicit whitelist of eight int fields, and `seed` and `attn_every`
-are absent although both are real `Cfg` fields. Without the flag all four runs train the
-identical model — four checkpoints, four scores, σ̂ = 0, nothing raising. It surfaced only
-because argparse is strict. The fix is two entries in that dict; the doc claim is the
-defect that produced the launch. Same shape as the `en` directory: a label read as a claim
-about what is underneath it.
+**Resolved 2026-08-30 (commit 101bf1b): `--seed` and `--attn_every` added to the whitelist.**
+The block below is kept as the incident record. Line 1433 described the parser as
+"any --flag below overrides Cfg.<flag>" and AGENTS.md repeated it as a general rule. It was
+not: the parser is an explicit whitelist, and `seed` and `attn_every` were absent although
+both are real `Cfg` fields. Without the flag all four runs would have trained the identical
+model — four checkpoints, four scores, σ̂ = 0, nothing raising. It surfaced only because
+argparse is strict. The doc claim was the defect that produced the launch. Same shape as the
+`en` directory: a label read as a claim about what is underneath it. AGENTS.md now states the
+whitelist explicitly; a `Cfg` field without a parser entry cannot be set from the CLI.
 
 The first four are unconditional. The second four run only if the measured seed variance
 says a 4-vs-4 comparison can resolve anything: lessons-b0 computes `s_pooled` from the
