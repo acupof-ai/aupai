@@ -67,6 +67,14 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
         model = model.to(dtype)
         for p in model.parameters():
             p.data = p.data.contiguous()
+    # KDA kernels require fp32 A_log/dt_bias: training feeds them via autocast,
+    # so a bf16 inference model crashes on long sequences (flash_kda backend,
+    # "A_log must be float32"). Upcast to match the training dtype contract.
+    for _m in model.modules():
+        if hasattr(_m, "A_log"):
+            _m.A_log.data = _m.A_log.data.float()
+            if hasattr(_m, "dt_bias"):
+                _m.dt_bias.data = _m.dt_bias.data.float()
     return model, cfg
 
 

@@ -111,8 +111,7 @@ def main():
 
     import fone  # noqa: F401
 
-    model, cfg = load_checkpoint(args.ckpt, device=args.device)
-    model = model.to(torch.bfloat16)
+    model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
     fone_on = getattr(cfg, "fone", False)
     num_id = getattr(cfg, "num_id", None)
