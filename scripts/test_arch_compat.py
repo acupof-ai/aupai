@@ -477,3 +477,19 @@ _wide = torch.cat([torch.tensor([[7, 8]]), torch.full((1, 4095), _E)], 1).repeat
 _ndoc = len(_train.doc_cu_seqlens(_wide, _E)) - 1
 assert _ndoc == 8, f"8 padded rows must be 8 documents, got {_ndoc} (grid overflows past 65535)"
 print(f"doc_cu_seqlens: packed unchanged, {_ndoc} docs for 8 padded rows (was 32768) OK")
+
+# MasterWeights must clear p.grad. The optimizer holds the fp32 copies, so its zero_grad()
+# clears m.grad and nothing clears p.grad: backward() accumulated into the old one and the
+# --fp32_master arm trained on a running sum (2.0, 4.0, 6.0 over three steps) while the
+# control arm did not -- an A/B that would have blamed the difference on fp32 master weights.
+_lin = torch.nn.Linear(2, 1, bias=False)
+_mw = _train.MasterWeights(_lin)
+_norms = []
+for _ in range(3):
+    (_lin(torch.ones(1, 2)) * 2).sum().backward()
+    _mw.pull_grads()
+    _norms.append(float(_lin.weight.grad.norm()) if _lin.weight.grad is not None else 0.0)
+assert _norms == [0.0, 0.0, 0.0], f"pull_grads must leave p.grad cleared, got {_norms}"
+_grads = [float(m.grad.abs().max()) for _, m in _mw.pairs]
+assert all(abs(g - 2.0) < 1e-6 for g in _grads), f"each step's grad must be the step's own, got {_grads}"
+print("MasterWeights: p.grad cleared every step, m.grad does not accumulate OK")

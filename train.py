@@ -871,8 +871,16 @@ class MasterWeights:
         self.map = {p: m for p, m in self.pairs}
 
     def pull_grads(self):
+        """Copy p.grad into m.grad and clear p.grad -- both halves, in one place.
+
+        The optimizer holds `m`, so its zero_grad() clears m.grad and NOTHING clears
+        p.grad: the next backward() accumulated into the old one and this arm trained on
+        a running sum (grad 2.0, 4.0, 6.0 over three steps). Clearing here rather than
+        next to opt.step() keeps the copy and the clear in the same function, so they
+        cannot drift apart again."""
         for p, m in self.pairs:
             m.grad = None if p.grad is None else p.grad.float()
+            p.grad = None
 
     def push(self):
         with torch.no_grad():
@@ -1851,8 +1859,10 @@ def main():
                     n_skip += 1
                     for opt in optimizers:
                         opt.zero_grad(set_to_none=True)
-                    if fp8:
-                        raw_model.zero_grad(set_to_none=True)
+                    # Unconditional: dropping the gradients IS this path. An optimizer may
+                    # not hold the parameters (--fp32_master) or all of them (fp8), and in
+                    # a plain run this is a no-op because opt.zero_grad already cleared them.
+                    raw_model.zero_grad(set_to_none=True)
                     if is_main:
                         runlog(f"step {step}/{total_steps} non-finite grad — step skipped ({n_skip})")
                     if n_skip >= 20 and good_state is not None:  # not a transient spike
