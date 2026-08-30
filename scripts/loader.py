@@ -81,9 +81,11 @@ def load_tokenizer(path, cfg):
     )
     tok = Tokenizer.from_file(path)
     if getattr(cfg, "vocab", None) is not None:
-        assert tok.get_vocab_size() == cfg.vocab, (
+        # cfg.vocab is the PADDED size (8/16-aligned for cuBLAS/_fp8_ok); the tokenizer's
+        # size is vocab_real. Old checkpoints (trained unpadded) have no vocab_real.
+        assert tok.get_vocab_size() == getattr(cfg, "vocab_real", cfg.vocab), (
             f"{path} has vocab {tok.get_vocab_size()} but the checkpoint was trained at "
-            f"{cfg.vocab}; this is a different vocabulary."
+            f"vocab_real {getattr(cfg, 'vocab_real', cfg.vocab)}; this is a different vocabulary."
         )
     vid = getattr(cfg, "vocab_id", None)
     if vid is not None:
