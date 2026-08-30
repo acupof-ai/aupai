@@ -715,7 +715,7 @@
   },
   {
    "id": "dq.sft_termination_underdetermined",
-   "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。",
+   "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。 | **机制解释(fb 确认,非相关性)**:code 源有确定边界(围栏/代码块)所以不欠定——这个结构解释预测了哪些源欠定且预测对。**独立成立的数据缺陷,非解释失败**。**修法 = renderer-per-source(nanochat 式:每任务一形态,由代码定,不继承源自带形态),非打包归一时(on-time 归一)). λ 合成目标:每簇一种形态,由生成器强制**。code 重复的 55.8% 成因另记(eval f8c08c1:贪心 55.8%/t=0.8 17%/base 25.4%,循环无藏物,成因在解码器不在模型/数据)。",
    "measured": "2026-08-30",
    "source": "pod 实测 scripts/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
    "config": {
@@ -734,7 +734,8 @@
     "near_dup_families": 1606,
     "shapes_gt1_families": 384,
     "shapes_gt1_rate": 0.239,
-    "terminal_diff_families": 342
+    "terminal_diff_families": 342,
+    "note": "OOM 痕迹保留(纯 python MinHash 的成本记录);本实现跑通后另记 completed"
    },
    "uncertainty": "近重是启发式(MinHash ~0.8 Jac);形状特征是分类器非原始 token;code 源 0% 未见多样性可能因 code 答案有确定结构",
    "status": "measured"

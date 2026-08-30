@@ -52,6 +52,7 @@ zh:en ≈ **35:65**（旧的 84:16 随中文 LM 目标一起作废）。
 **未测且必须标明的三件：**（a）30B 上 code 生成是否越过 12.6% 仪器阈值——3.24B 上是零，那是干净零点不是预测；（b）词表在自身单位下对 code 的闸口位置（见解冻条件 2 节）；（c）math/CoT 两个源的实际落地 token，现在是权重不是计数。
 
 - **synthetic 轴重组**：math+code 的 synthetic = 机制非瑕疵（`run score` 验证器 = 比一切 filter 好的过滤）。cap 只打**模板化百科散文**（cosmopedia 6.38× 帧浓度），不打 synthetic 推理链——两者我们此前混为一谈，分离。
+- **渲染器原则（2026-08-30，fb）+ 实测依据**：SFT 终止欠定实测 23.9% 近重簇答案形态 >1（集中 school_math 81%/s1k 82%/openo1 67%，code_python 0/math_gsm8k 0），机制解释=code 有确定边界不欠定。**修法 = 每源过渲染器、形态由代码定（nanochat 式），非打包归一时**——归一是补救，渲染器是预防。λ 合成目标：**每簇一种形态，由生成器强制**（`dq.sft_termination_underdetermined`）。code 重复 55.8% 成因在解码器（f8c08c1），不在数据。
 - 残余的通用中文从 16B 缩到 ~4B（支撑读题），合成占比升（math+code+CoT ~70%）。
 
 
