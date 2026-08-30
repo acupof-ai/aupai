@@ -35,12 +35,13 @@ def make(B, T, h, hd, dev="cuda", dtype=torch.bfloat16):
     return q, k, v, g, beta, A_log, dt_bias
 
 
-def call(args):
+def call(args, chunk=64):
     q, k, v, g, beta, A_log, dt_bias = args
     out, _ = chunk_kda(
-        q,
-        k,
-        v,
+        chunk_size=chunk,
+        q=q,
+        k=k,
+        v=v,
         g=g,
         beta=beta,
         cu_seqlens=None,
@@ -57,12 +58,12 @@ def call(args):
     return out
 
 
-def timeit(args, iters, backward):
+def timeit(args, iters, backward, chunk=64):
     grad = None
 
     def once():
         nonlocal grad
-        out = call(args)
+        out = call(args, chunk)
         if backward:
             if grad is None or grad.shape != out.shape:
                 grad = torch.randn_like(out)
@@ -81,12 +82,17 @@ def timeit(args, iters, backward):
 
 
 def sweep(a):
-    print(f"H20 GPU7, bf16, hd={a.hd}, no compile, no fp8, {a.iters} iters, fwd+bwd\n", flush=True)
-    print("axis           B     T    h    B*h      ms   ms/(B*h)  vs prev  work-scaled", flush=True)
+    print(
+        f"H20 GPU7, bf16, hd={a.hd}, chunk_size={a.chunk}, no compile, no fp8, {a.iters} iters, fwd+bwd\n",
+        flush=True,
+    )
+    print(
+        "axis           B     T    h    B*h      ms   ms/(B*h)  vs prev  work-scaled   ns/token", flush=True
+    )
     for label, cases in (
         ("batch", [(b, a.seq, a.heads) for b in (1, 2, 4, 8, 16, 32)]),
         ("heads", [(a.batch, a.seq, h) for h in (1, 2, 4, 8, 16, 32)]),
-        ("seqlen", [(a.batch, t, a.heads) for t in (512, 1024, 2048, 4096, 8192)]),
+        ("seqlen", [(a.batch, int(t), a.heads) for t in a.seqs.split(",")]),
     ):
         if label not in a.axes.split(","):
             continue
@@ -94,7 +100,7 @@ def sweep(a):
         for B, T, h in cases:
             args = make(B, T, h, a.hd)
             try:
-                ms = timeit(args, a.iters, True)
+                ms = timeit(args, a.iters, True, a.chunk)
             except torch.OutOfMemoryError:
                 print(f"{label:<10} {B:>5} {T:>5} {h:>4}   OOM", flush=True)
                 break
@@ -103,7 +109,7 @@ def sweep(a):
             wr = f"{(ms / prev_t) / (w / prev_w):.2f}" if prev_t else "   -"
             print(
                 f"{label:<10} {B:>5} {T:>5} {h:>4} {B * h:>6} {ms:>7.2f} {ms / (B * h):>10.3f}"
-                f" {ratio:>8} {wr:>12}",
+                f" {ratio:>8} {wr:>12} {ms * 1e6 / (B * T):>10.2f}",
                 flush=True,
             )
             prev_t, prev_w = ms, w
@@ -115,13 +121,13 @@ def sweep(a):
 def kernels(a):
     args = make(a.batch, a.seq, a.heads, a.hd)
     for _ in range(3):
-        out = call(args)
+        out = call(args, a.chunk)
         torch.autograd.grad(out, [t for t in args if t.requires_grad], torch.randn_like(out))
     torch.cuda.synchronize()
     n = 3
     with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CUDA]) as p:
         for _ in range(n):
-            out = call(args)
+            out = call(args, a.chunk)
             torch.autograd.grad(out, [t for t in args if t.requires_grad], torch.randn_like(out))
         torch.cuda.synchronize()
     ev = [e for e in p.key_averages() if e.device_type == DeviceType.CUDA]
@@ -138,18 +144,37 @@ def kernels(a):
         print(f"{ms:>8.3f} {c:>6.1f} {ms * 1000 / c:>9.1f} {ms / tot:>5.1%}  {e.key[:74]}", flush=True)
 
 
+def once(a):
+    """One fwd+bwd between cudaProfilerStart/Stop, for `ncu --profile-from-start off`."""
+    args = make(a.batch, a.seq, a.heads, a.hd)
+    for _ in range(3):
+        out = call(args, a.chunk)
+        torch.autograd.grad(out, [t for t in args if t.requires_grad], torch.randn_like(out))
+    torch.cuda.synchronize()
+    g = torch.randn_like(call(args, a.chunk))
+    torch.cuda.synchronize()
+    torch.cuda.profiler.start()
+    out = call(args, a.chunk)
+    torch.autograd.grad(out, [t for t in args if t.requires_grad], g)
+    torch.cuda.synchronize()
+    torch.cuda.profiler.stop()
+    print(f"one fwd+bwd done B={a.batch} T={a.seq} h={a.heads} hd={a.hd} chunk={a.chunk}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["sweep", "kernels"], default="sweep")
+    ap.add_argument("--mode", choices=["sweep", "kernels", "once"], default="sweep")
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seq", type=int, default=4096)
     ap.add_argument("--heads", type=int, default=8)
     ap.add_argument("--hd", type=int, default=128)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--axes", default="batch,heads,seqlen")
+    ap.add_argument("--chunk", type=int, default=64, help="fla KDA chunk_size: 32 or 64")
+    ap.add_argument("--seqs", default="512,1024,2048,4096")
     a = ap.parse_args()
     torch.manual_seed(0)
-    (sweep if a.mode == "sweep" else kernels)(a)
+    {"sweep": sweep, "kernels": kernels, "once": once}[a.mode](a)
 
 
 if __name__ == "__main__":
