@@ -260,6 +260,19 @@
       "uncertainty": "tokens/step assumes batch 32 per GPU across all 6 GPUs",
       "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 254 steps is 6.3x that",
       "status": "measured"
+    },
+    {
+      "id": "ds.scaling_fit_protocol",
+      "value": "pre-registered protocol for fitting L(D)=E+B/D^beta over the six budget points (docs/lessons/scaling_fit_protocol.md, frozen before the points run): Chinchilla recipe verbatim (Huber delta=1e-3, L-BFGS-B, 252-start grid, linear space); ACCEPT RMS<=0.05 / WEAK <=0.10 / FAIL else; U-shape (++--++), monotone drift (run>=4 all >0.01), endpoint same-sign patterns falsify the form regardless of RMS; LOO beta delta>0.15 is an imprecision flag not a falsifier; single-point tree = rerun once / investigate root cause / endpoint voids the curve. Quantity = aggregate val NLL at the final checkpoint on a fixed val set. fb's mix-composition hypothesis resolved: domain weights are identical at all six points (measured 0.3238/0.4962/0.0757/0.0495/0.0252/0.0177/0.0118) and the schedule is interleaved (randperm per phase) so the cross-domain recipe is constant by construction; the within-domain pool prefix IS source-ordered (no shuffle in build_corpus.py), so the protocol requires a fixed-seed domain shuffle before the val carve-out, a frozen corpus snapshot, and horizon-matched warmup (max(20, 1% of steps)) -- the old ladder's fixed 20-step warmup (7.9% of the 0.2b point) is a confound the new runs must not repeat. Fitter: scripts/fit_scaling.py (selftest: noise-free recovery, noisy ACCEPT, pattern detection)",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/scaling_fit_protocol.md; scripts/fit_scaling.py; train.py:1283-1356; data/mix_scale_*.json",
+      "config": {
+        "points": "0.2b/0.3b/0.4b/0.8b/1.6b/3.24b (16.2x span)",
+        "noise_anchor": "val measurement ~0.005-0.01 nat (35000 blocks); run-to-run ~0.05 (Kaplan, no internal replicate)"
+      },
+      "uncertainty": "the run-to-run noise anchor is literature (Kaplan), not internally replicated; B and beta are ridge-degenerate over a 16x span (noise-free fit recovered B=10000 vs true 6000 at nearly identical loss) -- the beta profile CI is the honest read",
+      "boundary": "protocol frozen before the first new budget point runs; changes only via a new version",
+      "status": "measured"
     }
   ]
 }
