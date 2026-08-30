@@ -788,6 +788,26 @@
       "boundary": "the service is this session's; scoring prompts, acceptance criteria and their facts belong to the scoring session",
       "status": "measured",
       "refuted_by": "the recorded command failing to bring the service up on a clean pod"
+    },
+    {
+      "id": "eff.kv_pool_undersized_for_serving",
+      "claim": "the 27B scoring service's KV pool can back the token budget it declares",
+      "value": "REFUTED. cli.py:66 sets num_blocks=256 and max_total_tokens=8192, but kv_cache.py:37 has BLOCK_TOKENS=16, so the pool holds 256 x 16 = 4096 tokens -- HALF the declared budget. A scoring request of prompt ~2000 + thinking output up to 661 is ~2661 tokens = 167 blocks, so TWO concurrent requests need 334 > 256 and the pool is exhausted: 'RuntimeError: PagedKvPool exhausted: all 256 blocks in use' at kv_cache.py:124 alloc_block, after which the engine loop throws on every request. Safe concurrency at that context length is 1, not 4. This is the true cause of the scoring caller's 0/3 run, which was first attributed to the caller's 16-way concurrency.",
+      "measured": "2026-08-30",
+      "source": "kv_cache.py / cli.py read against the scoring session's error report",
+      "config": {
+        "service": "tilerl serve --model qwen38-27b, one process per card",
+        "num_blocks": 256,
+        "BLOCK_TOKENS": 16,
+        "pool_tokens": 4096,
+        "max_total_tokens_declared": 8192,
+        "request_shape": "prompt ~2000 tok + thinking output up to 661 tok = ~2661 tok = 167 blocks",
+        "observed_failure": "16-way concurrency from the caller; 2-way is already over the pool"
+      },
+      "uncertainty": "the block arithmetic is exact; the ~2661-token request shape is the caller's report, not measured here",
+      "boundary": "the service was delivered after a SINGLE-request smoke test with no capacity limit stated, so the caller had no way to know. Raising num_blocks is the fix and is cheap -- the 27B in NVFP4 uses about 28 of 96 GB -- but the right value must be computed from the KV tensor size, not guessed. Not done: the line was paused before restart.",
+      "status": "measured",
+      "refuted_by": "a run at 2-way concurrency with ~2661-token requests that does not exhaust the pool"
     }
   ]
 }
