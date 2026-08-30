@@ -72,6 +72,13 @@ def main():
     if not a.no_fp8:
         train.convert_to_fp8_compute(model)
     if cfg.compile:
+        # Same limits train.py sets at :1632. Without them the default 8 is below AttnRes's
+        # 1 + 2*layers distinct source counts, dynamo silently falls back to eager from the 9th
+        # on, and the profile describes a model 33% slower than the one training runs.
+        torch._dynamo.config.cache_size_limit = 64
+        torch._dynamo.config.accumulated_cache_size_limit = 256
+        need = 1 + min(cfg.attn_res_blocks or 2 * cfg.layers, 2 * cfg.layers)
+        assert torch._dynamo.config.cache_size_limit >= need, "AttnRes would fall back to eager"
         model = torch.compile(model, dynamic=False)
     opts = train.build_optimizers(model, cfg)
     flce = train.LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=train.SOFTCAP)
