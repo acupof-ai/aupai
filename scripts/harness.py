@@ -921,31 +921,83 @@ def _broken_fact_ref():
     return d
 
 
+DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
+
+
+def _cited_path_exists(root, tok):
+    """A doc-cited data path that resolves. Gitignored artifacts (tokenizer.json, corpus
+    bytes) are exempt -- absent from a clean checkout is their normal state; only a
+    TRACKED path that is missing is rot. With no git (the pod), disk is the only truth."""
+    if os.path.exists(os.path.join(root, tok)):
+        return True
+    is_repo = (
+        subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root, capture_output=True).returncode
+        == 0
+    )
+    if not is_repo:
+        return False
+    r = subprocess.run(["git", "ls-files", "--error-unmatch", tok], cwd=root, capture_output=True, text=True)
+    return r.returncode != 0  # tracked-but-missing -> False; untracked (gitignored) -> True
+
+
+def _doc_data_paths(root):
+    """Every data/ path cited in a doc, as (file, line, path). Templates (<domain>), globs
+    (*), and brace expansions ({0.2b,...}) are not one path. A doc that recommends a path
+    that does not exist is how 3b ran a wrong fingerprint off README's mix_v3.json."""
+    out = []
+    for pat in ("*.md", "docs/**/*.md", "data/*.md"):
+        for md in glob.glob(os.path.join(root, pat), recursive=True):
+            for i, line in enumerate(open(md, encoding="utf-8"), 1):
+                for m in DATA_PATH_RE.finditer(line):
+                    tok = m.group(0).rstrip("._-/")
+                    if not tok or tok == "data":
+                        continue
+                    nxt = line[m.end()] if m.end() < len(line) else ""
+                    if nxt in "{[*?<>":  # brace/glob expansion or template, not one path
+                        continue
+                    out.append((os.path.relpath(md, root), i, tok))
+    return out
+
+
 def check_doc_commands(root):
-    """Every .sh/.py cited in an AGENTS.md command block exists. A documented command
-    that does not run is worse than none. Only fenced blocks are scanned; prose citations
-    and data files are not (a missing data file is caught at runtime by the mix guard)."""
+    """Every .sh/.py cited in an AGENTS.md command block exists, and every data/ path
+    cited in any doc exists. A documented path that does not resolve is worse than none:
+    README once recommended data/mix_v3.json, which has never existed, and a session ran
+    a wrong fingerprint because of it. Only fenced blocks are scanned for scripts; prose
+    citations of data files are scanned across all docs."""
     agents = os.path.join(root, "AGENTS.md")
-    if not os.path.exists(agents):
-        return SKIP, "AGENTS.md not present"
     missing = set()
-    for block in CMD_BLOCK_RE.findall(open(agents, encoding="utf-8").read()):
-        for tok in CMD_PATH_RE.findall(block):
-            if not os.path.exists(os.path.join(root, tok)):
-                missing.add(tok)
+    if os.path.exists(agents):
+        for block in CMD_BLOCK_RE.findall(open(agents, encoding="utf-8").read()):
+            for tok in CMD_PATH_RE.findall(block):
+                if not os.path.exists(os.path.join(root, tok)):
+                    missing.add(tok)
+    for f, _ln, tok in _doc_data_paths(root):
+        if not _cited_path_exists(root, tok):
+            missing.add(f"{f}:{_ln} {tok}")
     if missing:
-        return FAIL, f"command block cites script(s) not in the repo: {sorted(missing)[:5]}"
-    return PASS, "every script cited in a command block exists"
+        return FAIL, f"doc(s) cite path(s) not in the repo: {sorted(missing)[:5]}"
+    if not os.path.exists(agents) and not _doc_data_paths(root):
+        return SKIP, "no docs present"
+    return PASS, "every doc-cited script and data path exists"
 
 
 def _broken_doc_commands():
-    """The REAL AGENTS.md with one fenced block appended citing a script that does not
-    exist -- the FAIL tier."""
+    """The REAL README with one data path swapped to a name that does not exist -- the
+    FAIL tier for the data-path half (the script half appends a fake command block).
+    The other data paths README cites are created, so the world fails ONLY on the swap."""
     import shutil
 
     d = _tmp_repo()
-    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
-    with open(os.path.join(d, "AGENTS.md"), "a", encoding="utf-8") as f:
+    shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
+    p = os.path.join(d, "README.md")
+    s = open(p, encoding="utf-8").read()
+    assert "data/mix_scale_3.24b.json" in s, "real README no longer cites the default mix; update _broken_doc_commands"
+    open(p, "w", encoding="utf-8").write(s.replace("data/mix_scale_3.24b.json", "data/mix_scale_nonexistent.json"))
+    os.makedirs(os.path.join(d, "data", "corpus", "sample"), exist_ok=True)
+    open(os.path.join(d, "data", "mix_sample.json"), "w").write("{}")
+    open(os.path.join(d, "data", "tokenizer.json"), "w").write("{}")
+    with open(os.path.join(d, "README.md"), "a", encoding="utf-8") as f:
         f.write("\n```bash\npython scripts/nonexistent_command.sh --flag\n```\n")
     return d
 
