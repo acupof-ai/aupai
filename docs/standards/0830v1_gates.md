@@ -895,3 +895,19 @@ A review reports what it *ran*, not what it read.
   head, as "the step that unblocks the block", which is the same "idle is not free" error one
   turn after writing that rule down. The deadlock it exposed is the shape to remember: **the
   run that clears one red check turned another one red.**
+- **Pre-registration protects against a post-hoc rationale, not against a bad input.** The
+  bf16 A/B's experiment arm never cleared the model's gradients: with `--fp32_master` the
+  optimizers hold the fp32 masters, so `opt.zero_grad()` cleared `m.grad` while the bf16
+  `p.grad` accumulated across every step (`2.0 → 4.0 → 6.0` on a three-step reproduction).
+  The arm was not measuring fp32 masters; it was measuring a running sum against a normal
+  gradient. It would have produced a large improving Δ, which is exactly what the
+  pre-registered rule promotes to "the six ladder points were measured on a defective
+  optimizer, reopen the fit" — a real defect wearing the shape of the result we had agreed
+  to believe. **A defect that blocks you is cheap; a defect that produces a plausible
+  positive is the expensive kind, and the reading rule is what it exploits.** The review
+  pass, not the pre-registration, is what caught it.
+- **Two places in one file answering the same question differently: one of them is wrong.**
+  The same training loop cleared *both* the optimizer's and the model's gradients on the
+  rollback path (`train.py:1853-1855`) and only the optimizer's on the normal path. That
+  asymmetry is visible without understanding either path, and it located the bug faster than
+  reading the code did. Look for it first.
