@@ -2313,7 +2313,7 @@ def _broken_tasks_stale():
 
 # --------------------------------------------------------------------------- lane
 
-_TRAINING_PROCS = ("train.py", "sft.py", "sft_math.py", "torchrun", "run_ddp.sh")
+_TRAINING_PROCS = ("train.py", "sft.py", "sft_math.py", "torchrun", "run_ddp.sh", "rlvr.py")
 
 
 def _is_training_proc(cmdline):
@@ -2321,7 +2321,13 @@ def _is_training_proc(cmdline):
 
 
 def _gpu_procs():
-    """(gpu_idx, cmdline) for every GPU compute process visible from this container.
+    """(procs, error) for every GPU compute process visible from this container.
+
+    procs is a list of (gpu_idx, cmdline) on success (error=None).
+    error="not_found" if nvidia-smi is missing — a machine without the tool,
+    treated as no GPUs.
+    error=<msg> if nvidia-smi exists but fails — the guard must FAIL, not go
+    silent: a check that cannot run is a FAILURE, never a pass.
 
     HARNESS_GPU_PROCS points to a JSON file of [gpu_idx, cmdline] pairs — the
     selftest's injection point, same pattern as HARNESS_REQUIRE_EXTRA.
@@ -2330,9 +2336,9 @@ def _gpu_procs():
     if fake:
         try:
             with open(fake, encoding="utf-8") as f:
-                return [(str(p[0]), p[1]) for p in json.load(f)]
-        except (json.JSONDecodeError, OSError, IndexError, TypeError):
-            return None
+                return [(str(p[0]), p[1]) for p in json.load(f)], None
+        except (json.JSONDecodeError, OSError, IndexError, TypeError) as e:
+            return None, f"cannot read HARNESS_GPU_PROCS: {e}"
     try:
         apps = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"],
@@ -2342,10 +2348,14 @@ def _gpu_procs():
             ["nvidia-smi", "--query-gpu=index,gpu_uuid", "--format=csv,noheader"],
             capture_output=True, text=True, timeout=20,
         )
-    except (OSError, subprocess.SubprocessError):
-        return None  # no nvidia-smi: a dev box
-    if apps.returncode != 0 or gpus.returncode != 0:
-        return None
+    except FileNotFoundError:
+        return None, "not_found"  # no nvidia-smi: no GPUs on this machine
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"nvidia-smi failed to run: {e}"
+    if apps.returncode != 0:
+        return None, f"nvidia-smi compute-apps exited {apps.returncode}: {apps.stderr[:200]}"
+    if gpus.returncode != 0:
+        return None, f"nvidia-smi gpu-query exited {gpus.returncode}: {gpus.stderr[:200]}"
     uuid_to_idx = {}
     for line in gpus.stdout.splitlines():
         if "," in line:
@@ -2369,7 +2379,7 @@ def _gpu_procs():
             cmdline = ""
         if cmdline:  # a PID from another container's namespace: ps finds nothing
             procs.append((gpu_idx, cmdline))
-    return procs
+    return procs, None
 
 
 def check_lane_respected(root):
@@ -2382,11 +2392,12 @@ def check_lane_respected(root):
 
     A training card is one named in data/mix_scale_run_config.json's `cards`.
     A process belongs to training if its command line contains train.py, sft.py,
-    sft_math.py, torchrun, or run_ddp.sh. Everything else on a training card is
-    a violation: a 10-minute eval on one training card blocks a 55-minute
+    sft_math.py, torchrun, run_ddp.sh, or rlvr.py. Everything else on a training
+    card is a violation: a 10-minute eval on one training card blocks a 55-minute
     7-card run, because DDP is synchronous.
 
-    Cardless machines SKIP.
+    Cardless machines SKIP. A GPU machine with a broken nvidia-smi FAILs —
+    the guard must not go silent on the machine it guards.
     """
     if not _gpu_present():
         return SKIP, "no GPUs on this machine"
@@ -2398,9 +2409,11 @@ def check_lane_respected(root):
         train_cards = {c.strip() for c in config["cards"].split(",") if c.strip()}
     except (json.JSONDecodeError, KeyError):
         return SKIP, "cannot read cards from mix_scale_run_config.json"
-    procs = _gpu_procs()
-    if procs is None:
-        return SKIP, "nvidia-smi not available"
+    procs, err = _gpu_procs()
+    if err == "not_found":
+        return SKIP, "nvidia-smi not installed"
+    if err is not None:
+        return FAIL, f"nvidia-smi broken: {err}"
     violations = []
     for gpu_idx, cmdline in procs:
         if gpu_idx in train_cards and not _is_training_proc(cmdline):
