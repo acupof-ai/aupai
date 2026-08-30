@@ -25,6 +25,12 @@ sys.path.insert(0, ROOT)
 # FlashKDA CUTLASS kernel is unavailable in some envs; train.py reads this at import.
 os.environ["FLA_FLASH_KDA"] = "0"
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+# load_dataset() checks for updates online even on a cache hit; the pod cannot
+# reach huggingface.co (timeout) and hf-mirror's API 403s. Offline mode turns
+# an infinite hang into an immediate exception, which the per-benchmark
+# SKIPPED handler (run_eval.py:304) catches as a fast failure.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
 import fone
 from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
