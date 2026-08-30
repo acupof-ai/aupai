@@ -841,3 +841,17 @@ appearance of having been checked. Both guards below close that gap.
   zero net effect is zero only once someone has read the diff.** Both directions are the
   same rule as "read the source before trusting the benchmark": identity and behaviour are
   separate questions, and neither answers the other.
+- **A ratio does not carry its denominator, so write the denominator into its name.**
+  Three times on 2026-08-30 a ratio measured against one denominator was compared or
+  multiplied against another. (1) Code fertility came back as 3.03 *characters per token*
+  and was read against the 1.55 gate, which is *tokens per word* — opposite polarity, so
+  "the tokenizer compresses code 2× worse" was exactly backwards, and it was one step from
+  a rebuild that invalidates every checkpoint. (2) `0.329 tok/byte`, measured on decoded
+  content, was multiplied by 260GB of *compressed parquet* to yield "85.7B tokens" — a
+  product with no definition. (3) Earlier the same day, "30% of the SFT pack is padding"
+  was the block size, not the recoverable fraction (11.8%). None of these is carelessness:
+  a ratio written as a bare number has already lost the thing that makes it checkable.
+  Rule: name ratios `tok_per_decoded_byte`, `chars_per_token`, `tokens_per_word` — never
+  `fertility`, never `ratio`. And where an exact count is affordable, take it: decoding one
+  whole file and counting tokens has no denominator at all, and here it was cheaper than
+  the estimate it replaces.
