@@ -37,6 +37,17 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 - **synthetic 轴重组**：math+code 的 synthetic = 机制非瑕疵（`run score` 验证器 = 比一切 filter 好的过滤）。cap 只打**模板化百科散文**（cosmopedia 6.38× 帧浓度），不打 synthetic 推理链——两者我们此前混为一谈，分离。
 - 残余的通用中文从 16B 缩到 ~4B（支撑读题），合成占比升（math+code+CoT ~70%）。
 
+
+**具体源 + 许可（2026-08-30 实测可达）：**
+| 域 | 候选源 | 可达/许可 | 状态 |
+|---|---|---|---|
+| code | The Stack v2 (bigcode, ~900B) | **HF gated (bigcode-openrail-m，需接受)**；ModelScope 无镜像 | **30B 现实的 pivot**；切片去重后供 10-12B 干净 code |
+| math | OpenWebMath / DeepSeekMath / proof-pile | 开放/开源 | 语义以中文刷卡；英文为主，可验证 |
+| CoT | OpenThoughts / Skywork-OR1 / r1 类 | Apache 系 | 英文长链 |
+| en 通用 | WanJuanCC(46B en) / Ultra-FineWeb en / fineweb en | Apache/CC | 修 en 域（现 85% 中文） |
+| zh web | fineweb2-HQ + CCI3-HQ | 已下 sha 钉 | web 留出验过 |
+| wiki | zh wiki | CC | 现有 |
+
 ## 2. 36B 跨源去重（工程主矛盾，`harness run dedup` 第 4 步）
 
 设计：**exact content-hash O(n) + MinHash 带状 LSH**（build_corpus 内嵌 MinHashLSH）。**实测修正（2026-08-30）**：
