@@ -855,3 +855,28 @@ appearance of having been checked. Both guards below close that gap.
   `fertility`, never `ratio`. And where an exact count is affordable, take it: decoding one
   whole file and counting tokens has no denominator at all, and here it was cheaper than
   the estimate it replaces.
+
+## Review: what to look at, and who looks
+
+Every delivery is reviewed by a session that did not write it. Self-test is the author's
+evidence, not the review — the four defects below all shipped with a green self-test.
+Review is not reading the diff for style; it is running the four checks that have actually
+caught something in this repo, in this order:
+
+1. **Does the fix introduce the inverse failure?** The most common shape. `score_matrix.py`
+   lost every scored record when one checkpoint threw; the fix caught per-checkpoint and
+   continued — and now the script prints "wrote 0 record(s)" and **exits 0** when every
+   checkpoint fails. A crash was replaced by a silent success. Verified 2026-08-30 by
+   running it against a nonexistent checkpoint, not by reading it.
+2. **Does the exit code distinguish success from total failure?** A loop that skips every
+   item must not return the same status as one that processed every item. Same rule as
+   "a partial check that reports PASS is a defect", one level down.
+3. **Does `broken()` mutate a real artifact?** A hand-written broken world shares the
+   check's own assumptions; three of six checks were once dead while the self-test passed.
+4. **Is every ratio's denominator in its name?** See the ratio rule above — three
+   cross-denominator errors in one day, one of them a step from a tokenizer rebuild.
+
+Pairing, so the reviewer is never the author: de ↔ e1 (harness and eval plumbing),
+3b ↔ 44 (corpus numbers and measurement discipline), b0 ↔ 44 (panel readings), and the
+controller reviews tilerl's A/B, which is the one result that can invalidate the ladder.
+A review reports what it *ran*, not what it read.
