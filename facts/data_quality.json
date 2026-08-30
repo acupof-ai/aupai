@@ -226,9 +226,10 @@
     "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
     "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
     "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free",
-    "result": "math/code: below curve -> keep weights, do not upweight. web_hq/wiki: above curve -> higher loss at matched tokens; ambiguous between higher intrinsic floor (A_d) and worse token value (B_d) -- the matched-token plot cannot separate them. web_hq is the largest domain (32.4%), the flattest-slope, AND the domain with measured 30% junk (audit) -- the quality A/B targets exactly this cell"
+    "result": "math/code: below curve -> keep weights, do not upweight. web_hq/wiki: above curve (flat slopes: web_hq log-log -0.123 vs -0.26 textbook/en) -- higher loss at matched tokens. CAVEAT (fb 2026-08-30): flat slope + high loss are two faces of one observation and are EXPECTED under both 'dirty web' and 'clean web with high intrinsic entropy' -- the matched-token plot cannot separate A_d (floor) from B_d (token value), and the three facts (largest domain, flattest slope, 30% measured junk) do NOT constitute convergent evidence. The slope is directly decision-relevant for WEIGHTS regardless of cause; the A_d/B_d split is what the filter-strength A/B would separate.",
+    "architecture_boundary": "the six 0830v1 checkpoints are the OLD architecture (1024 sliding window + blocks=4, archived, experimental line judged fail). The relative per-domain pattern is expected to survive architecture, but old-arch and new-arch domain-loss numbers must never be pooled -- re-run E2 on the new-arch six points when they land"
    },
-   "uncertainty": "single-seed checkpoints; residuals are 15-30x seed noise (0.05 nat) so the pattern is real, but A_d vs B_d attribution needs the A/B",
+   "uncertainty": "single-seed checkpoints; residuals are 15-30x seed noise (0.05 nat) so the pattern is real; A_d vs B_d attribution is open by construction",
    "status": "measured"
   },
   {
