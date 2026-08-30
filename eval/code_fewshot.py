@@ -102,6 +102,9 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
     ap.add_argument("--selfcheck", action="store_true")
+    ap.add_argument("--demos", type=int, default=N_DEMOS, choices=[0, 1, 3],
+                    help="number of few-shot demos (0 = pure continuation, tests whether "
+                         "demos help or hurt; fb 2026-08-30)")
     args = ap.parse_args()
 
     if args.selfcheck:
@@ -118,11 +121,11 @@ def main():
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     demos = [(r["instruction"], r["reference_code"], r["expected_output"])
-             for r in rows[:N_DEMOS]]
-    evals = rows[N_DEMOS:]
+             for r in rows[:args.demos]]
+    evals = rows[args.demos:]
     print(f"code few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
-    preds_path = os.path.join(ROOT, "data", "eval", "preds_code_fewshot.jsonl")
+    preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot.jsonl")
     correct = total = no_fence = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
         for s in range(0, len(evals), args.batch):
@@ -155,7 +158,7 @@ def main():
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
 
     delta = 1.4 / (total ** 0.5)
-    print(f"code-500 few-shot: {correct}/{total} = {correct / total:.1%}")
+    print(f"code-500 few-shot ({args.demos}-shot): {correct}/{total} = {correct / total:.1%}")
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
           f"instrument exists iff acc > {2 * delta:.1%}")
     print(f"empty-continuation rate {no_fence / total:.1%}")
