@@ -41,7 +41,7 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 **具体源 + 许可（2026-08-30 实测可达）：**
 | 域 | 候选源 | 可达/许可 | 状态 |
 |---|---|---|---|
-| code | The Stack v2 (bigcode, ~900B) | **HF gated (bigcode-openrail-m，需接受)**；ModelScope 无镜像 | **30B 现实的 pivot**；切片去重后供 10-12B 干净 code |
+| code | 见 `ds.code_source_reachability`（2026-08-30 实测） | **大体量 ungated code 源在 pod 上全不可直接拉**：.co 堵、镜像 API 403、the_pile/RedPajama 是 URL-manifest、SlimPajama 元数据 401、stack/starcoderdata gated | **预训练 code 格存疑**：唯一干净 ungated 直接源 codeparrot-clean 很小且路径未定。code 能力主战场可能落 Fable+沙箱的 SFT/RL 验证道（已通） |
 | math | OpenWebMath / DeepSeekMath / proof-pile | 开放/开源 | 语义以中文刷卡；英文为主，可验证 |
 | CoT | OpenThoughts / Skywork-OR1 / r1 类 | Apache 系 | 英文长链 |
 | en 通用 | WanJuanCC(46B en) / Ultra-FineWeb en / fineweb en | Apache/CC | 修 en 域（现 85% 中文） |
