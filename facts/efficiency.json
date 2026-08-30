@@ -828,6 +828,25 @@
       "uncertainty": "single seed; no replicate needed at 21 sigma",
       "status": "measured",
       "boundary": "says attn_every 1 is broken under NoPE and why; says nothing about how KDA compares to attention when both have position information"
+    },
+    {
+      "id": "eff.fp8_transpose_cast_no_config_lever",
+      "claim": "the fp8 quantize overhead is a second, transposed cast per tensor, and no torchao config removes it at a profit",
+      "value": "torchao 0.17.0 casts input, weight and grad_output TWICE per step -- once per GEMM, in two different layouts. The second is the transposed one, and it is 59% of the fp8 overhead (71.08 of 120.12 ms at batch 32; the four largest kernels in the group all carry _t_ in their inductor names). Float8LinearConfig exposes six cast configs for exactly this, and ROWWISE_WITH_GW_HP is the one recipe that removes two of them: it sets cast_config_input_for_grad_weight and cast_config_grad_output_for_grad_weight to ScalingType.DISABLED, so grad_weight runs in bf16 and its transposed fp8 casts never happen. REJECTED on arithmetic: the three GEMMs have identical FLOPs (all MKN), so moving grad_weight from fp8 to bf16 costs about a third of the 247.25 ms fp8 GEMM row at half throughput, roughly +82 ms, while the entire fp8 quantize row is only 60.93 ms. Even removing ALL of the quantize overhead loses. Separately it scales AXISWISE, which is what makes stock `rowwise` raise 'aten.clone.default with axiswise scaling is not supported yet' under compile on the AttnRes .chunk() path, so it is very likely unrunnable here as well.",
+      "measured": "2026-08-30",
+      "source": "torchao/float8/config.py:353-379 and float8_linear.py:95-150 read directly; kernel split from scripts/profile_step.py on GPU 0",
+      "config": {
+        "torchao": "0.17.0+cu129",
+        "recipe_in_use": "e4m3_tensorwise (train.py:402, a custom config, not a stock recipe)",
+        "gpu": "NVIDIA H20, single GPU",
+        "batch": 32,
+        "seq": 4096,
+        "note": "the 60.93 ms / 247.25 ms figures are the batch-16 table; the 120.12 ms / 71.08 ms split is this batch-32 profile"
+      },
+      "uncertainty": "the one-third split of the fp8 GEMM row across the three GEMMs is from equal FLOP counts, not a per-GEMM measurement. The conclusion does not depend on it: the entire quantize row is smaller than the cost of moving one GEMM to bf16.",
+      "boundary": "torchao 0.17.0. A future version that fuses the transposed cast into the GEMM epilogue, or a grad_weight kernel that reads a non-transposed operand, reopens this.",
+      "status": "measured",
+      "refuted_by": "a measured ROWWISE_WITH_GW_HP run that is net faster end to end"
     }
   ]
 }
