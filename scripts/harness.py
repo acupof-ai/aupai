@@ -436,6 +436,39 @@ def check_guard_on_path(root):
     return PASS, "main() calls _assert_mix_domains"
 
 
+def check_gemm_dims(root):
+    """vocab 32773 cost 2.23x on the LM head because nothing checked shapes: it left the logits'
+    leading dimension 2-byte aligned and cuBLAS fell back to an SM75 align-1 kernel on a Hopper
+    card. Parsed from source rather than imported -- this must not need torch or a GPU.
+    Full audit incl. every nn.Linear: scripts/shape_audit.py."""
+    src_path = os.path.join(root, "train.py")
+    if not os.path.exists(src_path):
+        return SKIP, "train.py not present"
+    tree = ast.parse(open(src_path, encoding="utf-8").read())
+    cfg = next((n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Cfg"), None)
+    if cfg is None:
+        return FAIL, "train.py has no Cfg"
+    dims = {}
+    for node in cfg.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id in ("vocab", "d", "ffn_hidden"):
+                    if isinstance(node.value.value, int):
+                        dims[t.id] = node.value.value
+    if not dims:
+        return FAIL, "Cfg names none of vocab/d/ffn_hidden as an int literal"
+    bad = [f"{k}={v} (%8={v % 8})" for k, v in dims.items() if v % 8]
+    if bad:
+        return FAIL, f"GEMM dims not 8-aligned: {', '.join(bad)} -- cuBLAS drops to an align-1 kernel"
+    return PASS, f"{', '.join(f'{k}={v}' for k, v in sorted(dims.items()))} all 8-aligned"
+
+
+def _broken_gemm_dims():
+    d = _tmp_repo()
+    open(os.path.join(d, "train.py"), "w").write("class Cfg:\n    vocab = 32773\n    d = 1024\n")
+    return d
+
+
 def _broken_guard():
     d = _tmp_repo()
     open(os.path.join(d, "train.py"), "w").write("def main():\n    pass\n")
@@ -1060,6 +1093,13 @@ CHECKS = [
         _broken_ghost_running,
     ),
     (
+        "gemm_dims_aligned",
+        "Cfg's GEMM dimensions are multiples of 8",
+        "vocab 32773 made cuBLAS pick an SM75 align-1 kernel on Hopper; the LM head ran at 41% of bf16 peak, unnoticed",
+        check_gemm_dims,
+        _broken_gemm_dims,
+    ),
+    (
         "guard_on_path",
         "train.py main() actually calls the mix guard",
         "the guard lived in a wrapper while the documented entry point bypassed it",
@@ -1151,7 +1191,7 @@ STAGES = [
         "a tokenizer_<name>.json pinned per live checkpoint",
     ),
     ("corpus", ["mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
-    ("pretrain", ["guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
+    ("pretrain", ["gemm_dims_aligned", "guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
     ("sft", ["pinned_ids"], "pack fingerprint == checkpoint vocab_id; loss-mask test passes"),
     ("eval", [], "math-hard recorded in runs/experiments.jsonl"),
 ]
