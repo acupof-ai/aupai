@@ -145,6 +145,12 @@ def fetch(source, target_bytes):
     os.makedirs(outdir, exist_ok=True)
     fp = source_fp(manifest)
 
+    # stale .part files are a third state (neither complete nor from this source
+    # state): delete on startup rather than trust or rename them.
+    for part in sorted(os.path.join(outdir, x) for x in os.listdir(outdir) if x.endswith(".part")):
+        os.remove(part)
+        print(f"  removed stale .part {os.path.basename(part)}", file=sys.stderr)
+
     stale = _refuse_prev_fp(source, fp)
     if stale:
         print(
