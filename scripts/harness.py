@@ -1087,30 +1087,54 @@ def _read_ckpt_cfg(path):
 
 def check_ladder_config(root):
     """Every ladder checkpoint's cfg matches the single frozen run config.
-    The six mix_scale_* points must differ only in D; a silent recipe drift
-    (wrong warmup, wrong bucket) produces a completed point that poisons the
-    curve. SKIP without checkpoints or the frozen config file."""
+    Scope: checkpoints with an experiments row started after the frozen config
+    was written -- runs that predate the config cannot be bound by it.
+    A missing field (None) is UNKNOWN, not divergence: the checkpoint predates
+    the stamp. SKIP without checkpoints or the frozen config file."""
     fpath = os.path.join(root, "data", "mix_scale_run_config.json")
     if not os.path.exists(fpath):
         return SKIP, "data/mix_scale_run_config.json not present"
     frozen = json.load(open(fpath, encoding="utf-8"))
+    config_date = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(fpath)))
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
-    bad = []
+    # Exp rows: name -> started. Only checkpoints with a row started on/after
+    # the config date are in scope (the config binds runs launched after it).
+    started = {}
+    exp_path = os.path.join(root, "runs", "experiments.jsonl")
+    if os.path.exists(exp_path):
+        for line in open(exp_path, encoding="utf-8"):
+            if line.strip():
+                r = json.loads(line)
+                started[r.get("name", "")] = r.get("started", "")
+    bad, unknown, checked = [], [], 0
     for p in ckpts:
+        name = os.path.basename(p)[5:-3]  # ckpt_<name>.pt
+        when = started.get(name, "")
+        if when[:10] < config_date:
+            continue  # predates the frozen config
         try:
             cfg = _read_ckpt_cfg(p)
         except Exception as e:
             return FAIL, f"{os.path.basename(p)}: cannot read cfg: {e}"
         if not os.path.basename(cfg.get("mix", "")).startswith("mix_scale_"):
             continue
+        checked += 1
         for k in _FROZEN_KEYS:
-            if cfg.get(k) != frozen[k]:
-                bad.append(f"{os.path.basename(p)}: {k}={cfg.get(k)} != frozen {frozen[k]}")
+            v = cfg.get(k)
+            if v is None:
+                unknown.append(f"{os.path.basename(p)}:{k}")
+            elif v != frozen[k]:
+                bad.append(f"{os.path.basename(p)}: {k}={v} != frozen {frozen[k]}")
     if bad:
         return FAIL, "; ".join(bad)
-    return PASS, f"{len(ckpts)} checkpoint(s) match the frozen config"
+    if not checked:
+        return SKIP, "no checkpoints in scope (all predate the frozen config)"
+    msg = f"{checked} checkpoint(s) match the frozen config"
+    if unknown:
+        msg += f"; {len(unknown)} field(s) unverifiable (pre-stamp): {', '.join(sorted(set(unknown)))}"
+    return PASS, msg
 
 
 def _broken_ladder_config():
@@ -1132,6 +1156,97 @@ def _broken_ladder_config():
     pickle.dump({"cfg": cfg, "vocab_id": "fake"}, buf)
     with zipfile.ZipFile(os.path.join(d, "ckpt_test.pt"), "w") as z:
         z.writestr("data.pkl", buf.getvalue())
+    # An exp row started after the config was written -- the scope filter.
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
+        f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M"),
+                            "status": "ok"}) + "\n")
+    return d
+
+
+def _token_cache_dir():
+    """The directory holding token caches, from train.py's TOKEN_CACHE constant.
+    HARNESS_TOKEN_CACHE_DIR overrides (selftest)."""
+    forced = os.environ.get("HARNESS_TOKEN_CACHE_DIR")
+    if forced:
+        return forced
+    src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
+    if not m:
+        raise KeyError("train.py has no TOKEN_CACHE; the check that reads it cannot run")
+    return os.path.dirname(m.group(1))
+
+
+def _cache_rows(path, seq):
+    """Number of rows in a token cache, from the zip storage size (no torch)."""
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        info = next(i for i in z.infolist() if i.filename.endswith("data/0"))
+    return (info.file_size // 4) // (seq + 1)
+
+
+def check_mix_supply(root):
+    """Per-domain demand vs epoch-capped pool at every budget point. train.py
+    caps silently (a print on is_main only); a mix that wants more rows than
+    its pool allows trains on repeated data with nothing raising. SKIP without
+    caches (CPU CI, dev box)."""
+    cache_dir = _token_cache_dir()
+    if not os.path.isdir(cache_dir):
+        return SKIP, f"token cache dir {cache_dir} not present"
+    seq = cfg_default("seq")
+    anneal_frac = cfg_default("anneal_frac")
+    val_frac = cfg_default("val_frac")
+    val_rows_max = cfg_default("val_rows_max")
+    mixes = sorted(glob.glob(os.path.join(root, "data", "mix_scale_[0-9]*.json")))
+    if not mixes:
+        return SKIP, "no mix_scale_*.json budget points"
+    bad = []
+    for mp in mixes:
+        mix = json.load(open(mp, encoding="utf-8"))
+        rows = mix["total_tokens"] / seq
+        for name, d in mix["domains"].items():
+            cache = os.path.join(cache_dir, f"tokens_{name}.pt")
+            if not os.path.exists(cache):
+                bad.append(f"{os.path.basename(mp)}: {name} has no cache")
+                continue
+            try:
+                cache_rows = _cache_rows(cache, seq)
+            except Exception as e:
+                bad.append(f"{os.path.basename(mp)}: {name} cache unreadable: {e}")
+                continue
+            n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+            pool = cache_rows - n_val
+            used = 0
+            for frac, key in ((1 - anneal_frac, "weight"), (anneal_frac, "anneal")):
+                want = int(rows * frac * d.get(key, d["weight"]))
+                cap = int(pool * d.get("epochs", 1)) - used
+                if want > cap:
+                    bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want}, cap {cap}")
+                    break
+                used += want
+    if bad:
+        return FAIL, "; ".join(bad)
+    return PASS, f"{len(mixes)} mixes, all domains within supply"
+
+
+def _broken_mix_supply():
+    """The real 0.2b mix with caches too small to supply it -- demand exceeds
+    pool at every domain."""
+    import shutil
+    import zipfile
+
+    d = _tmp_repo()
+    shutil.copy(
+        os.path.join(ROOT, "data", "mix_scale_0.2b.json"),
+        os.path.join(d, "data", "mix_scale_0.2b.json"),
+    )
+    cache_dir = os.path.join(d, "fake_caches")
+    os.makedirs(cache_dir)
+    seq = cfg_default("seq")
+    for dom in ("web_hq", "textbook", "wiki", "en", "math", "code", "chat"):
+        with zipfile.ZipFile(os.path.join(cache_dir, f"tokens_{dom}.pt"), "w") as z:
+            z.writestr("data/0", b"\x00" * (4 * (seq + 1) * 10))
+    os.environ["HARNESS_TOKEN_CACHE_DIR"] = cache_dir
     return d
 
 
@@ -1430,6 +1545,13 @@ CHECKS = [
         "a silent recipe drift (wrong warmup, wrong bucket) produces a completed point that poisons the curve; the OOM was loud, the wrong-but-valid case is not",
         check_ladder_config,
         _broken_ladder_config,
+    ),
+    (
+        "mix_supply",
+        "per-domain demand does not exceed epoch-capped pool at any budget point",
+        "a mix that wants more rows than its pool allows trains on repeated data with nothing raising",
+        check_mix_supply,
+        _broken_mix_supply,
     ),
 ]
 
