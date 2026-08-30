@@ -58,6 +58,18 @@ def aupai_root():
     return os.path.abspath(env) if env else ROOT
 
 
+def _is_mount(path):
+    """A durable drive is a separate filesystem, not merely a directory that exists.
+    2026-08-30: another session created /data00/aupai_raw, so os.path.isdir("/data00")
+    turned true and this check began advising a move from /work (/dev/vda2, a real disk)
+    onto the container's own overlay -- strictly less durable, and it read as a hard red
+    that blocked launches. Existence is not a mount."""
+    try:
+        return os.stat(path).st_dev != os.stat("/").st_dev
+    except OSError:
+        return False
+
+
 def check_root_durable(root):
     """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys
     everything on /work; the durable NVMe drives are not visible inside the
@@ -80,7 +92,7 @@ def check_root_durable(root):
     if os.path.exists(df):
         durable = [l.strip() for l in open(df) if l.strip()]
     else:
-        durable = [m for m in DURABLE_MOUNTS if os.path.isdir(m)]
+        durable = [m for m in DURABLE_MOUNTS if _is_mount(m)]
     for m in ephemeral:
         if aupai == m or aupai.startswith(m + os.sep):
             note = f"root {aupai} is on {m}, a Kubernetes emptyDir -- a pod deletion erases it"
@@ -3004,10 +3016,19 @@ LADDER = [
 ]
 
 
-def _gate(force):
+# A step must not be blocked by the red it exists to clear. `run pretokenize` builds the
+# token caches, and mix_supply is red precisely because they are missing -- gating one on
+# the other is a deadlock with no way out but --force, which then also waves through the
+# reds that DO matter.
+_REPAIRS = {"pretokenize": {"mix_supply"}}
+
+
+def _gate(force, step=None):
     """The red invariants, by name and evidence. A runnable step needs none: 'no GPU
     pretraining while harness is red' was a doc line nothing executed until this."""
-    reds = [(n, ev) for n, s, ev, _a, _i in run_checks(ROOT, quiet=True) if s == FAIL]
+    repaired = _REPAIRS.get(step, ())
+    reds = [(n, ev) for n, s, ev, _a, _i in run_checks(ROOT, quiet=True)
+            if s == FAIL and n not in repaired]
     for n, ev in reds:
         print(f"  RED {n}: {ev}")
     if reds and not force:
@@ -3336,7 +3357,7 @@ def run_dispatch(rest):
     force = "--force" in step_args
     if force:
         step_args.remove("--force")
-    reds = _gate(force)
+    reds = _gate(force, step)
     if reds and not force:
         return 1
     forced = f" [FORCED, red: {', '.join(n for n, _ in reds)}]" if reds else ""
