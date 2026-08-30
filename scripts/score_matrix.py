@@ -440,6 +440,13 @@ def main():
         write_records(a.json, records)
         print(f"\nwrote {len(records)} record(s) to {a.json}")
 
+    n_skip = len(a.ckpt) - len(records)
+    if n_skip == len(a.ckpt) and n_skip > 0:
+        print(f"ALL {n_skip} checkpoint(s) SKIPPED", flush=True)
+        sys.exit(1)
+    if n_skip > 0:
+        print(f"{n_skip}/{len(a.ckpt)} checkpoint(s) SKIPPED", flush=True)
+
 
 if __name__ == "__main__":
     main()
