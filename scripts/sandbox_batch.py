@@ -14,6 +14,11 @@ the batch loudly: a probe that cannot prove cleanliness must not produce a lambd
 Output: per-sample JSONL {id, tier, pass, n_tests, n_fail, fails, is_holdout}
 to --out; summary (per-tier lambda, merged lambda, holdout hits) to stdout.
 
+Restartable: results are appended one line per completed sample (flushed);
+a rerun skips ids already in --out, so an interrupt loses at most the in-flight
+thread-pool chunk (<= workers samples). Input rows without an id get a
+deterministic row index id, so resume works on the same input file.
+
 Pod-only (sandbox_exec needs root + unshare).
   python3 scripts/sandbox_batch.py probe.jsonl --out probe_results.jsonl
   python3 scripts/sandbox_batch.py --selfcheck
@@ -104,16 +109,37 @@ def main():
         ap.error("input and --out required (unless --selfcheck)")
 
     rows = [json.loads(l) for l in open(args.input, encoding="utf-8") if l.strip()]
-    results = []
-    with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        for i, r in enumerate(ex.map(lambda s: run_sample(s, args.timeout), rows)):
-            results.append(r)
-            if (i + 1) % 100 == 0 or i + 1 == len(rows):
-                print(f"  {i + 1}/{len(rows)}", flush=True)
+    for i, s in enumerate(rows):
+        s.setdefault("id", f"row{i}")
 
-    with open(args.out, "w", encoding="utf-8") as f:
-        for r in results:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # restartable: append one line per completed sample (flushed); a rerun
+    # skips ids already in --out, so an interrupt loses at most the in-flight
+    # thread-pool chunk (<= workers samples).
+    done = set()
+    if os.path.exists(args.out):
+        for line in open(args.out, encoding="utf-8"):
+            try:
+                done.add(json.loads(line)["id"])
+            except (json.JSONDecodeError, KeyError):
+                pass  # partial line from a mid-write kill; rewritten on rerun
+    todo = [s for s in rows if s["id"] not in done]
+    if done:
+        print(f"resuming: {len(done)} already done, {len(todo)} to run", flush=True)
+
+    with open(args.out, "a", encoding="utf-8") as fout:
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            for i, r in enumerate(ex.map(lambda s: run_sample(s, args.timeout), todo)):
+                fout.write(json.dumps(r, ensure_ascii=False) + "\n")
+                fout.flush()
+                if (i + 1) % 100 == 0 or i + 1 == len(todo):
+                    print(f"  {i + 1}/{len(todo)}", flush=True)
+
+    results = []
+    for line in open(args.out, encoding="utf-8"):
+        try:
+            results.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
 
     total = len(results)
     passed = sum(r["pass"] for r in results)
