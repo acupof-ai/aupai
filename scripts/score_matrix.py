@@ -259,32 +259,32 @@ def metric_mc(ckpt_path, tok_path, benchmarks):
     return out, None
 
 
-def metric_math_hard(ckpt_path, tok_path):
+def metric_math_hard(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_hard.sh", ckpt_path, "1", tok_path],
+        ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
         {"math_hard": r"=\s*([\d.]+)\s*%"},
     )
 
 
-def metric_math_500(ckpt_path, tok_path):
+def metric_math_500(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_math.sh", ckpt_path, "1", tok_path],
+        ["bash", "scripts/eval_math.sh", ckpt_path, str(ngpu)],
         {"math_500": r"=\s*([\d.]+)\s*%"},
     )
 
 
-def metric_code_500(ckpt_path, tok_path):
+def metric_code_500(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_code.sh", ckpt_path, "1", tok_path],
+        ["bash", "scripts/eval_code.sh", ckpt_path, str(ngpu)],
         {"code_500": r"=\s*([\d.]+)\s*%"},
     )
 
 
-def metric_pass_at_k(ckpt_path):
-    # Sharded via eval_hard.sh (7 GPUs, ~25 min) instead of single-GPU math_hard.py (~3h).
+def metric_pass_at_k(ckpt_path, ngpu=1):
+    # Sharded via eval_hard.sh instead of single-GPU math_hard.py.
     # pass@k is computed on the merged full rows, so sharding changes speed, not the number.
     return _run(
-        ["bash", "scripts/eval_hard.sh", ckpt_path, "7"],
+        ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
         {"pass_at_1": r"pass@1\(greedy\)\s+([\d.]+)%", "pass_at_8": r"pass@8\s+([\d.]+)%"},
         env={"K": "8", "TEMP": "0.8"},
     )
@@ -383,7 +383,7 @@ def _metric(name, fn, record, *args, **kwargs):
         print(f"  {name:15s} {v}", flush=True)
 
 
-def score(ckpt_path, mix_path, tok_path, device):
+def score(ckpt_path, mix_path, tok_path, device, ngpu=1):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
@@ -428,13 +428,13 @@ def score(ckpt_path, mix_path, tok_path, device):
         # Run run_eval.py --benchmarks hellaswag piqa on a box with egress.
         _metric("mc_full", metric_mc, record, ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy"])
     if "math_hard" in wanted:
-        _metric("math_hard", metric_math_hard, record, ckpt_path, tok_path)
+        _metric("math_hard", metric_math_hard, record, ckpt_path, tok_path, ngpu)
     if "math_500" in wanted:
-        _metric("math_500", metric_math_500, record, ckpt_path, tok_path)
+        _metric("math_500", metric_math_500, record, ckpt_path, tok_path, ngpu)
     if "code_500" in wanted:
-        _metric("code_500", metric_code_500, record, ckpt_path, tok_path)
+        _metric("code_500", metric_code_500, record, ckpt_path, tok_path, ngpu)
     if "pass_at_k" in wanted:
-        _metric("pass_at_k", metric_pass_at_k, record, ckpt_path)
+        _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, ngpu)
 
     for m, reason in SKIP_REASON.items():
         if m not in wanted:
@@ -449,6 +449,8 @@ def main():
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any record")
+    ap.add_argument("--ngpu", type=int, default=1,
+                    help="GPUs for sharded evals (1 on the lane card, 7 on the training block)")
     a = ap.parse_args()
     if a.selftest:
         selftest()
@@ -460,7 +462,7 @@ def main():
     records = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device)
+            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu)
         except Exception as e:
             print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
             continue
