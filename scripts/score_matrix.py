@@ -263,6 +263,7 @@ def metric_math_hard(ckpt_path, tok_path, ngpu=1):
     return _run(
         ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
         {"math_hard": r"=\s*([\d.]+)\s*%"},
+        env={"TOKENIZER": tok_path},
     )
 
 
@@ -270,6 +271,7 @@ def metric_math_500(ckpt_path, tok_path, ngpu=1):
     return _run(
         ["bash", "scripts/eval_math.sh", ckpt_path, str(ngpu)],
         {"math_500": r"=\s*([\d.]+)\s*%"},
+        env={"TOKENIZER": tok_path},
     )
 
 
@@ -277,16 +279,17 @@ def metric_code_500(ckpt_path, tok_path, ngpu=1):
     return _run(
         ["bash", "scripts/eval_code.sh", ckpt_path, str(ngpu)],
         {"code_500": r"=\s*([\d.]+)\s*%"},
+        env={"TOKENIZER": tok_path},
     )
 
 
-def metric_pass_at_k(ckpt_path, ngpu=1):
+def metric_pass_at_k(ckpt_path, tok_path, ngpu=1):
     # Sharded via eval_hard.sh instead of single-GPU math_hard.py.
     # pass@k is computed on the merged full rows, so sharding changes speed, not the number.
     return _run(
         ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
         {"pass_at_1": r"pass@1\(greedy\)\s+([\d.]+)%", "pass_at_8": r"pass@8\s+([\d.]+)%"},
-        env={"K": "8", "TEMP": "0.8"},
+        env={"K": "8", "TEMP": "0.8", "TOKENIZER": tok_path},
     )
 
 
@@ -434,7 +437,7 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1):
     if "code_500" in wanted:
         _metric("code_500", metric_code_500, record, ckpt_path, tok_path, ngpu)
     if "pass_at_k" in wanted:
-        _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, ngpu)
+        _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, tok_path, ngpu)
 
     for m, reason in SKIP_REASON.items():
         if m not in wanted:

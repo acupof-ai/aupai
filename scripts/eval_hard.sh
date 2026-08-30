@@ -13,6 +13,7 @@ MAXNEW=${MAXNEW:-512}               # raise to test reasoning-length scaling
 # mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
 cd "$(dirname "$0")/.."
+bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs
 trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < data/synthetic/math_hard_eval_1k.jsonl)

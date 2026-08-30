@@ -6,6 +6,7 @@ set -euo pipefail
 CKPT=$1; N=${2:-6}
 TOK=${TOKENIZER:-data/tokenizer.json}
 cd "$(dirname "$0")/.."
+bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)
 trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < data/eval/code_holdout_500.jsonl)

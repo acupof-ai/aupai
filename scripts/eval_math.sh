@@ -9,6 +9,7 @@ CKPT=$1; N=${2:-6}
 # mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
 cd "$(dirname "$0")/.."
+bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs
 trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < data/eval/math_test_500.jsonl)
