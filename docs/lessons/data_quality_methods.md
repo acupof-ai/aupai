@@ -94,7 +94,7 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 | # | 做什么 | 预计切掉/收益 | 验证方式 |
 |---|---|---|---|
 | 1 | 每个新语料进训练前跑 recall-ratio 判据（含 recall_home ≥0.5 绝对下限） | CCI3-HQ 已知答案 RECALIBRATE（recall_new 1.7%，比值 0.50） | 判据在 CCI3-HQ 上输出 RECALIBRATE 即通过；3b 混淆矩阵为输入 |
-| 2 | web 质量头不用于 CCI3（直接证据 F1 0.03）；用 DCLM 式 fastText 或 CCI3 管线重标 | 切掉比例 unmeasured——阈值是决策变量不是检测属性（DCLM top-10%、FineWeb-Edu 切 91% 都是阈值选择） | 按文体留出集 + 风格改写探针；下游用 Ultra-FineWeb 式 1B WSD 退火验证（~110 H100-h/次） |
+| 2 | web 质量头不用于 CCI3（直接证据 F1 0.03）；用 DCLM 式 fastText 或 CCI3 管线重标 | 切掉比例 unmeasured——阈值是决策变量不是检测属性（DCLM top-10%、FineWeb-Edu 切 91% 都是阈值选择） | 按文体留出集 + 风格改写探针；下游用 Ultra-FineWeb 式 1B WSD 退火验证（~110 H100-h/次）。**fastText 已测失败**（`#dq.fasttext.cci3_failed`）：150 标签训出锁定 400 AUC 0.574、web_labels 0.577 vs 旧头 0.823——质量分类器路线在 n=150 上三个特征家族全灭 |
 | 3 | DSpin 功能字锚点检测洗稿 | 英文基准洗稿页 77-93% 命中；中文切掉比例 unmeasured | 2.07% 指纹文档上召回应近 100% |
 | 4 | ~~400 篇无指纹审计估隐藏洗稿患病率~~ **已测：p_hidden 8.0%，总洗稿 9.9%；junk 30.3%**（`#dq.audit.protocol_400`） | — | 混淆矩阵已出并已被重标定超过：Step 0+1 正则上线（`#dq.regex.recal_step01`），锁定样本上 recall 17.4%→21.5%、0 新增 FP；Step 2 质量头重训失败（`#dq.head.recal_step2_failed`）——特征空间是瓶颈，正则层是当前唯一有实测的垃圾过滤器 |
 | 5 | Kim 两阶段收窄 60%±10 | ±3pp 需 ~308 人读（ρ²=0.7） | pilot R² 置信下界 + κ ≥0.5 |
@@ -111,3 +111,4 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 - ~~质量头标注量下限~~——已测：150 手读标签训出的头 AUC 0.555，与 20K 教师标签的旧头 0.541 无差异；头/尾池化都是 0.54。下限不在标签量，在 mean-hidden 特征空间本身（`#dq.head.recal_step2_failed`）——recall≥0.5 且 precision≥0.8 的门槛在此架构下不可达，下一步杠杆是 DCLM 式 fastText 或 27B 直打
 - E2 六 checkpoint 分域损失——pod 上跑 domain_loss.py
 - 语义去重在中文网页的切掉率——无公开实测
+- ~~质量分类器路线（CCI3 junk/usable）~~——已测，三个特征家族全灭：mean-hidden 头 0.541（20K 教师标签）/0.555（150 手读）、尾池化 0.542、hashed-n-gram fastText 0.574（均为锁定 400 AUC）；fastText 在 web_labels 上 0.577 vs 旧头 0.823，CCI3 训出的分类器对 fineweb2 是净损失（`#dq.fasttext.cci3_failed`）。正则层是当前唯一有实测的 CCI3 垃圾过滤器

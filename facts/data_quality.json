@@ -659,10 +659,25 @@
     "pooling_check": "tail-512 pooling with the old head: AUC 0.542 -- feature location is not the bottleneck",
     "implication": "0.541's role is to reinforce the CCI3 exclusion ruling (quality judgements do not transfer across corpora), NOT to question the fineweb2 rebuild -- that rebuild scores with the head at AUC 0.823 on its own distribution. 3b's running web_hq rebuild: continue, no stop",
     "hygiene": "new head saved as /tmp/quality_head_recal.pt on the pod, NOT deployed; data/quality_head.pt untouched (swap timing is fb's call, now moot -- the new head is not better)",
-    "next_levers": "DCLM-style fastText (fb's call 2026-08-30: CPU-only, zero LLM labels, start from the 550 existing labels, not on the critical path; deliverable = recall/precision on the locked 400 AND no degradation on web_labels/fineweb2 vs the old head's 0.823). 27B-direct on CCI3 deferred (cross-register transfer unmeasured, GPU contented)",
+    "next_levers": "fastText ALSO FAILED (dq.fasttext.cci3_failed): locked-400 AUC 0.574, web_labels 0.577 vs old head 0.823. Quality-classifier route on 150 labels exhausted across 3 feature families. Remaining: 27B LLM judge on CCI3 (deferred, GPU contention) or accept the regex layer + CCI3 exclusion",
     "label_version": "head trained on v1 labels (0cf1eb8fa4ae=usable); the v2 flip of one training doc does not move the locked-400 result (400 never touched); fastText follow-up trains on v2"
    },
    "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
+   "status": "measured"
+  },
+  {
+   "id": "dq.fasttext.cci3_failed",
+   "value": "DCLM-style fastText (hashed char 2-5gram + word 1-2gram, 2^20 buckets, L2-normalized, logistic/L-BFGS, 5-fold CV reg selection) trained on the 150 v2 hand labels: locked-400 AUC 0.574 -- the recall>=0.5 AND precision>=0.8 bar is unreachable (best precision at recall>=0.5 is 0.38 at drop-15%); web_labels AUC 0.577 vs the deployed head's 0.823 -- the non-degradation check FAILS by 0.25 AUC. Diagnosis: in-sample AUC 1.000 / 5-fold CV 0.682 / transfer 0.574 -- the capacity memorizes 150 docs, generalizes weakly in-distribution, and CCI3-learned junk signals do not transfer to fineweb2.",
+   "unit": "AUC / 2x2 of the fastText junk classifier",
+   "measured": "2026-08-30",
+   "source": "agent C ran datagen/fasttext_junk.py on the pod (CPU) with 150 v2 labels (60 junk) from data/raw/cci3_hq; locked re-test on the 400 by id; web_labels from data/corpus/sample/web_labels.jsonl (180 docs)",
+   "config": {
+    "feature_family_scoreboard": "mean-hidden head (20K teacher labels) 0.541; head (150 hand) 0.555; tail-512 pooling 0.542; hashed n-gram fastText 0.574 -- all on the locked 400, all far below the bar",
+    "overfitting_evidence": "in-sample 1.000 vs CV 0.682 vs transfer 0.574; more labels would narrow the CV gap but the transfer gap says the 150 and 400 differ in junk composition",
+    "fineweb2_transfer": "0.577 on web_labels vs 0.823 for the old head -- a CCI3-trained classifier is a net loss for the fineweb2 domain, consistent with the no-transfer criterion",
+    "verdict": "quality-classifier route at n=150 exhausted; regex layer (dq.regex.recal_step01) remains the only measured junk filter on CCI3; CCI3 stays excluded from training"
+   },
+   "uncertainty": "n=400 AUC +/-0.035; CV-AUC +/-0.05 at 5-fold on 150; a larger label budget (1000+) might lift the CV ceiling but cannot fix the fineweb2 transfer failure",
    "status": "measured"
   }
  ]
