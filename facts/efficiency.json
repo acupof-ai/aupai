@@ -41,7 +41,7 @@
         "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024"
       },
       "uncertainty": null,
-      "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing; 166M in earlier drafts was an unmeasured estimate (e7c55e5), corrected to 172.5M non-embedding 2026-08-30. MFU uses 206M total (train.py:1790), not 166M — 31% is correct.",
+      "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing. 206.13M is the CORRECT 6ND count, not embedding wrongly included: head.weight is tok.weight (train.py:544), so 206.13M = 172.51M non-embedding + 33.62M shared matrix, and tying means the free input lookup and the LM head matmul are one matrix counted once. 166M (e7c55e5) was an unmeasured estimate and is superseded; it never entered the MFU, so 31% is unaffected.",
       "status": "measured"
     },
     {
