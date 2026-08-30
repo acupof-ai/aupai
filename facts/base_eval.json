@@ -248,6 +248,19 @@
    },
    "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
    "status": "measured"
+  },
+  {
+   "id": "be.expressive_ladder_reading_p02_p04",
+   "value": "first reading of decision-tree section 8 shapes on the ladder (p02/p03/p04, 2026-08-30): SHAPE A (capacity-limited) -- O1 +9.22pt (15.88->25.10, threshold 4.8) and GAP -6.66pt (73.84->67.18, threshold 4.2) both clear the noise floor; L2 +2.56 (threshold 2.5, borderline/saturating); C-Eval -1.12 (threshold 5.9, unreadable, at chance 25 all three points). The composition hypothesis (10x same-mix moves knowledge not expression) is WEAKENED by the ladder; the template premise (6.38x, mlm.corpus.cosmopedia_template_concentration) stands separately -- templated text and volume-buys-generation can both be true. Verdict carries a rate, not just a label: GAP closure ~7pt/doubling at the small end, linear extrapolation closes the remaining 67pt in ~9 doublings (512x); 10x (~3.3 doublings) buys ~24pt of closure as an UPPER BOUND (rate decays with D -- loss slope fell 0.910->0.567 nat/e-fold in one segment); the six-point fit's local slope at 3.24b is the number for the 10x projection. 'Volume is a real but insufficient lever' -- volume-moves-it is supported, volume-closes-it is not. C-Eval framing: a floor metric at chance is uninformative (same class as English MC); knowledge IS moving -- math_v2_like +11.19pt (76.69->87.88, past its 4.3pt resolution). Baseline note: fb's table used p02_s0 single-seed; the frozen rule uses the 4-seed mean (deltas +9.22/-6.66 vs +9.10/-7.22), verdict unchanged. Asymmetry stands: the ladder weakened but did not kill the hypothesis; the 10x build's same-mix control arm remains the confirmation test and is still required",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (p02_s0..s3, p03, p04); docs/lessons/scaling_decision_tree.md section 8",
+   "config": {
+    "points": "p02 (4-seed mean), p03, p04",
+    "thresholds_pt": {"L2": 2.5, "O1": 4.8, "O5": 6.8, "CE": 5.9, "GAP": 4.2},
+    "shape_rule": "tree section 8, frozen before the points landed"
+   },
+   "uncertainty": "3 of 6 points; the closure rate is a small-end estimate and will decay; the 24pt/10x figure is an upper bound",
+   "status": "measured"
   }
  ]
 }
