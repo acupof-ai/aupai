@@ -387,6 +387,40 @@ def check_no_stale_running(root):
     return PASS, "no run has been 'running' for over a day"
 
 
+def check_no_ghost_running(root):
+    # no_stale_running's blind spot: a run that FINISHED but was never recorded stays
+    # 'running' for up to 24h. On the pod, a running row older than 2h with no live
+    # process is a ghost -- close it with exp.py done. Pod-only: processes live there.
+    if not pod_drift.is_pod(root):
+        return SKIP, "dev checkout; process state lives on the pod"
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    import subprocess
+
+    ghosts = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if r.get("status") != "running":
+                continue
+            try:
+                t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+            except Exception:
+                return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
+            if (time.time() - t) / 3600 < 2:
+                continue  # grace: a launched run takes time to appear in ps
+            name = r.get("name", "")
+            if name and not subprocess.run(["pgrep", "-f", name], capture_output=True, text=True).stdout.strip():
+                ghosts.append(f"{name} (started {r.get('started')})")
+    if ghosts:
+        return FAIL, f"running rows with no live process: {', '.join(ghosts[:6])}; close with exp.py done"
+    return PASS, "every running row has a live process"
+
+
 def check_guard_on_path(root):
     """Deleting the guard's call site must show up as a FAIL, not just a raise in CI."""
     src_path = os.path.join(root, "train.py")
@@ -915,6 +949,18 @@ def check_pod_drift(root):
     return SKIP, "dev checkout; CI gates manifest freshness, the pod gates file drift"
 
 
+def _broken_ghost_running():
+    """The REAL experiment log plus a fake running row whose process cannot exist: the
+    pod-only ghost check must see it. The 2h grace is passed by backdating the row."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"started": "2026-08-29 00:00", "name": "ghost_run_xyz", "status": "running"}) + "\n")
+    return d
+
+
 def _broken_pod_drift():
     """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
     mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
@@ -1005,6 +1051,13 @@ CHECKS = [
         "a killed job wrote its checkpoint, never ran its eval, and left the row open",
         check_no_stale_running,
         _broken_stale_run,
+    ),
+    (
+        "no_ghost_running",
+        "a running row older than 2h has a live process (pod only)",
+        "a finished-but-unrecorded run looked alive for up to 24h under no_stale_running alone",
+        check_no_ghost_running,
+        _broken_ghost_running,
     ),
     (
         "guard_on_path",
