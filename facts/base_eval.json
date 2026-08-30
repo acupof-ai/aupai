@@ -153,6 +153,19 @@
    "status": "recorded"
   },
   {
+   "id": "be.known_answer_panel_3_4",
+   "value": "known-answer validation of the two new panel runners on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30): math_v2_like gold-win 96.25% vs wrong-win 3.75% (spread 92.5pt, 1040 pairs, 40/1080 skipped on token-length mismatch = 3.7%); lambada_zh two-way 92.7% vs 7.3% (spread 85.4pt, 1000 items), open-vocab top-1 24.0% / top-5 41.3%. Both swap-stable (0.9625/0.9625, 0.927/0.926 -- no position bias). Both clear the panel's >=60pt freeze gate. Caveat: the lambada items were built from data/corpus/batch_00{1..9}.jsonl (training-domain prose, calibration only -- memorization inflates the 24%); the panel metric needs held-out text",
+   "measured": "2026-08-30",
+   "source": "eval/math_v2_like.py; eval/lambada_zh.py; pod runs /tmp/ka_{math,lzh}_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "lambada_source": "data/corpus/batch_00{1..9}.jsonl (training-domain, calibration only)",
+    "math_wrong_answer": "one deterministic digit edit d->(d+1)%10 on the answer's last digit, same char length"
+   },
+   "uncertainty": "lambada open_acc1=24% is measured on training-domain text and is an upper bound; the held-out number is unmeasured",
+   "status": "recorded"
+  },
+  {
    "id": "be.panel_resolution_rules",
    "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
    "measured": "2026-08-30",
