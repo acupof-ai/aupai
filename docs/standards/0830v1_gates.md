@@ -140,7 +140,42 @@ detour: four of them are the ladder's own 0.2b point plus its seed replicates.
 | runs | what | serves |
 |---|---|---|
 | 4 | current arch, `attn_every 4`, seeds 0-3 | ladder's 0.2b point (seed 0); the seed-variance measurement; lessons-e1's control arm; lessons-44's F arm |
-| 4 | `attn_every 1`, seeds 0-3 | lessons-e1's KDA-vs-full-attention arm — **conditional, see below** |
+| 4 | `attn_every 1`, seeds 0-3 | **VOID — the arm is not a model.** See below |
+
+**`attn_every 1` is not a full-attention arm. It is a model with no position
+information.** Measured 2026-08-30: `p02_a1_s2` val 4.765 against `p02_s2` val 3.679, same
+seed, same mix, same config — a gap of 1.086 nat, **21× the measured seed σ̂ of 0.0516**. An
+effect that large in an A/B is a symptom, not a result.
+
+`train.py:272` states the cause: *"Gated MLA: latent KV compression + full causal attention
+(NoPE, KDA handles position)."* The attention layers carry no position encoding at all — no
+RoPE, no learned positions. `attn_every 1` removes all nine KDA layers and with them every
+source of positional information in the model. The 1.086 nat prices *having any position
+information*, which was never in question, and says nothing about KDA versus attention as
+operators.
+
+Everything built on this arm is void: σ_d, ρ, the paired design, the fit protocol's §6
+amendment, the minimum-two-pairs rule, the 721 GPU-min costing, the falsifier. All of it
+was elaborating the statistics of a comparison whose treatment arm is not a coherent model.
+The defect was upstream of every question asked about it, and an hour of careful work by
+three sessions went into the wrong layer. lessons-e1 verified the two hard unknowns — data
+order determined by `Cfg.seed`, init comparability across shared and replaced layers — and
+both answers hold. Nobody asked the prior question: **is the treatment arm a model that
+works.** The controller allocated the cards and approved the design, so the omission is the
+controller's first.
+
+Same shape as the `en` directory. A name — `attn_every 1` reading as "all attention" —
+trusted as a claim about what the thing is.
+
+A valid arm needs RoPE on the MLA layers, which is a code change rather than a flag. Even
+then the comparison becomes "KDA + NoPE" versus "attention + RoPE": two changes, not one.
+There may be no clean single-variable form of this question while KDA is load-bearing for
+position, and if so that should be stated rather than designed around
+(`eff.attn_every_1_has_no_position_information`).
+
+One number survives on its own: **612s vs 425s at the same token count — all-attention is
+44% slower** over seq 4096, consistent with quadratic attention. A throughput measurement,
+not an MDE judgement.
 
 44's F arm left this table on 2026-08-30. The W/F quality-cut experiment is **killed by its
 own pre-registered threshold**, not null: the union hit rate of the Step 0/1 filters on

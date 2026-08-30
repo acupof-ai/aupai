@@ -808,6 +808,24 @@
       "boundary": "the service was delivered after a SINGLE-request smoke test with no capacity limit stated, so the caller had no way to know. Raising num_blocks is the fix and is cheap -- the 27B in NVFP4 uses about 28 of 96 GB -- but the right value must be computed from the KV tensor size, not guessed. Not done: the line was paused before restart.",
       "status": "measured",
       "refuted_by": "a run at 2-way concurrency with ~2661-token requests that does not exhaust the pool"
+    },
+    {
+      "id": "eff.attn_every_1_has_no_position_information",
+      "value": 1.086,
+      "unit": "nat (val NLL penalty of attn_every 1 vs attn_every 4 at 0.2b, seed 2)",
+      "measured": "2026-08-30",
+      "source": "p02_a1_s2 val 4.765 vs p02_s2 val 3.679, identical seed/mix/config",
+      "config": {
+        "cause": "train.py:272 -- 'Gated MLA: latent KV compression + full causal attention (NoPE, KDA handles position)'. The attention layers carry NO position encoding: no RoPE, no learned positions. attn_every 1 removes all 9 KDA layers and therefore every source of positional information in the model.",
+        "what_it_is_not": "NOT a measurement of KDA-vs-attention as operators. attn_every 1 is not a full-attention arm; it is a model that cannot tell where a token is. The 1.086 nat gap prices having any position information at all.",
+        "magnitude_check": "21x the measured seed sigma of 0.0516 -- an effect that large in an A/B is a symptom, not a result",
+        "throughput": "612s vs 425s at the same token count: all-attention is 44% slower over seq 4096, consistent with quadratic attention. That number stands on its own as a throughput measurement.",
+        "what_a_valid_arm_needs": "RoPE on the MLA layers, which is a code change rather than a flag. Even then the comparison becomes 'KDA + NoPE' vs 'attention + RoPE' -- two changes, not one. There may be no clean single-variable form of this question while KDA is load-bearing for position.",
+        "voided": "the paired-design work built on this arm -- sigma_d, rho, the 721 GPU-min costing, the minimum-2-pairs rule, the falsifier. All were elaborating the statistics of a comparison whose treatment arm is not a coherent model."
+      },
+      "uncertainty": "single seed; no replicate needed at 21 sigma",
+      "status": "measured",
+      "boundary": "says attn_every 1 is broken under NoPE and why; says nothing about how KDA compares to attention when both have position information"
     }
   ]
 }
