@@ -64,6 +64,11 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--max_new", type=int, default=512)
     ap.add_argument("--batch", type=int, default=16)
+    ap.add_argument("--demos", type=int, default=3,
+                    help="number of solved demonstrations (fb's demo-count sweep: "
+                         "0-shot continuation vs 3-shot; pre-registered reading: "
+                         "0-shot > 3-shot by >2delta=12.6pt => demos interfere; "
+                         "both zero => the zero is not a prompt-format artefact)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
     args = ap.parse_args()
@@ -78,15 +83,15 @@ def main():
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     demos = [(r["instruction"], r["output"]) for r in rows[:N_DEMOS]]
     evals = rows[N_DEMOS:]
-    print(f"L1 few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
+    print(f"L1 few-shot: {args.demos} demos, {len(evals)} eval problems", flush=True)
 
-    preds_path = os.path.join(ROOT, "data", "eval", "preds_l1.jsonl")
+    preds_path = os.path.join(ROOT, "data", "eval", f"preds_l1_d{args.demos}.jsonl")
     correct = total = 0
     n_box = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
-            texts_in = [build_prompt(demos, r["instruction"]) for r in batch]
+            texts_in = [build_prompt(demos[:args.demos], r["instruction"]) for r in batch]
             if fone_on:
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:
