@@ -390,8 +390,31 @@ was recorded — the gap this section exists to close.
 
 ### web_hq
 
-- Status: LOST 2026-08-30. The fineweb2 shards were gone from /work, /data00 and
-  data/raw; no Fetch/Build command was recorded, so the domain was not rebuildable.
-  The 0.2b budget point trained on a CCI3 substitute under this name and was discarded.
-- Rebuild: in progress (owner: 3b). This block gets its Result line when the rebuild
-  stamps build_corpus_stats.json; until then corpus_fp_matches FAILs this domain by design.
+- Result: fingerprint: 30838d423348b2e5, 1,366,324 docs, 5,914,966,151 bytes, 1.434B
+  tokens (2026-08-30)
+- Build: `datagen/build_corpus.py` built `data/corpus/web` with the full garbage chain
+  (pass1+pass2+pass3, `AUPAI_NO_GARBAGE` unset) and `reject_holdout` per document. The
+  523 LAMBADA-zh holdout documents were then carved out by `remove_holdout2.py`, leaving
+  4,731,988 documents. `web_hq` is the first 62 shards of that post-removal `web`, moved
+  wholesale — not a selection of the best N, and **the quality cut was not applied**.
+- Deviation, on purpose: the quality-head cut that the pre-reset `web_hq` recipe called
+  for is skipped. The six budget points therefore run on uncut corpus and become the F
+  arm of the quality-cut experiment (`docs/lessons/quality_ab_design.md`); the W arm runs
+  the cut separately. This is experiment design, not an omission.
+- Fetch: fineweb2 via `HF_ENDPOINT=https://hf-mirror.com`; raw parquet at
+  `/data00/fw2raw` (19GB, 4 files). The pre-0830v1 shards were lost; this is the rebuild.
+- Holdout verification: two independent sources agree. aupai-3b carved 523 documents by
+  deterministic hash against `lambada_zh_src.jsonl`; lessons-b0 independently confirmed
+  the 523 ids match its own set and that a streaming scan of all 4,731,988 documents
+  finds zero. Order was exclusion first, fingerprint last.
+- Stamp: `build_corpus_stats.json` was written post-hoc from the live directory on
+  2026-08-30, not by `build_corpus.py` at build time — the build-time stats file did not
+  survive the move from `web`. The file says so in its own `stamped_at_build: false`.
+  The stamp still does its forward job: any later change to the directory fails
+  `corpus_fp_matches`.
+- Known property: 15.2% of documents are predominantly Traditional Chinese (scout
+  measurement, 9,000 documents from the first 3 shards; character-level 14.81%). The
+  tokenizer costs 1.164x more tokens per character on Traditional-heavy documents
+  (corpus-level) and 1.33-1.43x on controlled minimal pairs. Overall this is about
+  +2.5% tokens for the same text — recorded, not corrected. lessons-44 owns the
+  full-corpus value.
