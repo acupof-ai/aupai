@@ -44,17 +44,34 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 # the English three do not, same model same scale -- b0's finding), so base
 # gets ceval only as a z-score tripwire.
 APPLIES = {
-    "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like"],
-    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500"],
+    "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like", "l1_fewshot"],
+    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
     "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
     "math_500": "generative; a base checkpoint reads zero",
-    "pass_at_k": "RL only; an SFT checkpoint has no policy to sample from",
+    "pass_at_k": "needs a policy (SFT or RL); a base checkpoint has none",
     "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
+    "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); script pending b0 hand-run",
+}
+
+# Seed variance (sd) per metric at 0.2b, df=3, from ckpt_p02_s0..s3.
+# A move smaller than the readable-move threshold (4.65*sd, t-based df=3)
+# is not readable. Recorded next to each metric so nobody reads noise as signal.
+# Source: facts/base_eval.json (be.*_seed_variance), runs/score_matrix.jsonl.
+NOISE_THRESHOLDS = {
+    "minimal_pairs": {"sd_pt": 2.47, "readable_move_pt": 11.5, "source": "be.minimal_pairs_seed_variance"},
+    "math_v2_like": {"sd_pt": 3.11, "readable_move_pt": 14.5, "source": "be.math_v2_like_seed_variance"},
+    "lambada_zh": {"sd_pt": 1.02, "readable_move_pt": 4.8, "source": "be.panel_expressive_seed_variance"},
+    "mc_ceval": {"sd_pt": 1.27, "readable_move_pt": 5.9, "source": "be.panel_expressive_seed_variance"},
+    # domain_loss: sd=0.0516 nat (ds.seed_variance_0p2b), readable_move=0.24 nat
+    "domain_loss": {"sd_nat": 0.0516, "readable_move_nat": 0.24, "source": "ds.seed_variance_0p2b"},
+    # l1_fewshot: binomial delta=1.4/sqrt(N); N=500 -> 6.3pt. No seed variance yet
+    # (b0 hand-running); label noise is binomial, seed variance is model-side.
+    "l1_fewshot": {"binomial_delta_pt": 6.3, "n_items": 500, "source": "reasoning_panel.md §3"},
 }
 
 
@@ -173,6 +190,17 @@ def metric_math_v2_like(ckpt_path):
     Floor 50%; per-family reporting; pairs that break token-length alignment
     are skipped and counted."""
     return _run_eval_json("math_v2_like.py", ckpt_path)
+
+
+def metric_l1_fewshot(ckpt_path):
+    """Reasoning panel L1: few-shot continuation math (docs/lessons/reasoning_panel.md §2).
+    2-3 solved examples in prompt, model continues, exact-match on boxed/last number.
+    N>=500, binomial delta=1.4/sqrt(N)≈6.3pt. Zero GPU cost (prompt engineering only).
+    Script pending b0 hand-run; returns error until eval/l1_fewshot.py lands."""
+    script = os.path.join(ROOT, "eval", "l1_fewshot.py")
+    if not os.path.exists(script):
+        return None, "eval/l1_fewshot.py not yet written (b0 hand-running, 2026-08-30)"
+    return _run_eval_json("l1_fewshot.py", ckpt_path)
 
 
 def _run(cmd, patterns):
@@ -311,6 +339,7 @@ def score(ckpt_path, mix_path, tok_path, device):
         "measured": subprocess.run(["date", "+%Y-%m-%d"], capture_output=True, text=True).stdout.strip(),
         "metrics": {},
         "skipped": {},
+        "noise_thresholds": {k: v for k, v in NOISE_THRESHOLDS.items() if k in wanted},
     }
     wanted = APPLIES[kind]
     needs_model = "domain_loss" in wanted
@@ -339,6 +368,9 @@ def score(ckpt_path, mix_path, tok_path, device):
     if "math_v2_like" in wanted:
         v, err = metric_math_v2_like(ckpt_path)
         record["metrics"]["math_v2_like"] = v if v else {"error": err}
+    if "l1_fewshot" in wanted:
+        v, err = metric_l1_fewshot(ckpt_path)
+        record["metrics"]["l1_fewshot"] = v if v else {"error": err}
     if "mc_full" in wanted:
         v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy", "hellaswag", "piqa"])
         record["metrics"]["mc_full"] = v if v else {"error": err}
