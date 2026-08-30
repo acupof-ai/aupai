@@ -54,6 +54,23 @@ exact PID, never `pkill -f`. Current plan, in order:
 - **Phase B**: GPU 1-7 run the 0.2b pretrain. GPU 0 goes to aupai-3b for quality-head
   scoring.
 
+## The 0.2b point, 2026-08-30: trained on the wrong corpus
+
+`data/corpus/web_hq/` became eight symlinks into an in-progress CCI3 build at 22:24.
+`/data00/tokens_web_hq.pt` was rebuilt from them at 22:25. The 0.2b run started at 22:41
+and reused that cache, so 32.4% of its tokens came from the corpus this round had barred
+(measured filter recall 1.7%, hand-read junk 30.3% ± 4.6pp). The original fineweb2 shards
+are gone from `/work`, `/data00`, and `data/raw`; the domain is being re-downloaded.
+
+The run is recorded `status=fail` and does not enter the scaling curve. What survives is
+the mechanics: loss 7.871 to 3.204 with no NaN, `--batch 16 --accum 2` at 50.8GB/card,
+497s on seven cards.
+
+`corpus_fp` already stored all seven domain fingerprints in the checkpoint, and
+`corpus_fp_matches` already existed. It reported `1 domain(s) match` and PASSed. A check
+that covers one seventh and still reports PASS is worse than no check: it produces the
+appearance of having been checked. Both guards below close that gap.
+
 ## Rules this round does not bend
 
 - No GPU pretrain while `harness check` is red. A permanent red is the same as no signal.
@@ -66,3 +83,11 @@ exact PID, never `pkill -f`. Current plan, in order:
   run. Improvements are not batched into a later version.
 - `/work/aupai` on the pod is not a git repo. Code arrives by `podput` and drifts
   unmonitored; a stale pod copy already produced one wrong diagnosis this round.
+- A mix domain directory holds real files. No symlinks, and nothing pointing at a build
+  still being written. Corpora under construction stay in their own directory and enter a
+  mix by name, never by repointing an existing domain.
+- A partial check that reports PASS is a defect. State the coverage in the evidence
+  string, and FAIL when coverage is incomplete.
+- No kernel proposal without a `torch.compile` baseline. AttnRes measured 42.2ms eager and
+  3.85ms compiled for the same work — using the eager number would have made a
+  zero-benefit kernel look like a 10x opportunity.
