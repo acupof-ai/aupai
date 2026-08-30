@@ -54,8 +54,9 @@ def main():
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     args = parser.parse_args()
 
-    model, cfg = load_checkpoint(args.ckpt, device=args.device)
-    model = model.to(torch.bfloat16)
+    # dtype through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to fp32
+    # after the cast); a separate .to(bf16) here would undo the upcast.
+    model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
     # A FoNE checkpoint must decode through fone: tok.decode emits the [NUM] token
     # itself, so no answer parses and the score collapses for a non-model reason.

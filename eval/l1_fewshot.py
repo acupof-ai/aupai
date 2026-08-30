@@ -15,22 +15,42 @@ Usage: CUDA_VISIBLE_DEVICES=7 python3 eval/l1_fewshot.py --ckpt ckpt_p324.pt
 import argparse
 import json
 import os
+import re
 import sys
 
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-os.environ.setdefault("FLA_FLASH_KDA", "0")
 
+# FLA_FLASH_KDA must stay unset: the new-arch ladder checkpoints (attn_every 4)
+# route 9/12 layers through chunk_kda, and the eval runners' "0" default makes
+# that import fail (train.py:107 -> chunk_kda=None -> forward crash). score_matrix
+# leaves it unset and scores the same checkpoints fine.
 import fone  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
-from eval.math_zh import score  # noqa: E402
+from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 N_DEMOS = 3
+
+# Inlined from eval/math_zh.py: importing that module sets FLA_FLASH_KDA=0,
+# which kills chunk_kda for the new-arch ladder checkpoints.
+ANS_RE = re.compile(r"答案是[:：]\s*(.+?)(?:[。\n]|$)")
+
+
+def score(gen, gold):
+    gold_ans = extract_boxed(gold)
+    if gold_ans is None:
+        return 0.0
+    if extract_boxed(gen) is not None:
+        return reward_fn(gen, gold_ans)
+    m = ANS_RE.search(gen)
+    if m:
+        return reward_fn(f"\\boxed{{{m.group(1).strip()}}}", gold_ans)
+    return 0.0
 
 
 def build_prompt(demos, target_q):
@@ -48,8 +68,9 @@ def main():
     ap.add_argument("--tokenizer", default=TOK_PATH)
     args = ap.parse_args()
 
-    model, cfg = load_checkpoint(args.ckpt, device=args.device)
-    model = model.to(torch.bfloat16)
+    # dtype goes through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to
+    # fp32 after the cast); a separate .to(bf16) here would undo the upcast.
+    model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
     fone_on = getattr(cfg, "fone", False)
     num_id = getattr(cfg, "num_id", None)
