@@ -11,6 +11,7 @@ clean per-document <eos> boundary this produces is what the doc mask keys on.
 Training slices x=[:, :-1], y=labels[:, 1:].
 """
 
+import hashlib
 import json
 import os
 import random
@@ -52,6 +53,23 @@ SOURCES = [
     (os.path.join(DATA, "synthetic", "knowledge_qa_zh.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "synthetic", "math_gsm8k_zh.jsonl"), "instruction", "output"),
 ]
+
+
+def _fp_file(path):
+    """Content hash of a single file. Content-based, not git sha: uncommitted edits
+    change what a pack contains, and a sha would not see them."""
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:16]
+
+
+def _fp_sources():
+    """Content hash of all SOURCES files. A source swap that does not trigger a
+    repack is invisible without this."""
+    h = hashlib.sha256()
+    for path, _, _ in SOURCES:
+        with open(path, "rb") as f:
+            h.update(os.path.basename(path).encode() + b"\0" + hashlib.sha256(f.read()).digest())
+    return h.hexdigest()[:16]
 
 
 def read_examples():
@@ -211,8 +229,18 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
     labels = torch.tensor(rows_lab, dtype=torch.int32)
 
     # "vocab_id": the same key checkpoints carry, or the fingerprint check compares
-    # two differently-named fields.
-    blob = {"input_ids": input_ids, "labels": labels, "vocab_id": _vocab_fingerprint(tok)}
+    # two differently-named fields. The other three fingerprints make the pack's
+    # provenance self-describing: which packer built it, which sources it read, and
+    # which holdout set it was checked against. A stale holdout_fp is the
+    # contamination that nothing currently catches.
+    blob = {
+        "input_ids": input_ids,
+        "labels": labels,
+        "vocab_id": _vocab_fingerprint(tok),
+        "packer_fp": _fp_file(os.path.join(ROOT, "scripts", "prepare_sft.py")),
+        "sources_fp": _fp_sources(),
+        "holdout_fp": _fp_file(os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")),
+    }
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)
         n_num = int((input_ids == num_id).sum())

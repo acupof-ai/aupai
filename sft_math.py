@@ -104,6 +104,20 @@ def main():
     elif is_main:
         missing = "the checkpoint" if not ck_vocab else "the pack"
         print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
+    # A pack built against a stale holdout set may contain held-out questions.
+    # Refuse, the same way a vocab_id mismatch refuses.
+    holdout_path = os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
+    if "holdout_fp" in d and os.path.isfile(holdout_path):
+        import hashlib
+        live_fp = hashlib.sha256(open(holdout_path, "rb").read()).hexdigest()[:16]
+        if d["holdout_fp"] != live_fp:
+            raise RuntimeError(
+                f"{args.sft_path} was packed against holdout set {d['holdout_fp']}, "
+                f"but the current holdout_hashes.txt is {live_fp}. The pack may contain "
+                f"held-out questions. Repack with prepare_sft.py."
+            )
+    elif is_main:
+        print("WARNING pack predates holdout fingerprinting; verify holdout by hand", flush=True)
     assert Cfg.fone == ("values" in d), (
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
         f"{'has' if 'values' in d else 'has no'} values; repack with prepare_sft_math.py --fone"

@@ -694,6 +694,58 @@ def _broken_score_input_fresh():
     return d
 
 
+def check_sft_pack_holdout(root):
+    """An SFT pack must be built against the current holdout set, not a stale one.
+
+    The gap: holdout_hashes.txt is regenerated when the eval set changes, but a pack
+    built before the regeneration still carries the old hashes. Training on it leaks
+    held-out questions. The pack stamps holdout_fp (the hash of holdout_hashes.txt at
+    pack time); this check compares it against the current file. Same pattern as
+    score_input_fresh: the derived artifact must match the source it was built from."""
+    import hashlib
+
+    pack_path = os.path.join(root, "data", "sft", "sft_all.pt")
+    if not os.path.isfile(pack_path):
+        return SKIP, "no SFT pack"
+    holdout_path = os.path.join(root, "data", "eval", "holdout_hashes.txt")
+    if not os.path.isfile(holdout_path):
+        return SKIP, "no holdout_hashes.txt"
+    try:
+        d = _read_ckpt_dict(pack_path)
+    except Exception as e:
+        return FAIL, f"cannot read pack: {e}"
+    pack_fp = d.get("holdout_fp")
+    if pack_fp is None:
+        return PASS, "pack predates holdout fingerprinting -- UNKNOWN, not verified (repack to stamp)"
+    with open(holdout_path, "rb") as f:
+        live_fp = hashlib.sha256(f.read()).hexdigest()[:16]
+    if pack_fp != live_fp:
+        return FAIL, f"pack built against holdout {pack_fp}, current is {live_fp} -- repack"
+    return PASS, f"pack matches holdout {live_fp}"
+
+
+def _broken_sft_pack_holdout():
+    """A pack whose holdout_fp does not match the current holdout_hashes.txt."""
+    import torch
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    os.makedirs(os.path.join(d, "data", "sft"), exist_ok=True)
+    os.makedirs(os.path.join(d, "data", "eval"), exist_ok=True)
+    # The current holdout set:
+    with open(os.path.join(d, "data", "eval", "holdout_hashes.txt"), "w") as f:
+        f.write("current-holdout-hash\n")
+    # A pack built against a DIFFERENT (stale) holdout set:
+    torch.save(
+        {"input_ids": torch.zeros(1, 4097, dtype=torch.int32),
+         "labels": torch.zeros(1, 4097, dtype=torch.int32),
+         "vocab_id": "test", "holdout_fp": "stale0000000000"},
+        os.path.join(d, "data", "sft", "sft_all.pt"),
+    )
+    return d
+
+
 def _broken_restartability():
     """The real regression: a new script that accumulates in a loop and saves once at the end."""
     import shutil
@@ -1919,6 +1971,13 @@ CHECKS = [
         "re-running clean changes the corpus but leaves stale scores with nothing raising",
         check_score_input_fresh,
         _broken_score_input_fresh,
+    ),
+    (
+        "sft_pack_holdout",
+        "an SFT pack is built against the current holdout set, not a stale one",
+        "a pack built before a holdout regeneration leaks held-out questions into training",
+        check_sft_pack_holdout,
+        _broken_sft_pack_holdout,
     ),
     (
         "restartability",
