@@ -683,6 +683,38 @@
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) — NCCL auto-selects good protocol at smaller per-rank chunks",
    "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU — not ring-length-dependent in this regime",
    "status": "recorded"
+  },
+  {
+   "id": "eff.warmup_absolute_not_fractional",
+   "value": "At the 0.2b point (218 steps/rank), warmup 2/3/20 steps gave val 3.658/3.476/3.135 (same seed, same data, same mix). Absolute step count is what matters: 20 beats 3 beats 2 at every logged step. The six budget points use fixed warmup=20.",
+   "measured": "2026-08-30",
+   "source": "A/B/C: warmup_smoke / warmup_smoke_w3 / warmup_smoke_w20, 7xGPU1-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32, 218 steps, 428s each (runs/warmup_smoke*.log)",
+   "config": {
+    "gpus": "7xH20 (GPU1-7)",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "fp8": true,
+    "compiled": true,
+    "vocab": 32776,
+    "chunk_size": 32,
+    "mix": "data/mix_smoke_warmup.json (mix_scale_0.2b minus web_hq, six domains renormalized: textbook 0.734, wiki 0.112, en 0.073, math 0.037, code 0.026, chat 0.017)",
+    "total_tokens": 200000000,
+    "steps_per_rank": 218,
+    "warmup_arms": [2, 3, 20],
+    "val_warmup_2": 3.658,
+    "val_warmup_3": 3.476,
+    "val_warmup_20": 3.135,
+    "min_loss_warmup_2": 3.354,
+    "min_loss_warmup_3": 3.193,
+    "min_loss_warmup_20": 2.865,
+    "gnorm_step10_warmup_2": 6.88,
+    "gnorm_step10_warmup_3": 3.38,
+    "gnorm_step10_warmup_20": 1.43
+   },
+   "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) — the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
+   "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum — the 2->3->20 trend is monotonic — but 20 is the chosen smaller-bias config, not a measured optimum.",
+   "status": "measured"
   }
  ]
 }
