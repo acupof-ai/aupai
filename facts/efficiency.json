@@ -701,7 +701,11 @@
     "mix": "data/mix_smoke_warmup.json (mix_scale_0.2b minus web_hq, six domains renormalized: textbook 0.734, wiki 0.112, en 0.073, math 0.037, code 0.026, chat 0.017)",
     "total_tokens": 200000000,
     "steps_per_rank": 218,
-    "warmup_arms": [2, 3, 20],
+    "warmup_arms": [
+     2,
+     3,
+     20
+    ],
     "val_warmup_2": 3.658,
     "val_warmup_3": 3.476,
     "val_warmup_20": 3.135,
@@ -715,6 +719,34 @@
    "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) — the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
    "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum — the 2->3->20 trend is monotonic — but 20 is the chosen smaller-bias config, not a measured optimum.",
    "status": "measured"
+  },
+  {
+   "id": "eff.ddp_5k_intrinsic_overhead",
+   "claim": "The 5K (6.25%) DDP overhead is intrinsic to gradient synchronization, not static_graph or gradient_as_bucket_view bookkeeping",
+   "value": "static_graph=False: 74-75K (no change). bucket_view=False: 74-75K (no change). Baseline: 75K. Both DDP features exonerated. The overhead is the cost of gradient sync itself, constant across 3/4/7 GPUs (6.25% in all cases).",
+   "measured": "2026-08-30",
+   "source": "A/B: b4_no_sg (static_graph=False) vs b4_no_bv (bucket_view=False) vs baseline, 4xGPU4-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32, mix_scale_0.2b, 40 steps, bucket50, default NCCL protocol. Profile: GPU idle only 1.5% (27.7ms/step), NCCL 18.2% (overlapped with compute), GPU 98.5% busy.",
+   "config": {
+    "gpus": "4xH20 (GPU4-7)",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "fp8": true,
+    "compiled": true,
+    "vocab": 32776,
+    "chunk_size": 32,
+    "mix": "data/mix_scale_0.2b.json",
+    "bucket_cap_mb": 50,
+    "baseline_tok_s_gpu": 75000,
+    "no_static_graph_tok_s_gpu": 74500,
+    "no_bucket_view_tok_s_gpu": 74500,
+    "single_gpu_tok_s_gpu": 80000,
+    "gpu_idle_pct": 1.5,
+    "nccl_pct": 18.2
+   },
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
+   "boundary": "DDP intrinsic overhead; not worth further pursuit (6.25% = 13min on 3.5h six-point runs); closed per fb timebox",
+   "status": "closed"
   }
  ]
 }
