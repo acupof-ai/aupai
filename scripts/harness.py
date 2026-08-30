@@ -1189,20 +1189,29 @@ def check_mix_supply(root):
     FAILs when demand exceeds the FULL cache (data would repeat even after
     train.py's cap). The val-split reduction (demand > pool but <= cache) is
     a known, accepted condition -- the gate doc documents it as 1.53% at
-    3.24b, handled by the fit-protocol reading D from the log. SKIP without
+    3.24b, handled by the fit-protocol reading D from the log. The val carve
+    lands entirely in the anneal phase (roughly 2x the per-domain loss the
+    whole-budget figure suggests), not spread across both phases. SKIP without
     caches (CPU CI, dev box)."""
     cache_dir = _token_cache_dir()
     if not os.path.isdir(cache_dir):
         return SKIP, f"token cache dir {cache_dir} not present"
     seq = cfg_default("seq")
     anneal_frac = cfg_default("anneal_frac")
+    val_frac = cfg_default("val_frac")
+    val_rows_max = cfg_default("val_rows_max")
     mixes = sorted(glob.glob(os.path.join(root, "data", "mix_scale_[0-9]*.json")))
     if not mixes:
         return SKIP, "no mix_scale_*.json budget points"
     bad = []
+    val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
+    largest = max(
+        json.load(open(m, encoding="utf-8"))["total_tokens"] for m in mixes
+    )
     for mp in mixes:
         mix = json.load(open(mp, encoding="utf-8"))
         rows = mix["total_tokens"] / seq
+        is_largest = mix["total_tokens"] == largest
         for name, d in mix["domains"].items():
             cache = os.path.join(cache_dir, f"tokens_{name}.pt")
             if not os.path.exists(cache):
@@ -1223,9 +1232,17 @@ def check_mix_supply(root):
                     bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want}, cache supplies {cap}")
                     break
                 used += want
+            else:
+                # Both phases within cache: compute val-split loss for the report.
+                if is_largest:
+                    n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+                    pool = cache_rows - n_val
+                    demand = used
+                    val_loss_tokens += max(0, demand - pool) * seq
     if bad:
         return FAIL, "; ".join(bad)
-    return PASS, f"{len(mixes)} mixes, all domains within cache supply"
+    pct = 100 * val_loss_tokens / largest if largest else 0
+    return PASS, f"{len(mixes)} mixes, all within cache supply; val-split loss {pct:.2f}% at {largest / 1e9:.2f}B"
 
 
 def _broken_mix_supply():
@@ -1808,7 +1825,18 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
-STEPS = ("pretokenize", "point")  # ladder lands next, behind the same gate
+STEPS = ("pretokenize", "point", "ladder")
+
+# The six 0830v1 budget points, in order. Each is a mix_scale_* mix at the
+# frozen run config. Names double as checkpoint names: ckpt_<name>.pt.
+LADDER = [
+    ("p02", "data/mix_scale_0.2b.json"),
+    ("p03", "data/mix_scale_0.3b.json"),
+    ("p04", "data/mix_scale_0.4b.json"),
+    ("p08", "data/mix_scale_0.8b.json"),
+    ("p16", "data/mix_scale_1.6b.json"),
+    ("p324", "data/mix_scale_3.24b.json"),
+]
 
 
 def _gate(force):
@@ -1948,6 +1976,30 @@ def _run_point(step_args, forced):
     return r.returncode
 
 
+def _run_ladder(step_args, forced):
+    """All six budget points, sequential, resumable. A point with a
+    score-matrix record is skipped; a failed point stops the ladder.
+    Each point runs through _run_point, which enforces the frozen config."""
+    rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    done = set()
+    if os.path.exists(rec):
+        for line in open(rec, encoding="utf-8"):
+            m = re.search(r'"ckpt": "ckpt_(.+)\.pt"', line)
+            if m:
+                done.add(m.group(1))
+    for name, mix in LADDER:
+        if name in done:
+            print(f"ladder: {name} already scored, skipping")
+            continue
+        print(f"ladder: starting {name} ({mix})")
+        rc = _run_point(["--name", name, "--mix", mix], forced)
+        if rc != 0:
+            print(f"ladder: {name} failed (exit {rc}), stopping")
+            return rc
+    print("ladder: all six points complete")
+    return 0
+
+
 def run_dispatch(rest):
     """`harness run <step>` -- the only verb that executes. Thin dispatch, no new logic:
     every step refuses while check is red (--force records the reds in the exp row),
@@ -1967,6 +2019,8 @@ def run_dispatch(rest):
         return _run_pretokenize(step_args, forced)
     if step == "point":
         return _run_point(step_args, forced)
+    if step == "ladder":
+        return _run_ladder(step_args, forced)
     return 2
 
 
