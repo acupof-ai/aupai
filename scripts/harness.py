@@ -1235,6 +1235,8 @@ def check_opt_state_present(root):
             missing.append(os.path.basename(p))
     if missing:
         return FAIL, f"{len(missing)} checkpoint(s) with step but no opt: {', '.join(missing[:5])}"
+    if resumable == 0:
+        return PASS, f"0/{len(ckpts)} checkpoints carry a step field -- guard for 30B .stepN checkpoints, not a live PASS"
     return PASS, f"all {resumable} resumable checkpoints carry opt state"
 
 
