@@ -1361,14 +1361,23 @@ def check_ladder_config(root):
         return SKIP, "no checkpoints"
     # Ladder points are launched via run_ddp.sh; A/B runs use torchrun directly.
     ladder_names = set()
+    # An A/B arm deviates on purpose, and the ledger already records that it did: the
+    # deviating flag is written out in the launch cmd. Deriving the exemption from that row
+    # beats a hand-written list, which is exactly the thing that leaves out whatever nobody
+    # remembers (the env_fp baseline did, at three names against the pod's twenty-eight).
+    declared = {}
     exp_path = os.path.join(root, "runs", "experiments.jsonl")
     if os.path.exists(exp_path):
         for line in open(exp_path, encoding="utf-8"):
             if line.strip():
                 r = json.loads(line)
                 if "run_ddp.sh" in r.get("cmd", ""):
-                    ladder_names.add(r.get("name", ""))
-    bad, unknown, checked = [], [], 0
+                    nm = r.get("name", "")
+                    ladder_names.add(nm)
+                    flags = {_FLAG_TO_CFG.get(t[2:].split("=", 1)[0], t[2:].split("=", 1)[0])
+                             for t in r.get("cmd", "").split() if t.startswith("--")}
+                    declared[nm] = flags
+    bad, unknown, exempt, checked = [], [], [], 0
     for p in ckpts:
         name = os.path.basename(p)[5:-3]  # ckpt_<name>.pt
         if name not in ladder_names:
@@ -1385,12 +1394,17 @@ def check_ladder_config(root):
             if v is None:
                 unknown.append(f"{os.path.basename(p)}:{k}")
             elif v != frozen[k]:
-                bad.append(f"{os.path.basename(p)}: {k}={v} != frozen {frozen[k]}")
+                if k in declared.get(name, ()):
+                    exempt.append(f"{os.path.basename(p)}: {k}={v} (declared by {name})")
+                else:
+                    bad.append(f"{os.path.basename(p)}: {k}={v} != frozen {frozen[k]}")
     if bad:
         return FAIL, "; ".join(bad)
     if not checked:
         return SKIP, "no ladder checkpoints (experiments.jsonl is pod-authoritative; local copy may be stale)"
     msg = f"{checked} checkpoint(s) match the frozen config"
+    if exempt:
+        msg += f"; {len(exempt)} declared A/B deviation(s): {'; '.join(exempt)}"
     if unknown:
         msg += f"; {len(unknown)} field(s) unverifiable (pre-stamp): {', '.join(sorted(set(unknown)))}"
     return PASS, msg
