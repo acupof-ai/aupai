@@ -23,6 +23,26 @@ whole ladder.
 | NCCL protocol | default | forcing `PROTO=Simple` adds 2K tok/s but depends on an env var that a launch can silently omit |
 | warmup | 1% of steps, floor 2 | `max(20, 1%)` left the 0.2b point at 9.2% and the 3.24b point at 1.0% — a 9.2x systematic difference that would read as monotonic drift in the fit residuals |
 
+## The six-point run plan
+
+Sequential, seven cards each. Card count is part of the config, so the points cannot be
+run side by side on fewer cards. At the measured 75K tok/s/gpu the whole ladder is about
+3.5 hours of GPU time; tokenization is paid once, before the first point.
+
+| point | tokens | steps/card | wall |
+|---|---|---|---|
+| 0.2b | 2.0e8 | 218 | ~6 min |
+| 0.3b | 3.0e8 | 327 | ~10 min |
+| 0.4b | 4.0e8 | 436 | ~13 min |
+| 0.8b | 8.0e8 | 872 | ~25 min |
+| 1.6b | 1.6e9 | 1744 | ~51 min |
+| 3.24b | 3.24e9 | 3537 | ~103 min |
+
+Each point gets an `exp.py start` row before it launches and an `exp.py done` row plus a
+score-matrix record when it ends. A point that dies is rerun once at the same config;
+a second failure escalates. Per the frozen fit protocol, a point is never dropped
+because it fits badly.
+
 ## Gates
 
 | gate | opens when | evidence | owner | status |
