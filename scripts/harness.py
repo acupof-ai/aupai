@@ -2373,20 +2373,25 @@ def _busy_training_cards(train_cards):
 
 
 def check_lane_respected(root):
-    """Training cards must not host non-training work.
+    """Training cards must not be partially occupied by non-training work.
 
-    In a container, nvidia-smi reports host PIDs that ps cannot resolve, so
-    process identity is unavailable — the real ceiling is occupancy, not
-    identity. This check reads which training cards have a GPU compute app,
-    then checks whether a training process runs in this container. If cards
-    are busy but no training process exists, something is squatting.
+    The criterion is partial vs full occupancy, not training vs non-training:
+    - 0 busy cards → PASS (idle)
+    - busy == world → PASS (the block is used as a block, regardless of what)
+    - 0 < busy < world, no training process → FAIL (a small job tore the block)
+    - 0 < busy < world, training process → PASS (training in progress)
 
-    Detection only — the ceiling, not a gate. Loose `python3 eval/...` commands
-    are not wrapped by harness, so this check can see a violation after the fact
-    but cannot prevent one.
+    The rule protects the block's continuity: a 7-card DDP job needs all 7
+    simultaneously, so a 10-minute eval on one card blocks a 55-minute run.
+    A 7-card sharded eval that fills all 7 is legitimate — it uses the block
+    as a block.
 
-    Cardless machines SKIP. A GPU machine with a broken nvidia-smi FAILs —
-    the guard must not go silent on the machine it guards.
+    Ceiling: a squatter that fills ALL world cards passes. This is deliberate —
+    it does not happen in practice (filling 7 cards requires a 7-card task), and
+    preventing it would need process identity, which is unavailable in a
+    container (nvidia-smi reports host PIDs that ps cannot resolve).
+
+    Cardless machines SKIP. A GPU machine with a broken nvidia-smi FAILs.
     """
     if not _gpu_present():
         return SKIP, "no GPUs on this machine"
@@ -2396,8 +2401,9 @@ def check_lane_respected(root):
     try:
         config = json.load(open(config_path, encoding="utf-8"))
         train_cards = {c.strip() for c in config["cards"].split(",") if c.strip()}
-    except (json.JSONDecodeError, KeyError):
-        return SKIP, "cannot read cards from mix_scale_run_config.json"
+        world = int(config.get("world", len(train_cards)))
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return SKIP, "cannot read cards/world from mix_scale_run_config.json"
     busy, err = _busy_training_cards(train_cards)
     if err == "not_found":
         return SKIP, "nvidia-smi not installed"
@@ -2405,11 +2411,13 @@ def check_lane_respected(root):
         return FAIL, f"nvidia-smi broken: {err}"
     if not busy:
         return PASS, f"training cards {sorted(train_cards)}: idle"
+    if len(busy) >= world:
+        return PASS, f"training cards {sorted(busy)}: all {world} busy (block used as block)"
     if _has_training_process():
-        return PASS, f"training cards {busy}: busy (training process in container)"
+        return PASS, f"training cards {busy}: {len(busy)}/{world} busy (training in progress)"
     return FAIL, (
-        f"training cards {busy}: busy but no training process in container — "
-        f"something is squatting. Small jobs go on the lane card "
+        f"training cards {busy}: {len(busy)}/{world} busy but no training process — "
+        f"a small job is tearing the block. Small jobs go on the lane card "
         f"(the one not in {sorted(train_cards)})."
     )
 
