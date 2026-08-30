@@ -235,17 +235,18 @@
   },
   {
    "id": "be.panel_expressive_seed_variance",
-   "value": "seed variance of the expressive-ability panel metrics at 0.2b (new arch, attn_every 4), the noise floor for the decision-tree section 8 ladder read. PARTIAL n=2 (s0/s1, df=1 -- s2/s3 panel scores exist on the pod but are not synced to runs/score_matrix.jsonl, which holds only 2 old-arch rows; the df=3 values below are placeholders pending them): L2 two-way 90.4/89.1 -> s~1.2pt; O1 open acc@1 16.0/14.4 -> s~1.4pt; C-Eval 24.3/23.9 -> s~0.4pt (near chance, seed SD less meaningful); GAP=L2-O1 74.4/74.7 -> s~0.3pt (remarkably stable). Readable-move threshold (tree section 8): |Delta M| >= 4.65*s_M (t-based, df=3, 4-seed mean vs 1-seed). At the partial SDs: O1 threshold ~6.5pt, GAP threshold ~1.4pt -- the 74pt gap is measurable to ~1pt, so gap-narrowing across the ladder is a high-precision steering signal. The threshold rule is frozen; only the s_M inputs await s2/s3",
+   "value": "seed variance of the expressive-ability panel metrics at 0.2b (new arch, attn_every 4), the noise floor for decision-tree section 8. df=3 from all four seeds (s0..s3, merged at d803238 -- the local runs/score_matrix.jsonl was stale, pod-written and gitignored): L2 two-way mean 89.72% s=0.54pt; O1 open acc@1 mean 15.88% s=1.02pt; O5 acc@5 mean 37.05% s=1.47pt; C-Eval mean 23.02% s=1.27pt (near chance, seed SD less meaningful); GAP=L2-O1 mean 73.84pt s=0.90pt. Readable-move threshold (tree section 8): |Delta M| >= 4.65*s_M (t-based, df=3, 4-seed mean vs 1-seed) -> L2 2.5pt, O1 4.8pt, O5 6.8pt, CE 5.9pt, GAP 4.2pt. The 74pt GAP is readable to ~4pt. Note the partial s0/s1 estimate (s_GAP~0.3pt) was optimistic -- s2/s3 moved it to 0.90pt; the df=3 values supersede. Corollary recorded per fb: a 0.2b composition A/B on O1 has 4v4 MDE = 2.371*1.02 = 2.4pt -- READABLE; the reason tree section 8 declines it is wrong scale (tests 0.2b, hypothesis is about 36B), not lack of resolution. Generalising the val-NLL resolution failure (MDE 0.20) to the whole design was the over-reach, corrected",
    "measured": "2026-08-30",
-   "source": "fb cross-session messages 2026-08-30 (s0/s1 panel readings); runs/score_matrix.jsonl (stale, 2 old-arch rows only); pod runs/p02_seeds*.log for s2/s3 (not synced)",
+   "source": "runs/score_matrix.jsonl (merged d803238, p02_s0..s3); fb cross-session messages",
    "config": {
     "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
-    "metrics": "lambada-zh two-way / open acc@1 / acc@5, C-Eval, GAP=L2-O1",
-    "n_seeds_scored": 4,
-    "n_seeds_synced": 2,
-    "threshold_formula": "4.65*s_M = (t_0.975,3 + t_0.8,3)*sqrt(1/4+1)*s_M"
+    "metrics": "lambada-zh two_way_acc / open_acc1 / open_acc5 (n=1000), C-Eval, GAP=L2-O1",
+    "n_seeds": 4,
+    "df": 3,
+    "threshold_formula": "4.65*s_M = (t_0.975,3 + t_0.8,3)*sqrt(1/4+1)*s_M",
+    "thresholds_pt": {"L2": 2.5, "O1": 4.8, "O5": 6.8, "CE": 5.9, "GAP": 4.2}
    },
-   "uncertainty": "n=2 partial -- SD from range/1.128 has df=1; the df=3 values may move when s2/s3 land",
+   "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
    "status": "measured"
   }
  ]

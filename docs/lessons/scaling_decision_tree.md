@@ -207,14 +207,16 @@ top-40 质量头切从未在这一版执行,那刀的收益从未被测过)。�
 0.2b 实测:L2(lambada-zh two-way)90.4% vs O1(open acc@1)16.0%——**74pt gap 是
 表达能力最干净的操作化,且免费(面板已有两半)**。O1 不在 SKIP 类:旧 arch 3.24b
 held-out 实测 35.6%(200M 有演示量程)、acc@5/acc@1 = 2.3×(内部 headroom 结构)、
-seed 噪声 ~1.6pt(s0/s1)远小于 gap。
+seed 噪声 s_O1 = 1.02pt(df=3)远小于 gap。机制前提已测:cosmopedia 模板浓度
+6.38× 于 web_hq(top-100 句框覆盖 48.2% vs 7.6%,44 实测,
+mlm.corpus.cosmopedia_template_concentration)——必要性成立,后果(训练结果)归本节。
 
 **量**(每 checkpoint):L2、O1、O5(acc@5)、CE(C-Eval)、GAP = L2 − O1。
 
 **噪声地板(自校准,同 A/B 纪律)**:s_M = 四个 0.2b seed 的 seed SD(df=3,
-数据已存在,见 be.panel_expressive_seed_variance)。端点移动可读当且仅当
-|ΔM| ≥ 4.65·s_M(t 版,df=3,4-seed 均值对 1-seed:(t₀.₉₇₅,₃+t₀.₈,₃)·√(1/4+1) = 4.16·1.118)。
-GAP 的 s 直接从四个 seed 的逐 seed gap 算。
+be.panel_expressive_seed_variance):L2 0.54pt、O1 1.02pt、O5 1.47pt、CE 1.27pt、
+GAP 0.90pt。端点移动可读当且仅当 |ΔM| ≥ 4.65·s_M(t 版,df=3,4-seed 均值对 1-seed:
+(t₀.₉₇₅,₃+t₀.₈,₃)·√(1/4+1) = 4.16·1.118)→ 阈:L2 2.5、O1 4.8、O5 6.8、CE 5.9、GAP 4.2pt。
 
 **形态(看到数之前写死)**:
 - **A 容量型**:O1 移动 ≥ 阈 且 GAP 收窄 ≥ 阈 → 表达是数据量问题;10× 同配比
@@ -235,7 +237,7 @@ checkpoint)**;若 10× 构建改了配比且无同配比对照,假说对它不�
 现在就声明,不事后补。
 
 **不做的实验(预注册)**:0.2b 配比 A/B 不跑。原因不是无分辨率(O1 的 seed SD
-~1.6pt,4v4 MDE ≈ 3.3pt,其实可读)——是**答错问题**:它测 0.2b 的配比效应,
+1.02pt,4v4 MDE = 2.4pt,可读)——是**答错问题**:它测 0.2b 的配比效应,
 假说是关于 36B 的,尺度不匹配。判决性检验在 3.24b+(阶梯 + 10× 对照臂)。
 
 ## Changelog
