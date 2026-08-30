@@ -13,6 +13,10 @@
 # --autostash stashes and restores the WHOLE dirty tree, which in a six-session tree is
 # five other sessions' uncommitted work, every time anyone pushes a file to the pod. That
 # is the same hazard as `git checkout` on a file you did not write, run automatically.
+#
+# Large files (>100KB gzip+base64) bypass podput's argv limit by pushing directly to the
+# container's emptyDir host path via `tn push`. The file lands at /work/aupai/<path> in
+# the container, same as podput.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [ $# -ge 1 ] || { echo "usage: $0 <file>..."; exit 2; }
@@ -25,7 +29,28 @@ for f in "$@"; do
     exit 1
   fi
 done
+
+# Find the host path of the container's /work emptyDir (cached for this run).
+# podput's argv limit (~100KB gzip+base64) cannot carry large files; tn push to the
+# emptyDir host path bypasses the container's argv entirely.
+EMPTYPATH=""
+find_emptydir() {
+  [ -n "$EMPTYPATH" ] && return
+  EMPTYPATH=$(tn exec "for d in /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work; do [ -d \"\$d/aupai\" ] && echo \"\$d\" && break; done" 2>/dev/null | head -1)
+  if [ -z "$EMPTYPATH" ]; then
+    echo "pod_push: cannot find /work emptyDir host path (is the pod running?)" >&2
+    exit 1
+  fi
+}
+
 for f in "$@"; do
-  ~/bin/podput "$f" "/work/aupai/$f"
+  b64_size=$(gzip -9c "$f" | base64 | tr -d '\n' | wc -c | tr -d ' ')
+  if [ "$b64_size" -le 100000 ]; then
+    ~/bin/podput "$f" "/work/aupai/$f"
+  else
+    find_emptydir
+    echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
+    tn push "$f" "$EMPTYPATH/aupai/$f"
+  fi
 done
 ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
