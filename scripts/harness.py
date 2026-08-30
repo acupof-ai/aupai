@@ -608,13 +608,22 @@ def check_corpus_filters_fp(root):
     live = cf.fp_filters(root)
     if live is None:
         return SKIP, "no filters/ directory"
+    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
+    if err:
+        return SKIP, f"mix unreadable ({err}); mix checks own that"
     corpus = os.path.join(root, "data", "corpus")
-    if not os.path.isdir(corpus):
-        return SKIP, "no data/corpus"
+    present = [d for d in doms if os.path.isdir(os.path.join(corpus, d))]
+    if not present:
+        # No mix-domain corpus on this machine. data/corpus/sample/ is not a mix domain --
+        # it ships with the checkout and was never a build_corpus.py product. A machine that
+        # never built corpus has nothing to verify; mix_shards_present owns "corpus vanished
+        # on a GPU box".
+        return SKIP, "no mix-domain corpus on this machine"
     stale, unrecorded, ok = [], [], 0
-    for dom in sorted(os.listdir(corpus)):
+    for dom in present:
         stats = os.path.join(corpus, dom, "build_corpus_stats.json")
         if not os.path.isfile(stats):
+            unrecorded.append(dom)
             continue
         with open(stats) as f:
             got = json.load(f).get("filters_fp")
@@ -627,15 +636,13 @@ def check_corpus_filters_fp(root):
     if stale:
         return FAIL, "; ".join(stale)
     if ok == 0:
-        # The corpus dir exists (checked above) but nothing matches the live filters
-        # fingerprint. The check verified nothing; a PASS here would be vacuous -- the
-        # same shape that let token caches vanish with nothing raising.
-        if unrecorded:
-            return FAIL, (
-                f"0/{len(unrecorded)} domain(s) match filters {live}; "
-                f"{len(unrecorded)} predate the stamp ({', '.join(unrecorded)}) -- rebuild to stamp them"
-            )
-        return FAIL, f"0 domain(s) match filters {live} -- no build_corpus_stats.json under {os.path.relpath(corpus, root)}"
+        # Mix-domain corpus exists but nothing matches the live filters fingerprint. The
+        # check verified nothing; a PASS here would be vacuous -- the shape that let token
+        # caches vanish silently.
+        return FAIL, (
+            f"0/{len(present)} mix domain(s) match filters {live}; "
+            f"{len(unrecorded)} have no stamp ({', '.join(unrecorded)}) -- rebuild to stamp them"
+        )
     if unrecorded:
         # This is an honest unknown, not a green light: nothing recorded which filters built
         # those shards and nothing can recover it. Rebuild stamps them.
@@ -647,7 +654,7 @@ def check_corpus_filters_fp(root):
 
 
 def _broken_corpus_filters_fp():
-    d = _tmp_repo()
+    d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
     with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
         fh.write("# a filter\n")
@@ -665,13 +672,18 @@ def check_score_input_fresh(root):
     raising. score_corpus.py stamps input_fp (the corpus fingerprint at score time);
     this check compares it against the corpus's current fingerprint. A mismatch means
     the scores describe a corpus that no longer exists."""
+    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
+    if err:
+        return SKIP, f"mix unreadable ({err}); mix checks own that"
     scores_dir = os.path.join(root, "data", "scores")
-    if not os.path.isdir(scores_dir):
-        return SKIP, "no data/scores"
+    present = [d for d in doms if os.path.isdir(os.path.join(scores_dir, d))]
+    if not present:
+        return SKIP, "no mix-domain scores on this machine"
     stale, unrecorded, ok = [], [], 0
-    for dom in sorted(os.listdir(scores_dir)):
+    for dom in present:
         sp = os.path.join(scores_dir, dom, "score_stats.json")
         if not os.path.isfile(sp):
+            unrecorded.append(dom)
             continue
         with open(sp) as f:
             score_stats = json.load(f)
@@ -692,14 +704,10 @@ def check_score_input_fresh(root):
     if stale:
         return FAIL, "; ".join(stale)
     if ok == 0:
-        # The scores dir exists (checked above) but nothing matches the current corpus.
-        # The check verified nothing; a PASS here would be vacuous.
-        if unrecorded:
-            return FAIL, (
-                f"0/{len(unrecorded)} domain(s) fresh; "
-                f"{len(unrecorded)} predate input_fp ({', '.join(unrecorded)}) -- re-score to stamp them"
-            )
-        return FAIL, f"0 domain(s) fresh -- no score_stats.json under {os.path.relpath(scores_dir, root)}"
+        return FAIL, (
+            f"0/{len(present)} mix domain(s) fresh; "
+            f"{len(unrecorded)} have no input_fp ({', '.join(unrecorded)}) -- re-score to stamp them"
+        )
     if unrecorded:
         note = (f"; UNKNOWN, not verified: {len(unrecorded)} domain(s) predate input_fp "
                 f"({', '.join(unrecorded)}) -- re-score to stamp them")
@@ -710,7 +718,7 @@ def check_score_input_fresh(root):
 
 def _broken_score_input_fresh():
     """A domain whose scores were taken against a corpus that has since changed."""
-    d = _tmp_repo()
+    d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0}})
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
     open(os.path.join(d, "scripts", "harness.py"), "w").close()
     dom = "web_hq"
