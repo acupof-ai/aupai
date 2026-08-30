@@ -812,3 +812,25 @@ appearance of having been checked. Both guards below close that gap.
   from the other side. Rule: **allocate on a pipeline's exit, not on a sample of its
   utilisation.** `eval_all.sh` reclaims its cards between every step, so the only safe
   release point is after the whole script exits.
+- **The pre-registration goes in the ledger row, not in the conversation.** `harness run
+  point` hard-coded the ledger `hypothesis` to the string "0830v1 budget point", so five
+  runs measuring fp32 master weights would have recorded only which mix they used and
+  nothing about what they tested. Conversations get compacted; `runs/experiments.jsonl`
+  does not. A reading rule that lives only in a session's context is a reading rule that
+  will be gone before the number is read. Fixed by `--hypothesis` (675e834), and the
+  launch script now carries the full decision rule — the 0.24 nat threshold and the
+  control-arm precondition — into the row itself.
+- **A null is readable only if the control arm shows the defect it controls for.** The
+  bf16 A/B measures whether fp32 master weights recover discarded updates; the discard
+  rate was measured at ~91% on 3.24b. If the 0.2b control reads far below that, the point
+  does not discard many updates in the first place and Δ≈0 means "not measured", not "no
+  effect" — the same shape as a permanently-red CI being the same as no signal. Report the
+  two frozen fractions (model bf16, optimizer) alongside the val NLL, never Δ alone.
+- **"It only adds an output flag, so it cannot change the number" is a claim to verify,
+  not an assumption.** `eval/l1_fewshot.py` existed in three versions at once: the process
+  that produced L1 = 1/497 (started 12:56, wrote `preds_l1.jsonl`), the pod's copy, and
+  HEAD. The number survived — the demo split, prompt construction, and `score()` are
+  byte-identical across all three, and only `--out` and its JSON write differ — but that
+  was established by diffing, after a peer's drift gate flagged the mismatch. Nobody
+  noticed on their own, and the session that wrote the flag believed it had verified an
+  integration whose code had never reached the machine it ran on.
