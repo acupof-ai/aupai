@@ -89,6 +89,17 @@ DATA = os.path.join(ROOT, "data")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
 TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"
 
+# Committed audit evidence in data/corpus/sample/ (d76a8a1; read by datagen/fasttext_junk.py)
+# is jsonl but not shards. Enumerated here, not by schema-sniffing rows: a sniffer silently
+# skips a shard whose first line broke; this list fails loud on the next such file.
+NON_SHARD_JSONL = {
+    "cci3_audit_400.jsonl",
+    "cci3_audit_400_labels.jsonl",
+    "cci3_handread_150.jsonl",
+    "cci3_iaa_50.jsonl",
+    "web_labels.jsonl",
+}
+
 try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
     from fla.ops.kda import chunk_kda
     from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
@@ -1112,7 +1123,11 @@ def _domain_seqs(domain, tok, is_main, ddp):
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     srcfp = cache + ".srcfp"
-    shards = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
+    shards = sorted(
+        p
+        for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
+        if os.path.basename(p) not in NON_SHARD_JSONL
+    )
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
