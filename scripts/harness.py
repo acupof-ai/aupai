@@ -626,6 +626,16 @@ def check_corpus_filters_fp(root):
             ok += 1
     if stale:
         return FAIL, "; ".join(stale)
+    if ok == 0:
+        # The corpus dir exists (checked above) but nothing matches the live filters
+        # fingerprint. The check verified nothing; a PASS here would be vacuous -- the
+        # same shape that let token caches vanish with nothing raising.
+        if unrecorded:
+            return FAIL, (
+                f"0/{len(unrecorded)} domain(s) match filters {live}; "
+                f"{len(unrecorded)} predate the stamp ({', '.join(unrecorded)}) -- rebuild to stamp them"
+            )
+        return FAIL, f"0 domain(s) match filters {live} -- no build_corpus_stats.json under {os.path.relpath(corpus, root)}"
     if unrecorded:
         # This is an honest unknown, not a green light: nothing recorded which filters built
         # those shards and nothing can recover it. Rebuild stamps them.
@@ -681,6 +691,15 @@ def check_score_input_fresh(root):
             ok += 1
     if stale:
         return FAIL, "; ".join(stale)
+    if ok == 0:
+        # The scores dir exists (checked above) but nothing matches the current corpus.
+        # The check verified nothing; a PASS here would be vacuous.
+        if unrecorded:
+            return FAIL, (
+                f"0/{len(unrecorded)} domain(s) fresh; "
+                f"{len(unrecorded)} predate input_fp ({', '.join(unrecorded)}) -- re-score to stamp them"
+            )
+        return FAIL, f"0 domain(s) fresh -- no score_stats.json under {os.path.relpath(scores_dir, root)}"
     if unrecorded:
         note = (f"; UNKNOWN, not verified: {len(unrecorded)} domain(s) predate input_fp "
                 f"({', '.join(unrecorded)}) -- re-score to stamp them")
@@ -3132,7 +3151,29 @@ def _demo():
         finally:
             shutil.rmtree(root, ignore_errors=True)
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
-    print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
+
+    # The other half of the selftest: a PASS must have verified something. A check that
+    # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
+    # (0 ok runs in the ledger), lane_respected (0 PIDs resolvable in a container), and the two
+    # zero-count PASSes above. The broken-world loop asserts FAILs fire; this asserts PASSes are
+    # non-vacuous. A count is a number followed by a unit word; a PASS whose evidence carries
+    # counts ALL of which are zero verified nothing. (A legal zero -- "0 new (170 checked)" --
+    # passes because not every count is zero.) A check with nothing to examine on this machine
+    # must SKIP, not PASS.
+    vacuous = []
+    for name, _a, _i, fn, _b in CHECKS:
+        try:
+            state, evidence = fn(ROOT)
+        except Exception:
+            continue  # a crash against the real repo is the broken-world loop's territory
+        if state != PASS:
+            continue
+        counts = [int(m.group(1)) for m in re.finditer(r"(\d+)\s+[a-zA-Z]", str(evidence))]
+        if counts and all(c == 0 for c in counts):
+            vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
+    assert not vacuous, "PASS with nothing verified:\n  " + "\n  ".join(vacuous)
+    print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
+          f"every PASS verified a non-zero count)")
 
 
 STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score", "dedup")
