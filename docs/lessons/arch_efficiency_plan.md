@@ -1,3 +1,9 @@
+---
+question: "这个架构在 H20 上的 MFU 可达上界是多少,每个架构选择各自花了多少、换来什么——六个预算点之后的架构迭代需要哪些数"
+status: recorded
+source: "project measurements 2026-08-30; facts in facts/efficiency.json; profile traces in bench_eff/"
+---
+
 # Architecture Efficiency Measurement Plan
 
 **Goal**: Quantify the achievable MFU upper bound and per-architecture-choice cost/benefit, to guide architecture iteration after the six budget points.
