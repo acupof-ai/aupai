@@ -786,3 +786,29 @@ appearance of having been checked. Both guards below close that gap.
   lives. The lane convention survives separately as an operational rule: GPU 0 is the
   bench/scoring lane, so training there puts rank 0 on the card most likely to be contended,
   and DDP is synchronous.
+- **A commit message is a derived artifact, and it can go stale against its own diff.**
+  `5e643cb` ("an `<eos>` run opens one document") also introduced a rewrite of
+  `DeltaRecurrence.forward` from `nn.Conv1d` to four shifted multiply-adds: the controller
+  committed another session's uncommitted working-tree change alongside its own fix and
+  described only its own half. `131f420` ("fp32 master weights behind `--fp32_master`")
+  reverted that rewrite 42 minutes later and described only *its* own half. Net effect
+  zero, which is why nothing raised and why the owning session still believed its patch
+  was an unapplied file in `scratchpad/` — a path that exists on neither machine. Two
+  consequences, and the second is the one that costs: the patch is recoverable only from
+  `git show 5e643cb -- train.py`, and **for 42 minutes the repo trained on a different
+  code path than the ladder did**. `ckpt_sft_p324_v1.pt` (13:02) is inside that window;
+  `_v2.pt` (13:47) is outside it. The six ladder points are all at 07:xx and therefore
+  homogeneous, but that had to be *checked*, not assumed. Rule: **`git add -A` on a shared
+  file is how someone else's change enters your commit unnamed.** Stage by path, and when
+  a commit touches a file another session owns, name every hunk in the message or split
+  the commit. The failing question is not "does the tree work" — it does — but "does the
+  message describe the diff".
+- **An idle card is not a free card.** The controller read `nvidia-smi`, saw GPU 0-5 at 0%,
+  and released them to another session for a 7-card A/B. Those cards were the step gap
+  inside a running `eval_all.sh`: math-hard had finished its seven shards and math-500 had
+  not yet launched its own. 55 seconds later all seven were occupied again. A card's owner
+  is the script still running, not the instantaneous utilisation row — the same confusion
+  as the orphan process holding a card at 100% with no one able to account for it, read
+  from the other side. Rule: **allocate on a pipeline's exit, not on a sample of its
+  utilisation.** `eval_all.sh` reclaims its cards between every step, so the only safe
+  release point is after the whole script exits.
