@@ -414,6 +414,26 @@
       },
       "uncertainty": "inherits the 3 df on sigma",
       "status": "measured"
+    },
+    {
+      "id": "ds.scaling_fit_six_point",
+      "value": "Six-point fit of L(D)=E+B/D^beta per frozen protocol v1.10 (scripts/fit_scaling.py): E=2.003, B=30000 (sits at grid edge), beta=0.513. RMS=0.0206, max|resid|=0.0384; residuals +0.0384/-0.0207/+0.0002/-0.0207/-0.0002/+0.0144, sign pattern +-+--+. VERDICT: ACCEPT, and de-labeled -- RMS 0.0206 < 0.71*sigma-hat=0.0366, so the noise-loose label is removed and ACCEPT is hard (sigma decreases with D, as v1.6 predicted). No S4 falsifier fires: no U-shape, no monotone drift, no LOO beta instability (max |delta beta|=0.0031), endpoints not same-sign. Profile-likelihood beta CI is VACUOUS (spans the full 0.01-5 grid): under Huber delta=1e-3 all residuals are in the L1 zone, objective ~1e-4, so Delta=3.84 dwarfs the surface -- the L2 chi2 construct does not apply (protocol S9 Huber warning, same phenomenon); beta identification rests on LOO stability. Local slope at 3.1955b: -0.212 nat/e-fold (LOO range -0.20 to -0.25) -- for tilerl's non-inferiority tolerance at 3.24b: 0.212*ln(1.120)=0.024 nat, 4.3x tighter than the 0.103 secant-based tolerance (the curve bends flat, as fb predicted); attn_ab_read_protocol S7 requires the local slope, this is it. Warmup confound stands: beta is overestimated (protocol reading warning). D gaps: five small points 0% (no cap, verified), p324 scheduled 3.1955B vs requested 3.2449B = 1.522% < 10% -> absorbed per S11; the 1.53% prediction (train.py:1348/1362, integer row counts, pre-run) confirmed to three digits. p16 residual -0.0002: the 1.6b panel oddity is not in the NLL.",
+      "measured": "2026-08-30",
+      "source": "scripts/fit_scaling.py (frozen protocol v1.10); aupai-fb six-point val NLL + p324 log line",
+      "config": {
+        "D_scheduled_B": [0.2, 0.3, 0.4, 0.8, 1.6, 3.1955],
+        "val_nll": [3.691, 3.322, 3.159, 2.792, 2.570, 2.415],
+        "fit": "Huber delta=1e-3, L-BFGS-B, 252-start grid, D in raw tokens",
+        "beta": 0.5131,
+        "E": 2.0026,
+        "B": 30000,
+        "rms": 0.0206,
+        "max_resid": 0.0384,
+        "local_slope_3p24b_nat_per_efold": -0.2116,
+        "tilerl_tolerance_3p24b_nat": 0.024
+      },
+      "uncertainty": "beta CI vacuous under the frozen Huber/profile method (L1 at this noise scale); B at grid edge; beta overestimated by the warmup confound; E and B individually poorly identified (L1 flat region) but the fitted curve and its local slope are LOO-stable",
+      "status": "measured"
     }
   ]
 }
