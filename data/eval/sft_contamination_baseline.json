@@ -1,0 +1,5 @@
+{
+  "math_test_500.jsonl": 2,
+  "math_hard_eval_1k.jsonl": 0,
+  "code_holdout_500.jsonl": 0
+}

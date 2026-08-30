@@ -754,6 +754,17 @@ _SFT_EVAL_FILES = [
     os.path.join("data", "eval", "code_holdout_500.jsonl"),
 ]
 
+# Eval files whose contamination is already accepted and recorded. A hit in a
+# live file FAILs. A hit in a retired file reports and ratchets against a
+# per-file baseline: FAIL on increase only. Retiring an eval is not accepting
+# new contamination.
+_RETIRED_EVALS = {
+    "math_test_500.jsonl": "post-SFT inflated (30% near-dup in SFT corpus); base values clean",
+    "math_hard_eval_1k.jsonl": "v1 retired as metric of record; continuity only",
+}
+
+_SFT_CONTAM_BASELINE = os.path.join("data", "eval", "sft_contamination_baseline.json")
+
 
 def check_sft_pack_uncontaminated(root):
     """Directly test the pack for holdout contamination, not just the process that built it.
@@ -761,8 +772,13 @@ def check_sft_pack_uncontaminated(root):
     Complements sft_pack_holdout: that proves the guard was alive at pack time; this
     proves the questions are not in the pack. Samples 40 questions per eval file,
     encodes the first 24 tokens, and searches for exact subsequence matches in the
-    pack's flattened input_ids. Catches both a stale hash set and a missing EVAL_FILES
-    entry -- the two cases the fingerprint check cannot see.
+    pack's flattened input_ids.
+
+    Live eval files (code_holdout_500) FAIL on any hit — they are the metrics still
+    used as evidence. Retired eval files (math_test_500, math_hard_eval_1k) report
+    counts and ratchet against a per-file baseline: FAIL on increase only. The
+    baseline is a committed snapshot of accepted contamination; a rise above it is
+    new leakage.
 
     Verbatim matching only. Paraphrased questions (near-dup, not exact) need MinHash,
     the next layer. The 2026-08-30 contamination was 19/20 verbatim, so this covers
@@ -780,57 +796,90 @@ def check_sft_pack_uncontaminated(root):
     if not os.path.isfile(tok_path):
         return SKIP, "no tokenizer"
 
-    # Sample 40 questions per eval file, deterministically (every Nth line).
-    questions = []
+    tok = Tokenizer.from_file(tok_path)
+    NTOK = 24
+    # Per-file probes: track which eval file each probe came from, so live and
+    # retired files get different FAIL logic.
+    file_probes = {}  # basename -> list of token lists
     for rel in _SFT_EVAL_FILES:
         p = os.path.join(root, rel)
         if not os.path.isfile(p):
             continue
         lines = [l for l in open(p, encoding="utf-8") if l.strip()]
         step = max(1, len(lines) // 40)
+        probes = []
         for line in lines[::step][:40]:
             try:
-                questions.append(json.loads(line)["instruction"])
+                q = json.loads(line)["instruction"]
             except (json.JSONDecodeError, KeyError):
                 continue
-    if not questions:
+            ids = tok.encode(q).ids[:NTOK]
+            if len(ids) >= 8:  # too short to be a meaningful fingerprint
+                probes.append(ids)
+        if probes:
+            file_probes[os.path.basename(rel)] = probes
+    if not file_probes:
         return SKIP, "no eval questions found"
-
-    tok = Tokenizer.from_file(tok_path)
-    NTOK = 24
-    probes = []
-    for q in questions:
-        ids = tok.encode(q).ids[:NTOK]
-        if len(ids) >= 8:  # too short to be a meaningful fingerprint
-            probes.append(ids)
-    if not probes:
-        return SKIP, "no encodable questions"
 
     d = torch.load(pack_path, map_location="cpu", weights_only=True)
     flat = d["input_ids"].numpy().flatten()
     del d
 
+    # Per-file baseline of accepted exact-hit counts. A rise above it is new
+    # contamination. The baseline is a committed snapshot, not a live measurement.
+    baseline = {}
+    bl_path = os.path.join(root, _SFT_CONTAM_BASELINE)
+    if os.path.isfile(bl_path):
+        try:
+            with open(bl_path, encoding="utf-8") as f:
+                baseline = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
     # Narrow candidates token by token: after 3-4 tokens, almost nothing survives.
-    hits = 0
-    for probe in probes:
-        plen = len(probe)
-        candidates = np.where(flat[: -plen + 1] == probe[0])[0]
-        for i, t in enumerate(probe[1:], 1):
-            if len(candidates) == 0:
-                break
-            candidates = candidates[flat[candidates + i] == t]
-        if len(candidates) > 0:
-            hits += 1
-    if hits:
-        return FAIL, f"{hits}/{len(probes)} holdout probes found verbatim in pack"
-    return PASS, (
-        f"0/{len(probes)} holdout probes found in {len(flat) / 1e6:.0f}M tokens "
-        f"(verbatim only; paraphrased questions not detected)"
-    )
+    worst = PASS
+    parts = []
+    for fname, probes in file_probes.items():
+        hits = 0
+        for probe in probes:
+            plen = len(probe)
+            candidates = np.where(flat[: -plen + 1] == probe[0])[0]
+            for i, t in enumerate(probe[1:], 1):
+                if len(candidates) == 0:
+                    break
+                candidates = candidates[flat[candidates + i] == t]
+            if len(candidates) > 0:
+                hits += 1
+        n = len(probes)
+        retired = fname in _RETIRED_EVALS
+        if retired:
+            reason = _RETIRED_EVALS[fname]
+            base = baseline.get(fname)
+            if base is None:
+                if worst == PASS:
+                    worst = WARN
+                parts.append(f"{fname}: {hits}/{n} hits (retired: {reason}; no baseline — unratcheted)")
+            elif hits > base:
+                worst = FAIL
+                parts.append(
+                    f"{fname}: {hits}/{n} hits > baseline {base} "
+                    f"(retired: {reason}; INCREASE = new contamination)"
+                )
+            else:
+                parts.append(f"{fname}: {hits}/{n} hits (retired: {reason}; baseline {base})")
+        else:
+            if hits:
+                worst = FAIL
+                parts.append(f"{fname}: {hits}/{n} hits (LIVE — must be 0)")
+            else:
+                parts.append(f"{fname}: 0/{n} (live, clean)")
+    suffix = " (verbatim only; paraphrased not detected)" if worst == PASS else ""
+    return worst, "; ".join(parts) + suffix
 
 
 def _broken_sft_pack_uncontaminated():
-    """A pack that contains a real holdout question's tokens verbatim."""
+    """A pack that contains a real holdout question from a LIVE eval file, plus a
+    retired-file question above its baseline. Either alone must FAIL."""
     import shutil
 
     import torch
@@ -840,24 +889,33 @@ def _broken_sft_pack_uncontaminated():
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
     open(os.path.join(d, "scripts", "harness.py"), "w").close()
 
-    # Real tokenizer and one real eval file, so the probe encodes a real question.
+    # Real tokenizer and eval files, so the probe encodes real questions.
     shutil.copy(os.path.join(ROOT, "data", "tokenizer.json"), os.path.join(d, "data", "tokenizer.json"))
     eval_dir = os.path.join(d, "data", "eval")
     os.makedirs(eval_dir, exist_ok=True)
-    eval_src = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
-    shutil.copy(eval_src, os.path.join(eval_dir, "math_test_500.jsonl"))
+    for fname in ["math_test_500.jsonl", "code_holdout_500.jsonl"]:
+        shutil.copy(os.path.join(ROOT, "data", "eval", fname), os.path.join(eval_dir, fname))
 
     tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
-    q = json.loads(open(eval_src, encoding="utf-8").readline())["instruction"]
-    ids = tok.encode(q).ids[:24]
+    # First question of each file is always in the every-Nth-line sample.
+    rows = []
+    for fname in ["code_holdout_500.jsonl", "math_test_500.jsonl"]:
+        q = json.loads(
+            open(os.path.join(ROOT, "data", "eval", fname), encoding="utf-8").readline()
+        )["instruction"]
+        ids = tok.encode(q).ids[:24]
+        rows.append(ids + [0] * (4097 - len(ids)))
 
-    # Plant the question's tokens in the pack.
+    # Baseline says math_test_500 has 0 accepted hits; the planted question is an increase.
+    with open(os.path.join(eval_dir, "sft_contamination_baseline.json"), "w") as f:
+        json.dump({"math_test_500.jsonl": 0, "code_holdout_500.jsonl": 0}, f)
+
+    # Plant both questions' tokens in the pack.
     os.makedirs(os.path.join(d, "data", "sft"), exist_ok=True)
-    row = ids + [0] * (4097 - len(ids))
     torch.save(
         {
-            "input_ids": torch.tensor([row], dtype=torch.int32),
-            "labels": torch.full((1, 4097), -100, dtype=torch.int32),
+            "input_ids": torch.tensor(rows, dtype=torch.int32),
+            "labels": torch.full((len(rows), 4097), -100, dtype=torch.int32),
             "vocab_id": "test",
             "holdout_fp": "x",
         },
