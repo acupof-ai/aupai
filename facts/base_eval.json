@@ -98,7 +98,8 @@
    "measured": "2026-08-30",
    "source": "computed: n=((z_a+z_b)*0.5/delta)^2, z_a=1.96 two-sided, z_b=0.84; docs/lessons/base_eval_at_200m.md §2",
    "config": {
-    "assumption": "binomial, p=0.5 worst case"
+    "assumption": "binomial, p=0.5 worst case",
+    "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8"
    },
    "uncertainty": null,
    "status": "recorded"
@@ -187,7 +188,11 @@
     "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
     "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)",
     "resolution_formula": "delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n); z_a=1.96 two-sided alpha=0.05, z_b=0.84 power=0.8, p=0.5 worst case",
-    "mde_pt": {"1040": 4.3, "3161": 2.5, "5000": 2.0}
+    "mde_pt": {
+     "1040": 4.3,
+     "3161": 2.5,
+     "5000": 2.0
+    }
    },
    "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
    "status": "recorded"
@@ -199,9 +204,30 @@
    "source": "docs/lessons/base_eval_panel.md; computed n=((1.96+0.84)*0.5/delta)^2",
    "config": {
     "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt",
-    "power": "0.8, two-sided alpha 0.05"
+    "power": "0.8, two-sided alpha 0.05",
+    "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
+    "panel_version": "v1.3 (2026-08-30 resolution audit; two frozen numbers corrected, see docs/lessons/base_eval_panel.md changelog)"
    },
    "uncertainty": "the ladder spread is empirical and unfilled until de runs the six checkpoints; the cut thresholds are pre-registered",
+   "status": "recorded"
+  },
+  {
+   "id": "be.panel_v13_resolution_audit",
+   "value": "full resolution audit of the six frozen panel metrics under one formula, MDE=2.8*sqrt(p(1-p)/n) (p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8), fb-ordered 2026-08-30 after the 8.4pt misattribution was found: TWO frozen numbers wrong, both in docs/lessons/base_eval_panel.md (fixed in v1.3). (3) LAMBADA-zh: '3.6pt at p=0.3' used a one-sided z_a=1.645 (2.485*sqrt(0.21/1000)=3.60), violating the appendix's frozen two-sided formula -> 4.1pt at p=0.3, 4.4pt worst case. (4) math v2: '8.4pt at 1040 pairs' was the n=277 minimal-pair MDE misattributed -> 4.3pt; '3.9pt at 5000' not reproducible under the frozen formula -> 2.0pt; the '5000+ to reach 4pt' claim is void (1000 pairs already gives 4.4pt). Clean: metric 1 (no binomial MDE, block bootstrap), metric 2 (4.4pt/paradigm at n=1000 correct), metric 5 (ceval uses z, no MDE claimed), metric 6 (not a base metric). Propagation: the 8.4pt traveled from the panel text into fb's '5000->3.9pt' anchor and b0's delivery report -- three sites, one source. Lesson: a wrong number in a frozen document gets quoted downstream as an anchor; the audit exists because misattributions cluster (same copy-paste action)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md (v1.3 changelog); computed under the panel appendix formula",
+   "config": {
+    "formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
+    "checked": [
+     "domain NLL (bootstrap, no binomial MDE)",
+     "minimal pairs 4.4pt@1000 OK",
+     "LAMBADA-zh 3.6->4.1pt FIXED",
+     "math v2 8.4->4.3pt@1040, 3.9->2.0pt@5000 FIXED",
+     "ceval z-only OK",
+     "generative not a base metric"
+    ]
+   },
+   "uncertainty": "the 3.9pt's origin could not be reconstructed; recorded as not reproducible under the frozen formula rather than guessing the wrong formula that produced it",
    "status": "recorded"
   }
  ]
