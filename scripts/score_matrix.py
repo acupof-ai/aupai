@@ -339,6 +339,7 @@ def score(ckpt_path, mix_path, tok_path, device):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
+    wanted = APPLIES[kind]
     record = {
         "ckpt": ckpt_name,
         "type": kind,
@@ -348,7 +349,6 @@ def score(ckpt_path, mix_path, tok_path, device):
         "skipped": {},
         "noise_thresholds": {k: v for k, v in NOISE_THRESHOLDS.items() if k in wanted},
     }
-    wanted = APPLIES[kind]
     needs_model = "domain_loss" in wanted
     model = tok = seq = None
     if needs_model:
