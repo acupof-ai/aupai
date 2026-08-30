@@ -761,3 +761,28 @@ appearance of having been checked. Both guards below close that gap.
   checkpoints; the pod has 28. Local PASS, pod entirely FAIL. This is the same rule as
   "broken worlds mutate a real artifact, never a hand-written one", seen from the other
   side: both are **an assertion about one world, written from inside another**.
+- **The eighth instance happened to the person enforcing the rule, and it is the most
+  instructive one.** The controller stated explicitly that the clean SFT rebuild would not
+  be coupled to tilerl's unproven lookahead packing — one variable at a time. The rebuild
+  then used the lookahead packer anyway: the new pack is 46,938 rows against the predicted
+  46,898, and `prepare_sft.py` had been pushed to the pod between the launch and the run.
+  Nobody edited anything wrongly; the artifact was simply built against a source that
+  changed underneath it, with nothing to say so. Consequences were small — the old reading
+  was void, so there was no difference to attribute, and the paired A/B had by then shown
+  lookahead costs nothing measurable — but the mechanism was live. **An SFT pack carries
+  only `vocab_id`. It should carry a fingerprint of the packer, its `SOURCES`, and the
+  holdout hash file's own fingerprint**, exactly as shards carry `filters_fp` and scores
+  now carry `input_fp`. Then "which packer built this" and "was the holdout guard live"
+  are properties of the artifact rather than of who remembers.
+- **`cards` in the frozen run config packs two different things into one string.**
+  `"1,2,3,4,5,6,7"` is the allocation, and `NGPU` is `len(split(","))` — so someone dodging
+  one busy card by dropping to six silently changes the *recipe*, and nothing raises. Card
+  count changes the effective batch and the gradient noise; card indices change nothing,
+  since the eight H20s are identical and any seven of them span the same NVSwitch domains.
+  Ruling: **count is frozen, indices are allocation.** The fix is to split the field —
+  `world` (the number, in `_FROZEN_KEYS`) and `cards` (the allocation, not frozen but
+  asserted `len(cards) == world` before launch) — rather than to add an assertion on top
+  of a field that carries two meanings. One field with two meanings is where the silence
+  lives. The lane convention survives separately as an operational rule: GPU 0 is the
+  bench/scoring lane, so training there puts rank 0 on the card most likely to be contended,
+  and DDP is synchronous.
