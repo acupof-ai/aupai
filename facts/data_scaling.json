@@ -465,6 +465,22 @@
    },
    "uncertainty": "the_pile 需 -k;codeparrot parquet 路径待定;.co 是否区域堵(仅测了这台 pod)未证",
    "status": "measured"
+  },
+  {
+   "id": "ds.code_fertility_redpajama",
+   "value": "冻结词表对 code 的 chars/token(config 定义):tok/byte=0.329,3.04 B/token,chars/token=3.03。RedPajama-1T github 采样文件(98 里第一个)前 ~300MB 连续段,47,028 文档,content-hash 打散=>采样≈全体。标称全量 98x2.66GB=~85.7B raw tokens,高 fb 早前 ~30B 估 2.8x,分支 >=8B 定死,code 格不缺。**闸口未在自身量纲测**:3.03 是 chars/token(高好,> zh 1.693),不能与 en tokens/word 1.43(低好)比;'ref fertility<=1.55'是 tokens/word 量,非 chars/token。解冻条件 2 需用 tok.frontier 同段 code 对比(同一 code passage,我们的 vs 前沿词表,同量纲)才可判读。",
+   "measured": "2026-08-30",
+   "source": "pod 实测: /data00/aupai_raw/code_supply/github_00.sampled.jsonl + tokenizers.Tokenizer.from_file(data/tokenizer.json); measure3.py; curl -4 从 data.together.xyz",
+   "config": {
+    "tokenizer": "data/tokenizer.json (冻结 32,784)",
+    "numerator": "tokens=tokenizer.encode(text).ids 求和",
+    "denominator": "UTF-8 bytes / UTF-8 chars of same text",
+    "sample": "前 ~300MB 连续段,47,028 docs",
+    "sampling_note": "content-hash 打散文件名,n=1 文件采样近全体",
+    "sampling_uncertainty": "n=1 文件;跨语言(Python/C)tok/byte 有差异但打散使单文件≈混合"
+   },
+   "uncertainty": "n=1 采样文件;nominal 85.7B raw 未去重;闸口(tokens/word on code)未测,待 frontier 同段对比",
+   "status": "measured"
   }
  ]
 }
