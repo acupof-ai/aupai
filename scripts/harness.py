@@ -1166,7 +1166,19 @@ def _read_ckpt_cfg(path):
 #: on them is a permanent red, and a permanent red is no signal -- it blocked a launch the
 #: hour it landed. A RATCHET, like scripts/restartability_baseline.json: only a NEW
 #: checkpoint without env_fp fails. The list may shrink, never grow.
-_PRE_ENV_FP = {"ckpt_k4_11b_lr05.pt", "ckpt_k5_clean_0827.pt", "ckpt_k6_fone.pt"}
+#:
+#: It lives in a FILE, not in this source: the checkpoints are on the pod and a dev
+#: checkout has three of them, so a list written here was written against the wrong
+#: world -- it passed locally and left 28 pod checkpoints failing.
+_ENV_FP_BASELINE = os.path.join("data", "env_fp_baseline.json")
+
+
+def _pre_env_fp(root):
+    try:
+        with open(os.path.join(root, _ENV_FP_BASELINE), encoding="utf-8") as f:
+            return set(json.load(f)["pre_guard"])
+    except Exception:
+        return set()
 
 
 def check_env_fp_present(root):
@@ -1178,6 +1190,7 @@ def check_env_fp_present(root):
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
+    pre_guard = _pre_env_fp(root)
     missing, grandfathered = [], 0
     for p in ckpts:
         try:
@@ -1186,7 +1199,7 @@ def check_env_fp_present(root):
             continue  # unreadable checkpoint is a different check's problem
         if "env_fp" in d:
             continue
-        if os.path.basename(p) in _PRE_ENV_FP:
+        if os.path.basename(p) in pre_guard:
             grandfathered += 1
         else:
             missing.append(os.path.basename(p))
