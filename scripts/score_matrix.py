@@ -21,6 +21,7 @@ that does not move has no resolution and does not belong in the matrix.
 """
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -286,22 +287,39 @@ def metric_pass_at_k(ckpt_path):
 
 def write_records(path, records):
     """Replace same-ckpt records, keep others and unparseable lines. The matrix
-    is the current state, not a history."""
+    is the current state, not a history.
+
+    An exclusive lock on path + '.lock' serializes concurrent writers: without
+    it, two score_matrix processes on different ckpts can interleave their
+    read-modify-write cycles, and the later writer overwrites the earlier's
+    fresh record. Both print 'wrote N record(s)', both exit 0, and a record
+    vanishes with no log to say so."""
     names = {r["ckpt"] for r in records}
-    existing = []
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                try:
-                    if json.loads(line).get("ckpt") in names:
-                        continue
-                except Exception:
-                    pass
-                existing.append(line)
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(existing)
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    lock_path = path + ".lock"
+    with open(lock_path, "w") as lock_f:
+        fcntl.flock(lock_f, fcntl.LOCK_EX)
+        try:
+            existing = []
+            if os.path.exists(path):
+                with open(path, encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            if json.loads(line).get("ckpt") in names:
+                                continue
+                        except Exception:
+                            pass
+                        existing.append(line)
+            with open(path, "w", encoding="utf-8") as f:
+                f.writelines(existing)
+                for r in records:
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        finally:
+            fcntl.flock(lock_f, fcntl.LOCK_UN)
+
+
+def _selftest_write_worker(path, ckpt):
+    """Module-level worker for the concurrent-write selftest (must be picklable)."""
+    write_records(path, [{"ckpt": ckpt, "v": 1}])
 
 
 def selftest():
@@ -329,6 +347,19 @@ def selftest():
         write_records(p, [{"ckpt": "a.pt", "v": 2}])
         rows = [json.loads(l) for l in open(p, encoding="utf-8")]  # noqa: SIM115
         assert {(r["ckpt"], r["v"]) for r in rows} == {("a.pt", 2), ("b.pt", 1)}, rows
+        # concurrent writers: every record must survive. Without flock, the later
+        # writer reads stale content and overwrites the earlier's record — both
+        # print "wrote N record(s)", both exit 0, and a record vanishes silently.
+        import multiprocessing
+        p4 = os.path.join(d, "m4.jsonl")
+        ctx = multiprocessing.get_context("fork")
+        procs = [ctx.Process(target=_selftest_write_worker, args=(p4, f"ckpt_{i}.pt")) for i in range(4)]
+        for proc in procs:
+            proc.start()
+        for proc in procs:
+            proc.join()
+        rows4 = [json.loads(l) for l in open(p4, encoding="utf-8")]  # noqa: SIM115
+        assert len(rows4) == 4, f"concurrent write lost records: {len(rows4)}/4 survived"
     # the MC parser keys on display name, not flag name (ceval prints "C-Eval (zh)")
     m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", "  C-Eval (zh)        25.1%")
     assert m and (m.group(1).strip(), m.group(2)) == ("C-Eval (zh)", "25.1")
