@@ -384,9 +384,33 @@ appearance of having been checked. Both guards below close that gap.
   unmeasured AttnRes attributions from this session were each overturned by measurement,
   and two sessions had already scheduled work against them. The controller's output is
   who measures what and which reading counts, not an estimate.
-- No kernel proposal without a `torch.compile` baseline. AttnRes measured 42.2ms eager and
-  3.85ms compiled for the same work — using the eager number would have made a
-  zero-benefit kernel look like a 10x opportunity.
+- No kernel proposal without a `torch.compile` baseline, **and the baseline must carry
+  evidence that compilation took effect.** `compile=True` and a silently-eager model are
+  indistinguishable from the outside: `profile_step.py` omitted `cache_size_limit`, dynamo
+  fell back to eager past the 9th of AttnRes's 25 sources, the header printed
+  `compile True`, and the profiled model ran 36% slow with every elementwise row inflated
+  threefold. Evidence means zero recompile-limit warnings or a recorded limit. The
+  original reason still holds: AttnRes measured 42.2ms eager and 3.85ms compiled for the
+  same work, so the eager number would have made a zero-benefit kernel look like a 10x
+  opportunity.
+- **A benchmark's correctness assert runs before its timing is read.** An arm computing
+  something different is not faster or slower — it is not a comparison. A short-conv bench
+  failed its own `allclose` because PyTorch's conv is cross-correlation and the taps were
+  reversed; without that assert it would have produced a clean set of numbers for two arms
+  computing different things, with the wrong one winning.
+- **A ranked optimisation states its recoverable fraction, not its block size.** Two
+  estimates were revised down 3x in one afternoon by their own author for the same reason:
+  short_conv 3.1% → 1.0% (51.19ms is the block; 1.46x on fwd+bwd is what is recoverable),
+  and the fp8 amax hypothesis, where cost turned out to scale with bytes rather than
+  launches so fusing buys nothing.
+- **When the upper bound on the benefit is below the lower bound on the cost, the
+  experiment is redundant — decline it in arithmetic, not on a card.** Three retirements
+  in one day on this shape, in three unrelated domains: W/F on prevalence × Δ_marginal
+  (0.326% against a 2% line), the KDA A/B on MDE against gate (0.1021 against 0.08), and
+  torchao's `ROWWISE_WITH_GW_HP` on FLOPs against quantize overhead — the config's best
+  case saves at most the whole 60.93ms quantize row while certainly adding 82ms of bf16
+  GEMM, and it in fact disables only two of six casts so it cannot even reach that bound.
+  Granting the proposal more than it can have and still refusing needs no measurement.
 - **Until σ̂ is measured, every significant/not-significant call this round is
   provisional.** 0.035 came from a fit residual, which carries model misspecification;
   seed variance does not. Two experiments were designed against the conflation before
