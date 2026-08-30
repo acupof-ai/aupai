@@ -1534,6 +1534,26 @@ def main():
     if Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = 64
         torch._dynamo.config.accumulated_cache_size_limit = 256
+        if Cfg.attn_res:
+            # The AttnRes loop builds one compiled graph per distinct source count: 1 + 2*layers
+            # in Full mode (25), 1 + n_blocks in Block mode. Below that, torch.compile silently
+            # falls back to eager from source limit+1 on -- 980.8 -> 1463.9 ms/step (-33%,
+            # measured 2026-08-30). Read the EFFECTIVE limit back; an unreadable one raises,
+            # because a check that cannot run is not a check.
+            try:
+                import torch._dynamo as _dynamo
+
+                _dynamo_limit = _dynamo.config.cache_size_limit
+            except Exception as e:
+                raise RuntimeError(f"cannot read torch._dynamo.config.cache_size_limit: {e}") from e
+            _dynamo_need = 1 + min(Cfg.attn_res_blocks or 2 * Cfg.layers, 2 * Cfg.layers)
+            assert _dynamo_limit >= _dynamo_need, (
+                f"cache_size_limit={_dynamo_limit} < {_dynamo_need} AttnRes sources: eager fallback "
+                f"from source {_dynamo_limit + 1} on, -33% step time, silently. Keep it at 64 next "
+                "to the model = torch.compile line."
+            )
+            if is_main:
+                print(f"dynamo cache_size_limit={_dynamo_limit} (need {_dynamo_need})", flush=True)
         if os.environ.get("COMPILE_SUPPRESS_ERRORS", "0") == "1":
             torch._dynamo.config.suppress_errors = True
         model = torch.compile(model, dynamic=False)
