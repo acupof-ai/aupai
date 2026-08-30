@@ -15,10 +15,16 @@ Recipe and reasoning: `docs/standards/data_recipe_v3.md`. Weights: `data/mix_sca
 | code | `data/corpus/code` | 13,370 | 0.06B | code_filtered | human |
 | chat | `data/corpus/chat` | 9,255 | 0.04B | coig, in ChatML | human |
 
-The unfiltered `data/corpus/web` (2,991,648 documents, 3.55B tokens) is kept so a
-different quality threshold can be cut without rebuilding. **The mix must name
-`web_hq`**: train.py globs `data/corpus/<domain>/`, so the unfiltered corpus would
-train perfectly well and silently discard every filter.
+**Superseded 2026-08-30.** The unfiltered `web` domain (2,991,648 documents, 3.55B
+tokens) no longer exists: its first 62 shards were moved wholesale into `web_hq`, and
+nothing unfiltered is kept for re-thresholding. The rebuilt `web_hq` is 1,366,324
+documents / 1.4344B tokens, fingerprint `30838d423348b2e5`. Re-thresholding now means
+rebuilding from `data/raw/fineweb2_cmn`.
+
+The reason the mix must still name `web_hq` explicitly holds regardless: train.py globs
+the domain directory, so a mix pointing at an unfiltered corpus would train perfectly
+well and silently discard every filter. That is what the `mix_not_unfiltered` check
+exists for.
 
 ## How web_hq was filtered
 

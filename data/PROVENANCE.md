@@ -392,7 +392,8 @@ was recorded — the gap this section exists to close.
 
 - Result: fingerprint: 30838d423348b2e5, 1,366,324 docs, 5,914,966,151 bytes, 1.434B
   tokens (2026-08-30)
-- Build: `datagen/build_corpus.py` built `data/corpus/web` with the full garbage chain
+- Build: `datagen/build_corpus.py` built the `web` domain (moved wholesale into `web_hq`
+  on 2026-08-30; that directory no longer exists) with the full garbage chain
   (pass1+pass2+pass3, `AUPAI_NO_GARBAGE` unset) and `reject_holdout` per document. The
   523 LAMBADA-zh holdout documents were then carved out by `remove_holdout2.py`, leaving
   4,731,988 documents. `web_hq` is the first 62 shards of that post-removal `web`, moved
