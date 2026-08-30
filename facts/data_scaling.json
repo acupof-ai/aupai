@@ -451,7 +451,7 @@
   },
   {
    "id": "ds.code_source_reachability",
-   "value": "pod 上大体量 ungated code 源全部不可直接拉取:hongface.co 被堵(Errno 99),hf-mirror 只通已知路径 resolve(fineweb2 484MB 200 实测)但 API 元数据 403 反爬(所有 query 变体含 ungated 数据集都 403),modelscope 通但无 AI-ModelScope 名下的 the_pile/slim/codeparrot 镜像。矩阵:codeparrot-clean(Apache ungated,但 .co 堵+镜像 resolve 404 拿不到路径)=>不可达;the_pile/RedPajama-1T(Apache ungated)=>纯 URL-manifest(真实数据在他处),0 直接字节;SlimPajama-627B(Apache)=>元数据 401;starcoderdata/the-stack=>gated(auto)。即每个大体量 code 源要么 gated、要么 URL-manifest、要么堵。",
+   "value": "实测(pod, curl -4 强制 IPv4):IPv6 出口整体坏——curl 默认先试 IPv6,本 pod IPv6 路由坏(Errno 99),回退 IPv4 即通,所以必须 -4/强制 IPv4(之前 urllib/HEAD 探测不回落 IPv4,系统性假象)。curl -4 实测:数据直连 host 通、API host 真堵。data.together.xyz(RedPajama-1T github 98 采样文件)HTTP 200 每文件 2.66GB=260GB raw/~30B token,可达;hf-mirror resolve 通(fineweb2 484MB 200);hf-mirror API 路由 403 反爬;huggingface.co 及其 datasets-server 即使 IPv4 也 timeout(rc 28),真堵;the_pile(the-eye.eu)到 SSL 校验失败 rc 60,需 -k;codeparrot-clean 仓库在(307),parquet 路径待定。",
    "measured": "2026-08-30",
    "source": "pod 实测 conn.py/probe2-6.py/msco.py;pod 经 ~/bin/pod 执行 urllib HEAD/GET",
    "config": {
@@ -463,7 +463,7 @@
     "method": "urllib HEAD/GET timeout 15-25",
     "pod": "iv-yeozpb5g5cbw80bls64e"
    },
-   "uncertainty": "codeparrot resolve 404 可能是路径没猜对而非真堵;API 403 一致性极高(9/9 ungated 也 403)",
+   "uncertainty": "the_pile 需 -k;codeparrot parquet 路径待定;.co 是否区域堵(仅测了这台 pod)未证",
    "status": "measured"
   }
  ]

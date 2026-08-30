@@ -41,7 +41,7 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 **具体源 + 许可（2026-08-30 实测可达）：**
 | 域 | 候选源 | 可达/许可 | 状态 |
 |---|---|---|---|
-| code | 见 `ds.code_source_reachability`（2026-08-30 实测） | **大体量 ungated code 源在 pod 上全不可直接拉**：.co 堵、镜像 API 403、the_pile/RedPajama 是 URL-manifest、SlimPajama 元数据 401、stack/starcoderdata gated | **预训练 code 格存疑**：唯一干净 ungated 直接源 codeparrot-clean 很小且路径未定。code 能力主战场可能落 Fable+沙箱的 SFT/RL 验证道（已通） |
+| code | 见 `ds.code_source_reachability`（2026-08-30 实测） | **直达 host 可达、必须 `curl -4`**（IPv6 出口坏；之前 urllib/HEAD 不回落 IPv4 是系统性假象）。RedPajama-1T github 260GB raw/~30B tok 可达；hf-mirror resolve 通、API 403 反爬；huggingface.co 真堵；the_pile 需 -k | **预训练 code 格可测且量够**：RedPajama-1T github 切片单独 ~30B 原于 token；跨源 MinHash 去重后供 code 格。真码走预训练（code-SFT 实测 200M 只 0.0%→~3%，装不下能力，见 fb 2026-08-30）；Fable+沙箱主供 SFT/RL 验证式 |
 | math | OpenWebMath / DeepSeekMath / proof-pile | 开放/开源 | 语义以中文刷卡；英文为主，可验证 |
 | CoT | OpenThoughts / Skywork-OR1 / r1 类 | Apache 系 | 英文长链 |
 | en 通用 | WanJuanCC(46B en) / Ultra-FineWeb en / fineweb en | Apache/CC | 修 en 域（现 85% 中文） |
