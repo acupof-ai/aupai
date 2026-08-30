@@ -35,3 +35,9 @@ data/tokenizer_k6.json
 # data/corpus/*/ are ignored, so MOVING a file to data/_quarantine/ un-ignores it -- which
 # is how a 218,468-line jsonl reached a commit.
 data/_quarantine/
+
+# Pod-only build artifacts: raw sources and eval prediction files. Rebuildable,
+# never committed -- a fact that cites them is machine-verifiable on the pod,
+# SKIPped on a dev checkout (same three-state rule as data/corpus/*).
+data/raw/
+data/eval/preds_*.jsonl

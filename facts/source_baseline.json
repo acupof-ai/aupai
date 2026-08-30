@@ -1,0 +1,17 @@
+{
+  "runs/l1_p324.log": "deleted log; runs/*.log is not a durable source -- update be.l1_fewshot_p324 to cite the command + a durable artifact (preds file / score_matrix record / commit sha)",
+  "runs/code_base_0shot.log": "deleted log; runs/*.log is not a durable source -- update be.l1_fewshot_p324 to cite a durable artifact",
+  "runs/codezh_sft_v2.log": "deleted log; runs/*.log is not a durable source -- update be.l1_fewshot_p324 to cite a durable artifact",
+  "runs/ab_vocab.log": "deleted log; runs/*.log is not a durable source -- update eff.vocab_align_parity / eff.vocab_padding_softmax_defect to cite a durable artifact",
+  "runs/ab_vocab_32784.log": "deleted log; runs/*.log is not a durable source -- update eff.vocab_padding_softmax_defect to cite a durable artifact",
+  "runs/ab_vocab_32784_zeroinit.log": "deleted log; runs/*.log is not a durable source -- update eff.vocab_padding_softmax_defect to cite a durable artifact",
+  "runs/ab_vocab_32784_lr003.log": "deleted log; runs/*.log is not a durable source -- update eff.vocab_padding_softmax_defect to cite a durable artifact",
+  "runs/ab_chunk.log": "deleted log; runs/*.log is not a durable source -- update eff.chunk_size_parity to cite a durable artifact",
+  "runs/bf16_update_loss.log": "deleted log; runs/*.log is not a durable source -- update eff.bf16_updates_discarded to cite a durable artifact",
+  "runs/bf16_update_loss2.log": "deleted log; runs/*.log is not a durable source -- update eff.bf16_updates_discarded to cite a durable artifact",
+  "runs/scan_code_holdout.log": "deleted log; runs/*.log is not a durable source -- update cont.code_crawl_scan to cite a durable artifact",
+  "runs/scan_code_holdout_sft.log": "deleted log; runs/*.log is not a durable source -- update cont.code_sft_scan to cite a durable artifact",
+  "runs/warmup_smoke": "smoke-test output directory, not committed; update eff.warmup_absolute_not_fractional to cite a durable artifact",
+  "runs/p02_seeds": "pod-only directory with seed-run logs, not committed; update ds.seed_variance_0p2b / ds.nondeterminism_washes_out to cite a durable artifact",
+  "data/mix_scale_": "prefix, not a path; update ds.scaling_fit_protocol to name a specific file (e.g. data/mix_scale_3.24b.json)"
+}

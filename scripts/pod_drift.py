@@ -39,6 +39,7 @@ SCOPE = [
     "*.sh",
     "data/mix_scale_*.json",
     "data/tokenizer.json",
+    "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",
     "AGENTS.md",
