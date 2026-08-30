@@ -214,7 +214,8 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 ```
 
 - **`CUDA_VISIBLE_DEVICES`, not `cuda:N`**: fla/Triton kernels launch on the current device; `cuda:1` raises illegal memory access.
-- **File transfer into the container: `podput <local> <remote-abs-path>`** (gzip+base64, 180KB cap). `tn push` lands on the HOST filesystem and is invisible inside the container — never use it to deliver code or data to the repo.
+- **File transfer into the container: `podput <local> <remote-abs-path>`** (gzip+base64, 100KB cap — the real limit is the remote argv, not a constant). `tn push` lands on the HOST filesystem and is invisible inside the container — never use it to deliver code or data to the repo.
+- **Push code via `scripts/pod_push.sh <files>`, never bare `podput`.** It refuses a dirty tree, runs `git pull --rebase` first, and re-runs the drift gate after. A push copies one session's local state into the pod's global state; in a multi-session tree that state is stale by default (2026-08-30: a push rolled back 3b's `datagen/build_corpus.py` row-group feature, commit e39146e, and its new launcher died on `unrecognized arguments: --rg_mod`).
 - `uv sync` after dependency changes.
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 
