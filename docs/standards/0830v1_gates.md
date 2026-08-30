@@ -441,6 +441,17 @@ appearance of having been checked. Both guards below close that gap.
   metric. Build the next one from *hard* perturbations and let it start low: a mutated
   algorithm or a missing edge case, not a flipped operator. Headroom is a design
   parameter, not something to discover afterwards.
+- **"Verifiable" is a property of the answer, not of the checker. Name the checker before
+  quoting a survival rate.** `scripts/eqcheck.py` reads 21.6% coverage on a Chinese
+  synthetic math batch and its flagged bad steps are almost all false positives: Chinese
+  units break the equation chain, so `1600元 × 3/10 = 480` parses as `3/10 = 480`. Its
+  91.65% "survival rate" is instrument noise. Answer-level comparison against the gold
+  field on the same batch reads 99.85% raw and 99.91–99.97% after hand review — the batch
+  was clean and one checker could not see it. **The dangerous failure in a verification
+  pipeline is not low survival; it is a checker that confidently measures the wrong
+  thing** (`dq.verification.eqcheck_blind_spot`). Two requirements follow: a synthetic
+  batch must retain its gold answer field, and free-text generation needs a pre-registered
+  extraction contract — `\boxed{}` is the one already in use.
 - **Where the answer is verifiable, the measurement is a different economics.** Execution
   gives a binary label with no judge and no seed variance entering it, so the error is
   binomial: δ = 1.4/√N, or 6.3 points at N=500. Against val NLL's σ̂ = 0.0516 — which
