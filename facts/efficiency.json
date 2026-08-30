@@ -110,10 +110,11 @@
     "cards": 7,
     "model": "200M KDA + full causal MLA",
     "attnres": "Full (blocks=0)",
-    "denominator_tflops": 296
+    "denominator_tflops": 296,
+    "corpus": "CCI3 (both arms; the 22:24 web_hq symlink swap, not fineweb2)"
    },
    "uncertainty": "single run per arm, no seed repeat; MFU granularity ~1pt, the 14pt delta is ~14x that",
-   "boundary": "Full AttnRes only; Block variant and smaller-batch memory tradeoff unmeasured",
+   "boundary": "Full AttnRes only; Block variant and smaller-batch memory tradeoff unmeasured. Both arms ate the same CCI3, so the ratio is internally valid; under doc_mask the doc-length distribution enters operator cost, and CCI3 vs fineweb2 distributions were not measured -- do not compare this number to a fineweb2-corpus throughput",
    "status": "measured"
   },
   {
