@@ -109,10 +109,19 @@ At 3.24b, the control is the ladder's own checkpoint (`attn_every 4`, already pa
 - If σ_paired < σ_independent, MDE improves dramatically:
   - σ_paired 2× below σ → 3.24b 1+1 reaches MDE 0.10
   - σ_paired 2.6× below σ → 3.24b 1+1 reaches 0.08 gate at 206 GPU-min
-- **Probes (~24 GPU-min, before committing at 3.24b)**:
-  1. Same seed, same arm, twice → pure nondeterminism floor (should be ~0; if not, all σ estimates are contaminated)
-  2. Same seed, both arms, 2 seeds → first read on σ_paired (treatment runs only; control = existing 4 seeds)
-- Weaknesses: (1) σ_paired at 0.2b may not predict 3.24b, (2) 2-seed estimate is rough, (3) b0 must re-derive reading rules for paired design
+- **Probes (~18 GPU-min, running 2026-08-30)**:
+  1. Same seed (s2), same arm (`attn_every 4`), re-run vs existing `ckpt_p02_s2` (val 3.679) → pure nondeterminism floor. If diff > ~0.01, CUDA nondeterminism contaminates all σ estimates, σ̂=0.0516 is an upper bound.
+  2. Same seed (s2, s3), both arms (`attn_every 1` vs existing s2, s3 `attn_every 4`) → σ_paired first read.
+  - Pairing against s2/s3 (not s0/s1): s0/s1 ran before a train.py edit; s2/s3 are on the same side as new runs.
+- **Corrected bands** (b0's frozen paired t: `(t.975,n-1 + t.80,n-1)·s_d/√n`, not normal approximation):
+  - n=2 pairs (df=1): factor 14.08, needs s_d ≤ 0.0080 (ρ≈0.99, effectively unreachable)
+  - n=3 (df=2): factor 5.364, needs s_d ≤ 0.0258
+  - n=4 (df=3): factor 4.160, needs s_d ≤ 0.0385 (ρ≈0.72)
+  - n=6 (df=5): factor 3.491, needs s_d ≤ 0.0561
+  - **1-pair design does not exist** (n=1, df=0, s_d not estimable). Minimum 2 pairs.
+- **Real question**: σ_d = σ√(2(1−ρ)). Affordable form is 4 pairs at ~721 GPU-min (not 206 as initially quoted). Requires ρ ≈ 0.7.
+- **Binding falsifier**: If σ_d ≈ σ√2 (ρ≈0), pairing bought nothing, independent already failed, and **KDA A/B is dead at 200M — no further design substitutions**. Probe is simultaneously the design's own falsifier.
+- **Lower bound with teeth**: σ_d ≥ √2·σ_nondet. If probe 1 alone exceeds threshold, pairing dies without waiting for probe 2.
 - Init comparability: shared layers (embedding, 3 GatedMLA, FFN, norms) are identical with same seed; replaced layers (9 KDA → 9 GatedMLA) differ but that's the treatment, not a confound
 
 **Option B — Scaling law residual (free, indirect)**:
