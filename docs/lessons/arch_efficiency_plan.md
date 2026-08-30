@@ -103,6 +103,18 @@ At 3.24b, the control is the ladder's own checkpoint (`attn_every 4`, already pa
 - Reading: |gap| vs MDE (calculated from σ̂ at 3.24b, measured from ladder seeds if available)
 - If all-attention wins ≥ MDE → switch. If KDA wins ≥ MDE → param-matched arm. If < MDE → no resolution at 3.24b either.
 
+**Option A' — Paired comparison (fb proposal 2026-08-30, under evaluation)**:
+- Same seed in both arms → data order cancels (train.py:1343 mix planner uses `Cfg.seed`, architecture-independent)
+- Relevant quantity: σ of *paired difference* (σ_paired), not σ of independent runs
+- If σ_paired < σ_independent, MDE improves dramatically:
+  - σ_paired 2× below σ → 3.24b 1+1 reaches MDE 0.10
+  - σ_paired 2.6× below σ → 3.24b 1+1 reaches 0.08 gate at 206 GPU-min
+- **Probes (~24 GPU-min, before committing at 3.24b)**:
+  1. Same seed, same arm, twice → pure nondeterminism floor (should be ~0; if not, all σ estimates are contaminated)
+  2. Same seed, both arms, 2 seeds → first read on σ_paired (treatment runs only; control = existing 4 seeds)
+- Weaknesses: (1) σ_paired at 0.2b may not predict 3.24b, (2) 2-seed estimate is rough, (3) b0 must re-derive reading rules for paired design
+- Init comparability: shared layers (embedding, 3 GatedMLA, FFN, norms) are identical with same seed; replaced layers (9 KDA → 9 GatedMLA) differ but that's the treatment, not a confound
+
 **Option B — Scaling law residual (free, indirect)**:
 - Fit scaling law to ladder data (0.2b → 1.6b, `attn_every 4`)
 - Predict 3.24b loss, compare with actual
