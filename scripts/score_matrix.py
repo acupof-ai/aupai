@@ -371,11 +371,24 @@ def selftest():
     print("selftest OK")
 
 
+def _metric(name, fn, record, *args, **kwargs):
+    """Run a metric, print start/result, store it. Real-time output so a 2h
+    silent run doesn't look dead."""
+    print(f"  {name:15s} ... running", flush=True)
+    v, err = fn(*args, **kwargs)
+    record["metrics"][name] = v if v else {"error": err}
+    if err:
+        print(f"  {name:15s} ERROR: {err}", flush=True)
+    else:
+        print(f"  {name:15s} {v}", flush=True)
+
+
 def score(ckpt_path, mix_path, tok_path, device):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
     wanted = APPLIES[kind]
+    print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
         "type": kind,
@@ -388,49 +401,40 @@ def score(ckpt_path, mix_path, tok_path, device):
     needs_model = "domain_loss" in wanted
     model = tok = seq = None
     if needs_model:
+        print(f"  {'model':15s} ... loading", flush=True)
         model, cfg = load_checkpoint(ckpt_path, device=device, dtype=torch.bfloat16)
         tok = load_tokenizer(tok_path, cfg)
         model.eval()
         seq = getattr(cfg, "seq", 4096)
+        print(f"  {'model':15s} loaded", flush=True)
 
     if "domain_loss" in wanted:
-        v, err = metric_domain_loss(model, tok, seq, device, mix_path)
-        record["metrics"]["domain_loss"] = v if v else {"error": err}
+        _metric("domain_loss", metric_domain_loss, record, model, tok, seq, device, mix_path)
     if model is not None:
         del model
         torch.cuda.empty_cache()
     if "minimal_pairs" in wanted:
-        v, err = metric_minimal_pairs(ckpt_path)
-        record["metrics"]["minimal_pairs"] = v if v else {"error": err}
+        _metric("minimal_pairs", metric_minimal_pairs, record, ckpt_path)
     if "mc_ceval" in wanted:
-        v, err = metric_mc(ckpt_path, tok_path, ["ceval"])
-        record["metrics"]["mc_ceval"] = v if v else {"error": err}
+        _metric("mc_ceval", metric_mc, record, ckpt_path, tok_path, ["ceval"])
     if "lambada_zh" in wanted:
-        v, err = metric_lambada_zh(ckpt_path)
-        record["metrics"]["lambada_zh"] = v if v else {"error": err}
+        _metric("lambada_zh", metric_lambada_zh, record, ckpt_path)
     if "math_v2_like" in wanted:
-        v, err = metric_math_v2_like(ckpt_path)
-        record["metrics"]["math_v2_like"] = v if v else {"error": err}
+        _metric("math_v2_like", metric_math_v2_like, record, ckpt_path)
     if "l1_fewshot" in wanted:
-        v, err = metric_l1_fewshot(ckpt_path)
-        record["metrics"]["l1_fewshot"] = v if v else {"error": err}
+        _metric("l1_fewshot", metric_l1_fewshot, record, ckpt_path)
     if "mc_full" in wanted:
         # hellaswag/piqa excluded: pod HF egress broken, datasets unreachable.
         # Run run_eval.py --benchmarks hellaswag piqa on a box with egress.
-        v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy"])
-        record["metrics"]["mc_full"] = v if v else {"error": err}
+        _metric("mc_full", metric_mc, record, ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy"])
     if "math_hard" in wanted:
-        v, err = metric_math_hard(ckpt_path, tok_path)
-        record["metrics"]["math_hard"] = v if v else {"error": err}
+        _metric("math_hard", metric_math_hard, record, ckpt_path, tok_path)
     if "math_500" in wanted:
-        v, err = metric_math_500(ckpt_path, tok_path)
-        record["metrics"]["math_500"] = v if v else {"error": err}
+        _metric("math_500", metric_math_500, record, ckpt_path, tok_path)
     if "code_500" in wanted:
-        v, err = metric_code_500(ckpt_path, tok_path)
-        record["metrics"]["code_500"] = v if v else {"error": err}
+        _metric("code_500", metric_code_500, record, ckpt_path, tok_path)
     if "pass_at_k" in wanted:
-        v, err = metric_pass_at_k(ckpt_path)
-        record["metrics"]["pass_at_k"] = v if v else {"error": err}
+        _metric("pass_at_k", metric_pass_at_k, record, ckpt_path)
 
     for m, reason in SKIP_REASON.items():
         if m not in wanted:
