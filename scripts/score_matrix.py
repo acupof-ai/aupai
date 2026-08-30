@@ -53,7 +53,7 @@ SKIP_REASON = {
     "math_500": "generative; a base checkpoint reads zero",
     "code_500": "generative; a base checkpoint reads zero",
     "pass_at_k": "needs a policy (SFT or RL); a base checkpoint has none",
-    "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
+    "mc_full": "hellaswag/piqa unreachable from this machine (pod HF egress broken); not a signal judgement -- run --benchmarks hellaswag piqa on a box with egress. English MC also at chance on every 200M measured, ceval stays as tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
     "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); few-shot continuation math",
@@ -379,7 +379,9 @@ def score(ckpt_path, mix_path, tok_path, device):
         v, err = metric_l1_fewshot(ckpt_path)
         record["metrics"]["l1_fewshot"] = v if v else {"error": err}
     if "mc_full" in wanted:
-        v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy", "hellaswag", "piqa"])
+        # hellaswag/piqa excluded: pod HF egress broken, datasets unreachable.
+        # Run run_eval.py --benchmarks hellaswag piqa on a box with egress.
+        v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy"])
         record["metrics"]["mc_full"] = v if v else {"error": err}
     if "math_hard" in wanted:
         v, err = metric_math_hard(ckpt_path, tok_path)

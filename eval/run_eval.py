@@ -139,7 +139,12 @@ MC_BENCHMARKS = {
     "mmlu": ("MMLU", load_mmlu),
     "ceval": ("C-Eval (zh)", lambda: _load_module("ceval").load_items()),
 }
-ALL_BENCHMARKS = list(MC_BENCHMARKS) + ["gsm8k"]
+# hellaswag/piqa: unreachable from this machine (pod HF egress broken; curl -4
+# also times out on huggingface.co). Not a signal judgement -- run
+# `--benchmarks hellaswag piqa` on a box with egress. The at-chance note in
+# score_matrix SKIP_REASON applies to the English MC set as a whole and is a
+# separate reason.
+ALL_BENCHMARKS = [b for b in MC_BENCHMARKS if b not in ("hellaswag", "piqa")] + ["gsm8k"]
 
 
 # --- Batched log-likelihood scorer (shared by all multiple-choice benchmarks) ---
