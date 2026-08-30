@@ -165,24 +165,44 @@ argparse is strict. The doc claim was the defect that produced the launch. Same 
 `en` directory: a label read as a claim about what is underneath it. AGENTS.md now states the
 whitelist explicitly; a `Cfg` field without a parser entry cannot be set from the CLI.
 
-**What σ̂ decides, written before s2 and s3 finished.** Two of four are in: s0 val 3.691,
-s1 val 3.762, spread 0.071. σ̂ from four seeds carries 3 degrees of freedom and lands on
-two decisions that are already specified, so neither is chosen after seeing the number:
+**σ̂ = 0.0516 — measured, 2026-08-30. The first seed-variance number this repo has had.**
+
+| seed | val NLL |
+|---|---|
+| s0 | 3.691 |
+| s1 | 3.762 |
+| s2 | 3.679 |
+| s3 | 3.638 |
+
+mean 3.6925, range 0.1240, σ̂ 0.0516 with 3 df (`ds.seed_variance_0p2b`). That is
+**1.47× the 0.035 that two experiments were designed against** — and 0.035 was a fit
+residual borrowed as a seed variance, which carries model misspecification where seed
+noise does not.
+
+The branch was committed at `20e1b7a` while s2 was at step 170/217 and s3 had not started.
+It fires:
 
 | σ̂ | MDE at 4+4 = 1.98σ̂ | consequence |
 |---|---|---|
-| ≤ 0.040 | ≤ 0.079 | inside b0's pre-registered 0.08 gate — the second four runs happen |
-| > 0.040 | > 0.079 | outside it — the KDA A/B moves to the 3.24b checkpoint, where it is free |
+| ≤ 0.040 | ≤ 0.079 | inside the pre-registered 0.08 gate — the second four runs happen |
+| **> 0.040** | **0.1021** | **outside it — the KDA A/B moves to the 3.24b checkpoint** |
 
-The fit gate moves too. b0's ACCEPT is RMS ≤ 1.14σ̂, and the expected RMS of a 3-parameter
-fit through 6 points is 0.71σ̂. The `RMS ≤ 0.05` figure quoted around this round assumed
-σ = 0.035. If σ̂ comes back materially larger, that threshold is renegotiated **before the
-ladder runs**, not after a fit misses it — a threshold moved after seeing a fit is a
-fitted threshold.
+**Ruling: the second four runs (`attn_every 1`, seeds 0-3) do not happen.** At 0.2b a
+4-vs-4 resolves 0.1021 nat, and an experiment whose lack of resolution is computable
+beforehand should be declared beforehand rather than spending 24 GPU-minutes to produce a
+null. 8+8 would reach 0.0722 and still miss the gate; only the 3.24b checkpoint, where the
+comparison is free, is worth asking on.
 
-The two-seed spread of 0.071 is not σ̂ and is not evidence for either branch. It is
-recorded here so that the number, when it arrives, cannot be read as having been chosen
-to fit a conclusion already written.
+**The fit gate moves and must be renegotiated before the ladder runs.** ACCEPT is
+RMS ≤ 1.14σ̂ = **0.0588**, not the 0.05 quoted this round — that figure assumed σ = 0.035
+(1.14 × 0.035 = 0.0399). Expected RMS of a 3-parameter fit through 6 points is
+0.71σ̂ = 0.0366. Moving it now is renegotiation; moving it after a fit misses would be
+fitting the threshold.
+
+One caveat that travels with the number: 3 df makes the σ confidence interval roughly 0.6×
+to 2.9× wide. 0.0516 is a point estimate and is treated as one. It does not license
+reasoning that depends on σ being precisely 0.0516, only on it being materially larger
+than 0.035 — which the data supports at any reading of that interval.
 
 The first four are unconditional. The second four run only if the measured seed variance
 says a 4-vs-4 comparison can resolve anything: lessons-b0 computes `s_pooled` from the
