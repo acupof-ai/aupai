@@ -1009,7 +1009,9 @@ FACT_REQUIRED = {"id", "value", "measured", "source", "config", "uncertainty", "
 FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
 FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-FACT_SOURCE_PATH = re.compile(r"(?:scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+")
+FACT_SOURCE_PATH = re.compile(
+    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+"
+)
 
 
 def check_facts_well_formed(root):
@@ -1072,8 +1074,15 @@ def check_facts_well_formed(root):
 
 
 def _broken_facts():
-    """The REAL facts files and REAL AGENTS.md, with one entry's config deleted. A
-    hand-written file would share the check's own assumptions."""
+    """The REAL facts files and REAL AGENTS.md, with one entry's config deleted and
+    one entry's source pointing at a non-existent data/ path. A hand-written file
+    would share the check's own assumptions.
+
+    The source mutation uses a bare data/ path with no other prefix substring:
+    the old regex (no data/ in its prefix list) found no match and silently passed
+    it; the new regex matches data/... and FAILs on the missing file. This is the
+    coverage the broken world lacked -- it only exercised the missing-config path,
+    which is why the missing left anchor and missing data/ prefix went unnoticed."""
     import shutil
 
     d = _tmp_repo()
@@ -1082,6 +1091,7 @@ def _broken_facts():
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
+    obj["facts"][0]["source"] = "data/does_not_exist.jsonl"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
