@@ -17,11 +17,11 @@ whole ladder.
 |---|---|---|
 | cards | 7 (GPU 1-7) | GPU 0 is the bench/scoring lane |
 | batch / accum | 16 / 2 | effective 32. AttnRes Full OOMs at batch 32 on 96GB; accumulation keeps the optimizer recipe valid. Block AttnRes changes the architecture under test; grad_ckpt measured 2.4x slower at batch 72 |
-| `vocab` | 32776 | 32773 is 2-byte aligned, so cuBLAS falls back to an SM75 align-1 kernel at 41% of bf16 peak. Padding to a multiple of 8 reaches 92%: +14-16% end to end, tokenizer untouched |
+| `vocab` | 32784 | 32773 is 2-byte aligned, so cuBLAS falls back to an SM75 align-1 kernel at 41% of bf16 peak. Padding to a multiple of 8 reaches 92%: +14-16% end to end, tokenizer untouched. 32784 is additionally 16-aligned, so `_fp8_ok` accepts the head — a free fp8 option. The 11 padding rows (vocab_real:vocab) are zero-initialized so they stay neutral in the FLCE softmax (`eff.vocab_padding_softmax_defect`); A/B max \|delta\| 0.0016 at LR 0.03 |
 | `chunk_size` | 32 | fla KDA default 64; halved chunks measured 19.1% faster on the kernel, numerically neutral (max delta 0.0017 on loss ~8) |
 | `bucket_cap_mb` | 50 | 100 leaves DDP communication unhidden. 50 and 25 tie at 75K tok/s/gpu on both 3 and 7 cards, so 50 wins on fewer allreduces |
 | NCCL protocol | default | forcing `PROTO=Simple` adds 2K tok/s but depends on an env var that a launch can silently omit |
-| warmup | 1% of steps, floor 2 | `max(20, 1%)` left the 0.2b point at 9.2% and the 3.24b point at 1.0% — a 9.2x systematic difference that would read as monotonic drift in the fit residuals |
+| warmup | fixed 20 steps | absolute steps, not a fraction: momentum/second-moment reliability needs a roughly constant count. The fraction varies 9.2% (0.2b) to 0.57% (3.24b) — a known confound that overestimates beta; the proportional alternative biased the same direction harder (measured 0.52 val at 0.2b, `eff.warmup_absolute_not_fractional`) |
 
 ## The six-point run plan
 
@@ -53,7 +53,7 @@ because it fits badly.
 | G2 profile | step time split by source, summing to ~100 | `facts/efficiency.json` | lessons-e1 | GREEN; roofline table landed, kernel line closed |
 | G2b fit protocol | fitting method, accept thresholds, and falsification shapes frozen before the first point | `docs/lessons/scaling_fit_protocol.md` v1.1 + `scripts/fit_scaling.py` | lessons-b0 | GREEN, frozen |
 | G3 corpus | `web_hq` rebuilt from fineweb2, holdout excluded, fingerprint stamped | PROVENANCE fetch/build/result block + `corpus_fp_matches` green | aupai-3b | in progress, 36-way build |
-| G3b warmup | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | running |
+| G3b warmup | 2-step warmup does not destabilise the 0.2b point | smoke vs `warmup=20` control, same seed | aupai-de | GREEN; fixed warmup=20, `eff.warmup_absolute_not_fractional` |
 | G4 six points | all six `mix_scale_*` points trained and scored | six score-matrix rows + six experiments rows | aupai-fb | blocked on G3, G3b |
 | G5 scaling curve | the fit runs and its verdict is recorded | `fit_scaling.py` output with RMS and the beta profile interval | aupai-fb | blocked on G4 |
 
@@ -69,7 +69,7 @@ step-by-step loss comparison, `test_arch_compat` coverage, and a working fallbac
 | aupai-fb | controller: GPU allocation, gate rulings, launching runs, the experiment record, and the reasoning about what each result means | writes no code |
 | aupai-de | harness, CI gates, doc deletion, code cleanup, pod hygiene | training runs, research |
 | aupai-3b | corpus build, filters, quality head, eval-set construction | kernels, harness |
-| tilerl-bench-harness-plan | kernels and their benchmarks, written in this repo under `scripts/` | changing the architecture's math |
+| tilerl-bench-harness-plan | performance measurement and verification: reads the real artifact (generated code, kernel names, ncu counters, autograd saved tensors) to confirm or refute a claim; owns serving infrastructure; writes kernels only when a measurement says one is worth writing | changing the architecture's math |
 | lessons-b0 | research: what has resolution at 200M | writing repo code |
 | lessons-e1 | research: where the step time goes | writing repo code |
 | lessons-44 | research: filter transfer | writing repo code |
