@@ -44,7 +44,7 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 # the English three do not, same model same scale -- b0's finding), so base
 # gets ceval only as a z-score tripwire.
 APPLIES = {
-    "base": ["domain_loss", "minimal_pairs", "mc_ceval"],
+    "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like"],
     "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500"],
     "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "pass_at_k"],
 }
@@ -53,6 +53,8 @@ SKIP_REASON = {
     "math_500": "generative; a base checkpoint reads zero",
     "pass_at_k": "RL only; an SFT checkpoint has no policy to sample from",
     "mc_full": "English MC sits at chance on every 200M checkpoint measured; ceval stays as the tripwire",
+    "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
+    "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
 }
 
 
@@ -134,6 +136,43 @@ def metric_minimal_pairs(ckpt_path):
         return json.load(open(out, encoding="utf-8")), None
     finally:
         os.unlink(out)
+
+
+def _run_eval_json(script, ckpt_path, extra_args=None, timeout=3600):
+    """Shell out to an eval/<script>.py --ckpt --out <tmp> and parse its JSON."""
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+        out = tf.name
+    try:
+        r = subprocess.run(
+            [sys.executable, f"eval/{script}", "--ckpt", ckpt_path, "--out", out] + (extra_args or []),
+            capture_output=True, text=True, cwd=ROOT, timeout=timeout,
+        )
+        if r.returncode != 0:
+            tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["no output"]
+            return None, f"{script} exited {r.returncode}: {tail[0][:200]}"
+        return json.load(open(out, encoding="utf-8")), None
+    finally:
+        os.unlink(out)
+
+
+def metric_lambada_zh(ckpt_path):
+    """b0's eval/lambada_zh.py: LAMBADA-zh last-token prediction (panel #3).
+    Open-vocab top-1/top-5 (floor ~= 0) plus a 2-way known-answer reading
+    (real final token vs same-length distractor, floor 50%). Data must be
+    built first from held-out prose: eval/lambada_zh.py --build."""
+    data = os.path.join(ROOT, "data", "eval", "lambada_zh.jsonl")
+    if not os.path.exists(data):
+        return None, "lambada_zh.jsonl not built (eval/lambada_zh.py --build --src <held-out prose>)"
+    return _run_eval_json("lambada_zh.py", ckpt_path, ["--data", data])
+
+
+def metric_math_v2_like(ckpt_path):
+    """b0's eval/math_v2_like.py: math-hard v2 likelihood twin (panel #4).
+    Scores the gold answer span against a same-token-length wrong answer
+    (one deterministic digit edit) conditioned on the solution prefix.
+    Floor 50%; per-family reporting; pairs that break token-length alignment
+    are skipped and counted."""
+    return _run_eval_json("math_v2_like.py", ckpt_path)
 
 
 def _run(cmd, patterns):
@@ -294,6 +333,12 @@ def score(ckpt_path, mix_path, tok_path, device):
     if "mc_ceval" in wanted:
         v, err = metric_mc(ckpt_path, tok_path, ["ceval"])
         record["metrics"]["mc_ceval"] = v if v else {"error": err}
+    if "lambada_zh" in wanted:
+        v, err = metric_lambada_zh(ckpt_path)
+        record["metrics"]["lambada_zh"] = v if v else {"error": err}
+    if "math_v2_like" in wanted:
+        v, err = metric_math_v2_like(ckpt_path)
+        record["metrics"]["math_v2_like"] = v if v else {"error": err}
     if "mc_full" in wanted:
         v, err = metric_mc(ckpt_path, tok_path, ["ceval", "mmlu", "arc-easy", "hellaswag", "piqa"])
         record["metrics"]["mc_full"] = v if v else {"error": err}
