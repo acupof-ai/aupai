@@ -744,9 +744,9 @@
     "gpu_idle_pct": 1.5,
     "nccl_pct": 18.2
    },
-   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise Closed by timebox (fb 2026-08-30), not by identification. Re-test at 2B scale.",
-   "boundary": "Excluded: transmission (NCCL 18.2% overlapped), GPU idle (1.5%), static_graph, gradient_as_bucket_view. Not excluded: CPU-side reducer hook launch slowdown, DDP-introduced extra small kernels (6400 elementwise + 2960 reduction). Closed by timebox, not by identification. 3-GPU and 7-GPU both 6.25% — constant across ring size, but may vary with model size (re-test at 2B).",
-   "status": "unmeasured"
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
+   "boundary": "按时间盒关闭,不是因为查清了。已排除 —— NCCL 传输(18.2% 已重叠)、GPU 空闲(1.5%)、static_graph、gradient_as_bucket_view。未排除 —— CPU 侧 reducer hook 的 launch 拖慢、DDP 引入的额外小 kernel。模型变大时应被摊薄;若不降则此归因需重开。",
+   "status": "recorded"
   }
  ]
 }
