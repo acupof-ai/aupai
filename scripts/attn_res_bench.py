@@ -83,9 +83,15 @@ def err(a, b):
     return dict(max_abs=(a - b).abs().max().item(), rel=((a - b).norm() / b.norm().clamp_min(1e-30)).item())
 
 
-def make(cfg, device, seed):
+def make(cfg, device, seed, need_fp64=True):
+    """`need_fp64=False` for timing and memory arms: the fp64 reference tensors are 25 x 1.07 GB
+    of HOST ram at the target shape, which is what made every full-config run crawl or die."""
     g = torch.Generator(device="cpu").manual_seed(seed)
     dt = getattr(torch, cfg["dtype"])
+    if not need_fp64:
+        vs = [torch.randn(cfg["B"], cfg["T"], cfg["D"], dtype=dt, device=device) for _ in range(cfg["n"])]
+        gq = (torch.randn(cfg["D"], generator=g, dtype=torch.float64) * cfg["D"] ** -0.5).to(device, dt)
+        return None, None, vs, gq
     vs64 = [
         torch.randn(cfg["B"], cfg["T"], cfg["D"], generator=g, dtype=torch.float64).to(device)
         for _ in range(cfg["n"])
@@ -146,7 +152,7 @@ def g1(cfg, device, candidate=one_pass, baseline=two_pass, seeds=SEEDS):
 
 def g2(cfg, device, fn):
     """Determinism: same input twice, bit-exact."""
-    _, _, vs, gq = make(cfg, device, SEEDS[0])
+    _, _, vs, gq = make(cfg, device, SEEDS[0], need_fp64=False)
     return torch.equal(fn(vs, gq), fn(vs, gq))
 
 
@@ -164,7 +170,7 @@ def peak_mem_fwd_bwd(cfg, device, fn):
     nothing), while one_pass's fp32 running accumulator is saved by every rescale multiply."""
     if device.type != "cuda":
         return None
-    _, _, vs, gq = make(cfg, device, SEEDS[0])
+    _, _, vs, gq = make(cfg, device, SEEDS[0], need_fp64=False)
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     base = torch.cuda.memory_allocated()
@@ -173,7 +179,7 @@ def peak_mem_fwd_bwd(cfg, device, fn):
 
 
 def bench(cfg, device, fn, iters=10, warmup=3):
-    _, _, vs, gq = make(cfg, device, SEEDS[0])
+    _, _, vs, gq = make(cfg, device, SEEDS[0], need_fp64=False)
     sync = torch.cuda.synchronize if device.type == "cuda" else (lambda: None)
     for _ in range(warmup):
         fn(vs, gq)
