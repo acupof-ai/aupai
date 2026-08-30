@@ -1,4 +1,17 @@
-# aupai — 200M Chinese LLM (KDA + gated MLA hybrid, optional Attention Residuals)
+# aupai — 200M reasoning LLM, coding and math (KDA + gated MLA hybrid, optional Attention Residuals)
+
+**Objective changed 2026-08-30, by the user.** This was a 200M *Chinese* LLM. It is now a
+reasoning model targeting coding and math capability at ~30B tokens, and the corpus follows
+the capability rather than the language: roughly 60:40 English-leaning, because code is
+written in English and the math and chain-of-thought sources are overwhelmingly English.
+Chinese web drops from a planned 16B to 3-4B. The scaling law is no longer the deliverable.
+
+One consequence is already known and gates the corpus build: the frozen 32,784-slot
+vocabulary was fitted on Chinese web and cosmopedia, so it now faces a material
+distribution change plus a third distribution — code — that it has never seen.
+`tokenizer_eval` runs against a sample of the new composition **before any fetch**, and a
+failure is a rebuild decision that invalidates every existing checkpoint. What survives the
+change and what it supersedes: `docs/standards/0830v1_gates.md`.
 
 Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA, full causal over the 4096-token sequence (document-masked). The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training. Attention Residuals are on by default.
 
