@@ -331,25 +331,26 @@ def degeneration_rate(path, temperature, greedy=None):
         return None, f"no prediction file {os.path.relpath(path, ROOT)}"
     cfg = DEGEN_CONFIG
     n = deg = 0
-    for line in open(path, encoding="utf-8"):
-        try:
-            r = json.loads(line)
-        except Exception:
-            continue
-        if greedy is not None and r.get("greedy") != greedy:
-            continue
-        words = r.get("gen", "").split()
-        if len(words) < cfg["min_words"]:
-            continue
-        n += 1
-        counts = {}
-        for i in range(len(words) - cfg["ngram_len"] + 1):
-            ng = tuple(words[i : i + cfg["ngram_len"]])
-            c = counts.get(ng, 0) + 1
-            if c >= cfg["repeat_threshold"]:
-                deg += 1
-                break
-            counts[ng] = c
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                r = json.loads(line)
+            except Exception:
+                continue
+            if greedy is not None and r.get("greedy") != greedy:
+                continue
+            words = r.get("gen", "").split()
+            if len(words) < cfg["min_words"]:
+                continue
+            n += 1
+            counts = {}
+            for i in range(len(words) - cfg["ngram_len"] + 1):
+                ng = tuple(words[i : i + cfg["ngram_len"]])
+                c = counts.get(ng, 0) + 1
+                if c >= cfg["repeat_threshold"]:
+                    deg += 1
+                    break
+                counts[ng] = c
     if n == 0:
         return None, "no generations with enough words to form the n-gram"
     return {
