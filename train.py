@@ -1151,15 +1151,26 @@ def _domain_seqs(domain, tok, is_main, ddp):
 
 
 def _corpus_fp(ddir):
-    """Hash of sorted (shard name, size, mtime) for one domain dir. Canonical implementation:
-    scripts/corpus_fingerprint.py; inline so train.py imports nothing from scripts/ -- this is
-    the same value save_checkpoint writes into the checkpoint under corpus_fp."""
+    """Hash of sorted (shard name, size, sha256 of first/last 64KB) for one domain dir.
+    Canonical implementation: scripts/corpus_fingerprint.py (fp_dir); inline so train.py
+    imports nothing from scripts/ -- this is the same value save_checkpoint writes into
+    the checkpoint under corpus_fp. The two must agree bit-for-bit; corpus_fingerprint.py
+    --self-check asserts parity on every run. Content-based, not mtime-based: a transfer
+    (podput/rsync) changes mtime without touching a byte."""
     fh = hashlib.sha1()
     for nm in sorted(os.listdir(ddir)):
         if nm == "build_corpus_stats.json" or nm.startswith("."):
             continue
-        st = os.stat(os.path.join(ddir, nm))
-        fh.update(f"{nm}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+        p = os.path.join(ddir, nm)
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            head = f.read(65536)
+            if size > 65536:
+                f.seek(-65536, os.SEEK_END)
+                tail = f.read(65536)
+            else:
+                tail = b""
+        fh.update(f"{nm}:{size}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}\n".encode())
     return fh.hexdigest()[:16]
 
 

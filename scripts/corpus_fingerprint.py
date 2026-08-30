@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Per-domain corpus fingerprint: hash of (shard name, size, mtime).
+"""Per-domain corpus fingerprint: hash of (shard name, size, sha256 of the first and
+last 64KB).
 
 The incident: two corpora both called data/corpus/math, one 0.0% contaminated and
 one 30.0%, and nothing but an audit distinguished them. A checkpoint needs to say
 which corpus it trained on the way it already says which tokenizer (vocab_id).
 
-Stat-only on purpose: name+size+mtime is O(shards), so the fingerprint of a 108 GB
-domain costs a directory scan, not a line count. It catches the drift that matters
-(shard deleted, shard rewritten) and misses same-size same-mtime edits -- the same
-ceiling as the scan ledger, documented rather than hidden. Row counts would close
-it but cost minutes per domain on web-scale data.
+Content-based, not mtime-based: a copy, podput, rsync or mv changes mtime without
+touching a byte, and the 2026-08-30 sample-domain drift was exactly that -- a
+transfer that red the guard with no editor to trace. Head+tail 64KB also catches
+same-size edits, which mtime-only missed: a same-size rewrite almost necessarily
+moves the head or the tail. Cost stays O(shards): 128KB read per shard,
+milliseconds per domain on 108GB.
 
     python scripts/corpus_fingerprint.py [mix.json]   # print {domain: fp} for a mix
-    python scripts/corpus_fingerprint.py --self-check # broken world: mutate a real shard
+    python scripts/corpus_fingerprint.py --self-check # mutate/utime/parity on a real shard
 
 build_corpus.py stamps the fingerprint into build_corpus_stats.json at build time;
 harness check corpus_fp_matches compares that stamp to the live directory.
-"""
+train.py carries an inline copy (it imports nothing from scripts/); --self-check
+asserts the two agree bit-for-bit."""
 
 import argparse
 import glob
@@ -29,18 +32,37 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def fp_domain(domain, corpus_dir=None):
-    """Hash of sorted (shard name, size, mtime) for one corpus domain."""
-    d = os.path.join(corpus_dir or os.path.join(ROOT, "data", "corpus"), domain)
-    if not os.path.isdir(d):
-        return None
+def _shard_line(name, path):
+    """One shard's contribution: name, size, sha256 of the first and last 64KB.
+    A shard <= 64KB is hashed whole via its head."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        head = f.read(65536)
+        if size > 65536:
+            f.seek(-65536, os.SEEK_END)
+            tail = f.read(65536)
+        else:
+            tail = b""
+    return f"{name}:{size}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}\n".encode()
+
+
+def fp_dir(d):
+    """Hash of sorted shard lines for one domain directory. The workhorse: fp_domain
+    and build_corpus.py both call this, so the stamper cannot diverge from the guard."""
     h = hashlib.sha1()
     for name in sorted(os.listdir(d)):
         if name == "build_corpus_stats.json" or name.startswith("."):
             continue
-        st = os.stat(os.path.join(d, name))
-        h.update(f"{name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+        h.update(_shard_line(name, os.path.join(d, name)))
     return h.hexdigest()[:16]
+
+
+def fp_domain(domain, corpus_dir=None):
+    """Fingerprint of data/corpus/<domain>; None if the domain is absent."""
+    d = os.path.join(corpus_dir or os.path.join(ROOT, "data", "corpus"), domain)
+    if not os.path.isdir(d):
+        return None
+    return fp_dir(d)
 
 
 def fp_mix(mix_path):
@@ -50,26 +72,44 @@ def fp_mix(mix_path):
 
 
 def self_check():
-    """Broken world: copy a REAL shard into a temp corpus, mutate it, fp must change."""
-    real = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "math", "*.jsonl")))
+    """Known answers on a REAL shard: mutation changes the fp, mtime-only change does
+    not, deletion changes it, and train.py's inline copy agrees bit-for-bit. Uses the
+    first corpus domain with shards (math on the pod, sample on a fresh checkout), so
+    the parity assertion runs in CI too, not only where the full corpus lives."""
+    real = []
+    for dom in sorted(os.listdir(os.path.join(ROOT, "data", "corpus"))):
+        real = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", dom, "*.jsonl")))
+        if real:
+            break
     if not real:
-        print("self-check SKIP: no math shards to copy")
+        print("self-check SKIP: no corpus shards to copy")
         return 0
     with tempfile.TemporaryDirectory() as d:
-        dom = os.path.join(d, "math")
+        dom = os.path.join(d, "dom")
         os.makedirs(dom)
         shard = os.path.join(dom, "real_shard.jsonl")
         with open(real[0], "rb") as f, open(shard, "wb") as g:
             g.write(f.read())
-        fp1 = fp_domain("math", corpus_dir=d)
+        fp1 = fp_dir(dom)
         with open(shard, "a", encoding="utf-8") as f:
             f.write(json.dumps({"question": "指纹自检：改一行必须变", "output": "1"}, ensure_ascii=False) + "\n")
-        fp2 = fp_domain("math", corpus_dir=d)
+        fp2 = fp_dir(dom)
         assert fp1 and fp2 and fp1 != fp2, f"mutation did not change fingerprint: {fp1} -> {fp2}"
+        # Transfer invariance: copy/rsync/podput change mtime only -- the fp must not move.
+        os.utime(shard, (0, 0))
+        assert fp_dir(dom) == fp2, "mtime-only change moved the fingerprint"
         os.unlink(shard)
-        fp3 = fp_domain("math", corpus_dir=d)
-        assert fp3 is None or fp3 != fp1, "deleting the only shard must change the fingerprint too"
-    print(f"self-check OK (mutate {fp1} -> {fp2}, delete -> {fp3})")
+        fp3 = fp_dir(dom)
+        assert fp3 != fp1, "deleting the only shard must change the fingerprint"
+        # train.py's inline copy must agree bit-for-bit: a divergent inline copy would
+        # stamp checkpoints with a corpus id the guard never recognizes.
+        sys.path.insert(0, ROOT)
+        from train import _corpus_fp as _inline_fp  # noqa: E402
+
+        with open(real[0], "rb") as src, open(shard, "wb") as g:
+            g.write(src.read())
+        assert _inline_fp(dom) == fp_dir(dom), "train.py _corpus_fp diverged from canonical"
+    print(f"self-check OK (mutate {fp1} -> {fp2}, utime invariant, delete -> {fp3}, train.py parity)")
     return 0
 
 

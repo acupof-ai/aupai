@@ -399,21 +399,16 @@ def main():
                 f"ERROR: domain '{a.domain}' kept 0 documents from {a.source} -- "
                 f"check the --source glob / HF prefix (nothing written to {a.out})"
             )
-        # Corpus fingerprint (scripts/corpus_fingerprint.py): hash of shard
-        # name+size+mtime, so a checkpoint can name its corpus the way it names
-        # its tokenizer. Stamped here at build time; harness corpus_fp_matches
-        # compares it to the live directory.
-        import hashlib as _hl
+        # Corpus fingerprint: the canonical implementation, not a copy -- a stamper that
+        # diverged from the guard would stamp ids the guard never recognizes.
+        import sys as _sys
 
-        _h = _hl.sha1()
-        for _name in sorted(os.listdir(a.out)):
-            if _name == "build_corpus_stats.json" or _name.startswith("."):
-                continue
-            _st = os.stat(os.path.join(a.out, _name))
-            _h.update(f"{_name}:{_st.st_size}:{int(_st.st_mtime)}\n".encode())
+        _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+        from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+
         with open(os.path.join(a.out, "build_corpus_stats.json"), "w") as f:
             json.dump(
-                {"reasons": reasons, "top_hosts": hosts.most_common(50), "fingerprint": _h.hexdigest()[:16]},
+                {"reasons": reasons, "top_hosts": hosts.most_common(50), "fingerprint": _fp_dir(a.out)},
                 f,
                 ensure_ascii=False,
                 indent=1,
