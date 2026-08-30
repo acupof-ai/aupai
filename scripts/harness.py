@@ -1129,7 +1129,7 @@ def check_ladder_config(root):
     if bad:
         return FAIL, "; ".join(bad)
     if not checked:
-        return SKIP, "no ladder checkpoints (no exp row with run_ddp.sh)"
+        return SKIP, "no ladder checkpoints (experiments.jsonl is pod-authoritative; local copy may be stale)"
     msg = f"{checked} checkpoint(s) match the frozen config"
     if unknown:
         msg += f"; {len(unknown)} field(s) unverifiable (pre-stamp): {', '.join(sorted(set(unknown)))}"
@@ -1159,6 +1159,63 @@ def _broken_ladder_config():
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
         f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M"),
                             "status": "ok", "cmd": "bash run_ddp.sh --name test"}) + "\n")
+    return d
+
+
+def check_ladder_cfg_consistent(root):
+    """All six ladder points record the same cfg (except mix). The frozen list
+    prevents launch drift; this detects code-edit drift between points -- a
+    chunk_size, layers, or optimizer-param edit that no CLI flag can make and
+    no frozen key can see. Checkpoints record vars(Cfg): 46 fields, complete.
+    The only legitimate per-point difference is mix (the D varies)."""
+    names = [n for n, _ in LADDER]
+    ckpts = [os.path.join(root, f"ckpt_{n}.pt") for n in names]
+    ckpts = [p for p in ckpts if os.path.exists(p)]
+    if len(ckpts) < 2:
+        return SKIP, f"{len(ckpts)}/{len(names)} ladder checkpoints present; need 2+ to compare"
+    cfgs = {}
+    for p in ckpts:
+        try:
+            cfgs[p] = _read_ckpt_cfg(p)
+        except Exception as e:
+            return FAIL, f"{os.path.basename(p)}: cannot read cfg: {e}"
+    base_p, base = ckpts[0], cfgs[ckpts[0]]
+    diffs, unknown = [], []
+    for p in ckpts[1:]:
+        cfg = cfgs[p]
+        for k in sorted(set(base) | set(cfg)):
+            if k == "mix":
+                continue  # the D varies; everything else must not
+            if k not in base or k not in cfg:
+                unknown.append(f"{os.path.basename(p)}:{k}")
+            elif base[k] != cfg[k]:
+                diffs.append(f"{os.path.basename(p)}:{k} {base[k]!r}->{cfg[k]!r}")
+    if diffs:
+        return FAIL, f"{len(diffs)} field(s) differ: {'; '.join(diffs[:5])}"
+    note = f"; {len(unknown)} unverifiable (pre-stamp): {', '.join(sorted(set(unknown))[:5])}" if unknown else ""
+    return PASS, f"{len(ckpts)} checkpoints, {len(base)} fields, all consistent{note}"
+
+
+def _broken_ladder_cfg_consistent():
+    """Two ladder checkpoints with chunk_size changed in one -- the code-edit
+    drift the frozen list cannot see (no CLI flag touches chunk_size)."""
+    import io
+    import pickle
+    import shutil
+    import zipfile
+
+    d = _tmp_repo()
+    shutil.copy(
+        os.path.join(ROOT, "data", "mix_scale_run_config.json"),
+        os.path.join(d, "data", "mix_scale_run_config.json"),
+    )
+    for name, cs in [("p02_s0", 32), ("p03", 64)]:
+        cfg = {"mix": f"data/mix_scale_{'0.2b' if name == 'p02_s0' else '0.3b'}.json",
+               "chunk_size": cs, "batch": 16}
+        buf = io.BytesIO()
+        pickle.dump({"cfg": cfg, "vocab_id": "fake"}, buf)
+        with zipfile.ZipFile(os.path.join(d, f"ckpt_{name}.pt"), "w") as z:
+            z.writestr("data.pkl", buf.getvalue())
     return d
 
 
@@ -1619,6 +1676,13 @@ CHECKS = [
         "eight architecture/recipe flags escaped the frozen set and nothing noticed; the list rots the moment someone adds a flag",
         check_frozen_keys_complete,
         _broken_frozen_keys_complete,
+    ),
+    (
+        "ladder_cfg_consistent",
+        "all six ladder checkpoints record the same cfg (except mix)",
+        "a code edit to chunk_size/layers/optimizer params between points is invisible to the frozen list (no CLI flag) and to pod_drift (manifest regenerated); this is the only check that sees it",
+        check_ladder_cfg_consistent,
+        _broken_ladder_cfg_consistent,
     ),
     (
         "mix_supply",
