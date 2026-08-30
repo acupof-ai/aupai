@@ -872,6 +872,24 @@
       "boundary": "the 0.2b-0.3b segment of this mix and architecture; recompute the local slope at the budget being decided",
       "status": "measured",
       "refuted_by": "the six-point ladder fit giving a local slope at 3.24b that this two-point estimate misses by more than its own uncertainty"
+    },
+    {
+      "id": "eff.bf16_updates_discarded",
+      "value": "--fp8 casts the whole model to bf16 before training (train.py:1626) and run_ddp.sh always passes --fp8, so there are no fp32 master weights: the optimizers hold bf16 parameters, their state is bf16, and every step() rounds the result back to bf16. Fraction of parameter ELEMENTS whose bf16 bit pattern is unchanged across optimizer.step(), by lr_scale: 1.0 -> 32.00%, 0.5 -> 48.38%, 0.2 -> 71.56%, 0.1 -> 84.19%, 0.05 -> 91.29%, 0.01 -> 98.26%. The schedule's own floor is final_lr_frac=0.05 with warmdown=0.65, so a run spends its last 65% of steps decaying into the regime where 91.3% of updates are discarded. bfloat16 carries 8 mantissa bits, so an update below ~2^-9 of a parameter's magnitude cannot change its bit pattern: it is computed, applied, and dropped with nothing raising. A stalled parameter is indistinguishable from a converged one on the loss curve, which is why this needed a bit-level count rather than a loss reading.",
+      "unit": "percent of parameter elements unchanged per optimizer step",
+      "measured": "2026-08-30",
+      "source": "E2E_GPU=6 python scripts/bf16_update_loss.py --ckpt ckpt_p324.pt --steps 6 --batch 4; runs/bf16_update_loss.log and runs/bf16_update_loss2.log",
+      "config": {
+        "ckpt": "ckpt_p324.pt (all 176 tensors bfloat16; no optimizer state saved)",
+        "data": "data/sft/sft_all.pt, real tokens and real gradients",
+        "batch": 4,
+        "steps_per_scale": "6 (scales 1.0/0.1/0.01), 4 (scales 0.5/0.2/0.05)",
+        "path": "train.py's own build_optimizers + convert_to_fp8_compute, torch.compile off",
+        "comparison": "bit-level on the int16 view, not allclose: two equal bf16 values ARE the same value"
+      },
+      "uncertainty": "Measured on a pretrained checkpoint with SFT data; gradient magnitudes at the midpoint of a fresh 30B pretrain may differ. The 32% floor at full LR includes parameters whose gradient is legitimately zero (never-used vocabulary rows among them), so the absolute level is an upper bound on discarded WORK; the 32% -> 91% movement with LR is the signal and is unambiguous.",
+      "status": "measured",
+      "boundary": "Counts discarded updates, not the quality they would have bought. The loss cost needs an A/B against fp32 master weights."
     }
   ]
 }
