@@ -472,6 +472,21 @@ appearance of having been checked. Both guards below close that gap.
   metric. Build the next one from *hard* perturbations and let it start low: a mutated
   algorithm or a missing edge case, not a flipped operator. Headroom is a design
   parameter, not something to discover afterwards.
+- **Run the ground truth through the checker. A checker that cannot score its own gold
+  answers is broken, and the test is exhaustive and free.** `algorithms/rlvr_reward.py`
+  scores 217,932 of 217,953 gold answers correct — 99.9904% — and the 21 failures are two
+  real bugs that a hand-built variant suite did not find. **`对` sits in the Chinese
+  unit-stripping list** (from 一对, a pair), so `normalize_answer('对')` returns None while
+  `'错'` returns `'错'`. In a filter that is a dead row. **In a reward function it is
+  asymmetric: the model can be paid for answering 错 and never for answering 对, so RLVR
+  pushes it toward one answer on every true/false question regardless of the truth.**
+  Second bug: a *relative* 1e-4 tolerance scores `10000` against `10001` as correct, and
+  the false-positive window grows with magnitude while math answers stay exact.
+- **A bad checker in a filter gives a wrong survival rate. A bad checker in a reward
+  function is what the model optimises against.** Reward hacking is not adversarial
+  behaviour — it is the model finding the checker's blind spots faster than we do, because
+  that is precisely what training pays it to do. Every checker that becomes a reward gets
+  the ground-truth round trip before a single RL step.
 - **"Verifiable" is a property of the answer, not of the checker. Name the checker before
   quoting a survival rate.** `scripts/eqcheck.py` reads 21.6% coverage on a Chinese
   synthetic math batch and its flagged bad steps are almost all false positives: Chinese
