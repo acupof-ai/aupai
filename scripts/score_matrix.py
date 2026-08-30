@@ -204,11 +204,13 @@ def metric_l1_fewshot(ckpt_path):
     return _run_eval_json("l1_fewshot.py", ckpt_path)
 
 
-def _run(cmd, patterns):
+def _run(cmd, patterns, env=None):
     """subprocess, parse {name: value} from stdout lines matching
-    `patterns` (name -> regex with one float group). (values, error)."""
+    `patterns` (name -> regex with one float group). (values, error).
+    env merges into os.environ for K/TEMP-style knobs."""
+    full_env = {**os.environ, **env} if env else None
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600)
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=3600, env=full_env)
     except Exception as e:
         return None, f"{cmd[0]} failed to run: {e}"
     out = {}
@@ -279,9 +281,12 @@ def metric_code_500(ckpt_path, tok_path):
 
 
 def metric_pass_at_k(ckpt_path):
+    # Sharded via eval_hard.sh (7 GPUs, ~25 min) instead of single-GPU math_hard.py (~3h).
+    # pass@k is computed on the merged full rows, so sharding changes speed, not the number.
     return _run(
-        [sys.executable, "eval/math_hard.py", "--ckpt", ckpt_path, "--k", "8", "--temperature", "0.8"],
+        ["bash", "scripts/eval_hard.sh", ckpt_path, "7"],
         {"pass_at_1": r"pass@1\(greedy\)\s+([\d.]+)%", "pass_at_8": r"pass@8\s+([\d.]+)%"},
+        env={"K": "8", "TEMP": "0.8"},
     )
 
 
