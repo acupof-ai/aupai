@@ -272,6 +272,7 @@
       "measured": "2026-08-30",
       "source": "kernel trace of the real model, tileRL-bench-harness-plan session",
       "config": {
+        "compile_verified": "AttnRes really compiled: scripts/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after scripts/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
         "gpu": "NVIDIA H20, single GPU, no DDP",
         "batch": 16,
         "seq": 4096,
@@ -386,6 +387,7 @@
       "measured": "2026-08-30",
       "source": "kernel-name grouping of the full trace; supersedes the 17.2% 'remainder' row in eff.roofline_per_operator_prepad",
       "config": {
+        "compile_verified": "AttnRes really compiled: scripts/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after scripts/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
         "gpu": "NVIDIA H20, single GPU, no DDP",
         "batch": 16,
         "seq": 4096,
