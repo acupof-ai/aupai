@@ -33,6 +33,7 @@ SCOPE = [
     "*.sh",
     "data/mix_scale_*.json",
     "data/tokenizer.json",
+    "scripts/*.json",
     "AGENTS.md",
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
