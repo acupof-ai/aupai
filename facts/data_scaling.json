@@ -273,6 +273,18 @@
       "uncertainty": "the run-to-run noise anchor is literature (Kaplan), not internally replicated; B and beta are ridge-degenerate over a 16x span (noise-free fit recovered B=10000 vs true 6000 at nearly identical loss) -- the beta profile CI is the honest read",
       "boundary": "protocol frozen before the first new budget point runs; changes only via a new version",
       "status": "measured"
+    },
+    {
+      "id": "ds.scaling_decision_tree",
+      "value": "pre-registered decision tree for what to do after the six points are fit (docs/lessons/scaling_decision_tree.md, frozen before the points run): three mechanical reads -- doubling gain d_double=(L(Dmax)-E)(1-2^-beta), asymptote gap R=L(Dmax)-E, recognition levels (math twin / minimal pairs / LAMBADA at Dmax) -- drive the branches: d_double>=0.05 and R>0.10 -> extend D; R<0.05 -> data scaling done, read recognition: twin>0.75 + pairs>0.75 + LAMBADA>0.30 + generative<0.02 = recognition ceiling (knowledge present, production absent) -> SFT first, scale N only if SFT fails to move generation; twin<0.60 or pairs<0.60 = knowledge absent -> change data recipe. Fixed-N optimum: D* = smallest D with L(D)<=E+0.05 (within noise of the asymptote); the curve values only the 'more data' option, the tree puts alternatives on the same ruler. Fit-failure branches pre-registered (U-shape -> regime boundary, monotone drift -> wrong form, RMS>0.10 -> panel-only decision). Thresholds anchored to run-to-run noise (0.05, Kaplan) and the known-answer calibrations",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/scaling_decision_tree.md; docs/lessons/scaling_fit_protocol.md",
+      "config": {
+        "freeze": "before the first new budget point runs; changes only via a new version",
+        "noise_anchor": "0.05 nat run-to-run (Kaplan, no internal replicate)"
+      },
+      "uncertainty": "the recognition thresholds (0.75/0.60/0.30/0.02) are anchored to old-architecture measurements; the new architecture's levels may shift them -- but the thresholds are frozen, so a shift shows up as a branch taken, not a moved threshold",
+      "status": "measured"
     }
   ]
 }

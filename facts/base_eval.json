@@ -179,6 +179,18 @@
    "status": "recorded"
   },
   {
+   "id": "be.math_v2_5k_known_answer",
+   "value": "math-hard v2 likelihood twin on the expanded bank (ckpt_0830v1_3.24b.pt.ep1, GPU7, 2026-08-30; OLD architecture, runner calibration only): gold-win 94.92% vs wrong-win 5.08%, spread 89.8pt, swap-stable (0.9492/0.9492), 3012 pairs, 149/3161 token-length skips (4.7%). Bank expansion: generator at 280/family yields 5040 rows but only 3161 unique -- 9 families saturate their parameter spaces (number_array_cross 3 unique of 280, perfect_square_pattern 10, right_triangle_3060 26, quadratic_func 79, factorize 95, quadratic 138, inverse_prop 142, pythagoras 168, similar_triangle 124); the 1k bank itself had 848/1080 unique (232 dups). 3161 pairs resolves ~2.5pt at 80% power (vs 8.4pt at 1040); the panel's 5000-pair/3.9pt target needs generator widening (number_array_cross needs a new problem type, not just a wider range) -- reported to fb, not silently shipped",
+   "measured": "2026-08-30",
+   "source": "eval/math_v2_like.py; mathbank/eval_hard_v2_gen.py; pod runs /tmp/ka5k_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)"
+   },
+   "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
+   "status": "recorded"
+  },
+  {
    "id": "be.panel_resolution_rules",
    "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
    "measured": "2026-08-30",
