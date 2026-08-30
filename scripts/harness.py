@@ -1551,7 +1551,7 @@ def _demo():
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world)")
 
 
-STEPS = ("pretokenize",)  # point and ladder land next, behind the same gate
+STEPS = ("pretokenize", "point")  # ladder lands next, behind the same gate
 
 
 def _gate(force):
@@ -1585,6 +1585,44 @@ def _run_pretokenize(step_args, forced):
     return r.returncode
 
 
+def _run_point(step_args, forced):
+    """One 0830v1 budget point. run_ddp.sh already scores the checkpoint on success,
+    so this only has to launch it and record the row. --name is required; --mix defaults
+    to train.py's default; everything else passes through to train.py."""
+    name, mix, passthrough = None, None, []
+    i = 0
+    while i < len(step_args):
+        a = step_args[i]
+        if a == "--name" and i + 1 < len(step_args):
+            name, i = step_args[i + 1], i + 2
+        elif a.startswith("--name="):
+            name, i = a.split("=", 1)[1], i + 1
+        elif a == "--mix" and i + 1 < len(step_args):
+            mix, i = step_args[i + 1], i + 2
+        elif a.startswith("--mix="):
+            mix, i = a.split("=", 1)[1], i + 1
+        else:
+            passthrough.append(a)
+            i += 1
+    if not name:
+        print("run point: --name <n> is required")
+        return 2
+    mix = mix or cfg_default("mix")
+    cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *passthrough]
+    _exp("start", name=name, cmd=" ".join(cmd),
+         hypothesis=f"0830v1 budget point, mix {os.path.basename(mix)}{forced}")
+    r = subprocess.run(cmd, cwd=ROOT)
+    ckpt = f"ckpt_{name}.pt"
+    rec = os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    scored = r.returncode == 0 and os.path.exists(rec) and ckpt in open(rec, encoding="utf-8").read()
+    _exp("done", name=name,
+         result=f"exit {r.returncode}; {ckpt} scored in score_matrix" if scored else f"exit {r.returncode}",
+         finding="score_matrix record is the result; the fit interprets" if scored else "run failed before scoring",
+         decision="proceed to next point" if r.returncode == 0 else "investigate before next point",
+         status="ok" if r.returncode == 0 else "fail")
+    return r.returncode
+
+
 def run_dispatch(rest):
     """`harness run <step>` -- the only verb that executes. Thin dispatch, no new logic:
     every step refuses while check is red (--force records the reds in the exp row),
@@ -1602,6 +1640,8 @@ def run_dispatch(rest):
     forced = f" [FORCED, red: {', '.join(n for n, _ in reds)}]" if reds else ""
     if step == "pretokenize":
         return _run_pretokenize(step_args, forced)
+    if step == "point":
+        return _run_point(step_args, forced)
     return 2
 
 
