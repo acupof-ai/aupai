@@ -23,6 +23,7 @@ from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss  # noqa: 
 from tokenizers import Tokenizer  # noqa: E402
 
 import train  # noqa: E402
+from shape_audit import config_findings  # noqa: E402
 from train import SOFTCAP, Cfg, HybridLM, build_mix, build_optimizers, doc_cu_seqlens  # noqa: E402
 
 STEPS = int(os.environ.get("AB_STEPS", "10"))
@@ -68,6 +69,14 @@ def run_arm(value, Xtr, Ytr, eos_id):
 
 
 def main():
+    # This script builds HybridLM directly, bypassing the train.py startup gate and the
+    # harness check; without this, an uncommitted hostile Cfg (e.g. ffn_hidden=3400) runs
+    # the whole A/B in bf16 silently. The arm values below are the deliberate variable.
+    _fails = [f for f in config_findings(Cfg) if f["level"] == "FAIL"]
+    if _fails:
+        for f in _fails:
+            print(f"[FAIL] {f['where']}.{f['dim']} = {f['value']}: {f['why']}")
+        raise SystemExit("shape_audit FAIL: GEMM-hostile Cfg dimensions (see above)")
     Cfg.mix = "data/mix_sample.json"
     Cfg.batch = 4
     Cfg.seq = 512

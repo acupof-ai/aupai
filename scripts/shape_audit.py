@@ -31,7 +31,9 @@ FP8_ALIGN = 16  # _fp8_ok's requirement (train.py)
 
 
 def check(where, dim, value):
-    """One dimension, one verdict. FAIL costs throughput now; WARN only forfeits fp8."""
+    """One dimension, one verdict. Both tiers FAIL: 8-misalignment costs throughput now,
+    16-misalignment silently drops fp8 (_fp8_ok rejects the weight) -- this repo trains in
+    fp8 by default, so a run that silently stays bf16 is a wrong run, not a warning."""
     if value % FAST_ALIGN:
         return [
             {
@@ -47,13 +49,13 @@ def check(where, dim, value):
     if value % FP8_ALIGN:
         return [
             {
-                "level": "WARN",
+                "level": "FAIL",
                 "where": where,
                 "dim": dim,
                 "value": value,
-                "why": f"{value} % {FP8_ALIGN} = {value % FP8_ALIGN}; fast bf16 is fine, but _fp8_ok "
-                f"rejects this weight so it stays bf16",
-                "fix": f"pad to {(value // FP8_ALIGN + 1) * FP8_ALIGN} to make it fp8-eligible",
+                "why": f"{value} % {FP8_ALIGN} = {value % FP8_ALIGN}; _fp8_ok rejects this weight, "
+                f"so the run silently stays bf16 instead of the fp8 it was launched with",
+                "fix": f"pad to {(value // FP8_ALIGN + 1) * FP8_ALIGN}",
             }
         ]
     return []
