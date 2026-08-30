@@ -407,7 +407,9 @@
         "pre_registered_gate": 0.08,
         "decision": "4+4 MDE 0.1021 is OUTSIDE the 0.08 gate, so the second four runs (attn_every 1, seeds 0-3) do NOT happen; the KDA A/B moves to the 3.24b checkpoint where it is free",
         "pre_registration": "the sigma-hat <= 0.040 / > 0.040 branch was committed at 20e1b7a while s2 was at step 170/217 and s3 had not started",
-        "fit_gate_consequence": "ACCEPT is RMS <= 1.14 sigma = 0.0588, not the 0.05 quoted this round; that figure assumed sigma = 0.035. Expected RMS of a 3-parameter fit through 6 points is 0.71 sigma = 0.0366."
+        "fit_gate_consequence": "ACCEPT is RMS <= 1.14 sigma = 0.0588, not the 0.05 quoted this round; that figure assumed sigma = 0.035. Expected RMS of a 3-parameter fit through 6 points is 0.71 sigma = 0.0366.",
+        "formula_note": "0.1021 is the NORMAL approximation 2.8*s*sqrt(1/4+1/4). The protocol's frozen value is the t-version (t.975,6 + t.80,6)*s_4 = 0.1223. Both exceed the 0.08 gate, so the ruling is robust to the choice -- but cite the t-version against the protocol; comparing 0.1021 to a frozen 0.1223 is the discrepancy this note exists to prevent.",
+        "mde_t_version": 0.1223
       },
       "uncertainty": "inherits the 3 df on sigma",
       "status": "measured"
