@@ -112,7 +112,13 @@ class Cfg:
     layers = 12
     attn_every = 4
     ffn_hidden = 3072
-    vocab = 32773  # 32768 BPE merges + <unk>/<eos> inside them, 4 chat specials, [NUM]
+    vocab = 32776  # multiple of 8 for the cuBLAS aligned kernel: 32773 fell back to the SM75
+    # align-1 GEMM on Hopper (41% vs 92% of bf16 peak, +13.9% end-to-end, measured 2026-08-30).
+    # The 3 columns above vocab_real are alignment padding: never targets, masked to -inf in
+    # lm_logits. padded_vocab (32832) is unchanged, so head/embedding shapes and old checkpoints
+    # are unaffected -- this is not a tokenizer change and does not touch vocab_id.
+    vocab_real = 32773  # the frozen tokenizer's size (2026-08-29): 32768 BPE merges + 4 chat
+    # specials + [NUM], with <unk>/<eos> inside the merges; vocab - vocab_real is padding
     fone = False
     num_id = 32772  # [NUM] is the last id, always in the vocab, so --fone resizes nothing
     fone_loss_w = 1.0
@@ -565,9 +571,15 @@ class HybridLM(nn.Module):
 
     def lm_logits(self, hidden):
         """The vocabulary head plus the softcap, split out so a decoder can apply it to the
-        handful of positions it actually reads instead of to the whole prefix."""
+        handful of positions it actually reads instead of to the whole prefix. Columns at or
+        past vocab_real are alignment padding (never targets): masked to -inf AFTER the
+        softcap, since tanh would compress -inf to -SOFTCAP."""
         logits = self.head(hidden)[..., : self.cfg.vocab].float()
-        return SOFTCAP * torch.tanh(logits / SOFTCAP) if SOFTCAP else logits
+        out = SOFTCAP * torch.tanh(logits / SOFTCAP) if SOFTCAP else logits
+        real = getattr(self.cfg, "vocab_real", self.cfg.vocab)
+        if real < out.shape[-1]:
+            out[..., real:] = float("-inf")
+        return out
 
     def num_logits(self, hidden):
         """Per-digit logits (..., digits, 10) at every position; the caller masks to [NUM]. Runs
@@ -998,8 +1010,12 @@ def build_tokenizer(texts):
     )
     global VOCAB_ID
     tok = Tokenizer.from_file(TOK_PATH)
-    assert tok.get_vocab_size() == Cfg.vocab, (
-        f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab {Cfg.vocab}"
+    assert tok.get_vocab_size() == Cfg.vocab_real, (
+        f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab_real {Cfg.vocab_real}"
+    )
+    assert Cfg.vocab % 8 == 0 and Cfg.vocab >= Cfg.vocab_real, (
+        f"Cfg.vocab={Cfg.vocab} must be a multiple of 8 >= vocab_real={Cfg.vocab_real}: "
+        "an unaligned head width falls back to the SM75 align-1 cuBLAS kernel on Hopper (-55% step time)"
     )
     VOCAB_ID = vocab_fingerprint(tok)
     return tok
