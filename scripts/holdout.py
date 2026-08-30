@@ -3,6 +3,13 @@
 
 `python scripts/holdout.py` regenerates data/eval/holdout_hashes.txt from the eval
 files; importers use `is_holdout(question)`.
+
+Fail-closed: the hash file carries a fingerprint of the eval files that produced
+it. is_holdout() RAISES if the file is missing, predates fingerprints, or is
+stale (an eval file changed since regeneration). A guard that silently returns
+False is indistinguishable from no guard at all -- the 2026-08-30 sft_all.pt
+contamination (19/20 holdout questions packed because the hash set was empty)
+is the reason this is loud, not silent.
 """
 
 import hashlib
@@ -27,10 +34,37 @@ def qhash(q):
     return hashlib.sha1(norm(q).encode("utf-8")).hexdigest()[:16]
 
 
+def _fingerprint():
+    """sha1 of (basename, file-sha1) for every existing EVAL_FILES entry. Changes
+    when an eval file is added, removed, or edited -- which is exactly when the
+    hash set must be regenerated."""
+    h = hashlib.sha1()
+    for path in sorted(EVAL_FILES):
+        if os.path.exists(path):
+            h.update(os.path.basename(path).encode())
+            h.update(hashlib.sha1(open(path, "rb").read()).digest())
+    return h.hexdigest()[:16]
+
+
 def load():
     if not os.path.exists(HASH_PATH):
-        return set()
-    return {l.strip() for l in open(HASH_PATH, encoding="utf-8") if l.strip()}
+        raise RuntimeError(
+            f"{HASH_PATH} missing -- the holdout guard is unloaded. "
+            "Run `python scripts/holdout.py` to regenerate."
+        )
+    lines = [l.strip() for l in open(HASH_PATH, encoding="utf-8") if l.strip()]
+    fp = next((l[5:] for l in lines if l.startswith("# fp:")), None)
+    if fp is None:
+        raise RuntimeError(
+            f"{HASH_PATH} has no fingerprint (old format) -- the guard may be stale. "
+            "Run `python scripts/holdout.py` to regenerate."
+        )
+    if fp != _fingerprint():
+        raise RuntimeError(
+            f"{HASH_PATH} is stale: eval files changed since it was generated. "
+            "Run `python scripts/holdout.py` to regenerate."
+        )
+    return {l for l in lines if not l.startswith("#")}
 
 
 _CACHE = None
@@ -57,8 +91,9 @@ def main():
         print(f"  {os.path.basename(path)}: {n}")
     os.makedirs(os.path.dirname(HASH_PATH), exist_ok=True)
     with open(HASH_PATH, "w", encoding="utf-8") as f:
+        f.write(f"# fp:{_fingerprint()}\n")
         f.write("\n".join(sorted(hs)) + "\n")
-    print(f"{len(hs)} unique holdout hashes -> {HASH_PATH}")
+    print(f"{len(hs)} unique holdout hashes (fp {_fingerprint()}) -> {HASH_PATH}")
 
 
 if __name__ == "__main__":
