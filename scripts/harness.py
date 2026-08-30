@@ -1120,7 +1120,7 @@ def check_ladder_config(root):
         if not os.path.basename(cfg.get("mix", "")).startswith("mix_scale_"):
             continue
         checked += 1
-        for k in _FROZEN_KEYS:
+        for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS):
             v = cfg.get(k)
             if v is None:
                 unknown.append(f"{os.path.basename(p)}:{k}")
@@ -2027,6 +2027,13 @@ _FROZEN_KEYS = (
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
 )
+
+# Architecture constants with no CLI flag. They cannot drift via a launch, so
+# _strip_frozen and frozen_args do not touch them. But they can drift via a code
+# edit, and ladder_config_frozen compares them against the JSON as documented
+# intent -- closing the gap where all six points agree with each other but not
+# with what was intended (fb regenerated the manifest mid-ladder, blinding pod_drift).
+_CODE_FROZEN_KEYS = ("chunk_size", "layers", "d", "heads", "ffn_hidden")
 
 # CLI flags whose name differs from their Cfg field (--no_doc_mask sets Cfg.doc_mask).
 _FLAG_TO_CFG = {"no_doc_mask": "doc_mask", "no_attn_res": "attn_res"}

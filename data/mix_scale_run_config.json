@@ -13,5 +13,10 @@
   "grad_ckpt": false,
   "fone": false,
   "doc_mask": true,
-  "_comment": "Frozen run config for the six mix_scale_* budget points (2026-08-30). One file, not six copies: the six points must differ only in D. `harness run point` reads this and refuses a disagreeing CLI flag; check_ladder_config compares every ladder checkpoint's cfg against it. A change to any value reopens the whole ladder. Criterion: the frozen set is every Cfg field with a CLI flag that changes the architecture or the recipe, excluding seed. check_frozen_keys_complete enforces this against train.py's parser. chunk_size is a code constant (Cfg.chunk_size=32, no CLI flag) and cannot drift via a launch; NCCL protocol is default. Bool fields match Cfg defaults, so no flag is needed to achieve them — _strip_frozen refuses a flag that would change one. See docs/standards/0830v1_gates.md."
+  "chunk_size": 32,
+  "layers": 12,
+  "d": 1024,
+  "heads": 8,
+  "ffn_hidden": 3072,
+  "_comment": "Frozen run config for the six mix_scale_* budget points (2026-08-30). One file, not six copies: the six points must differ only in D. `harness run point` reads this and refuses a disagreeing CLI flag; check_ladder_config compares every ladder checkpoint's cfg against it. A change to any value reopens the whole ladder. Two kinds of fields: (1) CLI-settable (_FROZEN_KEYS) — every Cfg field with a CLI flag that changes the architecture or the recipe, excluding seed; check_frozen_keys_complete enforces this against train.py's parser. (2) Code-only (_CODE_FROZEN_KEYS) — architecture constants with no CLI flag, recorded as documented intent so a code edit before the first point diverges from a recorded value and fails. chunk_size is a code constant (Cfg.chunk_size=32, no CLI flag); NCCL protocol is default. Bool fields match Cfg defaults, so no flag is needed to achieve them — _strip_frozen refuses a flag that would change one. See docs/standards/0830v1_gates.md."
 }
