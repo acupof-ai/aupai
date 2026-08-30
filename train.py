@@ -138,6 +138,11 @@ class Cfg:
     doc_mask = True
     # Must name a live mix: a retired one here trains the retired recipe in silence.
     mix = "data/mix_scale_3.24b.json"  # domain mix (weights / epoch caps / anneal)
+    # Symlinked shards, or a domain whose live bytes mismatch its build_corpus_stats.json
+    # fingerprint, refuse to start: a swapped-in corpus trains under another domain's name
+    # (the voided 0.2b run: CCI3 shards under web_hq's name). The flag pardons known,
+    # intended byte drift; it never pardons a symlink.
+    allow_corpus_drift = False
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
     val_batches = 20
@@ -949,21 +954,14 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     assert vocab_id, f"refusing to write {path} with no vocab_id: it could never be scored safely"
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
     # Corpus fingerprint alongside vocab_id: which corpus this checkpoint trained on.
-    # Canonical implementation: scripts/corpus_fingerprint.py; inline so train.py
-    # imports nothing from scripts/. A domain absent from disk is absent from the map.
+    # _corpus_fp is the same hash the startup guard compares to the build-time stamp.
     corpus_fp = {}
     mix_path = cfg.get("mix")
     if mix_path:
         for dom in json.load(open(mix_path, encoding="utf-8")).get("domains", {}):
             ddir = os.path.join("data", "corpus", dom)
             if os.path.isdir(ddir):
-                fh = hashlib.sha1()
-                for nm in sorted(os.listdir(ddir)):
-                    if nm == "build_corpus_stats.json" or nm.startswith("."):
-                        continue
-                    st = os.stat(os.path.join(ddir, nm))
-                    fh.update(f"{nm}:{st.st_size}:{int(st.st_mtime)}\n".encode())
-                corpus_fp[dom] = fh.hexdigest()[:16]
+                corpus_fp[dom] = _corpus_fp(ddir)
     ck = {
         "model": model_state,
         "cfg": {k: v for k, v in cfg.items() if not k.startswith("_")},
@@ -1114,24 +1112,74 @@ def _domain_seqs(domain, tok, is_main, ddp):
     return ids, scatter_values(ids, vals, Cfg.num_id)
 
 
-def _assert_mix_domains(names, corpus_dir):
-    """Reject a mix that names the unfiltered corpus, or a domain with no shards on disk.
+def _corpus_fp(ddir):
+    """Hash of sorted (shard name, size, mtime) for one domain dir. Canonical implementation:
+    scripts/corpus_fingerprint.py; inline so train.py imports nothing from scripts/ -- this is
+    the same value save_checkpoint writes into the checkpoint under corpus_fp."""
+    fh = hashlib.sha1()
+    for nm in sorted(os.listdir(ddir)):
+        if nm == "build_corpus_stats.json" or nm.startswith("."):
+            continue
+        st = os.stat(os.path.join(ddir, nm))
+        fh.update(f"{nm}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+    return fh.hexdigest()[:16]
 
-    Called from main() where the mix json is read -- the one point run_ddp.sh, a bare
-    `python train.py` and run_pretrain_v3.sh share. Not from build_mix, which
-    test_arch_compat.py drives with a synthetic mix that has no corpus."""
+
+def _assert_mix_domains(names, corpus_dir, allow_drift=False):
+    """Reject a mix that names the unfiltered corpus, a domain with no shards on disk, a
+    domain reached through symlinks, or a domain whose live bytes no longer match its
+    build-time fingerprint. Called from main() where the mix json is read -- the one point
+    run_ddp.sh, a bare `python train.py` and run_pretrain_v3.sh share. Not from build_mix,
+    which test_arch_compat.py drives with a synthetic mix that has no corpus.
+
+    Returns {domain: live_fp} so main() can log data identity next to the mix line.
+    allow_drift pardons fingerprint drift (known, intended byte changes); it never pardons a
+    symlink -- a symlinked domain is a different corpus wearing another domain's name, not
+    drift of the same corpus."""
+    fps = {}
     for name in names:
         assert name != "web", (
             "mix domain 'web' is the UNFILTERED corpus: train.py globs data/corpus/<domain>/*.jsonl, "
             "so this trains on 2,991,648 unfiltered documents and silently discards every quality "
             "filter the corpus-v3 rebuild applied. Use web_hq."
         )
+        ddir = os.path.join(corpus_dir, name)
         # Redundant with _domain_seqs' `assert texts`, but fails before the 40-minute tokenize.
-        assert glob.glob(os.path.join(corpus_dir, name, "*.jsonl")), (
-            f"mix domain '{name}' has no shards: {os.path.join(corpus_dir, name)}/*.jsonl matches "
+        assert glob.glob(os.path.join(ddir, "*.jsonl")), (
+            f"mix domain '{name}' has no shards: {os.path.join(ddir)}/*.jsonl matches "
             "nothing. _domain_seqs would raise on this too, but only after tokenizing the domains "
             "that do exist."
         )
+        if os.path.islink(ddir):
+            links = [f"{name}/ (the domain dir itself)"]
+        else:
+            links = [f"{name}/{nm}" for nm in sorted(os.listdir(ddir)) if os.path.islink(os.path.join(ddir, nm))]
+        assert not links, (
+            f"mix domain '{name}' is reached through symlink(s): {links[:5]}. A symlinked domain is a "
+            "different corpus wearing another domain's name -- the voided 0.2b run trained on CCI3 "
+            "shards under web_hq's name this way. Name the real corpus in the mix instead."
+        )
+        live = _corpus_fp(ddir)
+        fps[name] = live
+        if allow_drift:
+            continue
+        stats = os.path.join(ddir, "build_corpus_stats.json")
+        try:
+            with open(stats, encoding="utf-8") as f:
+                stamped = json.load(f).get("fingerprint")
+        except Exception:
+            stamped = None
+        assert stamped, (
+            f"mix domain '{name}' carries no build-time fingerprint ({stats} missing or unstamped). "
+            "An unstamped domain cannot be distinguished from a swapped-in one -- rebuild it with "
+            "build_corpus.py, or pass --allow_corpus_drift to train on the live bytes knowingly."
+        )
+        assert live == stamped, (
+            f"mix domain '{name}' drifted since build: stamped {stamped} != live {live}. The bytes on "
+            "disk are not the ones build_corpus.py recorded. Rebuild the domain, or pass "
+            "--allow_corpus_drift to train on the live bytes knowingly."
+        )
+    return fps
 
 
 def _selftest_mix_guard():
@@ -1143,19 +1191,55 @@ def _selftest_mix_guard():
     + ast.parse of 1,500 lines on every `import train`, i.e. on every DDP rank."""
     import tempfile
 
+    def expect_raise(names, **kw):
+        try:
+            _assert_mix_domains(names, d, **kw)
+        except AssertionError:
+            return
+        raise AssertionError(f"mix guard accepted {names} {kw}")
+
     with tempfile.TemporaryDirectory() as d:
-        os.makedirs(os.path.join(d, "web_hq"))
-        open(os.path.join(d, "web_hq", "a.jsonl"), "w").close()
+        good = os.path.join(d, "web_hq")
+        os.makedirs(good)
+        with open(os.path.join(good, "a.jsonl"), "w"):
+            pass
+        with open(os.path.join(good, "build_corpus_stats.json"), "w") as f:
+            json.dump({"fingerprint": _corpus_fp(good)}, f)
         os.makedirs(os.path.join(d, "web"))
-        open(os.path.join(d, "web", "a.jsonl"), "w").close()
+        with open(os.path.join(d, "web", "a.jsonl"), "w"):
+            pass
         os.makedirs(os.path.join(d, "empty"))
-        _assert_mix_domains(["web_hq"], d)
+        assert _assert_mix_domains(["web_hq"], d) == {"web_hq": _corpus_fp(good)}
         for bad in (["web"], ["web_hq", "web"], ["empty"], ["web_hq", "missing"]):
-            try:
-                _assert_mix_domains(bad, d)
-            except AssertionError:
-                continue
-            raise AssertionError(f"mix guard accepted {bad}")
+            expect_raise(bad)
+        # drift: stamped, then mutated -- refused, and pardoned only by allow_drift
+        with open(os.path.join(good, "a.jsonl"), "a", encoding="utf-8") as f:
+            f.write('{"question": "drifted"}\n')
+        expect_raise(["web_hq"])
+        assert _assert_mix_domains(["web_hq"], d, allow_drift=True)
+        # a domain with no stamp at all -- refused, pardoned by allow_drift
+        nostamp = os.path.join(d, "nostamp")
+        os.makedirs(nostamp)
+        with open(os.path.join(nostamp, "c.jsonl"), "w"):
+            pass
+        expect_raise(["nostamp"])
+        assert _assert_mix_domains(["nostamp"], d, allow_drift=True)
+        # a symlinked domain dir, and a real dir holding a symlinked shard -- both refused,
+        # and allow_drift does not pardon either
+        real = os.path.join(d, "real_corpus")
+        os.makedirs(real)
+        with open(os.path.join(real, "b.jsonl"), "w"):
+            pass
+        os.symlink(real, os.path.join(d, "linked"))
+        expect_raise(["linked"])
+        expect_raise(["linked"], allow_drift=True)
+        inside = os.path.join(d, "inside")
+        os.makedirs(inside)
+        os.symlink(os.path.join(real, "b.jsonl"), os.path.join(inside, "s.jsonl"))
+        with open(os.path.join(inside, "r.jsonl"), "w"):
+            pass
+        expect_raise(["inside"])
+        expect_raise(["inside"], allow_drift=True)
 
 
 _selftest_mix_guard()
@@ -1302,6 +1386,10 @@ def main():
     parser.add_argument("--profile", action="store_true", help="export a chrome trace of N steps (measurement only, no behavior change)")
     parser.add_argument("--profile_warmup", type=int, default=15)
     parser.add_argument("--profile_steps", type=int, default=20)
+    parser.add_argument(
+        "--allow_corpus_drift", action="store_true",
+        help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
+    )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
@@ -1337,9 +1425,13 @@ def main():
         f"corpus to train on instead."
     )
     assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
-    _assert_mix_domains(
-        list(json.load(open(mix_path, encoding="utf-8"))["domains"]), os.path.join(DATA, "corpus")
+    fps = _assert_mix_domains(
+        list(json.load(open(mix_path, encoding="utf-8"))["domains"]),
+        os.path.join(DATA, "corpus"),
+        allow_drift=Cfg.allow_corpus_drift,
     )
+    if is_main:
+        print(f"corpus_fp: {fps}", flush=True)
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
