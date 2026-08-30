@@ -880,3 +880,18 @@ Pairing, so the reviewer is never the author: de ↔ e1 (harness and eval plumbi
 3b ↔ 44 (corpus numbers and measurement discipline), b0 ↔ 44 (panel readings), and the
 controller reviews tilerl's A/B, which is the one result that can invalidate the ladder.
 A review reports what it *ran*, not what it read.
+- **A check can only ask what its own environment can answer.** `check_lane_respected` first
+  tried to name the process on each training card: `nvidia-smi` reports **host** PIDs, the
+  harness runs **inside the container**, and `ps` there resolves none of them — so every GPU
+  process was skipped as "another container's" and the check returned PASS no matter what was
+  on the block. It shipped with a green self-test and its PASS was quoted as evidence the
+  cards were clean. The self-test was green because `HARNESS_GPU_PROCS` injects `(gpu, cmdline)`
+  pairs directly, bypassing the one step that was broken — a hand-written world again, in the
+  shape of an injection hook. `--query-compute-apps=process_name` is closed too (`[Not Found]`
+  from inside). The fix was not a better PID mapping but **a different question**: occupancy is
+  visible in the container, process identity is not, so the check asks "is a block card busy
+  with no training process present" and states that ceiling explicitly. Its first real run
+  FAILed on the controller's own scoring job sitting on GPU 0 — authorised, in the author's
+  head, as "the step that unblocks the block", which is the same "idle is not free" error one
+  turn after writing that rule down. The deadlock it exposed is the shape to remember: **the
+  run that clears one red check turned another one red.**
