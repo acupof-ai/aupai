@@ -1,3 +1,5 @@
+# restartable: a CPU self-check, seconds end to end. Its only write is a mix.json fixture
+# into tempfile.mkdtemp(), which nothing reads back -- an interrupt costs a rerun, not work.
 """Self-check for train.py architecture changes.
 
 Runs on CPU where fla is absent (a shape-preserving stand-in replaces the Triton
