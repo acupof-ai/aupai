@@ -689,6 +689,26 @@
    },
    "uncertainty": "single run, greedy; the 0.2pt present-rate difference from the retracted value is one problem",
    "status": "measured"
+  },
+  {
+   "id": "be.l1_3shot_15b",
+   "value": "L1 3-shot on the 15B stage-1 final, math-500, greedy: exact-match 13/497 = 2.6%, answer-present 370/497 = 74.4%. Binomial delta 6.3%, pre-registered instrument-exists threshold 2*delta = 12.6%. VERDICT UNCHANGED: the instrument does not exist on this axis. Both numbers moved against p324 (be.l1_3shot_rerun: 1/497 = 0.2%, present 63.8%) -- accuracy 13x and answer-present +10.6pt -- so the model is emitting answer-shaped output far more often and getting a few more right. That is a real movement in the right direction and it is not a capability reading: 2.6% is less than a quarter of the threshold, and the threshold is what the pre-registration says separates a usable instrument from noise. Degeneration 10/497 = 2.0% on the tail-300 window, 122/497 = 24.5% on the full text -- the same 4-12x window effect recorded in be.l1_3shot_rerun, measured here on a second checkpoint. STEP ATTRIBUTION, external: the file is a weights-only save whose `step` field is None, so it cannot self-report. It is believed to be step 16281 on the basis of its mtime (09-01 04:42 CST) against ckpt_pretrain_15b_s1.pt.step16000 (04:33) and the reported 15B readout carrying the same identity. The checkpoint does not assert this; step16000 is the last save that carries a step field, and it is the one stage 2 resumes from, so this number describes a model no later stage continues from.",
+   "measured": "2026-09-01",
+   "source": "eval/l1_fewshot.py --ckpt ckpt_pretrain_15b_s1.pt --demos 3 --run l1_15b_final, GPU 7 via harness launch; artifact data/eval/preds_l1_d3.l1_15b_final.jsonl (497 rows, full gen text, max 1172 chars)",
+   "config": {
+    "demos": 3,
+    "n": 497,
+    "temperature": 0,
+    "max_new": 512,
+    "metric": "exact match on the final answer",
+    "present_rule": "boxed or 答案是",
+    "threshold_2delta_pct": 12.6,
+    "ckpt_step_field": null,
+    "step_attributed": 16281
+   },
+   "uncertainty": "single greedy run; the step is an external attribution from mtime, not read from the checkpoint",
+   "status": "measured",
+   "artifact_sha256": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205"
   }
  ]
 }

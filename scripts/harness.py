@@ -5656,6 +5656,48 @@ def _selftest_merge_reverted_content():
     print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
 
 
+def _selftest_attest_written_path():
+    """attest must record the path that was WRITTEN, not the one requested.
+
+    open_artifact(path, run=...) writes a versioned path, so the two differ exactly
+    when versioning is in use -- which is exactly when the distinction matters. Every
+    eval writer attested its requested path, so l1_15b_final recorded a hash for
+    preds_l1_d3.jsonl: the 477-row overwrite it was versioned specifically to avoid
+    touching. The attestation pointed at the wrong file and the citation check could
+    not tell (e1, 2026-09-01).
+
+    The fix is to attest the handle's `.name`. This asserts the two paths differ under
+    --run, so a future refactor that drops versioning cannot make the test vacuous."""
+    import shutil
+    import tempfile
+
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from eval_artifacts import attest, open_artifact
+
+    d = tempfile.mkdtemp(prefix="attest_")
+    try:
+        os.makedirs(os.path.join(d, "data", "eval"), exist_ok=True)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        requested = os.path.join(d, "data", "eval", "preds_x.jsonl")
+        with open_artifact(requested, run="r1") as f:
+            written = f.name
+            f.write("{}\n")
+        assert written != requested, (
+            "the premise: --run must version the path, or this test proves nothing")
+        attest(written, root=d)
+        refs = os.path.join(d, "runs", "artifact_refs.jsonl")
+        rows = [json.loads(x) for x in open(refs, encoding="utf-8") if x.strip()]
+        assert rows, "attest wrote no row"
+        got = os.path.basename(rows[-1]["path"])
+        assert got == os.path.basename(written), \
+            f"attested {got}, but {os.path.basename(written)} is the file that exists"
+        assert got != os.path.basename(requested), \
+            "attesting the requested path is the defect this test exists for"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  attest: records the written path, not the requested one")
+
+
 def _selftest_exp_fold():
     """The ledger is an event log: a close clears its start, and a stray later start
     does not reopen a closed run.
@@ -6277,6 +6319,7 @@ def _demo():
     _selftest_devs_map()
     _selftest_gpu_descendants()
     _selftest_exp_fold()
+    _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_reverted_content()
 

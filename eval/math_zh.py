@@ -86,6 +86,8 @@ def main():
     n_box = n_eq = n_bad = n_rewrite = tot_len = 0
     by_steps = {}
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
+        # --run versions the path, so the handle's name is the file that exists.
+        out_path = fout.name
         for s in range(0, len(rows), args.batch):
             batch = rows[s : s + args.batch]
             texts_in = [format_prompt(r["instruction"]) for r in batch]
@@ -114,7 +116,9 @@ def main():
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)
 
-    attest(preds_path)  # the citation contract: the writer proves these bytes existed
+    # attest what was WRITTEN, not what was requested: --run versions the path, and
+    # attesting preds_path recorded a hash for a file this run never touched.
+    attest(out_path)  # the citation contract: the writer proves these bytes existed
     print(f"math-500: {correct}/{total} = {correct / total:.1%} (t={args.temperature})")
     print(f"boxed rate {n_box / total:.1%} | rewrite('解答') rate {n_rewrite / total:.1%} | "
           f"avg gen tokens {tot_len / total:.0f} | step-eq wrong {n_bad}/{n_eq} = {n_bad / max(n_eq, 1):.1%}")

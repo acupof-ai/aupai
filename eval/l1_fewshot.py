@@ -104,6 +104,8 @@ def main():
     correct = total = 0
     n_box = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
+        # --run versions the path, so the handle's name is the file that exists.
+        out_path = fout.name
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
             texts_in = [build_prompt(demos[:args.demos], r["instruction"]) for r in batch]
@@ -125,7 +127,9 @@ def main():
             if total % 64 < args.batch or total == len(evals):
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
 
-    attest(preds_path)  # the citation contract: the writer proves these bytes existed
+    # attest what was WRITTEN, not what was requested: --run versions the path, and
+    # attesting preds_path recorded a hash for a file this run never touched.
+    attest(out_path)  # the citation contract: the writer proves these bytes existed
     delta = 1.4 / (total ** 0.5)
     acc = correct / total
     print(f"L1 math-500 few-shot: {correct}/{total} = {acc:.1%}")

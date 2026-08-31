@@ -153,6 +153,8 @@ def main():
     # partial file is valid up to its last row.
     n_pass1 = n_passk = n_samp_ok = total = no_fence = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
+        # --run versions the path, so the handle's name is the file that exists.
+        out_path = fout.name
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
             prompts = [tok.encode(format_prompt(r["instruction"])).ids for r in batch]
@@ -191,7 +193,9 @@ def main():
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} pass@1={n_pass1 / total:.1%}", flush=True)
 
-    attest(preds_path)  # the citation contract: the writer proves these bytes existed
+    # attest what was WRITTEN, not what was requested: --run versions the path, and
+    # attesting preds_path recorded a hash for a file this run never touched.
+    attest(out_path)  # the citation contract: the writer proves these bytes existed
     if k > 1:
         print(f"code-500: pass@1(greedy) {n_pass1}/{total} = {n_pass1 / total:.1%} | "
               f"sampled@T={temp} mean {n_samp_ok / (total * k):.1%} | "

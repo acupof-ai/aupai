@@ -35,6 +35,12 @@ def open_artifact(path, force=False, run=None, mode="w"):
 
     With `run`, writes to the versioned path instead, which cannot collide and so
     never needs the refusal. Appending is not overwriting and is always allowed.
+
+    The returned handle's `.name` is the path actually written. Attest THAT, never
+    the path you passed in: with `run` they differ, and attesting the input meant a
+    versioned run recorded a hash for the unversioned file it did not touch --
+    l1_15b_final attested preds_l1_d3.jsonl, the 477-row overwrite it was written
+    specifically to avoid (e1, 2026-09-01).
     """
     if run:
         path = versioned_path(path, run)

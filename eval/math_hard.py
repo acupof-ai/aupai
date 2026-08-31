@@ -101,6 +101,8 @@ def main():
     per_batch = max(1, a.batch // k)
     dump = open(a.dump, "w", encoding="utf-8") if a.dump else None
     with open_artifact(preds, force=a.force, run=a.run) as f:
+        # --run versions the path, so the handle's name is the file that exists.
+        out_path = f.name
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
             texts_in = [format_prompt(r["instruction"]) for r in batch]
@@ -168,7 +170,9 @@ def main():
             _done = sum(v[3] for v in by.values())
             if _done % 64 == 0 or _done == len(rows):
                 print(f"  {_done}/{len(rows)} pass@1={sum(v[0] for v in by.values()) / _done:.1%}", flush=True)
-    attest(preds)  # the citation contract: the writer proves these bytes existed
+    # attest what was WRITTEN, not what was requested: --run versions the path, and
+    # attesting `preds` recorded a hash for a file this run never touched.
+    attest(out_path)  # the citation contract: the writer proves these bytes existed
     if dump:
         dump.close()
     n = sum(v[3] for v in by.values())
