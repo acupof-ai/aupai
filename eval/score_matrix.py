@@ -416,15 +416,19 @@ def _add_degeneration(record, key, pred_path, temperature, greedy=None):
 
 
 def write_records(path, records):
-    """Replace same-ckpt records, keep others and unparseable lines. The matrix
-    is the current state, not a history.
+    """Replace same-(ckpt, profile) records, keep others and unparseable lines.
+    The matrix is the current state, not a history.
+
+    The key is (ckpt, profile), not ckpt: a milestone-profile record must never
+    replace a checkpoint's full record (2026-08-31, t39 dry run). A record
+    without a profile reads as 'full', so existing rows need no migration.
 
     An exclusive lock on path + '.lock' serializes concurrent writers: without
     it, two score_matrix processes on different ckpts can interleave their
     read-modify-write cycles, and the later writer overwrites the earlier's
     fresh record. Both print 'wrote N record(s)', both exit 0, and a record
     vanishes with no log to say so."""
-    names = {r["ckpt"] for r in records}
+    keys = {(r["ckpt"], r.get("profile", "full")) for r in records}
     lock_path = path + ".lock"
     with open(lock_path, "w") as lock_f:
         fcntl.flock(lock_f, fcntl.LOCK_EX)
@@ -434,7 +438,8 @@ def write_records(path, records):
                 with open(path, encoding="utf-8") as f:
                     for line in f:
                         try:
-                            if json.loads(line).get("ckpt") in names:
+                            r = json.loads(line)
+                            if (r.get("ckpt"), r.get("profile", "full")) in keys:
                                 continue
                         except Exception:
                             pass
@@ -538,7 +543,7 @@ def _metric(name, fn, record, *args, **kwargs):
         print(f"  {name:15s} {v} ({elapsed}s)", flush=True)
 
 
-def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
+def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
@@ -550,6 +555,7 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
     print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
+        "profile": profile,  # (ckpt, profile) is the key: a milestone record must never replace a full one
         "type": kind,
         "vocab_id": vocab_id,
         "measured": subprocess.run(["date", "+%Y-%m-%d"], capture_output=True, text=True).stdout.strip(),
@@ -641,7 +647,7 @@ def main():
     records = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics)
+            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics, a.profile or "full")
         except Exception as e:
             print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
             continue
