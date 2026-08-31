@@ -806,6 +806,67 @@ def _broken_blob():
     return d
 
 
+def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
+    """Definitions the merge base had that the merge result no longer has, where the
+    losing side never deleted them. Returns [(path, name, side_taken)].
+
+    The complement of merge_took_one_side, and the more dangerous shape. That
+    function only examines paths BOTH parents changed since the base, on the
+    reasoning that taking an untouched side whole IS the merge. That reasoning is
+    wrong whenever the untouched side is behind the base: it carries an older copy
+    forward and silently reverts the other side's work. 21da619 did exactly that to
+    _selftest_gpu_descendants -- base had it, ours had it, the merged side had never
+    seen it, and main lost a test while keeping the function it tests.
+
+    A side that never had the content is not deleting it. Deliberate deletion is
+    tested operationally (fb's rule): the removal counts as intended only when the
+    removing side's OWN commits, merge-base..parent, contain a diff that removes the
+    name. Otherwise the content is simply older than that branch.
+
+    Scope: top-level `def NAME(` in tracked .py files. Definitions are what a merge
+    can silently revert without breaking an import, and a name is cheap to test for.
+    A body gutted while the signature survives is not caught here."""
+    def git(*args):
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    parents = git("rev-list", "--parents", "-n", "1", merge_sha).split()
+    if len(parents) < 3:
+        return []
+    m, ours, theirs = parents[0], parents[1], parents[2]
+    base = git("merge-base", ours, theirs).strip()
+    if not base:
+        return []
+    defs = re.compile(r"^def\s+([A-Za-z_]\w*)\s*\(", re.M)
+    out = []
+    changed = [p for p in set(git("diff", "--name-only", base, m).split()) if p.endswith(".py")]
+    for path in sorted(changed)[:max_files]:
+        base_src = git("show", f"{base}:{path}")
+        merged_src = git("show", f"{m}:{path}")
+        if not base_src or not merged_src:
+            continue
+        lost = set(defs.findall(base_src)) - set(defs.findall(merged_src))
+        for name in sorted(lost):
+            # Which side dropped it, and did that side's own history delete it?
+            in_ours = name in set(defs.findall(git("show", f"{ours}:{path}")))
+            in_theirs = name in set(defs.findall(git("show", f"{theirs}:{path}")))
+            if not in_ours and not in_theirs:
+                continue  # gone from both parents; the merge did not lose it
+            # fb's operational test, applied to the side that DROPPED it rather than
+            # the side that kept it. Someone deliberately retiring a function deletes
+            # it on their branch; that branch is the one now missing it. A side that
+            # merely never had the content deleted nothing, and taking that side whole
+            # is the silent revert this function exists to find.
+            dropper = theirs if in_ours else ours
+            side = "ours" if in_ours else "theirs"  # the side whose copy survived in the base sense
+            deleted_deliberately = bool(
+                git("log", "--format=%h", "-S", f"def {name}(", f"{base}..{dropper}", "--", path).strip()
+            )
+            if not deleted_deliberately:
+                out.append((path, name, side))
+    return out
+
+
 def merge_took_one_side(root, merge_sha="HEAD"):
     """Files a merge resolved by taking one parent WHOLE, when both parents had
     changed them. Returns [(path, "ours"|"theirs", n_lost_commits)].
@@ -922,6 +983,17 @@ def check_merge_complete(root):
         )
     if fixed:
         return PASS, f"{len(fixed)} contested file(s) re-resolved in the staged tree: {', '.join(fixed[:3])}"
+    # The other shape: a side that never had the content carries an older copy forward
+    # and silently reverts the other side. merge_took_one_side cannot see it, because
+    # it only examines files BOTH parents changed (21da619, 2026-08-31).
+    reverted = merge_reverted_content(root)
+    if reverted:
+        return FAIL, (
+            f"{len(reverted)} definition(s) present in the merge base and gone from the "
+            "result, with no side deleting them: "
+            + "; ".join(f"{name} in {path}" for path, name, _ in reverted[:3])
+            + ". A side that never had the content did not delete it -- restore from the base."
+        )
     contested = len([1 for _ in merge_took_one_side(root)]) or 0
     n_both = len(set(subprocess.run(
         ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
@@ -4975,6 +5047,87 @@ def _selftest_gate_timeout():
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
 
 
+def _selftest_merge_fix_not_deadlocked():
+    """The check must refuse a bad merge AND accept the commit that fixes it.
+
+    Without the second half it deadlocks: the amend re-reads HEAD, HEAD is still the
+    bad merge, and --no-verify becomes the only exit -- which teaches people to
+    bypass the check at the moment it is working (de + fb, 2026-08-31)."""
+    import shutil
+
+    d = _broken_merge_complete()
+    try:
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, f"a bad merge must be refused, got {state}"
+        rel = os.path.join("scripts", "loader.py")
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("def f():\n    OURS_MARKER = 'kept by us'\n"
+                    "    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, evidence = check_merge_complete(d)
+        assert state == PASS, f"the fix for a bad merge must be accepted, got {state}: {evidence}"
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("def f():\n    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, "restaging the offending content must not pass as a fix"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
+
+
+def _selftest_merge_reverted_content():
+    """Real merges as the cases, plus the deliberate deletion that must NOT fire.
+
+    21da619 is the instance that exposed the gap: base and ours had
+    _selftest_gpu_descendants, the merged side had never seen it, the merge took that
+    side, and main lost a test while keeping the function it tests.
+    merge_took_one_side saw nothing, because it only examines files BOTH parents
+    changed.
+
+    41294c1 is the near-miss I first reported alongside it and got wrong: no side had
+    the content, so nothing was lost. Kept as a case precisely because I misread it.
+
+    The constructed case is the one that decides whether the check is usable: someone
+    retiring a function on purpose must not be flagged, or every intentional deletion
+    becomes a red and the check gets bypassed."""
+    import shutil
+    import tempfile
+
+    real = "/Users/bytedance/code/aupai"
+    if os.path.exists(os.path.join(real, ".git")):
+        hit = merge_reverted_content(real, "21da619")
+        assert any(n == "_selftest_gpu_descendants" for _, n, _ in hit), \
+            f"21da619 must be caught, got {hit}"
+        assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
+
+    d = tempfile.mkdtemp(prefix="delib_")
+    try:
+        def sh(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        sh("init", "-q"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        f = os.path.join(d, "scripts", "loader.py")
+        open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n    return 2\n")
+        sh("add", "-A"); sh("commit", "-qm", "base"); sh("branch", "other")
+        open(f, "w").write("def keep_me():\n    return 1\n")          # deliberate retire
+        sh("add", "-A"); sh("commit", "-qm", "retire retire_me on purpose")
+        sh("checkout", "-q", "other")
+        open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n"
+                           "    return 2\n\n\ndef added():\n    return 3\n")
+        sh("add", "-A"); sh("commit", "-qm", "unrelated add")
+        back = "master" if sh("rev-parse", "--verify", "-q", "master").returncode == 0 else "main"
+        sh("checkout", "-q", back)
+        sh("merge", "--no-commit", "other")
+        sh("checkout", "--ours", "scripts/loader.py"); sh("add", "scripts/loader.py")
+        sh("commit", "-qm", "merge")
+        assert not merge_reverted_content(d), \
+            "a deliberate deletion must not be flagged, or every intended removal is a red"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
+
+
 def _selftest_gpu_descendants():
     """Known answer: a child whose cmdline shares nothing with its parent's is still
     found, because descent is what is walked.
@@ -5539,6 +5692,8 @@ def _demo():
     _selftest_auto_resume()
     _selftest_devs_map()
     _selftest_gpu_descendants()
+    _selftest_merge_fix_not_deadlocked()
+    _selftest_merge_reverted_content()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
