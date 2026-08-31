@@ -66,10 +66,20 @@ blocked=$(python3 -c "import json;m=json.load(open('$MIX'));print(' '.join(sorte
 
 echo "== launch_30b stage $STAGE readiness ($MIX) =="
 echo "$contract"
+READY=1
+# Any FAIL blocks. The contract line was printed but never tested, so a mix whose weights
+# summed to 1.69013 printed [FAIL] and READY on adjacent lines and exited 0 (b0 G0).
+# Matched on the absence of PASS, not the presence of FAIL, so a crashed check that prints
+# a traceback also blocks rather than passing for lack of the word.
+case "$contract" in
+  *"[PASS]"*) ;;
+  *) echo "BLOCKED: mix contract did not pass."; READY=0 ;;
+esac
 if [ -n "$blocked" ]; then
-  echo "NOT READY: ${blocked// /, } still in _blocked -- not stamped yet."
+  echo "BLOCKED: ${blocked// /, } still in _blocked -- not stamped yet."
   READY=0
-else
+fi
+[ "$READY" = 1 ] && echo "READY: contract passed, all domains stamped, none blocked."
   echo "READY: all domains stamped, none blocked."
   READY=1
 fi
