@@ -4873,9 +4873,22 @@ def _demo():
         pod_fake = real[:10] if len(real) >= 10 else real[:5]
         merged, err = _merge_jsonl(pod_fake, real, eid, "selftest")
         assert err is None, f"sync selftest: clean merge refused: {err}"
-        # failure mode 1: duplicate (name, started) in the pod copy -> merge would lose a row
-        _, err = _merge_jsonl(pod_fake + [pod_fake[0]], real, eid, "selftest")
-        assert err and "duplicate" in err, f"sync selftest: duplicate pod identity not caught: {err}"
+        # A repeated identity is LEGAL: a start row and a done row share (name, started)
+        # by design. The old selftest asserted the opposite and locked in the refusal
+        # that blocked every sync once done began appending (2026-08-31).
+        dup, err = _merge_jsonl(pod_fake + [pod_fake[0]], real, eid, "selftest")
+        assert err is None, f"sync selftest: a repeated identity must merge, not refuse: {err}"
+        n_dup = len([x for x in dup.strip().split("\n") if x])
+        assert n_dup == len([x for x in merged.strip().split("\n") if x]), (
+            f"a byte-identical duplicate must collapse: {n_dup}")
+        # A second EVENT for the same run (same identity, different bytes) is kept.
+        ev = json.loads(pod_fake[0]); ev["status"] = "ok"; ev["result"] = "later event"
+        two, err = _merge_jsonl(pod_fake + [json.dumps(ev)], real, eid, "selftest")
+        assert err is None and len([x for x in two.strip().split("\n") if x]) == n_dup + 1, (
+            "a second event for one run must survive the merge")
+        # failure mode 1: a truncated pod row -> refuse, never ride into the ledger
+        _, err = _merge_jsonl(pod_fake + [pod_fake[0][:20]], real, eid, "selftest")
+        assert err and "parse" in err, f"sync selftest: truncated pod row not caught: {err}"
         # failure mode 2: a merged output missing a pod row -> verify catches it
         pod_ids = [eid(json.loads(l)) for l in pod_fake]
         pod_set = set(pod_ids)
@@ -5526,51 +5539,57 @@ def run_dispatch(rest):
 
 
 def _verify_merge(pod_ids, repo_only_ids, merged_ids, label):
-    """Assert merged == pod rows + repo-only rows. Returns an error string or None.
-    The incident this guards: a hand-merge keyed by name dropped 9 rows because
-    repeated attempts (p02_s0 x4, p03 x5) share a name -- identity is (name, started),
-    not name."""
-    if len(pod_ids) != len(set(pod_ids)):
-        seen, dups = set(), []
-        for i in pod_ids:
-            if i in seen and i not in dups:
-                dups.append(i)
-            seen.add(i)
-        return f"{label}: pod has {len(dups)} duplicate identit(ies) -- a merge would lose rows"
-    merged_set = set(merged_ids)
-    lost = set(pod_ids) - merged_set
-    if lost:
-        return f"{label}: {len(lost)} pod row(s) lost in merge"
-    lost_repo = set(repo_only_ids) - merged_set
+    """Assert the merge lost nothing. Returns an error string or None.
+
+    Identity may repeat: the ledgers are event logs, so a start row and a done row
+    deliberately share (name, started) and readers fold last-event-wins. The old
+    version refused on a repeated identity, which contradicted the semantics it was
+    meant to protect and blocked every sync once done started appending (2026-08-31,
+    5 duplicate identities on the pod). What must hold is that no row disappears."""
+    missing = [i for i in pod_ids if i not in set(merged_ids)]
+    if missing:
+        return f"{label}: {len(missing)} pod row(s) lost in merge"
+    lost_repo = [i for i in repo_only_ids if i not in set(merged_ids)]
     if lost_repo:
         return f"{label}: {len(lost_repo)} repo-only row(s) lost in merge"
-    if len(merged_ids) != len(set(merged_ids)):
-        return f"{label}: merged output has duplicate identities"
-    if len(merged_ids) != len(pod_ids) + len(repo_only_ids):
-        return f"{label}: merged {len(merged_ids)} rows, expected {len(pod_ids) + len(repo_only_ids)}"
+    if len(merged_ids) < len(pod_ids):
+        return f"{label}: merged {len(merged_ids)} rows, fewer than the pod's {len(pod_ids)}"
     return None
 
 
 def _merge_jsonl(pod_lines, repo_lines, identity_fn, label):
-    """Merge pod (producer) + repo-only lines by identity. Returns (merged_text, error).
-    The pod is the producer: its rows are authoritative. Repo rows whose identity is
-    not in the pod are kept (degen_t08, fetch_* -- runs recorded on this machine)."""
+    """Union of pod and repo rows, byte-identical lines collapsed. Returns (text, error).
+
+    Union, not identity-keyed replacement: these are event logs. The pod is the
+    producer, so its rows come first and a repo row that repeats an identity is an
+    additional EVENT for that run, not a competing copy -- keep both and let readers
+    fold. Only a line that will not parse is refused: a truncated row would otherwise
+    ride into the committed ledger and break every reader."""
     pod_rows, repo_rows = [], []
-    for l in pod_lines:
-        l = l.strip()
-        if l:
-            pod_rows.append((json.loads(l), l))
-    for l in repo_lines:
-        l = l.strip()
-        if l:
-            repo_rows.append((json.loads(l), l))
-    pod_ids = [identity_fn(r) for r, _ in pod_rows]
-    pod_id_set = set(pod_ids)
-    repo_only = [(r, l) for r, l in repo_rows if identity_fn(r) not in pod_id_set]
-    merged = [l for _, l in pod_rows] + [l for _, l in repo_only]
-    merged_ids = [identity_fn(json.loads(l)) for l in merged]
-    repo_only_ids = [identity_fn(r) for r, _ in repo_only]
-    err = _verify_merge(pod_ids, repo_only_ids, merged_ids, label)
+    for src, lines, out in (("pod", pod_lines, pod_rows), ("repo", repo_lines, repo_rows)):
+        for n, l in enumerate(lines, 1):
+            l = l.strip()
+            if not l:
+                continue
+            try:
+                out.append((json.loads(l), l))
+            except json.JSONDecodeError as e:
+                return None, f"{label}: {src} line {n} will not parse ({str(e)[:50]}); fix it before syncing"
+    # Byte-identical lines collapse wherever they appear, including within one side:
+    # a union merge of two branches that both appended the same row leaves two copies
+    # (b0's retro row, 2026-08-31), and syncing that would carry the duplicate onward.
+    seen, merged = set(), []
+    for _, l in pod_rows + repo_rows:
+        if l not in seen:
+            seen.add(l)
+            merged.append(l)
+    pod_line_set = {l for _, l in pod_rows}
+    err = _verify_merge(
+        [identity_fn(r) for r, _ in pod_rows],
+        [identity_fn(r) for r, l in repo_rows if l not in pod_line_set],
+        [identity_fn(json.loads(l)) for l in merged],
+        label,
+    )
     if err:
         return None, err
     return "\n".join(merged) + "\n", None
