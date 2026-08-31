@@ -55,13 +55,13 @@
     },
     "zh_web": {
       "weight": 0.11000,
-      "epochs": 3,
+      "epochs": 1,
       "anneal": 0.11000,
       "role": "Chinese web (fineweb2-HQ + CCI3-HQ)",
       "tokens": 1650000000,
       "source": "fineweb2-HQ + CCI3-HQ, downloaded, sha-pinned",
-      "supply": "1.434B on disk; need 1.65B -> epochs 3 (1.434B x 3 = 4.3B >= 1.65B); the only 30B domain with epochs>1, carried to stage 1 unchanged",
-      "status": "blocked: needs a fresh stamped build (the ladder web_hq dir is a frozen ladder directory, never reused). Unchanged from scaled-15B target (1.650B)"
+      "supply": "21.29B tokens measured (t49, 44: 909 shards, 84G, train.encode exact) -- epochs 1 suffices (21.29B >= 1.65B demand); the weight 0.11 does the downsampling",
+      "status": "blocked: needs a fresh stamped build (the ladder web_hq dir is a frozen ladder directory, never reused). Unchanged from scaled-15B target (1.650B). epochs 3->1 per fb 2026-08-31 (measured supply 21.29B, not the 1.434B estimate)"
     },
     "textbook_30b": {
       "weight": 0.03333,
