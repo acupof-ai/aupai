@@ -17,7 +17,11 @@ with open(path) as fh:
 # GPU kernels only: cat kernel/gpu_memcpy/gpu_memset carry device duration in us.
 gpu = [e for e in ev if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset") and "dur" in e]
 
+# Ordered, first match wins. Inductor names a fused kernel after every op it absorbed, so a
+# triton_* fusion that merely touched a scaled matmul has "_scaled_mm" in its name: match the
+# triton_ prefix BEFORE any op-name rule or 123.8 ms/step of fusions reads as fp8 GEMM.
 RULES = [
+    ("inductor fusion (triton)",     r"^triton_(poi|red|per|tem|unk)"),
     ("fp8 GEMM (_scaled_mm)",        r"nvjet_qqtst|_scaled_mm|cutlass.*f8|sm90.*fp8"),
     ("bf16 GEMM (LM head/FLCE)",     r"nvjet_tst|cutlass.*bf16|sm90.*bf16.*gemm"),
     ("flash attention",              r"flash|fmha|attn_fwd|attn_bwd|cute"),
@@ -26,7 +30,6 @@ RULES = [
     ("KDA / gated-delta (triton)",   r"chunk_kda|chunk_delta|chunk_gated_delta|chunk_gla|chunk_local_cumsum|l2norm_|fused_beta_sigmoid|kda|fused_recurrent|triton_.*chunk|^kernel_kernel$|^element_mul_kernel$"),
     ("liger FLCE",                   r"liger|fused_linear_cross|_flce"),
     ("fp8 quant / scale",            r"to_float8|abs_max|amax|_quant|scaled_cast|convert_fp8"),
-    ("inductor fusion (triton)",     r"triton_poi|triton_red|triton_per|triton_tem|triton_unk"),
     ("optimizer (Muon/AdamW)",       r"muon|adam|newton|zeropower|orthogonal|_foreach|multi_tensor"),
     ("NCCL allreduce",               r"nccl|allreduce|all_reduce|reduce_scatter|all_gather"),
     ("memcpy / memset",              r"^Memcpy|^Memset|memcpy|memset"),

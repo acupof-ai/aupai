@@ -15,3 +15,4 @@ step 120/1525 8% [main] | loss 4.808 | lr 1.00e-02 | gnorm 1.78 | 0.02B tok | 78
 step 130/1525 9% [main] | loss 4.683 | lr 1.00e-02 | gnorm 2.36 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
 step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
 step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+killed by tilerl at 13:32 pod time: profiler schedule (wait 1 + warmup 10 + active 20) completed at step 31 and wrote bench_eff/ddp_trace_rank0.json; --profile does not shorten the run, so the remaining 1494 steps were idle. Deliberate kill of PID 859627 to free lane GPU7 before the 22:30 local milestone. NOT a crash.
