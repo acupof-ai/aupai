@@ -3328,12 +3328,23 @@ def _30b_readiness(root=ROOT):
     else:
         gates.append(("GPU block", SKIP, "no GPU on this machine"))
 
-    # 6. build_corpus writers (host process list)
+    # 6. build_corpus writers: python processes only (not the launch chain), grouped by --domain.
+    # Gate: ≤1 per domain (a running clean is the normal state before t22).
     try:
         r = subprocess.run(["pgrep", "-af", "build_corpus"], capture_output=True, text=True, timeout=10)
-        writers = [l for l in r.stdout.strip().split("\n") if l and "pgrep" not in l]
-        if writers:
-            gates.append(("corpus writers", FAIL, f"{len(writers)} build_corpus process(es) running"))
+        writers = [l for l in r.stdout.strip().split("\n")
+                   if l and "pgrep" not in l and ("python" in l.split(None, 1)[-1][:20] if len(l.split(None, 1)) > 1 else False)]
+        # Group by --domain argument
+        domains = {}
+        for w in writers:
+            m = re.search(r"--domain\s+(\S+)", w)
+            dom = m.group(1) if m else "unknown"
+            domains[dom] = domains.get(dom, 0) + 1
+        over = {d: n for d, n in domains.items() if n > 1}
+        if over:
+            gates.append(("corpus writers", FAIL, f"multiple writers per domain: {over}"))
+        elif writers:
+            gates.append(("corpus writers", PASS, f"{len(writers)} writer(s), domains: {sorted(domains)}"))
         else:
             gates.append(("corpus writers", PASS, "none active"))
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -4584,6 +4595,11 @@ def cmd_launch(rest):
     cmd = rest[idx + 1:]
     if not cmd:
         ap.error("no command given after --")
+
+    # Popen does not use a shell: a bare foo.py fails with Permission denied.
+    # Prepend the interpreter when the command is a .py file in the repo.
+    if cmd[0].endswith(".py") and os.path.isfile(os.path.join(ROOT, cmd[0])):
+        cmd = [sys.executable] + cmd
 
     # Infer --no-gpu: corpus commands need no card
     _CORPUS_CMDS = ("fetch_corpus", "build_corpus", "count_cleaned", "clean_corpus")
