@@ -128,6 +128,43 @@ This is the loss path, so the standing gate is not sufficient on its own:
 The per-domain bar is the one the aggregate can hide: a single domain moving while the mean
 holds is exactly what an fp8 range failure on rare tokens would look like.
 
+### GEMM 3 is an accumulator, not a gradient — and we are already losing precision there
+
+b0 raised this against option A and it is right about the mechanism, but the conclusion inverts
+once you check which branch our config takes.
+
+FLCE accumulates `grad_weight` across all 64 chunks. `fused_linear_cross_entropy.py:233-241`
+has an fp32 path — `torch.addmm(grad_weight, grad_logits_t, input_chunk, out_dtype=torch.float32,
+out=grad_weight)` — but it is **guarded on `grad_weight.dtype == torch.float32`**, and
+`grad_weight` is `zeros_like(weight)` when `accum_dtype is None` (:76). We never pass
+`accum_dtype`, and our weights are **bf16** (verified in the step-7000 checkpoint: `head.weight`
+and `tok.weight` are both `torch.bfloat16`, per t01's bf16-params-no-fp32-master decision).
+
+**So the fp32 branch never fires for us.** We take the `else` at :257,
+`grad_weight += torch.mm(...).float()`, which computes the product in fp32 and then rounds the
+running sum back to bf16 on every one of the 64 `+=`.
+
+Measured on the pod, 64 chunk contributions accumulated bf16 vs fp32: **median relative error
+0.803%**, p99 33%, cosine similarity 0.999954. b0's independent 0.75% figure reproduces.
+
+Three consequences, and the third is the one that matters for scoping:
+
+1. b0's hazard is real but **pre-existing**, not introduced by fp8. The bf16 accumulator is
+   today's behaviour on the live 15B run.
+2. It cannot be a reason to prefer B over A, since B would have to reimplement the same
+   accumulation and would face the identical choice.
+3. **It is a separate, possibly larger lever than fp8 on this GEMM.** Passing
+   `accum_dtype=torch.float32` is one keyword argument, costs 33.6M × 4 bytes = 134 MB of fp32
+   accumulator, and buys back a 0.8% systematic bias on every head weight gradient. That is a
+   correctness change with no throughput claim, so it is not gated on the 3% rule — and it should
+   be tested independently of the fp8 work rather than bundled into it.
+
+For the fp8 design itself, b0's operational points stand and are adopted: GEMM 3's replacement
+must not silently substitute a bf16 output for whatever accumulator is in force, the vendored
+loop should **assert the accumulator dtype** rather than assume it, and `grad_weight` gets an
+elementwise comparison against the current path on one step before any training A/B — a
+systematic 0.8% bias is exactly what a 50-step `|Δval|` check cannot see.
+
 ### The forward-only refusal is the gate working
 
 Forward-only measures 37 ms = 2.2%, and it is refused for being under 3% even though it is the
@@ -141,7 +178,9 @@ The 112 ms is an **ideal** 2× on measured GEMM time. It will not be realised in
 work is not free, FLCE's chunking overhead is untouched by a faster matmul, and the
 `_scaled_mm` path has its own alignment constraints at N=32784. No implementation exists to
 measure yet, and the 224.0 ms itself comes from a single-card trace
-(`eff.steady_state_composition`), so the 7-card share may differ. Treat 6.6% as the ceiling to
+(`eff.steady_state_composition`), so the 7-card share may differ. Treat 5.6% as the ceiling to
 measure against, never as the expected gain. The 190.0 ms is single-card, so the 7-card share
 may differ, and every percentage above uses a 1702 ms step derived from 77K tok/s rather than a
-timed step.
+timed step. The 190.0 ms is single-card **at batch 16 accum 2** (b0): the head's chunk count
+scales with BT, and it is the 64 chunks that make the accumulator question sharp — at a different
+batch the accumulation error and the per-chunk absmax distribution both change.
