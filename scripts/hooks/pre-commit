@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Pre-commit hook: refuse oversized blobs and unlisted data/ paths.
+
+Install: python scripts/harness.py install-hooks
+Bypass: git commit --no-verify (use only for a legitimate new data file,
+and say why in the commit message).
+
+The 5MB limit is the same as harness's no_oversized_blob check -- this hook
+is the first line (commit time), CI is the second. The data/ allow-list is
+the set of paths that may be committed; anything else under data/ is refused
+because large data belongs in .gitignore, not history (7ab8588 swept 234MB
+under data/_corpus_unsanitized/ into one commit).
+"""
+import fnmatch
+import os
+import subprocess
+import sys
+
+MAX = 5 * 1024 * 1024
+
+ALLOWED = [
+    "data/mix_*.json",
+    "data/eval/*",
+    "data/synthetic/*",
+    "data/corpus/sample/*",
+    "data/corpus/.counts.json",
+    "data/PROVENANCE.md",
+    "data/MANIFEST.tsv",
+    "data/pod_head_manifest.txt",
+    "data/env_fp_baseline.json",
+    "data/raw/*_manifest.txt",
+    "data/sft/*.py",
+    "data/t2s_table.json",
+    "data/CORPUS_V3_CARD.md",
+    "data/REBUILD_PLAN_*.md",
+    "data/rl/*",
+    "data/sft_contamination_baseline.json",
+]
+
+
+def staged(diff_filter):
+    r = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", f"--diff-filter={diff_filter}"],
+        capture_output=True, text=True,
+    )
+    return [f for f in r.stdout.splitlines() if f.strip()]
+
+
+def main():
+    fail = False
+    for f in staged("AM"):
+        if os.path.isfile(f):
+            sz = os.path.getsize(f)
+            if sz > MAX:
+                print(
+                    f"REFUSING: {f} is {sz} bytes (>5MB) -- "
+                    f"large files are gitignored, not committed", file=sys.stderr,
+                )
+                fail = True
+    for f in staged("A"):
+        if f.startswith("data/") and not any(fnmatch.fnmatch(f, p) for p in ALLOWED):
+            print(
+                f"REFUSING: {f} is a new data/ path not in the allow-list -- "
+                f"add to scripts/hooks/pre-commit ALLOWED or use --no-verify "
+                f"with justification", file=sys.stderr,
+            )
+            fail = True
+    sys.exit(1 if fail else 0)
+
+
+if __name__ == "__main__":
+    main()

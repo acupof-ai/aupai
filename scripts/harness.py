@@ -3402,6 +3402,34 @@ def _demo():
     finally:
         pod_drift.MANIFEST = _old_manifest
 
+    # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
+    # allowed data file must pass; a small unallowed data file must refuse.
+    d = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
+    hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
+    os.makedirs(os.path.dirname(hook_dst), exist_ok=True)
+    os.symlink(os.path.join(ROOT, "scripts", "hooks", "pre-commit"), hook_dst)
+    # 6MB file -> must refuse
+    with open(os.path.join(d, "big.jsonl"), "w") as f:
+        f.write("x" * (6 * 1024 * 1024))
+    subprocess.run(["git", "add", "big.jsonl"], cwd=d, capture_output=True)
+    r = subprocess.run([hook_dst], cwd=d, capture_output=True)
+    assert r.returncode != 0, f"6MB staged file must refuse: {r.stdout}"
+    # small allowed data file -> must pass
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    open(os.path.join(d, "data", "mix_test.json"), "w").write("{}")
+    subprocess.run(["git", "reset", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "add", "data/mix_test.json"], cwd=d, capture_output=True)
+    r = subprocess.run([hook_dst], cwd=d, capture_output=True)
+    assert r.returncode == 0, f"allowed data file must pass: {r.stdout} {r.stderr}"
+    # small unallowed data file -> must refuse
+    open(os.path.join(d, "data", "secret.jsonl"), "w").write("small")
+    subprocess.run(["git", "add", "data/secret.jsonl"], cwd=d, capture_output=True)
+    r = subprocess.run([hook_dst], cwd=d, capture_output=True)
+    assert r.returncode != 0, f"unallowed data file must refuse: {r.stdout}"
+
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
 
@@ -4025,6 +4053,22 @@ def cmd_clean(rest):
     return 0
 
 
+def cmd_install_hooks(rest):
+    """`harness install-hooks` -- symlink .git/hooks/pre-commit to scripts/hooks/pre-commit.
+    The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
+    hook_src = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    hook_dst = os.path.join(ROOT, ".git", "hooks", "pre-commit")
+    if not os.path.exists(hook_src):
+        print(f"hook source missing: {hook_src}")
+        return 1
+    os.makedirs(os.path.dirname(hook_dst), exist_ok=True)
+    if os.path.lexists(hook_dst):
+        os.remove(hook_dst)
+    os.symlink(os.path.relpath(hook_src, os.path.dirname(hook_dst)), hook_dst)
+    print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, ROOT)}")
+    return 0
+
+
 def main():
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
@@ -4037,6 +4081,8 @@ def main():
         return cmd_sync(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "clean":
         return cmd_clean(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
+        return cmd_install_hooks(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
