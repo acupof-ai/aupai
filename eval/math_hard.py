@@ -12,7 +12,7 @@ import os as _os
 import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
-from eval_artifacts import open_artifact  # noqa: E402
+from eval_artifacts import attest, open_artifact  # noqa: E402
 import json
 import os
 import sys
@@ -168,6 +168,7 @@ def main():
             _done = sum(v[3] for v in by.values())
             if _done % 64 == 0 or _done == len(rows):
                 print(f"  {_done}/{len(rows)} pass@1={sum(v[0] for v in by.values()) / _done:.1%}", flush=True)
+    attest(preds)  # the citation contract: the writer proves these bytes existed
     if dump:
         dump.close()
     n = sum(v[3] for v in by.values())

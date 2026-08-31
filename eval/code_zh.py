@@ -19,7 +19,7 @@ import os as _os
 import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
-from eval_artifacts import open_artifact  # noqa: E402
+from eval_artifacts import attest, open_artifact  # noqa: E402
 import json
 import os
 import re
@@ -187,6 +187,7 @@ def main():
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} pass@1={n_pass1 / total:.1%}", flush=True)
 
+    attest(preds_path)  # the citation contract: the writer proves these bytes existed
     if k > 1:
         print(f"code-500: pass@1(greedy) {n_pass1}/{total} = {n_pass1 / total:.1%} | "
               f"sampled@T={temp} mean {n_samp_ok / (total * k):.1%} | "

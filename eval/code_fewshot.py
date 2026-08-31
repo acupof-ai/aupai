@@ -23,7 +23,7 @@ import os as _os
 import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
-from eval_artifacts import open_artifact  # noqa: E402
+from eval_artifacts import attest, open_artifact  # noqa: E402
 import json
 import os
 import sys
@@ -174,6 +174,7 @@ def main():
             if total % 64 < args.batch or total == len(evals):
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
 
+    attest(preds_path)  # the citation contract: the writer proves these bytes existed
     delta = 1.4 / (total ** 0.5)
     print(f"code-500 few-shot ({args.demos}-shot, t={args.temperature}): {correct}/{total} = {correct / total:.1%}")
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "

@@ -200,6 +200,92 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_cited_artifacts_attested(root):
+    """A fact citing a gitignored artifact carries a sha256 some attestation matches.
+
+    data/eval/preds_*.jsonl is gitignored and nothing reads it programmatically, so
+    fact_refs_resolve skips those paths on every machine: a fact could cite an artifact
+    that exists nowhere and nothing would notice. That is how an unlogged rerun
+    overwrote preds_l1_d3.jsonl and left five facts pointing at 477 rows of a different
+    run for hours (e1, 44's contract, 2026-08-31).
+
+    What this proves is historical -- the cited bytes existed when the citation was
+    made. It deliberately does NOT compare against the current file: preds are
+    regenerated every run, so a current-state check would fail on every legitimate
+    rerun. The writer's attestation row is the proof."""
+    refs = os.path.join(root, "runs", "artifact_refs.jsonl")
+    attested = set()
+    if os.path.exists(refs):
+        for line in open(refs, encoding="utf-8"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("sha256"):
+                attested.add(r["sha256"])
+    # The contract starts here. 18 citations predate it and cannot grow an attestation
+    # retroactively -- their artifacts were written before any writer attested, and
+    # several no longer exist. Failing them is a red nobody can act on, which is the
+    # same as no signal. New and re-measured facts carry the hash.
+    contract_from = "2026-09-01"
+    cited, bad, legacy = 0, [], 0
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp, encoding="utf-8"))
+        except Exception:
+            continue
+        for e in obj.get("facts", []):
+            blob = json.dumps(e, ensure_ascii=False)
+            for m in re.finditer(r"(data/eval/[\w./-]+\.jsonl)", blob):
+                path = m.group(1)
+                if (e.get("measured") or "") < contract_from:
+                    legacy += 1
+                    continue
+                cited += 1
+                sha = e.get("artifact_sha256") or ""
+                if not sha:
+                    bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
+                elif sha not in attested:
+                    bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
+    if not cited:
+        return SKIP, (f"no fact measured since {contract_from} cites a data/eval artifact "
+                      f"({legacy} predate the contract)")
+    if bad:
+        return FAIL, f"{len(bad)} of {cited} citation(s) unattested: {'; '.join(bad[:3])}"
+    return PASS, (f"{cited} artifact citation(s) since {contract_from}, every hash attested "
+                  f"by its writer ({legacy} legacy citations exempt)")
+
+
+def _broken_cited_artifacts_attested():
+    """The REAL facts, with one artifact-citing entry re-dated into the contract window
+    and its hash removed -- the shape a new fact takes when someone forgets to attest."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+    import shutil as _sh
+
+    hit = None
+    for fp in sorted(glob.glob(os.path.join(ROOT, "facts", "*.json"))):
+        obj = json.load(open(fp, encoding="utf-8"))
+        for e in obj.get("facts", []):
+            if re.search(r"data/eval/[\w./-]+\.jsonl", json.dumps(e, ensure_ascii=False)):
+                hit = (fp, obj, e)
+                break
+        if hit:
+            break
+    if not hit:
+        raise SelftestSkip("no fact cites a data/eval artifact yet")
+    fp, obj, e = hit
+    for other in glob.glob(os.path.join(ROOT, "facts", "*.json")):
+        _sh.copy(other, os.path.join(d, "facts", os.path.basename(other)))
+    # inside the contract window, so the legacy exemption does not hide it
+    e["measured"] = "2099-01-01"
+    e.pop("artifact_sha256", None)
+    json.dump(obj, open(os.path.join(d, "facts", os.path.basename(fp)), "w"), ensure_ascii=False)
+    return d
+
+
 def check_milestone_ckpt_pinned(root):
     """Every milestone row's checkpoint still exists, or a pinned copy does.
 
@@ -4322,6 +4408,13 @@ CHECKS = [
         "a mix that wants more rows than its pool allows trains on repeated data with nothing raising",
         check_mix_supply,
         _broken_mix_supply,
+    ),
+    (
+        "cited_artifacts_attested",
+        "a fact citing a gitignored eval artifact carries a sha256 its writer attested",
+        "preds_*.jsonl is gitignored so fact_refs_resolve skips it; an unlogged rerun overwrote preds_l1_d3.jsonl and five facts pointed at another run's rows for hours",
+        check_cited_artifacts_attested,
+        _broken_cited_artifacts_attested,
     ),
     (
         "milestone_ckpt_pinned",
