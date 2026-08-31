@@ -1593,7 +1593,7 @@
   },
   {
    "id": "eff.seam_dynamo_disable",
-   "value": "SHIP CANDIDATE: wrapping flash_attn_varlen_func in torch._dynamo.disable eliminates the flash recompiles entirely, 70 to 0. Both arms one session, one card, seed 42, mix_smoke_warmup, 110 steps, TORCH_LOGS=recompiles and the step lines in the SAME process so a step-N event ties to its own guard -- which neither earlier run could do. RESULT. OFF: 218 total recompiles, 70 flash, 20 of them after step 50. ON: 33 total, ZERO flash, zero after step 50. So the unbounded doc-count guard (eff.recompile_recurrence_explained) is gone and total recompiles fall 85%. The 20-after-step-50 figure is the one that matters: it reproduces the recurrence in this session rather than relying on the earlier trace, so before and after come from one measurement, per b0's protocol. THROUGHPUT IS UNCHANGED AT 81K tok/s IN BOTH ARMS, which is exactly why b0 required the acceptance metric to be trace-based and not tok/s: a constant tax is invisible to steady throughput. Reading tok/s alone would have scored this fix as doing nothing. It is also how I originally misread the flat 77K as evidence the recompile tax did not exist. NUMERICS ARE NEUTRAL, unlike the pad flag. Loss at steps 10/50/110: OFF 7.536/6.255/4.985, ON 7.575/6.233/5.142. Deltas 0.039, 0.022, 0.157 against a measured twin floor of 0.094 nat (eff.pad_dynamic_shapes_twin_control). Two of three are inside the floor; step 110 is 1.7x it, which is the one number that keeps this a candidate rather than a pass. Contrast the pad flag at 8.8x the floor. The prediction held: compile_key (interface.py:678-702) contains no batch_size, so the specialisation had no consumer and removing it should not change arithmetic. It did not, to within 1.7 floors.",
+   "value": "SHIP CANDIDATE: wrapping flash_attn_varlen_func in torch._dynamo.disable eliminates the flash recompiles entirely, 70 to 0. Both arms one session, one card, seed 42, mix_smoke_warmup, 110 steps, TORCH_LOGS=recompiles and the step lines in the SAME process so a step-N event ties to its own guard -- which neither earlier run could do. RESULT. OFF: 218 total recompiles, 70 flash, 20 of them after step 50. ON: 33 total, ZERO flash, zero after step 50. So the unbounded doc-count guard (eff.recompile_recurrence_explained) is gone and total recompiles fall 85%. The 20-after-step-50 figure is the one that matters: it reproduces the recurrence in this session rather than relying on the earlier trace, so before and after come from one measurement, per b0's protocol. THROUGHPUT IS UNCHANGED AT 81K tok/s IN BOTH ARMS, which is exactly why b0 required the acceptance metric to be trace-based and not tok/s: a constant tax is invisible to steady throughput. Reading tok/s alone would have scored this fix as doing nothing. It is also how I originally misread the flat 77K as evidence the recompile tax did not exist. NUMERICS ARE NEUTRAL, unlike the pad flag. Loss at steps 10/50/110: OFF 7.536/6.255/4.985, ON 7.575/6.233/5.142. Deltas 0.039, 0.022, 0.157 against a measured twin floor of 0.094 nat (eff.pad_dynamic_shapes_twin_control). Two of three are inside the floor; step 110 is 1.7x it, which is the one number that keeps this a candidate rather than a pass. Contrast the pad flag at 8.8x the floor. The prediction held: compile_key (interface.py:678-702) contains no batch_size, so the specialisation had no consumer and removing it should not change arithmetic. It did not, to within 1.7 floors. IN-CONFIG CONFIRMATION (2026-09-01, shipment window): the merged wrap was run on the BLOCK -- 7 cards, 600 steps, stage-1 mix, TORCH_LOGS=recompiles -- and produced ZERO flash recompiles. That is the half the lane test could not give: the lane arms were one card on the smoke mix, and the pre-fix figure was 70 per 110 steps with 20 recurring after step 50. Throughput there was median 77K with a 2/2-trimmed cv of 0.80%, loss 2.233 at step 600, MFU 31%.",
    "measured": "2026-09-01",
    "source": "runs/t57_seam.log, probes/t57_seam.py, docs/lessons/flash_recompile_seam_design.md",
    "config": {
@@ -1632,9 +1632,39 @@
      0.157
     ],
     "twin_floor_nat": 0.094,
-    "step110_delta_in_floors": 1.7
+    "step110_delta_in_floors": 1.7,
+    "in_config_flash_recompiles": 0,
+    "in_config_steps": 600,
+    "in_config_cards": 7,
+    "in_config_median_tok_s": 77,
+    "in_config_trimmed_cv_pct": 0.8
    },
    "uncertainty": "The seam ms is NOT measured here: this run had TORCH_LOGS but no --profile, so I have the recompile count and not the gap time. b0's acceptance metric asks for BOTH, and the 3.28% seam figure still comes from the earlier steady trace rather than from this session -- a combined --profile plus recompile-log run would close it, and the residual host-sync risk b0 named would show there as a new gap elsewhere. Untested. The step-110 loss delta of 0.157 exceeds the 0.094 twin floor by 1.7x on a single pair, so it could be either noise at the tail of a short run or a real effect; a twin arm would separate them and was not run. One card, 110 steps, smoke mix: none of this bounds the 7-card real-mix behaviour, and a graph break removed on one card may interact differently with DDP collectives.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.ab_throughput_statistic",
+   "value": "PRE-DECLARED before arms 2-4 were observed (fb's condition, so the statistic is not chosen to fit the result). Report per arm: the MEDIAN of the per-step tok/s at steps >= 100, and the mean with a 2/2 trim (drop the two lowest and two highest of the ~57 samples), plus the trimmed cv. Judge a candidate as a multiple of the twin spread, not as a raw percentage against the 3% gate. WHY, from arm 1: the raw cv at steps >= 100 is 6.1%, which cannot resolve a 3% gate. A 2/2 trim takes it to 0.80%. The difference is a handful of outliers -- one sample at 42K against a median of 77K -- not step-cost variance, and those outliers are checkpoint or eval interference rather than a property of the candidate. So the raw mean is the wrong statistic and I had proposed it: my shipment plan said 600 steps would buy a 4.1% band, and it bought 6.1% raw and 0.80% trimmed. The band prediction was wrong in both directions at once.",
+   "measured": "2026-09-01",
+   "source": "runs/ab_base_a_first.log, docs/lessons/shipment_ab_plan.md",
+   "config": {
+    "task": "shipment A/B",
+    "cards": 7,
+    "steps": 600,
+    "mix": "mix_15b_stage1",
+    "seed": 42,
+    "window": "steps >= 100",
+    "n_samples": 57,
+    "statistic": "median + 2/2-trimmed mean + trimmed cv",
+    "arm1_raw_cv_pct": 6.1,
+    "arm1_trimmed_cv_pct": 0.8,
+    "arm1_median_tok_s": 77,
+    "arm1_low_outlier_tok_s": 42,
+    "predicted_band_pct": 4.1,
+    "gate_pct": 3,
+    "judge_rule": "candidate delta as a multiple of the twin spread"
+   },
+   "uncertainty": "The trim rule is declared from ONE arm's distribution. If a later arm's outliers are more numerous than four, a 2/2 trim will not remove them and the trimmed cv will rise -- the rule is fixed regardless, since changing it after seeing the arms is the thing pre-declaration prevents. tok/s is logged at 1K resolution, so a median of 77K carries about 0.65% of quantisation on its own, which is a floor under any measured difference. And the twin spread this is judged against does not exist yet: arm 2 has not completed.",
    "status": "measured"
   }
  ]
