@@ -47,7 +47,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt", required=True)
     parser.add_argument("--max_new", type=int, default=512)
-    parser.add_argument("--batch", type=int, default=64)
+    parser.add_argument("--batch", type=int, default=256)
     parser.add_argument("--shards", type=int, default=1, help="split the test set across N processes")
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--device", default="cuda")
@@ -85,7 +85,8 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
+                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals,
+                                     tokenizer=tok)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
