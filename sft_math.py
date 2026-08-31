@@ -145,8 +145,11 @@ def main():
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
     if is_main:
+        from train import HAS_FA
+
         print(
-            f"resumed {args.resume} | params {sum(p.numel() for p in raw_model.parameters()) / 1e6:.1f}M | fp8 {fp8}",
+            f"resumed {args.resume} | params {sum(p.numel() for p in raw_model.parameters()) / 1e6:.1f}M | "
+            f"fp8 {fp8} | fa {HAS_FA} | doc_mask {Cfg.doc_mask}",
             flush=True,
         )
 
