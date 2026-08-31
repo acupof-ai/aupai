@@ -67,6 +67,16 @@ def sha_head(root, path):
     return _sha_bytes(b)
 
 
+def sha_index(root, path):
+    """sha256 of the staged blob (git show :path). Returns None if not in the index."""
+    r = subprocess.run(
+        ["git", "show", f":{path}"], cwd=root, capture_output=True
+    )
+    if r.returncode != 0:
+        return None
+    return _sha_bytes(r.stdout)
+
+
 def sha_disk(path):
     with open(path, "rb") as f:
         return _sha_bytes(f.read())
@@ -74,6 +84,19 @@ def sha_disk(path):
 
 def write_manifest(root=ROOT):
     lines = [f"{sha_head(root, p)}  {p}" for p in scoped_paths(root)]
+    with open(MANIFEST, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return len(lines)
+
+
+def write_manifest_index(root=ROOT):
+    """Manifest from the index (staged blobs), not HEAD. Used by the pre-commit
+    hook so the committed manifest matches HEAD after the commit lands."""
+    lines = []
+    for p in scoped_paths(root):
+        sha = sha_index(root, p)
+        if sha:
+            lines.append(f"{sha}  {p}")
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
@@ -192,6 +215,9 @@ def main():
     if mode == "--write":
         n = write_manifest()
         print(f"wrote {n} entries to {os.path.relpath(MANIFEST, ROOT)}")
+    elif mode == "--write-index":
+        n = write_manifest_index()
+        print(f"wrote {n} entries from index to {os.path.relpath(MANIFEST, ROOT)}")
     elif mode == "--selftest":
         selftest()
     elif mode == "--list-scoped":

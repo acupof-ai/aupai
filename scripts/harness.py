@@ -3501,6 +3501,42 @@ def _demo():
     r = subprocess.run([hook_dst], cwd=d, capture_output=True)
     assert r.returncode != 0, f"unallowed data file must refuse: {r.stdout}"
 
+    # Manifest regeneration: stage a scoped edit, run the hook, commit, and
+    # pod_drift.py --check-head must pass without a second commit.
+    d2 = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
+    hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
+    os.makedirs(os.path.dirname(hook_dst2), exist_ok=True)
+    os.symlink(os.path.join(ROOT, "scripts", "hooks", "pre-commit"), hook_dst2)
+    os.makedirs(os.path.join(d2, "scripts"), exist_ok=True)
+    os.makedirs(os.path.join(d2, "data"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "pod_drift.py"), os.path.join(d2, "scripts", "pod_drift.py"))
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d2, "AGENTS.md"))
+    shutil.copy(os.path.join(ROOT, "data", "pod_head_manifest.txt"), os.path.join(d2, "data", "pod_head_manifest.txt"))
+    subprocess.run(["git", "add", "-A"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=d2, capture_output=True)
+    # Stage a scoped edit
+    with open(os.path.join(d2, "AGENTS.md"), "a") as f:
+        f.write("\n# test edit\n")
+    subprocess.run(["git", "add", "AGENTS.md"], cwd=d2, capture_output=True)
+    r = subprocess.run([hook_dst2], cwd=d2, capture_output=True)
+    assert r.returncode == 0, f"hook must pass on scoped edit: {r.stdout} {r.stderr}"
+    # The manifest must be staged (regenerated from the index)
+    staged_files = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"], cwd=d2, capture_output=True, text=True
+    ).stdout
+    assert "data/pod_head_manifest.txt" in staged_files, f"manifest not staged: {staged_files}"
+    # Commit and verify check-head passes
+    subprocess.run(["git", "commit", "-m", "scoped edit"], cwd=d2, capture_output=True)
+    r = subprocess.run(
+        [sys.executable, os.path.join(d2, "scripts", "pod_drift.py"), "--check-head"],
+        cwd=d2, capture_output=True, text=True,
+    )
+    assert r.returncode == 0, f"check-head must pass after hook-mediated commit: {r.stdout} {r.stderr}"
+    shutil.rmtree(d2, ignore_errors=True)
+
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
 

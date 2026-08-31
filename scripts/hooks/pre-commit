@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Pre-commit hook: refuse oversized blobs and unlisted data/ paths.
+"""Pre-commit hook: refuse oversized blobs and unlisted data/ paths; keep pod
+manifest fresh from the index.
 
 Install: python scripts/harness.py install-hooks
 Bypass: git commit --no-verify (use only for a legitimate new data file,
@@ -10,6 +11,11 @@ is the first line (commit time), CI is the second. The data/ allow-list is
 the set of paths that may be committed; anything else under data/ is refused
 because large data belongs in .gitignore, not history (d535674 swept 234MB
 under data/_corpus_unsanitized/ into one commit).
+
+The manifest regeneration writes data/pod_head_manifest.txt from the INDEX
+(staged blobs, git show :path), not HEAD or the working tree, so the committed
+manifest matches HEAD after the commit lands. This eliminates the "manifest
+stale" CI red that required a separate "regenerate pod manifest" commit.
 """
 import fnmatch
 import os
@@ -65,7 +71,34 @@ def main():
                 f"with justification", file=sys.stderr,
             )
             fail = True
-    sys.exit(1 if fail else 0)
+    if fail:
+        sys.exit(1)
+
+    # Ruff E9/F on staged .py files -- the same gate CI runs, caught at commit time.
+    py_files = [f for f in staged("AM") if f.endswith(".py")]
+    if py_files:
+        try:
+            r = subprocess.run(
+                ["ruff", "check", "--select", "E9,F", *py_files],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                print(f"REFUSING: ruff E9/F failed:\n{r.stdout}", file=sys.stderr)
+                sys.exit(1)
+        except FileNotFoundError:
+            pass  # ruff not installed; CI catches it
+
+    # Regenerate pod manifest from staged content so it matches HEAD after commit.
+    repo = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    ).stdout.strip()
+    if repo and os.path.isfile(os.path.join(repo, "scripts", "pod_drift.py")):
+        r = subprocess.run(
+            [sys.executable, os.path.join(repo, "scripts", "pod_drift.py"), "--write-index"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            subprocess.run(["git", "add", "data/pod_head_manifest.txt"], capture_output=True)
 
 
 if __name__ == "__main__":
