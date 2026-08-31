@@ -1,80 +1,79 @@
 # aupai
 
-200M 中文推理模型。12 层混合架构 `(3 KDA + 1 MLA) × 3`，d=1024，词表 32,773，FP8 训练。
+A 200M-parameter reasoning model for coding and math, pretrained on ~30B tokens.
+Objective set 2026-08-30; the earlier Chinese-web LLM and its scaling law are retired
+(`docs/standards/0830v1_gates.md`). Working rules, layout, and the run book are in
+`AGENTS.md`; this file is the short version.
 
-KDA 是线性衰减循环，每层状态 256 KiB，与上下文长度无关。MLA 只缓存 256 维潜在，窗口 1024，每层 512 KiB。ctx 4096 下整模型 KV 缓存 3.75 MiB，同规模全注意力是 192 MiB。
+## Model
 
-架构可视化 <https://acupof-ai.github.io/aupai/>，可拖拽算参数、训练开销、显存。
+| | |
+|---|---|
+| layers | 12: KDA ×9 + gated MLA ×3, d=1024, 206M params |
+| position | NoPE — no RoPE, no learned positions; the KDA state carries position |
+| attention | full causal over the 4096-token sequence, document-masked (`cu_seqlens`) |
+| extras | Attention Residuals on by default; FP8 (e4m3 fwd+bwd); `--fone` number embedding |
+| vocabulary | 32,784 slots, frozen 2026-08-29; `data/tokenizer.json` is not in git — copy it from the pod |
+| optimizer | Muon for 2D weights, AdamW for embeddings and 1D; `torch.compile` |
 
-## 从零开始
+Correctness never depends on which attention package is installed: without flash-attn the
+SDPA fallback builds the document mask from `cu_seqlens` (~20× slower, refused at startup
+unless `--allow_slow_attn`). Measured 2026-08-31 on 7×H20 at the 0.2B point: 76K tok/s/GPU,
+MFU 30%.
+
+Interactive parameter/memory calculator: <https://acupof-ai.github.io/aupai/>.
+
+## Quick start
 
 ```bash
 uv sync
-python scripts/test_arch_compat.py     # CPU 冒烟测试，不需要 GPU
-python scripts/build_tokenizer.py --force
+python scripts/harness.py install-hooks        # pre-commit: ruff E9/F, blob guard, manifest, harness check
+python scripts/test_arch_compat.py             # CPU: fwd/bwd, checkpoint round-trip, doc-mask known answers
+python scripts/harness.py check                # repo invariants, ~5 s; CI runs the same
 ```
 
-仓库带一份 4,992 篇、约 0.9M token 的样本语料在 `data/corpus/sample/`，配 `data/mix_sample.json`，够跑通流程但不够训出模型。真实语料由 `scripts/build_domains.sh` 构建到 `data/corpus/<domain>/`，配 `data/mix_scale_3.24b.json`（默认 mix；六个预算点见 `data/mix_scale_*.json`）。**mix 是唯一的数据路径**：扁平回退已于 2026-08-29 删除，样本和真实语料走同一套代码。
+The checkout ships a 2,000-document sample corpus (`data/corpus/sample/`, `data/mix_sample.json`)
+that exercises the pipeline end to end. Real corpora are built by
+`python datagen/build_corpus.py --domain <d> --source <s>` into `data/corpus/<domain>/`, and a
+mix file (`data/mix_scale_*.json`, `data/mix_30b.json`) is the only data path: per-domain
+weight, epoch cap, anneal weight. A missing mix is an error, not a fallback.
 
-`data/tokenizer.json` 不入库。词表必须先建，train.py 缺它会直接报错——它曾经会静默训一个新的，那个词表缺 4 个 chat special 和 `[NUM]`，但 vocab_size 对得上，于是任何已有 checkpoint 配它都是乱码且不报错。
+## Run
 
-## 命令
+Every GPU or corpus job starts through one launcher — it writes the experiment row first,
+takes its cards from the controller's allocation (7-card block for training, one lane card
+for everything else), detaches with `setsid`, verifies `fa True | doc_mask True` in the
+worker log before the job counts as started, and arms a monitor:
 
 ```bash
-# 词表，分层采样，约 5 分钟
-python scripts/build_tokenizer.py --force
-
-# 预训练
-torchrun --nproc_per_node=7 train.py --fp8 --fone \
-  --attn_res --attn_res_blocks 4 --warmup 150 --lr_scale 0.5 --name X --track
-
-# SFT
-scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>
-
-# RLVR / GSPO
-torchrun --nproc_per_node=8 algorithms/rlvr.py --resume <ckpt>
-
-# math-hard 评测，metric of record
-scripts/eval_hard.sh <ckpt> [ngpu]
-
-# 实验记录，写入 EXPERIMENTS.md
-python scripts/exp.py start|done
+python scripts/harness.py launch <name> --training --hypothesis "..." -- ./run_ddp.sh --mix data/mix_scale_0.2b.json --name <name>
+python scripts/harness.py launch <name> -- python3 scripts/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl
+python scripts/harness.py launch <name> -- python3 scripts/fetch_corpus.py --source <src> --target_bytes 27e9
 ```
 
-任何匹配 `Cfg.<flag>` 的 `--flag` 覆盖对应默认值，见 `python train.py --help`。
+SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>`. RL gate: `eval/math_hard.py --ckpt X --k 8 --temperature 0.8`
+opens RL only if pass@8 − pass@1 ≥ 15 pt at the same temperature. Numbers land in
+`runs/score_matrix.jsonl` and `facts/*.json`, each with its measurement config; the
+pre-registered 30B readout is `docs/lessons/readout_30b_prereg.md` (`scripts/readout_30b.py`).
 
-远程执行见 AGENTS.md 的 Pod 一节。长任务用 `setsid`，`nohup` 挡不住 crictl 的进程组回收。
+## Commit workflow — one path
 
-## 数据
+1. Work in the shared tree on `main`; stage by path (`git add <file>`), never `-A`/`-a`.
+   One concern per commit, message in English.
+2. The pre-commit hook (installed above) runs ruff E9/F on staged Python, refuses files over
+   5 MB and unlisted `data/` paths, regenerates `data/pod_head_manifest.txt` from the index
+   into the same commit, and runs `harness check`. A red hook is a red commit.
+3. Push to the pod with `scripts/pod_push.sh <files>` — it refuses uncommitted files and
+   ships the manifest; `train.py` refuses to start on a drifted pod.
+4. CI on push: ruff, `py_compile`, `test_arch_compat`, `eqcheck`, `holdout`, `harness check`
+   and `--selftest`. Push `main` to `origin` only when CI is green.
+5. Record every run: `scripts/exp.py start` before, `done` after; tasks live in
+   `runs/tasks.jsonl` (`harness task add|done|list`). Status is read from artifacts, never
+   from a message.
 
-```bash
-bash scripts/build_domains.sh      # data/*.jsonl 原始源 -> data/corpus/<domain>/
-python scripts/data_overview.py    # 各域 token 数与占比
-python scripts/check_mix.py        # 干预算主阶段与 anneal 的行数、epoch cap、步数
-```
+## Numbers — `--fone`
 
-`build_domains.sh` 做清洗、跨域去重、math 近重去重，以及 holdout 过滤防 eval 污染。
-
-mix 给每个域三个值：权重、epoch cap、anneal 权重。train.py 按调度消费，先主阶段，最后 `anneal_frac` 换用 anneal 权重，`epochs` 强制为 1。mix 缺失是硬错误，不是回退。
-
-## 数字表示
-
-BPE 按词频切数字，1640 切成 `16|40`，进位规则无法跨数泛化。`--fone` 打开 Fourier Number Embedding：每个数收成一个 `[NUM]` token，值经傅里叶特征进 embedding，每位十路 argmax 解码。
-
-```bash
-python scripts/fone_probe.py                       # 同参数同步数的 FoNE / BPE A/B
-python scripts/fone_digit_acc.py --ckpt X          # 读 checkpoint 测数位准确率
-```
-
-## 提交前
-
-CI 跑 ruff E9/F、py_compile、`test_arch_compat.py`、`eqcheck.py`、`holdout.py`。触碰模型、优化器、checkpoint 路径时扩展 test_arch_compat。本地跑 `ruff format && ruff check`，行宽 110。
-
-## 实现
-
-- fla `chunk_kda` 内核走 KDA，FlashAttention 走 MLA 滑动窗口，SDPA 回退
-- FP8 前向反向，torchao e4m3_tensorwise，Liger FLCE
-- Muon 管 2D 矩阵，AdamW 管 embedding 与 1D，torch.compile
-- int32 token id，NVMe 缓存，异步 H2D
-
-7×H20 上 85K tok/s/gpu，MFU 36%。开 `--fone` 降到 73K，MFU 31%，代价来自 float64 数位提取和每步的数位交叉熵。
+BPE splits numbers by frequency (1640 → `16|40`). `--fone` gives each number one `[NUM]`
+token with a Fourier-encoded value and decodes digits ten-way. The flag changes the data
+format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees
+with the pack refuses. `scripts/fone_digit_acc.py --ckpt X` scores the digit head.
