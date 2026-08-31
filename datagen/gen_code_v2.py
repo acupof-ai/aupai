@@ -10,7 +10,11 @@ Provenance: this file IS the generator. data/eval/code_holdout_v2_500.jsonl
 is its only output. The census + verbatim probe (t51) verify cleanliness
 before the set is used.
 
-Usage: python datagen/gen_code_v2.py [n_per_family]  (default 50)
+Usage: python datagen/gen_code_v2.py [n_per_family]  (default 500//30+1=17)
+
+restartable: regenerates deterministically from rng = random.Random(2026) in
+seconds; output data/eval/code_holdout_v2_500.jsonl is re-creatable at any
+time by re-running this script.
 """
 import hashlib
 import json
