@@ -1259,6 +1259,100 @@ def _broken_merge_complete():
     return d
 
 
+def _bad_help_strings(src):
+    """argparse help strings in src that argparse cannot format.
+
+    argparse %-formats every help string against a params dict, so a literal
+    percent must be doubled. "55.8% of SFT generations" makes "% o" a %o
+    conversion and --help dies with "TypeError: %o format: an integer is
+    required, not dict" (eval/code_zh.py, ae2063f, live 25 hours).
+
+    Parsed with ast, not a regex: these help strings are written as implicit
+    concatenation across three lines, and a regex that misses the continuation
+    reads only the first fragment -- which is how my first version PASSED its
+    own broken world. ast.literal_eval joins them the way Python does.
+
+    Tested by formatting, not by pattern: `%s` is legal, `%%` is legal, `50%`
+    raises ValueError and `100% done` raises TypeError. Only argparse's own
+    formatting knows which is which, so ask it."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg != "help":
+                continue
+            try:
+                text = ast.literal_eval(kw.value)
+            except (ValueError, SyntaxError, TypeError):
+                continue
+            if not isinstance(text, str) or "%" not in text:
+                continue
+            try:
+                text % {"prog": "p", "default": None}
+            except (TypeError, ValueError) as e:
+                bad.append((text[:60], type(e).__name__, str(e)[:40]))
+    return bad
+
+
+def check_entrypoint_help(root):
+    """An argparse help string must be formattable, or --help dies.
+
+    Static, not by running --help: every CLI here imports torch, which costs
+    ~9.7 s each and 213 s for the 22 of them, against a 5 s per-check budget.
+    Running them also cannot tell a malformed help string from a dependency
+    missing on this machine -- my first version reported 7 failures, of which
+    the real one was 1 and the rest were no triton on macOS and the like.
+
+    Ceiling: this reads source, so it catches the formatting class and nothing
+    else. A CLI broken by its imports still passes. It is the cheapest test for
+    the defect that actually happened, not a liveness test for entrypoints."""
+    import glob
+
+    checked = 0
+    bad = []
+    for d in ("eval", "scripts", "datagen", "probes", "algorithms"):
+        for path in sorted(glob.glob(os.path.join(root, d, "*.py"))):
+            try:
+                src = open(path, encoding="utf-8").read()
+            except OSError:
+                continue
+            if "argparse" not in src:
+                continue
+            checked += 1
+            for text, exc, msg in _bad_help_strings(src):
+                bad.append(f"{os.path.relpath(path, root)}: {exc}: {text!r}")
+    if not checked:
+        return SKIP, "no argparse entrypoints found"
+    if bad:
+        return FAIL, (
+            f"{len(bad)} unformattable argparse help string(s); --help will die: "
+            + "; ".join(bad[:3]) + ". Double the literal percent (%% not %)."
+        )
+    return PASS, f"{checked} argparse entrypoints have formattable help strings"
+
+
+def _broken_entrypoint_help():
+    """The real defect, verbatim from ae2063f."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    with open(os.path.join(d, "eval", "code_zh.py"), "w", encoding="utf-8") as f:
+        f.write(
+            "import argparse\n"
+            "p = argparse.ArgumentParser()\n"
+            "p.add_argument('--temperature', type=float, default=0.0,\n"
+            "               help='0.0 = greedy. Raised only to test whether '\n"
+            "                    'the loop (55.8% of SFT generations repeat an 8-gram) '\n"
+            "                    'is produced by greedy decoding.')\n"
+            "p.parse_args()\n"
+        )
+    return d
+
+
 def check_no_stale_running(root):
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
@@ -4283,6 +4377,13 @@ CHECKS = [
         "four files hardcode these ids and a vocabulary rebuild moves them silently",
         check_pinned_ids,
         lambda: _broken_tokenizer(eos_id=5),
+    ),
+    (
+        "entrypoint_help",
+        "every argparse help string can be formatted, so --help works",
+        "eval/code_zh.py --help died with 'TypeError: %o format' for 25 hours and nobody noticed, because nothing runs --help; a literal percent in a help string is a %-conversion to argparse",
+        check_entrypoint_help,
+        _broken_entrypoint_help,
     ),
     (
         "merge_complete",

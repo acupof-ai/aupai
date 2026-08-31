@@ -482,7 +482,7 @@ def main():
     ap.add_argument("--selftest", action="store_true", help="run the hermetic mirror-chain selftest and exit")
     ap.add_argument("--source", default=None, help="named source (fineweb2, cci3_hq, ...)")
     ap.add_argument("--target_bytes", type=float, default=None, help="disk bytes to fetch (None = all)")
-    ap.add_argument("--stream_n", type=int, default=0, help="parallel streams (0 = one); fetch files where i%n==stream_i")
+    ap.add_argument("--stream_n", type=int, default=0, help="parallel streams (0 = one); fetch files where i%%n==stream_i")
     ap.add_argument("--stream_i", type=int, default=0, help="this stream's index (0..stream_n-1)")
     a = ap.parse_args()
     if a.selftest:
