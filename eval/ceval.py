@@ -79,16 +79,20 @@ def _demo():
         assert it["options"][it["label"]] == d["answer"].strip(), (d, it)
         assert d[d["answer"].strip()] in it["prompt"], "the correct option text is not in the prompt"
 
-    # Cloze: the same label indexes the same answer, the options are the TEXTS, and
-    # the answer text must NOT be in the prompt -- if it leaks in, the continuation
-    # is being scored against a prompt that already contains it.
+    # Cloze: the same label indexes the same answer, and the options are the TEXTS.
     cz = load_items(cloze=True)
     assert len(cz) == 1050, len(cz)
     for d, it in zip(raw[:50], cz[:50]):
         assert it["label"] == LETTERS.index(d["answer"].strip()), (d, it)
         assert it["options"][it["label"]] == str(d[d["answer"].strip()]), (d, it)
-        assert it["options"][it["label"]] not in it["prompt"], "option text leaked into the cloze prompt"
         assert it["norm"] == "char"
+    # The cloze prompt must not carry the option LIST -- that is the MCF prompt.
+    # A bare substring test is the wrong check: 15/1050 answers legitimately occur
+    # inside their own question ("500" in "500字节"), which is the question's
+    # content, not the answer being given away. What would be a real leak is the
+    # rendered option list, so test for that.
+    for it in cz:
+        assert "A. " not in it["prompt"], "the option list leaked into the cloze prompt"
     # The two scorings must disagree in shape, or one of them is not what it claims.
     assert cz[0]["options"] != items[0]["options"], "cloze options are still the bare letters"
     assert len(set(len(o) for it in cz for o in it["options"])) > 1, "cloze options are all one length"
