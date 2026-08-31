@@ -22,13 +22,11 @@ EXPECTED=$(wc -l < data/synthetic/math_hard_eval_1k.jsonl)
 ROWS=$([ "$K" -gt 1 ] && echo $((EXPECTED * (K + 1))) || echo "$EXPECTED")
 
 pids=()
-# Shard i maps to the i-th device the CALLER exposed; an unset caller means the
-# physical first N. CUDA_VISIBLE_DEVICES=$i outright would override an outer
-# restriction -- a lane-card launch (CUDA_VISIBLE_DEVICES=7) would land on
-# physical GPU 0, a training-block card.
-IFS=',' read -ra _DEVS <<< "${CUDA_VISIBLE_DEVICES:-}"
+# Shard i runs on the i-th device the CALLER exposed; an unset caller means the
+# physical first N. See eval/_devs.sh for why a physical index is wrong here.
+source eval/_devs.sh "$N"
 for i in $(seq 0 $((N-1))); do
-  CUDA_VISIBLE_DEVICES=${_DEVS[$i]:-$i} python3 eval/math_hard.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
+  CUDA_VISIBLE_DEVICES=${_DEVS[$i]} python3 eval/math_hard.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
     --k "$K" --temperature "$TEMP" --max_new "$MAXNEW" > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
 done
