@@ -2926,6 +2926,18 @@ def check_mix_supply(root, mix_glob=None):
     lands entirely in the anneal phase (roughly 2x the per-domain loss the
     whole-budget figure suggests), not spread across both phases. SKIP without
     caches (CPU CI, dev box)."""
+    # An all-blocked mix is answerable without a cache, so report it before the
+    # cache-dir SKIP -- otherwise a dev box says "no cache" and the real state (every
+    # domain deliberately blocked, pre-corpus) is invisible (fb, 2026-08-31).
+    pat = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
+    for f in glob.glob(pat if os.path.isabs(pat) else os.path.join(root, pat)):
+        try:
+            obj = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            continue
+        if not obj.get("domains") and obj.get("_blocked"):
+            return SKIP, (f"{os.path.basename(f)}: all {len(obj['_blocked'])} domains blocked "
+                          f"(pre-corpus, by design) -- nothing to gate yet")
     cache_dir = _token_cache_dir()
     if not os.path.isdir(cache_dir):
         return SKIP, f"token cache dir {cache_dir} not present"
@@ -2938,6 +2950,9 @@ def check_mix_supply(root, mix_glob=None):
     pattern = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
     mixes = sorted(glob.glob(pattern if os.path.isabs(pattern) else os.path.join(root, pattern)))
     if not mixes:
+        # Distinguish "no such file" from "the file exists and every domain is blocked":
+        # a mix with all domains under _blocked is a deliberate pre-corpus state, and a
+        # SKIP that calls it "no matching files" gets filed as a gap (fb, 2026-08-31).
         return SKIP, f"no mix files match {os.path.basename(pattern)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
@@ -6942,7 +6957,10 @@ def cmd_milestone(argv):
             r = subprocess.run(
                 [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
                  "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-                 "--milestone-profile", "milestone", "--paired-profile", "full"]
+                 "--milestone-profile", "milestone", "--paired-profile", "full",
+                 "--milestone-mix", mix]
+                + (["--paired-mix", _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) or ""]
+                   if _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) else [])
                 + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
                 + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
                 capture_output=True, text=True,
