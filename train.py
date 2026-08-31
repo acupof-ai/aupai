@@ -1204,8 +1204,26 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
     fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
     if cur:
-        ck["row_cursor"] = dict(cur)
+        # AS OF THIS STEP, not the plan's end. The plan-complete counts describe a run
+        # that finished; a checkpoint at step k describes one that has read k*batch*accum
+        # rows per rank. Seeding stage 2 from the plan-complete figure would skip
+        # everything between k and the end -- and --auto-resume makes a mid-plan
+        # checkpoint the expected case, not the rare one (fb, 2026-09-01).
+        dom_idx = getattr(cfg, "_plan_domains", None)
+        names = getattr(cfg, "_plan_names", None)
+        if step is not None and dom_idx is not None and names:
+            rows_done = step * cfg.batch * cfg.accum  # this rank's share, plan order
+            head = dom_idx[:rows_done]
+            counts = torch.bincount(head.to(torch.int64), minlength=len(names))
+            world = int(os.environ.get("WORLD_SIZE", 1))
+            # x world: every rank walks its own stripe of the same plan at the same rate,
+            # so the whole-run consumption of a domain is this rank's count x world.
+            ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
+            ck["row_cursor_as_of_step"] = step
+        else:
+            ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
+        ck["row_cursor_seed"] = _sample_seed()
     torch.save(ck, path)
 
 
@@ -1598,7 +1616,8 @@ def _selftest_mix_guard():
 _selftest_mix_guard()
 
 
-def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None, cursor_srcfp=None):
+def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
+              cursor_srcfp=None, cursor_seed=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
     {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}};
     weight = share of the main phase, anneal = share of the last Cfg.anneal_frac tokens.
@@ -1631,6 +1650,16 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None, cur
         # pools are read modulo their length, so a cursor past one epoch is meaningful.
         used[name] = 0
         if row_cursor and name in row_cursor:
+            # The shuffle seed too, beside srcfp: identical bytes shuffled at another
+            # seed give the same fingerprint and a different row ORDER, so the cursor
+            # would index different documents while every other check passes (fb).
+            if cursor_seed is not None and cursor_seed != _sample_seed():
+                if is_main:
+                    print(f"mix: {name} cursor discarded -- written at sample_seed "
+                          f"{cursor_seed}, this run uses {_sample_seed()}; the pool is "
+                          f"shuffled differently so the row count indexes other rows",
+                          flush=True)
+                continue
             want_fp = (cursor_srcfp or {}).get(name)
             ddir = os.path.join(DATA, "corpus", name)
             live_fp = _corpus_fp(ddir) if os.path.isdir(ddir) else None
@@ -1680,6 +1709,13 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None, cur
             f"mix: {plan.shape[1]} rows = {plan.shape[1] * Cfg.seq / 1e9:.2f}B tokens scheduled", flush=True
         )
     # The cursor AFTER this plan is consumed, for the checkpoint: what stage 2 seeds from.
+    # The per-row DOMAIN INDEX for this rank, in plan order. save_checkpoint counts a
+    # prefix of it to get the cursor AS OF a step, instead of the plan-complete counts
+    # below: with --auto-resume a mid-plan crash is the expected case, and seeding from
+    # the plan's end would skip every row the run never reached. int8, ~0.5MB per rank
+    # at stage-1 size (523,158 rows), so keeping it costs nothing next to a 959MB
+    # checkpoint (fb ruling: gating for stage 2).
+    Cfg._plan_domains = None  # set below, once `mine` exists
     Cfg._row_cursor = dict(used)
     # Only domains whose corpus dir is present: a mix can name a domain served from a
     # cache whose source is not on this box, and an unguarded fingerprint raises there.
@@ -1691,6 +1727,8 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None, cur
     # Multiple of world, or a rank left a row short gets a different lr and hangs the all-reduce.
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
+    Cfg._plan_domains = mine[0].to(torch.int8).clone()
+    Cfg._plan_names = list(names)
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
     vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
     for di, name in enumerate(names):
@@ -1906,11 +1944,12 @@ def main():
     # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
-    _cursor = _cursor_fp = None
+    _cursor = _cursor_fp = _cursor_seed = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
+            _cursor_seed = _pre.get("row_cursor_seed")
             del _pre
         except (OSError, RuntimeError, TypeError) as e:
             if is_main:
@@ -1925,7 +1964,8 @@ def main():
               "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
               "launching stage 2 if that tail matters.", flush=True)
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
-                       row_cursor=_cursor, cursor_srcfp=_cursor_fp)
+                       row_cursor=_cursor, cursor_srcfp=_cursor_fp,
+                       cursor_seed=_cursor_seed)
     (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
     seqs, vseqs = seqs.long(), vseqs.long()
     Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
