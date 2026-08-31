@@ -133,7 +133,14 @@ def main():
         cache = os.path.join(a.cache_dir, f"tokens_{name}.pt")
         if not os.path.exists(cache):
             continue
-        n = torch.load(cache, map_location="cpu", weights_only=False, mmap=True).shape[0]
+        # The cache is a FLAT token stream, not [N, seq+1]: tokens_code_rp1t.pt is
+        # torch.Size([7569081553]), one dimension. train.py:1468 reshapes it with
+        # data[: n * (seq+1)].view(-1, seq+1), so rows = len // (seq+1). Reading
+        # .shape[0] as a row count gave pools ~4000x too large and every epoch figure
+        # as 0.00 -- and since the pool feeds the CAP, a capped domain would have been
+        # silently reconstructed as uncapped.
+        stream = torch.load(cache, map_location="cpu", weights_only=False, mmap=True)
+        n = stream.shape[0] // (seq + 1) if stream.dim() == 1 else stream.shape[0]
         n_val = min(max(1, int(n * cfg.get("val_frac", 0.01))), cfg.get("val_rows_max", 2000))
         pool_rows[name] = n - n_val
 
