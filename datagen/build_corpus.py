@@ -292,19 +292,19 @@ class ShardWriter:
 
 def _clean_piece(piece):
     """One worker's slice: (file specs, filters name, out dir, shard prefix,
-    rgmod, rgidx). Per-worker exact dedup + shards prefixed with the worker id so
-    no two workers write the same file. Returns kept/docs/chars/reasons (the
-    global near-dup + holdout + stamp run in the parent over the completed
-    shards)."""
-    files, fname, out, prefix, rgmod, rgidx = piece
+    rgmod, rgidx, cache_dir, dry). Per-worker exact dedup + shards prefixed
+    with the worker id so no two workers write the same file. Returns
+    kept/docs/chars/reasons (the global near-dedup + holdout + stamp run in
+    the parent over the completed shards)."""
+    files, fname, out, prefix, rgmod, rgidx, cache_dir, dry = piece
     reject = reject_light if fname == "light" else reject_reason
     exact = set()
     os.makedirs(out, exist_ok=True)
-    w = ShardWriter(out, prefix)
+    w = None if dry else ShardWriter(out, prefix)
     reasons = Counter()
     kept = docs = kept_chars = 0
     for spec in files:
-        for text, url, src in iter_source(spec, _CACHE, rgmod, rgidx):
+        for text, url, src in iter_source(spec, cache_dir, rgmod, rgidx):
             text = SPECIAL_TOKEN.sub("", text).strip()
             docs += 1
             why = reject(text)
@@ -318,8 +318,10 @@ def _clean_piece(piece):
             if not why:
                 kept += 1
                 kept_chars += len(text)
-                w.write({"content": text, "source": src, "url": url})
-    w.close()
+                if w is not None:
+                    w.write({"content": text, "source": src, "url": url})
+    if w is not None:
+        w.close()
     return {"kept": kept, "docs": docs, "kept_chars": kept_chars, "reasons": dict(reasons)}
 
 
@@ -327,20 +329,29 @@ _CACHE = os.path.join(ROOT, "data", "raw")
 
 
 def _worker_pieces(a):
-    """: source specs -> list of per-worker slices (disjoint FILE ranges)."""
+    """: source specs -> list of per-worker slices (disjoint FILE ranges).
+    Glob specs (jsonl:/parquet:) expand to their files; a named SOURCES spec
+    goes to one worker whole (its files are downloaded one at a time and
+    deleted, so two workers on one source would fight over the cache)."""
     import glob as _g
 
     specs = []
     for sp in a.source:
         if sp.startswith("jsonl:"):
-            specs += sorted(_g.glob(sp[len("jsonl:"):]))
+            specs += [f"jsonl:{p}" for p in sorted(_g.glob(sp[len("jsonl:"):]))]
+        elif sp.startswith("parquet:"):
+            specs += [f"parquet:{p}" for p in sorted(_g.glob(sp[len("parquet:"):]))]
         else:
             specs.append(sp)
     N = a.workers
     slices = [[] for _ in range(N)]
     for i, sp in enumerate(specs):
         slices[i % N].append(sp)
-    return [(s, a.filters, a.out, f"w{i}_", a.rg_mod, a.rg_idx) for i, s in enumerate(slices) if s]
+    return [
+        (s, a.filters, a.out, f"w{i}_", a.rg_mod, a.rg_idx, a.cache_dir, a.dry)
+        for i, s in enumerate(slices)
+        if s
+    ]
 
 
 def _global_pass(a):
@@ -350,18 +361,34 @@ def _global_pass(a):
     filters_fp stamp over verified files."""
     import multiprocessing as mp
 
+    # A previous run's leftovers would be read as this run's output. Wipe is the
+    # operator's step (fb spec); the guard makes a missed wipe loud.
+    import glob as _g
+
+    stale = _g.glob(f"{a.out}/w*_*.jsonl") + _g.glob(f"{a.out}/w*_*.part")
+    if stale:
+        raise SystemExit(f"REFUSE: {len(stale)} worker shard(s) from a previous run in {a.out} -- wipe first")
+    old = _g.glob(f"{a.out}/{a.domain}_*.jsonl")
+    if old:
+        raise SystemExit(f"REFUSE: {len(old)} '{a.domain}' shard(s) already in {a.out} -- wipe first")
     pieces = _worker_pieces(a)
     with mp.Pool(a.workers) as pool:
         res = pool.map(_clean_piece, pieces)
-    reasons = Counter(); kept_chars = 0; docn = 0
+    reasons = Counter()
     for r in res:
-        reasons.update(r["reasons"]); kept_chars += r["kept_chars"]; docn += r["docs"]
+        reasons.update(r["reasons"])
+    total = sum(reasons.values()) or 1
+    if a.dry:
+        print(f"docs in {total} | kept {reasons['kept']} ({reasons['kept']/total:.1%}) [dry, workers={a.workers}]")
+        for why, n in reasons.most_common():
+            if why != "kept":
+                print(f"  {why:18s} {n:9d}  {n/total:.1%}")
+        return 0
     # global near-dedup + holdout over the kept shards (cross-worker dups)
     near = MinHashLSH(perms=128, bands=16)
     seen_exact = set()
-    kept = 0
+    kept = kept_chars = 0
     w = ShardWriter(a.out, a.domain)
-    import glob as _g
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     for p in paths:
         with open(p, encoding="utf-8") as f:
@@ -386,40 +413,44 @@ def _global_pass(a):
                     continue
                 seen_exact.add(k)
                 kept += 1
+                kept_chars += len(t)
                 w.write(d)
     w.close()
     # drop the worker-id shards (superseded by the merged rewrite)
     for p in paths:
         os.remove(p)
+    nshards = len(_g.glob(f"{a.out}/{a.domain}_*.jsonl"))
     total = sum(reasons.values()) or 1
     print(f"docs in {total} | kept {kept} ({kept/total:.1%}) | ~{kept_chars/CHARS_PER_TOKEN/1e9:.2f}B tok")
     for why, n in reasons.most_common():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n/total:.1%}")
-    if not a.dry:
-        _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, len(paths))
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
     return 0
 
 
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+    from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
         "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
         "filters": a.filters, "workers": a.workers, "n_shards": nshards,
+        # One stamp over the verified shards: what produced them (filters) and
+        # what they contain (dir). A domain without fingerprint fails the
+        # mix-domain guard at training start.
+        "filters_fp": _fp_filters(),
+        "fingerprint": _fp_dir(out),
     }
-    try:
-        from corpus_fingerprint import fp_filters as _fp
-        stats["filters_fp"] = _fp()
-        stats["fingerprint"] = _fp()
-    except Exception:
-        pass
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
 
 
 def _run_workers(a, target_chars):
-    if a.source[0].startswith("jsonl:"):
-        raise SystemExit("parallel clean expects non-wildcard per-file sources; --workers is for the 30B clean")
     return _global_pass(a)
 
 
@@ -497,6 +528,14 @@ def main():
                 exact.add(exact_key(text))
         print(f"exclude {pat}: dedup set +{len(exact) - n0} docs", flush=True)
     if a.workers > 1:
+        # Loud refusals: a silently ignored flag here is a kept-set divergence
+        # from the single-worker run that nothing reports.
+        if a.limit:
+            raise SystemExit("--limit is global-docs-seen; not supported with --workers (per-worker would change the kept set)")
+        if a.exclude:
+            raise SystemExit("--exclude is single-worker only; per-worker exclude seeding is not implemented")
+        if a.rg_mod:
+            raise SystemExit("--rg_mod and --workers are two parallelisms; pick one")
         return _run_workers(a, target_chars)
     kept_chars = seen = 0
     writers = {}
