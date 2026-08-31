@@ -953,6 +953,22 @@
       },
       "uncertainty": "reservoir 10k/class; coverage SE ~0.005 at p=0.5",
       "status": "measured"
+    },
+    {
+      "id": "mlm.ratio.30b_measured",
+      "value": "unmeasured: the 30B mix's zh:en content-language split, to be measured on stamped shards per domain as they land",
+      "measured": "2026-08-31",
+      "source": "fb ruling 2026-08-31 (t30); docs/lessons/scale_36b_plan.md section 1; data/mix_30b.json",
+      "config": {
+        "method": "44's t24 audit emits the per-domain language fraction as each domain is stamped; the number is written when it exists, never estimated",
+        "why_not_source_name": "math_owm/cot/textbook_30b carry Chinese sources, so the source-name split (~85:15 en:zh) is not the content-language split",
+        "supersedes": "the plan's earlier 35:65 prose (a rough estimate) and any source-name accounting"
+      },
+      "uncertainty": null,
+      "status": "unmeasured",
+      "claim": "the 30B mix's zh:en content-language split is measured on stamped shards, per domain",
+      "audit": "t24 audit pending; no per-domain language fraction exists yet (no 30B domain is stamped)",
+      "refuted_by": "t24 audit output as domains land"
     }
   ]
 }
