@@ -169,12 +169,20 @@ def write_manifest_index(root=ROOT):
             parts = line.split("  ", 2)
             if len(parts) >= 2:
                 head[parts[1]] = parts[0]
+    # Staged paths, PLUS any whose HEAD sha already disagrees with the cached row. The
+    # cache reused HEAD's entry for anything not staged, which is right for a normal
+    # commit and wrong after a MERGE: a merge changes files with nothing in the index,
+    # so a stale row survived every regeneration. facts/efficiency.json then held a sha
+    # from before 04bb05d while --write-index reported zero diff and --check-head kept
+    # refusing -- the staleness test and the fix it prescribed disagreed, and the fix
+    # was the wrong one (fb, 2026-09-01).
     changed = set(
         subprocess.run(
             ["git", "diff", "--cached", "--name-only", "HEAD"], cwd=root,
             capture_output=True, text=True,
         ).stdout.split()
     )
+    changed |= {p for p in head if sha_head(root, p) not in (None, head[p])}
     lines = []
     for p in scoped_paths(root):
         if p in changed or p not in head:
