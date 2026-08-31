@@ -2451,8 +2451,8 @@ def cmd_task(argv):
     in a conversation -- a conversation gets compacted and the assignment goes with it.
 
       harness task add  --owner b0 --task "..." --why "..." [--reading "..."] [--blocked-on t03]
-      harness task done t07 --evidence "runs/l1_p324_d0.log: 0-shot answer-present 41.2%"
-      harness task reopen t07 --why "pack half landed; v4 run still open"
+      harness task done b0-1 --evidence "runs/l1_p324_d0.log: 0-shot answer-present 41.2%"
+      harness task reopen b0-1 --why "pack half landed; v4 run still open"
       harness task list [--all]
 
     `done` REQUIRES evidence, and the check enforces it: a task closed without an artifact
@@ -2481,9 +2481,13 @@ def cmd_task(argv):
     rows = _read_tasks()
 
     if args.op == "add":
-        n = max([int(r["id"][1:]) for r in rows if re.fullmatch(r"t\d+", r.get("id", ""))] or [0]) + 1
+        # Owner-scoped ids: a global max+1 collides when two branches allocate
+        # concurrently and the union merge keeps both (t52 twice, 2026-08-31).
+        # <owner>-<n> is collision-free across branches; existing t-ids stay.
+        n = max([int(r["id"].split("-", 1)[1]) for r in rows
+                 if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))] or [0]) + 1
         row = {
-            "id": f"t{n:02d}",
+            "id": f"{args.owner}-{n}",
             "owner": args.owner,
             "state": "open",
             "task": args.task,
@@ -2577,6 +2581,10 @@ def check_tasks_well_formed(root):
     if not rows:
         return SKIP, "no task register"
     bad = []
+    ids = [r.get("id") for r in rows]
+    dups = sorted({i for i in ids if i and ids.count(i) > 1})
+    if dups:
+        bad.append(f"duplicate task id: {', '.join(dups)}")
     for r in rows:
         if r.get("state") == "done" and not (r.get("evidence") or "").strip():
             bad.append(f"{r.get('id')} done without evidence")
