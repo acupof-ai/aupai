@@ -2431,11 +2431,37 @@ def _broken_env():
 TASKS_PATH = os.path.join(ROOT, "runs", "tasks.jsonl")
 
 
-def _read_tasks(path=None):
+def _read_tasks(path=None, raw=False):
+    """The register, folded by id: last row for an id wins.
+
+    The file is an EVENT LOG, not a table. `task done`/`reopen` append a new row
+    carrying the same id and the new state instead of rewriting the old one,
+    because runs/*.jsonl merges by union: when two branches rewrite the same row,
+    union keeps BOTH and the register grows a duplicate id (2026-08-31, t39 and
+    t40 -- an open row and a done row for each, and tasks_well_formed failed the
+    merge). Appends from different branches union cleanly and fold to the same
+    state whichever order they land in.
+
+    raw=True returns every event, for the checks that must see collisions.
+    """
     p = path or TASKS_PATH
     if not os.path.exists(p):
         return []
-    return [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
+    rows = [json.loads(line) for line in open(p, encoding="utf-8") if line.strip()]
+    if raw:
+        return rows
+    folded = {}
+    for r in rows:
+        folded[r.get("id")] = r  # dict preserves first-insertion order; the value is the last event
+    return list(folded.values())
+
+
+def _append_task(row, path=None):
+    """One event. Append, never rewrite: see _read_tasks."""
+    p = path or TASKS_PATH
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def _write_tasks(rows, path=None):
@@ -2500,7 +2526,7 @@ def cmd_task(argv):
             "opened": time.strftime("%Y-%m-%d %H:%M"),
             "evidence": None,
         }
-        _write_tasks(rows + [row])
+        _append_task(row)
         print(f"{row['id']} -> {args.owner}: {args.task[:70]}")
         return 0
 
@@ -2509,8 +2535,9 @@ def cmd_task(argv):
         if not hit:
             print(f"no task {args.id}; `harness task list` shows what is open")
             return 1
-        hit[0].update(state="done", evidence=args.evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
-        _write_tasks(rows)
+        # Append the new state as an event; never rewrite the row (see _read_tasks).
+        ev = dict(hit[0], state="done", evidence=args.evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+        _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
 
@@ -2522,15 +2549,15 @@ def cmd_task(argv):
         if hit[0].get("state") != "done":
             print(f"{args.id} is {hit[0].get('state')}, not done -- only done tasks can reopen")
             return 1
-        prior = hit[0].get("evidence", "")
-        hit[0].update(
+        ev = dict(
+            hit[0],
             state="open",
             reopen_reason=args.why,
             reopened=time.strftime("%Y-%m-%d %H:%M"),
-            evidence=prior,  # keep prior evidence; the check accepts open+evidence
+            evidence=hit[0].get("evidence", ""),  # keep prior evidence; the check accepts open+evidence
         )
-        hit[0].pop("closed", None)
-        _write_tasks(rows)
+        ev.pop("closed", None)
+        _append_task(ev)
         print(f"{args.id} reopened: {args.why[:80]}")
         return 0
 
@@ -2584,10 +2611,16 @@ def check_tasks_well_formed(root):
     if not rows:
         return SKIP, "no task register"
     bad = []
-    ids = [r.get("id") for r in rows]
-    dups = sorted({i for i in ids if i and ids.count(i) > 1})
-    if dups:
-        bad.append(f"duplicate task id: {', '.join(dups)}")
+    # The register is an event log: repeated ids are state changes, not duplicates.
+    # A real collision is two rows sharing an id but naming DIFFERENT tasks -- two
+    # branches allocating the same id independently (t52 twice, 2026-08-31). `opened`
+    # is the discriminator: one task is opened once, whatever its later events.
+    opened_by_id = {}
+    for r in _read_tasks(os.path.join(root, "runs", "tasks.jsonl"), raw=True):
+        opened_by_id.setdefault(r.get("id"), set()).add(r.get("opened"))
+    collisions = sorted(i for i, o in opened_by_id.items() if len(o) > 1)
+    if collisions:
+        bad.append(f"id collision (same id, different tasks): {', '.join(collisions)}")
     for r in rows:
         if r.get("state") == "done" and not (r.get("evidence") or "").strip():
             bad.append(f"{r.get('id')} done without evidence")
@@ -2602,15 +2635,17 @@ def check_tasks_well_formed(root):
 
 
 def _broken_tasks_well_formed():
-    """The REAL register with one id duplicated -- the union-merge defect (t52 twice,
-    2026-08-31: two branches allocated max+1 independently, the merge kept both)."""
+    """The REAL register with a genuine id collision: the first row's id reused by a
+    DIFFERENT task (different `opened`), which is what two branches allocating max+1
+    independently produce (t52 twice, 2026-08-31). An exact duplicate would not do --
+    that is a legal state-change event under the event-log semantics."""
     d = _tmp_repo()
     p = os.path.join(d, "runs", "tasks.jsonl")
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    rows = _read_tasks()
+    rows = _read_tasks(raw=True)
     if not rows:  # nothing real to mutate; the check SKIPs and the selftest would be a fiction
         return None
-    rows = rows + [dict(rows[0])]  # exact duplicate of the first row's id
+    rows = rows + [dict(rows[0], opened="2020-01-01 00:00", task="a different task, same id")]
     _write_tasks(rows, p)
     return d
 
@@ -3725,6 +3760,47 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_register_union():
+    """fb's case: two branches each close a DIFFERENT row, the files union-merge,
+    and the result reads as both closed with no duplicate complaint.
+
+    Union merge concatenates; that is only safe because done APPENDS an event
+    rather than rewriting the row. This asserts the property directly on a
+    concatenated file, which is what .gitattributes produces."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="register_")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    p = os.path.join(d, "runs", "tasks.jsonl")
+    base = [
+        {"id": "de-1", "owner": "de", "state": "open", "task": "A", "why": "w", "opened": "2026-08-31 10:00"},
+        {"id": "b0-1", "owner": "b0", "state": "open", "task": "B", "why": "w", "opened": "2026-08-31 10:01"},
+    ]
+    # Two branches, each appending one close event to its own copy.
+    side_de = dict(base[0], state="done", evidence="runs/a.log", closed="2026-08-31 11:00")
+    side_b0 = dict(base[1], state="done", evidence="runs/b.log", closed="2026-08-31 11:05")
+    _write_tasks(base + [side_de] + [side_b0], p)  # the union of both branches
+
+    folded = {r["id"]: r for r in _read_tasks(p)}
+    assert folded["de-1"]["state"] == "done", f"de-1 must fold to done: {folded['de-1']}"
+    assert folded["b0-1"]["state"] == "done", f"b0-1 must fold to done: {folded['b0-1']}"
+    assert folded["de-1"]["evidence"] == "runs/a.log"
+    assert folded["b0-1"]["evidence"] == "runs/b.log"
+    assert len(_read_tasks(p)) == 2, "folded view holds one row per id"
+    assert len(_read_tasks(p, raw=True)) == 4, "raw view holds every event"
+
+    state, evidence = check_tasks_well_formed(d)
+    assert state == PASS, f"union-merged register must PASS, got {state}: {evidence}"
+
+    # A real collision -- same id, a different task -- must still FAIL.
+    _write_tasks(base + [side_de, side_b0, dict(base[0], task="C", opened="2026-08-30 09:00")], p)
+    state, evidence = check_tasks_well_formed(d)
+    assert state == FAIL and "collision" in evidence, f"a real id collision must FAIL: {state} {evidence}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  register: union-merged closes fold to done; a same-id different-task row still FAILs")
+
+
 def _selftest_auto_resume():
     """de-1's three cases, on real child processes: a crash after a .step save is
     resumed once, a clean exit is not, the kill-criterion code is not.
@@ -3764,7 +3840,7 @@ def _selftest_auto_resume():
         with open(log, "w") as lf:
             proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, cwd=d)
-        out = _supervise(_A(), cmd, proc, "", log, os.path.join(d, "runs", "arts.pid"))
+        out = _supervise(_A(), cmd, proc, "", log, os.path.join(d, "runs", "arts.pid"), root=d)
         resumed = os.path.join(d, "resumed.txt")
         return out, (open(resumed).read() if os.path.exists(resumed) else "")
 
@@ -4132,6 +4208,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_register_union()
     _selftest_auto_resume()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
@@ -5036,30 +5113,33 @@ def _latest_step_ckpt(name):
     return best, best_step
 
 
-def _supervise(args, cmd, proc, cards, log_path, pid_path):
-    """Wait on a launched job; on a crash relaunch it with --resume, up to N times."""
+def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None):
+    """Wait on a launched job; on a crash relaunch it with --resume, up to N times.
+
+    `root` redirects the exp row and suppresses the monitor: the selftest must not
+    write into the real ledger (see _close_row)."""
     resumes = []
     for attempt in range(args.auto_resume + 1):
         rc = proc.wait()
         if rc == 0:
             _close_row(args.name, "ok", f"exited 0 after {len(resumes)} resume(s)",
-                       "clean exit", "none")
+                       "clean exit", "none", root)
             return 0
         if rc == _KILL_CRITERION_EXIT:
             _close_row(args.name, "fail", f"kill criterion (exit {rc}) after {len(resumes)} resume(s)",
                        "deliberate stop: NaN or kill criterion, not a crash",
-                       "diagnose the stop; auto-resume does not relaunch it")
+                       "diagnose the stop; auto-resume does not relaunch it", root)
             return rc
         if attempt == args.auto_resume:
             _close_row(args.name, "fail", f"exit {rc}, auto-resume exhausted ({args.auto_resume})",
                        f"crashed {len(resumes) + 1} times; resumed at steps {resumes}",
-                       "investigate the crash before relaunching")
+                       "investigate the crash before relaunching", root)
             return rc
         ckpt, step = _latest_step_ckpt(args.name)
         if ckpt is None:
             _close_row(args.name, "fail", f"exit {rc}, no step checkpoint to resume from",
                        "crashed before the first --save_every save",
-                       "relaunch from scratch")
+                       "relaunch from scratch", root)
             return rc
         # The env fingerprint is part of what the checkpoint was trained under. A
         # changed environment makes a resume a different run wearing the same name.
@@ -5068,7 +5148,7 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path):
         if fp_now and fp_ckpt and fp_now != fp_ckpt:
             _close_row(args.name, "fail", f"exit {rc}, REFUSING resume: env fingerprint changed",
                        f"checkpoint {fp_ckpt} vs current {fp_now}",
-                       "resume by hand after deciding the environment change is safe")
+                       "resume by hand after deciding the environment change is safe", root)
             print(f"REFUSING resume: env fingerprint {fp_ckpt} -> {fp_now}", file=sys.stderr)
             return rc
         print(f"auto-resume {attempt + 1}/{args.auto_resume}: exit {rc}, resuming from step {step} in 60s",
@@ -5089,16 +5169,21 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path):
                                     start_new_session=True)
         with open(pid_path, "w") as f:
             f.write(f"{proc.pid}\n{' '.join(rcmd)}\n")
-        _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
+        if not root:
+            _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
     return 0
 
 
-def _close_row(name, status, result, finding, decision):
-    subprocess.run(
-        [sys.executable, os.path.join(HERE, "exp.py"), "done", "--name", name,
-         "--result", result, "--finding", finding, "--decision", decision, "--status", status],
-        capture_output=True,
-    )
+def _close_row(name, status, result, finding, decision, root=None):
+    """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
+    override (the ledger gets no env var), so a test that cannot redirect it writes
+    into the real ledger -- which is exactly what happened (four 'arts' rows,
+    2026-08-31, one pair sharing an identity that then failed the sync guard)."""
+    cmd = [sys.executable, os.path.join(HERE, "exp.py"), "done", "--name", name,
+           "--result", result, "--finding", finding, "--decision", decision, "--status", status]
+    if root:
+        cmd += ["--root", root]
+    subprocess.run(cmd, capture_output=True)
 
 
 def _env_fp_now():
