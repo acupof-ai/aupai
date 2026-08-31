@@ -51,8 +51,13 @@ else
   EXTRA="--warmdown $WARMDOWN --resume $RESUME"
 fi
 
+# --seed 42, not 0. train.py:1733 applies flags with `if hasattr(Cfg,k) and v` and 0 is
+# falsy, so the --seed 0 this script used to pass was dropped and Cfg.seed kept its default
+# 42. Stage 1 ran under 42 (b0 audit 2026-08-31); stage 2 states it so the two stages share
+# one documented seed and the value in the command is the value in effect. de fixes the
+# apply after stage 1 ends; until then no flag whose valid value is 0 or "" can be trusted.
 FLAGS="--mix $MIX --seq 4096 --warmup 300 --save_every 500 --attn_res_blocks 0 --attn_every 4 \
---batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 0 $EXTRA --name $NAME"
+--batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 42 $EXTRA --name $NAME"
 
 # Readiness: the mix contract + nothing still _blocked, read from THIS stage's own mix so
 # the line a person reads at launch names the mix being launched (not always mix_30b.json).
