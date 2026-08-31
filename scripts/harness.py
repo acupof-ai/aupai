@@ -3820,6 +3820,23 @@ def _demo():
     )
     assert r.stdout.strip() == "1", f"child must see PYTHONUNBUFFERED=1, got {r.stdout.strip()!r}"
 
+    # 30B readiness: a world with one _blocked domain must return NOT READY naming it.
+    d30 = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d30, "data"), exist_ok=True)
+    os.makedirs(os.path.join(d30, "runs"), exist_ok=True)
+    json.dump(
+        {"total_tokens": 30e9, "domains": {},
+         "_blocked": {"code_rp1t": {"weight": 1.0, "epochs": 1, "anneal": 1.0}}},
+        open(os.path.join(d30, "data", "mix_30b.json"), "w"),
+    )
+    open(os.path.join(d30, "runs", "tasks.jsonl"), "w").close()  # empty JSONL
+    ready, gates = _30b_readiness(d30)
+    assert not ready, "a blocked domain must make readiness NOT READY"
+    blocked_gate = [g for g in gates if g[0] == "mix_30b blocked"]
+    assert blocked_gate and blocked_gate[0][1] == FAIL, f"must have a FAIL mix_30b blocked gate: {gates}"
+    assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
+    shutil.rmtree(d30, ignore_errors=True)
+
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
 
@@ -4461,6 +4478,22 @@ def _allocation_cards(training):
     return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
 
 
+def _lane_occupant(card):
+    """PID of a process using the given GPU card, or None. Uses nvidia-smi on
+    the pod; returns None on machines without GPUs."""
+    try:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader",
+             f"--id={card}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().split("\n")[0].strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -4567,7 +4600,28 @@ def cmd_launch(rest):
     )
 
     # 2. Card allocation from the controller's config
-    cards = _allocation_cards(args.training)
+    if args.no_gpu:
+        cards = ""
+    else:
+        cards = _allocation_cards(args.training)
+
+    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
+    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
+    if not args.training and not args.no_gpu and cards:
+        lane_card = cards.split(",")[0].strip()
+        occupant = _lane_occupant(lane_card)
+        if occupant:
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py"),
+                 "done", "--name", args.name,
+                 "--result", f"refused: lane GPU {lane_card} occupied by pid {occupant}",
+                 "--finding", f"lane card {lane_card} has a running process (pid {occupant})",
+                 "--decision", "wait for the lane to free, or use --no-gpu for corpus jobs",
+                 "--status", "fail"],
+                capture_output=True,
+            )
+            print(f"REFUSED: {args.name} — lane GPU {lane_card} occupied by pid {occupant}", file=sys.stderr)
+            return 1
 
     # 2b. Training jobs: verify training-scope drift before launch.
     # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
@@ -4598,6 +4652,8 @@ def cmd_launch(rest):
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cards
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
+    if args.training and cards:
+        env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
 
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
