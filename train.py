@@ -1196,6 +1196,16 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         ck["opt"] = opt
     if step is not None:
         ck["step"] = step
+    # The row cursor: how many rows of each domain's pool the plan has consumed, and the
+    # corpus fingerprint each count is measured against. Stage 2 builds a NEW plan from
+    # its own mix, so without this every domain restarts at row 0 and the tail is never
+    # read. Top-level, not inside cfg -- the cfg dict strips _-prefixed keys, and a
+    # cursor is state, not configuration (de-7).
+    cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
+    fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
+    if cur:
+        ck["row_cursor"] = dict(cur)
+        ck["row_cursor_srcfp"] = dict(fps or {})
     torch.save(ck, path)
 
 
@@ -1588,7 +1598,7 @@ def _selftest_mix_guard():
 _selftest_mix_guard()
 
 
-def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
+def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None, cursor_srcfp=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
     {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}};
     weight = share of the main phase, anneal = share of the last Cfg.anneal_frac tokens.
@@ -1613,7 +1623,31 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
         if Cfg.fone:
             vval.append(vseq[:n_val])
             vpools[name] = vseq[n_val:]
+        # Seed the cursor from the checkpoint so a resume under a DIFFERENT mix continues
+        # where stage 1 stopped. Within one run the loop already seeks correctly
+        # (i0 = step * batch * accum into an ordered plan); the break is across mixes,
+        # where a fresh plan restarts every domain at row 0 and leaves the tail unread --
+        # 26% of code_rp1t, 34% of en_c4, 92% of zh_web (b0). A count, not an index:
+        # pools are read modulo their length, so a cursor past one epoch is meaningful.
         used[name] = 0
+        if row_cursor and name in row_cursor:
+            want_fp = (cursor_srcfp or {}).get(name)
+            ddir = os.path.join(DATA, "corpus", name)
+            live_fp = _corpus_fp(ddir) if os.path.isdir(ddir) else None
+            if want_fp and live_fp and want_fp != live_fp:
+                # Per domain, not all-or-nothing: a rebuilt corpus invalidates ITS cursor.
+                # A row count means nothing against different bytes, and silently reusing
+                # it is the failure this guard exists for.
+                if is_main:
+                    print(f"mix: {name} cursor {row_cursor[name]} discarded -- corpus "
+                          f"changed ({want_fp[:8]} -> {live_fp[:8]}), restarting at row 0",
+                          flush=True)
+            else:
+                used[name] = int(row_cursor[name])
+                if is_main:
+                    print(f"mix: {name} resuming at row {used[name]} "
+                          f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
+                          flush=True)
     plan = []
     for frac, key in phases:
         parts = []
@@ -1645,6 +1679,15 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
         print(
             f"mix: {plan.shape[1]} rows = {plan.shape[1] * Cfg.seq / 1e9:.2f}B tokens scheduled", flush=True
         )
+    # The cursor AFTER this plan is consumed, for the checkpoint: what stage 2 seeds from.
+    Cfg._row_cursor = dict(used)
+    # Only domains whose corpus dir is present: a mix can name a domain served from a
+    # cache whose source is not on this box, and an unguarded fingerprint raises there.
+    Cfg._row_cursor_srcfp = {
+        nm: _corpus_fp(os.path.join(DATA, "corpus", nm))
+        for nm in names
+        if os.path.isdir(os.path.join(DATA, "corpus", nm))
+    }
     # Multiple of world, or a rank left a row short gets a different lr and hangs the all-reduce.
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
@@ -1859,7 +1902,28 @@ def main():
             raise RuntimeError("shape_audit FAIL: GEMM-hostile Cfg dimensions, see above")
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
-    tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
+    # The cursor must reach build_mix, which runs BEFORE the checkpoint is loaded at
+    # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
+    # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
+    # minute per rank, and mmap keeps this to the header.
+    _cursor = _cursor_fp = None
+    if args.resume and os.path.exists(args.resume):
+        try:
+            _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
+            _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
+            del _pre
+        except (OSError, RuntimeError, TypeError) as e:
+            if is_main:
+                print(f"resume: could not pre-read the row cursor ({e}); every domain "
+                      f"starts at row 0 -- the tail of each pool stays unread", flush=True)
+    if args.resume and is_main and not _cursor:
+        # A stage-1 checkpoint predates the field. Say so rather than resuming silently
+        # from row 0, which is the bug this exists to fix wearing a resume's clothes.
+        print("resume: checkpoint carries no row_cursor (predates the field). Every "
+              "domain restarts at row 0; reconstruct with scripts/replay_cursor.py if "
+              "the unread tail matters.", flush=True)
+    tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
+                       row_cursor=_cursor, cursor_srcfp=_cursor_fp)
     (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
     seqs, vseqs = seqs.long(), vseqs.long()
     Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
