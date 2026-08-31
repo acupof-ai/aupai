@@ -166,7 +166,7 @@ English is 0.75% of training tokens, not the declared 4.95%, and chinese-cosmope
 over-read. The curve is unaffected — all six points share the composition — so the fix is
 the six `_comment` strings, not any weight (`mlm.corpus.en_domain_is_mostly_chinese`).
 
-The cause is not a mystery and does not need to be recorded as one. `scripts/build_domains.sh:32`
+The cause is not a mystery and does not need to be recorded as one. `datagen/build_domains.sh:32`
 builds the domain from two sources in one command:
 
 ```
@@ -175,7 +175,7 @@ has en && "${BC[@]}" --domain en --filters light --target_tokens 1e9 --no_near_d
   --source jsonl:data/en_textbook.jsonl
 ```
 
-`scripts/rebuild_corpus.sh:37` repeats it. So `en` never meant "English" — it meant "the
+`datagen/rebuild_corpus.sh:37` repeats it. So `en` never meant "English" — it meant "the
 domain holding these two files", and the larger of the two is Chinese. The name was read as
 a language label by everyone downstream, including the mix `_comment`. Nothing was
 misfiled; a directory name was trusted as a content claim. The general form is already a
@@ -1023,7 +1023,7 @@ A review reports what it *ran*, not what it read.
   field was the tail of a generation whose front held correct code (162/500 rows sat at
   the cap). The scorer was sound (execution match on the full generation); the artifact
   could not show it. Fixed: preds carry the full generation and the expected output, and
-  `scripts/rescore_code.py` reproduces the accuracy from the file alone (t28). Rule: **a
+  `datagen/rescore_code.py` reproduces the accuracy from the file alone (t28). Rule: **a
   score's artifact must be sufficient to recompute the score; otherwise it is a log.**
 - **A frozen corpus directory had a live writer, and the gate saw it three times.** A
   `build_corpus.py --domain code --filters light` process (started 11:55 for the new

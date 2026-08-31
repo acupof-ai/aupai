@@ -45,7 +45,7 @@ FATE = {
     "scripts/short_conv_bench.py": "DELETE",
     "scripts/train_vocab_variants.py": "DELETE",
     "scripts/reachability.py": "KEEP (add to AGENTS.md entry-point table)",
-    "scripts/count_cleaned_code.py": "KEEP (add to AGENTS.md entry-point table)",
+    "datagen/count_cleaned_code.py": "KEEP (add to AGENTS.md entry-point table)",
     "algorithms/test_rlvr_reward_suite.py": "KEEP (add to CI)",
     "mathbank/vet_programs.py": "KEEP (cite in corpus entry-point row)",
     "scripts/ckpt_info.py": "KEEP (AGENTS.md row — ops tool)",

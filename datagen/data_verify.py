@@ -16,9 +16,9 @@ Severity is tier-driven:
                     recorded so bootstrap knows what it rebuilds.
 
 Usage:
-  python scripts/data_verify.py                 # from repo root
-  python scripts/data_verify.py --scan          # also list data/ files not in manifest
-  python scripts/data_verify.py --missing-only  # report just the MISSING set (bootstrap)
+  python datagen/data_verify.py                 # from repo root
+  python datagen/data_verify.py --scan          # also list data/ files not in manifest
+  python datagen/data_verify.py --missing-only  # report just the MISSING set (bootstrap)
 """
 
 import argparse

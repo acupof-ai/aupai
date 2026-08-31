@@ -12,8 +12,8 @@ Merge mode (default): combine the 4 local files -> data/sft/sft_all_v2.jsonl,
 schema {instruction, output}, shuffled with seed 42.
 
 Usage:
-  python3 scripts/fetch_sft_data.py fetch
-  python3 scripts/fetch_sft_data.py [--max_samples 20000] [--output data/sft/sft_all_v2.jsonl]
+  python3 datagen/fetch_sft_data.py fetch
+  python3 datagen/fetch_sft_data.py [--max_samples 20000] [--output data/sft/sft_all_v2.jsonl]
 """
 
 import json, os, random, re, sys

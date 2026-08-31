@@ -13,8 +13,8 @@ same-size edits, which mtime-only missed: a same-size rewrite almost necessarily
 moves the head or the tail. Cost stays O(shards): 128KB read per shard,
 milliseconds per domain on 108GB.
 
-    python scripts/corpus_fingerprint.py [mix.json]   # print {domain: fp} for a mix
-    python scripts/corpus_fingerprint.py --self-check # mutate/utime/parity on a real shard
+    python datagen/corpus_fingerprint.py [mix.json]   # print {domain: fp} for a mix
+    python datagen/corpus_fingerprint.py --self-check # mutate/utime/parity on a real shard
 
 build_corpus.py stamps the fingerprint into build_corpus_stats.json at build time;
 harness check corpus_fp_matches compares that stamp to the live directory.

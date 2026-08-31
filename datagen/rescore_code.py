@@ -8,8 +8,8 @@ re-scorer over the file could reproduce the number (t28). This script is that
 re-scorer: it extracts and executes exactly as eval/code_zh.py does, and reports
 whether the file's ok count reproduces. Exit 0 on reproduction, 1 otherwise.
 
-    python scripts/rescore_code.py data/eval/preds_code_ckpt_sft_p324_v3.pt.jsonl
-    python scripts/rescore_code.py --selftest
+    python datagen/rescore_code.py data/eval/preds_code_ckpt_sft_p324_v3.pt.jsonl
+    python datagen/rescore_code.py --selftest
 """
 
 import json

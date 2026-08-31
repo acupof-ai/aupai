@@ -11,7 +11,7 @@ must not be edited. They are pinned here by checksum instead.
 | `data/synthetic/math_hard_eval_1k.jsonl` | 1032 | Synthetic hard-math eval (mathbank), the `eval_hard.sh` metric of record. |
 
 Both carry `instruction` (+ `output`, and `level`/`answer` for the hard set). All 1532
-questions feed `scripts/holdout.py` -> `data/eval/holdout_hashes.txt`.
+questions feed `datagen/holdout.py` -> `data/eval/holdout_hashes.txt`.
 
 ## Integrity
 
@@ -24,5 +24,5 @@ shasum -a 256 -c <<'SUMS'
 SUMS
 ```
 
-If either sum changes, the split changed: re-run `python scripts/holdout.py` and treat every
+If either sum changes, the split changed: re-run `python datagen/holdout.py` and treat every
 accuracy reported before the change as measured against a different holdout.

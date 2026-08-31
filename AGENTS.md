@@ -81,7 +81,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
 | Reachability | `python scripts/reachability.py` — which scripts are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
-| Count cleaned code | `python scripts/count_cleaned_code.py` — token counts over cleaned corpus domains |
+| Count cleaned code | `python datagen/count_cleaned_code.py` — token counts over cleaned corpus domains |
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
 | Lambda probes | `python eval/assemble_lambda_probe.py` / `python eval/validate_lambda_probe.py` — t05 lambda-curriculum probes (3b, deprioritised but live) |
@@ -206,7 +206,7 @@ One distinction decides the mix weight: **anchored rephrasing** vs **from-scratc
 
 ### Numbers — `--fone`
 
-BPE splits numbers by frequency, not place value (1640 → `16|40`). FoNE gives each number one `[NUM]` token carrying a Fourier value, scored ten-way per digit. `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees with the pack raises. `probes/fone_digit_acc.py --ckpt X` scores the digit head. Failure mode: multiple answer formats on identical prompts leave termination underdetermined — one format per prompt.
+BPE splits numbers by frequency, not place value (1640 → `16|40`). FoNE gives each number one `[NUM]` token carrying a Fourier value, scored ten-way per digit. `--fone` changes the data format everywhere: pack with `datagen/prepare_sft_math.py --fone`; a checkpoint whose flag disagrees with the pack raises. `probes/fone_digit_acc.py --ckpt X` scores the digit head. Failure mode: multiple answer formats on identical prompts leave termination underdetermined — one format per prompt.
 
 ### Vocabulary identity
 

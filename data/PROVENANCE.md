@@ -1,6 +1,6 @@
 # Data Provenance — raw pretrain sources
 
-Raw jsonl sources consumed by `scripts/build_domains.sh`. Frozen files are the
+Raw jsonl sources consumed by `datagen/build_domains.sh`. Frozen files are the
 single source of truth: **verify, don't re-download** — re-fetching introduces
 distribution drift and a fresh contamination risk against the eval holdout.
 
@@ -29,9 +29,9 @@ replaces the frozen copy.
 
 | file | domain | sha256 | rows | producer |
 |---|---|---|---|---|
-| alpaca_gpt4_zh.jsonl | chat | 93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d | 52,049 | scripts/fetch_chat_data.py (HuggingFaceH4/alpaca_gpt4_data_zh, sha-verified) |
-| coig.jsonl | chat | cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6 | 163,443 | scripts/fetch_chat_data.py (BAAI/COIG instructions config; normalizer TBD — diff raw dump vs frozen file on first fetch) |
-| school_math_r1_zh.jsonl | math | c8f6a7cce2e4c0b76711919a99767aa435a5ce6b509da722ffcb750d42124834 | 223,423 | scripts/fetch_math_data.py belle branch (pod sha identical, verified 2026-08-27; known 3.6% tail_answer gold bug, see docs/lessons/review_2026-08-26.md #2) |
+| alpaca_gpt4_zh.jsonl | chat | 93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d | 52,049 | datagen/fetch_chat_data.py (HuggingFaceH4/alpaca_gpt4_data_zh, sha-verified) |
+| coig.jsonl | chat | cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6 | 163,443 | datagen/fetch_chat_data.py (BAAI/COIG instructions config; normalizer TBD — diff raw dump vs frozen file on first fetch) |
+| school_math_r1_zh.jsonl | math | c8f6a7cce2e4c0b76711919a99767aa435a5ce6b509da722ffcb750d42124834 | 223,423 | datagen/fetch_math_data.py belle branch (pod sha identical, verified 2026-08-27; known 3.6% tail_answer gold bug, see docs/lessons/review_2026-08-26.md #2) |
 
 ## External SFT-math candidates surveyed 2026-08-28 (short-solution search)
 
@@ -89,7 +89,7 @@ Deleted with it, 708 MB of `data/sft/*.jsonl` intermediates — sft_dedup, sft_m
 sft_mixed_v2, sft_clean, sft_mixed_clean, sft_tagged, sft_expanded, short_all. They
 were stages of the pipeline that produced sft_k4.pt, which measured HARMFUL (k5 base
 51.2% → sft_k5 44.8% on math-500, p=0.043), and every one is regenerable from
-scripts/fetch_sft_data.py plus scripts/make_mixed.py. Kept: the network-sourced
+datagen/fetch_sft_data.py plus datagen/make_mixed.py. Kept: the network-sourced
 downloads (fable5_cot, gsm8k_zh, qwq_mmlu, reasoning, sft_all, sft_all_v2).
 
 In data/rl: rlvr_math_clean.jsonl (a second clean pass differing from rlvr_clean by
@@ -120,7 +120,7 @@ every future batch anyway — that is what made this call cheap to make.
   command above.
 - Synthetic code/knowledge: data/synthetic/{code_python_zh,knowledge_qa_zh}.jsonl
   via datagen/gen_code.py + gen_knowledge2.py (seeded, zero external deps).
-- Eval holdout filter: scripts/holdout.py — every fetcher must exclude it.
+- Eval holdout filter: datagen/holdout.py — every fetcher must exclude it.
 
 ## Eval resolution and the seed trap — measured 2026-08-28
 
@@ -249,7 +249,7 @@ replay are identical, so an eval gap between them is attributable.
 | loss tokens | 12.21M (68.7%) | 13.80M (72.0%) |
 | [NUM] share | 11.32% | 7.54% |
 
-Both packed with `prepare_sft_math.py --fone`, which a FoNE base requires: it has
+Both packed with `datagen/prepare_sft_math.py --fone`, which a FoNE base requires: it has
 only ever seen a number as one [NUM] carrying a Fourier value.
 
 ### 6. Hand sampling: Belle is 38.7% defective, and every automated check passed it
@@ -346,7 +346,7 @@ fall back on.
 ## Domain blocks — mix_scale domains (pod, stamped 2026-08-29, re-stamped 2026-08-30)
 
 Each block is the rebuild contract from docs/standards/corpus_rebuild.md. The
-fingerprint is `scripts/corpus_fingerprint.py`'s value (name+size+sha256 of the
+fingerprint is `datagen/corpus_fingerprint.py`'s value (name+size+sha256 of the
 first/last 64KB of the shards — content-based and transfer-invariant since
 2026-08-30; the former name+size+mtime scheme red on every podput/rsync while
 bytes stayed identical); `harness check` corpus_fp_matches compares it to the
@@ -367,25 +367,25 @@ was recorded — the gap this section exists to close.
 ### en
 
 - Result: fingerprint: 9f37cb35219bb617, 117,532 docs, 811,935,014 bytes
-- Build: `scripts/build_domains.sh` (en): `build_corpus.py --domain en --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/cosmopedia_extra.jsonl --source jsonl:data/en_textbook.jsonl`
+- Build: `datagen/build_domains.sh` (en): `build_corpus.py --domain en --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/cosmopedia_extra.jsonl --source jsonl:data/en_textbook.jsonl`
 - Fetch: frozen files above (sha256 anchors 2026-08-27)
 
 ### math
 
 - Result: fingerprint: e1e86aa0b594c5ed, 74,158 docs, 335,034,730 bytes
-- Build: `scripts/build_domains.sh` (math): school_math_r1_zh + en_math_text at `--target_tokens 8e8`, then synthetic math_short_v* at `--target_tokens 2e8` (near-dedup on the synthetic pass only)
+- Build: `datagen/build_domains.sh` (math): school_math_r1_zh + en_math_text at `--target_tokens 8e8`, then synthetic math_short_v* at `--target_tokens 2e8` (near-dedup on the synthetic pass only)
 - Fetch: frozen files above; math_short_v* generated by `mathbank/run_math_short.py` (see its block)
 
 ### code
 
 - Result: fingerprint: 5bb775eae9029669, 199,976 docs, 232,707,019 bytes
-- Build: `scripts/build_domains.sh` (code): `build_corpus.py --domain code --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/code_filtered.jsonl`
+- Build: `datagen/build_domains.sh` (code): `build_corpus.py --domain code --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/code_filtered.jsonl`
 - Fetch: frozen file above
 
 ### chat
 
 - Result: fingerprint: 080fdd63401b4ff9, 160,414 docs, 163,274,317 bytes
-- Build: `scripts/build_domains.sh` (chat): `build_corpus.py --domain chat --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/coig.jsonl --source jsonl:data/alpaca_gpt4_zh.jsonl`
+- Build: `datagen/build_domains.sh` (chat): `build_corpus.py --domain chat --filters light --target_tokens 1e9 --no_near_dedup --source jsonl:data/coig.jsonl --source jsonl:data/alpaca_gpt4_zh.jsonl`
 - Fetch: frozen files above
 
 ### web_hq

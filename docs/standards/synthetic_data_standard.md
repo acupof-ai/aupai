@@ -48,7 +48,7 @@ from-scratch generation, and `data/mix_scale_3.24b.json` gives it **49.6%** of a
 3. **One source, several styles.** Single-strategy generation shows diminishing returns from
    "lack of stylistic diversity". Measure the distribution over strategies and audiences, and
    n-gram diversity against the source corpus.
-4. **No eval leakage.** `scripts/scan_contamination.py` on every new source, before it enters
+4. **No eval leakage.** `datagen/scan_contamination.py` on every new source, before it enters
    a mix. This is finding #1 of docs/review_2026-08-26.md and it recurs whenever skipped.
 5. **A minority of the mix.** ~30% for rephrased, **under 5% for from-scratch at 200M**.
 6. **The verdict is held-out loss on the OTHER domains.** Ours, not borrowed: a model trained

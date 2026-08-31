@@ -5,8 +5,8 @@ Output format (jsonl, one file per source in data/math/):
   {"instruction": "<problem, zh>", "output": "<short steps>\n答案是：\\boxed{X}", "src": "..."}
 
 Sources are downloaded in parallel (one process each). Run:
-  python scripts/fetch_math_data.py                # all
-  python scripts/fetch_math_data.py ape210k belle  # subset
+  python datagen/fetch_math_data.py                # all
+  python datagen/fetch_math_data.py ape210k belle  # subset
 """
 
 import json

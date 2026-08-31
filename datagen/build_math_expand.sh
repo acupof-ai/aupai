@@ -3,7 +3,7 @@
 # length-filtered, holdout-clean) into data/corpus/math/.
 #   - math_short_v6/v7/v8: fresh-seed mathbank drain (seed + instance-cap; different
 #     seeds -> non-overlapping instruction pools)
-#   - ape210k / math23k / mxode / gsm8k_zh: HF fetch via scripts/fetch_math_data.py
+#   - ape210k / math23k / mxode / gsm8k_zh: HF fetch via datagen/fetch_math_data.py
 #   - math_short_sol_v1: short-solution line from mathbank/run_short_sol.py
 # belle is skipped on purpose: it duplicates school_math_r1_zh already in corpus.
 #
@@ -11,9 +11,9 @@
 #   cd mathbank && python run_math_short.py 200000 ../data/synthetic/math_short_v6.jsonl --seed 20260827
 #   cd mathbank && python run_math_short.py 200000 ../data/synthetic/math_short_v7.jsonl --seed 31337
 #   cd mathbank && python run_math_short.py 200000 ../data/synthetic/math_short_v8.jsonl --seed 999983
-#   python scripts/fetch_math_data.py ape210k math23k mxode gsm8k_zh
+#   python datagen/fetch_math_data.py ape210k math23k mxode gsm8k_zh
 #   python mathbank/run_short_sol.py 12000 data/synthetic/math_short_sol_v1.jsonl --seed 7
-#   bash scripts/build_math_expand.sh
+#   bash datagen/build_math_expand.sh
 
 set -euo pipefail
 cd "$(dirname "$0")/.."

@@ -37,7 +37,7 @@ INST_PATH = os.path.join(ROOT, "data", "rl", "instance_rates.jsonl")
 
 
 def sample(k, seed):
-    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    sys.path.insert(0, os.path.join(ROOT, "datagen"))
     from holdout import is_holdout  # noqa: E402
 
     bank = load_programs()

@@ -48,7 +48,7 @@ worker log before the job counts as started, and arms a monitor:
 ```bash
 python scripts/harness.py launch <name> --training --hypothesis "..." -- ./run_ddp.sh --mix data/mix_scale_0.2b.json --name <name>
 python scripts/harness.py launch <name> -- python3 eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl
-python scripts/harness.py launch <name> -- python3 scripts/fetch_corpus.py --source <src> --target_bytes 27e9
+python scripts/harness.py launch <name> -- python3 datagen/fetch_corpus.py --source <src> --target_bytes 27e9
 ```
 
 SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>`. RL gate: `eval/math_hard.py --ckpt X --k 8 --temperature 0.8`
@@ -75,5 +75,5 @@ pre-registered 30B readout is `docs/lessons/readout_30b_prereg.md` (`eval/readou
 
 BPE splits numbers by frequency (1640 → `16|40`). `--fone` gives each number one `[NUM]`
 token with a Fourier-encoded value and decodes digits ten-way. The flag changes the data
-format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees
+format everywhere: pack with `datagen/prepare_sft_math.py --fone`; a checkpoint whose flag disagrees
 with the pack refuses. `probes/fone_digit_acc.py --ckpt X` scores the digit head.

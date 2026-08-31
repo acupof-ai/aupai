@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Score every web shard with the distilled quality head, one worker per GPU.
 #
-#   scripts/score_corpus.sh [ngpu] [glob]
+#   datagen/score_corpus.sh [ngpu] [glob]
 #
 # The 27B teacher answers 0.76/s -- four days for 1.97M documents; the distilled head
 # does 231/s. That gap is the reason for the two-stage design.

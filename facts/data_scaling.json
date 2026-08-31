@@ -504,7 +504,7 @@
    "id": "ds.code_mining_feasibility",
    "value": "2.0B code-with-tests 格 4M 样本(500 tok/样本),即使 λ=1 也要 4M 次生成——任何预算外,瓶颈是件数非单价(fb)。挖而非造。RedPajama-1T github 采样文件实测(334,662 docs):7.6% repo(13,733/180,828)同时含 impl+test;26.96% doc(90,224)落双全 repo,test 文件 8.25%。对 73.6B 外推=多维 B token 可执行验证池,过滤可得、零生成。grep 层面可行性成立(上界,runnable-pair 过滤会缩不拦)。配执行信号的验证式天然存在于带测试的仓库,nanochat 同路(d62dd3e)。λ 因此只服务 SFT/评测规模(万级),不服务 2.0B 预训练格。",
    "measured": "2026-08-31",
-   "source": "pod 实测 scripts/scan_scm_tests.py on data/raw/code_supply/github_00.sampled.jsonl (334,662 docs)",
+   "source": "pod 实测 datagen/scan_scm_tests.py on data/raw/code_supply/github_00.sampled.jsonl (334,662 docs)",
    "config": {
     "file": "github_00.sampled.jsonl (2.66GB, 334,662 docs)",
     "test_heuristic": "path regex test/spec/_test",

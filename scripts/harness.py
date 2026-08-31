@@ -29,6 +29,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "datagen"))
 import corpus_fingerprint as cfp  # noqa: E402
 import pod_drift  # noqa: E402
 DATA = os.path.join(ROOT, "data")
@@ -867,7 +868,7 @@ def _broken_sft_pack_holdout():
     return d
 
 
-# Must match scripts/holdout.py EVAL_FILES. Kept here (not imported) so the check
+# Must match datagen/holdout.py EVAL_FILES. Kept here (not imported) so the check
 # reads from `root`, not from holdout.py's module-level ROOT.
 _SFT_EVAL_FILES = [
     os.path.join("data", "eval", "math_test_500.jsonl"),

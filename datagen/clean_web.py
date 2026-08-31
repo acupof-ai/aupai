@@ -22,7 +22,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "datagen"))
 
 SPAM = re.compile(
     r"(彩票|賭場|赌场|赌博|博彩|真人娱乐|北京赛车|时时彩|老虎机|六合彩|百家乐|开户送|注册送"
@@ -63,7 +63,7 @@ def main():
     a = ap.parse_args()
 
     # An opencc-derived {codepoint: simplified} table, so str.translate is idempotent: safe to run
-    # on a shard scripts/t2s_corpus.py already converted.
+    # on a shard datagen/t2s_corpus.py already converted.
     from t2s_corpus import table  # noqa: E402
 
     t2s = table()

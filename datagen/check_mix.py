@@ -3,9 +3,9 @@
 
 Reads the size of each tokens_<domain>.pt (from its file size, not by loading 36GB) and prints what
 build_mix will actually do: rows per phase, epochs per domain, which domains get capped, the anneal
-composition, and the resulting step count. Run this after scripts/pretokenize.py and before launching.
+composition, and the resulting step count. Run this after datagen/pretokenize.py and before launching.
 
-    python scripts/check_mix.py [--mix data/mix_scale_3.24b.json] [--batch 32] [--world 8]
+    python datagen/check_mix.py [--mix data/mix_scale_3.24b.json] [--batch 32] [--world 8]
 """
 
 import argparse
@@ -38,7 +38,7 @@ def main():
     total_rows = mix["total_tokens"] / seq
     missing = [d for d in mix["domains"] if cache_tokens(d) is None]
     if missing:
-        print(f"MISSING token caches: {missing} -- run scripts/pretokenize.py first")
+        print(f"MISSING token caches: {missing} -- run datagen/pretokenize.py first")
         return 1
 
     pools, used, got = {}, {}, {}

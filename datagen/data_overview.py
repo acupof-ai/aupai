@@ -6,7 +6,7 @@ instant) when present; otherwise data/corpus/<domain>/*.jsonl is tokenized with
 the project tokenizer and cached in <corpus>/.counts.json, so the first run
 counts and every later run is free.
 
-    python scripts/data_overview.py [--mix data/mix_scale_3.24b.json] [--corpus data/corpus]
+    python datagen/data_overview.py [--mix data/mix_scale_3.24b.json] [--corpus data/corpus]
 """
 
 import argparse
@@ -151,7 +151,7 @@ def main():
     ann = {d: c["anneal"] for d, c in mix["domains"].items()}
     print("\nmain phase: " + " ".join(f"{d} {c['weight']:.0%}" for d, c in mix["domains"].items()))
     print("anneal:     " + " ".join(f"{d} {w:.0%}" for d, w in ann.items()))
-    print("schedule dry-run (rows/phase, epoch caps, step count): python scripts/check_mix.py")
+    print("schedule dry-run (rows/phase, epoch caps, step count): python datagen/check_mix.py")
     return 0
 
 

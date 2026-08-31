@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Fetch chat raw sources -> data/{coig,alpaca_gpt4_zh}.jsonl.
 
-Producers for the chat domain in scripts/build_domains.sh. Verifies against
+Producers for the chat domain in datagen/build_domains.sh. Verifies against
 data/PROVENANCE.md sha256 — a mismatch prints an error and keeps the existing
 file (never silently swap data).
 
-Reproduce: python scripts/fetch_chat_data.py
+Reproduce: python datagen/fetch_chat_data.py
 """
 
 import hashlib

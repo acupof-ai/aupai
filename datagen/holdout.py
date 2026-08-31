@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The eval holdout, as a hash set every data path must exclude.
 
-`python scripts/holdout.py` regenerates data/eval/holdout_hashes.txt from the eval
+`python datagen/holdout.py` regenerates data/eval/holdout_hashes.txt from the eval
 files; importers use `is_holdout(question)`.
 
 Fail-closed: the hash file carries a fingerprint of the eval files that produced
@@ -51,19 +51,19 @@ def load():
     if not os.path.exists(HASH_PATH):
         raise RuntimeError(
             f"{HASH_PATH} missing -- the holdout guard is unloaded. "
-            "Run `python scripts/holdout.py` to regenerate."
+            "Run `python datagen/holdout.py` to regenerate."
         )
     lines = [l.strip() for l in open(HASH_PATH, encoding="utf-8") if l.strip()]
     fp = next((l[5:] for l in lines if l.startswith("# fp:")), None)
     if fp is None:
         raise RuntimeError(
             f"{HASH_PATH} has no fingerprint (old format) -- the guard may be stale. "
-            "Run `python scripts/holdout.py` to regenerate."
+            "Run `python datagen/holdout.py` to regenerate."
         )
     if fp != _fingerprint():
         raise RuntimeError(
             f"{HASH_PATH} is stale: eval files changed since it was generated. "
-            "Run `python scripts/holdout.py` to regenerate."
+            "Run `python datagen/holdout.py` to regenerate."
         )
     return {l for l in lines if not l.startswith("#")}
 

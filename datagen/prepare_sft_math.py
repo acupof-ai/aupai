@@ -12,12 +12,14 @@ import sys
 
 from tokenizers import Tokenizer
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)  # datagen/: holdout, prepare_sft
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))  # loader
 from holdout import is_holdout  # noqa: E402
 from loader import format_example  # noqa: E402
 from prepare_sft import pack_and_save  # noqa: E402
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(_HERE)
 DATA = os.path.join(ROOT, "data")
 TOK_PATH = os.path.join(DATA, "tokenizer.json")
 OUT_PATH = os.path.join(DATA, "sft", "sft_math.pt")

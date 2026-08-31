@@ -7,8 +7,8 @@ chain (reject_reason incl reject_holdout + garbage_topic) per document, stamps
 `filters_fp` into build_corpus_stats.json, writes shard-by-shard (restartable),
 and holds the "web" name as a guarded staging path.
 
-    python scripts/clean_corpus.py --domain web_hq      # uses this domain's raw source
-    python scripts/clean_corpus.py --domain web_hq --source fineweb2  # explicit raw
+    python datagen/clean_corpus.py --domain web_hq      # uses this domain's raw source
+    python datagen/clean_corpus.py --domain web_hq --source fineweb2  # explicit raw
 
 Contract: output data/corpus/<domain>/ + build_corpus_stats.json with filters_fp
 content-hash of filters/*.py (a changed filter -> different fp). Shard-level

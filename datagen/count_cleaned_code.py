@@ -14,7 +14,7 @@ is the 85.7B->73.6B correction class). Reads the clean's output shards
 Also checks whether the 751.3M-tokens/file projection holds within 10% (13 files
 were the fetch target); if not, the 73.6B code-supply figure changes by the gap.
 
-Usage (on pod): python3 scripts/count_cleaned_code.py
+Usage (on pod): python3 datagen/count_cleaned_code.py
 """
 import glob
 import json

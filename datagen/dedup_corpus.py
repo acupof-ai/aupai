@@ -7,8 +7,8 @@ page through several pipelines). Output a manifest of duplicate doc ids + which
 source each duplicates, so the mix/training path skips them. The manifest is the
 lazy option (shards stay untouched) -- the mix consults it.
 
-    python scripts/dedup_corpus.py --domains web_hq,cci3,en
-    python scripts/dedup_corpus.py --domains web_hq,cci3 --exact 0.8 --shingles 5
+    python datagen/dedup_corpus.py --domains web_hq,cci3,en
+    python datagen/dedup_corpus.py --domains web_hq,cci3 --exact 0.8 --shingles 5
 
 Contract: data/dedup/dedup_manifest.json (duplicate ids + which source) +
 dedup_stats.json with dedup_fp = hash(algorithm + params: exact threshold,

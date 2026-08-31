@@ -27,17 +27,17 @@ data/eval/math_test_500.jsonl	609a5a5af31d666a01e2a82c692d1d54f5e13a081a2a98c929
 data/synthetic/math_hard_eval_1k.jsonl	3ce9b0ff7fc6253c0d23c41cd360f09242f8a9a67ed187f4f56f812957ac703b	367957	eval	archive:math_hard_eval_1k.jsonl
 
 # --- fetched: re-derivable, pin to catch drift -------------------------------
-data/alpaca_gpt4_zh.jsonl	93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d	35040711	fetched	python scripts/fetch_chat_data.py
-data/coig.jsonl	cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6	141903289	fetched	python scripts/fetch_chat_data.py
-data/school_math_r1_zh.jsonl	c8f6a7cce2e4c0b76711919a99767aa435a5ce6b509da722ffcb750d42124834	214775978	fetched	python scripts/fetch_math_data.py belle   # approx, not byte-level (3.6% gold bug, PROVENANCE)
-data/math/ape210k.jsonl	a4a989a7f3d0c5681536f21938a00a033b03bdcdc9f38aaf0251e91447579350	44000937	fetched	python scripts/fetch_math_data.py ape210k
-data/math/belle.jsonl	a34511818febfac8d21deca35601f736c5c08ffbf2e4ca148f0b21eb584bf7a9	128997729	fetched	python scripts/fetch_math_data.py belle
-data/math/gsm8k_zh.jsonl	53256e7f0ed6c95b52624a5c80e0107e6b866f56181cc457d6628d7cfde93206	4003041	fetched	python scripts/fetch_math_data.py gsm8k_zh
-data/math/math23k.jsonl	c244babecd1443470f18911b0899446024d7de79996ae9a595366e54b790d41f	14791171	fetched	python scripts/fetch_math_data.py math23k
-data/math/mxode.jsonl	0aeed7b8b1cbbefa4789fc5e86b99e227951521677c4f3c5872bba55adc22127	124319320	fetched	python scripts/fetch_math_data.py mxode
-data/sft/gsm8k_zh.json	c0accee6c7db9588e3c6e99c62c20f9d9d56f987432637626c28f03ec67a89e5	9298026	fetched	python scripts/fetch_sft_data.py fetch
-data/sft/reasoning.jsonl	7f16c6dd7d85cf521de3a11a97981d3d0355f3fce27f82a1268166f5a79370dc	3781761	fetched	python scripts/fetch_sft_data.py fetch
-data/sft/qwq_mmlu.parquet	dc0b363ad53530feac84b2b7da22b4442f0b39d8d791892df2b6eca6dfa467df	47471994	fetched	python scripts/fetch_sft_data.py fetch
+data/alpaca_gpt4_zh.jsonl	93819e69830d9eb050e58c342230f3e1986a2e3cd07c3d1a075abb9ddcb6251d	35040711	fetched	python datagen/fetch_chat_data.py
+data/coig.jsonl	cdcac3f1d310c0dd8bb6cf5ee63a4b2a99d3386e098cead4985d7e962a8a10f6	141903289	fetched	python datagen/fetch_chat_data.py
+data/school_math_r1_zh.jsonl	c8f6a7cce2e4c0b76711919a99767aa435a5ce6b509da722ffcb750d42124834	214775978	fetched	python datagen/fetch_math_data.py belle   # approx, not byte-level (3.6% gold bug, PROVENANCE)
+data/math/ape210k.jsonl	a4a989a7f3d0c5681536f21938a00a033b03bdcdc9f38aaf0251e91447579350	44000937	fetched	python datagen/fetch_math_data.py ape210k
+data/math/belle.jsonl	a34511818febfac8d21deca35601f736c5c08ffbf2e4ca148f0b21eb584bf7a9	128997729	fetched	python datagen/fetch_math_data.py belle
+data/math/gsm8k_zh.jsonl	53256e7f0ed6c95b52624a5c80e0107e6b866f56181cc457d6628d7cfde93206	4003041	fetched	python datagen/fetch_math_data.py gsm8k_zh
+data/math/math23k.jsonl	c244babecd1443470f18911b0899446024d7de79996ae9a595366e54b790d41f	14791171	fetched	python datagen/fetch_math_data.py math23k
+data/math/mxode.jsonl	0aeed7b8b1cbbefa4789fc5e86b99e227951521677c4f3c5872bba55adc22127	124319320	fetched	python datagen/fetch_math_data.py mxode
+data/sft/gsm8k_zh.json	c0accee6c7db9588e3c6e99c62c20f9d9d56f987432637626c28f03ec67a89e5	9298026	fetched	python datagen/fetch_sft_data.py fetch
+data/sft/reasoning.jsonl	7f16c6dd7d85cf521de3a11a97981d3d0355f3fce27f82a1268166f5a79370dc	3781761	fetched	python datagen/fetch_sft_data.py fetch
+data/sft/qwq_mmlu.parquet	dc0b363ad53530feac84b2b7da22b4442f0b39d8d791892df2b6eca6dfa467df	47471994	fetched	python datagen/fetch_sft_data.py fetch
 data/sft/fable5_cot.jsonl	57e4e8f83ce85f9f2c473758af010b4c0383207fd0f3d23655ba3ad38d860c4a	1790012	fetched	# one-time export (Fable-5-CoT-Traces); manual if lost
 
 # --- derived: rebuilt on demand ------------------------------------------------

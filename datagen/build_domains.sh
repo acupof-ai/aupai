@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build data/corpus/<domain>/ for the default mix (train.py Cfg.mix), from the sources that exist on the pod.
 #
-#   bash scripts/build_domains.sh          # all domains
-#   DOMAINS="math chat" bash scripts/build_domains.sh
+#   bash datagen/build_domains.sh          # all domains
+#   DOMAINS="math chat" bash datagen/build_domains.sh
 #
 # Order matters: small domains first, each excluding the ones already built (a document must not
 # be counted once as `code` and again as `en`/`chat`); web last with all of them pre-seeded into

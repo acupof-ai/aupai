@@ -99,7 +99,7 @@ def main():
         assert d["vocab_id"] == ck_vocab, (
             f"{args.sft_path} was packed against vocabulary {d['vocab']} but "
             f"{args.resume} was trained on {ck_vocab}; repack with "
-            "`prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
+            "`datagen/prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
         )
     elif is_main:
         missing = "the checkpoint" if not ck_vocab else "the pack"
@@ -120,7 +120,7 @@ def main():
         print("WARNING pack predates holdout fingerprinting; verify holdout by hand", flush=True)
     assert Cfg.fone == ("values" in d), (
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
-        f"{'has' if 'values' in d else 'has no'} values; repack with prepare_sft_math.py --fone"
+        f"{'has' if 'values' in d else 'has no'} values; repack with datagen/prepare_sft_math.py --fone"
     )
     # V feeds the embedding, W is the digit target one position later (train.py's split)
     V = d["values"][:, :-1].contiguous() if Cfg.fone else None
