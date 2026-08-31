@@ -1292,6 +1292,51 @@
    },
    "uncertainty": "The probe ran without --profile, so it names guards but does not time them; the 54.9 ms/step figure comes from the separate steady-state trace (eff.steady_state_composition) and the two runs are not the same process. Guard counts are for the probe's ~60 steps on one card, so 24 and 7 are that window's totals and not a rate. Crucially the LATE-recurrence question is unresolved: this explains what recompiles, not why gaps containing compile_attempt_1 appear at step 260 when the variant set is finite and small. Frame numbering also differs between runs ([4/N] here, [17/64] in the live run), so the frame that blew the 64 limit in stage 1 is not shown to be AttnRes.forward -- that identification is still open.",
    "status": "measured"
+  },
+  {
+   "id": "eff.headroom_is_kernels_not_process",
+   "value": "the throughput headroom at stage 1 is in kernels, not in process, and the margin is 3x at either time base. GPU kernel time is 1607 ms/step. Idle beside it is 186.6 ms on the same-window base (step 1793.6 ms, busy 89.6%) or 95 ms on the steady-state 77K tok/s base (step 1702 ms, busy 94.4%, withdrawn by eff.step_remainder_attribution's own correction as mixing two clocks). So the whole process-side budget is 5.6-10.4% of a step, and only the non-overlapped part of it is recoverable. Against that, three kernel levers at their ideals: fp8 LM head 112 ms (6.2-6.6%), a fusion audit cutting 20% of fused-region time 103.5 ms (5.8-6.1%), a KDA retune doubling occupancy-limited throughput 87 ms (4.9-5.1%) -- 302.5 ms together, 16.9-17.8%. LAUNCH OVERHEAD IS NOT THE CONSTRAINT: 6684 launches/step cost 13 ms at 2 us/launch and 67 ms at 10 us, while the mean kernel is 138 us, two orders of magnitude above per-launch cost. Even elementwise-copy, the shortest group at 58.9 us mean, is 30x a launch. The idle is also not spread: 95.3% of 138460 gaps are under 5 us summing to 10.2 ms, while the largest 20 sum to 164.9 ms at a single rms_norm -> flash seam. A process lever is therefore 'fix one seam', not 'reduce launch count', a 16x difference in ceiling -- and the seam is compile work in a warmup window, so it may not survive to steady state at all.",
+   "measured": "2026-09-01",
+   "source": "e1-3 2026-09-01, arithmetic over eff.step_remainder_attribution and eff.dynamo_recompile_not_a_lever; docs/lessons/kernel_vs_process.md",
+   "config": {
+    "kernel_ms": 1607,
+    "step_same_window_ms": 1793.6,
+    "step_steady_state_ms": 1702,
+    "busy_pct": 89.6,
+    "launches_per_step": 6684,
+    "mean_kernel_us": 138
+   },
+   "uncertainty": "one 20-step trace on one card, in a warmup window; tilerl's steady-state trace replaces the range with a measurement and is expected to move the numbers inside it, not to move the ranking",
+   "status": "measured"
+  },
+  {
+   "id": "eff.kernels_hub_blocked_on_torch_version",
+   "value": "the HuggingFace kernels hub cannot ship to this pod, and the blocker is versions rather than the known-broken egress. Measured on the pod 2026-09-01: torch 2.11.0+cu129, CUDA 12.9, compute capability 9.0 (H20), fla 0.5.2. The kernels prebuilt matrix covers torch 2.12/2.13/2.14, so no build variant resolves and get_kernel has nothing to fetch. Broken egress to huggingface.co is a second, independent blocker behind it. Even absent both: nothing in kernels-community targets our table. kernels-community/fla DOES export chunk_kda, fused_recurrent_kda and chunk_gated_delta_rule, but its metadata carries no archs key, its one variant is build/torch-cuda, and the leaves are @triton.jit from upstream addf474 -- it is the flash-linear-attention we already pip-install, redistributed, same code and same speed, 0 downloads. Hub kernels also register as custom ops that inductor can schedule around but CANNOT FUSE INTO, which is the wrong direction on a step whose largest group is fusion at 517.6 ms. And kernelize() silently falls back to the original layer when a kernel lacks can_torch_compile (default False), so use_fallback=False is mandatory or a kernel reads as active while it is not.",
+   "measured": "2026-09-01",
+   "source": "e1-3 survey 2026-09-01; pod version probe; huggingface.co/docs/kernels, huggingface.co/kernels/kernels-community/fla",
+   "config": {
+    "pod_torch": "2.11.0+cu129",
+    "pod_cuda": "12.9",
+    "compute_capability": "9.0",
+    "fla": "0.5.2",
+    "kernels_build_matrix": "torch 2.12/2.13/2.14"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_unset",
+   "value": "inductor is skipping stride padding across our whole graph BECAUSE our shapes are dynamic, and the flag that would restore it is one line. torch._inductor.config.pad_dynamic_shapes defaults to False; the gate in ir.py, read verbatim from the pod's torch 2.11, returns in_strides unchanged when `not config.pad_dynamic_shapes and is_dynamic`, where is_dynamic is true if ANY size or stride is a symbol. The doc-mask cu is marked dynamic (train.py mark_dynamic), so 128-byte stride padding is skipped on pointwise and reduction buffers -- 64 elements for bf16, 128 for fp8. Measured on the pod: pad_dynamic_shapes False, comprehensive_padding True, padding_stride_threshold 1024, i.e. padding is on in general and off specifically for us. This governs memory coalescing, which is what the 517.6 ms of fusion and 107 ms of copies are made of, 39% of kernel time -- the only lever found in this survey that aims at bandwidth rather than launch count. THE SIGN IS NOT KNOWN: PyTorch's own in-source note records padding swinging AllenaiLongformerBase amp training from a 1.09x loss to a 1.05x win (71.09 -> 77.38 -> 67.77 ms) depending on padding_stride_threshold, because padding creates non-contiguous strides and inductor then uses a smaller persistent-reduction threshold. A/B on the lane before it goes near the block.",
+   "measured": "2026-09-01",
+   "source": "pod probe of torch._inductor.config and inspect.getsource(torch._inductor.ir) 2026-09-01; pytorch/pytorch _inductor/config.py in-source note",
+   "config": {
+    "pad_dynamic_shapes": false,
+    "comprehensive_padding": true,
+    "padding_stride_threshold": 1024,
+    "surface_pct_of_kernel_time": 39
+   },
+   "uncertainty": "sign unknown; must be A/B'd, and the cited PyTorch case swings both ways on a threshold we have not tuned",
+   "status": "measured"
   }
  ]
 }
