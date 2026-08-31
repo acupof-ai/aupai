@@ -3108,7 +3108,19 @@ def _read_tasks(path=None, raw=False):
     p = path or TASKS_PATH
     if not os.path.exists(p):
         return []
-    rows = [json.loads(line) for line in open(p, encoding="utf-8") if line.strip()]
+    # A concurrent append can be observed mid-write: the reader sees a torn line and
+    # json.loads raises, so `harness check` failed inside a hook and passed 20 s later
+    # by hand -- a flake that reads as a real refusal (fb, 2026-08-31). Skip a line
+    # that will not parse; ledgers_one_line_per_row is what judges malformed rows, and
+    # it runs when nobody is mid-write.
+    rows = []
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     if raw:
         return rows
     folded = {}
@@ -3121,8 +3133,15 @@ def _append_task(row, path=None):
     """One event. Append, never rewrite: see _read_tasks."""
     p = path or TASKS_PATH
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # One write() of one complete line, O_APPEND: concurrent appends under a page-sized
+    # payload do not interleave, and no reader observes a partial row. Building the
+    # line first matters -- f.write() of a str can flush at a buffer boundary.
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
 
 
 def _write_tasks(rows, path=None):
@@ -6023,9 +6042,20 @@ while True:
     time.sleep(60)
     if settled():
         break  # a result exists; anything the monitor adds now can only contradict it
+    # os.kill(pid, 0) accepts a ZOMBIE: an exited child nobody reaped keeps its pid,
+    # so the monitor waits forever on a finished run (harness.py:6418 documents the
+    # same trap, tilerl re-hit it). /proc state Z is dead.
+    alive = True
     try:
         os.kill(pid, 0)
+        try:
+            with open(f"/proc/{pid}/stat") as sf:
+                alive = sf.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            pass  # no procfs (macOS): fall back to the signal probe
     except OSError:
+        alive = False
+    if not alive:
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
             "--result", "process exited", "--finding", "monitor: process gone",
             "--decision", "check the log", "--status", "ok"], capture_output=True)
@@ -6250,7 +6280,14 @@ def cmd_launch(rest):
     if args.training:
         ok, reason = _wait_for_startup(log_path, args.gate_timeout)
         if not ok:
-            os.kill(proc.pid, signal.SIGTERM)
+            # The group, not the pid: run_ddp.sh spawns torchrun which spawns ranks,
+            # and killing the shell leaves them running (tilerl's matrix: bash rc -15,
+            # torchrun alive). getpgid rather than assuming proc.pid leads its group --
+            # a job launched without start_new_session does not (tilerl's review).
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                os.kill(proc.pid, signal.SIGTERM)
             subprocess.run(
                 [sys.executable, os.path.join(HERE, "exp.py"),
                  "done", "--name", args.name,
