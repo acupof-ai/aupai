@@ -1085,6 +1085,47 @@
    },
    "uncertainty": "One trace, one card, 20 active steps inside the warmup tail, so the amortized 244 ms/step is a property of that window and not of the run. The steady-state cost of the 25 variants is not measured here and may be zero once every shape is compiled; what is measured is that the variants exist and that compiling them costs 4.89 s. The bucketing fix is a proposal with no A/B behind it: the ship gate is >=3% tok/s with |delta val| <= 0.04 nat, and it needs the 7-card block, so it cannot be tested until stage 1 ends. Gap attribution assumes the largest cpu_op inside a gap explains it; the compile ops account for 151 of the 154-157 ms in the gaps I inspected.",
    "status": "measured"
+  },
+  {
+   "id": "eff.light_profile_wall",
+   "value": "Per-metric wall time for the light eval profile (t58: domain_loss + mc_full), read from the score records' own _wall_s field. TWO measurements of the same two metrics on ckpt_p324 differ by 1.8x, and the cause is CONTENTION, resolved by e1 from the file timestamps and verified here: runs/milestone_p324_v2.jsonl was written 11:42:51 pod time on an idle box, nothing on the other seven cards; runs/score_matrix.jsonl line 28 was written 12:45:39, and the stage-1 7-card training run started 12:45:05, 34 s earlier. IDLE BOX: domain_loss 71.5 s + mc_full 122.6 s = 194.1 s (3.2 min). BESIDE 7-CARD TRAINING: domain_loss 154.2 s (2.16x) + mc_full 202.2 s (1.65x) = 356.4 s (5.9 min). SCHEDULE AGAINST 356.4 s: a light run always runs on the lane beside a 7-card job, which is the regime the canonical record was measured in. Both clear the 8-minute target set for t58. The three generative metrics move the OPPOSITE way across the same two records, which makes the file look incoherent until the causes are separated: math_500 733.9 -> 118.2, code_500_v2 810.3 -> 132.4, code_500 722.5 -> 605.8. That is not contention but e1's CJK rep_stop landing between the two runs (029c43a, 11:48). Chinese has no whitespace word boundaries, so the whitespace 8-gram stop never fired and generations ran to the 512-token cap; the character 12-gram stop ends them near 77. The later record carries cjk_rate 0.982 on math_500 and the earlier has no cjk field at all, which is the fingerprint; code_500 gains least because code is the least CJK-dense of the three. So two effects pull opposite ways across two adjacent lines: contention made the likelihood metrics ~2x slower, the rep_stop fix made the generative metrics up to 6x faster. Neither number is wrong and neither record states its regime. Light is 16% of the full profile's metric wall time under contention: minutes, so it needs no protected lane slot, while a full milestone profile does.",
+   "measured": "2026-08-31",
+   "source": "runs/score_matrix.jsonl, eval/score_matrix.py; second measurement on the pod at /work/aupai/runs/milestone_p324_v2.jsonl (not committed)",
+   "config": {
+    "profile_light": [
+     "domain_loss",
+     "mc_full"
+    ],
+    "profile_milestone": [
+     "domain_loss",
+     "mc_full",
+     "math_500",
+     "code_500",
+     "code_500_v2"
+    ],
+    "ckpt": "ckpt_p324.pt",
+    "cards": 1,
+    "card_id": 7,
+    "ledger_domain_loss_s": 154.2,
+    "ledger_mc_full_s": 202.2,
+    "ledger_light_total_s": 356.4,
+    "v2run_domain_loss_s": 71.5,
+    "v2run_mc_full_s": 122.6,
+    "v2run_light_total_s": 194.1,
+    "math_500_s": 733.9,
+    "code_500_s": 722.5,
+    "code_500_v2_s": 810.3,
+    "target_s": 480,
+    "idle_box_total_s": 194.1,
+    "contended_total_s": 356.4,
+    "domain_loss_contention_factor": 2.16,
+    "mc_full_contention_factor": 1.65,
+    "idle_record_written": "11:42:51 pod",
+    "contended_record_written": "12:45:39 pod",
+    "training_started": "12:45:05 pod"
+   },
+   "uncertainty": "One checkpoint. The 1.8x is explained as contention against a 7-card training job, established from file timestamps rather than from a controlled A/B, so the 2.16x and 1.65x factors are single-pair observations and not a characterised contention curve. Neither figure includes checkpoint load or process startup, only each metric's own _wall_s, so an end-to-end light run exceeds 356 s. I first quoted 194.1 s to three sessions from the idle-box file before checking the canonical ledger; the regime, not the number, was the missing part, which is the same failure as reporting a single-stream cache read rate for a 7-rank load (eff.cache_load_gates_startup).",
+   "status": "measured"
   }
  ]
 }
