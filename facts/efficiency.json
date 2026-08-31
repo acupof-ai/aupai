@@ -949,6 +949,12 @@
    },
    "uncertainty": "single kill+resume pair; write time cold (first cached write 0.73s); step_s from ref steady-state ~71K tok/s/gpu; interval has margin (0.55% << 1%)",
    "status": "measured"
+  },
+  {
+   "id": "eff.pretokenize_throughput",
+   "value": "Domain pretokenization throughput on the pod CPU (180 cores, t49/t50, 2026-08-31; exact train.encode path: per-doc tokens + <eos>, one <eos>-separated int32 stream; thread budget held at 180: RAYON_NUM_THREADS=180 for 1 proc, 22 per worker for 8): math_seed (81.68M tok) 1 proc 2.45M tok/s (33.3s) -> 8 proc 18.22M tok/s (4.5s), per-proc 2.28M, scaling 7.44x (93%); wiki_chat (283.90M tok) 1 proc 3.78M tok/s (75.1s) -> 8 proc 29.37M tok/s (9.7s), per-proc 3.67M, scaling 7.77x (97%). Process parallelism is the lever, not the rayon pool: 1 proc x 180 threads = 2.45M vs 8 proc x 22 threads = 18.2M on math_seed. 64-proc pool over shards (count_domain.py): textbook_30b 1.61B tok in 61.3s = 26.28M tok/s; zh_web 21.29B tok in 488.1s = 43.62M tok/s. Projection for the 15B stage-1 corpus: 66-102 min single-process (pretokenize.py as written) vs 9-14 min with --workers 8; rate is content-dependent (math ~35% slower per byte than chat). Element-identity proven: 1-proc and 8-proc streams match to the token on both domains (stream_sum 349106798199 / 1424597499381), and scripts/test_parallel_encode.py asserts torch.equal on 2,000 docs. Cache capacity: /data00 is the overlay (st_dev 173, same as /), /work is a separate device (65026); df overlay = 2.0T total, 738G avail. Cache dtype int32 (4 B/token): 15B tokens = 60 GB, 30B = 120 GB -- both fit the overlay, no cache-dir move needed.",
+   "measured": "2026-08-31",
+   "source": "runs/t49_pretokenize_bench.txt; /tmp/bench_pretok.py + /tmp/count_domain.py on the pod; df/stat on pod 2026-08-31"
   }
  ]
 }
