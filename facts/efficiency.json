@@ -925,6 +925,30 @@
    },
    "uncertainty": "single 50-step run per arm; steady-state tok/s read from last 4 steps; +1.4% is within run-to-run noise, treat as 'no regression, per-op win real but end-to-end negligible'",
    "status": "measured"
+  },
+  {
+   "id": "eff.ckpt_resume_16h_interval",
+   "value": "Resume equivalence + checkpoint interval for the 16h 30B run (t38, 2026-08-31): kill by SIGKILL at step 40, resume from a 959MB checkpoint (model+opt+step). Resumed loss step50 5.841 vs ref 5.874, step60 5.532 vs ref 5.503 (|Δ|≤0.033 nat, within t01 val sd 0.039); lr exact at both steps (1.67e-3, 2.00e-3) — schedule and Muon momentum continue from the absolute step, not zero. Checkpoint write 4.91s median (cold) for 959MB with optimizer state at d=1024. Recommend --save_every 500 (~15 min, 0.55% of wall, ≤15 min work lost on crash). Floor is ~8 min (491s) to keep write <1%.",
+   "measured": "2026-08-31",
+   "source": "runs/t38_ref.log, runs/t38_resume.log, ckpt_cost.py",
+   "config": {
+    "recipe": "30B (seq 4096, warmup 300, fp8, doc_mask, AttnRes, no fp32_master, d=1024)",
+    "data": "mix_scale_0.2b",
+    "cards": 7,
+    "batch": 16,
+    "accum": 2,
+    "ref_steps": 60,
+    "kill_step": 40,
+    "resume_step": 40,
+    "ckpt_bytes": 959425710,
+    "ckpt_write_s_median": 4.91,
+    "step_s": 1.8,
+    "tps_total_K": 497,
+    "steps_16h_est": 31201,
+    "recommended_save_every": 500
+   },
+   "uncertainty": "single kill+resume pair; write time cold (first cached write 0.73s); step_s from ref steady-state ~71K tok/s/gpu; interval has margin (0.55% << 1%)",
+   "status": "measured"
   }
  ]
 }
