@@ -103,6 +103,7 @@ from holdout import norm  # noqa: E402
 HOLDOUT_FILES = [
     "data/eval/math_test_500.jsonl",
     "data/synthetic/math_hard_eval_v2_1k.jsonl",
+    "data/eval/code_holdout_v2_500.jsonl",
 ]
 DEFAULT_THRESHOLD = 0.8
 # fb's pre-registered admission rule (2026-08-30, cont.cci3_vs_webhq_rates):
