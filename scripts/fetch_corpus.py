@@ -136,11 +136,22 @@ def _manifest_fineweb_edu_10bt():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_rp1t_c4():
+    """en cell (fb 2026-08-31, hf-mirror down): RedPajama-1T c4 slice on
+    data.together.xyz (up while hf-mirror is rc=28). 1024 c4-train files, take in
+    manifest order until ~27GB. Reachable via curl -4. Manifest = shipped names
+    file (source_fp = its content hash)."""
+    names = open(os.path.join(ROOT, "data", "raw", "rp1t_c4_manifest.txt")).read().split()
+    base = "https://data.together.xyz/redpajama-data-1T/v1.0.0/c4/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
     "rp1t_github": _manifest_rp1t_github,
     "en_fineweb_edu": _manifest_fineweb_edu_10bt,
+    "rp1t_c4": _manifest_rp1t_c4,
 }
 
 
