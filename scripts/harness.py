@@ -434,19 +434,31 @@ def read_mix(path):
 
 
 @functools.lru_cache(maxsize=None)
-def experiments():
+def experiments(raw=False):
+    """The experiment log, folded by (name, started): the last event for a run wins.
+
+    The file is an event log -- exp.py appends a running row and later a terminal one
+    rather than rewriting, so union merge cannot produce a running/done pair. A reader
+    that does not fold sees a superseded status: t56_profile went ok 13:34 then fail
+    13:47, and an unfolded read failed score_matrix_present on the stale ok.
+    raw=True yields every event."""
     p = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(p):
         return []
-    out = []
+    evs = []
     for line in open(p, encoding="utf-8"):
         line = line.strip()
         if line:
             try:
-                out.append(json.loads(line))
+                evs.append(json.loads(line))
             except Exception:
                 pass
-    return out
+    if raw:
+        return evs
+    folded = {}
+    for r in evs:
+        folded[(r.get("name"), r.get("started"))] = r
+    return list(folded.values())
 
 
 CKPT_RE = re.compile(r"\bckpt_[A-Za-z0-9_.-]+?\.pt\b")
@@ -2317,12 +2329,18 @@ def check_score_matrix(root):
     log = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(log):
         return SKIP, "runs/experiments.jsonl not present"
-    rows = []
+    # Fold by (name, started), last event wins: the ledger is an event log, so one run
+    # has a running row and then a terminal one. Reading raw events made a superseded
+    # 'ok' outlive the 'fail' that replaced it -- t56_profile, ok 13:34 then fail 13:47,
+    # failed this check as an unscored success (2026-08-31).
+    folded = {}
     for line in open(log, encoding="utf-8"):
         try:
-            rows.append(json.loads(line))
+            r = json.loads(line)
         except Exception:
-            pass
+            continue
+        folded[(r.get("name"), r.get("started"))] = r
+    rows = list(folded.values())
     if not rows:
         return SKIP, "experiments.jsonl has no rows"
     scored = set()
