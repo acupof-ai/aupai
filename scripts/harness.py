@@ -84,8 +84,9 @@ def _is_mount(path):
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
 _RULE_CHECKS = {
+    # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
+    # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
-    "Vocabulary identity": "score_input_fresh",
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
@@ -131,10 +132,13 @@ _MANUAL_RULES = {
     "Each session works in its own worktree on its own branch": "worktree topology is per-machine, not in the repo",
     "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
+    "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
 }
-#: Ratchet. Raising this needs a commit that says which rule became unenforceable and why.
-_MANUAL_BASELINE = len(_MANUAL_RULES)
+#: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
+#: check could never fire -- the ratchet has to be a number a commit has to change.
+#: Raising it needs a message saying which rule became unenforceable and why.
+_MANUAL_BASELINE = 20
 
 
 def _norm_rule(text):
