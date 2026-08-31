@@ -320,6 +320,15 @@ def _clean_piece(piece):
                 kept_chars += len(text)
                 if w is not None:
                     w.write({"content": text, "source": src, "url": url})
+            if docs % 100_000 == 0:
+                # Workers inherit the parent's stdout (the launch log); without this
+                # the parallel path is silent until pool.map returns and the launch
+                # monitor's 10-min silence rule false-fails a healthy hours-long run.
+                print(
+                    f"[{prefix.rstrip('_')}] {docs} in | {reasons['kept']} kept | "
+                    f"{kept_chars / CHARS_PER_TOKEN / 1e9:.2f}B tok",
+                    flush=True,
+                )
     if w is not None:
         w.close()
     return {"kept": kept, "docs": docs, "kept_chars": kept_chars, "reasons": dict(reasons)}
@@ -391,6 +400,7 @@ def _global_pass(a):
     w = ShardWriter(a.out, a.domain)
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     for p in paths:
+        print(f"global pass: {os.path.basename(p)}", flush=True)
         with open(p, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
