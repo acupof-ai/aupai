@@ -1666,6 +1666,54 @@
    },
    "uncertainty": "The trim rule is declared from ONE arm's distribution. If a later arm's outliers are more numerous than four, a 2/2 trim will not remove them and the trimmed cv will rise -- the rule is fixed regardless, since changing it after seeing the arms is the thing pre-declaration prevents. tok/s is logged at 1K resolution, so a median of 77K carries about 0.65% of quantisation on its own, which is a floor under any measured difference. And the twin spread this is judged against does not exist yet: arm 2 has not completed.",
    "status": "measured"
+  },
+  {
+   "id": "eff.fp8_head_ab_noship",
+   "value": "NO-SHIP: the fp8 LM head is 3.9% SLOWER, not the +5.6% its roofline predicted. Shipment A/B, 7 cards, 600 steps, stage-1 mix, seed 42, statistic pre-declared before the arms were observed (eff.ab_throughput_statistic). THROUGHPUT. Two baseline twins gave trimmed means 76.83K and 76.84K -- a spread of 0.01K, which is what makes the verdict unambiguous. The fp8 arm gave 73.83K. Delta -3.00K = -3.91%, against a gate of >= +3%. That is 300x the twin spread, so it is an effect and not noise, and it is on the WRONG SIDE: the candidate does not merely miss the bar, it regresses. Trimmed cv was 0.79 / 0.82 / 0.81% across the three arms, so the measurement is tight. VAL PASSES, which matters for the diagnosis. Baselines 2.233 and 2.235, fp8 2.250, so +0.016 nat against a 0.04 nat ceiling and a 0.002 nat twin floor. The fp8 path is numerically sound at 8x the floor but inside the gate -- the parity work held. The head is dropped for SPEED, not for correctness. WHY THE ROOFLINE WAS WRONG BY 9.5 POINTS. eff.lm_head_is_compute_bound established the head at AI 668.7 FLOP/B against H20's balance point of 37, and 190.0 ms/step measured across three equal GEMMs, so an ideal 2x was 95 ms = 5.6%. The ideal did not survive contact. Candidates, none yet measured: the per-tensor absmax reductions (b0 named these as the first suspect if the A/B came in under gate -- three per _fp8_mm call, and only the forward's weight scale is cached), the quantise/dequantise traffic on 2048x32784 logits per chunk which is bandwidth the bf16 path never pays, and _scaled_mm's own efficiency at N=32784 versus cuBLAS's tuned bf16 kernels. b0's prediction was correct and I recorded it as a note rather than acting on it before the A/B.",
+   "measured": "2026-09-01",
+   "source": "runs/ab_shipment.log, facts/efficiency.json#eff.ab_throughput_statistic, docs/lessons/fp8_lm_head_design.md",
+   "config": {
+    "task": "shipment A/B arm 3",
+    "cards": 7,
+    "steps": 600,
+    "mix": "mix_15b_stage1",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "vocab": 32784,
+    "env": "FP8_HEAD=1",
+    "baseline_trimmed_mean_k": [
+     76.83,
+     76.84
+    ],
+    "baseline_spread_k": 0.01,
+    "fp8_trimmed_mean_k": 73.83,
+    "delta_k": -3.0,
+    "delta_pct": -3.91,
+    "gate_pct": 3,
+    "delta_in_twin_spreads": -300,
+    "baseline_loss": [
+     2.233,
+     2.235
+    ],
+    "fp8_loss": 2.25,
+    "val_delta_nat": 0.016,
+    "val_floor_nat": 0.002,
+    "val_ceiling_nat": 0.04,
+    "val_verdict": "PASS",
+    "trimmed_cv_pct": [
+     0.79,
+     0.82,
+     0.81
+    ],
+    "predicted_gain_pct": 5.6,
+    "measured_gain_pct": -3.91,
+    "prediction_error_points": 9.5,
+    "flash_recompiles_all_arms": 0
+   },
+   "uncertainty": "One fp8 arm against two baselines, so the fp8 side has no twin and its own run-to-run spread is unmeasured -- but a 300x-twin-spread gap does not need one to be read as real. The regression's CAUSE is not diagnosed: I show the fp8 head is slower, not which of the three candidate mechanisms accounts for it, and a scale-caching fix might change the verdict. That is the open question the note b0 left points at. The measurement is also 600 steps on one mix at one batch size; the head's chunk count scales with BT, so the balance between GEMM time saved and quantisation traffic added will shift with batch.",
+   "status": "measured"
   }
  ]
 }
