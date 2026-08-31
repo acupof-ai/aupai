@@ -1,0 +1,34 @@
+mix: 48820 rows = 0.20B tokens scheduled
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.564 | lr 1.00e-02 | gnorm 3.30 | 0.00B tok | 26K tok/s/gpu | MFU 11% | ETA 2.1h
+step 20/1525 1% [main] | loss 6.936 | lr 1.00e-02 | gnorm 0.89 | 0.00B tok | 73K tok/s/gpu | MFU 31% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.533 | lr 1.00e-02 | gnorm 1.52 | 0.00B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.482 | lr 1.00e-02 | gnorm 0.88 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.308 | lr 1.00e-02 | gnorm 1.73 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 60/1525 4% [main] | loss 5.910 | lr 1.00e-02 | gnorm 1.30 | 0.01B tok | 78K tok/s/gpu | MFU 32% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.807 | lr 1.00e-02 | gnorm 1.27 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.573 | lr 1.00e-02 | gnorm 2.30 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.197 | lr 1.00e-02 | gnorm 1.58 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.7h
+step 100/1525 7% [main] | loss 4.926 | lr 1.00e-02 | gnorm 1.83 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.7h
+step 110/1525 7% [main] | loss 5.013 | lr 1.00e-02 | gnorm 1.42 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 4.794 | lr 1.00e-02 | gnorm 2.17 | 0.02B tok | 76K tok/s/gpu | MFU 32% | ETA 0.7h
+step 130/1525 9% [main] | loss 4.680 | lr 1.00e-02 | gnorm 1.84 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 130/1525 9% [main] | loss 4.680 | lr 1.00e-02 | gnorm 1.84 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+killed by tilerl at 18:32 pod time: twin A reached step 110. Deliberate kill of 981444 for twin B in the same session. NOT a crash.
+mix: 48820 rows = 0.20B tokens scheduled
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.542 | lr 1.00e-02 | gnorm 3.88 | 0.00B tok | 27K tok/s/gpu | MFU 11% | ETA 2.0h
+step 20/1525 1% [main] | loss 7.067 | lr 1.00e-02 | gnorm 1.45 | 0.00B tok | 73K tok/s/gpu | MFU 31% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.543 | lr 1.00e-02 | gnorm 1.22 | 0.00B tok | 75K tok/s/gpu | MFU 32% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.484 | lr 1.00e-02 | gnorm 1.80 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.231 | lr 1.00e-02 | gnorm 0.92 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 60/1525 4% [main] | loss 5.907 | lr 1.00e-02 | gnorm 1.00 | 0.01B tok | 78K tok/s/gpu | MFU 32% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.847 | lr 1.00e-02 | gnorm 0.93 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.696 | lr 1.00e-02 | gnorm 1.32 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.266 | lr 1.00e-02 | gnorm 1.32 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 100/1525 7% [main] | loss 5.047 | lr 1.00e-02 | gnorm 1.42 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.6h
+step 110/1525 7% [main] | loss 5.107 | lr 1.00e-02 | gnorm 1.16 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 110/1525 7% [main] | loss 5.107 | lr 1.00e-02 | gnorm 1.16 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+killed by tilerl at 18:37 pod time: twin B reached step 110, comparison complete. Deliberate kill of 983500. NOT a crash.

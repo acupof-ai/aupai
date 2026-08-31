@@ -1536,6 +1536,59 @@
     "verdict": "no-ship on throughput; val half unreadable"
    },
    "uncertainty": "The throughput figures are the log's own tok/s at 1 K resolution, so +1 K is at the edge of what the display can distinguish: the true gain could be 0.6% or 1.8%. That does not change the verdict, since even 1.8% is under 3%, but it means this is not a precise measurement of the flag's effect. Steady state was taken at steps 90-110 rather than a full 50-step window past compile, so a longer run could differ. Single card, so any effect on multi-rank collectives is unmeasured. And the divergence cause is NOT diagnosed -- I established that it exists and that padding cannot explain it, not what it is. That diagnosis matters more than this flag and is not done.",
+   "status": "retracted",
+   "claim": "The val half of the pad_dynamic_shapes A/B is invalid because the harness diverges run-to-run: identical config gave loss 7.617 vs 9.447 at step 10, so no |delta val| verdict can be read from a 1-vs-1 comparison and every val gate including the fp8 head's 0.04 nat is compromised.",
+   "audit": "WRONG, and the twin run refutes it directly. Two runs with byte-identical config, same seed, same session gave 7.564/6.308/5.013 and 7.542/6.231/5.107 at steps 10/50/110 -- max spread 0.094 nat, and 0.022 at step 10 where I had claimed 1.83 nat of unexplained divergence. The harness reproduces. So the ON arm's +1.830 nat at step 10 is 19.5x the twin spread and 35x b0's sigma-hat 0.0516: it is a REAL EFFECT OF THE FLAG, not noise. pad_dynamic_shapes is not numerics-neutral -- padding strides changes the compiled kernels' arithmetic, which I asserted it could not do ('a padding flag changes memory layout, not arithmetic'). That assertion was the error; everything downstream of it followed. No val gate is compromised, and the fp8 head's 0.04 nat threshold stands. I raised a method alarm to fb, b0 and 44 on the strength of a comparison I had not controlled.",
+   "refuted_by": "eff.pad_dynamic_shapes_twin_control"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_twin_control",
+   "value": "The harness IS reproducible at single-run level, and pad_dynamic_shapes is NOT numerics-neutral. Twin control for the pad A/B (t57, 2026-09-01), run because I had claimed the opposite. TWO RUNS, byte-identical config, seed 42, same session, one card, mix_smoke_warmup, 110 steps: twin A 7.564 / 6.308 / 5.013 and twin B 7.542 / 6.231 / 5.107 at steps 10 / 50 / 110. Max spread 0.094 nat, and 0.022 at step 10. Both twins also land within 0.05 nat of the pad-OFF arm at steps 10 and 110, so OFF is an ordinary run and the harness reproduces. THEREFORE THE FLAG MOVES LOSS. ON minus OFF is +1.830 nat at step 10, +0.405 at 50, +0.831 at 110. The step-10 figure is 19.5x the twin spread and 35x b0's sigma-hat 0.0516. That is an effect, not noise. Padding strides changes which compiled kernels run and their accumulation order, so it changes arithmetic -- my assertion that 'a padding flag changes memory layout, not arithmetic' was false, and it was the premise for calling the val comparison invalid. CONSEQUENCE. pad_dynamic_shapes is a STRONGER no-ship than the throughput result alone made it: +1.25% tok/s and a loss regression of 0.83 nat at step 110, versus a 3% gain gate and a 0.04 nat loss ceiling. It fails both halves rather than merely missing the throughput bar. And no val gate is compromised: the fp8 head's 50-step 0.04 nat threshold is readable, because 0.094 nat of twin spread is the noise floor to clear and a 1-vs-1 comparison is meaningful against it.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_twin.log, runs/t57_pad_ab.log",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "steps": 110,
+    "twin_a_loss_10_50_110": [
+     7.564,
+     6.308,
+     5.013
+    ],
+    "twin_b_loss_10_50_110": [
+     7.542,
+     6.231,
+     5.107
+    ],
+    "twin_max_spread_nat": 0.094,
+    "twin_spread_step10_nat": 0.022,
+    "pad_off_loss": [
+     7.617,
+     6.182,
+     5.04
+    ],
+    "pad_on_loss": [
+     9.447,
+     6.587,
+     5.871
+    ],
+    "on_minus_off_nat": [
+     1.83,
+     0.405,
+     0.831
+    ],
+    "step10_in_twin_spreads": 19.5,
+    "step10_in_sigma_hat": 35,
+    "sigma_hat": 0.0516,
+    "verdict": "harness reproducible; flag changes arithmetic; no-ship on BOTH tok/s and val"
+   },
+   "uncertainty": "Two runs, not a distribution: 0.094 nat is the observed spread of one pair and a third twin could widen it. It is measured on one card at 110 steps on the smoke mix, so it does not bound the spread for a 7-card 50-step run on the real mix, which is what the fp8 gate will actually use -- that noise floor still has to be established in the configuration the gate runs in. The mechanism by which padding changes loss is not diagnosed: I show that it does, not which kernels changed or whether the direction is systematic. And since both twins sit near the OFF arm, I cannot rule out that the ON arm hit something specific to its session rather than to the flag; a second ON run would settle that and has not been done.",
    "status": "measured"
   }
  ]
