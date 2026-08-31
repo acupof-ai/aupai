@@ -167,8 +167,51 @@ def print_metric(name, spec, m_val, p_val, state, direction, delta, note, m_dege
         print(f"  degenerate_rate beside: {m_degen.get('rate', '?')} (n={m_degen.get('n', '?')}, t={t}) -- never a substitute for the accuracy above")
 
 
+def param_line(ckpt_name, ckpt_dir=None):
+    """'206.1M (tied head; state_dict 239.7M)' for one checkpoint, or None if unreadable.
+
+    The two numbers differ because tok.weight and head.weight are the SAME storage: the run
+    log reports parameters() (206.1M, each storage once) while the state_dict sums the tied
+    32832x1024 table twice (239.7M). Printed side by side so the pairing of a run-log number
+    against a checkpoint number never reads as a size change (fb, 2026-08-31).
+
+    COMPUTED, never stamped: a hardcoded '206.1M/239.7M' is the same stale-derived-artifact
+    shape as a cache whose key does not cover its content -- it would keep printing the old
+    pair after an arch change. Aliasing is detected by storage identity (data_ptr), not by
+    value equality: two tensors that merely happen to be equal are two parameters."""
+    path = os.path.join(ckpt_dir or ROOT, ckpt_name)
+    if not os.path.exists(path):
+        return None
+    try:
+        import torch
+
+        try:
+            ck = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
+        except Exception:  # noqa: BLE001
+            ck = torch.load(path, map_location="cpu", weights_only=False)
+        model = ck.get("model") if isinstance(ck, dict) else None
+        if not isinstance(model, dict):
+            return None
+        total, uniq, seen = 0, 0, set()
+        for t in model.values():
+            if not hasattr(t, "numel"):
+                continue
+            total += int(t.numel())
+            key = (t.data_ptr(), int(t.numel()))
+            if key not in seen:
+                seen.add(key)
+                uniq += int(t.numel())
+    except Exception:  # noqa: BLE001
+        return None
+    if not total:
+        return None
+    if uniq == total:
+        return f"{total / 1e6:.1f}M"
+    return f"{uniq / 1e6:.1f}M (tied head; state_dict {total / 1e6:.1f}M)"
+
+
 def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens,
-            milestone_profile="milestone", paired_profile="full", selftest=False):
+            milestone_profile="milestone", paired_profile="full", selftest=False, ckpt_dir=None):
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
     m_rec = load_score_record(score_matrix, milestone, milestone_profile)
     p_rec = load_score_record(score_matrix, paired, paired_profile)
@@ -181,6 +224,13 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
         p_dl = {"ckpt": paired, "domains": {k: v for k, v in p_rec["metrics"]["domain_loss"].items() if isinstance(v, dict)}}
 
     print(f"=== 30B readout: {milestone} vs {paired}" + (" (3.24B pair, warmup confound active)" if is_3p24b else "") + " ===")
+    # params for BOTH sides, so a run-log 206.1M paired against a state_dict 239.7M does not
+    # read as a size change. Silent when a checkpoint is not on this box -- the readout is a
+    # verdict table, not a checkpoint inspector.
+    for side, name in (("milestone", milestone), ("paired", paired)):
+        pl = param_line(name, ckpt_dir)
+        if pl:
+            print(f"  {side:9s} {name}: params {pl}")
     any_moved = False
     for name, spec in METRICS.items():
         if name == "per_role_domain_loss":
@@ -274,6 +324,30 @@ def selftest():
             moved_domains += 1
     assert moved_domains >= 1, "no domain loss moved between 0.2b and 3.24b -- engine or data broken"
     print(f"  {moved_domains}/{len(common)} domains moved (all in the known direction: lower at 3.24b)")
+    # 2b. param_line distinguishes a TIED head from two equal-but-separate tables. Value
+    # equality is not the test -- torch.equal is true for both -- so a param_line that keyed
+    # on equality would print "tied head" for an untied model and hide a real size change.
+    print("\n--- selftest 2b: param_line detects storage aliasing, not value equality ---")
+    try:
+        import tempfile
+
+        import torch
+
+        w = torch.zeros(4, 5)
+        with tempfile.TemporaryDirectory() as d:
+            torch.save({"model": {"tok.weight": w, "head.weight": w}}, os.path.join(d, "tied.pt"))
+            torch.save({"model": {"tok.weight": w, "head.weight": w.clone()}}, os.path.join(d, "untied.pt"))
+            tied, untied = param_line("tied.pt", d), param_line("untied.pt", d)
+        assert tied and "tied head" in tied, f"tied checkpoint not reported as tied: {tied}"
+        assert untied and "tied head" not in untied, (
+            f"two EQUAL but separate tables reported as tied: {untied} -- param_line is keying on "
+            "value equality, so it would hide a real doubling of the embedding table"
+        )
+        assert tied.startswith("0.0M (tied head; state_dict 0.0M)"), tied
+        assert "state_dict" not in untied, f"untied line should be a single number, got {untied}"
+        print(f"  tied -> {tied}; untied -> {untied}")
+    except ImportError:
+        print("  SKIP: no torch on this box", file=sys.stderr)
     # 3. a record missing a metric prints ABSENT, never floor (t39 acceptance:
     # a milestone whose score_matrix record lacks a metric is unmeasured, not floor)
     print("\n--- selftest 3: missing metric -> ABSENT, never floor ---")
@@ -315,6 +389,7 @@ def main():
     ap.add_argument("--milestone-domain-loss", help="domain_loss.py --json for the milestone (30B heads)")
     ap.add_argument("--paired-domain-loss", help="domain_loss.py --json for the paired checkpoint (same heads)")
     ap.add_argument("--milestone-tokens", type=float, help="milestone token budget (3.24e9/8e9/16e9/30e9); activates the warmup-confound rule at 3.24B")
+    ap.add_argument("--ckpt-dir", default=ROOT, help="where the checkpoints live (for the params header)")
     ap.add_argument("--milestone-profile", default="milestone", help="score_matrix profile of the milestone record")
     ap.add_argument("--paired-profile", default="full", help="score_matrix profile of the paired record")
     ap.add_argument("--selftest", action="store_true", help="known-answer dry runs")
@@ -324,7 +399,7 @@ def main():
     if not a.milestone or not a.paired:
         ap.error("--milestone and --paired are required (or --selftest)")
     readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
-            a.milestone_tokens, a.milestone_profile, a.paired_profile)
+            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir)
 
 
 if __name__ == "__main__":
