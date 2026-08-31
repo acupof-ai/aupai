@@ -572,7 +572,7 @@
     "variable": "carve source removed from SOURCES; everything else identical (v3 recipe, same base ckpt_p324, same hparams); pack 47078 rows vs v3's 46938, fence rows 14021 vs 15555",
     "v3_pair": "be.sft_v3_code500 (200/500 = 40.0% with the carve source's 2278 sibling examples in pack)"
    },
-   "uncertainty": "code-asking question share per source is a keyword upper bound (openo1's 54% includes math-CoT questions using 实现/算法/函数). v4's no-fence 98.8% read by fb from the log, not independently re-derived by 44.",
+   "uncertainty": "code-asking question share per source is a keyword upper bound (openo1's 54% includes math-CoT questions using 实现/算法/函数). v4's 0/500 independently re-derived: rescore_code.py on the full 500-row t28-format preds, row_agree 500/500, reproduces=True (2026-08-31).",
    "status": "measured"
   }
  ]

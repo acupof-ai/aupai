@@ -170,6 +170,15 @@ def _manifest_ms_finemath_4plus():
     return [(n, base + n, 0) for n in names]
 
 
+
+def _manifest_ms_om2():
+    """cot role (ModelScope, 2026-08-31): OpenMathInstruct-2, 55 data parquet
+    (small, under the finemath large-file abort; direct, no chunking)."""
+    names = open(os.path.join(ROOT, "data", "raw", "ms_om2_manifest.txt")).read().split()
+    base = "https://www.modelscope.cn/datasets/AI-ModelScope/OpenMathInstruct-2/resolve/master/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
@@ -179,6 +188,7 @@ SOURCES = {
     "rp1t_arxiv": _manifest_rp1t_arxiv,
     "rp1t_stackexchange": _manifest_rp1t_stackexchange,
     "ms_finemath_4plus": _manifest_ms_finemath_4plus,
+    "ms_om2": _manifest_ms_om2,
 }
 
 

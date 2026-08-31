@@ -1,6 +1,6 @@
 # aupai
 
-A 200M-parameter reasoning model for coding and math, pretrained on ~30B tokens.
+A 200M-parameter reasoning LLM for coding and math, pretrained on ~30B tokens.
 Objective set 2026-08-30; the earlier Chinese-web LLM and its scaling law are retired
 (`docs/standards/0830v1_gates.md`). Working rules, layout, and the run book are in
 `AGENTS.md`; this file is the short version.
