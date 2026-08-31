@@ -74,6 +74,13 @@ METRICS = {
 
 WARMUP_CONFOUND_MILESTONE_TOKENS = 3.24e9  # only the 3.24B pair has the 20-vs-300 confound
 
+# Alternative top keys for one metric, tried in order after the declared key. The base
+# profile scores ceval alone and writes mc_ceval; the milestone and sft profiles score
+# ceval+mmlu+arc-easy and write mc_full. Both hold "C-Eval (zh)". The paired 3.24B readout
+# crosses that boundary -- milestone side mc_full, ladder side mc_ceval -- so without the
+# alias the tripwire the pre-registration relies on reads ABSENT rather than a number.
+FIELD_ALIASES = {"mc_full": ("mc_ceval",), "mc_ceval": ("mc_full",)}
+
 
 def load_score_record(path, ckpt, profile="full"):
     """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
@@ -99,17 +106,26 @@ def load_domain_loss(path, ckpt):
 
 
 def get_field(record, field):
-    """field = (top_key, sub_key); sub_key None means the metric is derived."""
+    """field = (top_key, sub_key); sub_key None means the metric is derived.
+
+    A metric may be recorded under more than one top key when two profiles measure the same
+    thing through different benchmark sets. ceval is scored as mc_ceval by the base profile
+    and as mc_full by the milestone profile, both carrying the "C-Eval (zh)" sub-key. Trying
+    each alias in turn keeps a paired reading judgeable across a profile boundary: without
+    it the 3.24B pair reads ABSENT on ceval, because the milestone side writes mc_full and
+    ckpt_p324 was scored under base, which writes mc_ceval and leaves mc_full null."""
     if record is None:
         return None
     top, sub = field
-    v = record.get("metrics", {}).get(top)
-    if v is None:
-        return None
-    if sub is None:
-        return v
-    if isinstance(v, dict):
-        return v.get(sub)
+    metrics = record.get("metrics", {})
+    for key in (top, *FIELD_ALIASES.get(top, ())):
+        v = metrics.get(key)
+        if v is None:
+            continue
+        if sub is None:
+            return v
+        if isinstance(v, dict) and v.get(sub) is not None:
+            return v.get(sub)
     return None
 
 
@@ -348,6 +364,24 @@ def selftest():
         print(f"  tied -> {tied}; untied -> {untied}")
     except ImportError:
         print("  SKIP: no torch on this box", file=sys.stderr)
+    # 2c. ceval survives the profile boundary. The milestone profile writes mc_full; the
+    # base profile that scored the ladder point writes mc_ceval and leaves mc_full null.
+    # Without FIELD_ALIASES the pair reads ABSENT and the tripwire is silently unarmed --
+    # ABSENT looks like "not measured", so nobody goes looking for the number that exists.
+    print("\n--- selftest 2c: ceval reads across the milestone/base profile boundary ---")
+    spec = METRICS["ceval"]
+    milestone_side = {"metrics": {"mc_full": {"C-Eval (zh)": 27.1}}}
+    ladder_side = {"metrics": {"mc_ceval": {"C-Eval (zh)": 22.4}, "mc_full": None}}
+    mv, pv = get_field(milestone_side, spec["field"]), get_field(ladder_side, spec["field"])
+    assert mv == 27.1, f"milestone mc_full not read: {mv}"
+    assert pv == 22.4, (
+        f"ladder mc_ceval not read through the mc_full alias: {pv}. The 3.24B pair would "
+        "read ABSENT on ceval while both numbers exist in the ledger."
+    )
+    state, direction, delta, _ = verdict("ceval", spec, mv, pv, True)
+    assert state != "absent", "ceval judgeable on both sides still read absent"
+    print(f"  milestone(mc_full)={mv} paired(mc_ceval)={pv} delta={delta:+.1f}pt -> {state}")
+
     # 3. a record missing a metric prints ABSENT, never floor (t39 acceptance:
     # a milestone whose score_matrix record lacks a metric is unmeasured, not floor)
     print("\n--- selftest 3: missing metric -> ABSENT, never floor ---")
