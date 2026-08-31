@@ -806,6 +806,147 @@ def _broken_blob():
     return d
 
 
+def merge_took_one_side(root, merge_sha="HEAD"):
+    """Files a merge resolved by taking one parent WHOLE, when both parents had
+    changed them. Returns [(path, "ours"|"theirs", n_lost_commits)].
+
+    This is the real class, found by de 2026-08-31 while resolving a file two
+    sessions had edited: `git checkout --theirs <f>` took main's whole file and
+    dropped four of their changes; `git checkout HEAD <f>` restored theirs and
+    dropped my _gpu_descendants. Neither printed anything. A file-level resolution
+    of a file both sides edited discards one side silently, and no later check can
+    fail on code that is no longer there.
+
+    The test is exact rather than heuristic: for each path both parents changed
+    since the merge base, compare the merge's blob to each parent's. Byte-identical
+    to one parent means the other parent's work on that file is gone. A genuine
+    3-way merge blends and matches neither.
+
+    Ceiling: a path only one side changed is not examined, correctly -- taking that
+    side whole IS the merge. And a resolution that happens to reproduce one side
+    byte-for-byte while intending to is indistinguishable from one that discarded
+    the other; that case is rare and worth a human look, which is what FAIL asks for.
+
+    Measured false-positive rate on real history (e1, 2026-08-31): over 93 merges in
+    one day it reports 2. One (350210e) lists seven paths with 0 commits lost -- the
+    other side had no commits touching them, so nothing was discarded. The other
+    (583a54a) is a true "one side taken whole" and the file it took does drop a fact,
+    eff.dynamo_recompile_from_dynamic_cu, but that fact had been deliberately
+    retracted in 432c987 as a wrong measurement. So the check's one substantive hit
+    on a real day is a correct detection of a correct outcome. That is the expected
+    shape: it flags contested whole-file resolutions for a human, it does not know
+    which were intended.
+
+    Not this function's business (e1, 2026-08-31): a commit that never reached the
+    branch being merged was never in the input, so its absence is not a drop. I
+    reported one of those as a lost commit and was wrong. `git branch --contains
+    <sha>` distinguishes the two in two seconds and comes first."""
+    def git(*args):
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    parents = git("rev-list", "--parents", "-n", "1", merge_sha).split()
+    if len(parents) < 3:
+        return []  # not a merge
+    m, ours, theirs = parents[0], parents[1], parents[2]
+    base = git("merge-base", ours, theirs).strip()
+    if not base:
+        return []
+    both = (set(git("diff", "--name-only", base, ours).split())
+            & set(git("diff", "--name-only", base, theirs).split()))
+    out = []
+    for path in sorted(both):
+        mv = git("rev-parse", f"{m}:{path}").strip()
+        a = git("rev-parse", f"{ours}:{path}").strip()
+        b = git("rev-parse", f"{theirs}:{path}").strip()
+        if not mv or a == b:
+            continue
+        if mv == a:
+            lost = len(git("rev-list", f"{ours}..{theirs}", "--", path).split())
+            out.append((path, "ours", lost))
+        elif mv == b:
+            lost = len(git("rev-list", f"{theirs}..{ours}", "--", path).split())
+            out.append((path, "theirs", lost))
+    return out
+
+
+def check_merge_complete(root):
+    """A merge must not resolve a contested file by discarding one side."""
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, "cannot read HEAD"
+    if len(r.stdout.split()) < 3:
+        return PASS, "HEAD is not a merge (1 commit examined)"
+    took = merge_took_one_side(root)
+    # A ledger is union-merged by .gitattributes and legitimately equals one side
+    # when only that side appended; that is the merge driver working, not a drop.
+    took = [t for t in took if not t[0].endswith(".jsonl")
+            and t[0] != "data/pod_head_manifest.txt"]
+    # 0 commits lost means the other side had no commits touching that path: the file
+    # matches one parent because only one parent's history reached it, not because a
+    # resolution discarded anything. Seven of the nine hits over one day's 93 merges
+    # were this shape.
+    took = [t for t in took if t[2] > 0]
+    if took:
+        return FAIL, (
+            f"{len(took)} contested file(s) resolved by taking one side whole: "
+            + "; ".join(f"{p} == {side} ({n} commit(s) from the other side lost)"
+                        for p, side, n in took[:3])
+            + ". Re-resolve by hand and grep a marker from each side before committing."
+        )
+    contested = len([1 for _ in merge_took_one_side(root)]) or 0
+    n_both = len(set(subprocess.run(
+        ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
+        capture_output=True, text=True).stdout.split()))
+    return PASS, f"{n_both} file(s) changed by the merge, {contested} contested file(s) taken whole"
+
+
+def _broken_merge_complete():
+    """A real two-branch repo where the merge was resolved with `git checkout --theirs`.
+
+    de's actual mistake, 2026-08-31: resolving a file two sessions had edited, they
+    ran `git checkout --theirs scripts/harness.py`, which took main's whole file and
+    dropped four of their own changes. Then `git checkout HEAD` on the same file
+    restored theirs and dropped mine. Neither printed anything. This world is that
+    sequence, minimised."""
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    sh("init", "-q")
+    sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+    # A repo-real path: the selftest's meta-check rejects a world built entirely from
+    # invented paths, and rightly -- a world hand-written from the check's own
+    # assumptions cannot show the check works on the tree it will actually run against.
+    rel = os.path.join("scripts", "loader.py")
+    src = os.path.join(d, rel)
+    os.makedirs(os.path.dirname(src), exist_ok=True)
+    open(src, "w").write("def f():\n    return 1\n")
+    sh("add", "-A"); sh("commit", "-qm", "base")
+    sh("branch", "other")
+
+    # our side edits the function
+    open(src, "w").write("def f():\n    OURS_MARKER = 'kept by us'\n    return 1\n")
+    sh("add", "-A"); sh("commit", "-qm", "ours: add OURS_MARKER")
+
+    # their side edits the same function differently
+    sh("checkout", "-q", "other")
+    open(src, "w").write("def f():\n    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+    sh("add", "-A"); sh("commit", "-qm", "theirs: add THEIRS_MARKER")
+
+    # the resolution that loses a side silently
+    sh("checkout", "-q", "master") if sh("rev-parse", "--verify", "-q", "master").returncode == 0 else sh("checkout", "-q", "main")
+    sh("merge", "--no-commit", "other")
+    sh("checkout", "--theirs", rel)
+    sh("add", rel)
+    sh("commit", "-qm", "merge other (resolved --theirs)")
+    txt = open(src).read()
+    assert "THEIRS_MARKER" in txt and "OURS_MARKER" not in txt, \
+        f"the broken world must have lost our side: {txt!r}"
+    return d
+
+
 def check_no_stale_running(root):
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
@@ -3815,6 +3956,13 @@ CHECKS = [
         "four files hardcode these ids and a vocabulary rebuild moves them silently",
         check_pinned_ids,
         lambda: _broken_tokenizer(eos_id=5),
+    ),
+    (
+        "merge_complete",
+        "a merge does not resolve a contested file by discarding one side",
+        "resolving a file two sessions had edited with `git checkout --theirs` took one whole file and dropped four changes; the reverse checkout dropped another session's. Neither printed anything, and no later check can fail on code that is no longer there",
+        check_merge_complete,
+        _broken_merge_complete,
     ),
     (
         "no_stale_running",
