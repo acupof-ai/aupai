@@ -1337,6 +1337,29 @@
    },
    "uncertainty": "sign unknown; must be A/B'd, and the cited PyTorch case swings both ways on a threshold we have not tuned",
    "status": "measured"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_surface",
+   "value": "e1's find (e1-3), verified in the installed source and sized against the steady trace, NOT yet A/B'd. torch._inductor.config.pad_dynamic_shapes defaults False (config.py:1193), and ir.py:3941 reads 'if not config.pad_dynamic_shapes and is_dynamic: return in_strides' where is_dynamic is true when ANY entry of in_strides or size is not a plain int/sympy.Integer. So a symbolic dimension turns off 128-byte stride padding for that node. train.py:855's mark_dynamic(cu, 0) is the only source of symbolic shapes in the graph (both torch.compile calls pass dynamic=False), so cu's length is what makes nodes downstream of it dynamic. SURFACE SIZED: the padding-eligible kernels are pointwise/reduction fusions plus non-triton copy/elementwise, and their UNION is 626.9 ms/step = 39.2% of the 1600.3 ms kernel time -- 520.0 ms of triton poi/red/per plus 107.0 ms of aten copy/elementwise. That confirms e1's 39% figure exactly. A CAUTION ON THE BLAST RADIUS, and it corrects how I first sized this myself: the gate is per-NODE, not per-graph. ir.py checks each node's own sizes and strides, so padding is disabled only where a symbolic dim actually reaches, not across the whole graph. 39.2% is the eligible surface, i.e. an upper bound on what the config could touch, and the fraction of it that is currently unpadded is unknown. SIGN IS UNKNOWN. PyTorch's own note records both a 1.09x regression and a 1.05x win from this flag, and padding trades wasted bandwidth on padded tensors against better-aligned access, so it can go either way at our shapes. This is why it is a one-line A/B and not a change to make on reasoning.",
+   "measured": "2026-09-01",
+   "source": "bench_eff/t57_fusion.py, train.py; torch 2.11.0+cu129 _inductor/config.py:1193 and _inductor/ir.py:3941 on the pod",
+   "config": {
+    "finder": "e1 (e1-3)",
+    "measurer": "tilerl",
+    "flag": "torch._inductor.config.pad_dynamic_shapes",
+    "default": false,
+    "gate_site": "_inductor/ir.py:3941",
+    "gate_scope": "per node, not per graph",
+    "symbolic_source": "train.py:855 mark_dynamic(cu, 0)",
+    "kernel_total_ms_per_step": 1600.3,
+    "triton_poi_red_per_ms": 520.0,
+    "aten_copy_elementwise_ms": 107.0,
+    "padding_eligible_union_ms": 626.9,
+    "padding_eligible_pct": 39.2,
+    "ab_status": "queued on the lane after the 8B milestone profile and the fp8 activation absmax"
+   },
+   "uncertainty": "Nothing here is a throughput measurement: the flag has not been flipped. 39.2% is the eligible surface and an upper bound, not an expected gain, and the per-node gate means the actually-unpadded fraction is smaller by an unknown amount. Sizing comes from the single-card steady trace, so the 7-card shares may differ. I first computed the surface as 446.3 ms of 'copy/elementwise' by matching those words anywhere in a kernel name, which double-counted 339.3 ms of triton fusions already inside the 520.0 -- the same naming trap that inverted my first attribution pass. The 107.0 ms figure excludes triton-prefixed names for that reason.",
+   "status": "measured"
   }
  ]
 }
