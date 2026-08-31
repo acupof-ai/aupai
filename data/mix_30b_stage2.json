@@ -56,7 +56,10 @@
    "stage1_pool_rows": 1168802,
    "cumulative_rows": 1340017,
    "cumulative_epochs_on_stage1_pool": 1.1465,
-   "epoch_cap_note": "epochs 1 = ceil(571451/1168802) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.489: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 581073,
+   "epochs_pool_source": "stage-2 cache (measured)",
+   "stage2_pool_rows": 581073,
+   "epoch_cap_note": "epochs 1 = ceil(571451/581073) on the STAGE-2 pool measured from its token cache. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.9834: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +1.68%.",
    "supply_tokens": 2403694865,
    "fingerprint": "05e0fc6f14704056",
    "supply_margin_pct": 2.69,
@@ -77,7 +80,10 @@
    "stage1_pool_rows": 1842469,
    "cumulative_rows": 2436394,
    "cumulative_epochs_on_stage1_pool": 1.3224,
-   "epoch_cap_note": "epochs 1 = ceil(1074090/1842469) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.583: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 1842469,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 1 = ceil(1074090/1842469) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.5830: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +71.54%.",
    "status": "BLOCKED: data/corpus/code_rp1t_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   },
   "math_owm_stage2": {
@@ -93,7 +99,10 @@
    "stage1_pool_rows": 979824,
    "cumulative_rows": 1845369,
    "cumulative_epochs_on_stage1_pool": 1.8834,
-   "epoch_cap_note": "epochs 2 = ceil(1173995/979824) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 1.198: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 979824,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 2 = ceil(1173995/979824) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 1.1982: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom -16.54%.",
    "status": "BLOCKED: data/corpus/math_owm_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   },
   "cot_stage2": {
@@ -109,7 +118,10 @@
    "stage1_pool_rows": 98504,
    "cumulative_rows": 591024,
    "cumulative_epochs_on_stage1_pool": 6.0,
-   "epoch_cap_note": "epochs 3 = ceil(295512/98504) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 3.000: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 98504,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 3 = ceil(295512/98504) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 3.0000: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom -66.67%.",
    "status": "BLOCKED: data/corpus/cot_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   },
   "zh_web_stage2": {
@@ -125,7 +137,10 @@
    "stage1_pool_rows": 5192316,
    "cumulative_rows": 804010,
    "cumulative_epochs_on_stage1_pool": 0.1548,
-   "epoch_cap_note": "epochs 1 = ceil(401178/5192316) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.077: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 5192316,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 1 = ceil(401178/5192316) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.0773: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +1194.27%.",
    "status": "BLOCKED: data/corpus/zh_web_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   },
   "textbook_30b_stage2": {
@@ -141,7 +156,10 @@
    "stage1_pool_rows": 388021,
    "cumulative_rows": 243639,
    "cumulative_epochs_on_stage1_pool": 0.6279,
-   "epoch_cap_note": "epochs 1 = ceil(121581/388021) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.313: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 388021,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 1 = ceil(121581/388021) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.3133: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +219.15%.",
    "status": "BLOCKED: data/corpus/textbook_30b_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   },
   "wiki_chat_stage2": {
@@ -157,7 +175,10 @@
    "stage1_pool_rows": 65831,
    "cumulative_rows": 48728,
    "cumulative_epochs_on_stage1_pool": 0.7402,
-   "epoch_cap_note": "epochs 1 = ceil(24302/65831) on the STAGE-1 pool. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.369: a fractional cap re-creates stage 1's 61,593,088-token under-draw.",
+   "pool_rows": 65831,
+   "epochs_pool_source": "stage-1 pool (provisional)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 1 = ceil(24302/65831) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.3692: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +170.89%.",
    "status": "BLOCKED: data/corpus/wiki_chat_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
   }
  }

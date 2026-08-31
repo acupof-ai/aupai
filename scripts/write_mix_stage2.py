@@ -32,6 +32,13 @@ SEQ = 4096
 LANDED = {
     "en_c4": (2_403_694_865, "05e0fc6f14704056"),
 }
+# POOLS: domain -> stage-2 trainable pool rows, MEASURED from its token cache, not from the stamp.
+# A stamp gives tokens; a pool is rows of seq+1 minus n_val = min(int(rows*0.05), 5000), which only
+# the cache yields. A domain here gets its epochs re-derived against its OWN pool; without an entry
+# the epochs value is the stage-1-pool figure and is provisional.
+STAGE2_POOLS = {
+    "en_c4": 581_073,  # cache 2,401,144,188 tok = 586,073 rows of 4097, minus 5,000 val
+}
 
 SPEC = {
     "code_rp1t": (1_074_090, 1_362_304, 1_842_469, "code raw (RedPajama-1T github); 30B cumulative third"),
@@ -70,7 +77,9 @@ def build():
         w, places = _weight_for_rows(s2)
         runtime = int(ROWS * w)
         assert runtime == s2, f"{name}: weight {w} draws {runtime}, want {s2}"
-        epochs = math.ceil(runtime / pool)
+        s2_pool = STAGE2_POOLS.get(name)
+        cap_pool = s2_pool if s2_pool else pool
+        epochs = math.ceil(runtime / cap_pool)
         total += runtime
         entry = {
             "weight": w,
@@ -85,10 +94,15 @@ def build():
             "stage1_pool_rows": pool,
             "cumulative_rows": s1 + runtime,
             "cumulative_epochs_on_stage1_pool": round((s1 + runtime) / pool, 4),
+            "pool_rows": cap_pool,  # alias b0's readout draws_equal() reads
+            "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (provisional)",
+            "stage2_pool_rows": s2_pool,
             "epoch_cap_note": (
-                f"epochs {epochs} = ceil({runtime}/{pool}) on the STAGE-1 pool. build_mix caps at "
-                f"int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio "
-                f"{runtime / pool:.3f}: a fractional cap re-creates stage 1's 61,593,088-token under-draw."
+                f"epochs {epochs} = ceil({runtime}/{cap_pool}) on the "
+                f"{'STAGE-2 pool measured from its token cache' if s2_pool else 'STAGE-1 pool, PROVISIONAL until its cache exists'}. "
+                f"build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never "
+                f"the ratio {runtime / cap_pool:.4f}: a fractional cap re-creates stage 1's "
+                f"61,593,088-token under-draw. Headroom {(cap_pool - runtime) / runtime * 100:+.2f}%."
             ),
         }
         if name in LANDED:
