@@ -1730,15 +1730,29 @@ def main():
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
     args = parser.parse_args()
+    # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
+    # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
+    # despite its help text saying "0 = epoch end only", and --attn_res_blocks 0 landed
+    # only because the Cfg default was already 0. Ten int flags were affected; the
+    # warmdown/anneal_frac rescue loop this replaces was the same fix for two of them.
+    #
+    # store_true flags are excluded and handled below: argparse gives them False when
+    # absent, not None, so is-not-None would overwrite the Cfg default on every run --
+    # and Cfg.attn_res defaults to TRUE, so a blanket sweep would silently disable
+    # Attention Residuals everywhere. Absence of a switch is not a request to turn it off.
+    _switches = {a.dest for a in parser._actions if isinstance(a, argparse._StoreTrueAction)}
     for k, v in vars(args).items():
-        if hasattr(Cfg, k) and v:
-            setattr(Cfg, k, v)
-    # warmdown/anneal_frac are floats whose valid value 0.0 is falsy: the loop above skips
-    # them (the --warmdown 0 stage-1 join would silently keep Cfg.warmdown 0.65). Apply
-    # them explicitly by is-not-None so 0.0 lands.
-    for k in ("warmdown", "anneal_frac"):
-        v = getattr(args, k, None)
-        if v is not None:
+        if not hasattr(Cfg, k):
+            continue
+        if k in _switches:
+            # A store_true is False both when absent and when the Cfg default is False,
+            # so `is not None` would write False over a True default -- Cfg.attn_res
+            # defaults to True, and a blanket sweep would silently disable Attention
+            # Residuals on every run. Only a switch actually passed sets its field;
+            # turning one OFF is what the --no_* flags below are for.
+            if v:
+                setattr(Cfg, k, True)
+        elif v is not None:
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
