@@ -8,7 +8,7 @@ and say why in the commit message).
 The 5MB limit is the same as harness's no_oversized_blob check -- this hook
 is the first line (commit time), CI is the second. The data/ allow-list is
 the set of paths that may be committed; anything else under data/ is refused
-because large data belongs in .gitignore, not history (7ab8588 swept 234MB
+because large data belongs in .gitignore, not history (d535674 swept 234MB
 under data/_corpus_unsanitized/ into one commit).
 """
 import fnmatch
