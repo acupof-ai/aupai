@@ -548,6 +548,10 @@ def main():
     base_per_gb = b_hits / (b_bytes / 1e9) if b_bytes else 0.0
     print(f"BASELINE ({len(base_paths)} shard(s), {b_rows} rows, {b_bytes / 1e9:.3f} GB): "
           f"{b_hits} hit rows = {base_per_gb:.1f}/GB, {b_exact} exact")
+    b_long = [b_mc[i] for i in range(len(holdouts)) if i not in idx.short]
+    print(f"  (union holdouts hit at 0.7/0.8/0.9: "
+          f"{sum(v >= 0.7 for v in b_long)}/{sum(v >= 0.8 for v in b_long)}/{sum(v >= 0.9 for v in b_long)}"
+          f" -- baseline ceiling, context only)")
 
     results = scan_many(fresh, idx, args)
     short = set(idx.short)
