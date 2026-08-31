@@ -422,16 +422,17 @@ def _broken_mix_30b():
     return d
 
 
-def check_mix_30b_contract(root):
+def check_mix_30b_contract(root, mix_rel="data/mix_30b.json"):
     """The 30B pretrain mix (t30) is a composition contract, not a launch-ready file:
     domains land one by one as 3b stamps them, and every not-yet-landed domain is declared
     in _blocked with its full contract. Three invariants keep the composition from silently
     shrinking to what exists: weights(domains)+weights(_blocked) sum to 1.0 (nothing dropped),
     no name is a frozen ladder directory (a stamped-30B-corpus name, never web_hq/en/math/...),
-    and every landed domain is actually stamped."""
-    p = os.path.join(root, "data", "mix_30b.json")
+    and every landed domain is actually stamped. mix_rel lets a staged launcher check the
+    stage's own file so the line a person reads at launch names the mix being launched."""
+    p = os.path.join(root, mix_rel)
     if not os.path.exists(p):
-        return SKIP, "data/mix_30b.json not present"
+        return SKIP, f"{mix_rel} not present"
     try:
         mix = json.load(open(p, encoding="utf-8"))
     except Exception as e:  # noqa: BLE001

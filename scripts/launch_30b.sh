@@ -51,12 +51,13 @@ fi
 FLAGS="--mix $MIX --seq 4096 --warmup 300 --save_every 500 --attn_res_blocks 0 --attn_every 4 \
 --batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 0 $EXTRA --name $NAME"
 
-# Readiness: the mix contract + nothing still _blocked, read from THIS stage's own mix.
-contract=$(python3 scripts/harness.py check --only mix_30b_contract 2>&1)
+# Readiness: the mix contract + nothing still _blocked, read from THIS stage's own mix so
+# the line a person reads at launch names the mix being launched (not always mix_30b.json).
+contract=$(python3 -c "import sys; sys.path.insert(0,'scripts'); import harness; s,e=harness.check_mix_30b_contract('.', '$MIX'); print(f'  [{s}] mix_contract {e}')" 2>&1)
 blocked=$(python3 -c "import json;m=json.load(open('$MIX'));print(' '.join(sorted(m.get('_blocked',{}))))")
 
 echo "== launch_30b stage $STAGE readiness ($MIX) =="
-echo "$contract" | grep -E "mix_30b_contract" || echo "$contract" | tail -2
+echo "$contract"
 if [ -n "$blocked" ]; then
   echo "NOT READY: ${blocked// /, } still in _blocked -- not stamped yet."
   READY=0
