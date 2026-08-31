@@ -3722,6 +3722,70 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_auto_resume():
+    """de-1's three cases, on real child processes: a crash after a .step save is
+    resumed once, a clean exit is not, the kill-criterion code is not.
+
+    Real Popen children, not a mocked return code: the bug this supervisor replaced
+    was a zombie whose exit the parent never observed, which no mock reproduces."""
+    global ROOT
+    import shutil
+    import tempfile
+
+    real_root, real_sleep = ROOT, time.sleep
+    d = tempfile.mkdtemp(prefix="autoresume_")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    child = os.path.join(d, "child.py")
+    # Writes a step checkpoint on the first run, then exits with the code it was given.
+    # On a resumed run (--resume present) it exits 0, so a resumed job terminates.
+    open(child, "w").write(
+        "import os, sys\n"
+        "rc = int(sys.argv[1])\n"
+        "if '--resume' in sys.argv:\n"
+        "    open(os.path.join(sys.argv[2], 'resumed.txt'), 'a').write(' '.join(sys.argv[3:]) + '\\n')\n"
+        "    sys.exit(0)\n"
+        "open(os.path.join(sys.argv[2], 'ckpt_arts.pt.step500'), 'w').write('x')\n"
+        "sys.exit(rc)\n"
+    )
+
+    class _A:
+        name, training, output, auto_resume = "arts", False, None, 1
+
+    def run(rc):
+        for f in ("resumed.txt", "ckpt_arts.pt.step500"):
+            p = os.path.join(d, f)
+            if os.path.exists(p):
+                os.remove(p)
+        log = os.path.join(d, "runs", "arts.log")
+        cmd = [sys.executable, child, str(rc), d]
+        with open(log, "w") as lf:
+            proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, cwd=d)
+        out = _supervise(_A(), cmd, proc, "", log, os.path.join(d, "runs", "arts.pid"))
+        resumed = os.path.join(d, "resumed.txt")
+        return out, (open(resumed).read() if os.path.exists(resumed) else "")
+
+    try:
+        ROOT = d
+        time.sleep = lambda s: None  # the 60s backoff is policy, not behaviour under test
+        rc, resumed = run(1)
+        assert "--resume" in resumed and "step500" in resumed, f"a crash must resume from the step ckpt: {resumed!r}"
+        assert resumed.count("\n") == 1, f"exactly one resume for N=1: {resumed!r}"
+        assert rc == 0, f"a successful resume returns 0, got {rc}"
+
+        rc, resumed = run(0)
+        assert resumed == "", f"a clean exit must NOT resume: {resumed!r}"
+        assert rc == 0
+
+        rc, resumed = run(_KILL_CRITERION_EXIT)
+        assert resumed == "", f"the kill criterion must NOT resume: {resumed!r}"
+        assert rc == _KILL_CRITERION_EXIT, f"the kill-criterion code is returned as-is, got {rc}"
+    finally:
+        ROOT, time.sleep = real_root, real_sleep
+        shutil.rmtree(d, ignore_errors=True)
+    print("  auto-resume: crash resumes once, clean exit and kill criterion do not")
+
+
 def _demo():
     """Every check must FAIL on a world where its condition is violated."""
     import shutil
@@ -4064,6 +4128,8 @@ def _demo():
     assert blocked_gate and blocked_gate[0][1] == FAIL, f"must have a FAIL mix_30b blocked gate: {gates}"
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
+
+    _selftest_auto_resume()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
@@ -4813,6 +4879,9 @@ def cmd_launch(rest):
                     help="startup gate timeout in seconds (default: 120, 300 for --resume)")
     ap.add_argument("--output", default=None, help="declared output path for non-training jobs (monitored for growth alongside the log)")
     ap.add_argument("--no-gpu", action="store_true", help="corpus/CPU job: no card assigned, no lane check")
+    ap.add_argument("--auto-resume", type=int, default=0, metavar="N",
+                    help="on a non-zero exit, relaunch with --resume <latest step ckpt>, up to N times "
+                         "(blocks: detach the whole command with setsid nohup)")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
     if "--" not in rest:
         ap.error("no command given after --")
@@ -4938,7 +5007,112 @@ def cmd_launch(rest):
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")
     print(f"  exp: python scripts/exp.py done --name {args.name} --result ... --finding ... --decision ...")
+
+    # 6. Auto-resume: relaunch on a crash, never on a clean exit (de-1).
+    # Blocking by design -- the supervisor must outlive the child, so the caller
+    # detaches this whole command (setsid nohup), exactly as it detaches training.
+    if args.auto_resume:
+        return _supervise(args, cmd, proc, cards, log_path, pid_path)
     return 0
+
+
+#: Reserved for train.py's NaN / kill-criterion stop: a deliberate abort, never resumed.
+#: train.py does not raise it yet (it rolls back to good_state instead, train.py:2034);
+#: the guard exists so that adding the stop does not also need a change here, and so a
+#: future exit(_KILL_CRITERION_EXIT) cannot be silently treated as a crash.
+_KILL_CRITERION_EXIT = 42
+
+
+def _latest_step_ckpt(name):
+    """(path, step) of the newest ckpt_<name>.pt.step<N>, or (None, None)."""
+    best, best_step = None, None
+    for p in glob.glob(os.path.join(ROOT, f"ckpt_{name}.pt.step*")):
+        m = re.search(r"\.step(\d+)$", p)
+        if m and (best_step is None or int(m.group(1)) > best_step):
+            best, best_step = p, int(m.group(1))
+    return best, best_step
+
+
+def _supervise(args, cmd, proc, cards, log_path, pid_path):
+    """Wait on a launched job; on a crash relaunch it with --resume, up to N times."""
+    resumes = []
+    for attempt in range(args.auto_resume + 1):
+        rc = proc.wait()
+        if rc == 0:
+            _close_row(args.name, "ok", f"exited 0 after {len(resumes)} resume(s)",
+                       "clean exit", "none")
+            return 0
+        if rc == _KILL_CRITERION_EXIT:
+            _close_row(args.name, "fail", f"kill criterion (exit {rc}) after {len(resumes)} resume(s)",
+                       "deliberate stop: NaN or kill criterion, not a crash",
+                       "diagnose the stop; auto-resume does not relaunch it")
+            return rc
+        if attempt == args.auto_resume:
+            _close_row(args.name, "fail", f"exit {rc}, auto-resume exhausted ({args.auto_resume})",
+                       f"crashed {len(resumes) + 1} times; resumed at steps {resumes}",
+                       "investigate the crash before relaunching")
+            return rc
+        ckpt, step = _latest_step_ckpt(args.name)
+        if ckpt is None:
+            _close_row(args.name, "fail", f"exit {rc}, no step checkpoint to resume from",
+                       "crashed before the first --save_every save",
+                       "relaunch from scratch")
+            return rc
+        # The env fingerprint is part of what the checkpoint was trained under. A
+        # changed environment makes a resume a different run wearing the same name.
+        fp_now = _env_fp_now()
+        fp_ckpt = _ckpt_env_fp(ckpt)
+        if fp_now and fp_ckpt and fp_now != fp_ckpt:
+            _close_row(args.name, "fail", f"exit {rc}, REFUSING resume: env fingerprint changed",
+                       f"checkpoint {fp_ckpt} vs current {fp_now}",
+                       "resume by hand after deciding the environment change is safe")
+            print(f"REFUSING resume: env fingerprint {fp_ckpt} -> {fp_now}", file=sys.stderr)
+            return rc
+        print(f"auto-resume {attempt + 1}/{args.auto_resume}: exit {rc}, resuming from step {step} in 60s",
+              flush=True)
+        time.sleep(60)
+        resumes.append(step)
+        rcmd = [c for c in cmd if not c.startswith("--resume")] + ["--resume", ckpt]
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = cards
+        env["PYTHONUNBUFFERED"] = "1"
+        if args.training and cards:
+            env["NGPU"] = str(len(cards.split(",")))
+        with open(log_path, "a") as log_f:
+            log_f.write(f"\n=== auto-resume {attempt + 1}: exit {rc}, --resume {os.path.basename(ckpt)} ===\n")
+            log_f.flush()
+            proc = subprocess.Popen(rcmd, stdout=log_f, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL, env=env, cwd=ROOT,
+                                    start_new_session=True)
+        with open(pid_path, "w") as f:
+            f.write(f"{proc.pid}\n{' '.join(rcmd)}\n")
+        _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
+    return 0
+
+
+def _close_row(name, status, result, finding, decision):
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "done", "--name", name,
+         "--result", result, "--finding", finding, "--decision", decision, "--status", status],
+        capture_output=True,
+    )
+
+
+def _env_fp_now():
+    try:
+        sys.path.insert(0, HERE)
+        from env_fp import env_fingerprint
+        return env_fingerprint()
+    except Exception:
+        return None
+
+
+def _ckpt_env_fp(path):
+    try:
+        import torch
+        return torch.load(path, map_location="cpu", weights_only=False).get("env_fp")
+    except Exception:
+        return None
 
 
 def cmd_kill(argv):
