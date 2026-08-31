@@ -1,0 +1,6 @@
+# Append-only ledgers: concurrent branches both append at EOF, which a textual merge
+# reports as a conflict. Union merge keeps both sides' lines; row identity is
+# (name, started) / id, never line position, so order does not matter.
+runs/experiments.jsonl merge=union
+runs/score_matrix.jsonl merge=union
+runs/tasks.jsonl merge=union
