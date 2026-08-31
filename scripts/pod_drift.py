@@ -259,8 +259,11 @@ def check_head(root=ROOT):
 
 
 def is_pod(root=ROOT):
-    """A git checkout has .git; the pod's hand-pushed tree does not."""
-    return not os.path.isdir(os.path.join(root, ".git"))
+    """A git checkout has .git -- a directory in a normal clone, a FILE in a
+    linked worktree. The pod's hand-pushed tree has neither. Checking isdir
+    alone made every worktree look like the pod (no_ghost_running false-failed
+    the first worktree commit)."""
+    return not os.path.exists(os.path.join(root, ".git"))
 
 
 def selftest():
