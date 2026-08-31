@@ -66,7 +66,9 @@ if [ "$STAGE" = 1 ]; then
   fi
   EXTRA="--warmdown $WARMDOWN --anneal_frac 0"
 else
-  NAME=pretrain_30b_s2; MIX=data/mix_30b.json; WARMDOWN=0.10
+  # mix_30b_stage2.json, not mix_30b.json: stage 2 is the A-prime complement of what stage 1
+  # actually drew, in rows, with per-domain integer epoch caps (fb ruling 2026-08-31).
+  NAME=pretrain_30b_s2; MIX=data/mix_30b_stage2.json; WARMDOWN=0.10
   [ -n "$RESUME" ] || { echo "refusing: stage 2 needs --resume <stage-1 ckpt>" >&2; exit 2; }
   EXTRA="--warmdown $WARMDOWN --resume $RESUME"
 fi
