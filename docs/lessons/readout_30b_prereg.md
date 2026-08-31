@@ -202,3 +202,9 @@ cap 可以压缩权重变化:cot 的 w1 想要 310,546 行、被 pool×3 = 295,5
 fail-open 方向让失败是沉默的而不是响亮的:只读 `domains` 使未落地的角色"因缺席而不可判",而不可判不产生拒绝——守卫在最需要它的角色上最宽松。守卫对缺席数据的行为必须是写明的选择,不能继承自某个恰好返回 None 的分支。
 
 判据:**一个读不到它所守护的数据的守卫,与不存在无异,且更糟——它显示为绿。**
+
+### 7.4 复用域的治疗标注与 pool 算术约定(2026-08-31,tilerl 实测)
+
+**治疗标注**:复用域的 epoch 数必须写明新鲜/重复行的拆分。cot 的 stage-2 抽取 295,512 行 = pool×3,全部是 stage 1 已读过 3 次的行——**零新鲜行**;"6 pool-epochs" 算术正确但读作比实际更多的数据,表格须写 "6 epochs, no fresh rows" 或等价。de-7 的 cursor 修复也不改变这一点(cot 的 want 恰为 3×pool,无行可读)。对照:zh_web/textbook_30b/wiki_chat 的 stage-2 抽取在 cursor 下全部是未读行(supply 余量 13×/3.2×/2.8×)。同样写 "N epochs",治疗不同——重复是 A′ 依据(2605.12715,constrained-domain r 15–20)许可的,但必须可见。
+
+**pool 算术**:pool = cache_rows − n_val,n_val = min(int(cache_rows × 0.05), 5000),**从 cache 行数起算,不从 pool 起算**。wiki_chat 是第一个 5% 侧绑定的域:69,295 cache 行 → n_val 3,464,pool 65,831;cot 是 5,000 cap 侧绑定(103,504 → 5,175 > 5,000 → 5,000,pool 98,504)。用 "5% of pool" 反推是循环论证,只在 5,000 cap 绑定时碰巧抵消;sub-100K 行的域 cap 不绑定,循环算法会出错。d633dee 的 pool-model 检查从 cache_rows 起算,是对的。
