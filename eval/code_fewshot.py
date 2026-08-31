@@ -19,6 +19,11 @@ verified on mock continuations.
 Usage: CUDA_VISIBLE_DEVICES=X python3 eval/code_fewshot.py --ckpt ckpt_p324.pt
 """
 import argparse
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
+from eval_artifacts import open_artifact  # noqa: E402
 import json
 import os
 import sys
@@ -107,6 +112,10 @@ def main():
     ap.add_argument("--demos", type=int, default=N_DEMOS, choices=[0, 1, 3],
                     help="number of few-shot demos (0 = pure continuation, tests whether "
                          "demos help or hurt; fb 2026-08-30)")
+    ap.add_argument("--force", action="store_true",
+        help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
+    ap.add_argument("--run", default=None,
+        help="name this run so predictions version instead of colliding: preds_x.<run>.jsonl")
     args = ap.parse_args()
 
     if args.selfcheck:
@@ -135,7 +144,7 @@ def main():
                               + (f".t{args.temperature}" if args.temperature else "")
                               + ".jsonl")
     correct = total = no_fence = 0
-    with open(preds_path, "w", encoding="utf-8") as fout:
+    with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
             texts_in = [build_prompt(demos, r["instruction"]) for r in batch]

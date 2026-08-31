@@ -7,6 +7,11 @@ algorithms.rlvr_reward (falls back to 答案是：...), exact/numeric match.
 Usage: python eval/math_zh.py --ckpt ckpt_sft_math.pt [--max_new 512] [--batch 16]
 """
 import argparse
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
+from eval_artifacts import open_artifact  # noqa: E402
 import json
 import os
 import re
@@ -54,6 +59,10 @@ def main():
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="sampling temperature; 0 = greedy")
+    parser.add_argument("--force", action="store_true",
+        help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
+    parser.add_argument("--run", default=None,
+        help="name this run so predictions version instead of colliding: preds_x.<run>.jsonl")
     args = parser.parse_args()
 
     # dtype through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to fp32
@@ -76,7 +85,7 @@ def main():
     correct = total = 0
     n_box = n_eq = n_bad = n_rewrite = tot_len = 0
     by_steps = {}
-    with open(preds_path, "w", encoding="utf-8") as fout:
+    with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         for s in range(0, len(rows), args.batch):
             batch = rows[s : s + args.batch]
             texts_in = [format_prompt(r["instruction"]) for r in batch]

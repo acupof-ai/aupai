@@ -15,6 +15,11 @@ Usage: python eval/code_zh.py --ckpt ckpt_sft_math.pt [--max_new 512] [--batch 3
        python eval/code_zh.py --selfcheck
 """
 import argparse
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
+from eval_artifacts import open_artifact  # noqa: E402
 import json
 import os
 import re
@@ -99,6 +104,10 @@ def main():
              "vs 24.7% for base 0-shot) is produced by greedy decoding rather than by the model.")
     parser.add_argument("--selfcheck", action="store_true",
                         help="known-answer round-trip, no model")
+    parser.add_argument("--force", action="store_true",
+        help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
+    parser.add_argument("--run", default=None,
+        help="name this run so predictions version instead of colliding: preds_x.<run>.jsonl")
     args = parser.parse_args()
 
     if args.selfcheck:
@@ -139,7 +148,7 @@ def main():
     # scored, so an interrupt costs at most one batch of in-flight generations; the
     # partial file is valid up to its last row.
     n_pass1 = n_passk = n_samp_ok = total = no_fence = 0
-    with open(preds_path, "w", encoding="utf-8") as fout:
+    with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
             prompts = [tok.encode(format_prompt(r["instruction"])).ids for r in batch]
