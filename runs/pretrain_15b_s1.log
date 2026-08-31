@@ -1,0 +1,27 @@
+mix: cot weight wants 310546 rows, epoch cap leaves 295512 -> capped
+mix: en_c4 768566 rows = 0.66 epochs
+mix: cot 295512 rows = 3.00 epochs
+mix: math_owm 671374 rows = 0.69 epochs
+mix: zh_web 402832 rows = 0.08 epochs
+mix: textbook_30b 122058 rows = 0.31 epochs
+mix: wiki_chat 24426 rows = 0.37 epochs
+mix: code_rp1t 1362304 rows = 0.74 epochs
+mix: 3647072 rows = 14.94B tokens scheduled
+params 206.1M | tokens 521010 | seqs 521010 | device cuda:0 | world 7 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 300 epochs 1 lr_scale 1.0 mix data/mix_15b_stage1.json fone False
+step 10/16281 0% [main] | loss 7.619 | lr 3.33e-04 | gnorm 1.74 | 0.01B tok | 24K tok/s/gpu | MFU 10% | ETA 24.8h
+step 20/16281 0% [main] | loss 5.941 | lr 6.67e-04 | gnorm 0.65 | 0.02B tok | 61K tok/s/gpu | MFU 26% | ETA 9.6h
+step 30/16281 0% [main] | loss 5.661 | lr 1.00e-03 | gnorm 1.43 | 0.03B tok | 70K tok/s/gpu | MFU 29% | ETA 8.5h
+step 40/16281 0% [main] | loss 5.097 | lr 1.33e-03 | gnorm 1.36 | 0.04B tok | 70K tok/s/gpu | MFU 29% | ETA 8.4h
+step 50/16281 0% [main] | loss 4.592 | lr 1.67e-03 | gnorm 2.14 | 0.05B tok | 71K tok/s/gpu | MFU 30% | ETA 8.3h
+step 60/16281 0% [main] | loss 4.879 | lr 2.00e-03 | gnorm 1.64 | 0.06B tok | 72K tok/s/gpu | MFU 30% | ETA 8.2h
+step 70/16281 0% [main] | loss 4.493 | lr 2.33e-03 | gnorm 2.05 | 0.06B tok | 73K tok/s/gpu | MFU 30% | ETA 8.1h
+step 80/16281 0% [main] | loss 4.811 | lr 2.67e-03 | gnorm 2.83 | 0.07B tok | 70K tok/s/gpu | MFU 29% | ETA 8.4h
+step 90/16281 1% [main] | loss 4.442 | lr 3.00e-03 | gnorm 2.59 | 0.08B tok | 72K tok/s/gpu | MFU 30% | ETA 8.2h
+step 100/16281 1% [main] | loss 4.639 | lr 3.33e-03 | gnorm 2.89 | 0.09B tok | 71K tok/s/gpu | MFU 30% | ETA 8.3h
+step 110/16281 1% [main] | loss 4.489 | lr 3.67e-03 | gnorm 3.08 | 0.10B tok | 70K tok/s/gpu | MFU 29% | ETA 8.4h
+step 120/16281 1% [main] | loss 4.448 | lr 4.00e-03 | gnorm 7.25 | 0.11B tok | 69K tok/s/gpu | MFU 29% | ETA 8.5h
+step 130/16281 1% [main] | loss 3.739 | lr 4.33e-03 | gnorm 7.38 | 0.12B tok | 73K tok/s/gpu | MFU 31% | ETA 8.0h
+step 140/16281 1% [main] | loss 3.906 | lr 4.67e-03 | gnorm 5.03 | 0.13B tok | 74K tok/s/gpu | MFU 31% | ETA 7.9h
+step 150/16281 1% [main] | loss 3.579 | lr 5.00e-03 | gnorm 3.69 | 0.14B tok | 75K tok/s/gpu | MFU 31% | ETA 7.9h
+step 150/16281 1% [main] | loss 3.579 | lr 5.00e-03 | gnorm 3.69 | 0.14B tok | 75K tok/s/gpu | MFU 31% | ETA 7.9h

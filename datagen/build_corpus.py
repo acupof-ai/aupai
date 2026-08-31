@@ -494,6 +494,29 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
             else "skipped: upstream-deduped source, launch clock; stage-2 re-stamp prerequisite (t48)"
         ),
     }
+    # Measured tokens, counted the way training counts them. kept_tokens above is
+    # a chars/1.5 estimate and stays for continuity; `tokens` is the number a mix
+    # budget is read against. Both are stamped, so which is which is never a guess.
+    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    if os.path.exists(tok_path):
+        try:
+            from tokenizers import Tokenizer
+
+            from count_tokens import CONVENTION, count_shards
+
+            shards = sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))
+            if shards:
+                n_sample = min(3, len(shards))
+                tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
+                stats["tokens"] = tokens
+                stats["tokens_status"] = "measured"
+                stats["tokens_config"] = (
+                    f"data/tokenizer.json, {n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
+                )
+        except Exception as e:  # a stamp must land even if the count cannot
+            stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+    else:
+        stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
 

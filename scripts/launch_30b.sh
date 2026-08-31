@@ -18,14 +18,17 @@
 #   scripts/launch_30b.sh --stage 1 [--dry]              stage 1 (15B)
 #   scripts/launch_30b.sh --stage 2 --resume <ckpt> [--dry]   stage 2 (resume into 30B)
 #   --dry prints the resolved torchrun line + the STAGE's own readiness, exit non-zero while blocked.
+#   --gate-timeout N overrides the startup gate; raise it when the first tick is behind a
+#     slow load (68GB of warm token caches off /data00 has taken >120s).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-STAGE=""; RESUME=""; DRY=0
+STAGE=""; RESUME=""; DRY=0; GATE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --stage) STAGE=$2; shift 2 ;;
     --resume) RESUME=$2; shift 2 ;;
+    --gate-timeout) GATE=$2; shift 2 ;;
     --dry) DRY=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -66,9 +69,19 @@ else
   READY=1
 fi
 
-GATE=120; [ -n "$RESUME" ] && GATE=300   # a 959MB+ ckpt load exceeds the default gate (t38)
+# Startup gate: build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
+# (train.py:1886), and train.py:1396 torch.loads every domain's FULL cache on every rank.
+# Stage 1's seven caches are 149 GiB (zh_web alone is 79 GiB: its 21.29B-token supply, not
+# the 1.65B drawn), so 7 ranks read ~1.0 TiB. Measured on the pod: 1.4 GB/s raw sequential
+# (dd), 1.5-1.6 GiB/s through torch.load once warm -> ~13 min if every rank misses page
+# cache. 1800 = 2x that, per the "gate = 2x measured load, floor 600" rule. The 10-minute
+# silence monitor still catches a genuine hang after the gate.
+if [ -z "$GATE" ]; then
+  GATE=120; [ -n "$RESUME" ] && GATE=300   # a 959MB+ ckpt load exceeds the default gate (t38)
+  [ "$STAGE" = 1 ] && GATE=1800
+fi
 echo "== resolved command =="
-echo "python3 scripts/harness.py launch $NAME --training --gate-timeout $GATE \\"
+echo "python3 scripts/harness.py launch $NAME --training --gate-timeout $GATE --auto-resume 2 \\"
 echo "  --hypothesis 'staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')' \\"
 echo "  -- bash run_ddp.sh $FLAGS"
 
@@ -79,6 +92,8 @@ if [ "$READY" != 1 ]; then
   echo "refusing to launch: mix has blocked domains. Re-run when they stamp." >&2
   exit 1
 fi
-exec python3 scripts/harness.py launch "$NAME" --training --gate-timeout "$GATE" \
+# --auto-resume makes harness launch a BLOCKING supervisor that must outlive the child, so
+# this whole script has to be detached (setsid nohup), not just the torchrun inside it.
+exec python3 scripts/harness.py launch "$NAME" --training --gate-timeout "$GATE" --auto-resume 2 \
   --hypothesis "staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')" \
   -- bash run_ddp.sh $FLAGS
