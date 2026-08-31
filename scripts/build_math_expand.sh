@@ -21,7 +21,7 @@ MATH=math
 # Gate: no math_short batch enters the corpus contaminated (finding 2026-08-30:
 # the bank shares template DNA with math_hard_eval_1k; v3/v5/v6/v7/v8/v10/v11 all
 # REJECT at 0.8). This WILL refuse until the bank is fixed -- that is the point.
-bash scripts/gate_math_short.sh \
+bash eval/gate_math_short.sh \
     data/synthetic/math_short_v6.jsonl \
     data/synthetic/math_short_v7.jsonl \
     data/synthetic/math_short_v8.jsonl \

@@ -53,7 +53,7 @@ source: "literature search 2026-08-30 (3 agents, every arXiv ID fetch-verified) 
 
 **降幅模式是幂律学习曲线的机械预期**（`#dq.scaling.drop_mechanical`）：L_d(C)=A_d+B_d·C^−β 下，16× 跨度的降幅 Δ_d=(L_d−A_d)(1−16^−β)，与"当前剩余损失"成正比。小占比域离地板远，即使最优混合是均匀的也降幅更大。决策相关量是边际 w_d·dL_d/dC_d，不是 Δ_d。没有任何论文直接陈述过"小占比域降幅大"——这是幂律推论。
 
-**零成本判别实验 E2**（`#dq.e2.matched_token_protocol`）：7 个域的损失对各自域 token 数 C_d=w_d·T 画同一坐标系。共享 (B,β) 下应坍缩到一条曲线；math/code 在 matched token 上位于曲线上方 → B_d 真更大 → 该加权；坍缩 → 纯假象。数据用 `scripts/domain_loss.py` 跑六个 0830v1 checkpoint（pod，3b/de），无需重训。
+**零成本判别实验 E2**（`#dq.e2.matched_token_protocol`）：7 个域的损失对各自域 token 数 C_d=w_d·T 画同一坐标系。共享 (B,β) 下应坍缩到一条曲线；math/code 在 matched token 上位于曲线上方 → B_d 真更大 → 该加权；坍缩 → 纯假象。数据用 `eval/domain_loss.py` 跑六个 0830v1 checkpoint（pod，3b/de），无需重训。
 
 **math/code 加权的证据是真实的但有边界**：最强因果证据是 DeepSeekMath 有/无消融（1.3B：GSM8K 2.9→23.8，MMLU-STEM 19.5→33.1，通用 MMLU 49.1→54.9，`#dq.math.deepseekmath_ablation`）；Llama 3 配方 25% 数学+推理/17% 代码但无消融（`#dq.math.llama3_mix`）。反方向：DCLM 向已过滤数据混域平均 -1.2pp，phi-1.5 窄域加权牺牲知识，Kimi k1.5 证明 math/code 能力可后期 RL 注入（`#dq.math.dclm_counter`）。文献处方一致：DoReMi/RegMix/Data Mixing Laws 都用小 proxy 搜索权重，不读损失降幅（+6.5pp few-shot / 匹敌多训 48% 步数，`#dq.reweight.*`）。
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The full evaluation a checkpoint gets at the end of every stage: pretrain, SFT, RL.
 #
-#   scripts/eval_all.sh ckpt_k6_fone.pt                       # today's vocabulary
-#   scripts/eval_all.sh ckpt_k5_clean_0827.pt data/tokenizer_k5.json
-#   NGPU=3 scripts/eval_all.sh ckpt.pt                        # fewer shards
+#   eval/eval_all.sh ckpt_k6_fone.pt                       # today's vocabulary
+#   eval/eval_all.sh ckpt_k5_clean_0827.pt data/tokenizer_k5.json
+#   NGPU=3 eval/eval_all.sh ckpt.pt                        # fewer shards
 #
 # Writes runs/evalall_<ckpt>.log and prints one summary block. Every number below
 # has a known failure mode, so each is labelled with what it can and cannot say.
@@ -38,14 +38,14 @@ say() { echo "$*" | tee -a "$LOG"; }
 # 1. math-hard -- v1 retired as metric of record: our own generators contaminated it.
 #    Run for continuity; numbers across the 0830v1 reset are not comparable.
 say "--- math-hard (retired as metric of record; continuity only)"
-NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_hard.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
+NGPU=$NGPU TOKENIZER=$TOK bash eval/eval_hard.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
 # 2. math-500 -- 0.0% contamination on the pod pretraining corpus (holdout-filtered;
 #    the 10.2% figure was the local corpus). 30% of questions have a containment hit
 #    in the math SFT corpus, so post-SFT absolute values are inflated; base-checkpoint
 #    values are clean.
 say "--- math-500 (post-SFT inflated by SFT-corpus overlap; base values clean)"
-NGPU=$NGPU TOKENIZER=$TOK bash scripts/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
+NGPU=$NGPU TOKENIZER=$TOK bash eval/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
 # 3. MC suite -- a 200M Chinese model at the 25% chance line; a regression tripwire,
 #    not a capability measure.

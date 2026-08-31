@@ -10,7 +10,7 @@ these are the ones the experiment ledger reports.
 
 | Script | Data | Role |
 |---|---|---|
-| `math_hard.py` | `data/synthetic/math_hard_eval_1k.jsonl`, 1032 rows | **Metric of record.** `scripts/eval_hard.sh <ckpt> [ngpu]` shards it. |
+| `math_hard.py` | `data/synthetic/math_hard_eval_1k.jsonl`, 1032 rows | **Metric of record.** `eval/eval_hard.sh <ckpt> [ngpu]` shards it. |
 | `math_zh.py` | `data/eval/math_test_500.jsonl`, 500 rows | math-500, saturated at 32.2 / 26.8 / 32.0 / 31.0 — never conclude from it alone. |
 
 math-hard resolves to about ±1 point at a 2–3% pass rate, so test significance

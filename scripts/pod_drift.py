@@ -53,8 +53,8 @@ EXCLUDE_DIRS = ("datagen", "filters", "mathbank", "workflows")
 # every manifest file. Priority: training > eval > corpus > docs.
 _ENTRY_POINTS = {
     "training": ["train.py", "sft.py", "sft_math.py", "run_ddp.sh", "scripts/run_sft.sh"],
-    "eval": ["eval/run_eval.py", "eval/math_hard.py", "scripts/eval_hard.sh",
-             "scripts/eval_all.sh", "scripts/score_matrix.py"],
+    "eval": ["eval/run_eval.py", "eval/math_hard.py", "eval/eval_hard.sh",
+             "eval/eval_all.sh", "eval/score_matrix.py"],
     "corpus": ["scripts/fetch_corpus.py", "scripts/clean_corpus.py",
                "scripts/count_cleaned_code.py"],
 }
@@ -118,10 +118,12 @@ def _sha_bytes(b):
 
 
 def sha_head(root, path):
-    b = subprocess.run(
-        ["git", "show", f"HEAD:{path}"], cwd=root, capture_output=True, check=True
-    ).stdout
-    return _sha_bytes(b)
+    r = subprocess.run(
+        ["git", "show", f"HEAD:{path}"], cwd=root, capture_output=True
+    )
+    if r.returncode != 0:
+        return None
+    return _sha_bytes(r.stdout)
 
 
 def sha_index(root, path):
@@ -242,7 +244,11 @@ def check_head(root=ROOT):
     if not os.path.exists(MANIFEST):
         return False, "no manifest; run scripts/pod_drift.py --write"
     have = read_manifest()
-    want = {p: sha_head(root, p) for p in scoped_paths(root)}
+    want = {}
+    for p in scoped_paths(root):
+        sha = sha_head(root, p)
+        if sha:
+            want[p] = sha
     stale = [p for p in want if have.get(p, (None,))[0] != want[p]]
     gone = [p for p in have if p not in want]
     if stale or gone:

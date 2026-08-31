@@ -38,7 +38,7 @@ set +e
 # TOKENIZER travels with the checkpoint: ids do not survive a rebuild of
 # data/tokenizer.json, and scoring against the wrong file yields noise, not an error.
 TOKENIZER=${TOKENIZER:-data/tokenizer.json}
-NGPU=$NGPU bash scripts/eval_all.sh "$OUT" "$TOKENIZER"
+NGPU=$NGPU bash eval/eval_all.sh "$OUT" "$TOKENIZER"
 ALL_RC=$?
 ALL_LOG=runs/evalall_$(basename "$OUT" .pt).log
 RESULT=$(grep "TOTAL math-500" "$ALL_LOG" | tail -1)

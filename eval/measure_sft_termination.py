@@ -19,7 +19,7 @@ Pre-registered read (fb): high fraction of clusters with shapes>1 -> termination
 underdetermined, fix = normalize each cluster to one shape at pack time; ~0 -> rule
 it out (termination is not data-underdetermination).
 
-Usage: python3 scripts/measure_sft_termination.py [--limit N]
+Usage: python3 eval/measure_sft_termination.py [--limit N]
 """
 import argparse
 import json

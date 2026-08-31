@@ -29,7 +29,7 @@
     "scripts/build_tokenizer.py",
     "scripts/ckpt_sweep.py",
     "scripts/data_verify.py",
-    "scripts/domain_loss.py",
+    "eval/domain_loss.py",
     "scripts/fit_scaling.py",
     "scripts/gen_0094.py",
     "scripts/harness.py",
@@ -38,6 +38,6 @@
     "probes/mem_account.py",
     "scripts/pod_drift.py",
     "scripts/prepare_sft.py",
-    "scripts/score_matrix.py"
+    "eval/score_matrix.py"
   ]
 }

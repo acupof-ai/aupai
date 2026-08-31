@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Per-instance solve rate over the math bank; keep the 20-80% band.
 #
-#   scripts/probe_band.sh ckpt_sft_k4.pt [ngpu]
+#   eval/probe_band.sh ckpt_sft_k4.pt [ngpu]
 #
-# Sharded across the GPUs like scripts/eval_hard.sh; a failed shard aborts rather than
+# Sharded across the GPUs like eval/eval_hard.sh; a failed shard aborts rather than
 # quietly lowering the measured rate.
 set -euo pipefail
 CKPT=$1

@@ -12,7 +12,7 @@ for arg in "$@"; do
   prev=$arg
 done
 if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
-  python scripts/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl \
+  python eval/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl \
     || echo "WARN: score_matrix failed for ckpt_${NAME}.pt -- the harness check will flag the missing record" >&2
 fi
 exit $rc

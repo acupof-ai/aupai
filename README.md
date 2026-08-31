@@ -47,14 +47,14 @@ worker log before the job counts as started, and arms a monitor:
 
 ```bash
 python scripts/harness.py launch <name> --training --hypothesis "..." -- ./run_ddp.sh --mix data/mix_scale_0.2b.json --name <name>
-python scripts/harness.py launch <name> -- python3 scripts/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl
+python scripts/harness.py launch <name> -- python3 eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl
 python scripts/harness.py launch <name> -- python3 scripts/fetch_corpus.py --source <src> --target_bytes 27e9
 ```
 
 SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>`. RL gate: `eval/math_hard.py --ckpt X --k 8 --temperature 0.8`
 opens RL only if pass@8 − pass@1 ≥ 15 pt at the same temperature. Numbers land in
 `runs/score_matrix.jsonl` and `facts/*.json`, each with its measurement config; the
-pre-registered 30B readout is `docs/lessons/readout_30b_prereg.md` (`scripts/readout_30b.py`).
+pre-registered 30B readout is `docs/lessons/readout_30b_prereg.md` (`eval/readout_30b.py`).
 
 ## Commit workflow — one path
 

@@ -27,10 +27,10 @@ Known-answer dry runs (--selftest):
      (lower, the known ladder direction).
 
 Usage:
-  python3 scripts/readout_30b.py --milestone ckpt_30b_3p24b.pt --paired ckpt_p324.pt \
+  python3 eval/readout_30b.py --milestone ckpt_30b_3p24b.pt --paired ckpt_p324.pt \
       --milestone-tokens 3.24e9 \
       --milestone-domain-loss runs/dl_milestone.json --paired-domain-loss runs/dl_paired.json
-  python3 scripts/readout_30b.py --selftest
+  python3 eval/readout_30b.py --selftest
 """
 import argparse
 import json

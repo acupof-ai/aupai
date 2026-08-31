@@ -221,7 +221,7 @@
    "id": "dq.e2.matched_token_protocol",
    "value": "E2 RUN 2026-08-30 (domain_loss_v2.jsonl, 262K tokens/domain, six 0830v1 checkpoints): domains do NOT collapse -- shared-curve RMSE 1.04 nat (100x eval noise). math/code residuals -0.29/-0.92 nat (BELOW the curve): their larger 16x drop is the mechanical small-share effect, the claim is REFUTED. web_hq +1.50 and wiki +1.18 nat sit ABOVE the curve; web_hq has the flattest log-log slope (-0.123 vs -0.26 for textbook/en) -- its tokens buy the least loss reduction.",
    "measured": "2026-08-30",
-   "source": "agent B derivation from dq.scaling.drop_mechanical; data source scripts/domain_loss.py on the six 0830v1 checkpoints",
+   "source": "agent B derivation from dq.scaling.drop_mechanical; data source eval/domain_loss.py on the six 0830v1 checkpoints",
    "config": {
     "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
     "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
@@ -717,7 +717,7 @@
    "id": "dq.sft_termination_underdetermined",
    "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。 | **机制解释(fb 确认,非相关性)**:code 源有确定边界(围栏/代码块)所以不欠定——这个结构解释预测了哪些源欠定且预测对。**独立成立的数据缺陷,非解释失败**。**修法 = renderer-per-source(nanochat 式:每任务一形态,由代码定,不继承源自带形态),非打包归一时(on-time 归一)). λ 合成目标:每簇一种形态,由生成器强制**。code 重复的 55.8% 成因另记(eval f8c08c1:贪心 55.8%/t=0.8 17%/base 25.4%,循环无藏物,成因在解码器不在模型/数据)。",
    "measured": "2026-08-30",
-   "source": "pod 实测 scripts/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
+   "source": "pod 实测 eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
    "config": {
     "cluster": "MinHashLSH 128-perm/16-band + union-find over band keys",
     "shape_features": [

@@ -9,8 +9,8 @@ Sweeping T instead isolates the sequential axis: that one MUST be linear either 
 
 Calls fla's chunk_kda directly with train.py's exact arguments, so no model, no compile, no fp8.
 
-    CUDA_VISIBLE_DEVICES=7 python -u scripts/kda_probe.py --mode sweep
-    CUDA_VISIBLE_DEVICES=7 python -u scripts/kda_probe.py --mode kernels --batch 16
+    CUDA_VISIBLE_DEVICES=7 python -u eval/kda_probe.py --mode sweep
+    CUDA_VISIBLE_DEVICES=7 python -u eval/kda_probe.py --mode kernels --batch 16
 """
 
 import argparse

@@ -9,8 +9,8 @@ a domain -- "is a CCI3 token worth a web_hq token" is this number and nothing el
 Runs on a checkpoint after the fact, so the six 0830v1 budget points can be filled in
 without retraining. Scores with the vocabulary the checkpoint was trained on.
 
-    python scripts/domain_loss.py --ckpt ckpt_0830v1_3.24b.pt [--mix data/mix_scale_3.24b.json]
-    python scripts/domain_loss.py --ckpt A.pt --ckpt B.pt --json runs/domain_loss.json
+    python eval/domain_loss.py --ckpt ckpt_0830v1_3.24b.pt [--mix data/mix_scale_3.24b.json]
+    python eval/domain_loss.py --ckpt A.pt --ckpt B.pt --json runs/domain_loss.json
 """
 
 import argparse

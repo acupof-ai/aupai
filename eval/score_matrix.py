@@ -13,8 +13,8 @@ reason, never as 0. A base checkpoint reads zero on every generative eval
 (ckpt_0830v1_0.8b: math-500 0/500, degenerate loops); an inapplicable 0 and
 a measured 0 must look different in the ledger.
 
-    python scripts/score_matrix.py --ckpt ckpt_0830v1_0.2b.pt [--ckpt ...]
-    python scripts/score_matrix.py --ckpt X.pt --json runs/score_matrix.jsonl
+    python eval/score_matrix.py --ckpt ckpt_0830v1_0.2b.pt [--ckpt ...]
+    python eval/score_matrix.py --ckpt X.pt --json runs/score_matrix.jsonl
 
 Every metric here must prove it moves across the 0.2b->3.24b span; a metric
 that does not move has no resolution and does not belong in the matrix.
@@ -261,7 +261,7 @@ def metric_mc(ckpt_path, tok_path, benchmarks):
 
 def metric_math_hard(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
+        ["bash", "eval/eval_hard.sh", ckpt_path, str(ngpu)],
         {"math_hard": r"=\s*([\d.]+)\s*%"},
         env={"TOKENIZER": tok_path},
     )
@@ -269,7 +269,7 @@ def metric_math_hard(ckpt_path, tok_path, ngpu=1):
 
 def metric_math_500(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_math.sh", ckpt_path, str(ngpu)],
+        ["bash", "eval/eval_math.sh", ckpt_path, str(ngpu)],
         {"math_500": r"=\s*([\d.]+)\s*%"},
         env={"TOKENIZER": tok_path},
     )
@@ -277,7 +277,7 @@ def metric_math_500(ckpt_path, tok_path, ngpu=1):
 
 def metric_code_500(ckpt_path, tok_path, ngpu=1):
     return _run(
-        ["bash", "scripts/eval_code.sh", ckpt_path, str(ngpu)],
+        ["bash", "eval/eval_code.sh", ckpt_path, str(ngpu)],
         {"code_500": r"=\s*([\d.]+)\s*%"},
         env={"TOKENIZER": tok_path},
     )
@@ -287,7 +287,7 @@ def metric_pass_at_k(ckpt_path, tok_path, ngpu=1):
     # Sharded via eval_hard.sh instead of single-GPU math_hard.py.
     # pass@k is computed on the merged full rows, so sharding changes speed, not the number.
     return _run(
-        ["bash", "scripts/eval_hard.sh", ckpt_path, str(ngpu)],
+        ["bash", "eval/eval_hard.sh", ckpt_path, str(ngpu)],
         {"pass_at_1": r"pass@1\(greedy\)\s+([\d.]+)%", "pass_at_8": r"pass@8\s+([\d.]+)%"},
         env={"K": "8", "TEMP": "0.8", "TOKENIZER": tok_path},
     )

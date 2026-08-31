@@ -448,9 +448,9 @@
   {
    "id": "eff.kda_parallelism_not_the_bottleneck",
    "claim": "KDA's chunk kernel is starved for parallelism at the training batch size",
-   "value": "REFUTED at production batch. scripts/kda_probe.py, direct chunk_kda with train.py's arguments, H20, bf16, hd=128, fwd+bwd, 10 iters, one layer: B=1 2.11 ms, B=2 2.15 (work-scaled 0.51), B=4 3.23 (0.75), B=8 6.18 (0.96), B=16 12.10 (0.98), B=32 23.68 (0.98). Sub-linear only up to B*h~32; flat linear from B=8 on.",
+   "value": "REFUTED at production batch. eval/kda_probe.py, direct chunk_kda with train.py's arguments, H20, bf16, hd=128, fwd+bwd, 10 iters, one layer: B=1 2.11 ms, B=2 2.15 (work-scaled 0.51), B=4 3.23 (0.75), B=8 6.18 (0.96), B=16 12.10 (0.98), B=32 23.68 (0.98). Sub-linear only up to B*h~32; flat linear from B=8 on.",
    "measured": "2026-08-30",
-   "source": "scripts/kda_probe.py",
+   "source": "eval/kda_probe.py",
    "config": {
     "gpu": "NVIDIA H20, single GPU, no DDP",
     "batch": 16,
@@ -483,7 +483,7 @@
    "claim": "KDA's chunk kernels are slow because of an inter-chunk serial dependency",
    "value": "REFUTED. Three independent measurements: (1) time scales LINEARLY with B*h (work-scaled 0.98 from B=8) -- a chain's latency does not grow with batch; (2) halving chunk_size to 32 DOUBLES the chain length and is 19% FASTER (T=4096: 12.12 -> 9.81 ms), the reverse of the chain prediction; (3) the genuinely sequential kernels (fwd_kernel_h grid 512, bwd_kernel_dhu grid 256) are 1.51 of 12.77 ms = 11.9% of KDA time. The real cause is OCCUPANCY: the four dominant kernels achieve 6-12% occupancy and run at 15-29% of HBM and 16-42% of SM, while every kernel above 80% occupancy runs at 85-93% of HBM peak. Grid size is ample (8192-131072 blocks on 78 SMs); the kernels burn too many registers/shared memory per block, leaving ~4-8 resident warps with nothing to hide memory latency. Latency-bound, not chain-bound, not bandwidth-bound, not grid-bound. Measured DRAM traffic: 14.79 GB in 12.77 ms = 1.16 TB/s, 29% of the 4 TB/s peak.",
    "measured": "2026-08-30",
-   "source": "scripts/kda_probe.py plus ncu per-kernel counters",
+   "source": "eval/kda_probe.py plus ncu per-kernel counters",
    "config": {
     "gpu": "NVIDIA H20 GPU7",
     "batch": 16,
@@ -508,7 +508,7 @@
    "claim": "passing chunk_size=32 to chunk_kda is faster than the default 64",
    "value": "Measured -19.1% on the fla kernels at T=4096 (12.12 -> 9.81 ms), -17.8% at T=1024, -18.2% at T=2048. chunk_size is a supported fla kwarg accepting {32, 64}; train.py does not pass it, so it defaults to 64. Applied to the in-model fla group (~102 of the 128.1 ms DeltaRecurrence total; short_conv is unaffected) that is ~19.5 ms/step, 2.0% of the 978.5 ms step.",
    "measured": "2026-08-30",
-   "source": "scripts/kda_probe.py",
+   "source": "eval/kda_probe.py",
    "config": {
     "gpu": "NVIDIA H20 GPU7",
     "batch": 16,

@@ -83,7 +83,7 @@ def main():
     assert not (k > 1 and temp <= 0), (
         f"--k {k} at temperature {temp}: the k samples would be identical to the greedy "
         "answer and pass@k would equal pass@1 by construction. Pass --temperature (0.8 is "
-        "the project's pass@k setting) or TEMP=0.8 through scripts/eval_hard.sh."
+        "the project's pass@k setting) or TEMP=0.8 through eval/eval_hard.sh."
     )
     # pass@1 is the greedy answer; the k samples feed only pass@k and the sampled
     # mean, so pass@k - pass@1 has no sampling noise on the pass@1 side.

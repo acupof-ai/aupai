@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shard eval/code_zh.py across GPUs. Usage: scripts/eval_code.sh <ckpt> [ngpu]
+# Shard eval/code_zh.py across GPUs. Usage: eval/eval_code.sh <ckpt> [ngpu]
 # Same failure discipline as eval_math.sh: a failed shard aborts, never
 # silently lowers the score.
 set -euo pipefail

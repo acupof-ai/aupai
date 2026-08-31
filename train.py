@@ -405,7 +405,7 @@ class FP8Linear(nn.Module):
 
     # Kept out of the compiled graph: Inductor's min-cut partitioner recomputes the saved fp8
     # tensors, re-dividing already-scaled values -> NaN grads at step 1 without grad_ckpt
-    # (scripts/nan_probe.py, 2026-08-26).
+    # (eval/nan_probe.py, 2026-08-26).
     @torch._dynamo.disable
     def forward(self, x):
         return FP8LinearFunction.apply(x, self.weight, self.bias)

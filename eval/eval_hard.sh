@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shard eval/math_hard.py across GPUs. Usage: scripts/eval_hard.sh <ckpt> [ngpu]
+# Shard eval/math_hard.py across GPUs. Usage: eval/eval_hard.sh <ckpt> [ngpu]
 #
 # A failed shard must not be reported as a lower score: check each child's exit
 # and the merged row count.

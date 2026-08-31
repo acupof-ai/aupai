@@ -72,7 +72,7 @@ source: "fb tasking 2026-08-30; noise anchors from facts/data_scaling.json#ds.ka
 
 ## 显著性（fb 的问题 3），预注册
 
-- **主指标**：冻结面板 eval  mix 上的留出 NLL（`scripts/domain_loss.py`，每域首 shard 头部 4000 行打包，262K token/域，所有臂同一 eval）
+- **主指标**：冻结面板 eval  mix 上的留出 NLL（`eval/domain_loss.py`，每域首 shard 头部 4000 行打包，262K token/域，所有臂同一 eval）
 - **MDE = 0.05 nat**（≈种子噪声；16× 阶梯实测动 1.66-1.99 nat，比 MDE 大 30 倍——值得有的质量效应应该能越过它）
 - **判定规则**（每对臂）：Δ = mean(NLL_treatment − NLL_control)，跨 seed
   - Δ ≤ −0.05 且 seed 分布不重叠（或 Mann-Whitney p<0.05）→ 处理臂胜
@@ -87,7 +87,7 @@ source: "fb tasking 2026-08-30; noise anchors from facts/data_scaling.json#ds.ka
 
 ## E2（零成本，先跑）
 
-六个 0830v1 checkpoint 的分域 loss 对各自 token 数画同一坐标系（`scripts/domain_loss.py --ckpt A --ckpt B ... --json runs/domain_loss.json`）：
+六个 0830v1 checkpoint 的分域 loss 对各自 token 数画同一坐标系（`eval/domain_loss.py --ckpt A --ckpt B ... --json runs/domain_loss.json`）：
 
 - 坍缩到一条 L(C)=A+B·C^−β → 各域按 token 数走同一曲线，当前配比无明显错配
 - 某域在曲线上方 → 该域在"喂了多少"之外还有质量问题，是 B 臂的天然靶子

@@ -50,8 +50,8 @@ FATE = {
     "mathbank/vet_programs.py": "KEEP (cite in corpus entry-point row)",
     "scripts/ckpt_info.py": "KEEP (AGENTS.md row — ops tool)",
     "eval/ppl.py": "KEEP (AGENTS.md row — eval tool)",
-    "scripts/assemble_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
-    "scripts/validate_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
+    "eval/assemble_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
+    "eval/validate_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
     "scripts/build_math.py": "DELETE (3b confirmed unclaimed, 2026-08-31)",
 }
 
@@ -136,7 +136,7 @@ def harness_entry_points():
 
 
 def score_matrix_entry_points():
-    return _resolve_script(_read("scripts/score_matrix.py"))
+    return _resolve_script(_read("eval/score_matrix.py"))
 
 
 # --- Import graph (transitive) ---

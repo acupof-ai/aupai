@@ -132,7 +132,7 @@ in building it.
   and each token carries more, so cross-entropy per token rises for reasons that
   have nothing to do with the model being worse. Only two things compare across
   versions: `eval/ppl.py`'s **per-domain** perplexity within one checkpoint, and
-  the downstream scores from `scripts/eval_all.sh`.
+  the downstream scores from `eval/eval_all.sh`.
 
 ## Provenance and contamination
 

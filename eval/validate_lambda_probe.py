@@ -9,7 +9,7 @@ sending it would silently lower lambda. Local validation of self-authored Fable
 code is fine -- the sandbox is for untrusted code at training time, not for
 trusting the generator's own candidates.
 
-Usage: python3 scripts/validate_lambda_probe.py probe.jsonl
+Usage: python3 eval/validate_lambda_probe.py probe.jsonl
 Exits nonzero if any sample fails its own tests (or has no tests).
 """
 import json

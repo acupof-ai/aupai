@@ -71,20 +71,20 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Launch any GPU or corpus job | `python scripts/harness.py launch <name> [--training] [--hypothesis "..."] -- <cmd>` — exp row first, card allocation from controller config, startup gate for training, monitor on process-gone/log-silent |
 | Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on all 8 GPUs |
 | SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` |
-| Eval, one metric | `scripts/eval_hard.sh <ckpt> [ngpu]` |
-| Eval, full matrix | `scripts/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
-| Score matrix | `scripts/score_matrix.py --ckpt <ckpt> [--json runs/score_matrix.jsonl]` — per-type metrics; generative SKIPs on base, never 0 |
+| Eval, one metric | `eval/eval_hard.sh <ckpt> [ngpu]` |
+| Eval, full matrix | `eval/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
+| Score matrix | `eval/score_matrix.py --ckpt <ckpt> [--json runs/score_matrix.jsonl]` — per-type metrics; generative SKIPs on base, never 0 |
 | Pod drift | `scripts/pod_sync_check.sh` — sha256 of tracked code vs /work/aupai; exit 1 on DIFF/MISSING |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*` |
 | AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
-| FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod) |
+| FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
 | Reachability | `python scripts/reachability.py` — which scripts are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
 | Count cleaned code | `python scripts/count_cleaned_code.py` — token counts over cleaned corpus domains |
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
-| Lambda probes | `python scripts/assemble_lambda_probe.py` / `python scripts/validate_lambda_probe.py` — t05 lambda-curriculum probes (3b, deprioritised but live) |
+| Lambda probes | `python eval/assemble_lambda_probe.py` / `python eval/validate_lambda_probe.py` — t05 lambda-curriculum probes (3b, deprioritised but live) |
 
 ## Run pretraining
 
@@ -141,7 +141,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `lessons_have_frontmatter` | every lessons/audits doc has `question`/`status`/`source` | add the frontmatter |
 | `fact_refs_resolve` | every `facts/<file>.json#<id>` citation resolves; retracted citations WARN | fix the citation or the fact |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
-| `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `scripts/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
+| `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
 
 ## Add a check
 

@@ -53,7 +53,7 @@ fi
 # ---- 3. difficulty probe: keep only the problems this model gets right 20-80% of the time
 if want probe && [ ! -f data/rl/rl_band.jsonl ]; then
   say "stage probe: 10,382 instances x (1 greedy + 8 sampled), sharded over $NGPU GPUs"
-  bash scripts/probe_band.sh "ckpt_$SFT.pt" "$NGPU" >> "$LOG" 2>&1 || die "probe"
+  bash eval/probe_band.sh "ckpt_$SFT.pt" "$NGPU" >> "$LOG" 2>&1 || die "probe"
   say "stage probe: $(grep -m1 '^band:' "$LOG" | tail -1)"
 fi
 
@@ -82,8 +82,8 @@ if want bench; then
   say "stage bench"
   for CK in "ckpt_$PRETRAIN.pt" "ckpt_$SFT.pt" "ckpt_$RL.pt"; do
     [ -f "$CK" ] || continue
-    M5=$(bash scripts/eval_math.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
-    MH=$(bash scripts/eval_hard.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
+    M5=$(bash eval/eval_math.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
+    MH=$(bash eval/eval_hard.sh "$CK" "$NGPU" 2>>"$LOG" | tail -1)
     PK=$(python3 eval/math_hard.py --ckpt "$CK" --k 8 --temperature 0.8 2>>"$LOG" | tail -1)
     say "bench $CK | $M5 | $MH | pass@8 $PK"
   done

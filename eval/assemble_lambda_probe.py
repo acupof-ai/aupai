@@ -12,7 +12,7 @@ validate_lambda_probe, and split into passing (assembly) vs failing.
 # execution), never the already-emitted output. The expensive part (Fable agent
 # calls) happened upstream and is never re-run here.
 
-Usage: python3 scripts/assemble_lambda_probe.py workflow_out.json --out data/sft/lambda_probe_pilot40.jsonl
+Usage: python3 eval/assemble_lambda_probe.py workflow_out.json --out data/sft/lambda_probe_pilot40.jsonl
       (--out keeps only samples whose code passes its own tests; failing ones print)
 """
 import argparse

@@ -473,13 +473,13 @@
   {
    "id": "cont.gate",
    "value": {
-    "script": "scripts/gate_math_short.sh",
+    "script": "eval/gate_math_short.sh",
     "rule": "every math_short_* batch passes scripts/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
     "wired_into": "scripts/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
     "verified": "gate passes all 6 local math_short batches vs math-500+v2 (2026-08-30, rate-based scanner with gsm8k_zh baseline); still REJECTs mxode (141 math-500 holdouts, 7278 hit rows)"
    },
    "measured": "2026-08-30",
-   "source": "scripts/gate_math_short.sh, wired into scripts/build_math_expand.sh",
+   "source": "eval/gate_math_short.sh, wired into scripts/build_math_expand.sh",
    "config": {
     "consequence": "build_math_expand.sh is UNBLOCKED for math_short batches as of 2026-08-30 (they are clean vs the active evals math-500+v2). mxode stays REJECT. The earlier 'refuses until the bank is fixed' state is obsolete -- see cont.math_short_leak.resolution.",
     "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"

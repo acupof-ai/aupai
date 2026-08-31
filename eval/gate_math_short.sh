@@ -9,7 +9,7 @@
 # it scans against the scanner's default holdout set (math-500 + v2), so a bank
 # extension that drifts into v2's types stops here instead of at the next audit.
 #
-# Usage: scripts/gate_math_short.sh <batch.jsonl> [batch.jsonl ...]
+# Usage: eval/gate_math_short.sh <batch.jsonl> [batch.jsonl ...]
 # Exit: 0 = all clean (ingest allowed); 1 = at least one REJECT (do not ingest).
 set -euo pipefail
 cd "$(dirname "$0")/.."

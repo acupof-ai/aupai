@@ -111,7 +111,7 @@ closed 2026-08-30 not by a fix but by v2's construction: math_short batches neve
 contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are
 mxode's), they only ever contaminated math-hard v1, which is retired. The v1
 REJECT records above are history, not open work. The executable gate is
-`scripts/gate_math_short.sh`, wired into `scripts/build_math_expand.sh`: it scans
+`eval/gate_math_short.sh`, wired into `scripts/build_math_expand.sh`: it scans
 against math-500 + v2, and all six local batches pass with 0 hits
 (`facts/contamination.json#cont.gate`, `#cont.math_short_leak`).
 
