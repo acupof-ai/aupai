@@ -35,10 +35,12 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 | **code 带执行标注** | 7% | 2.0B | 0 | 新增 | **从 73.6B raw 里挖配对 impl+test** | **7.6% 的 repo 有 impl+test，26.96% 的文档落在这种 repo 里**（`ds.code_exec_supply`）——可过滤，零生成 |
 | **math 可验证** | 18% | 5.5B | 0.082B | ×67 | OpenWebMath / proof-pile | 开放，未落地计数 |
 | **长 CoT** | 15% | 4.5B | 0 | 新增 | OpenThoughts / Skywork-OR1 | Apache，未落地计数 |
-| **英文通用** | 18% | 5.5B | **0.027B**（真英文） | **×204** | Ultra-FineWeb en / fineweb | 开放 |
+| **英文通用** | 18% | 5.5B | **0.027B**（真英文） | **×204** | RedPajama-1T c4（`en_c4`，data.together.xyz）；fineweb-edu sample/10BT 仍首选，镜像恢复则切回 | 开放 |
 | **中文网页** | 11% | 3.3B | 1.434B | ×2.3 | fineweb2-HQ + CCI3-HQ | 已下，sha 钉 |
 | **中文教材** | 3% | 1.0B | 1.610B | **×0.6（缩）** | cosmopedia，截断 | 有余 |
 | **wiki + chat** | 1% | 0.2B | 0.284B | ×0.7 | 现有 | 有余 |
+
+**en 源切换（2026-08-31，fb 裁定）**：hf-mirror 从 pod 不可达（rc=28@10s；data.together.xyz 200@0.6s），en 角色源切为 RedPajama-1T c4（目录 `en_c4`，同权重 5.5B，epochs/anneal 不变）；fineweb-edu sample/10BT 仍首选——镜像在 en 落地一半前恢复则切回。math_owm / cot 合同不变：arxiv + stackexchange（同 host）作可达替代由 3b 拉取，是否计入该两角色由 44 读内容后定，不现在定。合同以 `data/mix_30b.json` 为准，本表与之同步。
 
 zh:en 语言比例:**按 stamp 后的落地分片实测,不按源名估**——math_owm / cot / textbook_30b 都带中文源,源名拆分(~85:15 en:zh)不是内容语言拆分。实测数由 44 的 t24 审计随域落地逐域给出,写在 `facts/multilingual.json#mlm.ratio.30b_measured`;数存在才写,不预估。(旧的 84:16 随中文 LM 目标一起作废;早先一版散文写的 35:65 是粗估,同样被实测取代。)
 
