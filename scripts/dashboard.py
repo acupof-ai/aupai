@@ -381,7 +381,7 @@ def render():
         summary += f", {n_warn} WARN"
     if n_skip:
         summary += f", {n_skip} SKIP"
-    parts.append(f"<h2>harness <span class='meta'>(<a href='#harness'>red — expand</a> if FAIL, else green)</span></h2>")
+    parts.append("<h2>harness <span class='meta'>(<a href='#harness'>red — expand</a> if FAIL, else green)</span></h2>")
     parts.append(f"<div>{summary}</div>")
     parts.append("<details id='harness'" + (" open" if n_fail else "") + "><summary>per-check evidence</summary><table>"
                  "<tr><th>state</th><th>check</th><th>evidence</th></tr>")

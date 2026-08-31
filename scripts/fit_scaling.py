@@ -10,7 +10,6 @@ Usage: python scripts/fit_scaling.py
 """
 import numpy as np
 from scipy.optimize import minimize
-from scipy.stats import chi2
 
 # (D_scheduled in tokens, agg val NLL). p324 D from the train log line
 # (3.1955B scheduled vs 3.2449B requested, gap 1.523% < 10% -> absorbed, S11);

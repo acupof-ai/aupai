@@ -35,7 +35,6 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from scan_math_contamination import (  # noqa: E402
     HoldoutIndex,
-    extract_question,
     iter_texts,
     load_holdouts,
     qhash,

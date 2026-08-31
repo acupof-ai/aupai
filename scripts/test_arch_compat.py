@@ -502,7 +502,6 @@ print("MasterWeights: p.grad cleared every step, m.grad does not accumulate OK")
 # that matters: without it, A can pass on an implementation that drops the mask entirely.
 _torch = torch
 import contextlib  # noqa: E402
-import torch.nn.functional as _F  # noqa: E402
 
 
 class _C:  # smallest cfg GatedMLA reads; head_dim 16 because flash-attn 4 on SM90
