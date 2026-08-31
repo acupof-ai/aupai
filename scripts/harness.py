@@ -5079,7 +5079,8 @@ def cmd_milestone(argv):
             print(f"harness launch ms_{stem} -- eval/score_matrix.py --ckpt {ckpt} "
                   f"--profile milestone --mix {os.path.relpath(a.mix, ROOT)} --json runs/score_matrix.jsonl")
             print(f"python3 eval/readout_30b.py --milestone {ckpt} --paired {paired} "
-                  f"--milestone-tokens {tokens} > runs/readout_{stem}.txt")
+                  f"--milestone-tokens {tokens} --milestone-profile milestone --paired-profile full "
+                  f"> runs/readout_{stem}.txt")
             return "dry"
         rc = cmd_launch([
             f"ms_{stem}", "--hypothesis", f"milestone {tokens / 1e9:.2f}B score_matrix profile", "--",
@@ -5094,7 +5095,8 @@ def cmd_milestone(argv):
         readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
         r = subprocess.run(
             [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
-             "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens)],
+             "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
+             "--milestone-profile", "milestone", "--paired-profile", "full"],
             capture_output=True, text=True,
         )
         with open(readout_path, "w", encoding="utf-8") as f:
