@@ -219,12 +219,38 @@ def fetch(source, target_bytes):
                 file=sys.stderr,
             )
             break
-        # write to temp name, then atomic rename: existence of dst == completeness
-        subprocess.run(
-            ["curl", "-4", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
-            check=True,
-            stdout=subprocess.DEVNULL,
-        )
+        # write to temp name, then atomic rename: existence of dst == completeness.
+        # curl must NOT be Check=True: a transient HTTP/2 stream error (exit 92,
+        # seen 2026-08-30: it killed the whole 11-file fetch 12 hours in) nets
+        # out to a nonzero curl exit even after its internal --retry 6. So we
+        # retry the SAME shard (resuming the .part via -C -) with bounded outer
+        # backoff, and only give up this shard loudly -- never crash the run.
+        attempts = 0
+        while True:
+            r = subprocess.run(
+                ["curl", "-4", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
+                stdout=subprocess.DEVNULL,
+            )
+            if r.returncode == 0:
+                break
+            attempts += 1
+            print(
+                f"  {name}: curl exit {r.returncode} (stream/net err) attempt {attempts}; "
+                f"resuming .part, backing off",
+                file=sys.stderr,
+                flush=True,
+            )
+            if attempts >= 4:
+                print(
+                    f"  {name}: giving up this shard after {attempts} outer retries; "
+                    f".part kept ({os.path.getsize(part) if os.path.exists(part) else 0}B) for resume",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return 3
+            import time
+
+            time.sleep(20 * attempts)
         sz = os.path.getsize(part) if os.path.exists(part) else 0
         if expect and sz != expect:
             print(
