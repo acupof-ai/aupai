@@ -104,10 +104,13 @@ activations. That is a stronger parity requirement than the body linears carry.
    absmax is p50 15.69, p99 19.84, max 26.88 — **max/p50 is only 1.71×**, so no single row
    dominates and per-tensor scaling costs little. What is still unmeasured is the **activation**
    side: the pre-softcap projection is unbounded and one outlier logit sets the scale for a
-   32784-wide chunk. Gate before any A/B, per b0: the **per-chunk** absmax DISTRIBUTION, not the
-   global absmax, since a global figure hides how often a chunk is dominated by one outlier.
-   **p99 of per-chunk absmax against e4m3's 448 is the number that decides per-tensor vs
-   per-chunk scaling.**
+   32784-wide chunk. **MEASURED and the gate passes** (`eff.fp8_head_activation_range`): over 128
+   chunks from step-11000 on real cot rows, per-chunk pre-softcap absmax is p50 48.05, p99 62.24,
+   max 82.43 against e4m3's 448. Zero chunks clip, the largest is 5.4× under the ceiling, and the
+   spread that decides the question is **p99/p50 = 1.30×**. So **per-tensor scaling is sufficient**
+   and the per-chunk / amax-history branch is not needed — the design's largest open risk is closed
+   and its most complicated option is removed. Measured on the forward projection only; the
+   backward's `grad_logits` distribution is the other fp8 operand and is not yet measured.
 2. **Loss curvature.** Cross-entropy is sensitive where the softmax is confident; a quantisation
    error that is invisible in the projection can move the loss. Gate: `|Δval| ≤ 0.04 nat` on a
    50-step A/B, which is the standing rule, plus a parity check of loss and grad-norm against

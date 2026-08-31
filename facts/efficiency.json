@@ -1457,6 +1457,39 @@
    },
    "uncertainty": "The step attribution is by POSITION in the log, not by timestamp: I assigned each recompile to the last step line printed before it, which is right if the log is written in order and wrong if stdout and the dynamo logger interleave differently. The counts per band should therefore be read as approximate, though the qualitative result -- the tail does not decay and the late frame is flash, not AttnRes -- does not depend on exact attribution. 45 distinct values in ~60 steps is a lower bound on the true variant count, since more steps would reveal more. The bucketing variant counts are arithmetic on the 45 observed values, not a measurement of a bucketed run, and no throughput claim is attached: the seam is 3.28% measured with a 4.56% ceiling, so even eliminating it entirely sits at the edge of the 3% ship gate. Whether padding the doc count is even correct for flash varlen is unexamined -- a padded block count may require padded cu_seqlens to match, which is a correctness question I have not touched.",
    "status": "measured"
+  },
+  {
+   "id": "eff.fp8_head_activation_range",
+   "value": "PER-TENSOR fp8 scaling is sufficient for the LM head's activations. This closes the gating unknown in docs/lessons/fp8_lm_head_design.md, measured on real batches rather than reasoned about. b0's gate was the per-CHUNK absmax DISTRIBUTION, not a global absmax, because Liger FLCE sets one fp8 scale per chunk and a single outlier logit would fix that scale for all 32784 columns. Measured over 128 chunks of 2048 rows, running the real model body from ckpt_pretrain_15b_s1.pt.step11000 on real cot rows and taking the PRE-softcap projection absmax per chunk: min 37.36, p50 48.05, p90 53.93, p99 62.24, max 82.43. e4m3's max is 448, so the largest chunk absmax observed is 5.4x under the format's ceiling and ZERO chunks would clip unscaled. The spread is the decisive number: p99/p50 is 1.30x and max/p50 is 1.72x, so no chunk is dominated by an outlier and a per-tensor scale loses almost nothing. Per-chunk or amax-history scaling is NOT needed, which removes the design's largest open risk and its most complicated branch. Note the coincidence worth not over-reading: max/p50 is 1.72x here and 1.71x for the head WEIGHT (eff.lm_head_is_compute_bound). Different quantities, similar spread, no shared cause established.",
+   "measured": "2026-09-01",
+   "source": "probes/t57_absmax.py, runs/t57_absmax.json, docs/lessons/fp8_lm_head_design.md",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "ckpt": "ckpt_pretrain_15b_s1.pt.step11000",
+    "domain": "cot",
+    "batches": 4,
+    "batch": 16,
+    "seq": 4096,
+    "chunk_rows": 2048,
+    "n_chunks": 128,
+    "vocab": 32784,
+    "hidden": 1024,
+    "measured": "pre-softcap head projection absmax per chunk",
+    "absmax_min": 37.36,
+    "absmax_p50": 48.05,
+    "absmax_p90": 53.93,
+    "absmax_p99": 62.24,
+    "absmax_max": 82.43,
+    "e4m3_max": 448.0,
+    "chunks_clipping_pct": 0.0,
+    "p99_over_p50": 1.295,
+    "max_over_p50": 1.72,
+    "verdict": "per-tensor scaling sufficient"
+   },
+   "uncertainty": "One domain (cot) and one checkpoint (step 11000, 68% through stage 1). cot is the smallest warm domain and was chosen for speed; a code- or math-heavy domain could have a different logit distribution, and the range may widen as training continues since logit magnitudes generally grow. 128 chunks over 4 batches is enough to characterise the bulk but not a tail event at 1-in-10000. The measurement is the FORWARD projection only: the backward pass quantises grad_logits, whose distribution is not measured here and is the other operand fp8 would touch. The verdict therefore covers the forward GEMM's input range, not the whole fp8 path.",
+   "status": "measured"
   }
  ]
 }
