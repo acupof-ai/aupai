@@ -1,0 +1,17 @@
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.585 | lr 1.00e-02 | gnorm 2.92 | 0.00B tok | 20K tok/s/gpu | MFU 8% | ETA 2.7h
+step 20/1525 1% [main] | loss 6.989 | lr 1.00e-02 | gnorm 0.98 | 0.00B tok | 72K tok/s/gpu | MFU 30% | ETA 0.8h
+step 30/1525 2% [main] | loss 6.572 | lr 1.00e-02 | gnorm 1.45 | 0.00B tok | 74K tok/s/gpu | MFU 31% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.541 | lr 1.00e-02 | gnorm 1.19 | 0.01B tok | 63K tok/s/gpu | MFU 26% | ETA 0.9h
+step 50/1525 3% [main] | loss 6.262 | lr 1.00e-02 | gnorm 1.13 | 0.01B tok | 78K tok/s/gpu | MFU 32% | ETA 0.7h
+step 60/1525 4% [main] | loss 5.944 | lr 1.00e-02 | gnorm 0.94 | 0.01B tok | 77K tok/s/gpu | MFU 32% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.865 | lr 1.00e-02 | gnorm 1.44 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.541 | lr 1.00e-02 | gnorm 0.98 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.277 | lr 1.00e-02 | gnorm 3.97 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 100/1525 7% [main] | loss 4.940 | lr 1.00e-02 | gnorm 1.79 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.6h
+step 110/1525 7% [main] | loss 4.997 | lr 1.00e-02 | gnorm 1.42 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 4.808 | lr 1.00e-02 | gnorm 1.78 | 0.02B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 130/1525 9% [main] | loss 4.683 | lr 1.00e-02 | gnorm 2.36 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
