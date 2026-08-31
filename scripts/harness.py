@@ -4957,6 +4957,36 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_cold_cache_refuses():
+    """A training launch with no token caches refuses instead of taking a short gate.
+
+    The fallback was backwards: _derive_gate_timeout returns None when no cache is on
+    disk, and cmd_launch then used 120s -- so the emptier the cache, the shorter the
+    deadline, while the work grows from a load into a single-process retokenize of
+    hours (b0, 2026-08-31). Asserts on the source, because reproducing it needs a
+    training launch and a card."""
+    import inspect
+    import tempfile
+
+    # the derivation really does return None-with-that-reason for an empty cache dir
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    mix = os.path.join(d, "data", "m.json")
+    json.dump({"domains": {"a": {}, "b": {}}, "total_tokens": 1e9}, open(mix, "w"))
+    secs, note = _derive_gate_timeout(["--mix", mix], cache_dir=d)
+    assert secs is None and "no token caches" in note, (secs, note)
+
+    src = inspect.getsource(cmd_launch)
+    i = src.index('"no token caches" in gate_note')
+    branch = src[i:i + 900]
+    assert "REFUSING" in branch, "a cold-cache training launch must refuse"
+    assert "return 2" in branch, "the refusal must exit non-zero"
+    # and the refusal must come BEFORE the fallback assignment it replaces
+    assert i < src.index("args.gate_timeout = derived or"), (
+        "the refusal must precede the 120s fallback, or the fallback still wins")
+    print("  gate: a training launch with cold caches refuses rather than taking 120s")
+
+
 def _selftest_refusal_writes_no_row():
     """A refused launch leaves the ledger untouched.
 
@@ -5724,6 +5754,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
@@ -6589,6 +6620,17 @@ def cmd_launch(rest):
     if args.gate_timeout is None:
         if args.training:
             derived, gate_note = _derive_gate_timeout(cmd)
+            if derived is None and gate_note and "no token caches" in gate_note:
+                # REFUSE rather than fall back. The fallback was backwards: the emptier
+                # the cache, the shorter the deadline, while the work grows from a load
+                # into a single-process retokenize of hours. A 120s gate then kills a
+                # healthy job at its most expensive moment (b0, 2026-08-31).
+                print(f"REFUSING: {args.name} -- {gate_note}. A training launch with cold "
+                      f"caches cannot be gated on time: tokenizing is hours, and the "
+                      f"derived gate would be shorter than a warm load. Run "
+                      f"`harness pretokenize --workers 8` first, or pass an explicit "
+                      f"--gate-timeout if you accept the risk.", file=sys.stderr)
+                return 2
             args.gate_timeout = derived or (300 if "--resume" in cmd else 120)
             if derived is None and gate_note:
                 gate_note = f"{gate_note}; falling back to {args.gate_timeout}s"
