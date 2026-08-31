@@ -146,12 +146,29 @@ def _manifest_rp1t_c4():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_rp1t_arxiv():
+    """math role (en, feeds math until OpenWebMath reachable): RedPajama-1T arxiv
+    slice on data.together (up while hf-mirror is down). 100 arxiv_*.jsonl."""
+    names = open(os.path.join(ROOT, "data", "raw", "rp1t_arxiv_manifest.txt")).read().split()
+    base = "https://data.together.xyz/redpajama-data-1T/v1.0.0/arxiv/"
+    return [(n, base + n, 0) for n in names]
+
+
+def _manifest_rp1t_stackexchange():
+    """cot-role QA (code+math): RedPajama-1T stackexchange slice (single file)."""
+    names = open(os.path.join(ROOT, "data", "raw", "rp1t_stackexchange_manifest.txt")).read().split()
+    base = "https://data.together.xyz/redpajama-data-1T/v1.0.0/stackexchange/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
     "rp1t_github": _manifest_rp1t_github,
     "en_fineweb_edu": _manifest_fineweb_edu_10bt,
     "rp1t_c4": _manifest_rp1t_c4,
+    "rp1t_arxiv": _manifest_rp1t_arxiv,
+    "rp1t_stackexchange": _manifest_rp1t_stackexchange,
 }
 
 
@@ -179,7 +196,7 @@ def _refuse_prev_fp(source, source_fp):
     return None
 
 
-def fetch(source, target_bytes):
+def fetch(source, target_bytes, stream_n=0, stream_i=0):
     ensure_raw_location()
     if not disk_ok(target_bytes):
         print(f"REFUSING: data/raw does not hold {target_bytes * 1.5 / 1e9:.1f}G needed", file=sys.stderr)
@@ -219,7 +236,9 @@ def fetch(source, target_bytes):
     stats = {"source": source, "source_fp": fp, "target_bytes": target_bytes, "shards": []}
     log = os.path.join(outdir, "fetch_stats.log")  # per-shard append log: resume evidence
     got = 0
-    for name, url, expect in manifest:
+    for idx_, (name, url, expect) in enumerate(manifest):
+        if stream_n and idx_ % stream_n != stream_i:
+            continue
         if got >= target_bytes:
             break
         dst = os.path.join(outdir, name)
@@ -301,8 +320,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", required=True, help="named source (fineweb2, cci3_hq, ...)")
     ap.add_argument("--target_bytes", type=float, default=None, help="disk bytes to fetch (None = all)")
+    ap.add_argument("--stream_n", type=int, default=0, help="parallel streams (0 = one); fetch files where i%n==stream_i")
+    ap.add_argument("--stream_i", type=int, default=0, help="this stream's index (0..stream_n-1)")
     a = ap.parse_args()
-    return fetch(a.source, a.target_bytes or 0)
+    return fetch(a.source, a.target_bytes or 0, a.stream_n, a.stream_i)
 
 
 if __name__ == "__main__":
