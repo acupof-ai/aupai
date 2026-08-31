@@ -139,8 +139,16 @@ stage-1 实际调度 3,647,072 行 = **14.9384B tokens,不是合同的 15.000B**
 - 所有里程碑的 **n 以实际步数计**(k × 224 × 4096),不以名义 tokens 计;3.24B 配对的 p324 同 tokens 配对不受影响(p324 是独立 run)。
 - 根因已立档:check_mix_supply 用 raw supply × epochs 验证,而 build_mix 在 pool(supply 减 val)× epochs 上 cap——任何被 cap 的域都会少抽。修复已报 de(pool 模型 + broken world)。
 
-## 7. Per-role domain loss 的适用域(2026-08-31,step3500 读数争议时立)
+## 7. per-role domain loss 的适用条件(2026-08-31,step3500 读数争议时立)
 
-per-role domain loss 的配对比较只在**两 run 训练域有重叠**时有效:同一份 held-out 文本必须对两个 checkpoint 都 in-distribution,否则差值测的是 OOD 惩罚,不是语料效应。stage-1 mix 与阶梯 mix(mix_scale_3.24b)域零重叠,故 3.24B 配对的 per-role loss 在**任何头**上都不可判读——阶梯头(stage-1 OOD,实测 −0.32..−0.85 nat)与 stage-1 头(p324 OOD)是镜像混杂,换头不换性质。
+该指标的判读**要求头集合是被判 mix 拥有权重的域的子集**。不是"两侧同头",也不是"各自本 mix 的头"——同头可以同时是两侧都不对的头。
 
-读法:该指标在 3.24B 配对处读**地板(不可判读)**,不得报"6/7 退化"。stage-1 自己的 own-mix 分数仍要测(30B 读数的基线,stage-1↔stage-2 共享域,同文本 own-mix 头,该指标在 30B 处有效),但不与 p324 配对。
+理由在 §2 的决策规则本身:角色改善 → mix 买到了该角色;角色持平 → 该权重没买到可测价值,进 change-mix 候选。**没有权重的角色无法进入这条规则**,对它的判决喂不给任何决策。
+
+由此得出零重叠情形的构造性结论:两个 mix 的域名无交集时,**任一方向的配对都不可判读**。在被判 mix 的头上打分对另一侧是分布外,反之亦然,delta 混合了能力与分布偏移,事后无法分离。此时记**地板(不可判读)**,不记方向、不记幅度。
+
+阈值同受此约束。0.1176 nat = 2.28 × σ̂,σ̂ = 0.0516 测自四个 0.2b 种子(`mix data/mix_scale_0.2b.json`、`corpus fp web_hq 30838d423348b2e5`),是**同分布下的种子噪声**。用在模型未训练过的文本上,它计的不是同一个量。头集合更换后,阈值标记为 provisional-not-transferred,判决列只写方向与幅度,直到在该头集合上测出 σ̂。
+
+2026-08-31 记录:stage-1 3.24B 里程碑按 `mix_scale_3.24b.json` 的头打分(web_hq/textbook/wiki/en/math/code/chat),与 stage-1 训练域零重叠。该读数无效,标 superseded 保留,不删除;"6 of 7 degraded" 不作为结论出现在任何地方。stage-1 头上的重打分作为**无配对的本 mix 基线**:8B/15B 里程碑对它做趋势差(同 mix 同头,按 §1 只读方向);30B 处与 stage-2 配对(stage-1↔stage-2 共享域,配对有效,阈值适用)。
+
+前向规则:任何在**已退役 mix 的头**上对新 mix 打分的里程碑读数,适用同一条件——阶梯头的存在不是错,用错了 mix 才是错。代码侧已强制执行:readout_30b 对 head 集合不一致的配对直接拒绝输出判决(de 19bea53,selftest 第 4 例即今夜这对)。
