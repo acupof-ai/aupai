@@ -38,7 +38,7 @@ MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 SCOPE = [
     "*.py",
     "*.sh",
-    "data/mix_scale_*.json",
+    "data/mix_*.json",
     "data/tokenizer.json",
     "facts/*.json",
     "scripts/*.json",
@@ -242,6 +242,33 @@ def unregistered_py(root, manifest=None):
     return sorted(out)
 
 
+def plan_sync(new_path, old_path, pod_path):
+    """push/del plan for `pod_push --all`. `old_path` is the pod's last manifest
+    (absent -> no deletes); `pod_path` is `sha256sum` output over the new
+    manifest's paths taken on the pod (missing files absent from it).
+    runs/*.jsonl is skipped in both directions: the pod produces rows, so the
+    sync direction there is pod -> commit, never commit -> pod."""
+    new = read_manifest(new_path)
+    old = read_manifest(old_path) if os.path.exists(old_path) else {}
+    pod = {}
+    if os.path.exists(pod_path):
+        for line in open(pod_path, encoding="utf-8"):
+            line = line.rstrip("\n")
+            if line:
+                sha, p = line.split(None, 1)
+                pod[p] = sha
+    plan = []
+    for p, (want, _cls) in new.items():
+        if p.startswith("runs/"):
+            continue
+        if pod.get(p) != want:
+            plan.append(f"push {p}")
+    for p in old:
+        if p not in new and not p.startswith("runs/"):
+            plan.append(f"del {p}")
+    return plan
+
+
 def check_head(root=ROOT):
     """The committed manifest must describe HEAD. CI runs this."""
     if not os.path.exists(MANIFEST):
@@ -380,6 +407,18 @@ def selftest():
     assert {"a.py", "b.py", "c.py"} <= set(m), f"merged manifest lost files: {sorted(m)}"
     for p in ("a.py", "b.py", "c.py"):
         assert m[p][0] == sha_disk(os.path.join(h, p)), f"{p} sha is not the merged sha"
+    # plan_sync: a matching file is untouched, a changed file is pushed, a
+    # manifest-left file is deleted, runs/ is skipped both ways.
+    import tempfile
+    j = tempfile.mkdtemp()
+    with open(os.path.join(j, "new"), "w") as f:
+        f.write(f"{'a' * 64}  a.py  training\n{'b' * 64}  b.py  docs\n{'c' * 64}  runs/x.jsonl  docs\n")
+    with open(os.path.join(j, "old"), "w") as f:
+        f.write(f"{'a' * 64}  a.py  training\n{'d' * 64}  d.py  docs\n")
+    with open(os.path.join(j, "pod"), "w") as f:
+        f.write(f"{'a' * 64}  a.py\n{'0' * 64}  b.py\n")
+    plan = plan_sync(os.path.join(j, "new"), os.path.join(j, "old"), os.path.join(j, "pod"))
+    assert plan == ["push b.py", "del d.py"], plan
     print("pod_drift selftest OK:", evidence)
 
 
@@ -408,6 +447,11 @@ def main():
             sys.exit(0)
         print(("OK: " if ok else "DRIFT: ") + evidence)
         sys.exit(0 if ok else 1)
+    elif mode == "--plan-sync":
+        # args: <old manifest from pod> <pod sha256sum output>; prints "push <p>" /
+        # "del <p>" lines for pod_push --all.
+        for op, p in plan_sync(MANIFEST, sys.argv[2], sys.argv[3]):
+            print(f"{op} {p}")
     elif mode == "--check-head":
         ok, evidence = check_head(ROOT)
         print(("OK: " if ok else "STALE: ") + evidence)

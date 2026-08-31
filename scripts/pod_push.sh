@@ -19,15 +19,24 @@
 # the container, same as podput.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-[ $# -ge 1 ] || { echo "usage: $0 <file>..."; exit 2; }
-# The pushed files themselves must be committed -- pushing uncommitted code is what the
-# drift guard forbids. The rest of the tree may be dirty (another session's work) and is
-# left exactly as it is.
-# They must also be reachable from main: the pod runs main's tree, and a branch-only
-# version pushed there would be rolled back by the next pusher's merge (2026-08-31
-# worktree ruling). Compare the working blob against main's -- commit to your branch,
-# merge, then push.
-for f in "$@"; do
+
+ALL=0
+if [ "${1:-}" = "--all" ]; then ALL=1; shift; fi
+[ $# -ge 1 ] || { echo "usage: $0 [--all] <file>..."; echo "       $0 --all   (sync the whole manifest: push changed, delete manifest-left)"; exit 2; }
+
+find_emptydir() {
+  [ -n "${EMPTYPATH:-}" ] && return
+  EMPTYPATH=$(tn exec "for d in /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work; do [ -d \"\$d/aupai\" ] && echo \"\$d\" && break; done" 2>/dev/null | head -1)
+  if [ -z "$EMPTYPATH" ]; then
+    echo "pod_push: cannot find /work emptyDir host path (is the pod running?)" >&2
+    exit 1
+  fi
+}
+
+# Push one committed, main-reachable file. Large files (>100KB gzip+base64) bypass
+# podput's argv limit via the container's emptyDir host path.
+push_one() {
+  local f="$1"
   if [ -n "$(git status --porcelain -- "$f")" ]; then
     echo "refusing: $f has uncommitted changes -- commit or stash it first"
     exit 1
@@ -41,7 +50,50 @@ for f in "$@"; do
     echo "refusing: $f differs from main -- merge your branch first (the pod runs main, not your branch)"
     exit 1
   fi
-done
+  local b64_size
+  b64_size=$(gzip -9c "$f" | base64 | tr -d '\n' | wc -c | tr -d ' ')
+  if [ "$b64_size" -le 100000 ]; then
+    ~/bin/podput "$f" "/work/aupai/$f"
+  else
+    find_emptydir
+    echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
+    tn push "$f" "$EMPTYPATH/aupai/$f"
+  fi
+}
+
+if [ $ALL -eq 1 ]; then
+  # Whole-tree sync after a layout-changing merge. The manifest must describe HEAD
+  # and be reachable from main; the pod's last manifest defines the delete set, so
+  # throwaway probes (never in any manifest) are untouched.
+  [ $# -eq 0 ] || { echo "pod_push --all takes no file arguments" >&2; exit 2; }
+  if ! python3 scripts/pod_drift.py --check-head >/dev/null 2>&1; then
+    echo "pod_push --all: manifest stale vs HEAD -- regenerate, commit, merge, then re-run" >&2
+    exit 1
+  fi
+  push_one data/pod_head_manifest.txt >/dev/null  # main-reachability gate on the manifest itself
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+  ~/bin/pod cat /work/aupai/data/pod_head_manifest.txt > "$tmp/old" 2>/dev/null || true
+  # Pod shas for every new-manifest path, one batch. Missing files error to stderr
+  # and are simply absent from stdout -> pushed.
+  paths=$(awk '{print $2}' data/pod_head_manifest.txt | grep -v '^runs/')
+  ~/bin/pod "cd /work/aupai && sha256sum $paths 2>/dev/null" > "$tmp/pod" || true
+  pushes=(); dels=()
+  while read -r op p; do
+    [ -n "$op" ] || continue
+    if [ "$op" = push ]; then pushes+=("$p"); else dels+=("$p"); fi
+  done < <(python3 scripts/pod_drift.py --plan-sync "$tmp/old" "$tmp/pod")
+  echo "pod_push --all: ${#pushes[@]} push, ${#dels[@]} delete"
+  for p in "${pushes[@]}"; do push_one "$p"; done
+  if [ ${#dels[@]} -gt 0 ]; then
+    ~/bin/pod "cd /work/aupai && rm -f -- ${dels[*]}"
+    echo "deleted: ${dels[*]}"
+  fi
+  # The manifest last: it must describe exactly what landed.
+  ~/bin/podput data/pod_head_manifest.txt /work/aupai/data/pod_head_manifest.txt
+  ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
+  exit 0
+fi
 
 # The manifest must describe HEAD. A scoped change without a regenerated manifest
 # makes the post-push drift line report the pusher's own file as drifted -- a false
@@ -54,28 +106,8 @@ if ! python3 scripts/pod_drift.py --check-head >/dev/null 2>&1; then
   exit 1
 fi
 
-# Find the host path of the container's /work emptyDir (cached for this run).
-# podput's argv limit (~100KB gzip+base64) cannot carry large files; tn push to the
-# emptyDir host path bypasses the container's argv entirely.
-EMPTYPATH=""
-find_emptydir() {
-  [ -n "$EMPTYPATH" ] && return
-  EMPTYPATH=$(tn exec "for d in /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work; do [ -d \"\$d/aupai\" ] && echo \"\$d\" && break; done" 2>/dev/null | head -1)
-  if [ -z "$EMPTYPATH" ]; then
-    echo "pod_push: cannot find /work emptyDir host path (is the pod running?)" >&2
-    exit 1
-  fi
-}
-
 for f in "$@"; do
-  b64_size=$(gzip -9c "$f" | base64 | tr -d '\n' | wc -c | tr -d ' ')
-  if [ "$b64_size" -le 100000 ]; then
-    ~/bin/podput "$f" "/work/aupai/$f"
-  else
-    find_emptydir
-    echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
-    tn push "$f" "$EMPTYPATH/aupai/$f"
-  fi
+  push_one "$f"
 done
 
 # Always push the manifest: a file can never land on the pod without the reference
