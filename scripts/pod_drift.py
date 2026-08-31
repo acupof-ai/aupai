@@ -337,6 +337,48 @@ def selftest():
     m = read_manifest(os.path.join(g, "data", "pod_head_manifest.txt"))
     assert "a.py" not in m, "manifest named a.py, absent from the commit's index"
     assert "b.py" in m, "manifest dropped b.py, present in the commit's index"
+
+    # Merge-commit regeneration: when the hook runs on a merge commit, the index
+    # it reads IS the merged index. The regenerated manifest must name every file
+    # from BOTH parents with the merged shas -- taking either side's manifest
+    # loses the other branch's files (2026-08-31 worktree ruling). Two-branch
+    # world: main adds c.py, branch de adds b.py; both regenerated the manifest,
+    # so the merge conflicts on it and the hook regenerates from the merged index.
+    import tempfile
+    h = tempfile.mkdtemp()
+
+    def g(*args, check=True):
+        return subprocess.run(["git", *args], cwd=h, capture_output=True, text=True, check=check)
+
+    g("init")
+    g("checkout", "-b", "main")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    open(os.path.join(h, "a.py"), "w").write("# a\n")
+    g("add", "a.py")
+    write_manifest_index(h)  # the hook, on main's first commit
+    g("add", "data/pod_head_manifest.txt")
+    g("commit", "-m", "a")
+    g("checkout", "-b", "de")
+    open(os.path.join(h, "b.py"), "w").write("# b\n")
+    g("add", "b.py")
+    write_manifest_index(h)
+    g("add", "data/pod_head_manifest.txt")
+    g("commit", "-m", "b")
+    g("checkout", "main")
+    open(os.path.join(h, "c.py"), "w").write("# c\n")
+    g("add", "c.py")
+    write_manifest_index(h)
+    g("add", "data/pod_head_manifest.txt")
+    g("commit", "-m", "c")
+    r = g("merge", "de", "--no-edit", check=False)
+    assert r.returncode != 0, "expected a manifest conflict, got a clean merge"
+    # The hook on the conflict-resolution commit: regenerate from the merged index.
+    write_manifest_index(h)
+    m = read_manifest(os.path.join(h, "data", "pod_head_manifest.txt"))
+    assert {"a.py", "b.py", "c.py"} <= set(m), f"merged manifest lost files: {sorted(m)}"
+    for p in ("a.py", "b.py", "c.py"):
+        assert m[p][0] == sha_disk(os.path.join(h, p)), f"{p} sha is not the merged sha"
     print("pod_drift selftest OK:", evidence)
 
 
