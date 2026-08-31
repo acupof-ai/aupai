@@ -1139,6 +1139,24 @@
    },
    "uncertainty": "One checkpoint. The 1.8x is explained as contention against a 7-card training job, established from file timestamps rather than from a controlled A/B, so the 2.16x and 1.65x factors are single-pair observations and not a characterised contention curve. Neither figure includes checkpoint load or process startup, only each metric's own _wall_s, so an end-to-end light run exceeds 356 s. I first quoted 194.1 s to three sessions from the idle-box file before checking the canonical ledger; the regime, not the number, was the missing part, which is the same failure as reporting a single-stream cache read rate for a 7-rank load (eff.cache_load_gates_startup).",
    "status": "measured"
+  },
+  {
+   "id": "eff.wrapper_orphans_torchrun",
+   "value": "run_ddp.sh orphans torchrun on SIGTERM, reproduced on the pod 2026-08-31, and the obvious fix does NOT work. harness's gate kill SIGTERMs `bash run_ddp.sh`; the script calls torchrun in the FOREGROUND with no exec and no trap, so bash dies and torchrun survives on seven cards while the ledger records the run as killed. Three variants tested, each a bash wrapper whose child is `sleep 300`, SIGTERMed after 2s: (1) bare, no exec, no trap -> wrapper dead, CHILD ORPHANED. Confirms b0's diagnosis. (2) `set -m; trap 'kill -- -$$' TERM INT` with the child still in the FOREGROUND -> wrapper ALIVE, CHILD ORPHANED. This is the fix as specified and it fails: bash does not run a trap while it is blocked waiting on a foreground child, so the handler never fires and the wrapper is left hung. (3) child backgrounded plus `wait $!`, with `trap 'kill 0' TERM INT` -> child DEAD, correct. Backgrounding is what makes the trap reachable: bash can service the signal because `wait` is interruptible, where a foreground child is not. exec is not available as the fix for this file: run_ddp.sh:6-17 must run after torchrun (it scores the checkpoint so a training run cannot finish without a score_matrix record), so the process has to survive its child.",
+   "measured": "2026-08-31",
+   "source": "run_ddp.sh, scripts/harness.py; reproduction /tmp/orphan_test2.sh on the pod",
+   "config": {
+    "signal": "SIGTERM",
+    "wait_before_kill_s": 2,
+    "child": "sleep 300",
+    "variant_bare": "orphaned",
+    "variant_trap_foreground": "orphaned, wrapper hung",
+    "variant_trap_background_wait": "child killed, correct",
+    "exec_available": false,
+    "exec_blocked_by": "run_ddp.sh:6-17 post-child score_matrix call"
+   },
+   "uncertainty": "Reproduced with `sleep 300` standing in for torchrun, not with torchrun itself, because the real case needs the seven-card block that stage 1 is using. torchrun spawns its own children, so the real fix must kill the process GROUP rather than the direct child, which variant 3 does but which this harness does not verify at depth. `kill 0` also killed the test's own setsid parent, producing two segfault lines in the harness output; that is an artifact of testing inside a shared group and not a property of the fix, but it means the exact kill form needs re-checking against a real torchrun tree before it ships. Not yet written into run_ddp.sh: the file is frozen while stage 1 runs, since an auto-resume would pick up the edit.",
+   "status": "measured"
   }
  ]
 }
