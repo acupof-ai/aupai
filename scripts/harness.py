@@ -3760,6 +3760,46 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_gate_timeout():
+    """Known answer: the gate is cache bytes / 1.5 GiB/s x2, floored at 600 s.
+
+    Tonight's real numbers are the case that matters -- 149 GiB must exceed the
+    6m26s the run actually took, and the old 120 s default must not."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="gate_")
+    os.makedirs(os.path.join(d, "cache"), exist_ok=True)
+    mix = os.path.join(d, "m.json")
+    json.dump({"domains": {"a": {}, "b": {}}}, open(mix, "w"))
+    cache = os.path.join(d, "cache")
+
+    def with_gib(total_gib):
+        for f in glob.glob(os.path.join(cache, "*.pt")):
+            os.remove(f)
+        half = int(total_gib * 2**30 / 2)
+        for name in ("tokens_a.pt", "tokens_b.pt"):
+            with open(os.path.join(cache, name), "wb") as f:
+                f.truncate(half)  # sparse: no real bytes written
+        return _derive_gate_timeout(["--mix", mix], cache_dir=cache)
+
+    secs, note = with_gib(149)
+    expect = int(149 / _CACHE_READ_GIBPS * 2)
+    assert secs == expect, f"149 GiB -> {secs}s, expected {expect}"
+    # The case the constant exists for: tonight's real startup was 386 s. A rate taken
+    # from single-stream warm reads (1.5 GiB/s) derives 198 s and kills a healthy run.
+    assert secs > 386, f"the gate must exceed the 6m26s the real run took, got {secs}s"
+    assert "149 GiB" in note, note
+
+    secs, _ = with_gib(1)  # a small mix must still get the floor, not 1s
+    assert secs == _GATE_FLOOR_S, f"floor not applied: {secs}"
+
+    secs, note = _derive_gate_timeout(["--mix", os.path.join(d, "nope.json")], cache_dir=cache)
+    assert secs is None and "unreadable" in note, f"a missing mix must not produce a gate: {secs} {note}"
+    shutil.rmtree(d, ignore_errors=True)
+    print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
+
+
 def _selftest_register_union():
     """fb's case: two branches each close a DIFFERENT row, the files union-merge,
     and the result reads as both closed with no duplicate complaint.
@@ -4208,6 +4248,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
 
@@ -4939,6 +4980,53 @@ while True:
     return monitor_proc.pid
 
 
+#: Effective cache-load rate, GiB/s, as the STARTUP sees it: 149 GiB of mix reached the
+#: first step in 6m26s on 2026-08-31 (7 ranks, shared page cache) -> 0.39 GiB/s aggregate.
+#: Not the 1.5-1.6 GiB/s warm single-stream figure -- that is one reader on an idle disk,
+#: and using it derives a 198 s gate for a startup that actually took 386 s. Contended
+#: (two tokenizers running) the same read collapsed to 0.07 GiB/s, hence the x2.
+_CACHE_READ_GIBPS = 0.39
+_GATE_FLOOR_S = 600
+
+
+def _derive_gate_timeout(cmd, cache_dir=None):
+    """Startup-gate seconds derived from the mix the command names, or None.
+
+    train.py:1396 loads every domain's FULL token cache on every rank before the
+    first step. On 2026-08-31 that was 149 GiB and the first step line came 6m26s
+    after launch -- the 120 s default would have killed a healthy run. The gate is
+    a property of the mix, not something an operator should have to measure again:
+    total cache bytes / 1.5 GiB/s, doubled for contention, floor 600 s.
+    """
+    mix = None
+    for i, c in enumerate(cmd):
+        if c == "--mix" and i + 1 < len(cmd):
+            mix = cmd[i + 1]
+            break
+    if not mix:
+        return None, None
+    doms, err = read_mix(mix if os.path.isabs(mix) else os.path.join(ROOT, mix))
+    if err:
+        return None, f"mix unreadable ({err})"
+    cache_dir = cache_dir or os.path.dirname("/data00/pretrain_1b_tokens.pt")
+    total = 0
+    missing = []
+    for d in doms:
+        p = os.path.join(cache_dir, f"tokens_{d}.pt")
+        if os.path.exists(p):
+            total += os.path.getsize(p)
+        else:
+            missing.append(d)
+    if not total:
+        return None, f"no token caches on disk for {len(doms)} domain(s)"
+    gib = total / 2**30
+    secs = max(_GATE_FLOOR_S, int(gib / _CACHE_READ_GIBPS * 2))
+    note = f"{gib:.0f} GiB of cache / {_CACHE_READ_GIBPS} GiB/s x2 -> {secs}s"
+    if missing:
+        note += f" (not yet tokenized: {', '.join(missing[:3])})"
+    return secs, note
+
+
 def cmd_launch(rest):
     """`harness launch <name> [--training] [--hypothesis "..."] -- <cmd>`
 
@@ -4971,8 +5059,19 @@ def cmd_launch(rest):
     if not cmd:
         ap.error("no command given after --")
     # Resume loads a checkpoint; 120s is too short for a 959MB file (tilerl-4c, t38).
+    # For a training job the gate comes from the mix's cache size instead: 120 s would
+    # have killed tonight's healthy 15B run, whose first step came 6m26s in.
+    gate_note = None
     if args.gate_timeout is None:
-        args.gate_timeout = 300 if "--resume" in cmd else 120
+        if args.training:
+            derived, gate_note = _derive_gate_timeout(cmd)
+            args.gate_timeout = derived or (300 if "--resume" in cmd else 120)
+            if derived is None and gate_note:
+                gate_note = f"{gate_note}; falling back to {args.gate_timeout}s"
+        else:
+            args.gate_timeout = 300 if "--resume" in cmd else 120
+    if args.training:
+        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)"))
 
     # Popen does not use a shell: a bare foo.py fails with Permission denied.
     # Prepend the interpreter when the command is a .py file in the repo.
@@ -4985,11 +5084,21 @@ def cmd_launch(rest):
         if any(any(c in part for c in _CORPUS_CMDS) for part in cmd):
             args.no_gpu = True
 
-    # 1. exp.py start row first
+    # 1. exp.py start row first.
+    # The row's `cmd` is the CHILD command only, so launcher configuration was
+    # invisible in the ledger: on 2026-08-31 the controller checked whether the 15B
+    # run had --auto-resume and the row said no, while the supervisor was running it
+    # (visible only in ps). The flags that govern the run belong in its record.
+    launcher = f"--gate-timeout {args.gate_timeout}"
+    if args.auto_resume:
+        launcher += f" --auto-resume {args.auto_resume}"
+    if args.training:
+        launcher += " --training"
     subprocess.run(
         [sys.executable, os.path.join(HERE, "exp.py"),
          "start", "--name", args.name,
          "--cmd", " ".join(cmd),
+         "--notes", f"launcher: harness launch {launcher}" + (f"; gate {gate_note}" if gate_note else ""),
          "--hypothesis", args.hypothesis],
         check=True,
     )

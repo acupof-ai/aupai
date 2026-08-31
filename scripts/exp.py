@@ -30,10 +30,28 @@ def set_root(root):
     MD = os.path.join(root, "EXPERIMENTS.md")
 
 
-def rows():
+def rows(raw=False):
+    """The log, folded by (name, started): the last event for a run wins.
+
+    The file is an event log, not a table -- `done` appends rather than rewriting,
+    so union-merging two branches cannot produce a running row and a done row for
+    the same run. raw=True yields every event."""
     if not os.path.exists(LOG):
         return []
-    return [json.loads(l) for l in open(LOG, encoding="utf-8") if l.strip()]
+    evs = [json.loads(l) for l in open(LOG, encoding="utf-8") if l.strip()]
+    if raw:
+        return evs
+    folded = {}
+    for r in evs:
+        folded[(r.get("name"), r.get("started"))] = r
+    return list(folded.values())
+
+
+def append(row):
+    """One event. Append, never rewrite: see rows()."""
+    os.makedirs(os.path.dirname(LOG), exist_ok=True)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def write(rs):
@@ -118,8 +136,7 @@ def main():
         set_root(a.root)
 
     if a.action == "start":
-        rs = rows()
-        rs.append(
+        append(
             {
                 "started": now(),
                 "name": a.name,
@@ -134,33 +151,29 @@ def main():
                 "commit": git_commit(),
             }
         )
-        write(rs)
         print(f"logged start: {a.name}")
     elif a.action == "done":
-        rs = rows()
+        # APPEND the closing event; never rewrite the start row. runs/*.jsonl merges
+        # by union, so a rewrite means two branches closing two different runs keep
+        # BOTH the running row and the done row for each (the register hit exactly
+        # this: duplicate t39/t40, 2026-08-31). Identity is (name, started), and
+        # readers fold on it -- `merge` already does, and rows() now does too, so an
+        # appended close carries the start row's `started` to fold onto it.
+        rs = rows(raw=True)
+        base = None
         for r in reversed(rs):
             if r["name"] == a.name and r["status"] == "running":
-                r.update(
-                    status=a.status, result=a.result, finding=a.finding, decision=a.decision, ended=now()
-                )
+                base = r
                 break
-        else:
-            rs.append(
-                {
-                    "started": now(),
-                    "name": a.name,
-                    "status": a.status,
-                    "cmd": "",
-                    "notes": "",
-                    "hypothesis": "",
-                    "result": a.result,
-                    "finding": a.finding,
-                    "decision": a.decision,
-                    "ended": now(),
-                    "commit": git_commit(),
-                }
-            )
-        write(rs)
+        ev = dict(
+            base
+            or {
+                "started": now(), "name": a.name, "cmd": "", "notes": "",
+                "hypothesis": "", "commit": git_commit(),
+            },
+            status=a.status, result=a.result, finding=a.finding, decision=a.decision, ended=now(),
+        )
+        append(ev)
         print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "merge":
         incoming = [json.loads(l) for l in open(a.src, encoding="utf-8") if l.strip()]
