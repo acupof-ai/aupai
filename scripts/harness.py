@@ -2854,6 +2854,51 @@ def _broken_untracked_aged():
     return d
 
 
+def check_dirty_aged(root):
+    """Tracked files dirty longer than 30 minutes — uncommitted work sitting in the
+    shared tree. In a multi-session tree a dirty file is a landmine: it blocks anyone
+    who needs to push it, and a broad `git add` sweeps it into someone else's commit
+    (d535674 swept 26 files; 2026-08-31 ruled that nothing stays uncommitted).
+    WARN, not FAIL: the file is not wrong, its owner just has to commit or revert.
+    The owner is unknown; the path is named so the standup can assign it."""
+    if not os.path.isdir(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=root, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return SKIP, f"git status failed: {r.stderr.strip()}"
+    cutoff = time.time() - 30 * 60
+    aged = []
+    for line in r.stdout.splitlines():
+        if len(line) < 4 or line[:2].strip() not in ("M", "A"):
+            continue  # untracked (??) is untracked_aged's job; deletes have no mtime
+        p = os.path.join(root, line[3:])
+        if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+            aged.append(line[3:])
+    if aged:
+        return WARN, f"{len(aged)} tracked file(s) dirty >30min: {', '.join(aged[:5])}"
+    return PASS, "no aged dirty files"
+
+
+def _broken_dirty_aged():
+    """A real git repo with one tracked file dirty for 31 minutes."""
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    sp.run(["git", "init"], cwd=d, capture_output=True)
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
+    sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True)
+    with open(os.path.join(d, "AGENTS.md"), "a") as f:
+        f.write("\n# dirty\n")
+    old = time.time() - 31 * 60
+    os.utime(os.path.join(d, "AGENTS.md"), (old, old))
+    return d
+
+
 CHECKS = [
     (
         "env_importable",
@@ -3114,6 +3159,13 @@ CHECKS = [
         "a session's unfinished work sits unowned for days; nobody knows if it is safe to delete",
         check_untracked_aged,
         _broken_untracked_aged,
+    ),
+    (
+        "dirty_aged",
+        "tracked files dirty longer than 30min are named so the owner commits or reverts",
+        "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
+        check_dirty_aged,
+        _broken_dirty_aged,
     ),
     (
         "mix_30b_contract",
@@ -3704,7 +3756,7 @@ def _demo():
     # not a tree, so no world it builds can hold a repo file.
     synthetic_world = {"no_oversized_blob", "env_importable"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
-    warn_only = {"untracked_aged"}
+    warn_only = {"untracked_aged", "dirty_aged"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
