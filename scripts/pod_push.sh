@@ -64,4 +64,17 @@ for f in "$@"; do
     tn push "$f" "$EMPTYPATH/aupai/$f"
   fi
 done
+
+# Always push the manifest: a file can never land on the pod without the reference
+# that describes it. 2026-08-31: a pushed fetch_corpus.py with a stale manifest killed
+# a healthy training launch because the pod-side --check compared fresh file vs old hash.
+manifest="data/pod_head_manifest.txt"
+b64_size=$(gzip -9c "$manifest" | base64 | tr -d '\n' | wc -c | tr -d ' ')
+if [ "$b64_size" -le 100000 ]; then
+  ~/bin/podput "$manifest" "/work/aupai/$manifest"
+else
+  find_emptydir
+  tn push "$manifest" "$EMPTYPATH/aupai/$manifest"
+fi
+
 ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null

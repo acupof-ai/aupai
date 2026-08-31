@@ -89,16 +89,38 @@ def main():
             pass  # ruff not installed; CI catches it
 
     # Regenerate pod manifest from staged content so it matches HEAD after commit.
+    # Run the STAGED pod_drift.py (git show :path), never the working-tree copy:
+    # a hook that executes uncommitted code is the fingerprint rule turned against us
+    # (2026-08-31: an uncommitted 3-column format wrote a manifest the pod's parser
+    # could not read, 147 false "missing", held a launch).
+    # The staged copy is written inside the repo so its ROOT (__file__-relative) resolves.
     repo = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     ).stdout.strip()
-    if repo and os.path.isfile(os.path.join(repo, "scripts", "pod_drift.py")):
-        r = subprocess.run(
-            [sys.executable, os.path.join(repo, "scripts", "pod_drift.py"), "--write-index"],
-            capture_output=True, text=True,
+    if repo:
+        staged_py = subprocess.run(
+            ["git", "show", ":scripts/pod_drift.py"], capture_output=True
         )
-        if r.returncode == 0:
-            subprocess.run(["git", "add", "data/pod_head_manifest.txt"], capture_output=True)
+        if staged_py.returncode != 0:
+            staged_py = subprocess.run(
+                ["git", "show", "HEAD:scripts/pod_drift.py"], capture_output=True
+            )
+        if staged_py.returncode == 0:
+            tmp_py = os.path.join(repo, "scripts", ".pod_drift_staged.py")
+            try:
+                with open(tmp_py, "wb") as f:
+                    f.write(staged_py.stdout)
+                r = subprocess.run(
+                    [sys.executable, tmp_py, "--write-index"],
+                    capture_output=True, text=True,
+                )
+                if r.returncode == 0:
+                    subprocess.run(["git", "add", "data/pod_head_manifest.txt"], capture_output=True)
+            finally:
+                if os.path.exists(tmp_py):
+                    os.unlink(tmp_py)
+        # If neither staged nor HEAD has pod_drift.py (fresh temp repo), skip
+        # manifest regeneration -- the hook must not fail a commit it cannot serve.
 
 
 if __name__ == "__main__":

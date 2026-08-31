@@ -3235,6 +3235,114 @@ def _val_nll(name):
     return val
 
 
+def _30b_readiness(root=ROOT):
+    """30B launch readiness, computed from artifacts only.
+
+    Gates: t22's task deps (t01/t20/t21/t30) all done; mix_30b _blocked empty
+    and landed domains stamped; pod drift clean; CI green on origin/main;
+    block idle or fully training; no build_corpus writers active.
+    Returns (ready, gates) where gates is a list of (name, state, detail)."""
+    gates = []
+
+    # 1. Task gates: t22's dependencies must all be done
+    tasks = {r.get("id"): r for r in _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))}
+    for tid in ("t01", "t20", "t21", "t30"):
+        t = tasks.get(tid)
+        if not t:
+            gates.append((f"task {tid}", FAIL, "not in register"))
+        elif t.get("state") != "done":
+            gates.append((f"task {tid}", FAIL, f"state={t.get('state')}"))
+        else:
+            gates.append((f"task {tid}", PASS, "done"))
+
+    # 2. mix_30b: _blocked empty, landed domains stamped
+    mix_path = os.path.join(root, "data", "mix_30b.json")
+    if not os.path.exists(mix_path):
+        gates.append(("mix_30b", FAIL, "data/mix_30b.json missing"))
+    else:
+        try:
+            mix = json.load(open(mix_path, encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            gates.append(("mix_30b", FAIL, f"parse error: {e}"))
+        else:
+            blocked = mix.get("_blocked", {})
+            landed = mix.get("domains", {})
+            if blocked:
+                gates.append(("mix_30b blocked", FAIL, f"{len(blocked)} blocked: {', '.join(sorted(blocked))}"))
+            else:
+                gates.append(("mix_30b blocked", PASS, "empty"))
+            corpus = os.path.join(root, "data", "corpus")
+            unstamped = [n for n in landed if not os.path.exists(os.path.join(corpus, n, "build_corpus_stats.json"))]
+            if unstamped:
+                gates.append(("mix_30b stamps", FAIL, f"unstamped: {', '.join(unstamped)}"))
+            elif landed:
+                gates.append(("mix_30b stamps", PASS, f"{len(landed)} landed, all stamped"))
+            else:
+                gates.append(("mix_30b stamps", SKIP, "no landed domains"))
+
+    # 3. Pod drift
+    drift_py = os.path.join(root, "scripts", "pod_drift.py")
+    if os.path.exists(drift_py):
+        r = subprocess.run([sys.executable, drift_py, "--check"], capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            gates.append(("pod drift", PASS, "clean"))
+        else:
+            first = (r.stdout or r.stderr).strip().split("\n")[0][:100]
+            gates.append(("pod drift", FAIL, first))
+    else:
+        gates.append(("pod drift", SKIP, "pod_drift.py not found"))
+
+    # 4. CI conclusion on origin/main
+    try:
+        r = subprocess.run(
+            ["gh", "api", "repos/{owner}/{repo}/commits/HEAD/check-runs",
+             "--jq", ".check_runs[0].conclusion"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            conclusion = r.stdout.strip()
+            state = PASS if conclusion == "success" else FAIL
+            gates.append(("CI origin/main", state, conclusion))
+        else:
+            gates.append(("CI origin/main", SKIP, "gh api failed or no runs"))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        gates.append(("CI origin/main", SKIP, "gh not available"))
+
+    # 5. GPU occupancy (pod only)
+    if _gpu_present():
+        config_path = os.path.join(root, "data", "mix_scale_run_config.json")
+        if os.path.exists(config_path):
+            config = json.load(open(config_path, encoding="utf-8"))
+            block = [c.strip() for c in config.get("cards", "").split(",") if c.strip()]
+            busy, err = _busy_training_cards(block)
+            if err:
+                gates.append(("GPU block", SKIP, err))
+            elif not busy:
+                gates.append(("GPU block", PASS, "idle"))
+            elif len(busy) == len(block) and _has_training_process():
+                gates.append(("GPU block", PASS, f"all {len(block)} busy (training)"))
+            else:
+                gates.append(("GPU block", FAIL, f"{len(busy)}/{len(block)} busy, no training process"))
+        else:
+            gates.append(("GPU block", SKIP, "no run config"))
+    else:
+        gates.append(("GPU block", SKIP, "no GPU on this machine"))
+
+    # 6. build_corpus writers (host process list)
+    try:
+        r = subprocess.run(["pgrep", "-af", "build_corpus"], capture_output=True, text=True, timeout=10)
+        writers = [l for l in r.stdout.strip().split("\n") if l and "pgrep" not in l]
+        if writers:
+            gates.append(("corpus writers", FAIL, f"{len(writers)} build_corpus process(es) running"))
+        else:
+            gates.append(("corpus writers", PASS, "none active"))
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        gates.append(("corpus writers", SKIP, "pgrep not available"))
+
+    ready = all(s != FAIL for _n, s, _d in gates)
+    return ready, gates
+
+
 def _board_event(kind, msg):
     """Append an event to runs/events.jsonl. The harness knows when things
     happen; this is how it stops staying silent."""
@@ -3294,6 +3402,7 @@ def _board_data():
     for p in [sm_path, exp_path, os.path.join(ROOT, "train.py")]:
         if os.path.exists(p):
             newest = max(newest, os.path.getmtime(p))
+    ready_30b, gates_30b = _30b_readiness()
     return {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else None,
@@ -3303,6 +3412,7 @@ def _board_data():
         "experiments": exps,
         "events": events,
         "tasks": _read_tasks(),
+        "readiness_30b": {"ready": ready_30b, "gates": [{"name": n, "state": s, "detail": d} for n, s, d in gates_30b]},
     }
 
 
@@ -3355,6 +3465,18 @@ def _render_board_html(d):
     if st["skip_count"]:
         stale_warn += f'<p style="color:#888">{st["skip_count"]} check(s) SKIPped — guard not running, not guard passed</p>'
 
+    # 30B launch readiness
+    r30 = d.get("readiness_30b", {})
+    r30_rows = ""
+    for g in r30.get("gates", []):
+        color = colors.get(g["state"], "#888")
+        r30_rows += f'<tr><td>{g["name"]}</td><td style="color:{color};font-weight:600">{g["state"]}</td><td>{g["detail"][:120]}</td></tr>\n'
+    r30_banner = ""
+    if r30.get("ready"):
+        r30_banner = '<p style="color:#2d7d32;font-weight:700;font-size:1.1em">30B LAUNCH READY</p>'
+    elif r30:
+        r30_banner = '<p style="color:#c62828;font-weight:700;font-size:1.1em">30B NOT READY</p>'
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>aupai board</title><style>
 body{{font:14px/1.5 system-ui,sans-serif;margin:2em;background:#fafafa;color:#222}}
@@ -3366,6 +3488,9 @@ th{{color:#666;font-weight:600}} .meta{{color:#888;font-size:12px}}
 <h1>aupai monitoring board</h1>
 <p class="meta">rendered {d["timestamp"]} · newest artifact {st["newest_artifact"] or "—"}</p>
 {stale_warn}
+{r30_banner}
+<h2>30B launch readiness</h2><p class="meta">computed from artifacts only; READY when every gate is green and _blocked is empty</p>
+<table><tr><th>gate</th><th>state</th><th>detail</th></tr>{r30_rows}</table>
 <h2>tasks</h2><p class="meta">assignments and their reading rules, from runs/tasks.jsonl. A closed
 task carries an artifact, never a session's word for it.</p>
 <table><tr><th>id</th><th>owner</th><th>state</th><th>task / reading rule</th></tr>{trows}</table>
@@ -3685,6 +3810,15 @@ def _demo():
         state, _ = check_tasks_well_formed(tmp_root)
         assert state == PASS, f"tasks_well_formed must accept a reopened row, got {state}"
         shutil.rmtree(tmp_root, ignore_errors=True)
+
+    # PYTHONUNBUFFERED: a child launched with the launcher's env must see it,
+    # so block-buffered stdout does not starve the log-silent monitor.
+    r = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.environ.get('PYTHONUNBUFFERED',''))"],
+        capture_output=True, text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    assert r.stdout.strip() == "1", f"child must see PYTHONUNBUFFERED=1, got {r.stdout.strip()!r}"
 
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
@@ -4347,12 +4481,14 @@ def _wait_for_startup(log_path, timeout):
     return False, "timeout"
 
 
-def _arm_monitor(name, pid, log_path):
+def _arm_monitor(name, pid, log_path, output_path=None):
     """Start a background monitor that marks the exp row when the process dies
-    or the log goes silent for 10 minutes."""
+    or the log (and declared output) goes silent for 10 minutes."""
+    output_repr = repr(output_path) if output_path else "None"
     monitor_code = f'''
 import os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
+output = {output_repr}
 silent_limit = 600
 last_size, last_grow = 0, time.time()
 while True:
@@ -4364,15 +4500,19 @@ while True:
             "--result", "process exited", "--finding", "monitor: process gone",
             "--decision", "check the log", "--status", "ok"], capture_output=True)
         break
-    if os.path.isfile(log):
-        sz = os.path.getsize(log)
-        if sz > last_size:
-            last_size, last_grow = sz, time.time()
-        elif time.time() - last_grow > silent_limit:
-            subprocess.run([sys.executable, exp_py, "done", "--name", name,
-                "--result", "log silent", "--finding", f"monitor: no growth in {{silent_limit}}s",
-                "--decision", "check the process", "--status", "fail"], capture_output=True)
-            break
+    grew = False
+    for p in ([log] + ([output] if output else [])):
+        if os.path.isfile(p):
+            sz = os.path.getsize(p)
+            if sz > last_size:
+                last_size, last_grow = sz, time.time()
+                grew = True
+                break
+    if not grew and time.time() - last_grow > silent_limit:
+        subprocess.run([sys.executable, exp_py, "done", "--name", name,
+            "--result", "log silent", "--finding", f"monitor: no growth in {{silent_limit}}s",
+            "--decision", "check the process", "--status", "fail"], capture_output=True)
+        break
 '''
     monitor_proc = subprocess.Popen(
         [sys.executable, "-c", monitor_code],
@@ -4400,6 +4540,8 @@ def cmd_launch(rest):
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
     ap.add_argument("--gate-timeout", type=int, default=120, help="startup gate timeout in seconds")
+    ap.add_argument("--output", default=None, help="declared output path for non-training jobs (monitored for growth alongside the log)")
+    ap.add_argument("--no-gpu", action="store_true", help="corpus/CPU job: no card assigned, no lane check")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
     if "--" not in rest:
         ap.error("no command given after --")
@@ -4408,6 +4550,12 @@ def cmd_launch(rest):
     cmd = rest[idx + 1:]
     if not cmd:
         ap.error("no command given after --")
+
+    # Infer --no-gpu: corpus commands need no card
+    _CORPUS_CMDS = ("fetch_corpus", "build_corpus", "count_cleaned", "clean_corpus")
+    if not args.no_gpu and not args.training:
+        if any(any(c in part for c in _CORPUS_CMDS) for part in cmd):
+            args.no_gpu = True
 
     # 1. exp.py start row first
     subprocess.run(
@@ -4421,11 +4569,35 @@ def cmd_launch(rest):
     # 2. Card allocation from the controller's config
     cards = _allocation_cards(args.training)
 
+    # 2b. Training jobs: verify training-scope drift before launch.
+    # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
+    if args.training:
+        drift_py = os.path.join(HERE, "pod_drift.py")
+        if os.path.exists(drift_py):
+            r = subprocess.run(
+                [sys.executable, drift_py, "--check", "--scope", "training"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode != 0:
+                detail = (r.stdout or r.stderr).strip().split("\n")[0][:150]
+                subprocess.run(
+                    [sys.executable, os.path.join(HERE, "exp.py"),
+                     "done", "--name", args.name,
+                     "--result", "refused: training-scope drift",
+                     "--finding", detail,
+                     "--decision", "push the drifted training file or wait for the push to finish",
+                     "--status", "fail"],
+                    capture_output=True,
+                )
+                print(f"REFUSED: {args.name} — training-scope drift: {detail}", file=sys.stderr)
+                return 1
+
     # 3. Launch with setsid nohup
     log_path = os.path.join(ROOT, "runs", f"{args.name}.log")
     pid_path = os.path.join(ROOT, "runs", f"{args.name}.pid")
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cards
+    env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
 
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
@@ -4456,7 +4628,7 @@ def cmd_launch(rest):
             return 1
 
     # 5. Arm monitor
-    monitor_pid = _arm_monitor(args.name, proc.pid, log_path)
+    monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
 
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")

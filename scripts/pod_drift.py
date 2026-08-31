@@ -26,6 +26,7 @@ Usage:
 """
 import hashlib
 import os
+import re
 import subprocess
 import sys
 
@@ -47,6 +48,62 @@ SCOPE = [
     ":!scripts/pod_sync_check.sh",
 ]
 EXCLUDE_DIRS = ("datagen", "filters", "mathbank", "workflows")
+
+# Job-class entry points: BFS from these through imports derives the class of
+# every manifest file. Priority: training > eval > corpus > docs.
+_ENTRY_POINTS = {
+    "training": ["train.py", "sft.py", "sft_math.py", "run_ddp.sh", "scripts/run_sft.sh"],
+    "eval": ["eval/run_eval.py", "eval/math_hard.py", "scripts/eval_hard.sh",
+             "scripts/eval_all.sh", "scripts/score_matrix.py"],
+    "corpus": ["scripts/fetch_corpus.py", "scripts/clean_corpus.py",
+               "scripts/count_cleaned_code.py"],
+}
+
+
+def _imports(path):
+    """Files this file imports or cites. Python files follow Python imports only;
+    shell files follow script citations. Mixing the two makes docstring mentions
+    in a Python file look like runtime dependencies."""
+    try:
+        text = open(path, encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return set()
+    deps = set()
+    if path.endswith(".py"):
+        for m in re.finditer(r"^\s*(?:from|import)\s+([\w.]+)", text, re.MULTILINE):
+            mod = m.group(1)
+            for cand in (mod.replace(".", "/") + ".py",
+                         os.path.join("scripts", mod.split(".")[-1] + ".py"),
+                         os.path.join("eval", mod.split(".")[-1] + ".py"),
+                         os.path.join("algorithms", mod.split(".")[-1] + ".py"),
+                         mod.split(".")[-1] + ".py"):
+                if os.path.isfile(os.path.join(ROOT, cand)):
+                    deps.add(cand)
+                    break
+    elif path.endswith(".sh"):
+        for m in re.finditer(r"(?:scripts|eval|algorithms)/[\w./-]+\.(?:py|sh)", text):
+            if os.path.isfile(os.path.join(ROOT, m.group(0))):
+                deps.add(m.group(0))
+    return deps
+
+
+def _classify_files():
+    """Job class for every file in the manifest, derived from BFS over import edges
+    from the class entry points. Files not reached by any BFS are 'docs'."""
+    classes = {}  # path -> class (first assignment wins by priority)
+    for job_class in ("training", "eval", "corpus"):
+        seen = set()
+        queue = [e for e in _ENTRY_POINTS[job_class] if os.path.isfile(os.path.join(ROOT, e))]
+        while queue:
+            f = queue.pop()
+            if f in seen or f in classes:
+                continue
+            seen.add(f)
+            classes[f] = job_class
+            for dep in _imports(os.path.join(ROOT, f)):
+                if dep not in seen and dep not in classes:
+                    queue.append(dep)
+    return classes
 
 
 def scoped_paths(root=ROOT):
@@ -103,6 +160,7 @@ def write_manifest_index(root=ROOT):
 
 
 def read_manifest(path=None):
+    """Returns path -> (sha, class). Lines without a class column default to 'docs'."""
     if path is None:
         path = MANIFEST
     m = {}
@@ -111,13 +169,19 @@ def read_manifest(path=None):
             line = line.rstrip("\n")
             if not line:
                 continue
-            sha, p = line.split("  ", 1)
-            m[p] = sha
+            parts = line.split("  ", 2)
+            if len(parts) == 3:
+                sha, p, cls = parts
+            else:
+                sha, p = parts
+                cls = "docs"
+            m[p] = (sha, cls)
     return m
 
 
-def check_pod(root=ROOT):
+def check_pod(root=ROOT, scope=None):
     """Every file the manifest names must exist here and match. The pod runs this.
+    scope=None checks all classes; scope='training' checks only training-class files.
     Also reports .py files no manifest entry names -- the forward check cannot see
     them, and a bare-podput script otherwise runs unregistered indefinitely.
 
@@ -127,9 +191,11 @@ def check_pod(root=ROOT):
     if not os.path.exists(manifest_path):
         return False, f"no manifest at {os.path.relpath(manifest_path, root)}"
     manifest = read_manifest(manifest_path)
+    if scope:
+        manifest = {p: v for p, v in manifest.items() if v[1] == scope}
     bad = []
     runs_div = []
-    for p, want in manifest.items():
+    for p, (want, _cls) in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
             bad.append(f"missing {p}")
@@ -141,7 +207,7 @@ def check_pod(root=ROOT):
     if bad:
         return False, f"{len(bad)} drifted: {'; '.join(bad)}"
     extra = unregistered_py(root, manifest)
-    parts = [f"{len(manifest)} files match"]
+    parts = [f"{len(manifest)} files match" + (f" (scope={scope})" if scope else "")]
     if runs_div:
         parts.append(f"{len(runs_div)} runs file(s) diverged (pod produces rows; sync to commit): {'; '.join(sorted(runs_div))}")
     if extra:
@@ -175,7 +241,7 @@ def check_head(root=ROOT):
         return False, "no manifest; run scripts/pod_drift.py --write"
     have = read_manifest()
     want = {p: sha_head(root, p) for p in scoped_paths(root)}
-    stale = [p for p in want if have.get(p) != want[p]]
+    stale = [p for p in want if have.get(p, (None,))[0] != want[p]]
     gone = [p for p in have if p not in want]
     if stale or gone:
         return False, f"manifest stale: {len(stale)} changed, {len(gone)} removed; run --write"
@@ -190,7 +256,9 @@ def is_pod(root=ROOT):
 def selftest():
     """The reverse scan on a real-shaped world: one registered script, one unregistered
     probe at root, one .py in an excluded dir and one under data/ -- only the probe is
-    unregistered, and check_pod still passes while naming it."""
+    unregistered, and check_pod still passes while naming it.
+    Also: scope filtering -- a drifted corpus-scope file must not fail --scope training,
+    and a drifted training-scope file must."""
     import tempfile
 
     d = tempfile.mkdtemp()
@@ -200,13 +268,35 @@ def selftest():
     open(os.path.join(d, "probe.py"), "w").write("# throwaway\n")
     open(os.path.join(d, "datagen", "gen.py"), "w").write("# excluded dir\n")
     open(os.path.join(d, "data", "tool.py"), "w").write("# data dir\n")
-    manifest = {"scripts/real.py": sha_disk(os.path.join(d, "scripts", "real.py"))}
+    manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
     assert found == ["probe.py"], found
     with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
-        f.write("".join(f"{sha}  {p}\n" for p, sha in manifest.items()))
+        f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest.items()))
     ok, evidence = check_pod(d)
     assert ok and "UNREGISTERED" in evidence, evidence
+
+    # Scope: a corpus-scope file that drifts must not fail --scope training.
+    corpus_sha = sha_disk(os.path.join(d, "scripts", "real.py"))
+    manifest2 = {
+        "scripts/real.py": (corpus_sha, "training"),
+        "scripts/fetch_corpus.py": ("0" * 64, "corpus"),  # stale sha, corpus class
+    }
+    with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
+        f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest2.items()))
+    open(os.path.join(d, "scripts", "fetch_corpus.py"), "w").write("# corpus tool\n")
+    ok_train, _ = check_pod(d, scope="training")
+    assert ok_train, "corpus-scope drift must not fail --scope training"
+    ok_all, _ = check_pod(d)
+    assert not ok_all, "corpus-scope drift must fail the full check"
+    # A training-scope file that drifts must fail --scope training.
+    manifest3 = {
+        "scripts/real.py": ("0" * 64, "training"),  # stale sha, training class
+    }
+    with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
+        f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest3.items()))
+    ok_train2, _ = check_pod(d, scope="training")
+    assert not ok_train2, "training-scope drift must fail --scope training"
     print("pod_drift selftest OK:", evidence)
 
 
@@ -223,8 +313,11 @@ def main():
     elif mode == "--list-scoped":
         print("\n".join(scoped_paths()))
     elif mode == "--check":
+        scope = None
+        if "--scope" in sys.argv:
+            scope = sys.argv[sys.argv.index("--scope") + 1]
         if is_pod(ROOT):
-            ok, evidence = check_pod(ROOT)
+            ok, evidence = check_pod(ROOT, scope=scope)
         elif os.environ.get("CI") == "true":
             ok, evidence = check_head(ROOT)
         else:
