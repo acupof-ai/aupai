@@ -2926,6 +2926,18 @@ def check_mix_supply(root, mix_glob=None):
     lands entirely in the anneal phase (roughly 2x the per-domain loss the
     whole-budget figure suggests), not spread across both phases. SKIP without
     caches (CPU CI, dev box)."""
+    # An all-blocked mix is answerable without a cache, so report it before the
+    # cache-dir SKIP -- otherwise a dev box says "no cache" and the real state (every
+    # domain deliberately blocked, pre-corpus) is invisible (fb, 2026-08-31).
+    pat = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
+    for f in glob.glob(pat if os.path.isabs(pat) else os.path.join(root, pat)):
+        try:
+            obj = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            continue
+        if not obj.get("domains") and obj.get("_blocked"):
+            return SKIP, (f"{os.path.basename(f)}: all {len(obj['_blocked'])} domains blocked "
+                          f"(pre-corpus, by design) -- nothing to gate yet")
     cache_dir = _token_cache_dir()
     if not os.path.isdir(cache_dir):
         return SKIP, f"token cache dir {cache_dir} not present"
@@ -2938,6 +2950,9 @@ def check_mix_supply(root, mix_glob=None):
     pattern = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
     mixes = sorted(glob.glob(pattern if os.path.isabs(pattern) else os.path.join(root, pattern)))
     if not mixes:
+        # Distinguish "no such file" from "the file exists and every domain is blocked":
+        # a mix with all domains under _blocked is a deliberate pre-corpus state, and a
+        # SKIP that calls it "no matching files" gets filed as a gap (fb, 2026-08-31).
         return SKIP, f"no mix files match {os.path.basename(pattern)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
@@ -4774,6 +4789,30 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_refusal_writes_no_row():
+    """A refused launch leaves the ledger untouched.
+
+    The start row was written at step 1 and the lane check ran at 2a, so launching a
+    second job under a LIVE run's name closed that run's row as fail: l1_rerun_0831
+    read running/running/fail while pid 550586 was alive and writing (e1,
+    2026-08-31). Asserts the ordering directly -- the refusal path must reach `return`
+    before any exp.py call, so a ledger seeded with a running row is byte-identical
+    after it."""
+    import inspect
+
+    src = inspect.getsource(cmd_launch)
+    lane_at = src.index("_lane_occupant(lane_card)")
+    row_at = src.index('"start", "--name", args.name')
+    assert lane_at < row_at, (
+        "the lane check must run BEFORE the start row is written, or a refused launch "
+        "closes a live run's row")
+    # and the refusal itself must write nothing
+    refusal = src[lane_at:src.index("return 1", lane_at)]
+    assert "exp.py" not in refusal, f"the refusal path writes a ledger row:\n{refusal}"
+    assert "No ledger row" in refusal, "the refusal must say it wrote nothing"
+    print("  launch: a lane refusal returns before the start row, writing no ledger row")
+
+
 def _selftest_pool_not_raw_supply():
     """A mix whose demand fits the raw cache but exceeds the pool must FAIL.
 
@@ -4787,10 +4826,20 @@ def _selftest_pool_not_raw_supply():
     pool_rows = cache_rows - n_val
     assert n_val == 1000 and pool_rows == 99_000, (n_val, pool_rows)
     raw_cap, pool_cap = cache_rows * epochs, pool_rows * epochs
-    want = 297_500  # fits 300,000 raw, exceeds 297,000 pool -- the accepted-then-short case
+    # Fits 300,000 raw, and exceeds 297,000 pool by more than the check's own 0.5%
+    # rounding tolerance (298,485). The previous 297,500 cleared pool but NOT the
+    # tolerance, so the check would have accepted it -- the dead assert 44 found was
+    # hiding a case that did not test what it claimed.
+    want = 299_000
     assert want <= raw_cap, "sanity: the case must fit RAW supply"
     assert want > pool_cap, "sanity: the case must exceed POOL supply"
-    assert want > pool_cap * 1.005 or want > pool_cap, "the pool model must reject it"
+    # The check's own tolerance, not a restatement of the line above: 44 caught the
+    # previous version as `want > pool_cap * 1.005 or want > pool_cap`, whose second
+    # clause is the preceding assert, so it could not fail. The live question is
+    # whether the case clears the 0.5% rounding tolerance the check actually applies.
+    assert want > pool_cap * 1.005, (
+        f"the case must exceed pool by more than the check's 0.5% tolerance: "
+        f"{want} vs {pool_cap * 1.005:.0f}")
     shortfall = 1 - pool_cap / want
     print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
 
@@ -5453,6 +5502,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
@@ -6335,11 +6385,30 @@ def cmd_launch(rest):
         if any(any(c in part for c in _CORPUS_CMDS) for part in cmd):
             args.no_gpu = True
 
-    # 1. exp.py start row first.
-    # The row's `cmd` is the CHILD command only, so launcher configuration was
-    # invisible in the ledger: on 2026-08-31 the controller checked whether the 15B
-    # run had --auto-resume and the row said no, while the supervisor was running it
-    # (visible only in ps). The flags that govern the run belong in its record.
+    # 1. Allocation and the lane check FIRST: a refusal must write no ledger row.
+    # Card allocation from the controller's config
+    if args.no_gpu:
+        cards = ""
+    else:
+        cards = _allocation_cards(args.training)
+
+    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
+    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
+    if not args.training and not args.no_gpu and cards:
+        lane_card = cards.split(",")[0].strip()
+        occupant = _lane_occupant(lane_card)
+        if occupant:
+            # No ledger row. The refusal happens BEFORE the start row is written, so a
+            # second launch under a live run's name cannot close that run's row: on
+            # 2026-08-31 l1_rerun_0831 read running/running/fail while pid 550586 was
+            # alive and writing, because the row was written at step 1 and this refusal
+            # ran at 2a (e1). A job that never starts leaves no trace in the ledger.
+            print(f"REFUSED: {args.name} - lane GPU {lane_card} occupied by pid {occupant}. "
+                  f"No ledger row written; the lane holds one job at a time.", file=sys.stderr)
+            return 1
+
+
+    # 2. The start row, once the job is known to be runnable.
     launcher = f"--gate-timeout {args.gate_timeout}"
     if args.auto_resume:
         launcher += f" --auto-resume {args.auto_resume}"
@@ -6353,30 +6422,6 @@ def cmd_launch(rest):
          "--hypothesis", args.hypothesis],
         check=True,
     )
-
-    # 2. Card allocation from the controller's config
-    if args.no_gpu:
-        cards = ""
-    else:
-        cards = _allocation_cards(args.training)
-
-    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
-    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
-    if not args.training and not args.no_gpu and cards:
-        lane_card = cards.split(",")[0].strip()
-        occupant = _lane_occupant(lane_card)
-        if occupant:
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py"),
-                 "done", "--name", args.name,
-                 "--result", f"refused: lane GPU {lane_card} occupied by pid {occupant}",
-                 "--finding", f"lane card {lane_card} has a running process (pid {occupant})",
-                 "--decision", "wait for the lane to free, or use --no-gpu for corpus jobs",
-                 "--status", "fail"],
-                capture_output=True,
-            )
-            print(f"REFUSED: {args.name} — lane GPU {lane_card} occupied by pid {occupant}", file=sys.stderr)
-            return 1
 
     # 2b. Training jobs: verify training-scope drift before launch.
     # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
@@ -6942,7 +6987,10 @@ def cmd_milestone(argv):
             r = subprocess.run(
                 [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
                  "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-                 "--milestone-profile", "milestone", "--paired-profile", "full"]
+                 "--milestone-profile", "milestone", "--paired-profile", "full",
+                 "--milestone-mix", mix]
+                + (["--paired-mix", _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) or ""]
+                   if _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) else [])
                 + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
                 + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
                 capture_output=True, text=True,

@@ -720,6 +720,29 @@ def selftest():
     else:
         print("\n--- selftest 5b: SKIP (real mix pair not on this box) ---", file=sys.stderr)
 
+    # A cap that NEUTRALISES a weight change: both mixes clamp to the same draw, so the
+    # role is judgeable despite a 2x weight ratio. Synthetic, because no live mix presents
+    # the disagreement -- cot's weights differ 0.95x and its draws differ by 17 rows, the
+    # same verdict either way, so only a constructed case exercises the draw path (44).
+    print("\n--- selftest 6: a cap-neutralised weight change stays judgeable ---")
+    import tempfile as _t6
+    d6 = _t6.mkdtemp()
+    m6, p6 = os.path.join(d6, "m.json"), os.path.join(d6, "p.json")
+    # pool 100 rows x 1 epoch caps both draws at 100 while the weights differ 2x
+    json.dump({"total_tokens": 4096 * 1000, "seq": 4096,
+               "domains": {"capped": {"weight": 0.60, "pool_rows": 100, "epochs": 1},
+                           "free": {"weight": 0.60, "pool_rows": 100_000, "epochs": 1}}},
+              open(m6, "w"))
+    json.dump({"total_tokens": 4096 * 1000, "seq": 4096,
+               "domains": {"capped": {"weight": 0.30, "pool_rows": 100, "epochs": 1},
+                           "free": {"weight": 0.30, "pool_rows": 100_000, "epochs": 1}}},
+              open(p6, "w"))
+    assert abs(weight_ratio("capped", m6, p6) - 2.0) < 1e-9, "both roles must read 2x on weights"
+    assert abs(weight_ratio("free", m6, p6) - 2.0) < 1e-9
+    assert draws_equal("capped", m6, p6) is True, "the cap must neutralise the weight change"
+    assert draws_equal("free", m6, p6) is False, "an uncapped role's draws must differ"
+    print("  a 2.0x weight change is judgeable when the cap clamps both draws, "
+          "unjudgeable when it does not")
     print("\nselftest OK")
     return 0
 
