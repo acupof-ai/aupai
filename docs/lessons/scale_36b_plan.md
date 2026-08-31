@@ -34,7 +34,7 @@ open@1 每 e-fold +8.4pt（仍在升，高于 4.8 噪声），**生成在真改�
 | **code 原始** | 27% | 8.0B | 0.058B | **×138** | RedPajama-1T github | **73.6B 可达**，精确计数，不是瓶颈 |
 | **code 带执行标注** | 7% | 2.0B | 0 | 新增 | **从 73.6B raw 里挖配对 impl+test** | **7.6% 的 repo 有 impl+test，26.96% 的文档落在这种 repo 里**（`ds.code_exec_supply`）——可过滤，零生成 |
 | **math 可验证** | 18% | 5.5B | 0.082B | ×67 | OpenWebMath / proof-pile | 开放，未落地计数 |
-| **长 CoT** | 15% | 4.5B | 0 | 新增 | OpenThoughts / Skywork-OR1 | Apache，未落地计数 |
+| **长 CoT** | 15% | 4.5B | 0 | 新增 | OpenThoughts / Skywork-OR1（计划名）；**实拉 AI-MO/NuminaMath-CoT via `datagen/numma_to_jsonl.py`**（它的 parquet→jsonl 适配器，付出本 cot 管线） | Apache 系，英文长链；numma 是可达实源 |
 | **英文通用** | 18% | 5.5B | **0.027B**（真英文） | **×204** | RedPajama-1T c4（`en_c4`，data.together.xyz）；fineweb-edu sample/10BT 仍首选，镜像恢复则切回 | 开放 |
 | **中文网页** | 11% | 3.3B | 1.434B | ×2.3 | fineweb2-HQ + CCI3-HQ | 已下，sha 钉 |
 | **中文教材** | 3% | 1.0B | 1.610B | **×0.6（缩）** | cosmopedia，截断 | 有余 |
