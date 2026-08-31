@@ -83,6 +83,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Count cleaned code | `python scripts/count_cleaned_code.py` — token counts over cleaned corpus domains |
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
+| Lambda probes | `python scripts/assemble_lambda_probe.py` / `python scripts/validate_lambda_probe.py` — t05 lambda-curriculum probes (3b, deprioritised but live) |
 
 ## Run pretraining
 

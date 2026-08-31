@@ -52,7 +52,7 @@ FATE = {
     "eval/ppl.py": "KEEP (AGENTS.md row — eval tool)",
     "scripts/assemble_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
     "scripts/validate_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
-    "scripts/build_math.py": "KEEP (ask 3b; delete if unclaimed)",
+    "scripts/build_math.py": "DELETE (3b confirmed unclaimed, 2026-08-31)",
 }
 
 # Collect all .py/.sh files (excluding noise)
