@@ -30,6 +30,7 @@ from loader import format_example  # noqa: E402
 OUT_DIR = os.path.join(ROOT, "data", "corpus")
 SHARD_BYTES = 100 * 2**20
 CHARS_PER_TOKEN = 1.5
+REJECT_EARLY_AT = 20_000  # fast-fail: >95% single-reason reject by this many docs -> wrong filters
 
 SOURCES = {
     "fineweb2": ("HuggingFaceFW/fineweb-2", "data/cmn_Hani/train/", "text", "url"),
@@ -335,6 +336,17 @@ def main():
     reasons, hosts = Counter(), Counter()
     exact, near = set(), MinHashLSH()
     reject = reject_light if a.filters == "light" else reject_reason
+    # (a) refuse at START: a code-family / English-leaning domain run with the
+    # web chain rejects ~100% as not_zh after processing millions of docs (2026-
+    # 08-31, twice, ~1h each) -- the final 0-kept guard is too late. Keyed on
+    # the explicit domain names; a rename creates a new domain and must rejoin.
+    CODE_DOMAINS = {"code", "code_rp1t", "en", "math", "cot"}
+    if a.domain in CODE_DOMAINS and a.filters != "light":
+        raise SystemExit(
+            f"REFUSE: domain '{a.domain}' is code-family / English-leaning; --filters must be "
+            f"'light' (the web CJK/digit/symbol chain rejects it ~100%). Got --filters "
+            f"'{a.filters}'."
+        )
     for pat in a.exclude:
         n0 = len(exact)
         for path in sorted(glob.glob(pat)):
@@ -363,6 +375,19 @@ def main():
                     else:
                         exact.add(k)
             reasons[why or "kept"] += 1
+            # (b) fast-fail: if the first REJECT_EARLY_AT docs reject >95% under
+            # a single reason, the filter chain is wrong for this source (the
+            # not_zh-0-kept wall surfaced after 3.96M docs). Stop in seconds,
+            # name the reason, don't burn an hour.
+            if seen == REJECT_EARLY_AT:
+                n = sum(reasons.values()) or 1
+                if reasons["kept"] / n < 0.05 and reasons:
+                    top, topn = reasons.most_common(1)[0]
+                    raise SystemExit(
+                        f"FAST-FAIL after {seen} docs: {(reasons['kept']) / n:.0%} kept, "
+                        f"~{topn / n:.0%} rejected as '{top}'. The filter set is wrong "
+                        f"for this source -- check --filters."
+                    )
             if why:
                 continue
             if host:

@@ -88,10 +88,12 @@ def clean(domain, source):
         "--host_cap",
         "0",  # single-source corpora: not a per-host web crawl
     ]
-    if domain in ("code", "en", "math", "cot"):
+    if domain not in ("web_hq", "cci3"):
         # the web chain's CJK/symbol/digit ratios delete a code/English corpus
-        # outright (2026-08-31: 100% of RedPajama code rejected as not_zh);
-        # light = length/bytes/holdout only, domain-neutral.
+        # outright (2026-08-31: 100% of RedPajama code rejected as not_zh, twice,
+        # because the `light` condition hard-coded "code" and missed code_rp1t).
+        # light = length/bytes/holdout only, domain-neutral -- apply it to every
+        # non-zh-web domain so a rename never drops it again.
         cmd += ["--filters", "light"]
     print(" ".join(cmd))
     r = subprocess.run(cmd, cwd=ROOT)
