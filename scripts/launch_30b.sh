@@ -23,6 +23,26 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+# --selftest: the G0 case. A mix whose contract FAILs must exit 1 and print BLOCKED, never
+# READY -- readiness was derived from _blocked alone and a 1.69013 weight sum printed [FAIL]
+# and READY on adjacent lines with exit 0. Runs offline, no pod, no cards. Before the arg
+# loop, which rejects unknown flags.
+if [ "${1:-}" = "--selftest" ]; then
+  t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+  cat > "$t/bad.json" <<'EOF'
+{"total_tokens": 1e9, "anneal_frac": 0,
+ "domains": {"a": {"weight": 0.9, "epochs": 1, "anneal": 0.9, "status": "landed"},
+             "b": {"weight": 0.79013, "epochs": 1, "anneal": 0.79013, "status": "landed"}}}
+EOF
+  out=$(MIX_OVERRIDE="$t/bad.json" bash "$0" --stage 1 --dry 2>&1); rc=$?
+  fail=0
+  case "$out" in *"BLOCKED"*) ;; *) echo "SELFTEST FAIL: no BLOCKED line for a failing contract"; fail=1 ;; esac
+  case "$out" in *"READY:"*) echo "SELFTEST FAIL: printed READY for a failing contract"; fail=1 ;; esac
+  [ "$rc" = 0 ] && { echo "SELFTEST FAIL: exit 0 for a failing contract"; fail=1; }
+  [ "$fail" = 0 ] && echo "selftest PASS: failing contract -> BLOCKED, no READY, exit $rc"
+  exit $fail
+fi
+
 STAGE=""; RESUME=""; DRY=0; GATE=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,7 +56,7 @@ done
 [ "$STAGE" = 1 ] || [ "$STAGE" = 2 ] || { echo "usage: --stage 1|2 [--resume <ckpt>] [--dry]" >&2; exit 2; }
 
 if [ "$STAGE" = 1 ]; then
-  NAME=pretrain_15b_s1; MIX=data/mix_15b_stage1.json; WARMDOWN=0
+  NAME=pretrain_15b_s1; MIX=${MIX_OVERRIDE:-data/mix_15b_stage1.json}; WARMDOWN=0
   # stage 1 must not anneal: the file's anneal_frac is the contract, assert it here so a
   # mis-set file cannot silently anneal stage 1 and break the stable-lr handoff.
   af=$(python3 -c "import json;print(json.load(open('$MIX')).get('anneal_frac','MISSING'))" 2>&1)
@@ -66,22 +86,25 @@ blocked=$(python3 -c "import json;m=json.load(open('$MIX'));print(' '.join(sorte
 
 echo "== launch_30b stage $STAGE readiness ($MIX) =="
 echo "$contract"
-READY=1
-# Any FAIL blocks. The contract line was printed but never tested, so a mix whose weights
-# summed to 1.69013 printed [FAIL] and READY on adjacent lines and exited 0 (b0 G0).
-# Matched on the absence of PASS, not the presence of FAIL, so a crashed check that prints
-# a traceback also blocks rather than passing for lack of the word.
+READY=1; SKIPPED=0
+# The contract line was printed but never tested, so a mix whose weights summed to 1.69013
+# printed [FAIL] and READY on adjacent lines and exited 0 (b0 G0). Three states, not two:
+# PASS proceeds; SKIP is the check declining to run off-pod (no GPU, domains unstamped here)
+# and cannot block a dev --dry; anything else, including a traceback, blocks. Matched on the
+# absence of PASS and SKIP so a crashed check blocks rather than passing for lack of "FAIL".
 case "$contract" in
   *"[PASS]"*) ;;
+  *"[SKIP]"*) SKIPPED=1 ;;
   *) echo "BLOCKED: mix contract did not pass."; READY=0 ;;
 esac
 if [ -n "$blocked" ]; then
   echo "BLOCKED: ${blocked// /, } still in _blocked -- not stamped yet."
   READY=0
 fi
-[ "$READY" = 1 ] && echo "READY: contract passed, all domains stamped, none blocked."
-  echo "READY: all domains stamped, none blocked."
-  READY=1
+if [ "$READY" = 1 ] && [ "$SKIPPED" = 1 ]; then
+  echo "READY (contract UNVERIFIED here): none blocked, but the contract check only runs on the pod."
+elif [ "$READY" = 1 ]; then
+  echo "READY: contract passed, all domains stamped, none blocked."
 fi
 
 # Startup gate: derived by `harness launch` from the mix's own cache bytes (de), so this
