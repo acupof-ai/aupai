@@ -1596,6 +1596,10 @@ def main():
     parser.add_argument(
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
+    parser.add_argument(
+        "--save_every", type=int, default=1000,
+        help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
+    )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
@@ -1957,18 +1961,20 @@ def main():
                 step += 1
                 if _prof is not None:
                     _prof.step()
-                if step % GOOD_SAVE_INTERVAL == 0:
+                # Refresh the rollback buffer on the finer of the two cadences so a save
+                # never writes a stale snapshot (save_every can be < GOOD_SAVE_INTERVAL).
+                if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
-                    if is_main and step % 1000 == 0:
-                        save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
-                        # keep the newest 3; resume only needs the latest
-                        stale = sorted(
-                            glob.glob(ckpt_path + ".step*"),
-                            key=lambda p: int(p.rsplit(".step", 1)[1]),
-                        )[:-3]
-                        for p in stale:
-                            os.remove(p)
+                if step > 0 and step % args.save_every == 0 and is_main:
+                    save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
+                    # keep the newest 3; resume only needs the latest
+                    stale = sorted(
+                        glob.glob(ckpt_path + ".step*"),
+                        key=lambda p: int(p.rsplit(".step", 1)[1]),
+                    )[:-3]
+                    for p in stale:
+                        os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
                     v = validate(
                         model,
