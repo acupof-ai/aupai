@@ -2155,7 +2155,28 @@ def main():
                         glob.glob(ckpt_path + ".step*"),
                         key=lambda p: int(p.rsplit(".step", 1)[1]),
                     )[:-3]
+                    # ...but never a step something has pinned. A milestone checkpoint is
+                    # one we have promised to keep, and the roller does not know that: on
+                    # 2026-08-31 the 3.24B own-mix baseline was lost because step3500
+                    # rotated out while its rescore sat in the lane queue, and those
+                    # weights are unrepeatable. harness milestone hardlinks the file to
+                    # ckpt_<run>.milestone_<token>.pt, so the pin is discoverable from
+                    # disk: same inode, no list to keep in sync and go stale.
+                    pinned_inodes = set()
+                    for m in glob.glob(os.path.join(os.path.dirname(ckpt_path) or ".",
+                                                    "*.milestone_*.pt")):
+                        try:
+                            pinned_inodes.add(os.stat(m).st_ino)
+                        except OSError:
+                            pass
                     for p in stale:
+                        try:
+                            if os.stat(p).st_ino in pinned_inodes:
+                                if is_main:
+                                    runlog(f"roller: keeping {os.path.basename(p)} -- pinned")
+                                continue
+                        except OSError:
+                            pass
                         os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
                     v = validate(
