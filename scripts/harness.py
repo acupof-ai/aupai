@@ -2599,14 +2599,15 @@ def check_tasks_well_formed(root):
 
 
 def _broken_tasks_well_formed():
-    """The REAL register with one row closed and its evidence emptied -- mutated, not written."""
+    """The REAL register with one id duplicated -- the union-merge defect (t52 twice,
+    2026-08-31: two branches allocated max+1 independently, the merge kept both)."""
     d = _tmp_repo()
     p = os.path.join(d, "runs", "tasks.jsonl")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     rows = _read_tasks()
     if not rows:  # nothing real to mutate; the check SKIPs and the selftest would be a fiction
         return None
-    rows[0] = dict(rows[0], state="done", evidence=None)
+    rows = rows + [dict(rows[0])]  # exact duplicate of the first row's id
     _write_tasks(rows, p)
     return d
 
@@ -5047,10 +5048,13 @@ def cmd_milestone(argv):
     pre-registration, then append the milestone ledger row (runs/milestones.jsonl)
     and the facts entry, and print the three-state verdict per metric.
 
-    --watch polls a directory for new checkpoint files carrying a milestone token
-    (3.24b/8b/15b/16b/30b in the name) and runs the pipeline as they land, so a 3am
-    milestone is scored without a person. The pair defaults to the previous
-    milestone in the ledger, else ckpt_p324.pt (the 3.24B ladder stand-in).
+    --watch polls a directory for the run's step checkpoints (ckpt_<run>.pt.step<N>)
+    and scores the saved step nearest each milestone step (3.24B ~= step 3531 at
+    16x2x4096x7 -> the step-3500 save), so a 3am milestone is scored without a
+    person. The pair defaults to the previous milestone's checkpoint, else
+    ckpt_p324.pt (the 3.24B ladder stand-in). The paired ckpt file may already be
+    deleted (train.py keeps the newest 3): readout_30b reads the pair's score
+    record by name, which persists in runs/score_matrix.jsonl.
 
     domain_loss needs no launch of its own: the milestone profile scores it on the
     3.24b mix, the same heads as the ladder records, and readout_30b falls back to
@@ -5061,12 +5065,15 @@ def cmd_milestone(argv):
     ap.add_argument("--paired", default=None, help="paired checkpoint (default: previous milestone, else ckpt_p324.pt)")
     ap.add_argument("--tokens", type=float, default=None, help="milestone token budget (default: parsed from the name)")
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"), help="domain-loss heads mix")
-    ap.add_argument("--watch", default=None, help="poll this directory for new milestone checkpoints")
+    ap.add_argument("--watch", default=None, help="poll this directory for step checkpoints")
+    ap.add_argument("--run", default=None, help="watch: run name (checkpoints are ckpt_<run>.pt.step<N>)")
+    ap.add_argument("--milestones", default=None, help="watch: '3.24b=3500,8b=8500,15b=16500' (token=nearest-saved-step)")
+    ap.add_argument("--save-every", type=int, default=500, help="watch: max distance from the milestone step to score a save")
     ap.add_argument("--interval", type=int, default=120, help="watch poll interval in seconds")
     ap.add_argument("--dry", action="store_true", help="print the commands, run nothing")
     a = ap.parse_args(argv)
 
-    def run_one(ckpt, paired, tokens):
+    def run_one(ckpt, paired, tokens, milestone=None):
         stem = ckpt[:-3] if ckpt.endswith(".pt") else ckpt
         if a.dry:
             print(f"harness launch ms_{stem} -- eval/score_matrix.py --ckpt {ckpt} "
@@ -5103,7 +5110,7 @@ def cmd_milestone(argv):
         ) if os.path.exists(p)]
         row = {
             "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
-            "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
+            "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
             "preds": [os.path.relpath(p, ROOT) for p in preds],
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
             "measured": time.strftime("%Y-%m-%d"),
@@ -5126,28 +5133,44 @@ def cmd_milestone(argv):
         return "ok"
 
     if a.watch:
-        print(f"watching {a.watch} every {a.interval}s for milestone checkpoints", flush=True)
+        if not a.run or not a.milestones:
+            ap.error("--watch needs --run and --milestones 'token=step,...'")
+        spec = {}  # insertion order = pairing order: each milestone pairs the previous
+        for item in a.milestones.split(","):
+            tok, step = item.split("=")
+            tok = tok.strip()
+            if tok not in MILESTONE_TOKENS:
+                ap.error(f"unknown milestone token {tok!r}; known: {sorted(MILESTONE_TOKENS)}")
+            spec[tok] = int(step)
+        print(f"watching {a.watch} for ckpt_{a.run}.pt.step<N>; "
+              f"milestones {spec}; pair = previous milestone, else ckpt_p324.pt", flush=True)
+        ms = os.path.join(ROOT, "runs", "milestones.jsonl")
         while True:
-            scored = set()
-            ms = os.path.join(ROOT, "runs", "milestones.jsonl")
+            scored = {}  # milestone token -> ckpt file, from the ledger
             if os.path.exists(ms):
-                scored = {json.loads(l)["ckpt"] for l in open(ms, encoding="utf-8") if l.strip()}
-            paired = a.paired
-            for p in sorted(glob.glob(os.path.join(a.watch, "ckpt_*.pt"))):
-                ckpt = os.path.basename(p)
-                if ckpt in scored:
+                for l in open(ms, encoding="utf-8"):
+                    if l.strip():
+                        r = json.loads(l)
+                        if r.get("milestone"):
+                            scored[r["milestone"]] = r["ckpt"]
+            saved = {}
+            for p in glob.glob(os.path.join(a.watch, f"ckpt_{a.run}.pt.step*")):
+                m = re.search(r"\.step(\d+)$", p)
+                if m:
+                    saved[int(m.group(1))] = os.path.basename(p)
+            for tok, target in spec.items():
+                if tok in scored or not saved:
                     continue
-                tok = _milestone_token(ckpt)
-                if not tok:
-                    continue
-                if paired is None:
-                    paired = sorted(scored)[-1] if scored else "ckpt_p324.pt"
-                print(f"[{time.strftime('%H:%M:%S')}] milestone {ckpt} ({tok}) vs {paired}", flush=True)
-                res = run_one(ckpt, paired, MILESTONE_TOKENS[tok])
+                step = min(saved, key=lambda s: abs(s - target))
+                if abs(step - target) > a.save_every:
+                    continue  # nearest save is too far from the milestone step; wait
+                ckpt = saved[step]
+                prev = [t for t in spec if t in scored]
+                paired = a.paired or (scored[prev[-1]] if prev else "ckpt_p324.pt")
+                print(f"[{time.strftime('%H:%M:%S')}] milestone {tok} @ step {step} "
+                      f"(target {target}): {ckpt} vs {paired}", flush=True)
+                res = run_one(ckpt, paired, MILESTONE_TOKENS[tok], milestone=tok)
                 print(f"  -> {res}", flush=True)
-                if res == "ok":
-                    scored.add(ckpt)
-                    paired = ckpt
             time.sleep(a.interval)
 
     if not a.ckpt:
