@@ -129,6 +129,26 @@ def main():
                     capture_output=True, text=True,
                 )
                 if r.returncode == 0:
+                    # Consistency: every manifest path must resolve in the index
+                    # this commit is built from. In a shared tree the working index
+                    # holds everyone's staged paths; GIT_INDEX_FILE (set by git for
+                    # `git commit <paths>`) is the commit's actual index.
+                    manifest = os.path.join(repo, "data", "pod_head_manifest.txt")
+                    if os.path.exists(manifest):
+                        bad = []
+                        for line in open(manifest):
+                            parts = line.strip().split("  ", 2)
+                            if len(parts) >= 2:
+                                p = parts[1]
+                                chk = subprocess.run(
+                                    ["git", "show", f":{p}"], capture_output=True,
+                                )
+                                if chk.returncode != 0:
+                                    bad.append(p)
+                        if bad:
+                            print(f"REFUSING: manifest names path(s) not in this commit's index: {bad[:5]}",
+                                  file=sys.stderr)
+                            sys.exit(1)
                     subprocess.run(["git", "add", "data/pod_head_manifest.txt"], capture_output=True)
             finally:
                 if os.path.exists(tmp_py):

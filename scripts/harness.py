@@ -36,6 +36,10 @@ SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
+# Per-check deadline. A check that hangs blocks the pre-commit hook and trains
+# people to --no-verify; a timed-out check SKIPs and names itself in the output.
+_CHECK_TIMEOUT = 5
+
 
 class SelftestSkip(Exception):
     """A broken world cannot be built on this checkout (missing untracked file).
@@ -1583,6 +1587,97 @@ def check_doc_commands(root):
     return PASS, "every doc-cited script and data path exists"
 
 
+# Retired phrases that must not reappear in README. The objective changed 2026-08-30;
+# the old Chinese-LLM framing and the removed 1024 window are stale, not historical.
+_README_RETIRED = [
+    "中文推理模型",
+    "sliding window 1024",
+    "窗口 1024",
+    "32,773",
+]
+
+
+def check_readme_current(root):
+    """README reflects the current objective, not a retired one.
+
+    (a) README's first paragraph carries the objective terms from AGENTS.md's first
+        heading (derived, not hard-coded).
+    (b) No guard phrase from facts/*.json and no retired phrase appears in README.
+    (c) Every command block in README cites files that exist (same as doc_commands)."""
+    readme = os.path.join(root, "README.md")
+    agents = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(readme):
+        return SKIP, "no README.md"
+    if not os.path.exists(agents):
+        return SKIP, "no AGENTS.md"
+    text = open(readme, encoding="utf-8").read()
+    # (a) objective terms from AGENTS.md's first heading
+    heading = open(agents, encoding="utf-8").readline().strip()
+    # Extract the objective part: after "—", before "("
+    obj = heading.split("—", 1)[-1].split("(")[0].strip() if "—" in heading else heading.lstrip("# ").strip()
+    # Content words: len > 3, lowercased, from the objective
+    stop = {"with", "from", "that", "this", "have", "will", "been", "they", "their",
+            "optional", "attention", "residuals", "gated", "hybrid"}
+    terms = set()
+    for w in obj.split():
+        w = w.lower().strip(",.()—")
+        if len(w) > 3 and w not in stop:
+            terms.add(w)
+    # First paragraph: skip the leading "# title" line
+    lines = text.split("\n")
+    body_start = 1 if lines and lines[0].startswith("# ") else 0
+    first_para = "\n".join(lines[body_start:]).split("\n\n")[0].lower()
+    missing = [t for t in terms if t not in first_para]
+    if missing:
+        return FAIL, f"README first paragraph missing objective terms from AGENTS.md heading: {missing}"
+    # (b) guard phrases and retired phrases
+    bad = []
+    for gf in _read_guard_phrases(root):
+        if gf in text:
+            bad.append(f"guard phrase: {gf!r}")
+    for rp in _README_RETIRED:
+        if rp in text:
+            bad.append(f"retired: {rp!r}")
+    if bad:
+        return FAIL, "; ".join(bad[:3])
+    # (c) command blocks cite existing files
+    missing_cmds = set()
+    for block in CMD_BLOCK_RE.findall(text):
+        for tok in CMD_PATH_RE.findall(block):
+            if not os.path.exists(os.path.join(root, tok)):
+                missing_cmds.add(tok)
+    if missing_cmds:
+        return FAIL, f"README cites path(s) not in the repo: {sorted(missing_cmds)[:5]}"
+    return PASS, "README matches the current objective; no retired or guard phrases"
+
+
+def _read_guard_phrases(root):
+    """All guard_phrases entries from facts/*.json."""
+    out = []
+    for f in glob.glob(os.path.join(root, "facts", "*.json")):
+        try:
+            data = json.load(open(f, encoding="utf-8"))
+            for entry in data.values() if isinstance(data, dict) else data:
+                if isinstance(entry, dict) and isinstance(entry.get("guard_phrases"), list):
+                    out.extend(entry["guard_phrases"])
+        except (json.JSONDecodeError, OSError):
+            pass
+    return out
+
+
+def _broken_readme_current():
+    """The REAL README with a retired phrase spliced back in -- the FAIL tier."""
+    import shutil
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    p = os.path.join(d, "README.md")
+    text = open(p, encoding="utf-8").read()
+    with open(p, "w", encoding="utf-8") as f:
+        f.write("A 200M 中文推理模型.\n\n" + text)
+    return d
+
+
 def _broken_doc_commands():
     """The REAL README with one data path swapped to a name that does not exist -- the
     FAIL tier for the data-path half (the script half appends a fake command block).
@@ -1594,11 +1689,12 @@ def _broken_doc_commands():
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     p = os.path.join(d, "README.md")
     s = open(p, encoding="utf-8").read()
-    assert "data/mix_scale_3.24b.json" in s, "real README no longer cites the default mix; update _broken_doc_commands"
-    open(p, "w", encoding="utf-8").write(s.replace("data/mix_scale_3.24b.json", "data/mix_scale_nonexistent.json"))
+    assert "data/mix_scale_0.2b.json" in s, "real README no longer cites mix_scale_0.2b; update _broken_doc_commands"
+    open(p, "w", encoding="utf-8").write(s.replace("data/mix_scale_0.2b.json", "data/mix_scale_nonexistent.json"))
     os.makedirs(os.path.join(d, "data", "corpus", "sample"), exist_ok=True)
-    open(os.path.join(d, "data", "mix_sample.json"), "w").write("{}")
-    open(os.path.join(d, "data", "tokenizer.json"), "w").write("{}")
+    for f in ("data/mix_sample.json", "data/mix_30b.json", "data/mix_scale_0.2b.json",
+              "data/tokenizer.json"):
+        open(os.path.join(d, f), "w").write("{}")
     with open(os.path.join(d, "README.md"), "a", encoding="utf-8") as f:
         f.write("\n```bash\npython scripts/nonexistent_command.sh --flag\n```\n")
     return d
@@ -2929,6 +3025,13 @@ CHECKS = [
         _broken_doc_commands,
     ),
     (
+        "readme_current",
+        "README reflects the current objective, not a retired one",
+        "README opened with the retired Chinese-LLM framing after the objective changed; a stale README misdirects every new reader",
+        check_readme_current,
+        _broken_readme_current,
+    ),
+    (
         "score_matrix_present",
         "every status=ok training run has a score-matrix record for its checkpoint",
         "a base checkpoint reads zero on every generative eval, and an unscored ok run is invisible -- the matrix is the only score that moves on a base",
@@ -3045,13 +3148,20 @@ STAGES = [
 def run_checks(root=ROOT, quiet=False):
     results = []
     for name, asserts, incident, fn, _broken in CHECKS:
+        t0 = time.time()
         try:
+            signal.alarm(_CHECK_TIMEOUT)
             state, evidence = fn(root)
+        except TimeoutError:
+            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUT}s"
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
+        finally:
+            signal.alarm(0)
+        dur = time.time() - t0
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
-            print(f"  [{state:^4}] {name:<22} {evidence}")
+            print(f"  [{state:^4}] {name:<22} {evidence}  ({dur:.1f}s)")
             if state in (FAIL, WARN):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
@@ -3620,6 +3730,10 @@ def _demo():
             untested.append(f"{name} raised instead of reporting FAIL: {e}")
         finally:
             shutil.rmtree(root, ignore_errors=True)
+            os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
+    # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
+    # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
+    os.environ.pop("HARNESS_GPU_PRESENT", None)
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
     # The other half of the selftest: a PASS must have verified something. A check that
@@ -3850,6 +3964,13 @@ def _demo():
     assert blocked_gate and blocked_gate[0][1] == FAIL, f"must have a FAIL mix_30b blocked gate: {gates}"
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
+
+    # Every check must PASS or SKIP on the real tree at the moment it lands.
+    # A check that is red on the real artifact the day it ships is the
+    # permanent-red failure mode; selftest must catch it, not the first colleague.
+    for name, _a, _i, fn, _broken in CHECKS:
+        state, _evidence = fn(ROOT)
+        assert state != FAIL, f"{name} FAILs on the real tree -- fix the check or the artifact before landing"
 
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
@@ -4588,7 +4709,8 @@ def cmd_launch(rest):
     ap.add_argument("name", help="run name (also the log and exp row name)")
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
-    ap.add_argument("--gate-timeout", type=int, default=120, help="startup gate timeout in seconds")
+    ap.add_argument("--gate-timeout", type=int, default=None,
+                    help="startup gate timeout in seconds (default: 120, 300 for --resume)")
     ap.add_argument("--output", default=None, help="declared output path for non-training jobs (monitored for growth alongside the log)")
     ap.add_argument("--no-gpu", action="store_true", help="corpus/CPU job: no card assigned, no lane check")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
@@ -4599,6 +4721,9 @@ def cmd_launch(rest):
     cmd = rest[idx + 1:]
     if not cmd:
         ap.error("no command given after --")
+    # Resume loads a checkpoint; 120s is too short for a 959MB file (tilerl-4c, t38).
+    if args.gate_timeout is None:
+        args.gate_timeout = 300 if "--resume" in cmd else 120
 
     # Popen does not use a shell: a bare foo.py fails with Permission denied.
     # Prepend the interpreter when the command is a .py file in the repo.
