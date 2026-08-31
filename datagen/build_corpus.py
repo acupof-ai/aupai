@@ -491,7 +491,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
         "near_dedup_note": (
             None
             if not a.no_near_dedup
-            else "skipped: upstream-deduped source, launch clock; stage-2 re-stamp prerequisite (t48)"
+            else "skipped by the 2026-08-31 dedup ruling; replaced by the separate calibrated near-dedup post-pass (44), removed fraction lands as a fact"
         ),
     }
     # Measured tokens, counted the way training counts them. kept_tokens above is
