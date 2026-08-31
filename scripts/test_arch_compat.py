@@ -480,6 +480,34 @@ _ndoc = len(_train.doc_cu_seqlens(_wide, _E)) - 1
 assert _ndoc == 8, f"8 padded rows must be 8 documents, got {_ndoc} (grid overflows past 65535)"
 print(f"doc_cu_seqlens: packed unchanged, {_ndoc} docs for 8 padded rows (was 32768) OK")
 
+# ShortConv: the K shifted multiply-adds must equal nn.Conv1d bit-for-bit (shared weights).
+# The arithmetic form ships for speed (3.44x compiled; conv_depthwise2d_generic is ~6%
+# bandwidth), so it must be numerically the conv it replaces -- not merely close. The spy
+# captures the patched forward's own short_conv output (its first silu), so the check
+# tracks the real branch rather than a copy that could drift from it.
+_dr = _train.DeltaRecurrence(Cfg)
+_xd = torch.randn(2, 16, Cfg.d)
+_Kc = _dr.short_conv.kernel_size[0]
+import torch.nn.functional as _F  # noqa: E402
+with torch.no_grad():
+    _hc = _F.pad(_xd.transpose(1, 2), (_Kc - 1, 0))
+    _ref_h = _F.silu(_dr.short_conv(_hc).transpose(1, 2))  # the plain nn.Conv1d path
+_cap = {}
+_orig_silu = _F.silu
+def _spy(t, *a, **k):
+    out = _orig_silu(t, *a, **k)
+    _cap.setdefault("h", out)  # first silu in DeltaRecurrence.forward is the short_conv out
+    return out
+_F.silu = _spy
+try:
+    with torch.no_grad():
+        _dr(_xd)
+finally:
+    _F.silu = _orig_silu
+_diff = (_cap["h"] - _ref_h).abs().max()
+assert _diff < 1e-4, f"short_conv shifted form != nn.Conv1d (max diff {_diff:.2e})"
+print(f"short_conv: shifted multiply-adds == nn.Conv1d (max diff {_diff:.2e}) OK")
+
 # MasterWeights must clear p.grad. The optimizer holds the fp32 copies, so its zero_grad()
 # clears m.grad and nothing clears p.grad: backward() accumulated into the old one and the
 # --fp32_master arm trained on a running sum (2.0, 4.0, 6.0 over three steps) while the

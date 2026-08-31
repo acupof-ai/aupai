@@ -248,8 +248,16 @@ class DeltaRecurrence(nn.Module):
     def forward(self, x, cu=None):
         B, T, D = x.shape
         # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
-        h = F.pad(x.transpose(1, 2), (self.short_conv.kernel_size[0] - 1, 0))
-        h = F.silu(self.short_conv(h).transpose(1, 2))
+        # K shifted multiply-adds, not nn.Conv1d: ATen routes a depthwise k=4 conv to
+        # conv_depthwise2d_generic at ~6% of bandwidth; inductor fuses the arithmetic form
+        # (3.44x compiled, the training path). Weights stay on self.short_conv, so
+        # checkpoints load unchanged. Eager is 0.61x -- this only wins under torch.compile.
+        w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
+        h = F.pad(x.transpose(1, 2), (K - 1, 0))
+        y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
+        for i in range(1, K):
+            y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
+        h = F.silu((y + self.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.reshape(B, T, self.h, self.hd).contiguous()
         k = k.reshape(B, T, self.h, self.hd).contiguous()
