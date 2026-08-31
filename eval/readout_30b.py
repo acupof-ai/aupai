@@ -186,15 +186,25 @@ def print_metric(name, spec, m_val, p_val, state, direction, delta, note, m_dege
 def param_line(ckpt_name, ckpt_dir=None):
     """'206.1M (tied head; state_dict 239.7M)' for one checkpoint, or None if unreadable.
 
-    The two numbers differ because tok.weight and head.weight are the SAME storage: the run
-    log reports parameters() (206.1M, each storage once) while the state_dict sums the tied
+    The two numbers differ because tok.weight and head.weight are the SAME table: the run
+    log reports parameters() (206.1M, each counted once) while the state_dict sums the tied
     32832x1024 table twice (239.7M). Printed side by side so the pairing of a run-log number
     against a checkpoint number never reads as a size change (fb, 2026-08-31).
 
     COMPUTED, never stamped: a hardcoded '206.1M/239.7M' is the same stale-derived-artifact
     shape as a cache whose key does not cover its content -- it would keep printing the old
-    pair after an arch change. Aliasing is detected by storage identity (data_ptr), not by
-    value equality: two tensors that merely happen to be equal are two parameters."""
+    pair after an arch change.
+
+    Tying is detected by storage identity FIRST and value equality only as a fallback, and
+    the distinction is load-bearing in both directions. Storage identity alone was wrong: a
+    mid-run checkpoint written with optimizer state deserialises tok.weight and head.weight
+    into separate storages, so the 3.24B readout printed the milestone as a bare 239.7M
+    beside the ladder point's '206.1M (tied head; ...)' -- the exact different-sized-models
+    reading this function exists to prevent. Value equality alone is also wrong: an UNTIED
+    model whose two tables happen to hold equal values reads as tied, hiding a real doubling
+    of the embedding table. So: same storage is tying; different storage with equal values
+    on the known tied pair (tok.weight/head.weight) is tying by value, reported as such;
+    anything else is two parameters."""
     path = os.path.join(ckpt_dir or ROOT, ckpt_name)
     if not os.path.exists(path):
         return None
@@ -217,13 +227,25 @@ def param_line(ckpt_name, ckpt_dir=None):
             if key not in seen:
                 seen.add(key)
                 uniq += int(t.numel())
+        by_value = False
+        if uniq == total:
+            tok, head = model.get("tok.weight"), model.get("head.weight")
+            if (
+                tok is not None
+                and head is not None
+                and getattr(tok, "shape", None) == getattr(head, "shape", None)
+                and torch.equal(tok, head)
+            ):
+                uniq -= int(head.numel())
+                by_value = True
     except Exception:  # noqa: BLE001
         return None
     if not total:
         return None
     if uniq == total:
         return f"{total / 1e6:.1f}M"
-    return f"{uniq / 1e6:.1f}M (tied head; state_dict {total / 1e6:.1f}M)"
+    how = "tied head by value" if by_value else "tied head"
+    return f"{uniq / 1e6:.1f}M ({how}; state_dict {total / 1e6:.1f}M)"
 
 
 #: Two checkpoints differenced across different token budgets bias every metric
@@ -379,27 +401,41 @@ def selftest():
     assert moved_domains >= 1, "no domain loss moved between 0.2b and 3.24b -- engine or data broken"
     print(f"  {moved_domains}/{len(common)} domains moved (all in the known direction: lower at 3.24b)")
     # 2b. param_line distinguishes a TIED head from two equal-but-separate tables. Value
-    # equality is not the test -- torch.equal is true for both -- so a param_line that keyed
-    # on equality would print "tied head" for an untied model and hide a real size change.
-    print("\n--- selftest 2b: param_line detects storage aliasing, not value equality ---")
+    # Storage identity is primary; value equality on the known tied pair is the fallback.
+    # Both are needed: see param_line's docstring for why either alone is wrong.
+    print("\n--- selftest 2b: param_line reads tying by storage, then by value ---")
     try:
         import tempfile
 
         import torch
 
         w = torch.zeros(4, 5)
+        other = torch.ones(4, 5)  # equal-shaped, DIFFERENT values: genuinely untied
         with tempfile.TemporaryDirectory() as d:
             torch.save({"model": {"tok.weight": w, "head.weight": w}}, os.path.join(d, "tied.pt"))
-            torch.save({"model": {"tok.weight": w, "head.weight": w.clone()}}, os.path.join(d, "untied.pt"))
-            tied, untied = param_line("tied.pt", d), param_line("untied.pt", d)
-        assert tied and "tied head" in tied, f"tied checkpoint not reported as tied: {tied}"
-        assert untied and "tied head" not in untied, (
-            f"two EQUAL but separate tables reported as tied: {untied} -- param_line is keying on "
-            "value equality, so it would hide a real doubling of the embedding table"
+            torch.save({"model": {"tok.weight": w, "head.weight": other}}, os.path.join(d, "untied.pt"))
+            # The shape that broke the 3.24B readout: a mid-run checkpoint deserialises the
+            # tied pair into SEPARATE storages, so a storage-only test reads it as untied and
+            # prints a bare 239.7M beside the ladder point's 206.1M.
+            saved = {"tok.weight": w, "head.weight": w}
+            torch.save({"model": saved, "step": 3500}, os.path.join(d, "midrun.pt"))
+            reloaded = torch.load(os.path.join(d, "midrun.pt"), weights_only=False)["model"]
+            reloaded["head.weight"] = reloaded["head.weight"].clone()  # force distinct storage
+            torch.save({"model": reloaded, "step": 3500}, os.path.join(d, "midrun.pt"))
+            tied = param_line("tied.pt", d)
+            untied = param_line("untied.pt", d)
+            midrun = param_line("midrun.pt", d)
+        assert tied and tied.startswith("0.0M (tied head; state_dict 0.0M)"), tied
+        assert untied and "tied" not in untied and "state_dict" not in untied, (
+            f"two DIFFERENT tables reported as tied: {untied} -- this would hide a real "
+            "doubling of the embedding table"
         )
-        assert tied.startswith("0.0M (tied head; state_dict 0.0M)"), tied
-        assert "state_dict" not in untied, f"untied line should be a single number, got {untied}"
-        print(f"  tied -> {tied}; untied -> {untied}")
+        assert midrun and "tied head by value" in midrun, (
+            f"a mid-run checkpoint whose tied pair deserialised into separate storages read "
+            f"as untied: {midrun}. This is the 3.24B readout defect -- the milestone printed a "
+            "bare 239.7M beside the ladder point's 206.1M, i.e. two different-sized models."
+        )
+        print(f"  tied -> {tied}; untied -> {untied}; mid-run -> {midrun}")
     except ImportError:
         print("  SKIP: no torch on this box", file=sys.stderr)
     # 2c. ceval survives the profile boundary. The milestone profile writes mc_full; the
