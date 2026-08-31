@@ -326,6 +326,12 @@ DEGEN_CONFIG = {
     # The eval scripts store gen[-300:] (code_zh.py:128, math_zh.py:103, math_hard.py:135),
     # so this metric sees the TAIL, not the full generation. See the two pitfalls below.
     "window": "gen[-300:]",
+    # CJK character n-gram: Chinese text has no whitespace word boundaries, so the
+    # whitespace 8-gram undercounts CJK degeneration (math_500 25.6% is a floor).
+    "cjk_ngram_len": 12,
+    "cjk_repeat_threshold": 3,
+    "cjk_min_chars": 36,
+    "cjk_majority_threshold": 0.3,
 }
 
 
@@ -352,7 +358,7 @@ def degeneration_rate(path, temperature, greedy=None):
     if not os.path.exists(path):
         return None, f"no prediction file {os.path.relpath(path, ROOT)}"
     cfg = DEGEN_CONFIG
-    n = deg = 0
+    n = deg = deg_cjk = 0
     with open(path, encoding="utf-8") as f:
         for line in f:
             try:
@@ -365,22 +371,37 @@ def degeneration_rate(path, temperature, greedy=None):
             # The eval scripts now store the FULL gen; the metric's window is the tail
             # (DEGEN_CONFIG["window"]). Old files already store the tail, and [-300:] of
             # a 300-char string is itself, so this is backward compatible.
-            words = r.get("gen", "")[-300:].split()
-            if len(words) < cfg["min_words"]:
-                continue  # cannot form the n-gram -> non-degenerate
-            counts = {}
-            for i in range(len(words) - cfg["ngram_len"] + 1):
-                ng = tuple(words[i : i + cfg["ngram_len"]])
-                c = counts.get(ng, 0) + 1
-                if c >= cfg["repeat_threshold"]:
-                    deg += 1
-                    break
-                counts[ng] = c
+            text = r.get("gen", "")[-300:]
+            words = text.split()
+            if len(words) >= cfg["min_words"]:
+                counts = {}
+                for i in range(len(words) - cfg["ngram_len"] + 1):
+                    ng = tuple(words[i : i + cfg["ngram_len"]])
+                    c = counts.get(ng, 0) + 1
+                    if c >= cfg["repeat_threshold"]:
+                        deg += 1
+                        break
+                    counts[ng] = c
+            # CJK character 12-gram: Chinese text has no whitespace word boundaries,
+            # so the whitespace 8-gram undercounts. Only for CJK-majority text.
+            cjk = sum(1 for c in text if '一' <= c <= '鿿')
+            if cjk > len(text) * cfg["cjk_majority_threshold"] and len(text) >= cfg["cjk_min_chars"]:
+                chars = list(text)
+                cg_counts = {}
+                for i in range(len(chars) - cfg["cjk_ngram_len"] + 1):
+                    ng = tuple(chars[i : i + cfg["cjk_ngram_len"]])
+                    c = cg_counts.get(ng, 0) + 1
+                    if c >= cfg["cjk_repeat_threshold"]:
+                        deg_cjk += 1
+                        break
+                    cg_counts[ng] = c
     if n == 0:
         return None, "no generations with enough words to form the n-gram"
     return {
         "rate": round(deg / n, 4),
         "degenerate": deg,
+        "cjk_rate": round(deg_cjk / n, 4),
+        "cjk_degenerate": deg_cjk,
         "n": n,
         "temperature": temperature,
         **cfg,
@@ -395,15 +416,19 @@ def _add_degeneration(record, key, pred_path, temperature, greedy=None):
 
 
 def write_records(path, records):
-    """Replace same-ckpt records, keep others and unparseable lines. The matrix
-    is the current state, not a history.
+    """Replace same-(ckpt, profile) records, keep others and unparseable lines.
+    The matrix is the current state, not a history.
+
+    The key is (ckpt, profile), not ckpt: a milestone-profile record must never
+    replace a checkpoint's full record (2026-08-31, t39 dry run). A record
+    without a profile reads as 'full', so existing rows need no migration.
 
     An exclusive lock on path + '.lock' serializes concurrent writers: without
     it, two score_matrix processes on different ckpts can interleave their
     read-modify-write cycles, and the later writer overwrites the earlier's
     fresh record. Both print 'wrote N record(s)', both exit 0, and a record
     vanishes with no log to say so."""
-    names = {r["ckpt"] for r in records}
+    keys = {(r["ckpt"], r.get("profile", "full")) for r in records}
     lock_path = path + ".lock"
     with open(lock_path, "w") as lock_f:
         fcntl.flock(lock_f, fcntl.LOCK_EX)
@@ -413,7 +438,8 @@ def write_records(path, records):
                 with open(path, encoding="utf-8") as f:
                     for line in f:
                         try:
-                            if json.loads(line).get("ckpt") in names:
+                            r = json.loads(line)
+                            if (r.get("ckpt"), r.get("profile", "full")) in keys:
                                 continue
                         except Exception:
                             pass
@@ -517,7 +543,7 @@ def _metric(name, fn, record, *args, **kwargs):
         print(f"  {name:15s} {v} ({elapsed}s)", flush=True)
 
 
-def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
+def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
@@ -529,6 +555,7 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
     print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
+        "profile": profile,  # (ckpt, profile) is the key: a milestone record must never replace a full one
         "type": kind,
         "vocab_id": vocab_id,
         "measured": subprocess.run(["date", "+%Y-%m-%d"], capture_output=True, text=True).stdout.strip(),
@@ -620,7 +647,7 @@ def main():
     records = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics)
+            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics, a.profile or "full")
         except Exception as e:
             print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
             continue

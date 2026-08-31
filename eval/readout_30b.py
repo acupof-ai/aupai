@@ -75,13 +75,14 @@ METRICS = {
 WARMUP_CONFOUND_MILESTONE_TOKENS = 3.24e9  # only the 3.24B pair has the 20-vs-300 confound
 
 
-def load_score_record(path, ckpt):
-    """The score_matrix record (one jsonl line) for a checkpoint."""
+def load_score_record(path, ckpt, profile="full"):
+    """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
+    without a profile reads as 'full' (pre-profile ledger, no migration)."""
     if not path or not os.path.exists(path):
         return None
     for line in open(path, encoding="utf-8"):
         r = json.loads(line)
-        if r.get("ckpt") == ckpt:
+        if r.get("ckpt") == ckpt and r.get("profile", "full") == profile:
             return r
     return None
 
@@ -281,6 +282,7 @@ def selftest():
     import io
     import tempfile
     rec_missing = json.loads(json.dumps(rec_full))
+    rec_missing["profile"] = "milestone"  # the production path: milestone record, one metric dropped
     rec_missing.get("metrics", {}).pop("code_500", None)
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
         tf.write(json.dumps(rec_missing) + "\n")
@@ -294,7 +296,9 @@ def selftest():
         os.unlink(tmp)
     i = out.index("\ncode_500\n")
     section = out[i:i + 400]
-    assert "ABSENT" in section and "floor" not in section.lower(), f"missing metric misread:\n{section}"
+    # A missing metric prints ABSENT and NO verdict line (print_metric returns early);
+    # "reachable: moved/floor" is the spec label, not a verdict -- do not grep for "floor".
+    assert "ABSENT" in section and "verdict:" not in section, f"missing metric misread:\n{section}"
     print("  code_500 absent from the record -> ABSENT, never floor")
     print("\nselftest OK")
     return 0
