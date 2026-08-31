@@ -912,7 +912,7 @@
    "source": "runs/p02_sc_base.log, runs/p02_sc_patched.log, bench_short_conv2.py",
    "config": "0.2b mix_scale_0.2b, batch 16 accum 2 seq 4096 grad_ckpt False, world 7, fp8, compile on, max_steps 50, compile warmup excluded from steady-state window",
    "uncertainty": "single 50-step run per arm; steady-state tok/s read from last 4 steps; +1.4% is within run-to-run noise, treat as 'no regression, per-op win real but end-to-end negligible'",
-   "status": "shipped"
+   "status": "measured"
   }
  ]
 }

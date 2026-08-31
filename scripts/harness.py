@@ -3983,6 +3983,7 @@ _REQUIRED_ALT = {"flash_attn": "flash_attn.cute"}
 _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
     "name", "mix", "resume", "max_steps",  # run management
+    "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "fp8",                # training precision, not architecture
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift",  # safety overrides
