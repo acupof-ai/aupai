@@ -396,6 +396,70 @@ def check_mix_shards(root):
     return FAIL, f"no shards for {missing}"
 
 
+def _broken_mix_30b():
+    """A 30B mix that silently drops a domain (weights sum to 0.9) AND names a frozen
+    ladder directory ('en') -- the two halves the contract check exists to catch."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    json.dump(
+        {
+            "total_tokens": 30e9,
+            "domains": {"en": {"weight": 0.5, "epochs": 1, "anneal": 0.5}},
+            "_blocked": {"code_rp1t": {"weight": 0.4, "epochs": 1, "anneal": 0.4}},
+        },
+        open(os.path.join(d, "data", "mix_30b.json"), "w"),
+    )
+    # a ladder mix naming 'en', so the ladder-name ban has something to bite
+    json.dump(
+        {"total_tokens": 1e9, "domains": {"en": {"weight": 1.0}}},
+        open(os.path.join(d, "data", "mix_scale_3.24b.json"), "w"),
+    )
+    return d
+
+
+def check_mix_30b_contract(root):
+    """The 30B pretrain mix (t30) is a composition contract, not a launch-ready file:
+    domains land one by one as 3b stamps them, and every not-yet-landed domain is declared
+    in _blocked with its full contract. Three invariants keep the composition from silently
+    shrinking to what exists: weights(domains)+weights(_blocked) sum to 1.0 (nothing dropped),
+    no name is a frozen ladder directory (a stamped-30B-corpus name, never web_hq/en/math/...),
+    and every landed domain is actually stamped."""
+    p = os.path.join(root, "data", "mix_30b.json")
+    if not os.path.exists(p):
+        return SKIP, "data/mix_30b.json not present"
+    try:
+        mix = json.load(open(p, encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return FAIL, f"mix_30b.json will not parse: {e}"
+    landed = mix.get("domains", {})
+    blocked = mix.get("_blocked", {})
+    if not isinstance(landed, dict) or not isinstance(blocked, dict):
+        return FAIL, "domains and _blocked must both be objects"
+    # 1. nothing dropped: the declared composition still sums to one
+    w_sum = sum(float(d.get("weight", 0)) for d in list(landed.values()) + list(blocked.values()))
+    if abs(w_sum - 1.0) > 1e-3:
+        return FAIL, f"weights(domains)+weights(_blocked) = {w_sum:.5f}, not 1.0 -- a domain was dropped or reweighted silently"
+    # 2. no frozen ladder directory names (a 30B domain binds to a NEW stamped corpus)
+    ladder = set()
+    for lf in glob.glob(os.path.join(root, "data", "mix_scale_*.json")):
+        try:
+            ladder |= set(json.load(open(lf, encoding="utf-8")).get("domains", {}))
+        except Exception:  # noqa: BLE001
+            pass
+    reused = [n for n in list(landed) + list(blocked) if n in ladder]
+    if reused:
+        return FAIL, f"30B mix reuses frozen ladder directory name(s) {sorted(reused)} -- bind to a new stamped directory"
+    # 3. every landed domain is stamped (build_corpus_stats.json), strict only on a train box
+    corpus = os.path.join(root, "data", "corpus")
+    if landed:
+        unstamped = [n for n in landed if not os.path.exists(os.path.join(corpus, n, "build_corpus_stats.json"))]
+        if unstamped:
+            if not _gpu_present():
+                return SKIP, f"no GPU on this machine: landed domains {unstamped} not yet stamped (not the pod)"
+            return FAIL, f"landed domains not stamped: {unstamped}"
+    return PASS, f"weights sum to {w_sum:.5f}; {len(landed)} landed, {len(blocked)} blocked ({', '.join(sorted(blocked)) or 'none'})"
+
+
 def check_tokenizer_roundtrip(root):
     p = os.path.join(root, "data", "tokenizer.json")
     if not os.path.exists(p):
@@ -2289,10 +2353,12 @@ def cmd_task(argv):
 
       harness task add  --owner b0 --task "..." --why "..." [--reading "..."] [--blocked-on t03]
       harness task done t07 --evidence "runs/l1_p324_d0.log: 0-shot answer-present 41.2%"
+      harness task reopen t07 --why "pack half landed; v4 run still open"
       harness task list [--all]
 
     `done` REQUIRES evidence, and the check enforces it: a task closed without an artifact
     is a session reporting itself complete, which is the one thing the board footer forbids.
+    `reopen` keeps the prior evidence and appends the reason; the check accepts the transition.
     """
     ap = argparse.ArgumentParser(prog="harness task")
     sub = ap.add_subparsers(dest="op", required=True)
@@ -2305,6 +2371,9 @@ def cmd_task(argv):
     d = sub.add_parser("done")
     d.add_argument("id")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
+    r = sub.add_parser("reopen")
+    r.add_argument("id")
+    r.add_argument("--why", required=True, help="why this task is being reopened")
     sub.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
     args = ap.parse_args(argv)
     rows = _read_tasks()
@@ -2334,6 +2403,26 @@ def cmd_task(argv):
         hit[0].update(state="done", evidence=args.evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
         _write_tasks(rows)
         print(f"{args.id} done: {args.evidence[:80]}")
+        return 0
+
+    if args.op == "reopen":
+        hit = [r for r in rows if r.get("id") == args.id]
+        if not hit:
+            print(f"no task {args.id}; `harness task list --all` shows what is closed")
+            return 1
+        if hit[0].get("state") != "done":
+            print(f"{args.id} is {hit[0].get('state')}, not done -- only done tasks can reopen")
+            return 1
+        prior = hit[0].get("evidence", "")
+        hit[0].update(
+            state="open",
+            reopen_reason=args.why,
+            reopened=time.strftime("%Y-%m-%d %H:%M"),
+            evidence=prior,  # keep prior evidence; the check accepts open+evidence
+        )
+        hit[0].pop("closed", None)
+        _write_tasks(rows)
+        print(f"{args.id} reopened: {args.why[:80]}")
         return 0
 
     show = rows if args.all else [r for r in rows if r.get("state") == "open"]
