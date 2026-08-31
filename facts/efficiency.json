@@ -1426,6 +1426,37 @@
    "uncertainty": "The negative measurements are single-card or 8-card at sequence lengths far below our 4096, and none is at our busy fraction. They establish that the lever's sign is not reliably positive, not that it is always negative. The actual cause of our 25 recompiles is undiagnosed -- a shape-dependent branch somewhere other than cu.",
    "boundary": "Says nothing about whether the recompile tax is worth fixing; it is 3.27% and real. It says cu bucketing is not the fix.",
    "status": "recorded"
+  },
+  {
+   "id": "eff.recompile_recurrence_explained",
+   "value": "The recurrence is explained, from the probe log I already had: FlashAttention recompiles on an UNBOUNDED batch_size guard, so the variant set never closes and eviction is permanent. This answers the one open question in eff.recompile_reason_named and eff.steady_state_composition, and it partly un-retracts cu bucketing. HOW IT WAS FOUND. Correlating recompile lines against step lines in runs/t57_recompile.log by position: 202 recompiles total, 172 before step 10, then 12 / 6 / 3 / 5 / 4 in the step bands 10-20 through 50+. The tail does NOT decay to zero. Every one of the four after step 50 is torch_dynamo_resume_in__flash_attn_fwd_at_406, i.e. flash_attn/cute/interface.py:406, and NOT AttnRes.forward. So the late recompiles are a different frame from the 24 early ones I reported. THE GUARD, verbatim: '- 13/0: batch_size == 66  # total_mblocks = batch', then 78, 68, 85, 81, 61, 83, 53, and so on. 45 DISTINCT values appear across ~60 steps, spanning 43 to 116, which is 61% of that range. This 'batch_size' is not Cfg.batch=16: it is FlashAttention's varlen block count, which tracks the number of DOCUMENTS in the batch, and doc count is drawn from a distribution rather than fixed. WHY IT RECURS FOREVER. torch._dynamo.config.recompile_limit is 64 (train.py:1912). With 45 values seen in 60 steps and new ones still appearing, the set does not close before the limit, so dynamo evicts and recompiles indefinitely. That is the mechanism behind gaps containing compile_attempt_1 at step 260, which a finite 25-variant AttnRes set could not produce. Frame 13 is also the frame the live stage-1 run reports as hitting recompile_limit(64) on all 7 ranks -- an identification I had earlier flagged as open. BUCKETING IS BACK, on the doc count rather than on cu's length. Padding the doc count to a multiple of 8 collapses the 45 values to 10 variants, 16 gives 6, and 32 gives 3 -- all far under the 64 limit, so the set closes and eviction stops. This is why I only PARTLY un-retract: my original cu-bucketing proposal targeted mark_dynamic(cu, 0) at train.py:855, and b0 is right that mark_dynamic already gives cu one graph. The correct target is FlashAttention's block count, a different quantity in a different file, and the fix is not ours to make directly -- it lives in the flash_attn varlen wrapper.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_recompile.log, train.py",
+   "config": {
+    "task": "t57",
+    "recompiles_total": 202,
+    "recompiles_before_step_10": 172,
+    "recompiles_by_band": {
+     "10-20": 12,
+     "20-30": 6,
+     "30-40": 3,
+     "40-50": 5,
+     "50+": 4
+    },
+    "late_frame": "torch_dynamo_resume_in__flash_attn_fwd_at_406 (flash_attn/cute/interface.py:406)",
+    "guard": "batch_size == N  # total_mblocks = batch",
+    "distinct_values": 45,
+    "value_range": "43-116",
+    "coverage_of_range_pct": 61,
+    "recompile_limit": 64,
+    "frame_id": 13,
+    "bucketing_pad_8_variants": 10,
+    "bucketing_pad_16_variants": 6,
+    "bucketing_pad_32_variants": 3,
+    "not_cfg_batch": "batch_size here is flash varlen block count ~ document count, not Cfg.batch=16"
+   },
+   "uncertainty": "The step attribution is by POSITION in the log, not by timestamp: I assigned each recompile to the last step line printed before it, which is right if the log is written in order and wrong if stdout and the dynamo logger interleave differently. The counts per band should therefore be read as approximate, though the qualitative result -- the tail does not decay and the late frame is flash, not AttnRes -- does not depend on exact attribution. 45 distinct values in ~60 steps is a lower bound on the true variant count, since more steps would reveal more. The bucketing variant counts are arithmetic on the 45 observed values, not a measurement of a bucketed run, and no throughput claim is attached: the seam is 3.28% measured with a 4.56% ceiling, so even eliminating it entirely sits at the edge of the 3% ship gate. Whether padding the doc count is even correct for flash varlen is unexamined -- a padded block count may require padded cu_seqlens to match, which is a correctness question I have not touched.",
+   "status": "measured"
   }
  ]
 }
