@@ -1398,6 +1398,34 @@
    },
    "uncertainty": "The accumulation error is measured on SYNTHETIC gradients, both b0's uniform draw and my lognormal row-scale version, not on real logit gradients from a training step. A lognormal scale is closer to the truth than uniform but it is still a model: real CE gradients are structured by the target distribution, not drawn i.i.d. The elementwise grad_weight comparison against a real step is still the check that settles it, and it has not run -- what these numbers establish is that the inverting case b0 named does not occur under a heavy-tailed distribution, not that the real distribution is heavy-tailed in the same way. The AdamW cancellation argument is also analytic rather than measured: no A/B has been run with an fp32 accumulator to confirm the loss curve is unchanged.",
    "status": "recorded"
+  },
+  {
+   "id": "eff.launch_reduction_not_a_lever",
+   "value": "Launch-count reduction cannot clear the 3% ship gate for us, by arithmetic on our own steady trace plus three external lines. CEILINGS (eff.steady_state_composition, step 1676.63 ms, busy 1600.25 ms, idle 76.38 ms): all non-kernel time = 4.56% is the hard cap on every process-side lever combined; launch overhead alone at 6684 launches x 5 us host-side = 33.4 ms = 1.99%, overlapping that cap; and 1.99% is an overestimate because launches pipeline -- at 240 us mean kernel duration the GPU does not starve waiting for the host. EXTERNAL EVIDENCE, all different-regime: vLLM PR #20059 (A100, torch 2.6, Qwen2.5-7B-Int4, INFERENCE DECODE) measures full vs piecewise CUDA graph at +4.9% output tok/s with TTFT worse on both backends, and names the mechanism as CPU launch time 56 ms -> 28 ms; vLLM's own baseline is ~5 ms of GPU exec per step for Llama-8B on H100, roughly 320x smaller than our 1607 ms, which is why per-launch cost binds there and not here. COUNTER-CASE, the transferable one: flattening vLLM's FX graph into one region DOUBLED host dispatch (28 -> 56 ms) rather than reducing it, and their FULL mode launched 494 blocks/SM where eager needed 4.6 -- consolidating regions moves cost into the launch path and can freeze a wrong launch config. TorchTitan (arXiv:2410.06511, H100, Llama-3.1-8B) is the only Hopper-class training source with per-block compile numbers, +6.64% at 8 GPUs rising to +14.82% at 128; the rise with GPU count at constant model indicates the computation-communication reordering half dominates, we are single-card, and their eager baseline is already banked since we run inductor. They publish no ablation of per-block vs whole-model compile.",
+   "measured": "2026-09-01",
+   "source": "b0 research (30 claims verified per-claim against primary sources, 2 refuted); vLLM PR #20059; arXiv:2410.06511; arithmetic from eff.steady_state_composition",
+   "config": {
+    "our_step": "1676.63 ms, 1600.25 ms busy, 95.44%",
+    "launches_per_step": 6684,
+    "mean_kernel_us": 240,
+    "assumed_launch_overhead_us": "2-5 host side, <1 GPU side when pipelined"
+   },
+   "uncertainty": "The 5 us/launch figure is a Hopper-class rule of thumb, not measured on our box; at 2 us the launch ceiling falls to 0.8%. No source at any scale measures launch-count reduction in a compute-bound training step -- every published win is inference decode or distributed jitter.",
+   "boundary": "Applies at 95.44% GPU-busy. If a future recipe drops the busy fraction materially the arithmetic must be redone.",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.cu_bucketing_wrong_cause",
+   "value": "cu bucketing is a fix aimed at a cause we have already eliminated, and three external measurements of it are negative. MECHANISM: train.py calls mark_dynamic(cu), which compiles cu's varying length to ONE graph -- if it were specialising, dynamo would raise. So the 25 recompiles the dynamo log reports are not cu shapes; the recurring compile seams measured in eff.steady_state_composition (54.9 ms/step at step 260, 72% of steady idle, 3.27% of the step) have a different and still-undiagnosed cause, and bucketing cu would not touch them. CORROBORATION: every doc-packed distinct-shape count reported in the field is small and bounded -- 9 (torch issue #188150, GB10, torch 2.11), 5 (SiQ_VL after pad-to-64), ours 25 against a cache_size_limit of 64. Nobody reports shape proliferation at steady state from document packing. MEASUREMENTS OF THE LEVER ITSELF, three for three negative: nanogpt speedrun max_num_docs, 8xH100 torch.compile fullgraph dynamic, over-padding cu -0.574% on an 86.74 s baseline, p=0.0000 over 8 runs, no loss regression; nanochat PR #663, over-sized cu_seqlens made varlen SLOWER than plain batching and 512 vs 96 flipped the sign; SiQ_VL at 590M params (within 3x of ours), pad_to_multiple_of=64 gave -6.6% throughput (26,443 vs 28,322 tok/s). No crossover formula exists relating padding waste to recompile saving.",
+   "measured": "2026-09-01",
+   "source": "b0 research; train.py mark_dynamic(cu); pod dynamo log 'cache_size_limit=64 (need 25)'; nanogpt speedrun max_num_docs PR; karpathy/nanochat PR #663; pytorch issue #188150",
+   "config": {
+    "our_shape_count": "25 against a limit of 64",
+    "recompile_tax": "54.9 ms/step, 3.27%, cause not cu"
+   },
+   "uncertainty": "The negative measurements are single-card or 8-card at sequence lengths far below our 4096, and none is at our busy fraction. They establish that the lever's sign is not reliably positive, not that it is always negative. The actual cause of our 25 recompiles is undiagnosed -- a shape-dependent branch somewhere other than cu.",
+   "boundary": "Says nothing about whether the recompile tax is worth fixing; it is 3.27% and real. It says cu bucketing is not the fix.",
+   "status": "recorded"
   }
  ]
 }

@@ -306,3 +306,88 @@ only candidate with a backward-pass claim.
   claim and its retraction.
 - Ideal ceilings (fp8 2×, doubled occupancy, 20% of fusion time) bound the
   search. None is achievable in full and none should be quoted as a forecast.
+
+## Half B, external evidence: what the field has measured (b0)
+
+30 claims survived per-claim verification against primary sources, 2 refuted, 28 gaps.
+Every claim carries the source's hardware, software version, scale and measured effect;
+a source whose win came from a launch-bound, static-shape or inference-decode regime is
+marked **different-regime** and is context, not evidence.
+
+Regime split of the survivors: **6 direct, 16 partial, 8 different-regime.** No source at
+any scale measures our combination — dynamic shapes, compute-bound training, Hopper class.
+
+### The assigned lever is negative, and the field agrees
+
+Launch reduction was the brief's premise. Three independent lines say no:
+
+| finding | source and regime | number |
+|---|---|---|
+| piecewise vs full CUDA graph, the only published head-to-head | vLLM PR #20059, A100, torch 2.6, Qwen2.5-7B **inference decode** | +4.9% output tok/s, but TTFT **worse** both backends; mechanism is 56 ms → 28 ms of **CPU launch time** |
+| vLLM's own GPU-exec baseline | Llama-8B, H100, inference | **~5 ms/step** of GPU exec, against our 1607 ms — roughly 320× |
+| merging regions | vLLM, eager, no cudagraph replay | flattening the graph **doubled** host dispatch, 28 → 56 ms |
+
+The third is the one worth keeping. Consolidating fused regions moved cost **into** the
+launch path, not out of it, and their FULL mode launched 494 blocks/SM where eager needed
+4.6. Our largest fusion already runs at 75% occupancy. Fewer regions is not free.
+
+TorchTitan is the only Hopper-class **training** source with per-block compile numbers
+(arXiv:2410.06511, H100, Llama-3.1-8B): +6.64% at 8 GPUs rising to +14.82% at 128. The
+rise with GPU count at constant model says the computation-communication reordering half
+dominates, and we are single-card. Their baseline is also eager while we are already
+inductor-compiled, so that delta is banked. **They publish no ablation of per-block versus
+whole-model compile at all** — the granularity choice is defended on composability, never
+with a number.
+
+### cu bucketing: three measurements, all negative, and the premise is wrong
+
+| source | regime | measured |
+|---|---|---|
+| nanogpt speedrun, `max_num_docs` | 8×H100, torch.compile fullgraph, dynamic | over-padding cu **−0.574%**, p=0.0000 over 8 runs |
+| nanochat PR #663 | single card | over-sized cu made varlen **slower than plain batching**; 512 vs 96 flipped the sign |
+| SiQ_VL, 590M params | single card, recent torch | `pad_to_multiple_of=64` → **−6.6%** throughput |
+
+Three for three against, including one at 3× our parameter count. But the disqualifying
+finding is not the sign, it is the mechanism:
+
+**`mark_dynamic(cu)` already compiles cu's varying length to one graph.** If it were
+specialising, dynamo would raise. So our 25 recompiles are *not* cu shapes — they are
+something else, and bucketing cu is a fix aimed at a cause we already eliminated.
+
+The corroborating half: every doc-packed shape count reported in the field is small and
+bounded — 9, 5, and ours at 25 against a limit of 64. **Nobody reports shape
+proliferation at steady state from document packing.** The dynamo log's "need 25" is the
+answer, not a warning.
+
+This does not clear the recompile tax. `eff.steady_state_composition` measures 54.9 ms/step
+of recurring compile seams at step 260, which is real and is **3.27% of the step**. What
+the external evidence settles is that **cu is not its cause**, so the diagnosis has to
+find the actual shape-dependent branch before anyone buckets anything.
+
+### Ceilings, restated on the steady trace
+
+| bound | value |
+|---|---|
+| all non-kernel time (76.38 ms of 1676.63 ms) | **4.56%** — hard cap on every process-side lever combined |
+| launch overhead alone, 6684 launches at 5 µs | **≤1.99%**, and it overlaps the above |
+| recurring compile seams | **3.27%** — the only process-side item with a mechanism |
+
+Launch overhead cannot reach the 3% gate even if perfectly eliminated, and it pipelines:
+at 240 µs mean kernel duration the GPU does not starve.
+
+### The 28 gaps, and the four that matter
+
+- No source measures launch-count reduction in a **compute-bound training** step. Every
+  published win is inference decode or distributed jitter.
+- No source relates **distinct fused-region count** to step time, as opposed to launch
+  count. Our 273 regions are unpriced as a count.
+- No **crossover formula** exists for bucketing padding-waste against recompile saving —
+  only the observation that the crossover is reachable by ordinary carelessness.
+- No CUDA-graph measurement exists for training with backward and optimizer at >100M
+  params on dynamic shapes.
+
+### What this changes
+
+Nothing in the ranking, which is the point. The process half was assigned on the premise
+that launch count was a lever; it is not, at 95.44% busy. Writing that down is the
+deliverable — it is what stops the next person proposing it from the same reasoning.
