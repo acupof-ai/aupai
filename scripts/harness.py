@@ -3269,6 +3269,28 @@ _CVD_EXEMPT = {
 }
 
 
+def _repo_owned_files(root):
+    """Paths the repo owns, relative to root. git ls-files in a checkout; the pod
+    manifest on the pod, which has no .git. None when neither is available.
+
+    The pod tree is not a checkout and holds untracked scratch files beside the
+    repo's own, so "every file under root" is the wrong scope for any check that
+    can turn `harness check` red there."""
+    if os.path.exists(os.path.join(root, ".git")):
+        r = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+        if r.returncode == 0:
+            return set(r.stdout.split())
+    manifest = os.path.join(root, "data", "pod_head_manifest.txt")
+    if os.path.isfile(manifest):
+        out = set()
+        for line in open(manifest, encoding="utf-8"):
+            parts = line.split()
+            if len(parts) >= 2:
+                out.add(parts[1])
+        return out or None
+    return None
+
+
 def check_device_set_honoured(root):
     """A shard script must take its device from eval/_devs.sh, never write a physical index.
 
@@ -3286,39 +3308,46 @@ def check_device_set_honoured(root):
 
     Ceiling: this reads the assignment's syntax, not what runs. A script that computes a
     physical index into a variable and assigns the variable passes. Detecting that needs
-    shell dataflow; the cheaper guarantee is one accepted idiom that greps."""
+    shell dataflow; the cheaper guarantee is one accepted idiom that greps.
+
+    Scope: repo-owned scripts only, taken from git or the pod manifest. The pod tree also
+    holds a dozen untracked scratch launchers (ab_launch.sh, fleet6.sh, ...) that predate
+    the rule; failing on those would turn `harness check` red on the pod, and `harness run`
+    refuses while check is red, so an unowned scratch file would block the pipeline."""
+    owned = _repo_owned_files(root)
+    if owned is None:
+        return SKIP, "cannot enumerate repo-owned files (no git, no manifest)"
     bad = []
     checked = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in (".git", "__pycache__", "node_modules")]
-        for fn in sorted(filenames):
-            if not fn.endswith(".sh"):
+    for rel in sorted(owned):
+        if not rel.endswith(".sh"):
+            continue
+        if rel in _CVD_EXEMPT or os.path.basename(rel) in _CVD_EXEMPT:
+            continue
+        path = os.path.join(root, rel)
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        checked += 1
+        body = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+        for n, line in enumerate(text.splitlines(), 1):
+            if line.lstrip().startswith("#"):
                 continue
-            path = os.path.join(dirpath, fn)
-            rel = os.path.relpath(path, root)
-            if rel in _CVD_EXEMPT or os.path.basename(rel) in _CVD_EXEMPT:
-                continue
-            try:
-                text = open(path, encoding="utf-8").read()
-            except OSError:
-                continue
-            checked += 1
-            body = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
-            for n, line in enumerate(text.splitlines(), 1):
-                if line.lstrip().startswith("#"):
-                    continue
-                m = _CVD_ASSIGN.search(line)
-                if m and not _CVD_SAFE.match(m.group(1)):
-                    bad.append(f"{rel}:{n} CUDA_VISIBLE_DEVICES={m.group(1)}")
-            if any("_DEVS" in l for l in body) and not _CVD_SOURCE.search("\n".join(body)):
-                bad.append(f"{rel} reads _DEVS without sourcing eval/_devs.sh")
+            m = _CVD_ASSIGN.search(line)
+            if m and not _CVD_SAFE.match(m.group(1)):
+                bad.append(f"{rel}:{n} CUDA_VISIBLE_DEVICES={m.group(1)}")
+        if any("_DEVS" in l for l in body) and not _CVD_SOURCE.search("\n".join(body)):
+            bad.append(f"{rel} reads _DEVS without sourcing eval/_devs.sh")
+    if not checked:
+        return SKIP, "no repo-owned shell scripts present"
     if bad:
         return FAIL, (
             f"{len(bad)} assignment(s) write a physical index instead of taking the "
             f"caller's: {', '.join(bad[:4])}. Use `source eval/_devs.sh \"$N\"` then "
             f"${{_DEVS[$i]}}."
         )
-    return PASS, f"{checked} shell scripts take their device from the caller's set"
+    return PASS, f"{checked} repo-owned shell scripts take their device from the caller's set"
 
 
 def _broken_device_set_honoured():
@@ -3328,10 +3357,14 @@ def _broken_device_set_honoured():
 
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
     src = os.path.join(ROOT, "eval", "eval_all.sh")
     dst = os.path.join(d, "eval", "eval_all.sh")
     shutil.copy(src, dst)
     shutil.copy(os.path.join(ROOT, "eval", "_devs.sh"), os.path.join(d, "eval", "_devs.sh"))
+    # No .git in a _tmp_repo, so the check reads its scope from the manifest.
+    with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w", encoding="utf-8") as f:
+        f.write("0  eval/eval_all.sh  docs\n0  eval/_devs.sh  docs\n")
     s = open(dst, encoding="utf-8").read()
     fixed = "CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 eval/run_eval.py"
     assert fixed in s, "eval_all.sh no longer carries the fixed assignment; update _broken_device_set_honoured"
