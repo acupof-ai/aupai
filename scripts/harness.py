@@ -200,6 +200,69 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_milestone_ckpt_pinned(root):
+    """Every milestone row's checkpoint still exists, or a pinned copy does.
+
+    train.py keeps the newest 3 step checkpoints, so a milestone file lives about
+    3 x save_every steps -- ~70 minutes at stage-1 speed. The 3.24B own-mix baseline
+    was lost that way on 2026-08-31: the rescore sat in the lane queue, step3500
+    rotated out, and the measurement is unrepeatable because the weights are gone.
+    A milestone is a checkpoint we have promised to keep; the roller does not know
+    that, so the promise has to be a file beside it."""
+    ms = os.path.join(root, "runs", "milestones.jsonl")
+    if not os.path.exists(ms):
+        return SKIP, "no runs/milestones.jsonl"
+    rows = []
+    for line in open(ms, encoding="utf-8"):
+        if line.strip():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    if not rows:
+        return SKIP, "milestones.jsonl has no rows"
+    # Only the pod holds checkpoints; a dev box would report every row unpinned.
+    if not glob.glob(os.path.join(root, "ckpt_*.pt")):
+        return SKIP, "no checkpoints on this machine (pod holds them)"
+    lost, ok = [], 0
+    for r in rows:
+        ck = r.get("ckpt")
+        if not ck:
+            continue
+        if os.path.exists(os.path.join(root, ck)):
+            ok += 1
+            continue
+        tok = r.get("milestone")
+        pins = glob.glob(os.path.join(root, f"*milestone_{tok}*.pt")) if tok else []
+        if pins:
+            ok += 1
+        else:
+            lost.append(f"{ck} (milestone {tok or '?'})")
+    if lost:
+        return FAIL, (f"{len(lost)} milestone row(s) whose checkpoint is gone with no pinned "
+                      f"copy: {'; '.join(lost[:3])} -- that measurement cannot be repeated")
+    return PASS, f"{ok} milestone checkpoint(s) present or pinned"
+
+
+def _broken_milestone_ckpt_pinned():
+    """The REAL milestones ledger with a row naming a checkpoint that is not there."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "milestones.jsonl")
+    if not os.path.exists(src):
+        raise SelftestSkip("no milestones ledger to mutate")
+    rows = [json.loads(x) for x in open(src, encoding="utf-8") if x.strip()]
+    if not rows:
+        raise SelftestSkip("milestones ledger is empty")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    rows[0] = dict(rows[0], ckpt="ckpt_rotated_away.pt.step3500", milestone="3.24b")
+    with open(os.path.join(d, "runs", "milestones.jsonl"), "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # a checkpoint must exist or the check SKIPs instead of failing
+    open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    return d
+
+
 def check_no_duplicate_defs(root):
     """No module defines the same top-level name twice.
 
@@ -4333,6 +4396,13 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "milestone_ckpt_pinned",
+        "every milestone row's checkpoint still exists or has a pinned copy",
+        "the 3.24B own-mix baseline was lost when step3500 rotated out of train.py's newest-3 window while the rescore waited in the lane queue; the weights are gone and the measurement cannot be repeated",
+        check_milestone_ckpt_pinned,
+        _broken_milestone_ckpt_pinned,
+    ),
+    (
         "no_duplicate_defs",
         "no module defines the same top-level name twice",
         "two sessions restored one dropped selftest from different commits and harness.py carried it twice; Python binds the second, so the first is dead code that drifts, and ruff F811 does not fire across intervening defs",
@@ -7230,6 +7300,26 @@ def cmd_milestone(argv):
                   f"--milestone-tokens {tokens} --milestone-profile milestone --paired-profile full "
                   f"> runs/readout_{stem}.txt")
             return "dry"
+        # Pin the checkpoint OUT of train.py's rotation before scoring it. train.py keeps
+        # the newest 3 step checkpoints (train.py:2089), so a milestone file survives
+        # ~3 x save_every steps -- about 70 minutes at stage-1 speed. On 2026-08-31 the
+        # 3.24B rescore was queued behind another job's lane slot, step3500 rotated out
+        # while it waited, and that baseline is unrecoverable. A milestone is a thing we
+        # promise to keep; the rotation does not know that.
+        watch_dir = a.watch or ROOT
+        src_ck = os.path.join(watch_dir, ckpt)
+        if os.path.exists(src_ck) and milestone:
+            pinned = os.path.join(watch_dir, f"ckpt_{a.run or 'run'}.milestone_{milestone}.pt")
+            if not os.path.exists(pinned):
+                try:
+                    import shutil as _sh
+
+                    _sh.copy2(src_ck, pinned)
+                    print(f"pinned {ckpt} -> {os.path.basename(pinned)} "
+                          f"(out of the newest-3 rotation)", flush=True)
+                except OSError as e:
+                    print(f"WARNING: could not pin {ckpt}: {e}; the rescore window is "
+                          f"~3 saves wide", file=sys.stderr)
         rc = cmd_launch([
             f"ms_{stem}", "--hypothesis", f"milestone {tokens / 1e9:.2f}B score_matrix profile", "--",
             "eval/score_matrix.py", "--ckpt", ckpt, "--profile", "milestone",
