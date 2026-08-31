@@ -11,7 +11,7 @@ import os as _os
 import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
-from eval_artifacts import open_artifact  # noqa: E402
+from eval_artifacts import attest, open_artifact  # noqa: E402
 import json
 import os
 import re
@@ -114,6 +114,7 @@ def main():
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)
 
+    attest(preds_path)  # the citation contract: the writer proves these bytes existed
     print(f"math-500: {correct}/{total} = {correct / total:.1%} (t={args.temperature})")
     print(f"boxed rate {n_box / total:.1%} | rewrite('解答') rate {n_rewrite / total:.1%} | "
           f"avg gen tokens {tot_len / total:.0f} | step-eq wrong {n_bad}/{n_eq} = {n_bad / max(n_eq, 1):.1%}")

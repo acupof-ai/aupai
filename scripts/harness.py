@@ -200,6 +200,92 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_cited_artifacts_attested(root):
+    """A fact citing a gitignored artifact carries a sha256 some attestation matches.
+
+    data/eval/preds_*.jsonl is gitignored and nothing reads it programmatically, so
+    fact_refs_resolve skips those paths on every machine: a fact could cite an artifact
+    that exists nowhere and nothing would notice. That is how an unlogged rerun
+    overwrote preds_l1_d3.jsonl and left five facts pointing at 477 rows of a different
+    run for hours (e1, 44's contract, 2026-08-31).
+
+    What this proves is historical -- the cited bytes existed when the citation was
+    made. It deliberately does NOT compare against the current file: preds are
+    regenerated every run, so a current-state check would fail on every legitimate
+    rerun. The writer's attestation row is the proof."""
+    refs = os.path.join(root, "runs", "artifact_refs.jsonl")
+    attested = set()
+    if os.path.exists(refs):
+        for line in open(refs, encoding="utf-8"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("sha256"):
+                attested.add(r["sha256"])
+    # The contract starts here. 18 citations predate it and cannot grow an attestation
+    # retroactively -- their artifacts were written before any writer attested, and
+    # several no longer exist. Failing them is a red nobody can act on, which is the
+    # same as no signal. New and re-measured facts carry the hash.
+    contract_from = "2026-09-01"
+    cited, bad, legacy = 0, [], 0
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp, encoding="utf-8"))
+        except Exception:
+            continue
+        for e in obj.get("facts", []):
+            blob = json.dumps(e, ensure_ascii=False)
+            for m in re.finditer(r"(data/eval/[\w./-]+\.jsonl)", blob):
+                path = m.group(1)
+                if (e.get("measured") or "") < contract_from:
+                    legacy += 1
+                    continue
+                cited += 1
+                sha = e.get("artifact_sha256") or ""
+                if not sha:
+                    bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
+                elif sha not in attested:
+                    bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
+    if not cited:
+        return SKIP, (f"no fact measured since {contract_from} cites a data/eval artifact "
+                      f"({legacy} predate the contract)")
+    if bad:
+        return FAIL, f"{len(bad)} of {cited} citation(s) unattested: {'; '.join(bad[:3])}"
+    return PASS, (f"{cited} artifact citation(s) since {contract_from}, every hash attested "
+                  f"by its writer ({legacy} legacy citations exempt)")
+
+
+def _broken_cited_artifacts_attested():
+    """The REAL facts, with one artifact-citing entry re-dated into the contract window
+    and its hash removed -- the shape a new fact takes when someone forgets to attest."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+    import shutil as _sh
+
+    hit = None
+    for fp in sorted(glob.glob(os.path.join(ROOT, "facts", "*.json"))):
+        obj = json.load(open(fp, encoding="utf-8"))
+        for e in obj.get("facts", []):
+            if re.search(r"data/eval/[\w./-]+\.jsonl", json.dumps(e, ensure_ascii=False)):
+                hit = (fp, obj, e)
+                break
+        if hit:
+            break
+    if not hit:
+        raise SelftestSkip("no fact cites a data/eval artifact yet")
+    fp, obj, e = hit
+    for other in glob.glob(os.path.join(ROOT, "facts", "*.json")):
+        _sh.copy(other, os.path.join(d, "facts", os.path.basename(other)))
+    # inside the contract window, so the legacy exemption does not hide it
+    e["measured"] = "2099-01-01"
+    e.pop("artifact_sha256", None)
+    json.dump(obj, open(os.path.join(d, "facts", os.path.basename(fp)), "w"), ensure_ascii=False)
+    return d
+
+
 def check_milestone_ckpt_pinned(root):
     """Every milestone row's checkpoint still exists, or a pinned copy does.
 
@@ -4396,6 +4482,13 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "cited_artifacts_attested",
+        "a fact citing a gitignored eval artifact carries a sha256 its writer attested",
+        "preds_*.jsonl is gitignored so fact_refs_resolve skips it; an unlogged rerun overwrote preds_l1_d3.jsonl and five facts pointed at another run's rows for hours",
+        check_cited_artifacts_attested,
+        _broken_cited_artifacts_attested,
+    ),
+    (
         "milestone_ckpt_pinned",
         "every milestone row's checkpoint still exists or has a pinned copy",
         "the 3.24B own-mix baseline was lost when step3500 rotated out of train.py's newest-3 window while the rescore waited in the lane queue; the weights are gone and the measurement cannot be repeated",
@@ -5027,6 +5120,36 @@ def _refresh_board():
 
 
 # ------------------------------------------------------------------------ selftest
+
+
+def _selftest_cold_cache_refuses():
+    """A training launch with no token caches refuses instead of taking a short gate.
+
+    The fallback was backwards: _derive_gate_timeout returns None when no cache is on
+    disk, and cmd_launch then used 120s -- so the emptier the cache, the shorter the
+    deadline, while the work grows from a load into a single-process retokenize of
+    hours (b0, 2026-08-31). Asserts on the source, because reproducing it needs a
+    training launch and a card."""
+    import inspect
+    import tempfile
+
+    # the derivation really does return None-with-that-reason for an empty cache dir
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    mix = os.path.join(d, "data", "m.json")
+    json.dump({"domains": {"a": {}, "b": {}}, "total_tokens": 1e9}, open(mix, "w"))
+    secs, note = _derive_gate_timeout(["--mix", mix], cache_dir=d)
+    assert secs is None and "no token caches" in note, (secs, note)
+
+    src = inspect.getsource(cmd_launch)
+    i = src.index('"no token caches" in gate_note')
+    branch = src[i:i + 900]
+    assert "REFUSING" in branch, "a cold-cache training launch must refuse"
+    assert "return 2" in branch, "the refusal must exit non-zero"
+    # and the refusal must come BEFORE the fallback assignment it replaces
+    assert i < src.index("args.gate_timeout = derived or"), (
+        "the refusal must precede the 120s fallback, or the fallback still wins")
+    print("  gate: a training launch with cold caches refuses rather than taking 120s")
 
 
 def _selftest_refusal_writes_no_row():
@@ -5877,6 +6000,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
@@ -6744,6 +6868,17 @@ def cmd_launch(rest):
     if args.gate_timeout is None:
         if args.training:
             derived, gate_note = _derive_gate_timeout(cmd)
+            if derived is None and gate_note and "no token caches" in gate_note:
+                # REFUSE rather than fall back. The fallback was backwards: the emptier
+                # the cache, the shorter the deadline, while the work grows from a load
+                # into a single-process retokenize of hours. A 120s gate then kills a
+                # healthy job at its most expensive moment (b0, 2026-08-31).
+                print(f"REFUSING: {args.name} -- {gate_note}. A training launch with cold "
+                      f"caches cannot be gated on time: tokenizing is hours, and the "
+                      f"derived gate would be shorter than a warm load. Run "
+                      f"`harness pretokenize --workers 8` first, or pass an explicit "
+                      f"--gate-timeout if you accept the risk.", file=sys.stderr)
+                return 2
             args.gate_timeout = derived or (300 if "--resume" in cmd else 120)
             if derived is None and gate_note:
                 gate_note = f"{gate_note}; falling back to {args.gate_timeout}s"

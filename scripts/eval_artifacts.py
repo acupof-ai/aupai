@@ -13,9 +13,11 @@ checkpoint is gone or the sampler moves.
 
 Selftest: python3 scripts/eval_artifacts.py --selftest
 """
+import hashlib
 import json
 import os
 import sys
+import time
 
 
 class ArtifactExists(Exception):
@@ -80,6 +82,45 @@ def verify_sealed(path):
     if n != d.get("expected"):
         return False, f"{path}: {n} rows on disk, sidecar expected {d.get('expected')}"
     return True, f"{path}: {n} rows, matches its seal"
+
+
+def attest(path, root=None):
+    """Record that this artifact existed with these bytes, in runs/artifact_refs.jsonl.
+
+    A fact may cite a gitignored preds file, so no check can resolve the path on a
+    machine that does not hold it -- five facts cited preds_l1_d3.jsonl after an
+    unlogged rerun overwrote it, and nothing noticed for hours (e1, 2026-08-31).
+
+    The writer attests at write time; the citation carries path + sha256; the check
+    matches the two. What that proves is HISTORICAL: the cited bytes existed when the
+    citation was made. It deliberately does not prove the current file matches, because
+    preds are regenerated every run and a current-state check would false-alarm on
+    every legitimate rerun (44's contract).
+    """
+    root = root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    h = hashlib.sha256()
+    n = 0
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+            n += len(chunk)
+    rows = sum(1 for line in open(path, encoding="utf-8", errors="replace") if line.strip())
+    row = {
+        "path": os.path.relpath(path, root) if path.startswith(root) else path,
+        "sha256": h.hexdigest(),
+        "bytes": n,
+        "rows": rows,
+        "written_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    out = os.path.join(root, "runs", "artifact_refs.jsonl")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)  # one atomic append: concurrent evals must not interleave
+    finally:
+        os.close(fd)
+    return row
 
 
 def _selftest():
