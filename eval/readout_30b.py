@@ -601,6 +601,26 @@ def selftest():
         assert abs(u["math_owm"][2] - 1.749) < 0.01, u["math_owm"]
         print(f"  3 roles refuse (math_owm {u['math_owm'][2]:.2f}x, code_rp1t "
               f"{u['code_rp1t'][2]:.2f}x, en_c4 {u['en_c4'][2]:.2f}x), 4 still judged")
+    # 6. the draw path: a cap can compress a weight change below tolerance, so where
+    # the cap binds the DRAW ratio decides, not the weight ratio. Synthetic, because no
+    # current mix presents the disagreement (cot: weight 0.952, draw 0.99994 -- same
+    # verdict either way), and an untested parameter is a parameter that rots (44).
+    print("\n--- selftest 6: post-cap draws override the weight ratio ---")
+    import tempfile as _t2
+    d6 = _t2.mkdtemp()
+    m6, p6 = os.path.join(d6, "m.json"), os.path.join(d6, "p.json")
+    json.dump({"domains": {"capped": {"weight": 0.60}, "free": {"weight": 0.60}}}, open(m6, "w"))
+    json.dump({"domains": {"capped": {"weight": 0.30}, "free": {"weight": 0.30}}}, open(p6, "w"))
+    # weights say 2.0x for BOTH roles -> both unjudgeable on weights alone
+    by_weight = reweight_unjudgeable(m6, p6)
+    assert set(by_weight) == {"capped", "free"}, by_weight
+    # the cap binds on `capped`: both mixes draw the same rows despite 2x the weight
+    draws = {"capped": (100_000, 100_006), "free": (50_000, 100_000)}
+    by_draw = reweight_unjudgeable(m6, p6, draws)
+    assert "capped" not in by_draw, f"a cap-neutralised role must be judgeable: {by_draw}"
+    assert "free" in by_draw, f"a genuinely reweighted role must still refuse: {by_draw}"
+    print("  a 2.00x weight change with an identical post-cap draw is judgeable; "
+          "a 2.00x change that reaches the draw is not")
     print("\nselftest OK")
     return 0
 
