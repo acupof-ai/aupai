@@ -4999,6 +4999,162 @@ def cmd_kill(argv):
     return 0
 
 
+MILESTONE_TOKENS = {"3.24b": 3.24e9, "8b": 8e9, "15b": 15e9, "16b": 16e9, "30b": 30e9}
+
+
+def _milestone_token(name):
+    """The milestone token budget encoded in a checkpoint name, or None."""
+    m = re.search(r"_(3\.24b|8b|15b|16b|30b)(?:_|[.\-])", name)
+    return m.group(1) if m else None
+
+
+def _exp_row_status(name):
+    """Last status of an exp row; rows are append-only, last row with the name wins."""
+    p = os.path.join(ROOT, "runs", "experiments.jsonl")
+    status = None
+    if os.path.exists(p):
+        for line in open(p, encoding="utf-8"):
+            r = json.loads(line)
+            if r.get("name") == name:
+                status = r.get("status")
+    return status
+
+
+def _wait_exp_row(name, timeout):
+    """Poll an exp row until it leaves 'running'. Returns the final status."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = _exp_row_status(name)
+        if st and st != "running":
+            return st
+        time.sleep(30)
+    return "timeout"
+
+
+def cmd_milestone(argv):
+    """`harness milestone <ckpt> [--paired <ckpt>] [--tokens T] [--mix M] [--watch <dir>] [--interval N] [--dry]`
+
+    Score a milestone checkpoint unattended (t39): score_matrix --profile milestone
+    on the lane via `harness launch`, then eval/readout_30b.py against the
+    pre-registration, then append the milestone ledger row (runs/milestones.jsonl)
+    and the facts entry, and print the three-state verdict per metric.
+
+    --watch polls a directory for new checkpoint files carrying a milestone token
+    (3.24b/8b/15b/16b/30b in the name) and runs the pipeline as they land, so a 3am
+    milestone is scored without a person. The pair defaults to the previous
+    milestone in the ledger, else ckpt_p324.pt (the 3.24B ladder stand-in).
+
+    domain_loss needs no launch of its own: the milestone profile scores it on the
+    3.24b mix, the same heads as the ladder records, and readout_30b falls back to
+    the score record when no explicit domain-loss file is given.
+    """
+    ap = argparse.ArgumentParser(prog="harness milestone")
+    ap.add_argument("ckpt", nargs="?", help="checkpoint file (single-run mode)")
+    ap.add_argument("--paired", default=None, help="paired checkpoint (default: previous milestone, else ckpt_p324.pt)")
+    ap.add_argument("--tokens", type=float, default=None, help="milestone token budget (default: parsed from the name)")
+    ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"), help="domain-loss heads mix")
+    ap.add_argument("--watch", default=None, help="poll this directory for new milestone checkpoints")
+    ap.add_argument("--interval", type=int, default=120, help="watch poll interval in seconds")
+    ap.add_argument("--dry", action="store_true", help="print the commands, run nothing")
+    a = ap.parse_args(argv)
+
+    def run_one(ckpt, paired, tokens):
+        stem = ckpt[:-3] if ckpt.endswith(".pt") else ckpt
+        if a.dry:
+            print(f"harness launch ms_{stem} -- eval/score_matrix.py --ckpt {ckpt} "
+                  f"--profile milestone --mix {os.path.relpath(a.mix, ROOT)} --json runs/score_matrix.jsonl")
+            print(f"python3 eval/readout_30b.py --milestone {ckpt} --paired {paired} "
+                  f"--milestone-tokens {tokens} > runs/readout_{stem}.txt")
+            return "dry"
+        rc = cmd_launch([
+            f"ms_{stem}", "--hypothesis", f"milestone {tokens / 1e9:.2f}B score_matrix profile", "--",
+            "eval/score_matrix.py", "--ckpt", ckpt, "--profile", "milestone",
+            "--mix", a.mix, "--json", "runs/score_matrix.jsonl",
+        ])
+        if rc != 0:
+            return "refused"  # lane occupied; the watcher retries next poll
+        st = _wait_exp_row(f"ms_{stem}", 5400)
+        if st != "ok":
+            return f"score_matrix {st}"
+        readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
+        r = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
+             "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens)],
+            capture_output=True, text=True,
+        )
+        with open(readout_path, "w", encoding="utf-8") as f:
+            f.write(r.stdout)
+        print(r.stdout)
+        if r.returncode != 0:
+            return f"readout rc={r.returncode}: {r.stderr[:200]}"
+        moved = r.stdout.count("verdict: moved")
+        preds = [p for p in (
+            os.path.join(ROOT, "data", "eval", f"preds_{ckpt}.jsonl"),
+            os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
+            os.path.join(ROOT, "data", "eval", f"preds_code_v2_{ckpt}.jsonl"),
+        ) if os.path.exists(p)]
+        row = {
+            "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
+            "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
+            "preds": [os.path.relpath(p, ROOT) for p in preds],
+            "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
+            "measured": time.strftime("%Y-%m-%d"),
+        }
+        with open(os.path.join(ROOT, "runs", "milestones.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        facts_path = os.path.join(ROOT, "facts", "base_eval.json")
+        facts = json.load(open(facts_path, encoding="utf-8"))
+        facts["facts"] = [e for e in facts["facts"] if e.get("id") != f"be.milestone_{stem}"]
+        facts["facts"].append({
+            "id": f"be.milestone_{stem}",
+            "value": f"{moved} metric(s) moved past threshold vs {paired}; full verdict in runs/readout_{stem}.txt",
+            "measured": row["measured"],
+            "source": f"runs/readout_{stem}.txt",
+            "config": f"score_matrix --profile milestone --mix {row['mix']}; readout_30b prereg thresholds; paired {paired}",
+            "uncertainty": "per-metric n and threshold printed in the readout file",
+            "status": "measured",
+        })
+        json.dump(facts, open(facts_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        return "ok"
+
+    if a.watch:
+        print(f"watching {a.watch} every {a.interval}s for milestone checkpoints", flush=True)
+        while True:
+            scored = set()
+            ms = os.path.join(ROOT, "runs", "milestones.jsonl")
+            if os.path.exists(ms):
+                scored = {json.loads(l)["ckpt"] for l in open(ms, encoding="utf-8") if l.strip()}
+            paired = a.paired
+            for p in sorted(glob.glob(os.path.join(a.watch, "ckpt_*.pt"))):
+                ckpt = os.path.basename(p)
+                if ckpt in scored:
+                    continue
+                tok = _milestone_token(ckpt)
+                if not tok:
+                    continue
+                if paired is None:
+                    paired = sorted(scored)[-1] if scored else "ckpt_p324.pt"
+                print(f"[{time.strftime('%H:%M:%S')}] milestone {ckpt} ({tok}) vs {paired}", flush=True)
+                res = run_one(ckpt, paired, MILESTONE_TOKENS[tok])
+                print(f"  -> {res}", flush=True)
+                if res == "ok":
+                    scored.add(ckpt)
+                    paired = ckpt
+            time.sleep(a.interval)
+
+    if not a.ckpt:
+        ap.error("ckpt required (or --watch)")
+    tokens = a.tokens or MILESTONE_TOKENS.get(_milestone_token(a.ckpt) or "")
+    if not tokens:
+        ap.error("--tokens required (cannot parse a milestone token from the checkpoint name)")
+    paired = a.paired or "ckpt_p324.pt"
+    res = run_one(a.ckpt, paired, tokens)
+    if res not in ("ok", "dry"):
+        print(f"FAILED: {res}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_install_hooks(rest):
     """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit}
     to scripts/hooks/pre-commit. pre-commit covers direct commits; pre-merge-commit
@@ -5052,6 +5208,8 @@ def main():
         return cmd_launch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "kill":
         return cmd_kill(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "milestone":
+        return cmd_milestone(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

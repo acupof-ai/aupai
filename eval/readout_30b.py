@@ -270,6 +270,32 @@ def selftest():
             moved_domains += 1
     assert moved_domains >= 1, "no domain loss moved between 0.2b and 3.24b -- engine or data broken"
     print(f"  {moved_domains}/{len(common)} domains moved (all in the known direction: lower at 3.24b)")
+    # 3. a record missing a metric prints ABSENT, never floor (t39 acceptance:
+    # a milestone whose score_matrix record lacks a metric is unmeasured, not floor)
+    print("\n--- selftest 3: missing metric -> ABSENT, never floor ---")
+    rec_full = load_score_record(sm, "ckpt_sft_p324_v2.pt")
+    if rec_full is None:
+        print("selftest SKIP: sft_v2 record not in runs/score_matrix.jsonl", file=sys.stderr)
+        return 0
+    import contextlib
+    import io
+    import tempfile
+    rec_missing = json.loads(json.dumps(rec_full))
+    rec_missing.get("metrics", {}).pop("code_500", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
+        tf.write(json.dumps(rec_missing) + "\n")
+        tmp = tf.name
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            readout("ckpt_sft_p324_v2.pt", "ckpt_sft_p324_v2.pt", tmp, None, None, None)
+        out = buf.getvalue()
+    finally:
+        os.unlink(tmp)
+    i = out.index("\ncode_500\n")
+    section = out[i:i + 400]
+    assert "ABSENT" in section and "floor" not in section.lower(), f"missing metric misread:\n{section}"
+    print("  code_500 absent from the record -> ABSENT, never floor")
     print("\nselftest OK")
     return 0
 
