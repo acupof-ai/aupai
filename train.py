@@ -1724,6 +1724,16 @@ def main():
             f"params {n_params / 1e6:.1f}M | tokens {len(data)} | seqs {len(X)} | "
             f"device {device} | world {world} | fa {HAS_FA} | fp8 {fp8}"
         )
+        # doc_mask is a frozen recipe key, and the only code that honours it is
+        # flash_attn_varlen_func: the fallback branch takes `cu` and ignores it, so every
+        # document attends across every boundary while the banner still prints doc_mask
+        # True. That is how five A/B arms trained 0.293 nat off the ladder without one
+        # line of the log looking wrong. On CUDA it is a wrong run, not a slow one.
+        assert not (Cfg.doc_mask and torch.cuda.is_available() and not HAS_FA), (
+            "doc_mask=True but flash_attn is unavailable -- the attention fallback ignores "
+            "cu, so documents would attend across boundaries. Install flash-attn, or pass "
+            "--no_doc_mask to say you meant it."
+        )
         runlog(
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
