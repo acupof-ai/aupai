@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -3008,6 +3009,13 @@ CHECKS = [
         check_untracked_aged,
         _broken_untracked_aged,
     ),
+    (
+        "mix_30b_contract",
+        "the 30B mix declares its full composition (landed + _blocked sum to 1.0) and names no frozen ladder directory",
+        "a pre-launch mix silently shrinks to whatever 3b has stamped, and a reused ladder name trains on the frozen corpus",
+        check_mix_30b_contract,
+        _broken_mix_30b,
+    ),
 ]
 
 
@@ -3625,6 +3633,15 @@ def _demo():
     )
     assert r.returncode == 0, f"check-head must pass after hook-mediated commit: {r.stdout} {r.stderr}"
     shutil.rmtree(d2, ignore_errors=True)
+
+    # launch gate selftest: a log without the fa/doc_mask lines must time out;
+    # a log with them must pass immediately.
+    gate_log = os.path.join(tempfile.mkdtemp(), "gate.log")
+    open(gate_log, "w").write("params 200M | device cuda | world 7 | fa True | fp8 True\n")
+    assert not _wait_for_startup(gate_log, timeout=3), "gate must FAIL without doc_mask line"
+    open(gate_log, "a").write("cfg batch 16 doc_mask True attn_res 0/0\n")
+    assert _wait_for_startup(gate_log, timeout=3), "gate must PASS with both lines"
+    shutil.rmtree(os.path.dirname(gate_log), ignore_errors=True)
 
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
@@ -4249,6 +4266,156 @@ def cmd_clean(rest):
     return 0
 
 
+def _allocation_cards(training):
+    """Card set from the controller's allocation file, never from the caller.
+
+    Training jobs get the block (all cards in mix_scale_run_config.json).
+    Non-training jobs get the lane (the card not in the block)."""
+    config_path = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+    if os.path.isfile(config_path):
+        config = json.load(open(config_path, encoding="utf-8"))
+        block = config.get("cards", "")
+        if training:
+            return block
+        block_set = {c.strip() for c in block.split(",") if c.strip()}
+        all_cards = {str(i) for i in range(8)}
+        lane = sorted(all_cards - block_set)
+        return ",".join(lane) if lane else block
+    return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+
+
+def _wait_for_startup(log_path, timeout):
+    """Poll the log for the training startup gate lines (fa and doc_mask).
+
+    train.py prints two runlog lines at startup:
+      params ... | device cuda | world 7 | fa True | fp8 True
+      cfg batch ... doc_mask True attn_res ...
+    Both must appear before the job counts as started."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.isfile(log_path):
+            text = open(log_path, errors="ignore").read()
+            if "fa " in text and "doc_mask " in text:
+                return True
+        time.sleep(2)
+    return False
+
+
+def _arm_monitor(name, pid, log_path):
+    """Start a background monitor that marks the exp row when the process dies
+    or the log goes silent for 10 minutes."""
+    monitor_code = f'''
+import os, subprocess, sys, time
+pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
+silent_limit = 600
+last_size, last_grow = 0, time.time()
+while True:
+    time.sleep(60)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        subprocess.run([sys.executable, exp_py, "done", "--name", name,
+            "--result", "process exited", "--finding", "monitor: process gone",
+            "--decision", "check the log", "--status", "ok"], capture_output=True)
+        break
+    if os.path.isfile(log):
+        sz = os.path.getsize(log)
+        if sz > last_size:
+            last_size, last_grow = sz, time.time()
+        elif time.time() - last_grow > silent_limit:
+            subprocess.run([sys.executable, exp_py, "done", "--name", name,
+                "--result", "log silent", "--finding", f"monitor: no growth in {{silent_limit}}s",
+                "--decision", "check the process", "--status", "fail"], capture_output=True)
+            break
+'''
+    monitor_proc = subprocess.Popen(
+        [sys.executable, "-c", monitor_code],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return monitor_proc.pid
+
+
+def cmd_launch(rest):
+    """`harness launch <name> [--training] [--hypothesis "..."] -- <cmd>`
+
+    Unified launcher: exp row first, setsid nohup with runs/<name>.log,
+    card allocation from the controller's config (never the caller), startup
+    gate for training jobs (kill + fail row if the fa/doc_mask line never
+    appears), monitor armed on process-gone and log-silent.
+
+    Usage:
+      harness launch p02_s0 --training --hypothesis "0.2b point" -- ./run_ddp.sh --mix data/mix_scale_0.2b.json --name p02_s0
+      harness launch eval_ckpt -- eval/math_hard.py --ckpt ckpt_k9.pt
+    """
+    ap = argparse.ArgumentParser(prog="harness launch")
+    ap.add_argument("name", help="run name (also the log and exp row name)")
+    ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
+    ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
+    ap.add_argument("--gate-timeout", type=int, default=120, help="startup gate timeout in seconds")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="-- <command> [args...]")
+    args = ap.parse_args(rest)
+
+    cmd = args.cmd
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        ap.error("no command given after --")
+
+    # 1. exp.py start row first
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"),
+         "start", "--name", args.name,
+         "--cmd", " ".join(cmd),
+         "--hypothesis", args.hypothesis],
+        check=True,
+    )
+
+    # 2. Card allocation from the controller's config
+    cards = _allocation_cards(args.training)
+
+    # 3. Launch with setsid nohup
+    log_path = os.path.join(ROOT, "runs", f"{args.name}.log")
+    pid_path = os.path.join(ROOT, "runs", f"{args.name}.pid")
+    env = os.environ.copy()
+    env["CUDA_VISIBLE_DEVICES"] = cards
+
+    with open(log_path, "w") as log_f:
+        proc = subprocess.Popen(
+            ["setsid", "nohup"] + cmd,
+            stdout=log_f, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env, cwd=ROOT,
+        )
+    with open(pid_path, "w") as f:
+        f.write(str(proc.pid))
+
+    # 4. Training jobs: verify the startup gate line
+    if args.training:
+        if not _wait_for_startup(log_path, args.gate_timeout):
+            os.kill(proc.pid, signal.SIGTERM)
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py"),
+                 "done", "--name", args.name,
+                 "--result", "killed: startup gate timeout",
+                 "--finding", f"no fa/doc_mask line in {args.gate_timeout}s",
+                 "--decision", "fix the startup issue",
+                 "--status", "fail"],
+                capture_output=True,
+            )
+            print(f"FAILED: {args.name} killed — no startup gate line in {args.gate_timeout}s", file=sys.stderr)
+            return 1
+
+    # 5. Arm monitor
+    monitor_pid = _arm_monitor(args.name, proc.pid, log_path)
+
+    print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
+    print(f"  log: {log_path}")
+    print(f"  exp: python scripts/exp.py done --name {args.name} --result ... --finding ... --decision ...")
+    return 0
+
+
 def cmd_install_hooks(rest):
     """`harness install-hooks` -- symlink .git/hooks/pre-commit to scripts/hooks/pre-commit.
     The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
@@ -4279,6 +4446,8 @@ def main():
         return cmd_clean(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "launch":
+        return cmd_launch(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
