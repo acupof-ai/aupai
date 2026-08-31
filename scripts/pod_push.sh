@@ -76,7 +76,9 @@ if [ $ALL -eq 1 ]; then
   ~/bin/pod cat /work/aupai/data/pod_head_manifest.txt > "$tmp/old" 2>/dev/null || true
   # Pod shas for every new-manifest path, one batch. Missing files error to stderr
   # and are simply absent from stdout -> pushed.
-  paths=$(awk '{print $2}' data/pod_head_manifest.txt | grep -v '^runs/')
+  # Space-separated: a newline inside the quoted command becomes a command
+  # separator in the pod's bash -lc, so only the first path would reach sha256sum.
+  paths=$(awk '{print $2}' data/pod_head_manifest.txt | grep -v '^runs/' | tr '\n' ' ')
   ~/bin/pod "cd /work/aupai && sha256sum $paths 2>/dev/null" > "$tmp/pod" || true
   pushes=(); dels=()
   while read -r op p; do
@@ -84,7 +86,7 @@ if [ $ALL -eq 1 ]; then
     if [ "$op" = push ]; then pushes+=("$p"); else dels+=("$p"); fi
   done < <(python3 scripts/pod_drift.py --plan-sync "$tmp/old" "$tmp/pod")
   echo "pod_push --all: ${#pushes[@]} push, ${#dels[@]} delete"
-  for p in "${pushes[@]}"; do push_one "$p"; done
+  for p in ${pushes[@]+"${pushes[@]}"}; do push_one "$p"; done
   if [ ${#dels[@]} -gt 0 ]; then
     ~/bin/pod "cd /work/aupai && rm -f -- ${dels[*]}"
     echo "deleted: ${dels[*]}"

@@ -262,10 +262,10 @@ def plan_sync(new_path, old_path, pod_path):
         if p.startswith("runs/"):
             continue
         if pod.get(p) != want:
-            plan.append(f"push {p}")
+            plan.append(("push", p))
     for p in old:
         if p not in new and not p.startswith("runs/"):
-            plan.append(f"del {p}")
+            plan.append(("del", p))
     return plan
 
 
@@ -418,7 +418,7 @@ def selftest():
     with open(os.path.join(j, "pod"), "w") as f:
         f.write(f"{'a' * 64}  a.py\n{'0' * 64}  b.py\n")
     plan = plan_sync(os.path.join(j, "new"), os.path.join(j, "old"), os.path.join(j, "pod"))
-    assert plan == ["push b.py", "del d.py"], plan
+    assert plan == [("push", "b.py"), ("del", "d.py")], plan
     print("pod_drift selftest OK:", evidence)
 
 
