@@ -1111,8 +1111,10 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
             v[ar, ends] = torch.where(nxt == num_id, val, torch.zeros_like(val))
         ends += (~done).long()
         done |= nxt == _EOS
-        # Repetition stop: check every 32 tokens for whitespace 8-gram repeated 3x.
+        # Repetition stop: check every 32 tokens. Whitespace 8-gram for
+        # English/code; character 12-gram for CJK-majority text (no spaces).
         if rep_stop and step > 0 and step % 32 == 31:
+            from collections import Counter
             for i in range(B):
                 if done[i]:
                     continue
@@ -1120,13 +1122,18 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
                 if len(gen_ids) < 64:
                     continue
                 text = tokenizer.decode(gen_ids)
+                hit = False
                 words = text.split()
-                if len(words) < 24:  # need at least 3x 8-grams
-                    continue
-                grams = [tuple(words[j : j + 8]) for j in range(len(words) - 7)]
-                from collections import Counter
-                counts = Counter(grams)
-                if any(c >= 3 for c in counts.values()):
+                if len(words) >= 24:  # need at least 3x 8-grams
+                    grams = [tuple(words[j : j + 8]) for j in range(len(words) - 7)]
+                    hit = any(c >= 3 for c in Counter(grams).values())
+                if not hit:
+                    cjk = sum(1 for c in text if '一' <= c <= '鿿')
+                    if cjk > len(text) * 0.3 and len(text) >= 36:
+                        chars = list(text)
+                        cg = [tuple(chars[j : j + 12]) for j in range(len(chars) - 11)]
+                        hit = any(c >= 3 for c in Counter(cg).values())
+                if hit:
                     done[i] = True
         if bool(done.all()):
             break
