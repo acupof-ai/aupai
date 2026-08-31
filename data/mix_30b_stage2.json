@@ -95,16 +95,16 @@
    "stage1_epochs_on_stage1_pool": 0.6852,
    "stage2_epochs_on_stage2_pool": 0.7391,
    "cumulative_epochs_not_defined": "stage 1 and stage 2 read DIFFERENT corpora for this domain, so there is no shared pool to count epochs against. The A-prime table's cumulative figure for this domain was computed against the stage-1 pool and is an artifact.",
-   "pool_rows": 1588514,
+   "pool_rows": 1588494,
    "epochs_pool_source": "stage-2 cache (measured)",
-   "stage2_pool_rows": 1588514,
-   "epoch_cap_note": "epochs 1 = ceil(1173995/1588514) on the STAGE-2 pool measured from its token cache. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.7391: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +35.31%.",
-   "supply_tokens": 6513329302,
-   "fingerprint": "a67cde07d3b3f63d",
+   "stage2_pool_rows": 1588494,
+   "epoch_cap_note": "epochs 1 = ceil(1173995/1588494) on the STAGE-2 pool measured from its token cache. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 0.7391: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom +35.31%.",
+   "supply_tokens": 6513304690,
+   "fingerprint": "1e687e4b5ce37598",
    "supply_epochs": 1,
-   "supply_x_epochs_tokens": 6513329302,
+   "supply_x_epochs_tokens": 6513304690,
    "supply_margin_pct": 35.45,
-   "status": "LANDED: data/corpus/math_owm_stage2 stamped, fp a67cde07d3b3f63d, supply 6513329302 tokens covers the want of 4808683520 at 1 epoch(s) by 35.45%. epochs 1 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
+   "status": "LANDED: data/corpus/math_owm_stage2 stamped, fp 1e687e4b5ce37598, supply 6513304690 tokens covers the want of 4808683520 at 1 epoch(s) by 35.45%. epochs 1 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
   },
   "cot": {
    "weight": 0.0806945,
