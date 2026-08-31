@@ -1,0 +1,42 @@
+{
+ "total_tokens": 1500000000.0,
+ "anneal_frac": 0,
+ "_comment": "t31 real-packing rehearsal: stage-1 domains (all 7 stamped 2026-08-31), stage-1 weights renormalised, small total for 50 steps. Not a training mix -- throughput measurement only.",
+ "domains": {
+  "code_rp1t": {
+   "weight": 0.47094,
+   "epochs": 1,
+   "anneal": 0.47094
+  },
+  "math_seed": {
+   "weight": 0.01633,
+   "epochs": 3,
+   "anneal": 0.01633
+  },
+  "cot": {
+   "weight": 0.0848,
+   "epochs": 3,
+   "anneal": 0.0848
+  },
+  "en_c4": {
+   "weight": 0.27793,
+   "epochs": 1,
+   "anneal": 0.27793
+  },
+  "zh_web": {
+   "weight": 0.11,
+   "epochs": 1,
+   "anneal": 0.11
+  },
+  "textbook_30b": {
+   "weight": 0.03333,
+   "epochs": 1,
+   "anneal": 0.03333
+  },
+  "wiki_chat": {
+   "weight": 0.00667,
+   "epochs": 1,
+   "anneal": 0.00667
+  }
+ }
+}
