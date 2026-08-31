@@ -219,9 +219,9 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             if note:
                 print(f"  note: {note}")
             if state == "moved" and direction == "improved":
-                print(f"  RL gate: gap >= 15pt -> RL may start (something to amplify)")
+                print("  RL gate: gap >= 15pt -> RL may start (something to amplify)")
             elif state == "flat":
-                print(f"  RL gate: gap readable but < 15pt -> no RL (the 200M 3.5pt reading was flat, not floor)")
+                print("  RL gate: gap readable but < 15pt -> no RL (the 200M 3.5pt reading was flat, not floor)")
             continue
         # generative accuracy metrics
         mv = get_field(m_rec, spec["field"])
