@@ -259,6 +259,8 @@ def main():
     rows = rows[:500]
     out_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "data", "eval", "code_holdout_v2_500.jsonl")
+    # restartable: deterministic from random.Random(2026), full run is seconds,
+    # and rows are written one per line -- an interrupt loses at most the in-flight row.
     with open(out_path, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
