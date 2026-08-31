@@ -84,6 +84,11 @@ def clean(domain, source):
         "--host_cap",
         "0",  # single-source corpora: not a per-host web crawl
     ]
+    if domain in ("code", "en", "math", "cot"):
+        # the web chain's CJK/symbol/digit ratios delete a code/English corpus
+        # outright (2026-08-31: 100% of RedPajama code rejected as not_zh);
+        # light = length/bytes/holdout only, domain-neutral.
+        cmd += ["--filters", "light"]
     print(" ".join(cmd))
     r = subprocess.run(cmd, cwd=ROOT)
     if r.returncode != 0:
