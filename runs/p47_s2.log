@@ -1,0 +1,283 @@
+W0831 08:47:18.828000 606360 torch/distributed/run.py:851] 
+W0831 08:47:18.828000 606360 torch/distributed/run.py:851] *****************************************
+W0831 08:47:18.828000 606360 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0831 08:47:18.828000 606360 torch/distributed/run.py:851] *****************************************
+corpus_fp: {'web_hq': '30838d423348b2e5', 'textbook': '3f237c5191cb8571', 'wiki': '44eb88458cfb3ed5', 'en': '9f37cb35219bb617', 'math': 'e1e86aa0b594c5ed', 'code': '5bb775eae9029669', 'chat': '080fdd63401b4ff9'}
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W831 08:47:39.005707269 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: web_hq 23717 rows = 0.07 epochs
+mix: textbook 36343 rows = 0.09 epochs
+mix: wiki 5545 rows = 0.10 epochs
+mix: en 3627 rows = 0.10 epochs
+mix: math 1843 rows = 0.10 epochs
+mix: code 1298 rows = 0.10 epochs
+mix: chat 861 rows = 0.10 epochs
+mix: 73234 rows = 0.30B tokens scheduled
+env fingerprint OK (b802edfcec8dad5e)
+Resumed from ckpt_p47_s1.pt.step50 (step 50)
+FP8 compute enabled
+params 206.1M | tokens 10462 | seqs 10462 | device cuda:0 | world 7 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 20 epochs 1 lr_scale 1.0 mix data/mix_scale_0.3b.json fone False
+dynamo cache_size_limit=64 (need 25)
+WSD JOIN: resumed at step 50/100 under mix data/mix_scale_0.3b.json | lr_mult 1.0000 | warmdown 0.1 anneal_frac 0.1 | warmdown starts at step 90
+[rank0]:W0831 08:48:00.963000 606427 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank5]:W0831 08:48:00.963000 606432 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank3]:W0831 08:48:00.965000 606430 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank2]:W0831 08:48:00.971000 606429 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0831 08:48:00.974000 606428 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank6]:W0831 08:48:00.977000 606433 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank4]:W0831 08:48:00.977000 606431 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+step 60/100 60% [main] | loss 5.716 | lr 1.00e-02 | gnorm 1.17 | 0.06B tok | 21K tok/s/gpu | MFU 9% | ETA 0.1h
+step 70/100 70% [main] | loss 4.935 | lr 1.00e-02 | gnorm 2.20 | 0.06B tok | 60K tok/s/gpu | MFU 25% | ETA 0.0h
+step 80/100 80% [main] | loss 4.873 | lr 1.00e-02 | gnorm 1.02 | 0.07B tok | 54K tok/s/gpu | MFU 22% | ETA 0.0h
+step 90/100 90% [main] | loss 4.941 | lr 1.00e-02 | gnorm 1.03 | 0.08B tok | 69K tok/s/gpu | MFU 29% | ETA 0.0h
+step 100/100 100% [anneal] | loss 4.454 | lr 7.32e-04 | gnorm 0.22 | 0.09B tok | 56K tok/s/gpu | MFU 23% | ETA 0.0h
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 83                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank4]:W0831 08:50:54.018000 606431 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/55: batch_size == 69                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank1]:W0831 08:50:56.023000 606428 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 115                                        # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank2]:W0831 08:50:56.176000 606429 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 113                                        # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank3]:W0831 08:50:56.439000 606430 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 68                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank6]:W0831 08:50:56.753000 606433 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 84                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank5]:W0831 08:50:58.403000 606432 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64] torch._dynamo hit config.recompile_limit (64)
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64]    last reason: 17/63: batch_size == 73                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64] User stack trace:
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+[rank0]:W0831 08:50:58.534000 606427 torch/_dynamo/convert_frame.py:1743] [17/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
+ep 1/1 train 4.454 val 4.717 194s
+saved /work/aupai/ckpt_p47_s2.pt
+/work/aupai/runs/p47_s2.log: no curves found
