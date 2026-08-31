@@ -22,7 +22,7 @@ cd "$(dirname "$0")/.."
 
 ALL=0
 if [ "${1:-}" = "--all" ]; then ALL=1; shift; fi
-[ $# -ge 1 ] || { echo "usage: $0 [--all] <file>..."; echo "       $0 --all   (sync the whole manifest: push changed, delete manifest-left)"; exit 2; }
+[ $# -ge 1 ] || [ $ALL -eq 1 ] || { echo "usage: $0 [--all] <file>..."; echo "       $0 --all   (sync the whole manifest: push changed, delete manifest-left)"; exit 2; }
 
 find_emptydir() {
   [ -n "${EMPTYPATH:-}" ] && return
