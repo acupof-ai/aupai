@@ -957,3 +957,35 @@ A review reports what it *ran*, not what it read.
   nobody can reproduce, and it reads exactly like one that can. A fact's source is the
   command that produced it plus a durable artifact: a score-matrix record, a preds file, a
   commit sha. Never the log.
+- **The attention fallback silently drops the document mask, and a frozen recipe key went
+  with it.** `flash_attn` became an empty namespace package — the base image ships a
+  `flash_attn/` directory containing only `cute` (from flash-attn 4), while the v2 that
+  `train.py` imports lived in the container's writable layer and went with the restart
+  that also took liger_kernel, fla, flask, opencc and trackio. Those five were noticed and
+  reinstalled; flash-attn was not, because the image's same-named directory made
+  `find_spec` report it present. `check_env_importable` — whose docstring names this exact
+  incident — was therefore green throughout, reporting "all 17 packages present". The fix
+  is that a spec with `origin is None` counts as missing.
+  **The cost was not a missing package.** `train.py:301` falls back to
+  `F.scaled_dot_product_attention(..., is_causal=True)` and never passes `cu`, so with
+  `HAS_FA=False` every document attends across its boundaries into unrelated preceding
+  documents — while `Cfg.doc_mask` is True, `doc_cu_seqlens` computes the boundaries
+  correctly, and the startup banner prints `doc_mask True` next to `fa False` without
+  noticing that they contradict. `doc_mask` is in `_FROZEN_KEYS`: **an environment change
+  silently overrode a frozen recipe key**, and the five A/B arms that ran this way were not
+  a different kernel from the ladder, they were a different training objective (0.293 nat
+  apart). Rule: **a config flag that a code path can ignore must assert, not degrade** —
+  `assert not (Cfg.doc_mask and not HAS_FA)` at startup, beside the shape audit. Any
+  boolean that gates behaviour in one place and is checked in another is this bug waiting.
+- **`check=True` is the wrong guard on a network fetch.** The 28GB code fetch died 12h22m
+  before anyone noticed, on `subprocess.run(curl, check=True)` meeting curl exit 92 — a
+  transient HTTP/2 stream error after curl's own six retries. A transient non-zero from a
+  network tool is the normal case, not the exceptional one, so `check=True` converted a
+  retryable blip into the death of an eleven-file run. It died with no log under `runs/`
+  (the traceback went to `/tmp`), no `setsid`, and no monitor — the controller had armed
+  monitors on the scoring run and the RL gate, neither of which was on the critical path,
+  and none on the thing it had itself called the long pole. Two readings of `du -sh`
+  returning the same bytes were reported as a percentage rather than triggering "why has
+  this not moved". Rule: **a long fetch needs a per-file progress log under `runs/`,
+  bounded retry per shard rather than a fatal check, resume from `.part`, and a monitor
+  that fires on both "process gone" and "bytes unchanged while process alive".**
