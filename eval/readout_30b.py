@@ -81,6 +81,72 @@ WARMUP_CONFOUND_MILESTONE_TOKENS = 3.24e9  # only the 3.24B pair has the 20-vs-3
 # alias the tripwire the pre-registration relies on reads ABSENT rather than a number.
 FIELD_ALIASES = {"mc_full": ("mc_ceval",), "mc_ceval": ("mc_full",)}
 
+#: A per-role domain-loss delta across two mixes carries a reweighting effect as well as a
+#: capability change. Equal domain SETS pass the different-heads guard, so a stage-1 vs
+#: stage-2 pair looks valid while three of its seven roles were reweighted 0.74x to 1.75x.
+#: 5% relative: comfortably inside the noise on a weight, and at the stage-1 -> A' boundary
+#: it separates the two groups cleanly (largest passing move 5%, smallest failing 21%).
+#: The partition is a property of THIS pair of mixes and is recomputed per boundary, never
+#: memorised (prereg §7.1, fb 2026-08-31).
+WEIGHT_CHANGE_LIMIT = 0.05
+
+
+def _mix_weights(mix_path):
+    """{domain: weight} for a mix file, or {} when the path is absent or unreadable.
+    Absent means "cannot check", which reads as no refusal -- the caller treats a missing
+    mix as an unknown ratio rather than a zero one."""
+    if not mix_path or not os.path.exists(mix_path):
+        return {}
+    try:
+        with open(mix_path, encoding="utf-8") as f:
+            mix = json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+    return {k: float(v.get("weight", 0)) for k, v in (mix.get("domains") or {}).items()}
+
+
+def weight_ratio(domain, milestone_mix, paired_mix):
+    """milestone weight / paired weight for one domain; None when either is unavailable.
+
+    None means unjudgeable-by-absence and must not be read as 1.0: a missing mix file
+    would otherwise silently assert the weights are equal, which is the failure this
+    whole document is about."""
+    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
+    if domain not in mw or domain not in pw or not pw[domain]:
+        return None
+    return mw[domain] / pw[domain]
+
+
+def draws_equal(domain, milestone_mix, paired_mix, seq=4096):
+    """True when both mixes DRAW the same row count for a domain despite different weights.
+
+    The weight ratio is a proxy; the exact condition is post-cap draw equality (44, prereg
+    §7.1). build_mix computes want = int(total_rows * weight) and then caps it at
+    int(pool_rows * epochs), so two different weights that both exceed the cap produce the
+    identical draw and carry no reweighting effect at all. cot is the live case: w1 wants
+    310,546 rows and w2 wants 295,495, and both clamp to 295,512.
+
+    None when the mixes do not carry what this needs (row totals, epochs, a pool size),
+    which sends the caller back to the conservative weight-ratio test."""
+    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
+    if domain not in mw or domain not in pw:
+        return None
+    try:
+        m = json.load(open(milestone_mix, encoding="utf-8"))
+        p = json.load(open(paired_mix, encoding="utf-8"))
+        pool = m["domains"][domain].get("pool_rows") or p["domains"][domain].get("pool_rows")
+        if not pool:
+            return None
+        m_rows = int(m["total_tokens"] / seq)
+        p_rows = int(p["total_tokens"] / seq)
+        m_ep = m["domains"][domain].get("epochs", 1)
+        p_ep = p["domains"][domain].get("epochs", 1)
+        m_draw = min(int(m_rows * mw[domain]), int(pool * m_ep))
+        p_draw = min(int(p_rows * pw[domain]), int(pool * p_ep))
+    except Exception:  # noqa: BLE001
+        return None
+    return m_draw == p_draw
+
 
 def load_score_record(path, ckpt, profile="full"):
     """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
@@ -258,7 +324,7 @@ BUDGET_MISMATCH_LIMIT = 0.05
 
 def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens,
             milestone_profile="milestone", paired_profile="full", selftest=False, ckpt_dir=None,
-            actual_tokens=None, paired_tokens=None):
+            actual_tokens=None, paired_tokens=None, milestone_mix=None, paired_mix=None):
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
     m_rec = load_score_record(score_matrix, milestone, milestone_profile)
     p_rec = load_score_record(score_matrix, paired, paired_profile)
@@ -322,6 +388,22 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             for d in common:
                 mv = m_dl["domains"][d]["loss"]
                 pv = p_dl["domains"][d]["loss"]
+                # A role whose WEIGHT changed between the two mixes carries a reweighting
+                # effect inside its delta. Equal head sets pass the guard above, so this is
+                # the case that guard cannot see. Refuse per role rather than per pair: at
+                # the stage-1 -> A' boundary four roles move by <5% and three by 21-75%, so
+                # refusing the whole metric would discard four honest reads and permitting
+                # it would ask a reader to discount 1.75x by eye.
+                wr = weight_ratio(d, milestone_mix, paired_mix)
+                same_draw = draws_equal(d, milestone_mix, paired_mix)
+                if wr is not None and abs(wr - 1.0) > WEIGHT_CHANGE_LIMIT and not same_draw:
+                    w_p = _mix_weights(paired_mix).get(d)
+                    w_m = _mix_weights(milestone_mix).get(d)
+                    print(f"  {d:15s} milestone={mv:.4f} paired={pv:.4f}  "
+                          f"floor (reweighted, unjudgeable)  w {w_p:.5f} -> {w_m:.5f} ({wr:.2f}x)")
+                    print(f"      note: read within-stage only; the cross-stage delta mixes "
+                          f"capability with a {wr:.2f}x weight change")
+                    continue
                 state, direction, delta, note = verdict(name, spec, mv, pv, is_3p24b)
                 if state == "moved":
                     any_moved = True
@@ -509,6 +591,50 @@ def selftest():
     assert "REFUSING" in out4 and "DIFFERENT heads" in out4, out4[-400:]
     assert "moved (degraded)" not in out4, "disjoint heads must never produce a verdict"
     print("  disjoint heads refuse; no per-domain verdict is printed")
+    # 5. A reweighted role refuses; roles whose weight held still print a verdict. The
+    # failing case is math_owm at 1.75x (stage 1 0.18333 -> A' 0.32058): equal domain SETS
+    # pass the different-heads guard, so without this gate the reweighting shows up as
+    # capability. cot is the post-cap case -- its weight moved 0.95x AND both mixes clamp
+    # to the same 295,512 rows, so it is judgeable for the stronger reason.
+    print("\n--- selftest 5: a reweighted role refuses, an unchanged one is judged ---")
+    import tempfile as _t5
+    W1 = {"code_rp1t": 0.37200, "math_owm": 0.18333, "cot": 0.08480, "en_c4": 0.20987,
+          "zh_web": 0.11000, "textbook_30b": 0.03333, "wiki_chat": 0.00667}
+    W2 = {"code_rp1t": 0.29330, "math_owm": 0.32058, "cot": 0.08069, "en_c4": 0.15604,
+          "zh_web": 0.10955, "textbook_30b": 0.03320, "wiki_chat": 0.00664}
+    with _t5.TemporaryDirectory() as d5:
+        m5p, p5p = os.path.join(d5, "s2.json"), os.path.join(d5, "s1.json")
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in W2.items()}},
+                  open(m5p, "w"))
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in W1.items()}},
+                  open(p5p, "w"))
+        # milestone strictly better on every role, so any judged role reads "moved"
+        m5 = {"ckpt": "m5.pt", "profile": "milestone",
+              "metrics": {"domain_loss": {k: {"loss": 1.5} for k in W1}}}
+        p5 = {"ckpt": "p5.pt", "profile": "full",
+              "metrics": {"domain_loss": {k: {"loss": 2.5} for k in W1}}}
+        sm5 = os.path.join(d5, "sm.jsonl")
+        with open(sm5, "w") as f:
+            f.write(json.dumps(m5) + "\n" + json.dumps(p5) + "\n")
+        buf5 = _io.StringIO()
+        with _c.redirect_stdout(buf5):
+            readout("m5.pt", "p5.pt", sm5, None, None, 8e9, paired_profile="full",
+                    milestone_mix=m5p, paired_mix=p5p)
+        out5 = buf5.getvalue()
+    for role, ratio in (("math_owm", 1.75), ("code_rp1t", 0.79), ("en_c4", 0.74)):
+        line = next((ln for ln in out5.splitlines() if ln.strip().startswith(role)), "")
+        assert "reweighted, unjudgeable" in line, (
+            f"{role} moved {ratio}x and was still judged: {line!r}. Equal domain sets pass "
+            "the different-heads guard, so nothing else catches this."
+        )
+    for role in ("cot", "zh_web", "textbook_30b", "wiki_chat"):
+        line = next((ln for ln in out5.splitlines() if ln.strip().startswith(role)), "")
+        assert "moved" in line and "reweighted" not in line, (
+            f"{role} held its weight and was refused anyway: {line!r}. Refusing the whole "
+            "metric would discard four honest reads."
+        )
+    print("  3 reweighted roles refuse (1.75x/0.79x/0.74x); 4 unchanged roles judged")
+
     print("\nselftest OK")
     return 0
 
@@ -522,6 +648,8 @@ def main():
     ap.add_argument("--paired-domain-loss", help="domain_loss.py --json for the paired checkpoint (same heads)")
     ap.add_argument("--milestone-tokens", type=float, help="milestone token budget (3.24e9/8e9/16e9/30e9); activates the warmup-confound rule at 3.24B")
     ap.add_argument("--ckpt-dir", default=ROOT, help="where the checkpoints live (for the params header)")
+    ap.add_argument("--milestone-mix", help="mix json the milestone trained under (per-role reweight gate, prereg 7.1)")
+    ap.add_argument("--paired-mix", help="mix json the paired checkpoint trained under")
     ap.add_argument("--actual-tokens", type=float, default=None,
                     help="tokens the milestone checkpoint actually saw (step x tokens/step)")
     ap.add_argument("--paired-tokens", type=float, default=None,
@@ -535,7 +663,8 @@ def main():
     if not a.milestone or not a.paired:
         ap.error("--milestone and --paired are required (or --selftest)")
     readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
-            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir)
+            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir,
+            milestone_mix=a.milestone_mix, paired_mix=a.paired_mix)
 
 
 if __name__ == "__main__":
