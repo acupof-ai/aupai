@@ -4844,6 +4844,49 @@ def _selftest_pool_not_raw_supply():
     print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
 
 
+def _selftest_gpu_descendants():
+    """Known answer: a child whose cmdline shares nothing with its parent's is still
+    found, because descent is what is walked.
+
+    The failing case is the real one -- score_matrix (parent) shells out to
+    math_zh.py (child). On 2026-08-31 a kill matched children by the parent's
+    cmdline pattern, math_zh.py could not match, and it survived holding 12.7 GB on
+    GPU 7. The verification greped the same pattern, so `killed; exp row closed`
+    printed over a live orphan.
+
+    Pure-function test on the ppid walk: no pod, no GPU.
+    """
+    def walk(gpu_pids, ppid, root, limit=12):
+        out = []
+        for p in gpu_pids:
+            seen, cur = 0, p
+            while cur in ppid and seen < limit:
+                cur = ppid[cur]
+                seen += 1
+                if cur == str(root):
+                    out.append(p)
+                    break
+        return out
+
+    # parent 100 -> score_matrix 200 -> math_zh 300; 400 is someone else's job.
+    ppid = {"200": "100", "300": "200", "400": "999"}
+    got = walk(["300", "400"], ppid, 100)
+    assert got == ["300"], f"descent must find the grandchild and only it: {got}"
+
+    # The failing case: pattern matching cannot find it. This is what the old code did.
+    parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
+    child_cmdline = "math_zh.py --ckpt X --shards 1"
+    assert parent_cmdline not in child_cmdline, "the premise: the child shares no cmdline text"
+
+    # A cycle must not hang the kill path.
+    got = walk(["1"], {"1": "2", "2": "1"}, 999)
+    assert got == [], "a ppid cycle must terminate and match nothing"
+
+    # A direct child is found too, not just a grandchild.
+    assert walk(["200"], {"200": "100"}, 100) == ["200"]
+    print("  gpu descendants: grandchild with a foreign cmdline found; cycle terminates; stranger excluded")
+
+
 def _selftest_killpg_reaps_children():
     """A kill must reap a child running a DIFFERENT script.
 
@@ -5504,6 +5547,7 @@ def _demo():
 
     _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
+    _selftest_gpu_descendants()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
