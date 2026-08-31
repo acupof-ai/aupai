@@ -55,7 +55,8 @@ def main():
     stats = {}
     sp = os.path.join(ROOT, "data", "corpus", "code", "build_corpus_stats.json")
     if os.path.exists(sp):
-        stats = json.load(open(sp))
+        with open(sp, encoding="utf-8") as fh:
+        stats = json.load(fh)
     fp = stats.get("filters_fp")
 
     per_file = tokens / max(1, len(SHARDS))
@@ -74,3 +75,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
