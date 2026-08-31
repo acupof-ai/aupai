@@ -489,11 +489,15 @@ def _metric(name, fn, record, *args, **kwargs):
         print(f"  {name:15s} {v}", flush=True)
 
 
-def score(ckpt_path, mix_path, tok_path, device, ngpu=1):
+def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
-    wanted = APPLIES[kind]
+    wanted = metrics if metrics else APPLIES[kind]
+    known = set().union(*APPLIES.values())
+    bad = [m for m in wanted if m not in known]
+    if bad:
+        raise ValueError(f"unknown metrics {bad}; choose from {sorted(known)}")
     print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
@@ -567,6 +571,8 @@ def main():
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any record")
     ap.add_argument("--ngpu", type=int, default=1,
                     help="GPUs for sharded evals (1 on the lane card, 7 on the training block)")
+    ap.add_argument("--metrics", nargs="+", default=None,
+                    help="subset of metrics to run (default: all that apply to the ckpt type)")
     a = ap.parse_args()
     if a.selftest:
         selftest()
@@ -578,7 +584,7 @@ def main():
     records = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu)
+            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, a.metrics)
         except Exception as e:
             print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
             continue
