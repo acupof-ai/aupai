@@ -4,13 +4,16 @@ Groups are matched on kernel name, most specific first. The point of the exercis
 coverage: whatever does not match a named group lands in 'UNATTRIBUTED', which is the
 number the task exists to shrink below 5%.
 """
-import json, sys, re
+import json
+import re
+import sys
 from collections import defaultdict
 
 path = sys.argv[1]
 n_active = int(sys.argv[2]) if len(sys.argv) > 2 else 20
 
-ev = json.load(open(path))["traceEvents"]
+with open(path) as fh:
+    ev = json.load(fh)["traceEvents"]
 # GPU kernels only: cat kernel/gpu_memcpy/gpu_memset carry device duration in us.
 gpu = [e for e in ev if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset") and "dur" in e]
 
@@ -60,6 +63,6 @@ print("-" * 66)
 named = 100 - tot.get("UNATTRIBUTED", 0) / grand * 100
 print(f"named coverage {named:.1f}%  (target >= 95%)")
 if unattr:
-    print(f"\ntop unattributed kernels:")
+    print("\ntop unattributed kernels:")
     for nm, d in sorted(unattr.items(), key=lambda kv: -kv[1])[:12]:
         print(f"  {d/n_active/1000.0:7.2f} ms/step  {nm[:88]}")
