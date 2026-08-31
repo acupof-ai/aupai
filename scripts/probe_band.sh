@@ -17,8 +17,11 @@ trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < "$PROBE")
 
 pids=()
+# Respect an outer CUDA_VISIBLE_DEVICES: shard i maps to the i-th visible device,
+# not physical device i (same fix as eval_hard.sh, 2f97e4a).
+IFS=',' read -ra _DEVS <<< "${CUDA_VISIBLE_DEVICES:-}"
 for i in $(seq 0 $((N - 1))); do
-  CUDA_VISIBLE_DEVICES=$i python3 eval/math_hard.py --ckpt "$CKPT" --data "$PROBE" \
+  CUDA_VISIBLE_DEVICES=${_DEVS[$i]:-$i} python3 eval/math_hard.py --ckpt "$CKPT" --data "$PROBE" \
     --shards "$N" --shard "$i" --k 8 --temperature 0.8 --max_new 320 \
     --dump "$GENS.$i" > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
