@@ -1360,37 +1360,64 @@ def _broken_entrypoint_help():
     return d
 
 
-def check_no_stale_running(root):
+def _exp_events(root, folded=True):
+    """runs/experiments.jsonl. Folded by (name, started): the last event for a run wins.
+
+    The ledger is an EVENT LOG, not a table -- exp.py `done` appends a closing event
+    carrying the start row's `started` rather than rewriting the start row, so that a
+    union merge of two branches cannot produce two half-closed runs. A reader that
+    walks raw lines and looks at `status` therefore sees every closed run as still
+    running, forever.
+
+    That is not hypothetical: p02_fp32m_s0 was correctly closed on 2026-09-01 with an
+    appended event on the exact (name, started) pair, and check_no_stale_running kept
+    failing on it, because the check re-implemented the read without the fold. exp.py
+    has folded since it was written; four readers here had not."""
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
-        return SKIP, "runs/experiments.jsonl not present"
-    # Fold by (name, started) FIRST: the ledger is an event log, so a run has a running
-    # row and later a terminal one. Filtering for status=="running" before folding
-    # counts a row that a later `done` already superseded -- sft_p324_v3 has
-    # running@03:44 and killed@03:44, and this check failed on the running row while
-    # the run was long closed, refusing every merge in the shipment window. Same missed
-    # reader as score_matrix_present: experiments() grew a fold and this reader did not
-    # adopt it (fb, 2026-09-01).
-    folded = {}
+        return None
+    evs = []
     for line in open(p, encoding="utf-8"):
-        try:
-            r = json.loads(line)
-        except Exception:
+        line = line.strip()
+        if not line:
             continue
-        k = (r.get("name"), r.get("started"))
-        prev = folded.get(k)
-        # Terminal beats running regardless of POSITION. Union merge concatenates two
-        # branches' rows, so a `running` row can land after the `ok` that closed it --
-        # sft_p324_v3 has ok at line 44 and running at 132 for the same (name, started).
-        # Position-based last-wins reads that as an open run 25h old and refuses every
-        # merge. A run does not reopen; only `task reopen` does that, and it is a
-        # different ledger.
-        if prev is None or (prev.get("status") == "running" and r.get("status") != "running"):
-            folded[k] = r
-        elif prev.get("status") != "running" and r.get("status") != "running":
-            folded[k] = r  # two terminal events: the later one wins
+        try:
+            evs.append(json.loads(line))
+        except Exception:
+            continue  # a line another session is mid-append
+    if not folded:
+        return evs
+    out = {}
+    for r in evs:
+        key = (r.get("name"), r.get("started"))
+        prev = out.get(key)
+        # A close is TERMINAL. Last-write-wins alone reopens a finished run when a
+        # duplicate start event lands after its close -- which the ledger contains:
+        # (sft_p324_v3, 2026-08-31 03:44) has an ok event at line 44 and a running
+        # event at line 132, and folding on order alone reported a run that finished
+        # in 32 minutes as 26 hours stale. A union merge of two branches can order
+        # events however it likes, so order is not evidence of sequence.
+        # Terminal beats running regardless of POSITION. A union merge concatenates
+        # two branches' rows, so a `running` row can land after the `ok` that closed
+        # it -- sft_p324_v3 has ok at line 44 and running at 132 for the same
+        # (name, started). Position-based last-wins reads that as an open run 25h old
+        # and refuses every merge in the shipment window. A run does not reopen; only
+        # `task reopen` does that, and it is a different ledger. Two terminal events
+        # for one run: the later one wins. (de and e1 reached this independently,
+        # 2026-09-01; de's inline version in check_no_stale_running and this shared
+        # one merged here, with de's reasoning kept.)
+        if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
+            continue
+        out[key] = r
+    return list(out.values())
+
+
+def check_no_stale_running(root):
+    evs = _exp_events(root)  # folded: an appended close must clear its start row
+    if evs is None:
+        return SKIP, "runs/experiments.jsonl not present"
     rows = []
-    for r in folded.values():
+    for r in evs:
         if r.get("status") != "running":
             continue
         # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
@@ -5629,6 +5656,50 @@ def _selftest_merge_reverted_content():
     print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
 
 
+def _selftest_exp_fold():
+    """The ledger is an event log: a close clears its start, and a stray later start
+    does not reopen a closed run.
+
+    Both halves are real defects from 2026-09-01. p02_fp32m_s0 was correctly closed
+    with an appended event on the exact (name, started) pair and check_no_stale_running
+    kept failing, because it walked raw lines. Then (sft_p324_v3, 03:44) turned out to
+    carry an ok event at line 44 and a running event at line 132 — folding on file
+    order alone reported a run that finished in 32 minutes as 26 hours stale."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="expfold_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        ev = [
+            {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
+            {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
+            # a duplicate START appended AFTER the close, the sft_p324_v3 shape
+            {"name": "b", "started": "2026-08-31 03:44", "status": "ok", "ended": "2026-08-31 04:16"},
+            {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
+            # a genuinely open run must survive the fold
+            {"name": "c", "started": "2026-08-31 12:45", "status": "running", "ended": ""},
+        ]
+        with open(p, "w", encoding="utf-8") as f:
+            for r in ev:
+                f.write(json.dumps(r) + "\n")
+
+        folded = {(r["name"], r["started"]): r for r in _exp_events(d)}
+        assert folded[("a", "2026-08-31 05:08")]["status"] == "fail", "an appended close must clear its start"
+        assert folded[("b", "2026-08-31 03:44")]["status"] == "ok", \
+            "a start appended after a close must NOT reopen the run"
+        assert folded[("c", "2026-08-31 12:45")]["status"] == "running", \
+            "a genuinely open run must still read as running"
+        assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
+
+        state, evidence = check_no_stale_running(d)
+        assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  exp fold: close clears its start; a later start does not reopen; open runs survive")
+
+
 def _selftest_gpu_descendants():
     """Known answer: a child whose cmdline shares nothing with its parent's is still
     found, because descent is what is walked.
@@ -5977,12 +6048,21 @@ def _demo():
         # failure mode 1: a truncated pod row -> refuse, never ride into the ledger
         _, err = _merge_jsonl(pod_fake + [pod_fake[0][:20]], real, eid, "selftest")
         assert err and "parse" in err, f"sync selftest: truncated pod row not caught: {err}"
-        # failure mode 2: a merged output missing a pod row -> verify catches it
+        # failure mode 2: a merged output missing a pod row -> verify catches it.
+        # Drop an identity, not a LINE. Two events legitimately share (name, started)
+        # -- a start and its close -- so dropping the last line can leave its identity
+        # present through the sibling event and the check correctly reports nothing
+        # lost. This selftest used to pass only because the real ledger's last line
+        # happened to be identity-unique; closing p02_fp32m_s0 made it a duplicate and
+        # the assert stopped firing (2026-09-01). It was testing the fixture.
         pod_ids = [eid(json.loads(l)) for l in pod_fake]
         pod_set = set(pod_ids)
         repo_only_ids = [eid(json.loads(l)) for l in real if eid(json.loads(l)) not in pod_set]
         merged_ids = [eid(json.loads(l)) for l in merged.strip().split("\n")]
-        err = _verify_merge(pod_ids, repo_only_ids, merged_ids[:-1], "selftest")
+        dropped = pod_ids[0]
+        kept = [i for i in merged_ids if i != dropped]
+        assert len(kept) < len(merged_ids), "the selftest must actually drop something"
+        err = _verify_merge(pod_ids, repo_only_ids, kept, "selftest")
         assert err and "lost" in err, f"sync selftest: lost row not caught: {err}"
 
     # pod_push manifest freshness: --check-head must fail when a scoped file changed
@@ -6196,6 +6276,7 @@ def _demo():
     _selftest_auto_resume()
     _selftest_devs_map()
     _selftest_gpu_descendants()
+    _selftest_exp_fold()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_reverted_content()
 
@@ -7496,6 +7577,26 @@ def cmd_kill(argv):
 TOKENS_PER_STEP = 16 * 2 * 4096 * 7
 
 
+def _paired_profile(paired, matrix=None):
+    """The profile the pair's record actually carries: 'milestone' when one exists,
+    else 'full'. Asking the ledger beats assuming -- a pair scored only under the
+    milestone profile has no full record, and a missing record reads as ABSENT
+    rather than as an error."""
+    path = matrix or os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    have = set()
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("ckpt") == paired:
+                have.add(r.get("profile", "full"))
+    return "milestone" if "milestone" in have and "full" not in have else "full"
+
+
 def _pin_milestone(watch_dir, run, ckpt, token):
     """Take a milestone checkpoint out of train.py's rotation. Returns the pinned path.
 
@@ -7557,14 +7658,16 @@ def _milestone_token(name):
 
 def _exp_row_status(name):
     """Last status of an exp row; rows are append-only, last row with the name wins."""
-    p = os.path.join(ROOT, "runs", "experiments.jsonl")
-    status = None
-    if os.path.exists(p):
-        for line in open(p, encoding="utf-8"):
-            r = json.loads(line)
-            if r.get("name") == name:
-                status = r.get("status")
-    return status
+    # Folded by (name, started), then the latest start for that name. Folding by
+    # NAME alone attaches a close to whichever row came last in the file, which is
+    # how a close landed on the wrong start of p02_fp32m_s0 (fb, 2026-09-01).
+    evs = _exp_events(ROOT)
+    if not evs:
+        return None
+    mine = [r for r in evs if r.get("name") == name]
+    if not mine:
+        return None
+    return max(mine, key=lambda r: str(r.get("started", ""))).get("status")
 
 
 def _wait_launched(name, timeout):
@@ -7731,7 +7834,15 @@ def cmd_milestone(argv):
             r = subprocess.run(
                 [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
                  "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-                 "--milestone-profile", "milestone", "--paired-profile", "full",
+                 "--milestone-profile", "milestone",
+                 # The PAIR's profile, resolved from what exists rather than assumed.
+                 # Hardcoding "full" was right while the pair was ckpt_p324 (a ladder
+                 # checkpoint with a full record) and wrong the moment a milestone
+                 # became the pair: the 8B baseline exists only under profile=milestone,
+                 # so the lookup missed and the 15B readout printed ABSENT on every
+                 # metric -- a "no metric moved" verdict resting on a lookup miss, which
+                 # is worse than a wrong number because it reads as a measurement (fb).
+                 "--paired-profile", _paired_profile(paired),
                  "--milestone-mix", mix]
                 + (["--paired-mix", _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) or ""]
                    if _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) else [])
