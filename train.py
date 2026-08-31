@@ -1054,13 +1054,18 @@ _MAX_CTX = 4096  # the trained seq len; smaller truncates the model's own long r
 
 
 @torch.no_grad()
-def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_values=None):
+def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_values=None,
+                   tokenizer=None, rep_stop=True):
     """Greedy (temperature=0) or sampled decoding for a list of token-id lists. Returns generated ids.
 
     prompt_values switches on the FoNE path: a per-position value list for each prompt.
     Then the return is (ids, values) per row, because a [NUM] token carries no number
     of its own -- the digit head reads it off the same hidden state that predicted the
     token, and fone.decode_text writes it back into the text.
+
+    rep_stop: repetition stop (whitespace 8-gram repeated 3x, checked every 32 tokens).
+    Requires tokenizer for decoding. A correct answer never trips it; degenerate ones
+    stop at ~100 tokens instead of running to max_new.
     """
     B = len(prompts)
     keep = max(0, _MAX_CTX - max_new)  # prompt budget; 0 means "keep all" (p[-0:] == p[0:])
@@ -1079,8 +1084,13 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
     done = torch.zeros(B, dtype=torch.bool, device=device)
     ar = torch.arange(B, device=device)
     num_id = model.cfg.num_id if fone_on else None
+    rep_stop = rep_stop and tokenizer is not None
 
-    for _ in range(max_new):
+    for step in range(max_new):
+        # DEFECT (tilerl): this recomputes the full prefix per token -- no KDA/MLA
+        # state is carried across steps. Each step is O(T) not O(1), making
+        # generation O(T^2) per sequence. A state-carrying decode path would
+        # cut wall time ~max_new-fold for long contexts.
         _, hidden = model(x[:, -_MAX_CTX:], num_vals=v[:, -_MAX_CTX:] if fone_on else None, no_head=True)
         # hidden covers only the last _MAX_CTX positions; index relative to that slice, then
         # run the head on those B rows alone rather than on B x T.
@@ -1101,6 +1111,23 @@ def generate_batch(model, prompts, max_new, device, temperature=0.0, prompt_valu
             v[ar, ends] = torch.where(nxt == num_id, val, torch.zeros_like(val))
         ends += (~done).long()
         done |= nxt == _EOS
+        # Repetition stop: check every 32 tokens for whitespace 8-gram repeated 3x.
+        if rep_stop and step > 0 and step % 32 == 31:
+            for i in range(B):
+                if done[i]:
+                    continue
+                gen_ids = x[i, lengths[i] : ends[i]].tolist()
+                if len(gen_ids) < 64:
+                    continue
+                text = tokenizer.decode(gen_ids)
+                words = text.split()
+                if len(words) < 24:  # need at least 3x 8-grams
+                    continue
+                grams = [tuple(words[j : j + 8]) for j in range(len(words) - 7)]
+                from collections import Counter
+                counts = Counter(grams)
+                if any(c >= 3 for c in counts.values()):
+                    done[i] = True
         if bool(done.all()):
             break
     ids = [x[i, lengths[i] : ends[i]].tolist() for i in range(B)]
