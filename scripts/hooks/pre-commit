@@ -88,6 +88,20 @@ def main():
         except FileNotFoundError:
             pass  # ruff not installed; CI catches it
 
+    # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP
+    # on dev machines. CI is the second line; the commit is the first.
+    repo = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
+    ).stdout.strip()
+    if repo and os.path.isfile(os.path.join(repo, "scripts", "harness.py")):
+        r = subprocess.run(
+            [sys.executable, os.path.join(repo, "scripts", "harness.py"), "check"],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            print(f"REFUSING: harness check failed:\n{r.stdout}", file=sys.stderr)
+            sys.exit(1)
+
     # Regenerate pod manifest from staged content so it matches HEAD after commit.
     # Run the STAGED pod_drift.py (git show :path), never the working-tree copy:
     # a hook that executes uncommitted code is the fingerprint rule turned against us

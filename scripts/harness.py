@@ -2361,6 +2361,9 @@ def cmd_task(argv):
     is a session reporting itself complete, which is the one thing the board footer forbids.
     `reopen` keeps the prior evidence and appends the reason; the check accepts the transition.
     """
+    if not os.path.isdir(os.path.join(ROOT, ".git")):
+        print("refusing: the register lives in the repo; run this in the tree", file=sys.stderr)
+        return 1
     ap = argparse.ArgumentParser(prog="harness task")
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
