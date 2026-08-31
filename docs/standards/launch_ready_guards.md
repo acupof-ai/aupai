@@ -106,11 +106,13 @@ fingerprint covers, rather than leaving a reader to assume content equality.
 
 **Failing case.** Copy `data/tokenizer.json`, move one entry in `merges` to the front,
 leave the vocab untouched. The gate must go red. Today `VOCAB_ID` is unchanged and the
-cache is reused.
+cache is reused. Second case: build a cache, then launch with `--seed 7`. The gate must
+go red; today the cache built under seed 42 is reused against a different shuffle.
 
 **Fix.** Write a `cache + ".tokfp"` sidecar holding `sha256(TOK_PATH bytes)[:16]` and add
 `same_tok` to the conjunction. A sidecar rather than a change to `vocab_fingerprint`,
-because `vocab_id` also means something in checkpoints and should keep meaning it.
+because `vocab_id` also means something in checkpoints and should keep meaning it. For
+the seed, put it in the cache name the way `--fone` already is.
 
 The gate's own job is smaller: **compare the three values and print them.** The
 comparison exists in `train.py`, inside the training process, after torchrun has brought
@@ -127,17 +129,24 @@ covering all 177 manifest entries, and raises at startup. The cost of the gap is
 therefore wasted time, not wrong data: the operator learns at first step rather than at
 the gate.
 
-One item is outside both. `data/tokenizer.json` is listed in `pod_drift.SCOPE` but ships
+Two items are outside both. `data/tokenizer.json` is listed in `pod_drift.SCOPE` but ships
 zero manifest entries, because `scoped_paths()` enumerates `git ls-files` and the file is
 gitignored (.gitignore:5). The single most identity-bearing file in the run is named by
 the drift gate and covered by neither tier.
+
+And the pod's check has no independent reference. `pod_drift.MANIFEST` resolves against
+`ROOT`, so on the pod `check_pod` compares the pod's files to the pod's own copy of
+`data/pod_head_manifest.txt` — both delivered by the same `pod_push.sh`. A push carrying
+a stale manifest carries its own reference with it, and the comparison passes. Only the
+CI branch checks the manifest against HEAD, and CI does not run before a launch.
 
 **Failing case.** Append a byte to the pod's `data/tokenizer.json`. `--dry` stays green,
 and `grep -c data/tokenizer.json data/pod_head_manifest.txt` returns 0.
 
 **Fix.** Add `scripts/launch_30b.sh` to `_ENTRY_POINTS["training"]`; the BFS follows its
 citation of harness. Cover `data/tokenizer.json` by content hash rather than by
-`git ls-files`.
+`git ls-files`. Have the gate compare the pod manifest's own hash to the committed one,
+so the reference is checked rather than assumed.
 
 ## G3 — the environment is the one that was verified
 
@@ -226,3 +235,72 @@ non-zero when any is red, so the dry run becomes the only thing a person has to 
 
 The scope-note work is separate and ordered: `PROVENANCE.md` blocks for the seven
 stage-1 domains, then parameterize the five checks onto the launch mix.
+
+## Appendix — the audit's findings, verified
+
+Eleven findings survived per-finding adversarial verification against the live repo and
+pod; two were refuted. Each is stated with the failing case that is red before the change.
+The five guards above are the fix; this appendix is the evidence they rest on.
+
+### G0 — the gate discards its own answer
+
+Reproduced. A mix whose weights sum to 1.69013 prints `[FAIL] mix_contract` and
+`READY: all domains stamped, none blocked.` on adjacent lines and exits 0. Separately,
+`check_mix_30b_contract` tests stamp presence with `os.path.exists` while `train.py` reads
+the stamp and compares it to live bytes, so `{"fingerprint": "UNKNOWN"}` is PASS at the
+gate and a refusal at startup — this morning's exact input.
+
+### G1 — three ways the cache key misses the token stream
+
+**The gate never looks at the cache at all.** `--dry` exits before any torchrun, so a
+wiped `/data00` reads READY. The gate then sizes itself from the same absent caches:
+`_derive_gate_timeout` finds zero cache files and harness falls back to **120 s**, while
+the work it is timing has become a full single-process retokenize. The guard inverts —
+the emptier the cache, the shorter the deadline; warm, the same derivation yields 769 s.
+
+**`Cfg.seed` is not in the cache key.** `train.py:1382` shuffles documents with
+`random.Random(Cfg.seed)` before encoding, so the seed determines the cached token
+stream. It appears in neither `_domain_cache_path` nor any freshness term.
+`datagen/pretokenize.py` — the documented warm-cache path — parses only
+`--mix/--domains/--workers`, so it always builds at the default 42. Change the seed
+literal in `launch_30b.sh` for a seed sweep and training silently reads a cache shuffled
+under a different seed. Failing case: build a cache, launch with `--seed 7`, observe
+reuse. The repo already solved this shape for `--fone` by putting it in the cache name.
+
+**`VOCAB_ID` hashes only the id-to-token map.** Verified on the pod against the real
+`data/tokenizer.json`: flipping `add_prefix_space`, adding an NFKC normalizer, and moving
+one merge to the front each hold `vfp = 0bce3584bc24f255` while changing the token stream
+(`reading` goes from [2335,330] to [16307,15278] on the merge move alone).
+
+### G2 — the pod checks itself against its own copy
+
+`pod_drift.MANIFEST` resolves against `ROOT`, so on the pod `check_pod` compares the
+pod's files to the pod's own `data/pod_head_manifest.txt` — and both are pushed by the
+same `pod_push.sh`. A push that carries a stale or edited manifest carries its own
+reference with it. Second: the training scope is derived by import BFS, so it can only
+contain `.py` and `.sh`. `data/tokenizer.json` is named in `SCOPE` yet ships zero manifest
+entries, because `scoped_paths()` enumerates `git ls-files` and the file is gitignored.
+
+### G3 — no baseline exists
+
+Nothing compares the current environment to a previously verified one before a launch.
+`check_env_fp_present` verifies that checkpoints *carry* an `env_fp`, a different
+property; `env_fp` is compared only on `--resume`. The 2026-08-30 restart class is
+invisible to every pre-launch gate. And `env_fingerprint()` is itself blind to much of
+what changes the numerics, so a comparison alone is necessary rather than sufficient.
+
+### G4 — the flags are not the effective values
+
+`--seed 0` was dropped by the truthiness apply at `train.py:1733` and the live run trains
+under 42; `attn_res_blocks 0` is the same bug hidden by a matching default.
+`mix_15b_stage1.json`'s `_comment` is wrong about where `anneal_frac` comes from —
+`harness.cfg_default` AST-parses train.py's `Cfg`, not the run config. And `world`, the
+card count, is a recipe value `FLAGS` cannot express: editing the card list changes it
+with byte-identical `--dry` output.
+
+### One finding outside the four guards
+
+`harness.py` sends SIGTERM to `proc.pid`, which is `bash run_ddp.sh`; `run_ddp.sh:5`
+calls torchrun without `exec` and installs no trap. Reproduced locally: bash exits −15
+and the child survives. When the startup gate fires, the exp row records a kill, no
+monitor is armed, and seven cards stay occupied by an orphan. Fix is `exec torchrun`.
