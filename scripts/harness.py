@@ -2217,6 +2217,16 @@ def check_env_importable(root):
         # fp32-master A/B on the fallback attention path, silently non-comparable with the
         # six ladder points that ran with fa True. find_spec is not import.
         if spec is None or spec.origin is None:
+            # flash_attn is the one package where the shadow is expected: the base image
+            # ships flash-attn 4, whose real code lives under flash_attn.cute, and train.py
+            # imports from there when the v2 top level is absent. Ask for what the code
+            # actually uses rather than for the layout it used to have.
+            alt = _REQUIRED_ALT.get(mod)
+            try:
+                if alt and (a := importlib.util.find_spec(alt)) and a.origin:
+                    continue
+            except (ImportError, ValueError):
+                pass
             missing.append(mod)
     if not missing:
         return PASS, f"all {len(req)} imported packages present"
@@ -3482,6 +3492,9 @@ _FLAG_TO_CFG = {"no_attn_res": "attn_res"}
 # Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
 # architecture or the recipe is frozen; these are run-management, measurement, or
 # deliberately variable. check_frozen_keys_complete forces a decision when a new flag lands.
+# A module whose real code may live one level down (see check_env_importable).
+_REQUIRED_ALT = {"flash_attn": "flash_attn.cute"}
+
 _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
     "name", "mix", "resume", "max_steps",  # run management
