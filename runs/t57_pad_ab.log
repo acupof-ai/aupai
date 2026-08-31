@@ -1,0 +1,36 @@
+mix: 48820 rows = 0.20B tokens scheduled
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.617 | lr 1.00e-02 | gnorm 4.84 | 0.00B tok | 26K tok/s/gpu | MFU 11% | ETA 2.1h
+step 20/1525 1% [main] | loss 7.216 | lr 1.00e-02 | gnorm 1.43 | 0.00B tok | 73K tok/s/gpu | MFU 31% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.560 | lr 1.00e-02 | gnorm 1.30 | 0.00B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.568 | lr 1.00e-02 | gnorm 0.82 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.182 | lr 1.00e-02 | gnorm 0.82 | 0.01B tok | 78K tok/s/gpu | MFU 32% | ETA 0.7h
+step 60/1525 4% [main] | loss 5.873 | lr 1.00e-02 | gnorm 1.21 | 0.01B tok | 78K tok/s/gpu | MFU 32% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.844 | lr 1.00e-02 | gnorm 1.77 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.627 | lr 1.00e-02 | gnorm 1.56 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.217 | lr 1.00e-02 | gnorm 1.59 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.7h
+step 100/1525 7% [main] | loss 4.980 | lr 1.00e-02 | gnorm 1.91 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.7h
+step 110/1525 7% [main] | loss 5.040 | lr 1.00e-02 | gnorm 1.79 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 4.893 | lr 1.00e-02 | gnorm 1.78 | 0.02B tok | 75K tok/s/gpu | MFU 32% | ETA 0.7h
+step 120/1525 8% [main] | loss 4.893 | lr 1.00e-02 | gnorm 1.78 | 0.02B tok | 75K tok/s/gpu | MFU 32% | ETA 0.7h
+killed by tilerl at 18:18 pod time: baseline arm reached steady state (78K at step 50 -> 80K flat at 90-110); enough for the A/B comparison. Deliberate kill of 975074 to free the lane for the ON arm in the same session. NOT a crash.
+[padshim] pad_dynamic_shapes = True
+mix: 48820 rows = 0.20B tokens scheduled
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 9.447 | lr 1.00e-02 | gnorm 324.00 | 0.00B tok | 9K tok/s/gpu | MFU 4% | ETA 5.9h
+step 20/1525 1% [main] | loss 7.980 | lr 1.00e-02 | gnorm 186.00 | 0.00B tok | 73K tok/s/gpu | MFU 31% | ETA 0.8h
+step 30/1525 2% [main] | loss 6.958 | lr 1.00e-02 | gnorm 374.00 | 0.00B tok | 77K tok/s/gpu | MFU 32% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.930 | lr 1.00e-02 | gnorm 496.00 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.587 | lr 1.00e-02 | gnorm 792.00 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 60/1525 4% [main] | loss 6.343 | lr 1.00e-02 | gnorm 446.00 | 0.01B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
+step 70/1525 5% [main] | loss 6.506 | lr 1.00e-02 | gnorm 1368.00 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 6.351 | lr 1.00e-02 | gnorm 612.00 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.989 | lr 1.00e-02 | gnorm 1080.00 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 100/1525 7% [main] | loss 5.899 | lr 1.00e-02 | gnorm 780.00 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.6h
+step 110/1525 7% [main] | loss 5.871 | lr 1.00e-02 | gnorm 2960.00 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 5.810 | lr 1.00e-02 | gnorm 1856.00 | 0.02B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 130/1525 9% [main] | loss 5.693 | lr 1.00e-02 | gnorm 1400.00 | 0.02B tok | 82K tok/s/gpu | MFU 34% | ETA 0.6h
+step 130/1525 9% [main] | loss 5.693 | lr 1.00e-02 | gnorm 1400.00 | 0.02B tok | 82K tok/s/gpu | MFU 34% | ETA 0.6h
+killed by tilerl at 18:24 pod time: ON arm reached steady state (81K at step 110). Deliberate kill of 977328 to free the lane. NOT a crash.

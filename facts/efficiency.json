@@ -1490,6 +1490,53 @@
    },
    "uncertainty": "One domain (cot) and one checkpoint (step 11000, 68% through stage 1). cot is the smallest warm domain and was chosen for speed; a code- or math-heavy domain could have a different logit distribution, and the range may widen as training continues since logit magnitudes generally grow. 128 chunks over 4 batches is enough to characterise the bulk but not a tail event at 1-in-10000. The measurement is the FORWARD projection only: the backward pass quantises grad_logits, whose distribution is not measured here and is the other operand fp8 would touch. The verdict therefore covers the forward GEMM's input range, not the whole fp8 path.",
    "status": "measured"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_ab",
+   "value": "NO-SHIP: torch._inductor.config.pad_dynamic_shapes gains ~1% tok/s, under the 3% gate. e1's find, my measurement, and the val half of the A/B is INVALID for a reason worth more than the throughput result. THROUGHPUT. Both arms, one card, same session, same seed 42, same mix, same 48,820 scheduled rows, config injected by a sitecustomize shim so train.py stayed frozen (the ON arm's log confirms '[padshim] pad_dynamic_shapes = True'). Steady state by step 90: OFF 80K, 80K, 80K at steps 90/100/110; ON 80K, 80K, 81K. So +1 K tok/s = +1.25%, against a 3% ship gate. Under it, and the surface it could touch was 39.2% of kernel time, so the flag reaches far less of that than the eligible fraction suggests -- consistent with the per-NODE gate at ir.py:3941 rather than a per-graph one. THE VAL COMPARISON DOES NOT WORK, and this is the real finding. The two arms diverge at step 10: OFF loss 7.617, ON loss 9.447, then 6.182 vs 6.587 at step 50 and 5.040 vs 5.871 at step 110. Same seed, same params (206.1M both), same world 1, same fa/fp8, same row count. A padding flag changes memory layout, not arithmetic, so it CANNOT move step-10 loss by 1.83 nat. Something else differs run to run, which means single-run loss numbers from this harness are not comparable between arms at all -- so no |delta val| verdict can be read from a 1-vs-1 comparison, for THIS lever or any other. Whatever the cause (unseeded init path, nondeterministic reduction order, data order), the consequence for method is the same and it is larger than the flag: any A/B whose acceptance depends on val must run multiple seeds per arm, or compare against sigma-hat 0.0516 as a noise floor rather than against a single paired difference.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_pad_ab.log, probes/padshim.py, facts/efficiency.json#eff.pad_dynamic_shapes_surface",
+   "config": {
+    "task": "t57",
+    "finder": "e1 (e1-3)",
+    "measurer": "tilerl",
+    "flag": "torch._inductor.config.pad_dynamic_shapes",
+    "injection": "sitecustomize shim, train.py frozen",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "rows_scheduled": 48820,
+    "tok_s_off_90_100_110": [
+     80,
+     80,
+     80
+    ],
+    "tok_s_on_90_100_110": [
+     80,
+     80,
+     81
+    ],
+    "gain_pct": 1.25,
+    "ship_gate_pct": 3,
+    "loss_off_10_50_110": [
+     7.617,
+     6.182,
+     5.04
+    ],
+    "loss_on_10_50_110": [
+     9.447,
+     6.587,
+     5.871
+    ],
+    "val_comparison": "INVALID -- arms diverge at step 10 with identical config",
+    "verdict": "no-ship on throughput; val half unreadable"
+   },
+   "uncertainty": "The throughput figures are the log's own tok/s at 1 K resolution, so +1 K is at the edge of what the display can distinguish: the true gain could be 0.6% or 1.8%. That does not change the verdict, since even 1.8% is under 3%, but it means this is not a precise measurement of the flag's effect. Steady state was taken at steps 90-110 rather than a full 50-step window past compile, so a longer run could differ. Single card, so any effect on multi-rank collectives is unmeasured. And the divergence cause is NOT diagnosed -- I established that it exists and that padding cannot explain it, not what it is. That diagnosis matters more than this flag and is not done.",
+   "status": "measured"
   }
  ]
 }
