@@ -4635,10 +4635,18 @@ def _selftest_gpu_descendants():
                     break
         return out
 
-    # parent 100 -> score_matrix 200 -> math_zh 300; 400 is someone else's job.
-    ppid = {"200": "100", "300": "200", "400": "999"}
+    # score_matrix 200 -> bash eval_math.sh 250 (NO GPU) -> math_zh 300; 400 is a stranger.
+    # The intermediate shell is the case that broke the first implementation: a ppid
+    # map built only over GPU-holding pids stops at 250 and finds nothing. The map
+    # must come from the whole process table.
+    ppid = {"200": "100", "250": "200", "300": "250", "400": "999"}
     got = walk(["300", "400"], ppid, 100)
-    assert got == ["300"], f"descent must find the grandchild and only it: {got}"
+    assert got == ["300"], f"descent must cross the non-GPU shell and exclude the stranger: {got}"
+
+    # The regression itself: a map missing the shell must NOT find the child. If this
+    # ever passes, the map has silently narrowed back to GPU pids only.
+    gpu_only = {"200": "100", "300": "250"}
+    assert walk(["300"], gpu_only, 100) == [], "a map missing the intermediate shell must find nothing"
 
     # The failing case: pattern matching cannot find it. This is what the old code did.
     parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
@@ -4651,7 +4659,8 @@ def _selftest_gpu_descendants():
 
     # A direct child is found too, not just a grandchild.
     assert walk(["200"], {"200": "100"}, 100) == ["200"]
-    print("  gpu descendants: grandchild with a foreign cmdline found; cycle terminates; stranger excluded")
+    print("  gpu descendants: child found across a non-GPU shell; narrowed map finds nothing; "
+          "cycle terminates; stranger excluded")
 
 
 def _selftest_devs_map():
@@ -6237,7 +6246,13 @@ def _gpu_descendants(root_host_pid):
     text with its parent's. Walk /proc/<pid>/stat's PPid field up from each pid
     nvidia-smi reports instead -- descent is the real relation, cmdline was a
     proxy for it (de + e1, 2026-08-31: a kill left math_zh.py holding 12.7 GB
-    and the verification greped the same blind pattern, so it printed success)."""
+    and the verification greped the same blind pattern, so it printed success).
+
+    The chain runs through NON-GPU processes: score_matrix (383102) -> bash
+    eval_math.sh (400242, no GPU) -> math_zh.py (400379, 6.5 GB). A ppid map
+    built only over GPU pids stops at the shell and reports nothing, which is
+    exactly how the first version of this function failed. Read the whole
+    process table's ppid map, not just the GPU pids'."""
     r = subprocess.run(
         ["tn", "exec", "nvidia-smi --query-compute-apps=pid --format=csv,noheader"],
         capture_output=True, text=True,
@@ -6245,18 +6260,18 @@ def _gpu_descendants(root_host_pid):
     gpu_pids = [p.strip() for p in r.stdout.split() if p.strip().isdigit()]
     if not gpu_pids:
         return []
-    # One call, not one per pid: each tn exec is a round trip.
-    script = "; ".join(f"echo -n '{p} '; awk '{{print $4}}' /proc/{p}/stat 2>/dev/null || echo" for p in gpu_pids)
-    r = subprocess.run(["tn", "exec", script], capture_output=True, text=True)
+    # Whole-table ppid map in one call: intermediate shells are not GPU processes,
+    # so a map over gpu_pids alone breaks the chain.
+    r = subprocess.run(["tn", "exec", "ps -eo pid=,ppid="], capture_output=True, text=True)
     ppid = {}
     for line in r.stdout.splitlines():
         parts = line.split()
-        if len(parts) == 2 and parts[1].isdigit():
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             ppid[parts[0]] = parts[1]
     out = []
     for p in gpu_pids:
         seen, cur = 0, p
-        while cur in ppid and seen < 12:  # bounded: a cycle must not hang a kill
+        while cur in ppid and seen < 64:  # bounded: a cycle must not hang a kill
             cur = ppid[cur]
             seen += 1
             if cur == str(root_host_pid):
