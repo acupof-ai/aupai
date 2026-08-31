@@ -21,6 +21,40 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# Fate rulings from fb (2026-08-31). DELETE files are cited by no doc, fact, run
+# row, or registry. KEEP files must become reachable or return to the list.
+FATE = {
+    "algorithms/prepare_rlvr.py": "DELETE",
+    "bench_mem.py": "DELETE",
+    "data/sft/quality_check.py": "DELETE",
+    "filters/clean_school_math.py": "DELETE (filters_fp hash change — ratchet baseline)",
+    "scripts/attn_every_probe.py": "DELETE",
+    "scripts/attn_res_gap.py": "DELETE",
+    "scripts/audit_ocsg.py": "DELETE",
+    "scripts/chat_remote.py": "DELETE",
+    "scripts/ckpt_diff.py": "DELETE",
+    "scripts/dashboard.py": "DELETE (superseded by harness board)",
+    "scripts/fone_probe.py": "DELETE",
+    "scripts/ocsg_determ.py": "DELETE",
+    "scripts/probe_arith.py": "DELETE",
+    "scripts/probe_procedure.py": "DELETE",
+    "scripts/repeat_check.py": "DELETE",
+    "scripts/rescore_v2.py": "DELETE",
+    "scripts/rl_delta_cos.py": "DELETE",
+    "scripts/sandbox_batch.py": "DELETE",
+    "scripts/short_conv_bench.py": "DELETE",
+    "scripts/train_vocab_variants.py": "DELETE",
+    "scripts/reachability.py": "KEEP (add to AGENTS.md entry-point table)",
+    "scripts/count_cleaned_code.py": "KEEP (add to AGENTS.md entry-point table)",
+    "algorithms/test_rlvr_reward_suite.py": "KEEP (add to CI)",
+    "mathbank/vet_programs.py": "KEEP (cite in corpus entry-point row)",
+    "scripts/ckpt_info.py": "KEEP (AGENTS.md row — ops tool)",
+    "eval/ppl.py": "KEEP (AGENTS.md row — eval tool)",
+    "scripts/assemble_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
+    "scripts/validate_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
+    "scripts/build_math.py": "KEEP (ask 3b; delete if unclaimed)",
+}
+
 # Collect all .py/.sh files (excluding noise)
 ALL_FILES = set()
 for dirpath, dirnames, filenames in os.walk(ROOT):
@@ -301,25 +335,28 @@ def main():
             return "import"
         return "none"
 
-    print(f"{'PATH':<55} {'LINES':>6}  {'LAST COMMIT':<20}  REACHED FROM")
-    print("-" * 110)
+    print(f"{'PATH':<55} {'LINES':>6}  {'LAST COMMIT':<20}  {'REACHED FROM':<45}  FATE")
+    print("-" * 130)
     unreachable = []
     for f in sorted(ALL_FILES):
         lines = file_lines(f)
         commit = git_last_commit(f)
         ep = reaching(f)
+        fate = FATE.get(f, "")
         if ep == "none":
             unreachable.append(f)
-        print(f"{f:<55} {lines:>6}  {commit:<20}  {ep}")
+        print(f"{f:<55} {lines:>6}  {commit:<20}  {ep:<45}  {fate}")
 
-    print(f"\n{'='*110}")
+    print(f"\n{'='*130}")
+    delete_count = sum(1 for f in unreachable if FATE.get(f, "").startswith("DELETE"))
+    keep_count = sum(1 for f in unreachable if FATE.get(f, "").startswith("KEEP"))
     print(f"Total: {len(ALL_FILES)} files, {len(eps)} entry points, "
           f"{len(bfs_reachable)} BFS-reachable, {len(all_edges)} citation edges, "
-          f"{len(unreachable)} unreachable")
+          f"{len(unreachable)} unreachable ({delete_count} DELETE, {keep_count} KEEP)")
     if unreachable:
         print("\nUnreachable (deletion candidates):")
         for f in unreachable:
-            print(f"  {f}")
+            print(f"  {f:<55} {FATE.get(f, '')}")
 
 
 if __name__ == "__main__":
