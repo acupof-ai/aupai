@@ -1,6 +1,11 @@
+NOT A DELETION ORACLE. This is a citation graph: a doc mention counts as an edge,
+so 'reachable' can mean 'named by a doc nobody runs'. And a file loaded by a runtime
+glob is live while invisible here -- vet_programs.py:37 globs math_programs_l*_ext*.py,
+23 generators. Before deleting anything, grep for glob/importlib on its directory.
+
 PATH                                                     LINES  LAST COMMIT           REACHED FROM                                   FATE
 ----------------------------------------------------------------------------------------------------------------------------------
-algorithms/__init__.py                                      49  8f5c8ad 2026-08-27    import:algorithms/rlvr_trainer.py              
+algorithms/__init__.py                                      49  8f5c8ad 2026-08-27    import:algorithms/test_rlvr_reward_suite.py    
 algorithms/rlvr.py                                          13  aa3a8b9 2026-08-26    ENTRY                                          
 algorithms/rlvr_data.py                                    236  a85a54e 2026-08-30    registry:algorithms/__init__.py                
 algorithms/rlvr_generate.py                                 43  9176f85 2026-08-30    registry:algorithms/__init__.py                
@@ -11,53 +16,86 @@ chat.py                                                     50  3f6c3ad 2026-08-
 datagen/annotate_quality.py                                139  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
 datagen/audit_source_score.py                              100  9176f85 2026-08-30    docs:docs/lessons/kept_methods.md              
 datagen/augment_data.py                                    114  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
-datagen/build_corpus.py                                    598  75bef8d 2026-08-31    ENTRY                                          
-datagen/clean_web.py                                       157  9176f85 2026-08-30    docs:docs/standards/corpus_rebuild.md          
+datagen/build_corpus.py                                    709  e6726a2 2026-08-31    ENTRY                                          
+datagen/build_domains.sh                                    78  c3a47e8 2026-08-31    docs:docs/standards/0830v1_gates.md            
+datagen/build_math_expand.sh                                39  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+datagen/build_web_hq.sh                                     54  c3a47e8 2026-08-31    docs:docs/standards/corpus_rebuild.md          
+datagen/check_mix.py                                       100  c3a47e8 2026-08-31    docs:docs/standards/REBUILD_PLAN_2026-08-29.md  
+datagen/clean_corpus.py                                    120  c3a47e8 2026-08-31    ENTRY                                          
+datagen/clean_web.py                                       157  c3a47e8 2026-08-31    docs:docs/standards/corpus_rebuild.md          
+datagen/corpus_fingerprint.py                              156  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+datagen/count_cleaned_code.py                               86  a983e42 2026-08-31    ENTRY                                          KEEP (add to AGENTS.md entry-point table)
+datagen/data_overview.py                                   159  c3a47e8 2026-08-31    import                                         
+datagen/data_verify.py                                     183  c3a47e8 2026-08-31    docs:scripts/bootstrap_pod.sh                  
+datagen/dedup_corpus.py                                    113  c3a47e8 2026-08-31    ENTRY                                          
 datagen/distil_traces.py                                   168  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
 datagen/fasttext_junk.py                                   147  cd8f37e 2026-08-30    facts:facts/data_quality.json                  
-datagen/gen_code.py                                        340  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
+datagen/fetch_chat_data.py                                  81  c3a47e8 2026-08-31    docs:scripts/bootstrap_pod.sh                  
+datagen/fetch_corpus.py                                    492  122d4a8 2026-08-31    ENTRY                                          
+datagen/fetch_math_data.py                                 221  c3a47e8 2026-08-31    docs:scripts/bootstrap_pod.sh                  
+datagen/fetch_sft_data.py                                  179  c3a47e8 2026-08-31    docs:scripts/bootstrap_pod.sh                  
+datagen/gen_0094.py                                        133  c3a47e8 2026-08-31    facts:scripts/restartability_baseline.json     
+datagen/gen_code.py                                        340  9176f85 2026-08-30    docs:docs/lessons/code500_v2.md                
+datagen/gen_code_v2.py                                     273  218415a 2026-08-31    docs:docs/lessons/code500_v2.md                
 datagen/gen_knowledge.py                                   575  9b7242b 2026-08-27    facts:scripts/restartability_baseline.json     
 datagen/gen_knowledge2.py                                  433  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
+datagen/holdout.py                                         101  b8881fd 2026-08-31    ENTRY                                          
+datagen/holdout_split.py                                   126  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+datagen/make_mixed.py                                       39  c3a47e8 2026-08-31    facts:scripts/restartability_baseline.json     
+datagen/numma_to_jsonl.py                                   43  b24997d 2026-08-31    docs:docs/lessons/scale_36b_plan.md            
+datagen/prepare_sft.py                                     348  c3a47e8 2026-08-31    docs:docs/lessons/reasoning_panel.md           
+datagen/prepare_sft_math.py                                 93  c3a47e8 2026-08-31    ENTRY                                          
+datagen/pretokenize.py                                      65  c3a47e8 2026-08-31    ENTRY                                          
 datagen/quality_clf.py                                     169  9176f85 2026-08-30    facts:facts/data_quality.json                  
+datagen/rebuild_corpus.sh                                   74  c3a47e8 2026-08-31    docs:docs/standards/0830v1_gates.md            
+datagen/rescore_code.py                                    104  c3a47e8 2026-08-31    docs:docs/lessons/reasoning_panel.md           
 datagen/sample_pattern_discovery.py                         79  d535674 2026-08-31    facts:scripts/restartability_baseline.json     
+datagen/sandbox_exec.py                                    145  0557844 2026-08-31    docs:docs/lessons/milestone_profile.md         
+datagen/scan_contamination.py                               54  c3a47e8 2026-08-31    docs:docs/lessons/kept_methods.md              
+datagen/scan_math_contamination.py                         575  b8881fd 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+datagen/scan_scm_tests.py                                  100  c3a47e8 2026-08-31    facts:facts/data_scaling.json                  
 datagen/score_27b_zero.py                                  220  d535674 2026-08-31    facts:scripts/restartability_baseline.json     
+datagen/score_corpus.py                                    117  c3a47e8 2026-08-31    ENTRY                                          
+datagen/score_corpus.sh                                     43  c3a47e8 2026-08-31    docs:docs/standards/corpus_rebuild.md          
 datagen/score_web_27b.py                                   280  9176f85 2026-08-30    facts:facts/data_quality.json                  
+datagen/t2s_corpus.py                                      131  c3a47e8 2026-08-31    import                                         
+datagen/test_scan_math_contamination.py                    116  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
 datagen/train_quality_head.py                              161  9176f85 2026-08-30    ENTRY                                          
 eval/__init__.py                                            43  234356f 2026-08-30    import:eval/eval_all.sh                        
 eval/arc.py                                                 82  5604d42 2026-08-29    registry:eval/run_eval.py                      
-eval/assemble_lambda_probe.py                               93  ef2a730 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
+eval/assemble_lambda_probe.py                               93  3d2acd9 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
 eval/base_matrix.py                                        422  60e2436 2026-08-30    ENTRY                                          
 eval/boolq.py                                               60  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/ceval.py                                               60  9176f85 2026-08-30    registry:eval/run_eval.py                      
 eval/chid_probe.py                                          79  9176f85 2026-08-30    import:eval/base_matrix.py                     
-eval/code_fewshot.py                                       177  c51019a 2026-08-30    docs:EXPERIMENTS.md                            
-eval/code_zh.py                                            187  9443d4c 2026-08-31    ENTRY                                          
+eval/code_fewshot.py                                       177  c3a47e8 2026-08-31    docs:EXPERIMENTS.md                            
+eval/code_zh.py                                            193  224c212 2026-08-31    ENTRY                                          
 eval/ctx_probe.py                                          218  3b32e69 2026-08-31    facts:facts/base_eval.json                     
-eval/domain_loss.py                                        192  ef2a730 2026-08-31    docs:docs/lessons/quality_ab_design.md         
-eval/eval_all.sh                                            88  ef2a730 2026-08-31    ENTRY                                          
-eval/eval_code.sh                                           46  ef2a730 2026-08-31    ENTRY                                          
-eval/eval_hard.sh                                           77  ef2a730 2026-08-31    ENTRY                                          
-eval/eval_math.sh                                           49  ef2a730 2026-08-31    ENTRY                                          
-eval/gate_math_short.sh                                     28  ef2a730 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+eval/domain_loss.py                                        192  3d2acd9 2026-08-31    docs:docs/lessons/quality_ab_design.md         
+eval/eval_all.sh                                            88  3d2acd9 2026-08-31    ENTRY                                          
+eval/eval_code.sh                                           49  1f758d6 2026-08-31    ENTRY                                          
+eval/eval_hard.sh                                           77  3d2acd9 2026-08-31    ENTRY                                          
+eval/eval_math.sh                                           49  3d2acd9 2026-08-31    ENTRY                                          
+eval/gate_math_short.sh                                     28  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
 eval/gsm8k.py                                               65  c51019a 2026-08-30    registry:eval/run_eval.py                      
 eval/hellaswag.py                                           64  9176f85 2026-08-30    registry:eval/run_eval.py                      
-eval/kda_probe.py                                          181  ef2a730 2026-08-31    facts:facts/efficiency.json                    
+eval/kda_probe.py                                          181  3d2acd9 2026-08-31    facts:facts/efficiency.json                    
 eval/l1_fewshot.py                                         136  c51019a 2026-08-30    ENTRY                                          
 eval/lambada_zh.py                                         242  ef40a44 2026-08-30    ENTRY                                          
-eval/math_hard.py                                          186  04eeee7 2026-08-31    ENTRY                                          
+eval/math_hard.py                                          186  3d2acd9 2026-08-31    ENTRY                                          
 eval/math_v2_like.py                                       176  e33a97e 2026-08-30    ENTRY                                          
-eval/math_zh.py                                            115  89e7f9d 2026-08-31    ENTRY                                          
-eval/measure_sft_termination.py                            213  ef2a730 2026-08-31    facts:facts/data_quality.json                  
+eval/math_zh.py                                            116  224c212 2026-08-31    ENTRY                                          
+eval/measure_sft_termination.py                            213  3d2acd9 2026-08-31    facts:facts/data_quality.json                  
 eval/mmlu.py                                                67  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/nan_probe.py                                          131  ef2a730 2026-08-31    ENTRY                                          
 eval/openbookqa.py                                          67  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/piqa.py                                                74  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/ppl.py                                                 84  26c14d9 2026-08-30    ENTRY                                          KEEP (AGENTS.md row — eval tool)
-eval/probe_band.sh                                          49  ef2a730 2026-08-31    docs:scripts/run_pipeline.sh                   
-eval/readout_30b.py                                        295  ef2a730 2026-08-31    docs:docs/lessons/readout_30b_prereg.md        
+eval/probe_band.sh                                          49  3d2acd9 2026-08-31    docs:scripts/run_pipeline.sh                   
+eval/readout_30b.py                                        406  6ba294c 2026-08-31    ENTRY                                          
 eval/run_eval.py                                           340  c51019a 2026-08-30    ENTRY                                          
-eval/score_matrix.py                                       619  ef2a730 2026-08-31    ENTRY                                          
-eval/validate_lambda_probe.py                               58  ef2a730 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
+eval/score_matrix.py                                       679  d4c2b88 2026-08-31    ENTRY                                          
+eval/validate_lambda_probe.py                               58  3d2acd9 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
 eval/winogrande.py                                          69  9176f85 2026-08-30    registry:eval/run_eval.py                      
 filters/pass1_garbage.py                                   126  aa3a8b9 2026-08-26    ENTRY                                          
 filters/pass2_garbage.py                                    65  9176f85 2026-08-30    facts:facts/data_quality.json                  
@@ -99,12 +137,11 @@ mathbank/math_programs_short_l3.py                        1069  5bb773a 2026-08-
 mathbank/math_programs_short_l4.py                         941  5bb773a 2026-08-27    registry:mathbank/run_short_sol.py             
 mathbank/mathcommon.py                                      41  aa3a8b9 2026-08-26    import:mathbank/vet_programs.py                
 mathbank/procedure_curriculum.py                           277  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
-mathbank/program_probe.py                                  158  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
+mathbank/program_probe.py                                  158  c3a47e8 2026-08-31    facts:scripts/restartability_baseline.json     
 mathbank/run_math_short.py                                 252  9176f85 2026-08-30    docs:docs/audits/audit_math_corpus.md          
-mathbank/run_short_sol.py                                   95  9176f85 2026-08-30    docs:scripts/build_math_expand.sh              
+mathbank/run_short_sol.py                                   95  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
 mathbank/split_bank.py                                      65  3ed1eb6 2026-08-28    docs:docs/audits/audit_math_corpus.md          
 mathbank/vet_programs.py                                    51  aa3a8b9 2026-08-26    ENTRY                                          KEEP (cite in corpus entry-point row)
-prepare_sft_math.py                                         91  907920c 2026-08-29    ENTRY                                          
 probes/ab_vocab_loss.py                                    110  bcc43c4 2026-08-31    facts:facts/efficiency.json                    
 probes/attn_res_bench.py                                   233  bcc43c4 2026-08-31    facts:scripts/restartability_baseline.json     
 probes/attn_res_cpu_gap.py                                 168  bcc43c4 2026-08-31    facts:facts/efficiency.json                    
@@ -115,72 +152,46 @@ probes/fone_digit_acc.py                                    96  bcc43c4 2026-08-
 probes/lm_head_gemm.py                                     120  bcc43c4 2026-08-31    facts:facts/efficiency.json                    
 probes/mem_account.py                                      175  bcc43c4 2026-08-31    facts:scripts/restartability_baseline.json     
 probes/profile_step.py                                     139  bcc43c4 2026-08-31    docs:docs/standards/0830v1_gates.md            
-run_ddp.sh                                                  18  8033d98 2026-08-30    ENTRY                                          
+run_ddp.sh                                                  18  3d2acd9 2026-08-31    ENTRY                                          
 sampling.py                                                 17  7b21241 2026-08-27    import:chat.py                                 
 scripts/assert_vocab.sh                                     19  4c669ba 2026-08-30    docs:scripts/assert_vocab.sh                   
-scripts/bootstrap_pod.sh                                    79  26c14d9 2026-08-30    docs:scripts/bootstrap_pod.sh                  
-scripts/build_domains.sh                                    78  26c14d9 2026-08-30    docs:docs/standards/0830v1_gates.md            
-scripts/build_math_expand.sh                                39  d535674 2026-08-31    docs:docs/audits/audit_math_corpus.md          
+scripts/bootstrap_pod.sh                                    79  c3a47e8 2026-08-31    docs:scripts/bootstrap_pod.sh                  
 scripts/build_tokenizer.py                                 150  26c14d9 2026-08-30    ENTRY                                          
-scripts/build_web_hq.sh                                     54  26c14d9 2026-08-30    docs:docs/standards/corpus_rebuild.md          
-scripts/check_mix.py                                       100  26c14d9 2026-08-30    docs:docs/standards/REBUILD_PLAN_2026-08-29.md  
+scripts/census_code_v2.py                                   73  1f758d6 2026-08-31    docs:docs/lessons/code500_v2.md                
 scripts/ckpt_info.py                                        66  9176f85 2026-08-30    ENTRY                                          KEEP (AGENTS.md row — ops tool)
 scripts/ckpt_sweep.py                                      127  bcc43c4 2026-08-31    facts:scripts/restartability_baseline.json     
-scripts/clean_corpus.py                                    120  0c0ebc3 2026-08-31    ENTRY                                          
-scripts/corpus_fingerprint.py                              156  bce33b8 2026-08-30    docs:docs/audits/audit_math_corpus.md          
-scripts/count_cleaned_code.py                               78  0d8a185 2026-08-31    ENTRY                                          KEEP (add to AGENTS.md entry-point table)
-scripts/data_overview.py                                   159  7359a56 2026-08-30    import                                         
-scripts/data_verify.py                                     183  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh                  
-scripts/dedup_corpus.py                                    113  1b42176 2026-08-30    ENTRY                                          
+scripts/count_tokens.py                                     64  3f526a4 2026-08-31    import:datagen/build_corpus.py                 
 scripts/env_fp.py                                           54  6ef7e7a 2026-08-30    import:algorithms/rlvr.py                      
 scripts/eqcheck.py                                          61  9176f85 2026-08-30    ENTRY                                          
-scripts/exp.py                                             186  9176f85 2026-08-30    ENTRY                                          
-scripts/fetch_chat_data.py                                  81  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh                  
-scripts/fetch_corpus.py                                    365  80486fa 2026-08-31    ENTRY                                          
-scripts/fetch_math_data.py                                 221  9176f85 2026-08-30    docs:scripts/build_math_expand.sh              
-scripts/fetch_sft_data.py                                  179  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh                  
+scripts/exp.py                                             199  55b1d41 2026-08-31    ENTRY                                          
 scripts/fit_scaling.py                                     138  c669a4f 2026-08-31    docs:docs/standards/0830v1_gates.md            
-scripts/gen_0094.py                                        133  aecba2d 2026-08-29    facts:scripts/restartability_baseline.json     
-scripts/harness.py                                        4917  8199ee0 2026-08-31    ENTRY                                          
-scripts/holdout.py                                         100  2b7efbd 2026-08-30    ENTRY                                          
-scripts/holdout_split.py                                   126  c669a4f 2026-08-31    docs:docs/audits/audit_math_corpus.md          
-scripts/launch_30b.sh                                       71  43ae7a3 2026-08-31    docs:scripts/launch_30b.sh                     
+scripts/harness.py                                        5940  d94fce6 2026-08-31    ENTRY                                          
+scripts/launch_30b.sh                                       99  2117612 2026-08-31    docs:scripts/launch_30b.sh                     
 scripts/loader.py                                          287  da1d4b5 2026-08-31    ENTRY                                          
-scripts/make_mixed.py                                       39  9176f85 2026-08-30    facts:scripts/restartability_baseline.json     
 scripts/plot_curves.py                                      97  9176f85 2026-08-30    docs:scripts/run_pretrain.sh                   
-scripts/pod_drift.py                                       346  ac6dd38 2026-08-31    ENTRY                                          
-scripts/pod_push.sh                                         80  d2d252d 2026-08-31    ENTRY                                          
+scripts/pod_drift.py                                       517  bd49d09 2026-08-31    ENTRY                                          
+scripts/pod_push.sh                                        127  e86033c 2026-08-31    ENTRY                                          
 scripts/pod_sync_check.sh                                   19  a65bbbe 2026-08-30    ENTRY                                          
-scripts/prepare_sft.py                                     348  4a30262 2026-08-31    docs:docs/lessons/reasoning_panel.md           
-scripts/pretokenize.py                                      53  26c14d9 2026-08-30    ENTRY                                          
-scripts/reachability.py                                    363  d546aab 2026-08-31    ENTRY                                          KEEP (add to AGENTS.md entry-point table)
-scripts/rebuild_corpus.sh                                   74  9176f85 2026-08-30    docs:docs/standards/0830v1_gates.md            
-scripts/rescore_code.py                                    104  89e7f9d 2026-08-31    docs:docs/standards/0830v1_gates.md            
+scripts/reachability.py                                    371  c3a47e8 2026-08-31    ENTRY                                          KEEP (add to AGENTS.md entry-point table)
 scripts/restartability_audit.py                            237  9bf64d6 2026-08-30    ENTRY                                          
 scripts/run_ablation.sh                                     27  c5c04b2 2026-08-30    ENTRY                                          
-scripts/run_pipeline.sh                                     92  9176f85 2026-08-30    docs:scripts/run_pipeline.sh                   
+scripts/run_pipeline.sh                                     92  c3a47e8 2026-08-31    docs:scripts/run_pipeline.sh                   
 scripts/run_pretrain.sh                                     47  9176f85 2026-08-30    docs:scripts/run_pretrain.sh                   
-scripts/run_sft.sh                                          56  66bc906 2026-08-28    ENTRY                                          
-scripts/sandbox_exec.py                                    118  a52ec68 2026-08-30    import:eval/code_zh.py                         
-scripts/scan_contamination.py                               54  9176f85 2026-08-30    docs:docs/lessons/kept_methods.md              
-scripts/scan_math_contamination.py                         574  80e8ae6 2026-08-31    docs:docs/audits/audit_math_corpus.md          
-scripts/scan_scm_tests.py                                  100  e01c08f 2026-08-31    facts:facts/data_scaling.json                  
-scripts/score_corpus.py                                    117  fd5f164 2026-08-30    ENTRY                                          
-scripts/score_corpus.sh                                     43  21138ad 2026-08-31    docs:docs/standards/corpus_rebuild.md          
+scripts/run_sft.sh                                          56  3d2acd9 2026-08-31    ENTRY                                          
+scripts/sample_code_rp1t.py                                 48  06e9e3b 2026-08-31    facts:facts/data_quality.json                  
 scripts/select_band.py                                      66  9176f85 2026-08-30    import                                         
 scripts/shape_audit.py                                     138  db762ca 2026-08-30    ENTRY                                          
-scripts/t2s_corpus.py                                      131  9176f85 2026-08-30    import                                         
-scripts/test_arch_compat.py                                651  81e8cf0 2026-08-31    ENTRY                                          
-scripts/test_e2e.py                                        254  26c14d9 2026-08-30    ENTRY                                          
-scripts/test_scan_math_contamination.py                    116  d535674 2026-08-31    docs:docs/audits/audit_math_corpus.md          
-scripts/test_sft_pack.py                                   145  da1d4b5 2026-08-31    ENTRY                                          
+scripts/test_arch_compat.py                                652  c3a47e8 2026-08-31    ENTRY                                          
+scripts/test_e2e.py                                        254  c3a47e8 2026-08-31    ENTRY                                          
+scripts/test_parallel_encode.py                             38  8e7c2d4 2026-08-31    facts:facts/efficiency.json                    
+scripts/test_sft_pack.py                                   146  c3a47e8 2026-08-31    ENTRY                                          
 scripts/tokenizer_eval.py                                  360  9176f85 2026-08-30    ENTRY                                          
 scripts/tokenizer_report.py                                485  9176f85 2026-08-30    ENTRY                                          
 scripts/tokenizer_sweep.py                                 135  9176f85 2026-08-30    import:scripts/tokenizer_eval.py               
 serve.py                                                   176  9176f85 2026-08-30    ENTRY                                          
 sft.py                                                     186  9176f85 2026-08-30    ENTRY                                          
-sft_math.py                                                251  1419b2c 2026-08-31    ENTRY                                          
-train.py                                                  2078  81e8cf0 2026-08-31    ENTRY                                          
+sft_math.py                                                251  c3a47e8 2026-08-31    ENTRY                                          
+train.py                                                  2176  029c43a 2026-08-31    ENTRY                                          
 
 ==================================================================================================================================
-Total: 181 files, 60 entry points, 179 BFS-reachable, 164 citation edges, 0 unreachable (0 DELETE, 0 KEEP)
+Total: 187 files, 61 entry points, 185 BFS-reachable, 172 citation edges, 0 unreachable (0 DELETE, 0 KEEP)

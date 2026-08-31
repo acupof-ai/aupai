@@ -335,6 +335,14 @@ def main():
             return "import"
         return "none"
 
+    # Printed with the table, not only in this file's docstring: the committed
+    # listing is what someone reads before deleting, and a warning that lives only
+    # in the generator is a warning they never see.
+    print("NOT A DELETION ORACLE. This is a citation graph: a doc mention counts as an edge,")
+    print("so 'reachable' can mean 'named by a doc nobody runs'. And a file loaded by a runtime")
+    print("glob is live while invisible here -- vet_programs.py:37 globs math_programs_l*_ext*.py,")
+    print("23 generators. Before deleting anything, grep for glob/importlib on its directory.")
+    print()
     print(f"{'PATH':<55} {'LINES':>6}  {'LAST COMMIT':<20}  {'REACHED FROM':<45}  FATE")
     print("-" * 130)
     unreachable = []
