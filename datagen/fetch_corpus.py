@@ -285,6 +285,72 @@ def _host(u):
     return u.split("/")[2] if u.startswith("http") else u
 
 
+def _chain_hosts(url_chain):
+    """Hosts of a mirror chain, for the give-up message. t37 reading: a source
+    missing on ALL its hosts must name the chain it tried, so the operator sees
+    every mirror probed, not just the last."""
+    return ", ".join(_host(u) for u in url_chain)
+
+
+def _selftest():
+    """t37 acceptance, hermetic (no internet): a local HTTP server serves one
+    shard; the FIRST mirror host is a closed port. Assert the closed host is
+    abandoned in <10 s and the server host serves the bytes with the serving
+    host recorded; assert an all-closed chain fails and names every host."""
+    import http.server
+    import tempfile
+    import threading
+
+    payload = b"hello t37 mirror chain\n" * 3
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def _ok(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+        def do_HEAD(self):
+            self._ok()
+
+        def do_GET(self):
+            self._ok()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    d = tempfile.mkdtemp()
+    part = os.path.join(d, "shard.part")
+    good = f"http://127.0.0.1:{port}/x.jsonl"
+    closed_a = "http://127.0.0.1:9/x.jsonl"  # discard port: refused, fails fast
+    closed_b = "http://127.0.0.1:8/y.jsonl"
+    try:
+        # (a) failover: closed first host abandoned, server host serves the bytes
+        r, server = _fetch_one([closed_a, good], part, "t37selftest", None)
+        assert r.returncode == 0, f"failover did not serve: rc {r.returncode}"
+        with open(part, "rb") as fp:
+            got_bytes = fp.read()
+        assert got_bytes == payload, "served bytes mismatch"
+        assert server == f"127.0.0.1:{port}", f"wrong serving host {server}"
+        # (b) missing on ALL hosts: fails, names the chain tried
+        r2, server2 = _fetch_one([closed_a, closed_b], part, "t37selftest", None)
+        assert r2.returncode != 0, "all-closed chain must fail"
+        assert server2 is None, f"no host should serve an all-closed chain, got {server2}"
+        got = _chain_hosts([closed_a, closed_b])
+        assert "127.0.0.1:9" in got and "127.0.0.1:8" in got, f"chain not named: {got!r}"
+        print(f"fetch_corpus selftest OK: failover served {len(payload)}B on {server}; "
+              f"all-closed named {got!r}")
+        return 0
+    finally:
+        httpd.shutdown()
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def fetch(source, target_bytes, stream_n=0, stream_i=0, modelscope_urls=None):
     ensure_raw_location()
     if not disk_ok(target_bytes):
@@ -376,6 +442,7 @@ def fetch(source, target_bytes, stream_n=0, stream_i=0, modelscope_urls=None):
             if attempts >= 4:
                 print(
                     f"  {name}: giving up this shard after {attempts} outer retries; "
+                    f"hosts tried ({_chain_hosts(url_chain)}) all failed; "
                     f".part kept ({os.path.getsize(part) if os.path.exists(part) else 0}B) for resume",
                     file=sys.stderr,
                     flush=True,
@@ -408,11 +475,16 @@ def fetch(source, target_bytes, stream_n=0, stream_i=0, modelscope_urls=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", required=True, help="named source (fineweb2, cci3_hq, ...)")
+    ap.add_argument("--selftest", action="store_true", help="run the hermetic mirror-chain selftest and exit")
+    ap.add_argument("--source", default=None, help="named source (fineweb2, cci3_hq, ...)")
     ap.add_argument("--target_bytes", type=float, default=None, help="disk bytes to fetch (None = all)")
     ap.add_argument("--stream_n", type=int, default=0, help="parallel streams (0 = one); fetch files where i%n==stream_i")
     ap.add_argument("--stream_i", type=int, default=0, help="this stream's index (0..stream_n-1)")
     a = ap.parse_args()
+    if a.selftest:
+        return _selftest()
+    if not a.source:
+        ap.error("--source <name> is required (or pass --selftest)")
     return fetch(a.source, a.target_bytes or 0, a.stream_n, a.stream_i)
 
 
