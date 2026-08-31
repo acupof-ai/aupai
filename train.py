@@ -1248,11 +1248,14 @@ def scatter_values(ids, vals, num_id):
 
 
 def _encode_worker(i, lo, hi, path):
-    # Part-files, not a Queue: mp.Queue's feeder thread can be killed when the
-    # worker exits before flushing an over-pipe-buffer payload, and the parent's
-    # q.get() then blocks forever (observed 2026-08-31, 4/4 workers zombied).
-    ids, vals = encode(_PARALLEL_TEXTS[lo:hi], _PARALLEL_TOK)
-    np.savez(path, ids=ids.numpy(), vals=vals.numpy() if Cfg.fone else np.empty(0))
+    # Part-files, not a Queue: a worker that dies leaves the parent's q.get()
+    # blocking forever with no error (observed 2026-08-31); exitcode!=0 surfaces.
+    out = encode(_PARALLEL_TEXTS[lo:hi], _PARALLEL_TOK)
+    if Cfg.fone:
+        ids, vals = out
+        np.savez(path, ids=ids.numpy(), vals=vals.numpy())
+    else:
+        np.savez(path, ids=out.numpy(), vals=np.empty(0))
 
 
 def _encode_domain(texts, tok, workers, log=None):
