@@ -1,0 +1,42 @@
+=== off ===
+[seam] arm OFF, wrapper untouched
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.536 | lr 1.00e-02 | gnorm 3.03 | 0.00B tok | 24K tok/s/gpu | MFU 10% | ETA 2.3h
+step 20/1525 1% [main] | loss 6.992 | lr 1.00e-02 | gnorm 0.95 | 0.00B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.443 | lr 1.00e-02 | gnorm 0.86 | 0.00B tok | 76K tok/s/gpu | MFU 32% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.515 | lr 1.00e-02 | gnorm 0.88 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.255 | lr 1.00e-02 | gnorm 1.81 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 60/1525 4% [main] | loss 6.006 | lr 1.00e-02 | gnorm 4.41 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.905 | lr 1.00e-02 | gnorm 1.30 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.587 | lr 1.00e-02 | gnorm 0.86 | 0.01B tok | 80K tok/s/gpu | MFU 33% | ETA 0.7h
+step 90/1525 6% [main] | loss 5.218 | lr 1.00e-02 | gnorm 1.18 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 100/1525 7% [main] | loss 4.970 | lr 1.00e-02 | gnorm 1.77 | 0.01B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
+step 110/1525 7% [main] | loss 4.985 | lr 1.00e-02 | gnorm 1.32 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 4.836 | lr 1.00e-02 | gnorm 2.00 | 0.02B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 120/1525 8% [main] | loss 4.836 | lr 1.00e-02 | gnorm 2.00 | 0.02B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+killed by tilerl at 18:45 pod time: OFF arm reached step 110 (70 flash recompiles, 20 after step 50, 81K tok/s, loss 4.985). Deliberate kill of 986621 for the ON arm in the same session. NOT a crash.
+--- flash recompiles ---
+70
+=== on ===
+[seam] flash_attn_varlen_func wrapped in _dynamo.disable
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+step 10/1525 1% [main] | loss 7.575 | lr 1.00e-02 | gnorm 2.95 | 0.00B tok | 34K tok/s/gpu | MFU 14% | ETA 1.6h
+step 20/1525 1% [main] | loss 7.071 | lr 1.00e-02 | gnorm 1.06 | 0.00B tok | 81K tok/s/gpu | MFU 34% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.480 | lr 1.00e-02 | gnorm 0.83 | 0.00B tok | 82K tok/s/gpu | MFU 34% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.626 | lr 1.00e-02 | gnorm 3.44 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.233 | lr 1.00e-02 | gnorm 1.91 | 0.01B tok | 82K tok/s/gpu | MFU 34% | ETA 0.7h
+step 60/1525 4% [main] | loss 6.208 | lr 1.00e-02 | gnorm 1.17 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.7h
+step 70/1525 5% [main] | loss 5.996 | lr 1.00e-02 | gnorm 1.23 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.7h
+step 80/1525 5% [main] | loss 5.798 | lr 1.00e-02 | gnorm 1.48 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 90/1525 6% [main] | loss 5.364 | lr 1.00e-02 | gnorm 1.12 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 100/1525 7% [main] | loss 5.128 | lr 1.00e-02 | gnorm 1.80 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 110/1525 7% [main] | loss 5.142 | lr 1.00e-02 | gnorm 0.77 | 0.01B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 120/1525 8% [main] | loss 4.978 | lr 1.00e-02 | gnorm 1.15 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 130/1525 9% [main] | loss 4.869 | lr 1.00e-02 | gnorm 1.60 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+step 130/1525 9% [main] | loss 4.869 | lr 1.00e-02 | gnorm 1.60 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+killed by tilerl at 18:49 pod time: ON arm reached step 110 (0 flash recompiles vs OFF 70). Deliberate kill of 988811. NOT a crash.
+--- flash recompiles ---
+0
+execing command in container 827d3e58e99af98e06c8cf3f18e6faf46e831e67e98002f30f6b38c13c7991c2: command terminated with exit code 1

@@ -1590,6 +1590,52 @@
    },
    "uncertainty": "Two runs, not a distribution: 0.094 nat is the observed spread of one pair and a third twin could widen it. It is measured on one card at 110 steps on the smoke mix, so it does not bound the spread for a 7-card 50-step run on the real mix, which is what the fp8 gate will actually use -- that noise floor still has to be established in the configuration the gate runs in. The mechanism by which padding changes loss is not diagnosed: I show that it does, not which kernels changed or whether the direction is systematic. And since both twins sit near the OFF arm, I cannot rule out that the ON arm hit something specific to its session rather than to the flag; a second ON run would settle that and has not been done.",
    "status": "measured"
+  },
+  {
+   "id": "eff.seam_dynamo_disable",
+   "value": "SHIP CANDIDATE: wrapping flash_attn_varlen_func in torch._dynamo.disable eliminates the flash recompiles entirely, 70 to 0. Both arms one session, one card, seed 42, mix_smoke_warmup, 110 steps, TORCH_LOGS=recompiles and the step lines in the SAME process so a step-N event ties to its own guard -- which neither earlier run could do. RESULT. OFF: 218 total recompiles, 70 flash, 20 of them after step 50. ON: 33 total, ZERO flash, zero after step 50. So the unbounded doc-count guard (eff.recompile_recurrence_explained) is gone and total recompiles fall 85%. The 20-after-step-50 figure is the one that matters: it reproduces the recurrence in this session rather than relying on the earlier trace, so before and after come from one measurement, per b0's protocol. THROUGHPUT IS UNCHANGED AT 81K tok/s IN BOTH ARMS, which is exactly why b0 required the acceptance metric to be trace-based and not tok/s: a constant tax is invisible to steady throughput. Reading tok/s alone would have scored this fix as doing nothing. It is also how I originally misread the flat 77K as evidence the recompile tax did not exist. NUMERICS ARE NEUTRAL, unlike the pad flag. Loss at steps 10/50/110: OFF 7.536/6.255/4.985, ON 7.575/6.233/5.142. Deltas 0.039, 0.022, 0.157 against a measured twin floor of 0.094 nat (eff.pad_dynamic_shapes_twin_control). Two of three are inside the floor; step 110 is 1.7x it, which is the one number that keeps this a candidate rather than a pass. Contrast the pad flag at 8.8x the floor. The prediction held: compile_key (interface.py:678-702) contains no batch_size, so the specialisation had no consumer and removing it should not change arithmetic. It did not, to within 1.7 floors.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_seam.log, probes/t57_seam.py, docs/lessons/flash_recompile_seam_design.md",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "steps": 110,
+    "env": "TORCH_LOGS=recompiles",
+    "change": "train.flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)",
+    "off_total_recompiles": 218,
+    "off_flash_recompiles": 70,
+    "off_flash_after_step50": 20,
+    "on_total_recompiles": 33,
+    "on_flash_recompiles": 0,
+    "on_flash_after_step50": 0,
+    "tok_s_off": 81,
+    "tok_s_on": 81,
+    "loss_off_10_50_110": [
+     7.536,
+     6.255,
+     4.985
+    ],
+    "loss_on_10_50_110": [
+     7.575,
+     6.233,
+     5.142
+    ],
+    "loss_deltas": [
+     0.039,
+     0.022,
+     0.157
+    ],
+    "twin_floor_nat": 0.094,
+    "step110_delta_in_floors": 1.7
+   },
+   "uncertainty": "The seam ms is NOT measured here: this run had TORCH_LOGS but no --profile, so I have the recompile count and not the gap time. b0's acceptance metric asks for BOTH, and the 3.28% seam figure still comes from the earlier steady trace rather than from this session -- a combined --profile plus recompile-log run would close it, and the residual host-sync risk b0 named would show there as a new gap elsewhere. Untested. The step-110 loss delta of 0.157 exceeds the 0.094 twin floor by 1.7x on a single pair, so it could be either noise at the tail of a short run or a real effect; a twin arm would separate them and was not run. One card, 110 steps, smoke mix: none of this bounds the 7-card real-mix behaviour, and a graph break removed on one card may interact differently with DDP collectives.",
+   "status": "measured"
   }
  ]
 }
