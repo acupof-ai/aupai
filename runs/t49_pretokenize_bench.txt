@@ -1,0 +1,40 @@
+t49 pretokenize throughput (2026-08-31, 44; /tmp/bench_pretok.py on the pod, 180 CPUs)
+
+Method: exact replication of train._domain_seqs's tokenization path (same shard
+glob, same random.Random(Cfg.seed=42) shuffle, same encode() -> one
+<eos>-separated int32 stream). 8-process run splits the shuffled doc list into
+contiguous blocks, streams concatenated in worker order -> element-identical
+stream (stream_sum matches both runs of each domain). Thread budget held equal:
+RAYON_NUM_THREADS=180 for 1 proc, 22 per worker for 8 procs.
+
+                            math_seed            wiki_chat
+  shards on disk            5 (320 MB)           12 (1.0 GB)
+  docs                      181,684              372,827
+  tokens                    81.68M               283.90M
+  1 proc  (180 thr)         33.3s  2.45M tok/s   75.1s  3.78M tok/s
+  8 proc  (22 thr each)      4.5s 18.22M tok/s    9.7s 29.37M tok/s
+  per-proc at 8             2.28M tok/s          3.67M tok/s
+  scaling                   7.44x (93%)          7.77x (97%)
+  stream_sum (1p == 8p)     349106798199         1424597499381
+
+Load + shuffle is 1.8-4.2s; save + stamps <= 6.3s. Neither is material.
+
+Projection for the stage-1 corpus (~15B tokens):
+  1 process (pretokenize.py as written):  66 min (wiki rate) - 102 min (math rate)
+  8 processes (this driver):               9 min (wiki rate) - 14 min (math rate)
+  Rate is content-dependent (math's denser markup tokenizes ~35% slower per
+  byte than wiki chat); the stage-1 mix spans both regimes, so the range stands.
+
+Critical-path verdict: TOKENIZATION IS ON THE CRITICAL PATH TONIGHT IF
+pretokenize.py RUNS AS-IS (single process, ~1-1.7h for 15B). With the 8-process
+driver it is ~9-14 min -- effectively off. The driver is /tmp/bench_pretok.py
+on the pod; promoting it (or an 8-worker mode in pretokenize.py) is the unlock.
+
+Artifacts (train.py-compatible, verified via the real _domain_seqs reuse path):
+  /data00/tokens_math_seed.pt  (81.68M tok) + .vocab + .srcfp  -- reuse 0.2s
+  /data00/tokens_wiki_chat.pt  (283.90M tok) + .vocab + .srcfp -- reuse 0.7s
+Both caches load with no retokenize ("cache's source changed" / "another
+vocabulary" lines absent). Tonight's run skips these two domains outright.
+
+Caveat: caches are the non-fone (default) stream. A --fone stage-1 run needs
+tokens_<domain>_fone.pt, a separate artifact this task did not build.
