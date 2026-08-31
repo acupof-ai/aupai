@@ -145,12 +145,34 @@ def main():
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     ).stdout.strip()
     if repo and os.path.isfile(os.path.join(repo, "scripts", "harness.py")):
-        r = subprocess.run(
-            [sys.executable, os.path.join(repo, "scripts", "harness.py"), "check"],
-            capture_output=True, text=True,
-        )
+        try:
+            r = subprocess.run(
+                [sys.executable, os.path.join(repo, "scripts", "harness.py"), "check"],
+                capture_output=True, text=True, timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            print("REFUSING: harness check did not finish in 180s -- rerun it by hand; "
+                  "a hook that hangs is a hook people bypass", file=sys.stderr)
+            sys.exit(1)
         if r.returncode != 0:
-            print(f"REFUSING: harness check failed:\n{r.stdout}", file=sys.stderr)
+            # stdout AND stderr, and the FAIL lines pulled out. Printing stdout alone
+            # produced "REFUSING: harness check failed:" with an empty reason when the
+            # run crashed or a check raised, because those write to stderr (fb,
+            # 2026-08-31). A refusal that does not say what failed cannot be acted on.
+            failed = [ln for ln in r.stdout.splitlines() if "[FAIL]" in ln]
+            print("REFUSING: harness check failed", file=sys.stderr)
+            for ln in failed:
+                print(f"  {ln.strip()}", file=sys.stderr)
+            if not failed:
+                print("  (no [FAIL] line -- the check run itself failed)", file=sys.stderr)
+                print(f"  exit {r.returncode}", file=sys.stderr)
+                tail = (r.stderr or r.stdout or "").strip().splitlines()[-15:]
+                for ln in tail:
+                    print(f"  {ln}", file=sys.stderr)
+            # A ledger another session is mid-write reads as malformed for a moment.
+            # Say so rather than leaving the reader to guess at a transient.
+            print("  if this passes when rerun by hand, a concurrent write raced a "
+                  "ledger read -- report it, do not --no-verify", file=sys.stderr)
             sys.exit(1)
     print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 

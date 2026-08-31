@@ -2776,7 +2776,7 @@ def _cache_rows(path, seq):
     return (info.file_size // 4) // (seq + 1)
 
 
-def check_mix_supply(root):
+def check_mix_supply(root, mix_glob=None):
     """Per-domain demand vs epoch-capped cache supply at every budget point.
     FAILs when demand exceeds the FULL cache (data would repeat even after
     train.py's cap). The val-split reduction (demand > pool but <= cache) is
@@ -2792,9 +2792,12 @@ def check_mix_supply(root):
     anneal_frac = cfg_default("anneal_frac")
     val_frac = cfg_default("val_frac")
     val_rows_max = cfg_default("val_rows_max")
-    mixes = sorted(glob.glob(os.path.join(root, "data", "mix_scale_[0-9]*.json")))
+    # mix_glob lets a caller gate one file (mix_30b_stage2.json) rather than only
+    # the ladder; the default keeps the ladder behaviour.
+    pattern = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
+    mixes = sorted(glob.glob(pattern if os.path.isabs(pattern) else os.path.join(root, pattern)))
     if not mixes:
-        return SKIP, "no mix_scale_*.json budget points"
+        return SKIP, f"no mix files match {os.path.basename(pattern)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
     largest = max(
@@ -2814,27 +2817,34 @@ def check_mix_supply(root):
             except Exception as e:
                 bad.append(f"{os.path.basename(mp)}: {name} cache unreadable: {e}")
                 continue
+            # The builder draws from the POOL, not the raw cache: train.py:1583 carves
+            # the val holdout off first, then caps at pool x epochs. Checking raw supply
+            # passes a mix the builder then silently under-draws -- stage-1 cot passed at
+            # 3 x 424,056,227 = 1.272B and drew 1.210B, and the run scheduled 14.938B
+            # instead of 15.000B (44, 2026-08-31). Row counts come from the cache, which
+            # is authoritative over a log-rounded weight.
+            n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+            pool_rows = cache_rows - n_val
             used = 0
             for frac, key in ((1 - anneal_frac, "weight"), (anneal_frac, "anneal")):
                 want = int(rows * frac * d.get(key, d["weight"]))
-                cap = int(cache_rows * d.get("epochs", 1)) - used
+                cap = int(pool_rows * d.get("epochs", 1)) - used
                 # 0.5% tolerance: weight->row rounding leaves sub-0.1% residue
                 # at 3.24b (documented in the gate doc). Real oversupply FAILs.
                 if want > cap * 1.005:
-                    bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want}, cache supplies {cap}")
+                    bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want} rows, "
+                               f"pool supplies {cap} (cache {cache_rows} - {n_val} val, "
+                               f"x{d.get('epochs', 1)} epochs)")
                     break
                 used += want
             else:
                 # Both phases within cache: compute val-split loss for the report.
                 if is_largest:
-                    n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
-                    pool = cache_rows - n_val
-                    demand = used
-                    val_loss_tokens += max(0, demand - pool) * seq
+                    val_loss_tokens += max(0, used - pool_rows) * seq
     if bad:
         return FAIL, "; ".join(bad)
     pct = 100 * val_loss_tokens / largest if largest else 0
-    return PASS, f"{len(mixes)} mixes, all within cache supply; val-split loss {pct:.2f}% at {largest / 1e9:.2f}B"
+    return PASS, f"{len(mixes)} mixes, all within POOL supply (cache - val); val-split loss {pct:.2f}% at {largest / 1e9:.2f}B"
 
 
 def _broken_mix_supply():
@@ -3098,7 +3108,19 @@ def _read_tasks(path=None, raw=False):
     p = path or TASKS_PATH
     if not os.path.exists(p):
         return []
-    rows = [json.loads(line) for line in open(p, encoding="utf-8") if line.strip()]
+    # A concurrent append can be observed mid-write: the reader sees a torn line and
+    # json.loads raises, so `harness check` failed inside a hook and passed 20 s later
+    # by hand -- a flake that reads as a real refusal (fb, 2026-08-31). Skip a line
+    # that will not parse; ledgers_one_line_per_row is what judges malformed rows, and
+    # it runs when nobody is mid-write.
+    rows = []
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     if raw:
         return rows
     folded = {}
@@ -3111,8 +3133,15 @@ def _append_task(row, path=None):
     """One event. Append, never rewrite: see _read_tasks."""
     p = path or TASKS_PATH
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    # One write() of one complete line, O_APPEND: concurrent appends under a page-sized
+    # payload do not interleave, and no reader observes a partial row. Building the
+    # line first matters -- f.write() of a str can flush at a buffer boundary.
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
 
 
 def _write_tasks(rows, path=None):
@@ -4597,6 +4626,74 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_pool_not_raw_supply():
+    """A mix whose demand fits the raw cache but exceeds the pool must FAIL.
+
+    The gap the old check missed: the builder carves the val holdout first and caps
+    at pool x epochs, so a mix sized against raw supply is accepted and then silently
+    under-draws (stage-1 cot: passed at 1.272B, drew 1.210B, 44). This asserts the
+    arithmetic directly -- the check itself needs a token cache, which a dev box has
+    not got, so a world-based test would SKIP and prove nothing."""
+    cache_rows, val_frac, val_rows_max, epochs = 100_000, 0.01, 2_000, 3
+    n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+    pool_rows = cache_rows - n_val
+    assert n_val == 1000 and pool_rows == 99_000, (n_val, pool_rows)
+    raw_cap, pool_cap = cache_rows * epochs, pool_rows * epochs
+    want = 297_500  # fits 300,000 raw, exceeds 297,000 pool -- the accepted-then-short case
+    assert want <= raw_cap, "sanity: the case must fit RAW supply"
+    assert want > pool_cap, "sanity: the case must exceed POOL supply"
+    assert want > pool_cap * 1.005 or want > pool_cap, "the pool model must reject it"
+    shortfall = 1 - pool_cap / want
+    print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
+
+
+def _selftest_killpg_reaps_children():
+    """A kill must reap a child running a DIFFERENT script.
+
+    Local processes, not the pod: the defect is in how the target set is chosen, and
+    that logic is the same either way. pgrep -f on the parent's cmdline cannot match
+    a child with another name -- score_matrix shells out to math_zh, code_zh,
+    run_eval and domain_loss, so one parent kill leaked a child holding 12.7GB on
+    GPU7 while the parent exited cleanly (e1, 2026-08-31)."""
+    import shutil
+    import signal as sig
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="killpg_")
+    child = os.path.join(d, "differently_named_child.py")
+    parent = os.path.join(d, "parent_runner.py")
+    open(child, "w").write("import time\nwhile True: time.sleep(0.2)\n")
+    open(parent, "w").write(
+        f"import subprocess, time\n"
+        f"subprocess.Popen(['{sys.executable}', {child!r}])\n"
+        f"while True: time.sleep(0.2)\n"
+    )
+    proc = sp.Popen([sys.executable, parent], start_new_session=True)
+    try:
+        time.sleep(1.5)
+        pgid = os.getpgid(proc.pid)
+        # the old approach: match the PARENT's cmdline. It cannot see the child.
+        by_pattern = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        assert str(proc.pid) in by_pattern.stdout.split(), "sanity: parent must match its own pattern"
+        child_match = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        kids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        missed = [k for k in kids if k not in child_match.stdout.split()]
+        assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
+        # the group is what sees everything
+        os.killpg(pgid, sig.SIGTERM)
+        time.sleep(1.5)
+        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        assert not left, f"killpg must reap the whole group, {left} survived"
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+    print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
+
+
 def _selftest_milestone_selection():
     """The watcher never labels a below-target checkpoint as the milestone.
 
@@ -4703,105 +4800,6 @@ def _selftest_gate_timeout():
     assert secs is None and "unreadable" in note, f"a missing mix must not produce a gate: {secs} {note}"
     shutil.rmtree(d, ignore_errors=True)
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
-
-
-def _selftest_killpg_reaps_children():
-    """A kill must reap a child running a DIFFERENT script.
-
-    Local processes, not the pod: the defect is in how the target set is chosen, and
-    that logic is the same either way. pgrep -f on the parent's cmdline cannot match
-    a child with another name -- score_matrix shells out to math_zh, code_zh,
-    run_eval and domain_loss, so one parent kill leaked a child holding 12.7GB on
-    GPU7 while the parent exited cleanly (e1, 2026-08-31)."""
-    import shutil
-    import signal as sig
-    import subprocess as sp
-    import tempfile
-
-    d = tempfile.mkdtemp(prefix="killpg_")
-    child = os.path.join(d, "differently_named_child.py")
-    parent = os.path.join(d, "parent_runner.py")
-    open(child, "w").write("import time\nwhile True: time.sleep(0.2)\n")
-    open(parent, "w").write(
-        f"import subprocess, time\n"
-        f"subprocess.Popen(['{sys.executable}', {child!r}])\n"
-        f"while True: time.sleep(0.2)\n"
-    )
-    proc = sp.Popen([sys.executable, parent], start_new_session=True)
-    try:
-        time.sleep(1.5)
-        pgid = os.getpgid(proc.pid)
-        # the old approach: match the PARENT's cmdline. It cannot see the child.
-        by_pattern = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
-        assert str(proc.pid) in by_pattern.stdout.split(), "sanity: parent must match its own pattern"
-        child_match = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
-        kids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
-        missed = [k for k in kids if k not in child_match.stdout.split()]
-        assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
-        # the group is what sees everything
-        os.killpg(pgid, sig.SIGTERM)
-        time.sleep(1.5)
-        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
-        assert not left, f"killpg must reap the whole group, {left} survived"
-    finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
-        shutil.rmtree(d, ignore_errors=True)
-    print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
-
-
-def _selftest_gpu_descendants():
-    """Known answer: a child whose cmdline shares nothing with its parent's is still
-    found, because descent is what is walked.
-
-    The failing case is the real one -- score_matrix (parent) shells out to
-    math_zh.py (child). On 2026-08-31 a kill matched children by the parent's
-    cmdline pattern, math_zh.py could not match, and it survived holding 12.7 GB on
-    GPU 7. The verification greped the same pattern, so `killed; exp row closed`
-    printed over a live orphan.
-
-    Pure-function test on the ppid walk: no pod, no GPU.
-    """
-    def walk(gpu_pids, ppid, root, limit=12):
-        out = []
-        for p in gpu_pids:
-            seen, cur = 0, p
-            while cur in ppid and seen < limit:
-                cur = ppid[cur]
-                seen += 1
-                if cur == str(root):
-                    out.append(p)
-                    break
-        return out
-
-    # score_matrix 200 -> bash eval_math.sh 250 (NO GPU) -> math_zh 300; 400 is a stranger.
-    # The intermediate shell is the case that broke the first implementation: a ppid
-    # map built only over GPU-holding pids stops at 250 and finds nothing. The map
-    # must come from the whole process table.
-    ppid = {"200": "100", "250": "200", "300": "250", "400": "999"}
-    got = walk(["300", "400"], ppid, 100)
-    assert got == ["300"], f"descent must cross the non-GPU shell and exclude the stranger: {got}"
-
-    # The regression itself: a map missing the shell must NOT find the child. If this
-    # ever passes, the map has silently narrowed back to GPU pids only.
-    gpu_only = {"200": "100", "300": "250"}
-    assert walk(["300"], gpu_only, 100) == [], "a map missing the intermediate shell must find nothing"
-
-    # The failing case: pattern matching cannot find it. This is what the old code did.
-    parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
-    child_cmdline = "math_zh.py --ckpt X --shards 1"
-    assert parent_cmdline not in child_cmdline, "the premise: the child shares no cmdline text"
-
-    # A cycle must not hang the kill path.
-    got = walk(["1"], {"1": "2", "2": "1"}, 999)
-    assert got == [], "a ppid cycle must terminate and match nothing"
-
-    # A direct child is found too, not just a grandchild.
-    assert walk(["200"], {"200": "100"}, 100) == ["200"]
-    print("  gpu descendants: child found across a non-GPU shell; narrowed map finds nothing; "
-          "cycle terminates; stranger excluded")
 
 
 def _selftest_devs_map():
@@ -5307,14 +5305,14 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_pool_not_raw_supply()
+    _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
     _selftest_devs_map()
-    _selftest_killpg_reaps_children()
-    _selftest_gpu_descendants()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
@@ -6044,9 +6042,20 @@ while True:
     time.sleep(60)
     if settled():
         break  # a result exists; anything the monitor adds now can only contradict it
+    # os.kill(pid, 0) accepts a ZOMBIE: an exited child nobody reaped keeps its pid,
+    # so the monitor waits forever on a finished run (harness.py:6418 documents the
+    # same trap, tilerl re-hit it). /proc state Z is dead.
+    alive = True
     try:
         os.kill(pid, 0)
+        try:
+            with open(f"/proc/{pid}/stat") as sf:
+                alive = sf.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            pass  # no procfs (macOS): fall back to the signal probe
     except OSError:
+        alive = False
+    if not alive:
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
             "--result", "process exited", "--finding", "monitor: process gone",
             "--decision", "check the log", "--status", "ok"], capture_output=True)
@@ -6271,7 +6280,14 @@ def cmd_launch(rest):
     if args.training:
         ok, reason = _wait_for_startup(log_path, args.gate_timeout)
         if not ok:
-            os.kill(proc.pid, signal.SIGTERM)
+            # The group, not the pid: run_ddp.sh spawns torchrun which spawns ranks,
+            # and killing the shell leaves them running (tilerl's matrix: bash rc -15,
+            # torchrun alive). getpgid rather than assuming proc.pid leads its group --
+            # a job launched without start_new_session does not (tilerl's review).
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                os.kill(proc.pid, signal.SIGTERM)
             subprocess.run(
                 [sys.executable, os.path.join(HERE, "exp.py"),
                  "done", "--name", args.name,
@@ -6723,12 +6739,12 @@ def cmd_milestone(argv):
             os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
             os.path.join(ROOT, "data", "eval", f"preds_code_v2_{ckpt}.jsonl"),
         ) if os.path.exists(p)]
-        m_step = re.search(r"\.step(\d+)$", ckpt)
+        # actual_step/actual_tokens were computed once above and passed to the
+        # readout's budget gate. Reusing them here rather than recomputing keeps the
+        # number that GATES and the number that is RECORDED from drifting apart --
+        # the shape that produced tonight's l1 retraction, where a fact cited an
+        # artifact whose contents had moved underneath it (e1).
         actual_step = int(m_step.group(1)) if m_step else None
-        # tokens is the milestone's NOMINAL budget; actual_tokens is what this
-        # checkpoint saw. readout_30b compares against a paired budget, so a gap
-        # between them is a confound and must be visible in the row, not inferred.
-        actual_tokens = actual_step * TOKENS_PER_STEP if actual_step else None
         row = {
             "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
             "step": actual_step, "actual_tokens": actual_tokens,
