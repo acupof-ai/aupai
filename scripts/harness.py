@@ -5468,7 +5468,11 @@ def cmd_milestone(argv):
     if not tokens:
         ap.error("--tokens required (cannot parse a milestone token from the checkpoint name)")
     paired = a.paired or "ckpt_p324.pt"
-    res = run_one(a.ckpt, paired, tokens)
+    # Label the row with the milestone this run represents. The watcher dedups on it,
+    # and a null makes a hand-run milestone invisible to the watcher that follows it.
+    label = _milestone_token(a.ckpt) or next(
+        (t for t, v in MILESTONE_TOKENS.items() if abs(v - tokens) / v < 0.05), None)
+    res = run_one(a.ckpt, paired, tokens, milestone=label)
     if res not in ("ok", "dry"):
         print(f"FAILED: {res}", file=sys.stderr)
         return 1
