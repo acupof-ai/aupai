@@ -15,14 +15,9 @@ change and what it supersedes: `docs/standards/0830v1_gates.md`.
 
 Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA, full causal over the 4096-token sequence (document-masked). The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training. Attention Residuals are on by default.
 
-## Writing rules (all docs, commit messages, and replies)
+## Writing rules (all docs, commit messages, register rows, and replies)
 
-- No metaphors. They distort.
-- No big words, no verdict-first tone, no invented compressed terms, no filler explanation, no spoken/speech register.
-- Delete anything a competent reader already knows.
-- Every rewrite must raise information density. Rephrasing without new information is a no-op.
-- 3+ consecutive prose paragraphs: check whether a table, list, or grouping works instead.
-- Target: simple, clear, coherent, specific, accurate, complete. Short units and strict logical order matter more than completeness of phrasing.
+The standard is `docs/standards/writing.md` (user, 2026-08-31): no metaphors, no filler, no verdict-first tone, few quotes and parentheses, formulas set as formulas, bold for the key part only, three consecutive paragraphs become a table, every rewrite raises density, four review passes before hand-over.
 
 ## 0830v1 reset (2026-08-30)
 
