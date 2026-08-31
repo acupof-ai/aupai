@@ -3972,6 +3972,7 @@ def _run_pipeline_step(step, script, step_args, forced, env=None):
 
 _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
+    "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
 )
