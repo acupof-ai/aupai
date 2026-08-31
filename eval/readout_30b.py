@@ -81,6 +81,123 @@ WARMUP_CONFOUND_MILESTONE_TOKENS = 3.24e9  # only the 3.24B pair has the 20-vs-3
 # alias the tripwire the pre-registration relies on reads ABSENT rather than a number.
 FIELD_ALIASES = {"mc_full": ("mc_ceval",), "mc_ceval": ("mc_full",)}
 
+#: A per-role domain-loss delta across two mixes carries a reweighting effect as well as a
+#: capability change. Equal domain SETS pass the different-heads guard, so a stage-1 vs
+#: stage-2 pair looks valid while three of its seven roles were reweighted 0.74x to 1.75x.
+#: 5% relative: comfortably inside the noise on a weight, and at the stage-1 -> A' boundary
+#: it separates the two groups cleanly (largest passing move 5%, smallest failing 21%).
+#: The partition is a property of THIS pair of mixes and is recomputed per boundary, never
+#: memorised (prereg §7.1, fb 2026-08-31).
+WEIGHT_CHANGE_LIMIT = 0.05
+
+
+#: Stage-2 domains bind to new stamped corpus directories, so their mix keys carry a
+#: "_stage2" suffix -- check_mix_30b_contract's second invariant REFUSES a mix that reuses
+#: a frozen ladder directory name. The suffix is load-bearing there and meaningless when
+#: pairing a role across the boundary, so the readout normalises it here. This is the only
+#: place that pairs across stages; the mix files must keep the suffix (tilerl, 2026-08-31).
+_STAGE_SUFFIXES = ("_stage2", "_stage3")
+
+
+def _base_role(name):
+    """'math_owm_stage2' -> 'math_owm'. The role identity a cross-stage pair shares."""
+    for suf in _STAGE_SUFFIXES:
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return name
+
+
+def _mix_entries(mix_path):
+    """{base role: entry} for a mix file, reading domains AND _blocked.
+
+    _blocked is included because a mix under construction is the normal state: stage-2
+    domains move from _blocked into domains one at a time as they are stamped, and a role
+    that has not landed yet still carries the weight and epochs this comparison needs.
+    Reading only `domains` made every unlanded role unjudgeable-by-absence, which reads as
+    no refusal -- a fail-open on the roles most likely to have been reweighted."""
+    if not mix_path or not os.path.exists(mix_path):
+        return {}
+    try:
+        with open(mix_path, encoding="utf-8") as f:
+            mix = json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+    out = {}
+    for section in ("domains", "_blocked"):
+        for k, v in (mix.get(section) or {}).items():
+            if isinstance(v, dict):
+                out[_base_role(k)] = v
+    return out
+
+
+def _mix_weights(mix_path):
+    """{base role: weight}; {} when the path is absent or unreadable. Absent means
+    "cannot check", which reads as no refusal -- the caller treats a missing mix as an
+    unknown ratio rather than a zero one."""
+    return {k: float(v.get("weight", 0)) for k, v in _mix_entries(mix_path).items()}
+
+
+def weight_ratio(domain, milestone_mix, paired_mix):
+    """milestone weight / paired weight for one role; None when either is unavailable.
+
+    None means unjudgeable-by-absence and must not be read as 1.0: a missing mix file
+    would otherwise silently assert the weights are equal, which is the failure this
+    whole document is about."""
+    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
+    d = _base_role(domain)
+    if d not in mw or d not in pw or not pw[d]:
+        return None
+    return mw[d] / pw[d]
+
+
+#: Field names a mix may use for a domain's trainable pool, in preference order. The pool
+#: is packed rows of seq+1 minus the validation holdout, so it exists only once a token
+#: cache has been built; a stage-2 mix written before its caches land publishes
+#: stage1_pool_rows (the pool the stage-1 draw was capped against) and nothing else.
+_POOL_FIELDS = ("pool_rows", "stage1_pool_rows")
+
+
+def _pool_rows(entry):
+    for f in _POOL_FIELDS:
+        v = entry.get(f)
+        if v:
+            return int(v)
+    return None
+
+
+def draws_equal(domain, milestone_mix, paired_mix, seq=4096):
+    """True when both mixes DRAW the same row count for a role despite different weights.
+
+    The weight ratio is a proxy; the exact condition is post-cap draw equality (44, prereg
+    §7.1). build_mix computes want = int(total_rows * weight) and then caps it at
+    int(pool_rows * epochs), so two different weights that both exceed the cap produce the
+    identical draw and carry no reweighting effect at all. cot is the live case: stage 1
+    wants int(3,662,109 x 0.0848) = 310,546 rows and clamps to int(98,504 x 3) = 295,512,
+    while stage 2 wants 295,512 and is already at the cap -- both draw 295,512.
+
+    None when the mixes do not carry what this needs, which sends the caller back to the
+    conservative weight-ratio test. None is common and must stay visible: the caller says
+    so in the output, otherwise the exact test silently degrades and nobody learns the
+    field is missing (tilerl, 2026-08-31)."""
+    me, pe = _mix_entries(milestone_mix), _mix_entries(paired_mix)
+    d = _base_role(domain)
+    if d not in me or d not in pe:
+        return None
+    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
+    try:
+        pool = _pool_rows(me[d]) or _pool_rows(pe[d])
+        if not pool:
+            return None
+        m_tot = json.load(open(milestone_mix, encoding="utf-8")).get("total_tokens")
+        p_tot = json.load(open(paired_mix, encoding="utf-8")).get("total_tokens")
+        if not m_tot or not p_tot:
+            return None
+        m_draw = min(int(int(m_tot / seq) * mw[d]), int(pool * me[d].get("epochs", 1)))
+        p_draw = min(int(int(p_tot / seq) * pw[d]), int(pool * pe[d].get("epochs", 1)))
+    except Exception:  # noqa: BLE001
+        return None
+    return m_draw == p_draw
+
 
 def load_score_record(path, ckpt, profile="full"):
     """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
@@ -186,15 +303,25 @@ def print_metric(name, spec, m_val, p_val, state, direction, delta, note, m_dege
 def param_line(ckpt_name, ckpt_dir=None):
     """'206.1M (tied head; state_dict 239.7M)' for one checkpoint, or None if unreadable.
 
-    The two numbers differ because tok.weight and head.weight are the SAME storage: the run
-    log reports parameters() (206.1M, each storage once) while the state_dict sums the tied
+    The two numbers differ because tok.weight and head.weight are the SAME table: the run
+    log reports parameters() (206.1M, each counted once) while the state_dict sums the tied
     32832x1024 table twice (239.7M). Printed side by side so the pairing of a run-log number
     against a checkpoint number never reads as a size change (fb, 2026-08-31).
 
     COMPUTED, never stamped: a hardcoded '206.1M/239.7M' is the same stale-derived-artifact
     shape as a cache whose key does not cover its content -- it would keep printing the old
-    pair after an arch change. Aliasing is detected by storage identity (data_ptr), not by
-    value equality: two tensors that merely happen to be equal are two parameters."""
+    pair after an arch change.
+
+    Tying is detected by storage identity FIRST and value equality only as a fallback, and
+    the distinction is load-bearing in both directions. Storage identity alone was wrong: a
+    mid-run checkpoint written with optimizer state deserialises tok.weight and head.weight
+    into separate storages, so the 3.24B readout printed the milestone as a bare 239.7M
+    beside the ladder point's '206.1M (tied head; ...)' -- the exact different-sized-models
+    reading this function exists to prevent. Value equality alone is also wrong: an UNTIED
+    model whose two tables happen to hold equal values reads as tied, hiding a real doubling
+    of the embedding table. So: same storage is tying; different storage with equal values
+    on the known tied pair (tok.weight/head.weight) is tying by value, reported as such;
+    anything else is two parameters."""
     path = os.path.join(ckpt_dir or ROOT, ckpt_name)
     if not os.path.exists(path):
         return None
@@ -217,13 +344,25 @@ def param_line(ckpt_name, ckpt_dir=None):
             if key not in seen:
                 seen.add(key)
                 uniq += int(t.numel())
+        by_value = False
+        if uniq == total:
+            tok, head = model.get("tok.weight"), model.get("head.weight")
+            if (
+                tok is not None
+                and head is not None
+                and getattr(tok, "shape", None) == getattr(head, "shape", None)
+                and torch.equal(tok, head)
+            ):
+                uniq -= int(head.numel())
+                by_value = True
     except Exception:  # noqa: BLE001
         return None
     if not total:
         return None
     if uniq == total:
         return f"{total / 1e6:.1f}M"
-    return f"{uniq / 1e6:.1f}M (tied head; state_dict {total / 1e6:.1f}M)"
+    how = "tied head by value" if by_value else "tied head"
+    return f"{uniq / 1e6:.1f}M ({how}; state_dict {total / 1e6:.1f}M)"
 
 
 #: Two checkpoints differenced across different token budgets bias every metric
@@ -236,7 +375,7 @@ BUDGET_MISMATCH_LIMIT = 0.05
 
 def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens,
             milestone_profile="milestone", paired_profile="full", selftest=False, ckpt_dir=None,
-            actual_tokens=None, paired_tokens=None):
+            actual_tokens=None, paired_tokens=None, milestone_mix=None, paired_mix=None):
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
     m_rec = load_score_record(score_matrix, milestone, milestone_profile)
     p_rec = load_score_record(score_matrix, paired, paired_profile)
@@ -279,6 +418,19 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             if m_dl is None or p_dl is None:
                 print(f"\n{name}: ABSENT (domain-loss records missing)")
                 continue
+            # Different heads means the two models were scored on text neither shares.
+            # Tonight: stage-1 (code_rp1t/cot/en_c4/math_owm/textbook_30b/wiki_chat/
+            # zh_web) against the ladder's (chat/code/en/math/textbook/web_hq/wiki),
+            # zero overlap, reported as "6 of 7 domains degraded". A partial overlap is
+            # the more dangerous version -- it yields a verdict that looks whole.
+            m_heads, p_heads = set(m_dl["domains"]), set(p_dl["domains"])
+            if m_heads != p_heads:
+                only_m, only_p = sorted(m_heads - p_heads), sorted(p_heads - m_heads)
+                print(f"\n{name}: REFUSING -- the pair was scored on DIFFERENT heads. "
+                      f"milestone-only {only_m or 'none'}, paired-only {only_p or 'none'}. "
+                      f"Domain loss across different corpora measures the corpora, not the "
+                      f"models. Rescore both on one mix.")
+                continue
             common = sorted(set(m_dl["domains"]) & set(p_dl["domains"]))
             if not common:
                 print(f"\n{name}: ABSENT (no shared domains -- score both checkpoints on the same mix heads)")
@@ -287,6 +439,26 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             for d in common:
                 mv = m_dl["domains"][d]["loss"]
                 pv = p_dl["domains"][d]["loss"]
+                # A role whose WEIGHT changed between the two mixes carries a reweighting
+                # effect inside its delta. Equal head sets pass the guard above, so this is
+                # the case that guard cannot see. Refuse per role rather than per pair: at
+                # the stage-1 -> A' boundary four roles move by <5% and three by 21-75%, so
+                # refusing the whole metric would discard four honest reads and permitting
+                # it would ask a reader to discount 1.75x by eye.
+                wr = weight_ratio(d, milestone_mix, paired_mix)
+                same_draw = draws_equal(d, milestone_mix, paired_mix)
+                if same_draw is None and wr is not None:
+                    # Say so. A silent degradation to the proxy means nobody learns the
+                    # exact test never ran -- which is how a guard becomes decorative.
+                    print(f"  {d:15s} (post-cap draw unknown; using the weight-ratio proxy)")
+                if wr is not None and abs(wr - 1.0) > WEIGHT_CHANGE_LIMIT and not same_draw:
+                    w_p = _mix_weights(paired_mix).get(d)
+                    w_m = _mix_weights(milestone_mix).get(d)
+                    print(f"  {d:15s} milestone={mv:.4f} paired={pv:.4f}  "
+                          f"floor (reweighted, unjudgeable)  w {w_p:.5f} -> {w_m:.5f} ({wr:.2f}x)")
+                    print(f"      note: read within-stage only; the cross-stage delta mixes "
+                          f"capability with a {wr:.2f}x weight change")
+                    continue
                 state, direction, delta, note = verdict(name, spec, mv, pv, is_3p24b)
                 if state == "moved":
                     any_moved = True
@@ -366,27 +538,41 @@ def selftest():
     assert moved_domains >= 1, "no domain loss moved between 0.2b and 3.24b -- engine or data broken"
     print(f"  {moved_domains}/{len(common)} domains moved (all in the known direction: lower at 3.24b)")
     # 2b. param_line distinguishes a TIED head from two equal-but-separate tables. Value
-    # equality is not the test -- torch.equal is true for both -- so a param_line that keyed
-    # on equality would print "tied head" for an untied model and hide a real size change.
-    print("\n--- selftest 2b: param_line detects storage aliasing, not value equality ---")
+    # Storage identity is primary; value equality on the known tied pair is the fallback.
+    # Both are needed: see param_line's docstring for why either alone is wrong.
+    print("\n--- selftest 2b: param_line reads tying by storage, then by value ---")
     try:
         import tempfile
 
         import torch
 
         w = torch.zeros(4, 5)
+        other = torch.ones(4, 5)  # equal-shaped, DIFFERENT values: genuinely untied
         with tempfile.TemporaryDirectory() as d:
             torch.save({"model": {"tok.weight": w, "head.weight": w}}, os.path.join(d, "tied.pt"))
-            torch.save({"model": {"tok.weight": w, "head.weight": w.clone()}}, os.path.join(d, "untied.pt"))
-            tied, untied = param_line("tied.pt", d), param_line("untied.pt", d)
-        assert tied and "tied head" in tied, f"tied checkpoint not reported as tied: {tied}"
-        assert untied and "tied head" not in untied, (
-            f"two EQUAL but separate tables reported as tied: {untied} -- param_line is keying on "
-            "value equality, so it would hide a real doubling of the embedding table"
+            torch.save({"model": {"tok.weight": w, "head.weight": other}}, os.path.join(d, "untied.pt"))
+            # The shape that broke the 3.24B readout: a mid-run checkpoint deserialises the
+            # tied pair into SEPARATE storages, so a storage-only test reads it as untied and
+            # prints a bare 239.7M beside the ladder point's 206.1M.
+            saved = {"tok.weight": w, "head.weight": w}
+            torch.save({"model": saved, "step": 3500}, os.path.join(d, "midrun.pt"))
+            reloaded = torch.load(os.path.join(d, "midrun.pt"), weights_only=False)["model"]
+            reloaded["head.weight"] = reloaded["head.weight"].clone()  # force distinct storage
+            torch.save({"model": reloaded, "step": 3500}, os.path.join(d, "midrun.pt"))
+            tied = param_line("tied.pt", d)
+            untied = param_line("untied.pt", d)
+            midrun = param_line("midrun.pt", d)
+        assert tied and tied.startswith("0.0M (tied head; state_dict 0.0M)"), tied
+        assert untied and "tied" not in untied and "state_dict" not in untied, (
+            f"two DIFFERENT tables reported as tied: {untied} -- this would hide a real "
+            "doubling of the embedding table"
         )
-        assert tied.startswith("0.0M (tied head; state_dict 0.0M)"), tied
-        assert "state_dict" not in untied, f"untied line should be a single number, got {untied}"
-        print(f"  tied -> {tied}; untied -> {untied}")
+        assert midrun and "tied head by value" in midrun, (
+            f"a mid-run checkpoint whose tied pair deserialised into separate storages read "
+            f"as untied: {midrun}. This is the 3.24B readout defect -- the milestone printed a "
+            "bare 239.7M beside the ladder point's 206.1M, i.e. two different-sized models."
+        )
+        print(f"  tied -> {tied}; untied -> {untied}; mid-run -> {midrun}")
     except ImportError:
         print("  SKIP: no torch on this box", file=sys.stderr)
     # 2c. ceval survives the profile boundary. The milestone profile writes mc_full; the
@@ -436,6 +622,104 @@ def selftest():
     # "reachable: moved/floor" is the spec label, not a verdict -- do not grep for "floor".
     assert "ABSENT" in section and "verdict:" not in section, f"missing metric misread:\n{section}"
     print("  code_500 absent from the record -> ABSENT, never floor")
+    # 4. tonight's exact pair: disjoint heads must refuse, not report a regression
+    print("\n--- selftest 4: different heads -> REFUSE, never a verdict ---")
+    import contextlib as _c
+    import io as _io
+    import tempfile as _t
+    m4 = {"ckpt": "m.pt", "profile": "milestone",
+          "metrics": {"domain_loss": {k: {"loss": 2.4} for k in
+                      ("code_rp1t", "cot", "en_c4", "math_owm", "textbook_30b", "wiki_chat", "zh_web")}}}
+    p4 = {"ckpt": "p.pt", "profile": "full",
+          "metrics": {"domain_loss": {k: {"loss": 1.6} for k in
+                      ("chat", "code", "en", "math", "textbook", "web_hq", "wiki")}}}
+    with _t.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
+        tf.write(json.dumps(m4) + "\n" + json.dumps(p4) + "\n")
+        tmp4 = tf.name
+    try:
+        buf = _io.StringIO()
+        with _c.redirect_stdout(buf):
+            readout("m.pt", "p.pt", tmp4, None, None, 3.24e9, paired_profile="full")
+        out4 = buf.getvalue()
+    finally:
+        os.unlink(tmp4)
+    assert "REFUSING" in out4 and "DIFFERENT heads" in out4, out4[-400:]
+    assert "moved (degraded)" not in out4, "disjoint heads must never produce a verdict"
+    print("  disjoint heads refuse; no per-domain verdict is printed")
+    # 5. A reweighted role refuses; roles whose weight held still print a verdict. The
+    # failing case is math_owm at 1.75x (stage 1 0.18333 -> A' 0.32058): equal domain SETS
+    # pass the different-heads guard, so without this gate the reweighting shows up as
+    # capability. cot is the post-cap case -- its weight moved 0.95x AND both mixes clamp
+    # to the same 295,512 rows, so it is judgeable for the stronger reason.
+    print("\n--- selftest 5: a reweighted role refuses, an unchanged one is judged ---")
+    import tempfile as _t5
+    W1 = {"code_rp1t": 0.37200, "math_owm": 0.18333, "cot": 0.08480, "en_c4": 0.20987,
+          "zh_web": 0.11000, "textbook_30b": 0.03333, "wiki_chat": 0.00667}
+    W2 = {"code_rp1t": 0.29330, "math_owm": 0.32058, "cot": 0.08069, "en_c4": 0.15604,
+          "zh_web": 0.10955, "textbook_30b": 0.03320, "wiki_chat": 0.00664}
+    with _t5.TemporaryDirectory() as d5:
+        m5p, p5p = os.path.join(d5, "s2.json"), os.path.join(d5, "s1.json")
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in W2.items()}},
+                  open(m5p, "w"))
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in W1.items()}},
+                  open(p5p, "w"))
+        # milestone strictly better on every role, so any judged role reads "moved"
+        m5 = {"ckpt": "m5.pt", "profile": "milestone",
+              "metrics": {"domain_loss": {k: {"loss": 1.5} for k in W1}}}
+        p5 = {"ckpt": "p5.pt", "profile": "full",
+              "metrics": {"domain_loss": {k: {"loss": 2.5} for k in W1}}}
+        sm5 = os.path.join(d5, "sm.jsonl")
+        with open(sm5, "w") as f:
+            f.write(json.dumps(m5) + "\n" + json.dumps(p5) + "\n")
+        buf5 = _io.StringIO()
+        with _c.redirect_stdout(buf5):
+            readout("m5.pt", "p5.pt", sm5, None, None, 8e9, paired_profile="full",
+                    milestone_mix=m5p, paired_mix=p5p)
+        out5 = buf5.getvalue()
+    for role, ratio in (("math_owm", 1.75), ("code_rp1t", 0.79), ("en_c4", 0.74)):
+        # the role may occupy several lines (proxy note, verdict, note) -- join them
+        line = " ".join(ln for ln in out5.splitlines() if ln.strip().startswith(role))
+        assert "reweighted, unjudgeable" in line, (
+            f"{role} moved {ratio}x and was still judged: {line!r}. Equal domain sets pass "
+            "the different-heads guard, so nothing else catches this."
+        )
+    for role in ("cot", "zh_web", "textbook_30b", "wiki_chat"):
+        line = " ".join(ln for ln in out5.splitlines() if ln.strip().startswith(role))
+        assert "moved" in line and "reweighted" not in line, (
+            f"{role} held its weight and was refused anyway: {line!r}. Refusing the whole "
+            "metric would discard four honest reads."
+        )
+    print("  3 reweighted roles refuse (1.75x/0.79x/0.74x); 4 unchanged roles judged")
+
+    # 5b. The gate must reach the REAL mix files, not only synthetic ones. e178f17 passed
+    # its synthetic case and returned None for every role against the live pair, for three
+    # reasons a synthetic fixture cannot show: stage-2 keys carry a "_stage2" suffix, most
+    # stage-2 roles sit in _blocked until stamped, and the pool field is stage1_pool_rows
+    # (tilerl, 2026-08-31). A guard that cannot read production data is decorative.
+    real_s1 = os.path.join(ROOT, "data", "mix_15b_stage1.json")
+    real_s2 = os.path.join(ROOT, "data", "mix_30b_stage2.json")
+    if os.path.exists(real_s1) and os.path.exists(real_s2):
+        print("\n--- selftest 5b: the gate reads the real stage-1/stage-2 pair ---")
+        got = {d: (weight_ratio(d, real_s2, real_s1), draws_equal(d, real_s2, real_s1))
+               for d in ("code_rp1t", "math_owm", "cot", "en_c4", "zh_web",
+                         "textbook_30b", "wiki_chat")}
+        unreadable = [d for d, (wr, _) in got.items() if wr is None]
+        assert not unreadable, (
+            f"weight_ratio is None for {unreadable} against the real mixes -- the gate "
+            "cannot see production data and every role would pass unrefused"
+        )
+        for d in ("math_owm", "code_rp1t", "en_c4"):
+            wr, de = got[d]
+            assert abs(wr - 1.0) > WEIGHT_CHANGE_LIMIT and not de, f"{d}: ratio {wr}, draws_equal {de}"
+        assert got["cot"][1] is True, (
+            f"cot post-cap draw equality not detected: {got['cot']}. Both mixes clamp to "
+            "295,512 rows, so cot is judgeable for a stronger reason than its 0.95x."
+        )
+        print(f"  real pair: 3 refuse, cot judged on post-cap draw equality "
+              f"(ratio {got['cot'][0]:.3f}, draws_equal True)")
+    else:
+        print("\n--- selftest 5b: SKIP (real mix pair not on this box) ---", file=sys.stderr)
+
     print("\nselftest OK")
     return 0
 
@@ -449,6 +733,8 @@ def main():
     ap.add_argument("--paired-domain-loss", help="domain_loss.py --json for the paired checkpoint (same heads)")
     ap.add_argument("--milestone-tokens", type=float, help="milestone token budget (3.24e9/8e9/16e9/30e9); activates the warmup-confound rule at 3.24B")
     ap.add_argument("--ckpt-dir", default=ROOT, help="where the checkpoints live (for the params header)")
+    ap.add_argument("--milestone-mix", help="mix json the milestone trained under (per-role reweight gate, prereg 7.1)")
+    ap.add_argument("--paired-mix", help="mix json the paired checkpoint trained under")
     ap.add_argument("--actual-tokens", type=float, default=None,
                     help="tokens the milestone checkpoint actually saw (step x tokens/step)")
     ap.add_argument("--paired-tokens", type=float, default=None,
@@ -462,7 +748,8 @@ def main():
     if not a.milestone or not a.paired:
         ap.error("--milestone and --paired are required (or --selftest)")
     readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
-            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir)
+            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir,
+            milestone_mix=a.milestone_mix, paired_mix=a.paired_mix)
 
 
 if __name__ == "__main__":

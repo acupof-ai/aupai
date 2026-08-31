@@ -26,6 +26,13 @@ SEQ = 4096
 # Rows are b0's A-prime table (b0 6375636). Stage-1 rows are from the RUN'S OWN LOG, not the
 # table -- stage 1 under-drew cot when its epoch cap fired. Pools are measured directly from the
 # token caches: rows of seq+1, minus n_val = min(int(rows*0.05), 5000).
+# LANDED: domain -> (stamp tokens, fingerprint). A domain leaves _blocked only when it is stamped
+# AND its supply covers its want. Epochs stay measured on the STAGE-1 pool until a token cache for
+# the stage-2 corpus exists: the real pool is rows-of-seq+1 minus n_val, which only the cache gives.
+LANDED = {
+    "en_c4": (2_403_694_865, "05e0fc6f14704056"),
+}
+
 SPEC = {
     "code_rp1t": (1_074_090, 1_362_304, 1_842_469, "code raw (RedPajama-1T github); 30B cumulative third"),
     "math_owm": (1_173_995, 671_374, 979_824, "math/reasoning raw (OpenWebMath + finemath)"),
@@ -58,14 +65,14 @@ def _weight_for_rows(rows):
 
 
 def build():
-    blocked, total = {}, 0
+    landed, blocked, total = {}, {}, 0
     for name, (s2, s1, pool, role) in SPEC.items():
         w, places = _weight_for_rows(s2)
         runtime = int(ROWS * w)
         assert runtime == s2, f"{name}: weight {w} draws {runtime}, want {s2}"
         epochs = math.ceil(runtime / pool)
         total += runtime
-        blocked[f"{name}_stage2"] = {
+        entry = {
             "weight": w,
             "epochs": epochs,
             "anneal": w,
@@ -83,15 +90,33 @@ def build():
                 f"int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio "
                 f"{runtime / pool:.3f}: a fractional cap re-creates stage 1's 61,593,088-token under-draw."
             ),
-            "status": (
-                f"BLOCKED: data/corpus/{name}_stage2 is not stamped (no build_corpus_stats.json). "
-                "Move to domains only when it is stamped AND its epochs is re-derived against the "
-                "NEW pool -- every epoch figure here is measured on the stage-1 pool."
-            ),
         }
+        if name in LANDED:
+            supply, fp = LANDED[name]
+            want_tok = runtime * SEQ
+            assert supply >= want_tok, (
+                f"{name}: stamp supply {supply} < want {want_tok} -- do not land a domain that "
+                "cannot cover its draw"
+            )
+            entry["supply_tokens"] = supply
+            entry["fingerprint"] = fp
+            entry["supply_margin_pct"] = round((supply / want_tok - 1) * 100, 2)
+            entry["status"] = (
+                f"LANDED: data/corpus/{name}_stage2 stamped, fp {fp}, supply {supply} tokens covers the "
+                f"want of {want_tok} by {entry['supply_margin_pct']}%. epochs {epochs} is still measured "
+                "on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
+            )
+            landed[f"{name}_stage2"] = entry
+        else:
+            entry["status"] = (
+                f"BLOCKED: data/corpus/{name}_stage2 is not stamped (no build_corpus_stats.json). "
+                "Move to domains only when it is stamped AND its supply covers its want."
+            )
+            blocked[f"{name}_stage2"] = entry
     assert total == ROWS, f"runtime rows {total} != {ROWS}"
-    wsum = sum(b["weight"] for b in blocked.values())
+    wsum = sum(b["weight"] for b in list(landed.values()) + list(blocked.values()))
     assert abs(wsum - 1.0) < 1e-3, f"weights sum {wsum}, outside the contract's 1e-3"
+    assert len(landed) + len(blocked) == len(SPEC), "a domain went missing"
     return {
         "_comment": [
             "Stage 2 of the staged 15B->30B pretrain (t22), Case A-prime. fb ruling 2026-08-31.",
@@ -104,10 +129,12 @@ def build():
             "targets by -17..+14 rows (total -3); each weight here carries the decimals needed to hit",
             "its target exactly, 6dp for math_owm through 9dp for textbook_30b.",
             "",
-            "EPOCHS ARE MEASURED ON THE STAGE-1 POOL, not the stage-2 corpus, which does not exist yet.",
-            "Pool = rows of seq+1 in the token cache minus n_val = min(int(rows*0.05), 5000). When the",
-            "*_stage2 dirs are stamped, every epochs value must be re-derived as ceil(rows/pool) against",
-            "the new pool before the domain leaves _blocked.",
+            "EPOCHS ARE MEASURED ON THE STAGE-1 POOL, including for domains already in `domains`.",
+            "Pool = rows of seq+1 in the token cache minus n_val = min(int(rows*0.05), 5000), so the",
+            "stage-2 pool is unknowable until that corpus has a token cache -- a stamp gives tokens, not",
+            "packed rows. A landed domain therefore carries a stage-1-pool epochs value that MUST be",
+            "re-derived as ceil(rows/pool) against its own pool once the cache exists, and before stage 2",
+            "launches. Landing on the stamp is a supply check, not an epoch check.",
             "",
             "Stage 1 drew 3,647,072 rows = 14.9384B, not the commissioned 15.000B, because cot's epoch",
             "cap fired on ROWS while its demand was written in TOKENS. So cot has seen 5.71 raw-supply",
@@ -137,7 +164,7 @@ def build():
             f"{total} rows = {total * SEQ / 1e9:.4f}B, exactly total_rows, because every weight carries "
             "enough decimals to hit its row target. No per-domain flooring loss remains."
         ),
-        "domains": {},
+        "domains": landed,
         "_blocked": blocked,
     }
 
