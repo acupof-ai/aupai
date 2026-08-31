@@ -5029,15 +5029,38 @@ def _exp_row_status(name):
     return status
 
 
-def _wait_exp_row(name, timeout):
-    """Poll an exp row until it leaves 'running'. Returns the final status."""
+def _wait_launched(name, timeout):
+    """Wait for a job launched in-process by cmd_launch. Returns its exit code,
+    or None on timeout.
+
+    waitpid, not a poll of the exp row: cmd_launch's Popen child is OUR child, and
+    an unreaped child that exits becomes a zombie whose pid `os.kill(pid, 0)` still
+    accepts. The monitor therefore never sees it die, never closes the row, and a
+    row-polling wait hangs for its full timeout with the work long finished
+    (2026-08-31, the t39 dry run: score_matrix done in 50 min, driver still waiting).
+    Reaping is also what yields the exit code, which auto-resume needs.
+    """
+    pid_path = os.path.join(ROOT, "runs", f"{name}.pid")
+    try:
+        pid = int(open(pid_path).readline().strip())
+    except (OSError, ValueError):
+        return None
     deadline = time.time() + timeout
     while time.time() < deadline:
-        st = _exp_row_status(name)
-        if st and st != "running":
-            return st
-        time.sleep(30)
-    return "timeout"
+        try:
+            done, status = os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            return _exp_row_exit(name)  # not our child (resumed run): fall back to the row
+        if done == pid:
+            return os.waitstatus_to_exitcode(status)
+        time.sleep(5)
+    return None
+
+
+def _exp_row_exit(name):
+    """0 if the row closed ok, 1 if it closed failed, None while still running."""
+    st = _exp_row_status(name)
+    return None if st in (None, "running") else (0 if st == "ok" else 1)
 
 
 def cmd_milestone(argv):
@@ -5089,9 +5112,11 @@ def cmd_milestone(argv):
         ])
         if rc != 0:
             return "refused"  # lane occupied; the watcher retries next poll
-        st = _wait_exp_row(f"ms_{stem}", 5400)
-        if st != "ok":
-            return f"score_matrix {st}"
+        st = _wait_launched(f"ms_{stem}", 5400)
+        if st is None:
+            return "score_matrix timeout"
+        if st != 0:
+            return f"score_matrix exit {st}"
         readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
         r = subprocess.run(
             [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
