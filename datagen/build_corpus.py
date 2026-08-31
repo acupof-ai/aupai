@@ -264,13 +264,20 @@ class ShardWriter:
         os.makedirs(out_dir, exist_ok=True)
         self.out_dir, self.prefix, self.n, self.f, self.size = out_dir, prefix, 0, None, 0
 
+    def _path(self, part):
+        p = os.path.join(self.out_dir, f"{self.prefix}_{self.n:03d}.jsonl")
+        return p + ".part" if part else p
+
     def write(self, row):
         if self.f is None or self.size >= SHARD_BYTES:
             if self.f:
                 self.f.close()
-            self.f = open(
-                os.path.join(self.out_dir, f"{self.prefix}_{self.n:03d}.jsonl"), "w", encoding="utf-8"
-            )
+                # a killed writer leaves a truncated complete-looking file if we
+                # wrote the final name directly (2026-08-31: a killed duplicate
+                # truncated shard _002 and the survivor won't revisit it). Write
+                # .part, rename on close -- existence of the final name == whole.
+                os.rename(self._path(True), self._path(False))
+            self.f = open(self._path(True), "w", encoding="utf-8")
             self.n, self.size = self.n + 1, 0
         line = json.dumps(row, ensure_ascii=False) + "\n"
         self.f.write(line)
@@ -279,6 +286,8 @@ class ShardWriter:
     def close(self):
         if self.f:
             self.f.close()
+            if os.path.exists(self._path(True)):
+                os.rename(self._path(True), self._path(False))
 
 
 def main():
