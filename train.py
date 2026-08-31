@@ -1260,6 +1260,10 @@ def _encode_domain(texts, tok, workers, log=None):
     does not scale (t49: 1 proc x 180 threads 2.45M tok/s vs 8 proc x 22 threads
     18.2M on math_seed). Callers MUST set RAYON_NUM_THREADS=nproc/workers before
     importing tokenizers so the inherited pools sum to nproc; pretokenize.py does.
+    The calling process MUST NOT have encoded before the first parallel call: a
+    live rayon pool does not survive fork() (the child deadlocks in inherited
+    locks -- observed 2026-08-31). pretokenize.py --workers N satisfies this by
+    construction: with N>1 the parent never encodes.
     Streams ride a queue back, so this is for per-domain streams up to a few GB;
     past that, workers should write part-files instead.
     """
