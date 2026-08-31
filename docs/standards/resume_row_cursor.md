@@ -104,6 +104,66 @@ The distinction the sentence protects: a passing rehearsal proves a resume *cont
 from these counts*. It cannot prove the counts are what stage 1 consumed — no artifact
 of that exists, and none can be made now.
 
+## Loss continuity cannot be gated at 0.002 nat
+
+The pre-registered criterion — resumed loss within 0.002 nat of continuous — is
+**retired as instrument-impossible for per-step training loss** (fb, 2026-09-01): the
+threshold sits below the σ_nondet floor, since per-step sd is ~0.29 nat and the
+same-seed non-determinism reading above is ±0.13. Retired with cause, not dropped.
+
+Per-step loss on this run has sd ≈ 0.29 nat. Stage-1's own final 40 steps span
+**1.094 to 2.521**, a 1.4 nat range between adjacent logged steps on one continuous
+run with no resume anywhere near it. A 0.002 nat threshold is three orders of
+magnitude below that noise; no 50-step window can resolve it, and a gate nobody can
+evaluate is a gate that gets waved through.
+
+| window | n | mean | sd |
+|---|---|---|---|
+| stage-1 final 100 steps | 11 | 1.7039 | 0.2904 |
+| resumed 50 steps | 6 | 2.0273 | 0.2489 |
+
+Mean delta +0.3234 nat, SEM 0.1341 — 2.4 SEM, which is why the twin below replaced
+the threshold rather than the threshold being relaxed.
+
+### What replaced it: the twin, with the verdict rule pre-declared
+
+Same checkpoint, same 50 steps, cursor against no-cursor. The rule was fixed **before**
+the numbers, so a result cannot be explained after the fact:
+
+- the no-cursor arm re-reads rows the weights already saw, the cursor arm reads unseen
+  rows, so the expected signature is no-cursor ≈ stage-1 tail and cursor **higher** by
+  the fresh-data premium
+- **PASS**: no-cursor within 1 SEM of the stage-1 tail mean, and cursor above no-cursor
+- **FAIL**: cursor **below** no-cursor (the cursor would be serving seen data labelled
+  fresh), or either arm's mean diverging more than 1 nat
+
+The +0.32 at 2.4 SEM is consistent with that mechanism, not evidence against it — which
+is exactly why it needed a test with its interpretation fixed in advance.
+
+### Result, with each contrast's own error
+
+| contrast | n | mean | SEM | ratio | df |
+|---|---|---|---|---|---|
+| no-cursor vs stage-1 tail (unpaired) | 5 vs 11 | +0.0927 | 0.1332 | 0.70 | ~14 |
+| cursor vs no-cursor (**paired**, same steps) | 5 pairs | +0.2672 | 0.1931 | **1.38** | 4 |
+
+Both pre-declared conditions hold: no-cursor within 1 SEM of the tail, cursor above
+no-cursor, neither arm near 1 nat.
+
+The paired figure is the one to quote for the cursor premium, and it is **1.38 SEM, not
+2.0** — the 0.70 belongs to a different contrast and pairing the arms raises the error
+rather than lowering it here, because the per-step deltas are large and inconsistent:
+−0.017, +0.617, +0.085, +0.827, −0.176. **Two of five are negative.** The mean is in the
+predicted direction and five steps cannot establish the premium's size; the twin
+demonstrates the cursor does not serve seen data as fresh, which is what it was built to
+test, and nothing finer.
+
+### σ_nondet
+
+The no-cursor arm re-runs the same seed over rows the weights already read, so
++0.0927 ± 0.1332 (df ≈ 14) is a same-seed non-determinism reading, not only a pass
+condition. It belongs in the σ_nondet fact with that df.
+
 ## Rehearsal before stage 2
 
 Two assertions, the second easy to forget:
