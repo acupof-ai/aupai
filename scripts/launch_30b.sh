@@ -18,8 +18,8 @@
 #   scripts/launch_30b.sh --stage 1 [--dry]              stage 1 (15B)
 #   scripts/launch_30b.sh --stage 2 --resume <ckpt> [--dry]   stage 2 (resume into 30B)
 #   --dry prints the resolved torchrun line + the STAGE's own readiness, exit non-zero while blocked.
-#   --gate-timeout N overrides the startup gate; raise it when the first tick is behind a
-#     slow load (68GB of warm token caches off /data00 has taken >120s).
+#   --gate-timeout N overrides the startup gate, which `harness launch` otherwise derives
+#     from the mix's own cache bytes; pass it only for a case that derivation cannot see.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
