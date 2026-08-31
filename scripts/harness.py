@@ -481,6 +481,13 @@ def check_no_foreground_pod_training(root):
     except (subprocess.TimeoutExpired, OSError) as e:
         return SKIP, f"pod unreachable: {type(e).__name__}"
     rows = [ln.split(None, 3) for ln in r.stdout.strip().split("\n") if ln.strip()]
+    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
+    # leaves a bash -lc whose argv contains the whole launch command, so a match on
+    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
+    # training process and is correctly not a session leader. It names setsid in its
+    # own command line; the job it spawned is the thing to judge (2026-09-01, this
+    # check refused a commit while tilerl's A/B was launching correctly).
+    rows = [x for x in rows if not (len(x) > 3 and "setsid" in x[3] and x[3].startswith("bash -lc"))]
     if not rows:
         return PASS, "no training process on the pod"
     attached = [x for x in rows if len(x) >= 3 and x[0] != x[1]]  # pid != sid -> not a session leader

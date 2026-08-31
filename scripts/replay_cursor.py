@@ -173,6 +173,13 @@ def main():
         return 0
     ck["row_cursor"] = used
     ck["row_cursor_srcfp"] = srcfp
+    # The shuffle seed the reconstruction is measured against. Without it the rehearsal's
+    # seed check has nothing to compare and reads as unverified -- and a reconstruction
+    # is exactly the case where the seed matters, since the counts were derived from a
+    # pool order this field is the only record of. cfg.sample_seed if the run set one,
+    # else cfg.seed, which is _sample_seed()'s rule.
+    _ss = cfg.get("sample_seed")
+    ck["row_cursor_seed"] = cfg.get("seed") if _ss is None else _ss
     ck["row_cursor_reconstructed"] = {
         "method": "replay of the stage-1 plan (de-7)",
         "step": step,
