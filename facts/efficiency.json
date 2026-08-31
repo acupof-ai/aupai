@@ -1366,6 +1366,32 @@
    },
    "uncertainty": "Nothing here is a throughput measurement: the flag has not been flipped. 39.2% is the eligible surface and an upper bound, not an expected gain, and the per-node gate means the actually-unpadded fraction is smaller by an unknown amount. Sizing comes from the single-card steady trace, so the 7-card shares may differ. I first computed the surface as 446.3 ms of 'copy/elementwise' by matching those words anywhere in a kernel name, which double-counted 339.3 ms of triton fusions already inside the 520.0 -- the same naming trap that inverted my first attribution pass. The 107.0 ms figure excludes triton-prefixed names for that reason.",
    "status": "measured"
+  },
+  {
+   "id": "eff.head_grad_accum_bf16",
+   "value": "The LM head's grad_weight accumulates in bf16, not fp32, and the resulting bias is real but harmless under AdamW. Recorded as a KNOWN PRE-EXISTING DEVIATION that the 15B and 30B numbers carry; b0 ruled it must NOT ship mid-run. MECHANISM. Liger FLCE has an fp32 accumulation path (fused_linear_cross_entropy.py:233-241, torch.addmm with out_dtype=torch.float32 into grad_weight) but it is guarded on grad_weight.dtype == torch.float32. grad_weight is zeros_like(weight) when accum_dtype is None (:76), train.py:1994 never passes accum_dtype, and our weights are bf16 (verified: head.weight and tok.weight are torch.bfloat16 in the step-7000 checkpoint, per t01's bf16-params-no-fp32-master decision). So the else at :257 runs: grad_weight += torch.mm(...).float(), rounding the running sum back to bf16 on each of the 64 chunks. SIZE. 64-chunk accumulation, bf16 vs fp32: median relative error 0.803% (b0 measured 0.75% independently), p99 33%, cosine 0.999954. WHY IT IS HARMLESS, which is b0's finding and the reason the fix is not urgent. The head is in the AdamW 'embed' group, not Muon (train.py:945 routes any parameter whose name contains tok or head there). AdamW divides by sqrt(v) and v tracks g-squared, so an error proportional to the gradient largely cancels in the update. What survives is a direction change, and b0 measured 0.146% sign flips on synthetic uniform gradients. B0'S FALSIFIABLE CONDITION, TESTED AND IT HOLDS. b0 flagged that their figure used a uniform magnitude distribution while real logit gradients are heavy-tailed, and said the ruling inverts if flips concentrate on high-magnitude elements. Measured with a lognormal per-row scale: unweighted flips 0.178%, |g|-WEIGHTED flips 0.0009%, and flip rate among the top-1% largest-|g| elements is 0.0000%. So the flips concentrate on near-zero elements, which is the opposite of the inverting case: the elements that drive the update are unaffected. THE DISQUALIFYING PROPERTY for shipping mid-run is comparability, not size. The head touches every token's loss, so changing its gradient accumulation between stages would confound every per-role row simultaneously, and unlike a reweighting it is not detectable per role -- prereg 7.1's gate is structurally blind to it. Fix path: accum_dtype=torch.float32, one keyword, 33.6M x 4 = 134 MB, after the 30B run completes, as its own change with its own A/B.",
+   "measured": "2026-09-01",
+   "source": "train.py, facts/efficiency.json#eff.lm_head_is_compute_bound, docs/lessons/fp8_lm_head_design.md",
+   "config": {
+    "chunks": 64,
+    "chunk_shape": "2048 x 32784",
+    "vocab": 32784,
+    "hidden": 1024,
+    "accumulator_dtype_actual": "bfloat16",
+    "fp32_path_guard": "grad_weight.dtype == torch.float32",
+    "accum_dtype_passed": null,
+    "weight_dtype": "bfloat16",
+    "median_rel_err_pct": 0.803,
+    "p99_rel_err_pct": 33.0,
+    "cosine": 0.999954,
+    "sign_flips_unweighted_pct": 0.178,
+    "sign_flips_g_weighted_pct": 0.0009,
+    "sign_flips_top1pct_g": 0.0,
+    "optimizer_group": "AdamW embed (train.py:945)",
+    "ruling": "do not ship mid-run (b0, pre-registration owner); after the 30B run, own A/B"
+   },
+   "uncertainty": "The accumulation error is measured on SYNTHETIC gradients, both b0's uniform draw and my lognormal row-scale version, not on real logit gradients from a training step. A lognormal scale is closer to the truth than uniform but it is still a model: real CE gradients are structured by the target distribution, not drawn i.i.d. The elementwise grad_weight comparison against a real step is still the check that settles it, and it has not run -- what these numbers establish is that the inverting case b0 named does not occur under a heavy-tailed distribution, not that the real distribution is heavy-tailed in the same way. The AdamW cancellation argument is also analytic rather than measured: no A/B has been run with an fp32 accumulator to confirm the loss curve is unchanged.",
+   "status": "recorded"
   }
  ]
 }
