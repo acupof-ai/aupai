@@ -6842,6 +6842,9 @@ def cmd_milestone(argv):
     ap = argparse.ArgumentParser(prog="harness milestone")
     ap.add_argument("ckpt", nargs="?", help="checkpoint file (single-run mode)")
     ap.add_argument("--paired", default=None, help="paired checkpoint (default: previous milestone, else ckpt_p324.pt)")
+    ap.add_argument("--unpaired", action="store_true",
+                    help="score and record only, no comparison: the own-mix baseline a later "
+                         "milestone differences against (b0's ruling, 2026-08-31)")
     ap.add_argument("--tokens", type=float, default=None, help="milestone token budget (default: parsed from the name)")
     ap.add_argument("--mix", default=None,
                     help="domain-loss heads mix (default: the mix each checkpoint was trained on)")
@@ -6866,6 +6869,10 @@ def cmd_milestone(argv):
         if a.dry:
             print(f"harness launch ms_{stem} -- eval/score_matrix.py --ckpt {ckpt} "
                   f"--profile milestone --mix {os.path.relpath(mix, ROOT)} --json runs/score_matrix.jsonl")
+            if a.unpaired:
+                print(f"(unpaired baseline: no readout_30b call; record + "
+                      f"runs/readout_{stem}.txt written from the score record)")
+                return "dry"
             print(f"python3 eval/readout_30b.py --milestone {ckpt} --paired {paired} "
                   f"--milestone-tokens {tokens} --milestone-profile milestone --paired-profile full "
                   f"> runs/readout_{stem}.txt")
@@ -6896,20 +6903,56 @@ def cmd_milestone(argv):
         if paired_tokens is None and paired == "ckpt_p324.pt":
             paired_tokens = 3.24e9
         readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
-        r = subprocess.run(
-            [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
-             "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-             "--milestone-profile", "milestone", "--paired-profile", "full"]
-            + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
-            + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
-            capture_output=True, text=True,
-        )
-        with open(readout_path, "w", encoding="utf-8") as f:
-            f.write(r.stdout)
-        print(r.stdout)
-        if r.returncode != 0:
-            return f"readout rc={r.returncode}: {r.stderr[:200]}"
-        moved = r.stdout.count("verdict: moved")
+        if a.unpaired:
+            # No valid pair exists yet: stage-1's heads are disjoint from the ladder's,
+            # so both directions are confounded -- the ladder-heads read is the OOD
+            # penalty and a stage-1-heads read against p324 is its mirror. Record the
+            # baseline; 8B and 15B share stage-1's domains and difference against it
+            # (b0 ruled, 44 reviewed).
+            rec = None
+            smp = os.path.join(ROOT, "runs", "score_matrix.jsonl")
+            if os.path.exists(smp):
+                for _l in open(smp, encoding="utf-8"):
+                    if not _l.strip():
+                        continue
+                    try:
+                        _r = json.loads(_l)
+                    except json.JSONDecodeError:
+                        continue
+                    if _r.get("ckpt") == ckpt and _r.get("profile", "full") == "milestone":
+                        rec = _r
+            dl = (rec or {}).get("metrics", {}).get("domain_loss", {})
+            lines = [f"=== {ckpt}: UNPAIRED own-mix baseline ===",
+                     f"mix: {os.path.relpath(mix, ROOT)}",
+                     f"tokens: {actual_tokens / 1e9:.3f}B (nominal {tokens / 1e9:.2f}B)",
+                     "",
+                     "No verdict: this milestone has no comparable pair. Recorded so 8B and",
+                     "15B, which share these heads, can difference against it.",
+                     ""]
+            for k in sorted(x for x in dl if isinstance(dl[x], dict)):
+                lines.append(f"  {k:15s} {dl[k].get('loss')}")
+            for k in sorted(x for x in (rec or {}).get("metrics", {}) if x != "domain_loss"):
+                lines.append(f"  {k:15s} {(rec or {}).get('metrics', {})[k]}")
+            body = "\n".join(lines) + "\n"
+            with open(readout_path, "w", encoding="utf-8") as f:
+                f.write(body)
+            print(body)
+            r = None
+        else:
+            r = subprocess.run(
+                [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
+                 "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
+                 "--milestone-profile", "milestone", "--paired-profile", "full"]
+                + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
+                + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
+                capture_output=True, text=True,
+            )
+            with open(readout_path, "w", encoding="utf-8") as f:
+                f.write(r.stdout)
+            print(r.stdout)
+            if r.returncode != 0:
+                return f"readout rc={r.returncode}: {r.stderr[:200]}"
+        moved = r.stdout.count("verdict: moved") if r else 0
         preds = [p for p in (
             os.path.join(ROOT, "data", "eval", f"preds_{ckpt}.jsonl"),
             os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
@@ -6922,7 +6965,8 @@ def cmd_milestone(argv):
         # artifact whose contents had moved underneath it (e1).
         actual_step = int(m_step.group(1)) if m_step else None
         row = {
-            "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(mix, ROOT),
+            "ckpt": ckpt, "paired": (None if a.unpaired else paired), "tokens": tokens,
+            "unpaired_baseline": bool(a.unpaired), "mix": os.path.relpath(mix, ROOT),
             "step": actual_step, "actual_tokens": actual_tokens,
             "token_shortfall": (round(1 - actual_tokens / tokens, 4) if actual_tokens and tokens else None),
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
