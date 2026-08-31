@@ -190,16 +190,25 @@ class MinHashLSH:
 # ---- sources -----------------------------------------------------------------------------------
 def iter_jsonl(path):
     op = gzip.open if path.endswith(".gz") else open
+    bad = 0
     with op(path, "rt", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
-                d = json.loads(line)
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    # One malformed line killed the whole en_c4 clean (2026-08-31):
+                    # a worker raised, pool.map re-raised, the run died at 90%.
+                    bad += 1
+                    continue
                 text = d.get("content") or d.get("text")
                 if not text and d.get("instruction"):
                     # Same ChatML the SFT pack uses, so pretraining already sees that format.
                     text = "".join(format_example(d["instruction"], d.get("output", "")))
                 yield text or "", d.get("url")
+    if bad:
+        print(f"iter_jsonl: {bad} malformed line(s) skipped in {path}", file=sys.stderr)
 
 
 def iter_parquet(path, text_col="text", url_col="url", rg_mod=None, rg_idx=None):
@@ -367,25 +376,37 @@ def _global_pass(a):
     """: after parallel per-worker clean, remove global near-dups + holdout and
     stamp. Loads every shard, keeps only near-unique non-holdout docs, rewrites
     to a single prefix set (drop worker ids), writes build_corpus_stats + the
-    filters_fp stamp over verified files."""
-    import multiprocessing as mp
-
-    # A previous run's leftovers would be read as this run's output. Wipe is the
-    # operator's step (fb spec); the guard makes a missed wipe loud.
+    filters_fp stamp over verified files.
+    --global-only skips the worker pool and re-runs this pass over the existing
+    w*_*.jsonl shards (a killed serial pass leaves them on disk)."""
     import glob as _g
 
-    stale = _g.glob(f"{a.out}/w*_*.jsonl") + _g.glob(f"{a.out}/w*_*.part")
-    if stale:
-        raise SystemExit(f"REFUSE: {len(stale)} worker shard(s) from a previous run in {a.out} -- wipe first")
-    old = _g.glob(f"{a.out}/{a.domain}_*.jsonl")
-    if old:
-        raise SystemExit(f"REFUSE: {len(old)} '{a.domain}' shard(s) already in {a.out} -- wipe first")
-    pieces = _worker_pieces(a)
-    with mp.Pool(a.workers) as pool:
-        res = pool.map(_clean_piece, pieces)
+    paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     reasons = Counter()
-    for r in res:
-        reasons.update(r["reasons"])
+    if a.global_only:
+        if not paths:
+            raise SystemExit(f"REFUSE: --global-only but no w*_*.jsonl shards in {a.out}")
+        # The merged output of a previous (killed) pass must not survive into this one.
+        for p in _g.glob(f"{a.out}/{a.domain}_*.jsonl"):
+            os.remove(p)
+    else:
+        # A previous run's leftovers would be read as this run's output. Wipe is the
+        # operator's step (fb spec); the guard makes a missed wipe loud.
+        stale = paths + _g.glob(f"{a.out}/w*_*.part")
+        if stale:
+            raise SystemExit(f"REFUSE: {len(stale)} worker shard(s) from a previous run in {a.out} -- wipe first")
+        old = _g.glob(f"{a.out}/{a.domain}_*.jsonl")
+        if old:
+            raise SystemExit(f"REFUSE: {len(old)} '{a.domain}' shard(s) already in {a.out} -- wipe first")
+        pieces = _worker_pieces(a)
+        import multiprocessing as mp
+
+        with mp.Pool(a.workers) as pool:
+            res = pool.map(_clean_piece, pieces)
+        reasons = Counter()
+        for r in res:
+            reasons.update(r["reasons"])
+        paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     total = sum(reasons.values()) or 1
     if a.dry:
         print(f"docs in {total} | kept {reasons['kept']} ({reasons['kept']/total:.1%}) [dry, workers={a.workers}]")
@@ -397,8 +418,10 @@ def _global_pass(a):
     near = MinHashLSH(perms=128, bands=16)
     seen_exact = set()
     kept = kept_chars = 0
+    # Worker-kept counts are pre-global; the pass below reclassifies some as
+    # holdout/exact_dup/near_dup, so recount "kept" from its verdict.
+    reasons["kept"] = 0
     w = ShardWriter(a.out, a.domain)
-    paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     for p in paths:
         print(f"global pass: {os.path.basename(p)}", flush=True)
         with open(p, encoding="utf-8") as f:
@@ -424,6 +447,7 @@ def _global_pass(a):
                 seen_exact.add(k)
                 kept += 1
                 kept_chars += len(t)
+                reasons["kept"] += 1
                 w.write(d)
     w.close()
     # drop the worker-id shards (superseded by the merged rewrite)
@@ -455,6 +479,15 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
         # mix-domain guard at training start.
         "filters_fp": _fp_filters(),
         "fingerprint": _fp_dir(out),
+        # Whether the global near-dedup pass ran. A false stamp must say why on
+        # the artifact: the stage-2 re-stamp prerequisite is recorded here, not
+        # in a message (fb ruling 2026-08-31).
+        "near_dedup": not a.no_near_dedup,
+        "near_dedup_note": (
+            None
+            if not a.no_near_dedup
+            else "skipped: upstream-deduped source, launch clock; stage-2 re-stamp prerequisite (t48)"
+        ),
     }
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
@@ -513,6 +546,7 @@ def main():
         help="parallel row-group index; run the same build with --rg_mod K for i in 0..K-1",
     )
     ap.add_argument("--workers", type=int, default=1, help="parallel clean: N workers over disjoint source-file slices; worker id in the shard prefix; global near-dup+holdout+stamp at the end")
+    ap.add_argument("--global-only", action="store_true", help="skip the worker phase; re-run the global pass over existing w*_*.jsonl shards (a killed serial pass leaves them)")
     a = ap.parse_args()
     a.out = a.out or os.path.join(OUT_DIR, a.domain)
 
@@ -537,7 +571,7 @@ def main():
             for text, _ in iter_jsonl(path):
                 exact.add(exact_key(text))
         print(f"exclude {pat}: dedup set +{len(exact) - n0} docs", flush=True)
-    if a.workers > 1:
+    if a.workers > 1 or a.global_only:
         # Loud refusals: a silently ignored flag here is a kept-set divergence
         # from the single-worker run that nothing reports.
         if a.limit:
