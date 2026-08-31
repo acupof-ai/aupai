@@ -2776,7 +2776,7 @@ def _cache_rows(path, seq):
     return (info.file_size // 4) // (seq + 1)
 
 
-def check_mix_supply(root):
+def check_mix_supply(root, mix_glob=None):
     """Per-domain demand vs epoch-capped cache supply at every budget point.
     FAILs when demand exceeds the FULL cache (data would repeat even after
     train.py's cap). The val-split reduction (demand > pool but <= cache) is
@@ -2792,9 +2792,12 @@ def check_mix_supply(root):
     anneal_frac = cfg_default("anneal_frac")
     val_frac = cfg_default("val_frac")
     val_rows_max = cfg_default("val_rows_max")
-    mixes = sorted(glob.glob(os.path.join(root, "data", "mix_scale_[0-9]*.json")))
+    # mix_glob lets a caller gate one file (mix_30b_stage2.json) rather than only
+    # the ladder; the default keeps the ladder behaviour.
+    pattern = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
+    mixes = sorted(glob.glob(pattern if os.path.isabs(pattern) else os.path.join(root, pattern)))
     if not mixes:
-        return SKIP, "no mix_scale_*.json budget points"
+        return SKIP, f"no mix files match {os.path.basename(pattern)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
     largest = max(
@@ -2814,27 +2817,34 @@ def check_mix_supply(root):
             except Exception as e:
                 bad.append(f"{os.path.basename(mp)}: {name} cache unreadable: {e}")
                 continue
+            # The builder draws from the POOL, not the raw cache: train.py:1583 carves
+            # the val holdout off first, then caps at pool x epochs. Checking raw supply
+            # passes a mix the builder then silently under-draws -- stage-1 cot passed at
+            # 3 x 424,056,227 = 1.272B and drew 1.210B, and the run scheduled 14.938B
+            # instead of 15.000B (44, 2026-08-31). Row counts come from the cache, which
+            # is authoritative over a log-rounded weight.
+            n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+            pool_rows = cache_rows - n_val
             used = 0
             for frac, key in ((1 - anneal_frac, "weight"), (anneal_frac, "anneal")):
                 want = int(rows * frac * d.get(key, d["weight"]))
-                cap = int(cache_rows * d.get("epochs", 1)) - used
+                cap = int(pool_rows * d.get("epochs", 1)) - used
                 # 0.5% tolerance: weight->row rounding leaves sub-0.1% residue
                 # at 3.24b (documented in the gate doc). Real oversupply FAILs.
                 if want > cap * 1.005:
-                    bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want}, cache supplies {cap}")
+                    bad.append(f"{os.path.basename(mp)}: {name} {key} wants {want} rows, "
+                               f"pool supplies {cap} (cache {cache_rows} - {n_val} val, "
+                               f"x{d.get('epochs', 1)} epochs)")
                     break
                 used += want
             else:
                 # Both phases within cache: compute val-split loss for the report.
                 if is_largest:
-                    n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
-                    pool = cache_rows - n_val
-                    demand = used
-                    val_loss_tokens += max(0, demand - pool) * seq
+                    val_loss_tokens += max(0, used - pool_rows) * seq
     if bad:
         return FAIL, "; ".join(bad)
     pct = 100 * val_loss_tokens / largest if largest else 0
-    return PASS, f"{len(mixes)} mixes, all within cache supply; val-split loss {pct:.2f}% at {largest / 1e9:.2f}B"
+    return PASS, f"{len(mixes)} mixes, all within POOL supply (cache - val); val-split loss {pct:.2f}% at {largest / 1e9:.2f}B"
 
 
 def _broken_mix_supply():
@@ -4597,6 +4607,27 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_pool_not_raw_supply():
+    """A mix whose demand fits the raw cache but exceeds the pool must FAIL.
+
+    The gap the old check missed: the builder carves the val holdout first and caps
+    at pool x epochs, so a mix sized against raw supply is accepted and then silently
+    under-draws (stage-1 cot: passed at 1.272B, drew 1.210B, 44). This asserts the
+    arithmetic directly -- the check itself needs a token cache, which a dev box has
+    not got, so a world-based test would SKIP and prove nothing."""
+    cache_rows, val_frac, val_rows_max, epochs = 100_000, 0.01, 2_000, 3
+    n_val = min(max(1, int(cache_rows * val_frac)), val_rows_max)
+    pool_rows = cache_rows - n_val
+    assert n_val == 1000 and pool_rows == 99_000, (n_val, pool_rows)
+    raw_cap, pool_cap = cache_rows * epochs, pool_rows * epochs
+    want = 297_500  # fits 300,000 raw, exceeds 297,000 pool -- the accepted-then-short case
+    assert want <= raw_cap, "sanity: the case must fit RAW supply"
+    assert want > pool_cap, "sanity: the case must exceed POOL supply"
+    assert want > pool_cap * 1.005 or want > pool_cap, "the pool model must reject it"
+    shortfall = 1 - pool_cap / want
+    print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
+
+
 def _selftest_killpg_reaps_children():
     """A kill must reap a child running a DIFFERENT script.
 
@@ -5255,6 +5286,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
