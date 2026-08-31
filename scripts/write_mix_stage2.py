@@ -68,6 +68,12 @@ STAGE2_POOLS = {
     # < the 5,000 cap, so n_val = 3,464. This is why the arithmetic must start from the cache
     # row count -- for a sub-100,000-row domain the cap does NOT bind.
     "wiki_chat": 65_831,      # 69,295 rows - 3,464
+    # math_owm_stage2 is a NEW corpus, 6.53B against stage 1's 4.03B, so its pool is 62% larger
+    # and its cap drops from the provisional 2 to 1: cache 6,528,628,253 tok = 1,593,514 rows of
+    # 4097, minus 5,000 val. want/pool 0.7391, so it draws 0.74 epochs and repeats NOTHING --
+    # the A-prime table's "math_owm repeats at 1.88 cumulative" was an artifact of measuring
+    # against the stage-1 pool. Cumulative on its own pool is 1.16, not 1.88.
+    "math_owm": 1_588_514,
 }
 
 SPEC = {
@@ -130,7 +136,18 @@ def build():
             "stage1_rows": s1,
             "stage1_pool_rows": pool,
             "cumulative_rows": s1 + runtime,
-            "cumulative_epochs_on_stage1_pool": round((s1 + runtime) / pool, 4),
+            # Cumulative epochs only MEAN anything when both stages read the same corpus. For a
+            # reused dir that is s1+s2 over the shared pool. For a NEW corpus the two draws come
+            # from different bodies of text, so a single cumulative figure is a category error:
+            # report each stage against its own pool instead.
+            **({"cumulative_epochs_on_shared_pool": round((s1 + runtime) / pool, 4)}
+               if name in SAME_CORPUS_AS_STAGE1 else
+               {"stage1_epochs_on_stage1_pool": round(s1 / pool, 4),
+                "stage2_epochs_on_stage2_pool": round(runtime / cap_pool, 4) if s2_pool else None,
+                "cumulative_epochs_not_defined": (
+                    "stage 1 and stage 2 read DIFFERENT corpora for this domain, so there is no "
+                    "shared pool to count epochs against. The A-prime table's cumulative figure for "
+                    "this domain was computed against the stage-1 pool and is an artifact.")}),
             "pool_rows": cap_pool,  # alias b0's readout draws_equal() reads
             "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (PROVISIONAL, different corpus)",
             "stage2_pool_rows": s2_pool,

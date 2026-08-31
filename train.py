@@ -124,6 +124,24 @@ except ImportError:
     except ImportError:
         HAS_FA = False
 
+if HAS_FA:
+    # flash's varlen wrapper validates argument SHAPES against a Python int -- `assert
+    # cu_seqlens_k.shape == (batch_size + 1,)` and siblings at cute/interface.py:376/381/384,
+    # where batch_size is cu_seqlens_q.shape[0] - 1, i.e. the document count. Dynamo must burn
+    # that count into a guard to prove the assert, and the count is drawn from a distribution:
+    # 45 distinct values over 60 steps, range 43-116, against recompile_limit 64. The variant
+    # set never closes, so eviction and recompilation are PERMANENT -- 70 flash recompiles in
+    # 110 steps, 20 of them after step 50, costing 54.9 ms/step of gap at the rms_norm -> flash
+    # seam (eff.recompile_recurrence_explained, eff.steady_state_composition).
+    #
+    # The specialisation buys nothing: flash's own compile_key (interface.py:678-702) contains
+    # no batch_size at all -- only dtypes, head dims, causal, mod hashes, and `x is None`
+    # presence booleans -- so the document count cannot select or compile a different kernel.
+    # Disabling tracing here discards a guard with no consumer. Measured 70 -> 0 flash
+    # recompiles, 218 -> 33 total, tok/s unchanged, loss deltas inside the twin floor at 2 of 3
+    # sampled steps (eff.seam_dynamo_disable).
+    flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)
+
 
 # Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
 SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
@@ -169,6 +187,13 @@ class Cfg:
     clip = 1.0
     val_frac = 0.05
     seed = 42
+    #: The seed for the corpus shuffle, separate from `seed` so a seed sweep does not
+    #: rebuild every cache. Cfg.seed also drives weight init, the val permutation and
+    #: the batch generator, and the p02_s* arms exist to measure INIT variance at a
+    #: fixed corpus -- binding the cache to it would change their training data and fold
+    #: data variance into ds.seed_variance_0p2b, which the readout's thresholds derive
+    #: from. None means "follow Cfg.seed" (de-7 design).
+    sample_seed = None
     compile = True  # model body only; FLCE loss kept outside (Liger compile-incompatible)
     grad_ckpt = False  # costs 25% wall-clock for ~15GB savings; batch 32 fits without it on H20
     attn_res = True  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
@@ -418,6 +443,99 @@ def _fp8_ok(mod, name):
     # FoNE heads excluded by NAME: num_head runs on hidden[nmask], whose row count is the batch's
     # [NUM] count -- rarely a multiple of 16, and not visible from the weight shape.
     return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
+
+
+_FP8_WSCALE = {}  # id(weight) -> scale, cleared per step; the head weight is constant within a
+                  # step and reused across all 64 FLCE chunks, so recomputing its absmax 64 times
+                  # is 64 reductions over 32784x1024 for one value (b0). FP8LinearFunction caches
+                  # its scales for the same reason.
+
+
+def _fp8_mm(a, b, out_dtype, cache_b=False):
+    """One fp8 GEMM with per-tensor e4m3 scaling. a @ b, both 2D, b already oriented.
+
+    Same recipe as FP8LinearFunction: scale each operand by its own absmax so the largest
+    element lands at e4m3's 448, multiply in fp8, and let _scaled_mm apply the scales to the
+    accumulator. Measured range on the head's activations is p50 48 / p99 62 / max 82 against
+    448, spread p99/p50 = 1.30x, so per-tensor is sufficient and per-chunk scaling is not
+    needed (eff.fp8_head_activation_range).
+
+    Per-tensor scaling is robust to an outlier, tested rather than assumed (probes/t57_outlier.py,
+    b0's point that the range fact should not simply wave the question off). Planting one element
+    at 82, 448 and 4480 while the rest sit near p50 moves the ORDINARY rows' median relative
+    error only 3.766% -> 3.764% -> 3.791%, cosine 0.99929 throughout. The reason is that the
+    scale is a DIVISOR, not a clamp: a 55x outlier shrinks every element by 55x together, and
+    e4m3 keeps 3 mantissa bits regardless of exponent, so relative precision is scale-invariant.
+    Absolute range would only matter if the outlier pushed ordinary elements below e4m3's
+    subnormal floor, which needs ~10^5 of spread, not 55x.
+    """
+    sa = (a.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    # Every path binds sb explicitly. The earlier walrus form was correct but left the hit case
+    # binding sb only as a side effect of the condition, so any added elif or reorder made it
+    # unbound -- a NameError rather than a wrong number, but a trap for the next reader (b0).
+    if not cache_b:
+        sb = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    elif (cached := _FP8_WSCALE.get(id(b))) is not None:
+        sb = cached
+    else:
+        sb = _FP8_WSCALE[id(b)] = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    qa = (a / sa).to(torch.float8_e4m3fn)
+    qb = (b / sb).to(torch.float8_e4m3fn)
+    return torch._scaled_mm(qa.contiguous(), qb.t().contiguous().t(),
+                            scale_a=sa, scale_b=sb, out_dtype=out_dtype)
+
+
+def patch_liger_flce_fp8():
+    """Route Liger FLCE's three head GEMMs through _scaled_mm. Returns True if patched.
+
+    The head is the largest single lever with a mechanism: arithmetic intensity 668.7 FLOP/B
+    against H20's balance point of 37, so it is compute-bound by 18x, and it is excluded from
+    fp8 today only by _fp8_ok's NAME check (eff.lm_head_is_compute_bound). All three matmuls are
+    the same M=2048 K=1024 N=32784 shape and measure 62.5 / 63.0 / 64.5 ms per step, so
+    converting only the forward buys a third of the ceiling and lands under the ship gate --
+    this patches all three, ideal 2x = 95 ms = 5.6% of a 1702 ms step.
+
+    Patched by source rewrite of the three call sites rather than by vendoring all 487 lines,
+    so a Liger bump surfaces as a failed patch instead of as a silently stale copy. The
+    grad_weight site keeps whatever accumulator dtype is in force: substituting an fp8 GEMM's
+    own output dtype there would replace an accumulator with a single product, which is the one
+    substitution that breaks correctness (b0). Our grad_weight is bf16 today because weights are
+    bf16 and accum_dtype is unset (eff.head_grad_accum_bf16), and that stays true after this.
+    """
+    try:
+        import inspect
+
+        from liger_kernel.ops import fused_linear_cross_entropy as _flce
+    except ImportError:
+        return False
+    src = inspect.getsource(_flce.fused_linear_cross_entropy_forward)
+    # Clear the weight-scale cache at the top of every FLCE call. id() is only unique among LIVE
+    # objects, so a freed tensor's id can be reused by a different one -- caching across calls
+    # would then hand a stale scale to an unrelated weight. Within one call the weight is pinned
+    # by the caller's reference, which is exactly the lifetime the 64 chunks need.
+    src = src.replace("    for chunk_id in range(num_chunks):",
+                      "    _FP8_WSCALE.clear()\n    for chunk_id in range(num_chunks):", 1)
+    subs = [
+        ("logits_chunk = _input_chunk @ weight.t()",
+         "logits_chunk = _fp8_mm(_input_chunk, weight.t(), _input_chunk.dtype, cache_b=True)"),
+        ("grad_input[start_idx:end_idx] = grad_logits_chunk @ weight",
+         "grad_input[start_idx:end_idx] = _fp8_mm(grad_logits_chunk, weight, grad_input.dtype)"),
+        ("grad_weight += torch.mm(grad_logits_chunk.t(), _input_chunk).float()",
+         "grad_weight += _fp8_mm(grad_logits_chunk.t(), _input_chunk, torch.float32).to(grad_weight.dtype)"),
+    ]
+    for old, _ in subs:
+        if old not in src:
+            print(f"fp8 head: PATCH FAILED, Liger source changed -- missing {old[:44]!r}", flush=True)
+            return False
+    for old, new in subs:
+        src = src.replace(old, new)
+    ns = dict(_flce.__dict__)
+    ns["_fp8_mm"] = _fp8_mm
+    ns["_FP8_WSCALE"] = _FP8_WSCALE
+    exec(compile(src, "<fp8_flce>", "exec"), ns)  # noqa: S102
+    _flce.fused_linear_cross_entropy_forward = ns["fused_linear_cross_entropy_forward"]
+    print("fp8 head: Liger FLCE's three GEMMs routed through _scaled_mm", flush=True)
+    return True
 
 
 def convert_to_fp8_compute(model):
@@ -1189,6 +1307,34 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         ck["opt"] = opt
     if step is not None:
         ck["step"] = step
+    # The row cursor: how many rows of each domain's pool the plan has consumed, and the
+    # corpus fingerprint each count is measured against. Stage 2 builds a NEW plan from
+    # its own mix, so without this every domain restarts at row 0 and the tail is never
+    # read. Top-level, not inside cfg -- the cfg dict strips _-prefixed keys, and a
+    # cursor is state, not configuration (de-7).
+    cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
+    fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
+    if cur:
+        # AS OF THIS STEP, not the plan's end. The plan-complete counts describe a run
+        # that finished; a checkpoint at step k describes one that has read k*batch*accum
+        # rows per rank. Seeding stage 2 from the plan-complete figure would skip
+        # everything between k and the end -- and --auto-resume makes a mid-plan
+        # checkpoint the expected case, not the rare one (fb, 2026-09-01).
+        dom_idx = getattr(cfg, "_plan_domains", None)
+        names = getattr(cfg, "_plan_names", None)
+        if step is not None and dom_idx is not None and names:
+            rows_done = step * cfg.batch * cfg.accum  # this rank's share, plan order
+            head = dom_idx[:rows_done]
+            counts = torch.bincount(head.to(torch.int64), minlength=len(names))
+            world = int(os.environ.get("WORLD_SIZE", 1))
+            # x world: every rank walks its own stripe of the same plan at the same rate,
+            # so the whole-run consumption of a domain is this rank's count x world.
+            ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
+            ck["row_cursor_as_of_step"] = step
+        else:
+            ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
+        ck["row_cursor_srcfp"] = dict(fps or {})
+        ck["row_cursor_seed"] = _sample_seed()
     torch.save(ck, path)
 
 
@@ -1337,6 +1483,17 @@ def _encode_domain(texts, tok, workers, log=None):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _sample_seed():
+    """The corpus-shuffle seed: Cfg.sample_seed when set, else Cfg.seed.
+
+    Separate from Cfg.seed on purpose. Cfg.seed also drives weight init, the val
+    permutation and the batch generator, and the p02_s* arms measure INIT variance at a
+    fixed corpus -- binding the cache to Cfg.seed would change their training data and
+    fold data variance into ds.seed_variance_0p2b, the number the readout's thresholds
+    derive from. Pinning sample_seed lets a seed sweep share one cache (de-7)."""
+    return Cfg.seed if Cfg.sample_seed is None else Cfg.sample_seed
+
+
 def _domain_cache_path(domain):
     """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
     token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
@@ -1355,6 +1512,13 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     srcfp = cache + ".srcfp"
+    # The shuffle below is seeded (Random(Cfg.seed).shuffle), so the seed decides WHICH
+    # rows land where in the pool -- two caches built at different seeds hold the same
+    # documents in different order. A resume cursor is a row count into that order, so a
+    # seed change silently reinterprets every cursor rather than invalidating it. A
+    # sidecar, not a name: unlike --fone the stream is identical, so two seeds must not
+    # coexist as two caches, they must force one rebuild (de-7 prerequisite).
+    seedfp = cache + ".seed"
     shards = sorted(
         p
         for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
@@ -1363,23 +1527,37 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
+    # An unstamped cache REBUILDS. The 17 caches that predate this stamp were written
+    # explicitly by scripts/stamp_cache_seeds.py after auditing what each was actually
+    # shuffled at (all 42: the ladder caches predate the seed-1/2/3 arms, and every
+    # stage-1 cache was built by a run passing --seed 0, which the truthiness bug
+    # dropped). Lazy adoption was the first version and 44 was right to reject it: it
+    # cannot distinguish "predates the stamp" from "written by a seed nobody recorded",
+    # so it would launder exactly the wrong-order cache this exists to catch.
+    same_seed = os.path.exists(seedfp) and open(seedfp).read().strip() == str(_sample_seed())
     fresh = (
         os.path.exists(cache)
         and shards
         and same_vocab
         and same_source
+        and same_seed
         and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
     )
     if is_main and not fresh and os.path.exists(cache) and not same_vocab:
         print(f"mix: {domain} cache was built by another vocabulary, retokenizing", flush=True)
     if is_main and not fresh and os.path.exists(cache) and not same_source:
         print(f"mix: {domain} cache's source changed since caching, retokenizing", flush=True)
+    if is_main and not fresh and os.path.exists(cache) and same_source and same_vocab and not same_seed:
+        was = open(seedfp).read().strip() if os.path.exists(seedfp) else "unstamped"
+        print(f"mix: {domain} cache was shuffled at sample_seed {was}, now "
+              f"{_sample_seed()}: retokenizing (the row ORDER differs, so a resume "
+              f"cursor into the old order is meaningless)", flush=True)
     if is_main and not fresh:
         texts = []
         for p in shards:
             texts += _jsonl_content(p)
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
-        random.Random(Cfg.seed).shuffle(texts)
+        random.Random(_sample_seed()).shuffle(texts)
         print(f"mix: tokenizing {domain} ({len(texts)} docs, workers={workers}) -> {cache}", flush=True)
         data = _encode_domain(texts, tok, workers, log=lambda m: print(m, flush=True))
         del texts
@@ -1388,6 +1566,8 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
             f.write(VOCAB_ID or "")
         with open(srcfp, "w") as f:
             f.write(live_fp)
+        with open(seedfp, "w") as f:
+            f.write(str(_sample_seed()))
         n_tok = len(data[0] if Cfg.fone else data)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
@@ -1547,7 +1727,8 @@ def _selftest_mix_guard():
 _selftest_mix_guard()
 
 
-def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
+def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
+              cursor_srcfp=None, cursor_seed=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
     {"total_tokens": 11.5e9, "domains": {"web": {"weight": .83, "epochs": 2, "anneal": .42}, ...}};
     weight = share of the main phase, anneal = share of the last Cfg.anneal_frac tokens.
@@ -1572,7 +1753,41 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
         if Cfg.fone:
             vval.append(vseq[:n_val])
             vpools[name] = vseq[n_val:]
+        # Seed the cursor from the checkpoint so a resume under a DIFFERENT mix continues
+        # where stage 1 stopped. Within one run the loop already seeks correctly
+        # (i0 = step * batch * accum into an ordered plan); the break is across mixes,
+        # where a fresh plan restarts every domain at row 0 and leaves the tail unread --
+        # 26% of code_rp1t, 34% of en_c4, 92% of zh_web (b0). A count, not an index:
+        # pools are read modulo their length, so a cursor past one epoch is meaningful.
         used[name] = 0
+        if row_cursor and name in row_cursor:
+            # The shuffle seed too, beside srcfp: identical bytes shuffled at another
+            # seed give the same fingerprint and a different row ORDER, so the cursor
+            # would index different documents while every other check passes (fb).
+            if cursor_seed is not None and cursor_seed != _sample_seed():
+                if is_main:
+                    print(f"mix: {name} cursor discarded -- written at sample_seed "
+                          f"{cursor_seed}, this run uses {_sample_seed()}; the pool is "
+                          f"shuffled differently so the row count indexes other rows",
+                          flush=True)
+                continue
+            want_fp = (cursor_srcfp or {}).get(name)
+            ddir = os.path.join(DATA, "corpus", name)
+            live_fp = _corpus_fp(ddir) if os.path.isdir(ddir) else None
+            if want_fp and live_fp and want_fp != live_fp:
+                # Per domain, not all-or-nothing: a rebuilt corpus invalidates ITS cursor.
+                # A row count means nothing against different bytes, and silently reusing
+                # it is the failure this guard exists for.
+                if is_main:
+                    print(f"mix: {name} cursor {row_cursor[name]} discarded -- corpus "
+                          f"changed ({want_fp[:8]} -> {live_fp[:8]}), restarting at row 0",
+                          flush=True)
+            else:
+                used[name] = int(row_cursor[name])
+                if is_main:
+                    print(f"mix: {name} resuming at row {used[name]} "
+                          f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
+                          flush=True)
     plan = []
     for frac, key in phases:
         parts = []
@@ -1604,9 +1819,27 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1):
         print(
             f"mix: {plan.shape[1]} rows = {plan.shape[1] * Cfg.seq / 1e9:.2f}B tokens scheduled", flush=True
         )
+    # The cursor AFTER this plan is consumed, for the checkpoint: what stage 2 seeds from.
+    # The per-row DOMAIN INDEX for this rank, in plan order. save_checkpoint counts a
+    # prefix of it to get the cursor AS OF a step, instead of the plan-complete counts
+    # below: with --auto-resume a mid-plan crash is the expected case, and seeding from
+    # the plan's end would skip every row the run never reached. int8, ~0.5MB per rank
+    # at stage-1 size (523,158 rows), so keeping it costs nothing next to a 959MB
+    # checkpoint (fb ruling: gating for stage 2).
+    Cfg._plan_domains = None  # set below, once `mine` exists
+    Cfg._row_cursor = dict(used)
+    # Only domains whose corpus dir is present: a mix can name a domain served from a
+    # cache whose source is not on this box, and an unguarded fingerprint raises there.
+    Cfg._row_cursor_srcfp = {
+        nm: _corpus_fp(os.path.join(DATA, "corpus", nm))
+        for nm in names
+        if os.path.isdir(os.path.join(DATA, "corpus", nm))
+    }
     # Multiple of world, or a rank left a row short gets a different lr and hangs the all-reduce.
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
+    Cfg._plan_domains = mine[0].to(torch.int8).clone()
+    Cfg._plan_names = list(names)
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
     vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
     for di, name in enumerate(names):
@@ -1730,15 +1963,29 @@ def main():
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
     args = parser.parse_args()
+    # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
+    # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
+    # despite its help text saying "0 = epoch end only", and --attn_res_blocks 0 landed
+    # only because the Cfg default was already 0. Ten int flags were affected; the
+    # warmdown/anneal_frac rescue loop this replaces was the same fix for two of them.
+    #
+    # store_true flags are excluded and handled below: argparse gives them False when
+    # absent, not None, so is-not-None would overwrite the Cfg default on every run --
+    # and Cfg.attn_res defaults to TRUE, so a blanket sweep would silently disable
+    # Attention Residuals everywhere. Absence of a switch is not a request to turn it off.
+    _switches = {a.dest for a in parser._actions if isinstance(a, argparse._StoreTrueAction)}
     for k, v in vars(args).items():
-        if hasattr(Cfg, k) and v:
-            setattr(Cfg, k, v)
-    # warmdown/anneal_frac are floats whose valid value 0.0 is falsy: the loop above skips
-    # them (the --warmdown 0 stage-1 join would silently keep Cfg.warmdown 0.65). Apply
-    # them explicitly by is-not-None so 0.0 lands.
-    for k in ("warmdown", "anneal_frac"):
-        v = getattr(args, k, None)
-        if v is not None:
+        if not hasattr(Cfg, k):
+            continue
+        if k in _switches:
+            # A store_true is False both when absent and when the Cfg default is False,
+            # so `is not None` would write False over a True default -- Cfg.attn_res
+            # defaults to True, and a blanket sweep would silently disable Attention
+            # Residuals on every run. Only a switch actually passed sets its field;
+            # turning one OFF is what the --no_* flags below are for.
+            if v:
+                setattr(Cfg, k, True)
+        elif v is not None:
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
@@ -1804,7 +2051,32 @@ def main():
             raise RuntimeError("shape_audit FAIL: GEMM-hostile Cfg dimensions, see above")
     tok = build_tokenizer([])
     eos_id = tok.token_to_id("<eos>")
-    tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world)
+    # The cursor must reach build_mix, which runs BEFORE the checkpoint is loaded at
+    # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
+    # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
+    # minute per rank, and mmap keeps this to the header.
+    _cursor = _cursor_fp = _cursor_seed = None
+    if args.resume and os.path.exists(args.resume):
+        try:
+            _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
+            _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
+            _cursor_seed = _pre.get("row_cursor_seed")
+            del _pre
+        except (OSError, RuntimeError, TypeError) as e:
+            if is_main:
+                print(f"resume: could not pre-read the row cursor ({e}); every domain "
+                      f"starts at row 0 -- the tail of each pool stays unread", flush=True)
+    if args.resume and is_main and not _cursor:
+        # A stage-1 checkpoint predates the field. Say so rather than resuming silently
+        # from row 0, which is the bug this exists to fix wearing a resume's clothes.
+        print("resume: checkpoint carries no row_cursor (predates the field). Every "
+              "domain restarts at row 0, leaving each pool's tail unread (92% of "
+              "zh_web at stage-1 weights). Reconstruct it with "
+              "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
+              "launching stage 2 if that tail matters.", flush=True)
+    tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
+                       row_cursor=_cursor, cursor_srcfp=_cursor_fp,
+                       cursor_seed=_cursor_seed)
     (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))
     seqs, vseqs = seqs.long(), vseqs.long()
     Xtr, Ytr, Xva, Yva = seqs[:, :-1], seqs[:, 1:], vseqs[:, :-1], vseqs[:, 1:]
@@ -1861,6 +2133,25 @@ def main():
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
+        # Off by default: this is the loss path, so an fp8 error reaches EVERY gradient rather
+        # than one layer's activations. Behind a flag until the four-arm A/B judges it against
+        # an in-config noise floor (docs/lessons/shipment_ab_plan.md).
+        if os.environ.get("FP8_HEAD") == "1":
+            if Cfg.fone:
+                raise SystemExit(
+                    "FP8_HEAD=1 with --fone: FoNE changes the token stream and the head's input "
+                    "distribution, and the digit probe has not been run against an fp8 head. "
+                    "Run the probe first or drop one of the two flags."
+                )
+            # Fail CLOSED. The function detects a Liger bump and returns False; discarding that
+            # return would let FP8_HEAD=1 train in bf16, turning the A/B's fp8 arm into a second
+            # baseline and reading "no difference" for a candidate that never ran. Same class as
+            # --seed 0: a flag declaring a property the consumer relies on, false while set (b0).
+            if not patch_liger_flce_fp8():
+                raise SystemExit(
+                    "FP8_HEAD=1 but the Liger FLCE patch did not apply -- see the line above for "
+                    "which source string is missing. An explicit opt-in must take effect or refuse."
+                )
         if is_main:
             print("FP8 compute enabled", flush=True)
     if is_main:
@@ -1885,7 +2176,15 @@ def main():
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
             f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
-            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone}"
+            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone} "
+            # The EFFECTIVE values, from Cfg after the flags are applied -- not the
+            # argv the caller typed. --seed 0 was silently dropped for weeks and
+            # nothing in the log said so, because the log did not print the seed at
+            # all: the invisibility is what let the truthiness bug live (44).
+            f"seed {Cfg.seed} sample_seed {_sample_seed()}"
+            + (" (pinned)" if Cfg.sample_seed is not None else " (follows seed)")
+            + f" warmdown {Cfg.warmdown} anneal_frac {Cfg.anneal_frac} "
+            f"val_every {Cfg.val_every} attn_every {Cfg.attn_every}"
         )
 
     master = MasterWeights(raw_model) if args.fp32_master else None
@@ -2092,7 +2391,28 @@ def main():
                         glob.glob(ckpt_path + ".step*"),
                         key=lambda p: int(p.rsplit(".step", 1)[1]),
                     )[:-3]
+                    # ...but never a step something has pinned. A milestone checkpoint is
+                    # one we have promised to keep, and the roller does not know that: on
+                    # 2026-08-31 the 3.24B own-mix baseline was lost because step3500
+                    # rotated out while its rescore sat in the lane queue, and those
+                    # weights are unrepeatable. harness milestone hardlinks the file to
+                    # ckpt_<run>.milestone_<token>.pt, so the pin is discoverable from
+                    # disk: same inode, no list to keep in sync and go stale.
+                    pinned_inodes = set()
+                    for m in glob.glob(os.path.join(os.path.dirname(ckpt_path) or ".",
+                                                    "*.milestone_*.pt")):
+                        try:
+                            pinned_inodes.add(os.stat(m).st_ino)
+                        except OSError:
+                            pass
                     for p in stale:
+                        try:
+                            if os.stat(p).st_ino in pinned_inodes:
+                                if is_main:
+                                    runlog(f"roller: keeping {os.path.basename(p)} -- pinned")
+                                continue
+                        except OSError:
+                            pass
                         os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
                     v = validate(

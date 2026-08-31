@@ -650,3 +650,24 @@ if _torch.cuda.is_available() and _train.HAS_FA:
     _gpu_check(_CBig, 2, 4096, _torch.tensor([0, 1500, 4096, 4700, 8192]))
 else:
     print("flash varlen vs fallback SKIP (no CUDA or no flash_attn)")
+
+
+# --- the flash wrapper must stay dynamo-disabled -----------------------------------------
+# Removing the wrap silently restores 70 flash recompiles per 110 steps, 20 of them recurring
+# after step 50, because the varlen wrapper's shape asserts specialise dynamo on the DOCUMENT
+# COUNT and that count is unbounded (eff.recompile_recurrence_explained). Throughput does not
+# move when it regresses -- 81K in both arms of the lane test -- so nothing else in the suite
+# would catch it. This asserts the wrap by its effect on a traced function, not by looking for
+# an attribute name that a torch bump could rename.
+if _train.HAS_FA:
+    _f = _train.flash_attn_varlen_func
+    _marker = getattr(_f, "_torchdynamo_disable", None)
+    assert _marker, (
+        "flash_attn_varlen_func is not wrapped in torch._dynamo.disable. Its shape asserts "
+        "(cute/interface.py:376/381/384) specialise dynamo on the unbounded document count, "
+        "which reopens permanent recompilation at ~54.9 ms/step with NO tok/s signal. "
+        "Restore the wrap at train.py's flash import block."
+    )
+    print("flash_attn_varlen_func is dynamo-disabled OK")
+else:
+    print("flash dynamo-disable SKIP (no flash_attn)")

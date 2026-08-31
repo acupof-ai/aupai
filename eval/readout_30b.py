@@ -379,6 +379,20 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
     m_rec = load_score_record(score_matrix, milestone, milestone_profile)
     p_rec = load_score_record(score_matrix, paired, paired_profile)
+    # A MISSING record is not an absent metric. Every metric printed ABSENT for the 15B
+    # readout because the pair was looked up under profile=full while its only record is
+    # profile=milestone -- and "no metric moved" on a lookup miss reads as a measurement
+    # (fb, 2026-09-01). A metric absent from a record that EXISTS is a real ABSENT; a
+    # record that does not exist is a broken call, and the two must not look alike.
+    missing = [f"{n} (profile={pr})" for n, pr, rec in
+               ((milestone, milestone_profile, m_rec), (paired, paired_profile, p_rec))
+               if rec is None]
+    if missing:
+        print(f"REFUSING: no score record for {', '.join(missing)}. Every metric would "
+              f"read ABSENT and the summary would say 'no metric moved', which is a "
+              f"lookup miss wearing a verdict's clothes. Check the (ckpt, profile) pair "
+              f"against runs/score_matrix.jsonl.")
+        return False
     m_dl = load_domain_loss(milestone_dl, milestone) if milestone_dl else None
     p_dl = load_domain_loss(paired_dl, paired) if paired_dl else None
     # domain loss may also live in the score_matrix record (same heads); prefer the explicit files
@@ -632,8 +646,19 @@ def selftest():
     rec_missing = json.loads(json.dumps(rec_full))
     rec_missing["profile"] = "milestone"  # the production path: milestone record, one metric dropped
     rec_missing.get("metrics", {}).pop("code_500", None)
+    # BOTH sides: the pair is looked up under profile=full, and a record that does not
+    # exist now refuses rather than printing ABSENT -- which is the fix this case would
+    # otherwise trip over. The full record keeps code_500 so the milestone's dropped
+    # metric is what the assertion sees.
+    # BOTH sides exist -- a record that does not is now a refusal, not an ABSENT -- and
+    # code_500 is dropped from BOTH, which is what "metric not in both records" means.
+    # Dropping it from one side only leaves the pair carrying it, and the metric then
+    # produces a verdict instead of the ABSENT this case is about.
+    rec_pair = json.loads(json.dumps(rec_full))
+    rec_pair.get("metrics", {}).pop("code_500", None)
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
         tf.write(json.dumps(rec_missing) + "\n")
+        tf.write(json.dumps(rec_pair) + "\n")
         tmp = tf.name
     try:
         buf = io.StringIO()
@@ -642,8 +667,11 @@ def selftest():
         out = buf.getvalue()
     finally:
         os.unlink(tmp)
+    # The metric's OWN block, not a fixed window: a 400-char slice ran into the next
+    # metric's section, whose verdict line then failed an assertion about this one.
     i = out.index("\ncode_500\n")
-    section = out[i:i + 400]
+    nxt = out.find("\n\n", i + 1)
+    section = out[i:nxt if nxt != -1 else i + 400]
     # A missing metric prints ABSENT and NO verdict line (print_metric returns early);
     # "reachable: moved/floor" is the spec label, not a verdict -- do not grep for "floor".
     assert "ABSENT" in section and "verdict:" not in section, f"missing metric misread:\n{section}"

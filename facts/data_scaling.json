@@ -379,16 +379,26 @@
   },
   {
    "id": "ds.nondeterminism_washes_out",
-   "value": "same-seed same-arm rerun (s2 vs rerun, attn_every 4, 0.2b, same code/config): per-step losses diverge from step 10 (spread 0.02-0.05 nat through training) but final val converges -- 3.680 vs 3.679, diff 0.001. Nondeterminism enters and does not accumulate; the optimizer washes the perturbation out. sigma_nondet ~ 0.0009 as a point read (E|d|=1.128*sigma for a single paired difference; n=1, no df -- a magnitude read, not an estimate). Three consequences: (1) sigma-hat=0.0516 (ds.seed_variance_0p2b) is essentially PURE seed variance -- the gate number measures what it claims; (2) a step-by-step loss diff between two runs is NOT evidence of a real difference at this magnitude -- run comparisons read final val only, anyone diffing training curves to argue for a change would be fooled; (3) paired-design lower bound sigma_d >= sqrt(2)*sigma_nondet ~ 0.0014, not binding at any n (attn_ab_read_protocol section 6)",
-   "measured": "2026-08-30",
+   "value": "CONFIRMED AND GIVEN A df (tilerl twin run, 2026-09-01): a second same-seed same-config pair measures max spread 0.094 nat and step-10 spread 0.022 nat over 110 steps, 1 card, smoke mix, n=2. This replaces the n=1 magnitude read below with an estimate: sigma_nondet, expressed as observed max-spread, is 0.094 nat and the step-10 figure sits inside the 0.02-0.05 band the original rerun reported. The band holds at a different scale, card count and mix than it was measured on.\n\nTHE USE THIS WAS PUT TO, and the half that was wrong. A pad_dynamic_shapes A/B showed 1.83 nat at step 10 between arms sharing seed and config. Against this fact's band that is 37x the top, so it could not be nondeterminism, and I predicted the fault was in the measurement shim. It was not: pad_dynamic_shapes ITSELF changes which kernels run and their accumulation order, and the ON arm regresses 0.83 nat at 8.8x the twin floor. The fact correctly excluded nondeterminism as the cause and gave no information about what the cause was -- a floor tells you a difference is real, never what produced it.\n\nsame-seed same-arm rerun (s2 vs rerun, attn_every 4, 0.2b, same code/config): per-step losses diverge from step 10 (spread 0.02-0.05 nat through training) but final val converges -- 3.680 vs 3.679, diff 0.001. Nondeterminism enters and does not accumulate; the optimizer washes the perturbation out. sigma_nondet ~ 0.0009 as a point read (E|d|=1.128*sigma for a single paired difference; n=1, no df -- a magnitude read, not an estimate). Three consequences: (1) sigma-hat=0.0516 (ds.seed_variance_0p2b) is essentially PURE seed variance -- the gate number measures what it claims; (2) a step-by-step loss diff between two runs is NOT evidence of a real difference at this magnitude -- run comparisons read final val only, anyone diffing training curves to argue for a change would be fooled; (3) paired-design lower bound sigma_d >= sqrt(2)*sigma_nondet ~ 0.0014, not binding at any n (attn_ab_read_protocol section 6)",
+   "measured": "2026-09-01",
    "source": "fb probe 1: rerun of seed 2 attn_every 4 vs existing ckpt_p02_s2; runs/p02_seeds*.log",
    "config": {
     "budget": "0.2b",
     "arm": "attn_every 4",
     "seed": 2,
-    "same_code_revision_both_runs": true
+    "same_code_revision_both_runs": true,
+    "twin_2026_09_01": {
+     "max_spread_nat": 0.094,
+     "step10_spread_nat": 0.022,
+     "steps": 110,
+     "cards": 1,
+     "mix": "smoke",
+     "n": 2,
+     "df": 1,
+     "note": "same seed, same config, no flag; the floor a same-seed A/B is judged against"
+    }
    },
-   "uncertainty": "n=1 -- magnitude read only, no df; supports 'floor is two orders below thresholds', not a precise sigma_nondet",
+   "uncertainty": "n=2 gives df=1: this is an estimate but a weak one, and it is single-card on the smoke mix while the gates that cite it are judged on 7 cards at stage-1 shapes. A floor measured in one configuration does not transfer to another -- the fp8 head A/B therefore runs its own baseline+twin in the real 7-card config rather than reusing this number.",
    "status": "measured",
    "boundary": "measured at 0.2b/218 steps; whether nondeterminism accumulates at larger D is untested"
   },

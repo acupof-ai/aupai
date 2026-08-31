@@ -50,8 +50,8 @@ mix = `data/mix_scale_30b.json`(8 能力角色,zh:en ≈ 35:65)。
 | **code-500 accuracy** | 500 | 12.6pt(二项 2δ,δ=1.4/√500=6.3pt) | 30B 处 >12.6% → 代码生成存在,continue 进 RL 闸;≤12.6%(地板)→ 30B mix 没买到可测代码生成,**stop 推理轴主张**,按阴性报。8B/16B 只看趋势,早过阈值不改动作 |
 | **math-hard pass@1** | ≥1000 | 8.8pt(二项 2δ @ n=1036;δ=1.4/√n) | 同上:30B 处非零(>2δ)→ continue;地板 → stop。n 以实际跑的题数为准,阈值随 n 写死在记录里 |
 | **pass@8−pass@1 gap** | 同上 | **15pt(RL 闸口)** | ≥15pt → 有可放大的东西,RL 可开;<15pt → RL 不开(读数:"不是 RL 没用,是这个 checkpoint 上没有 RL 可放大的东西")。这是 continue-to-RL 决策,不是 stop |
-| **MC 套件**(ceval + mmlu + arc-easy) | ceval 1.3k/科 | ceval 5.9pt(seed SD 1.27pt × 4.65,be.panel_expressive_seed_variance);英文三件 **chance+2δ 地板**(各 25% 机会率) | **tripwire,不是 stop**:ceval 掉 ≥5.9pt → mix 伤了通用能力,change mix;升 ≥5.9pt → 佐证,不单独构成结论。英文三件在 chance+2δ 以内 = 地板,不判读(三选一是机会率,不是模型性质) |
-| **per-role domain loss**(8 角色) | 4000 行/角色 | 0.1176 nat(2.28×σ̂,σ̂=0.0516,ds.seed_variance_0p2b) | 对阶梯点同头比较:角色改善 ≥0.1176 → mix 买到了该角色,continue;30B 处仍平(<0.1176)→ 该角色权重没买到可测价值,**change mix 候选**(进重配 A/B)。这是唯一能逐角色说"change mix"的指标 |
+| **MC 套件**(ceval + mmlu + arc-easy) | ceval 1,050 题(ceval.py val split,52 科;2026-09-01 更正:原写 1.3k 是错的) | ceval 5.9pt(seed SD 1.27pt × 4.65,be.panel_expressive_seed_variance);英文三件 **chance+2δ 地板**(各 25% 机会率) | **tripwire,不是 stop**:ceval 掉 ≥5.9pt → mix 伤了通用能力,change mix;升 ≥5.9pt → 佐证,不单独构成结论。英文三件在 chance+2δ 以内 = 地板,不判读(三选一是机会率,不是模型性质) |
+| **per-role domain loss**(8 角色) | 4000 行/角色(打包后截断 64 seq × 4096 = 262,144 tokens;记录以 tokens 字段携带,domain_loss.py:34-35) | 0.1176 nat(2.28×σ̂,σ̂=0.0516,ds.seed_variance_0p2b) | 对阶梯点同头比较:角色改善 ≥0.1176 → mix 买到了该角色,continue;30B 处仍平(<0.1176)→ 该角色权重没买到可测价值,**change mix 候选**(进重配 A/B)。这是唯一能逐角色说"change mix"的指标 |
 | **degenerate_rate** | 同各 accuracy 的 n | 二项 2δ @ n | **永远并排报,永不替代 accuracy**(v2:55.8% 退化@贪心 vs 2.2% 正确)。accuracy 升且退化率升 ≥2δ → 格式不稳定,报;退化率降 → 佐证。本身不构成 stop |
 
 格式类指标(degenerate_rate、围栏率)是贪心解码器的性质,报的时候必须带温度;

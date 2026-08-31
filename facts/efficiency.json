@@ -1173,7 +1173,7 @@
   },
   {
    "id": "eff.lm_head_is_compute_bound",
-   "value": "The LM head is COMPUTE-bound, not memory-bound, and an fp8 path through it is a real lever worth ~112 ms/step. This RETRACTS the claim I gave fb and the user that FP8 has no headroom left, which rested on asserting the head was memory-bound from its vocab size without computing arithmetic intensity. Codex adversarial review caught it; I verified the roofline independently. Liger FLCE processes the head as chunked GEMMs of M=2048, K=1024, N=32784 (probes/lm_head_gemm.py): 2MKN = 137.506 GFLOP against bf16 traffic of A+B+C = 196.09 MiB, so arithmetic intensity is 668.7 FLOP/B. H20's balance point is 148 TFLOPS / 4 TB/s = 37 FLOP/B. At AI 668.7 the bandwidth roof is 2.675 PFLOP/s, eighteen times the 148 TFLOPS bf16 peak, so the GEMM sits far inside the compute-bound region. Even counting a second read of the logits it is 404.5 FLOP/B, still 11x past the balance point. The head measures 224.0 ms/step in the t56 trace, so an ideal fp8 2x saves ~112 ms/step = 6.6% of a 1702 ms step. Two corrections to why it is excluded. _fp8_ok excludes it by NAME ('head'), not by detecting a tied parameter, and the alignment argument does not apply: head is 32832x1024 and the FLCE slice is 32784x1024, both multiples of 16. And Liger 0.8.2 has no fp8 switch -- its kernel multiplies in the incoming dtype -- so this is a patch-plus-parity job, not a one-line change to _fp8_ok. Consequence for the lever order: the head is not a distant third behind fusion and KDA. It is the only group with a mechanism (fp8 tensor cores), a computed ceiling (112 ms) and a bounded scope (one kernel), where fusion's 517.6 ms has no established mechanism yet.",
+   "value": "CORRECTED 2026-09-01: the head is 190.0 ms/step, not 224.0. The 224 was the whole nvjet_tst kernel-NAME family (6328 calls, 221.3 ms), of which the head is 3840 calls and 190.0 ms; the other 2488 calls and 31.2 ms are aten::bmm and aten::baddbmm from attention, confirmed by correlation id to cpu_op. Same trap as the _scaled_mm misattribution: a kernel-name prefix is not a semantic group. The three head GEMMs are now MEASURED separately (b0, reproduced by me), each at 1280 calls over 20 steps = 64/step matching FLCE's chunk count: TNN 62.5 ms (32.9%), splitK_NNT 63.0 ms (33.1%), coopA_NTT 64.5 ms (34.0%). So the FLOP-equality inference held within 3%, and the ideal-2x ceiling is 95 ms = 5.6% of a 1702 ms step, not 112 ms and 6.6%.\n\nThe LM head is COMPUTE-bound, not memory-bound, and an fp8 path through it is a real lever worth ~112 ms/step. This RETRACTS the claim I gave fb and the user that FP8 has no headroom left, which rested on asserting the head was memory-bound from its vocab size without computing arithmetic intensity. Codex adversarial review caught it; I verified the roofline independently. Liger FLCE processes the head as chunked GEMMs of M=2048, K=1024, N=32784 (probes/lm_head_gemm.py): 2MKN = 137.506 GFLOP against bf16 traffic of A+B+C = 196.09 MiB, so arithmetic intensity is 668.7 FLOP/B. H20's balance point is 148 TFLOPS / 4 TB/s = 37 FLOP/B. At AI 668.7 the bandwidth roof is 2.675 PFLOP/s, eighteen times the 148 TFLOPS bf16 peak, so the GEMM sits far inside the compute-bound region. Even counting a second read of the logits it is 404.5 FLOP/B, still 11x past the balance point. The head measures 224.0 ms/step in the t56 trace, so an ideal fp8 2x saves ~112 ms/step = 6.6% of a 1702 ms step. Two corrections to why it is excluded. _fp8_ok excludes it by NAME ('head'), not by detecting a tied parameter, and the alignment argument does not apply: head is 32832x1024 and the FLCE slice is 32784x1024, both multiples of 16. And Liger 0.8.2 has no fp8 switch -- its kernel multiplies in the incoming dtype -- so this is a patch-plus-parity job, not a one-line change to _fp8_ok. Consequence for the lever order: the head is not a distant third behind fusion and KDA. It is the only group with a mechanism (fp8 tensor cores), a computed ceiling (112 ms) and a bounded scope (one kernel), where fusion's 517.6 ms has no established mechanism yet.",
    "measured": "2026-08-31",
    "source": "probes/lm_head_gemm.py, facts/efficiency.json#eff.step_remainder_attribution, train.py",
    "config": {
@@ -1188,14 +1188,20 @@
     "h20_bf16_tflops": 148,
     "h20_hbm_tb_s": 4,
     "bandwidth_roof_pflops_at_this_ai": 2.675,
-    "measured_head_ms_per_step": 224.0,
-    "ideal_fp8_saving_ms": 112,
-    "ideal_fp8_saving_pct_of_step": 6.6,
+    "measured_head_ms_per_step": 190.0,
+    "ideal_fp8_saving_ms": 95,
+    "ideal_fp8_saving_pct_of_step": 5.6,
     "liger_version": "0.8.2",
     "liger_has_fp8_switch": false,
-    "excluded_by": "_fp8_ok name check on 'head', not tied-parameter detection"
+    "excluded_by": "_fp8_ok name check on 'head', not tied-parameter detection",
+    "nvjet_tst_family_ms_per_step": 221.3,
+    "non_head_in_family_ms": 31.2,
+    "non_head_source": "aten::bmm and aten::baddbmm (attention)",
+    "gemm_fwd_ms": 62.5,
+    "gemm_grad_input_ms": 63.0,
+    "gemm_grad_weight_ms": 64.5
    },
-   "uncertainty": "The 112 ms is an IDEAL 2x on the measured GEMM time and will not be realised in full: fp8 needs per-tensor or per-row scaling work, the accumulation stays higher precision, and FLCE's chunking adds fixed overhead the GEMM speedup does not touch. No implementation exists to measure, and Liger 0.8.2 would need patching. The roofline is arithmetic from shapes and H20's published peaks, not a measured kernel efficiency, so it establishes that the head CAN use faster tensor cores rather than that it will get 2x. The parity risk is the real gate: the head feeds the loss directly, so an fp8 error lands on every gradient. Ship path is a minimal parity check plus a 50-step A/B under the same >=3% tok/s and |delta val| <= 0.04 nat rule, on an idle card.",
+   "uncertainty": "The 112 ms is an IDEAL 2x on the measured GEMM time and will not be realised in full: fp8 needs per-tensor or per-row scaling work, the accumulation stays higher precision, and FLCE's chunking adds fixed overhead the GEMM speedup does not touch. No implementation exists to measure, and Liger 0.8.2 would need patching. The roofline is arithmetic from shapes and H20's published peaks, not a measured kernel efficiency, so it establishes that the head CAN use faster tensor cores rather than that it will get 2x. The parity risk is the real gate: the head feeds the loss directly, so an fp8 error lands on every gradient. Ship path is a minimal parity check plus a 50-step A/B under the same >=3% tok/s and |delta val| <= 0.04 nat rule, on an idle card. The 224.0 ms in the original version of this entry was a name-family total and overstated the head by 34.0 ms; every percentage derived from it was correspondingly high. b0 caught it while measuring the three-way split I had only inferred.",
    "status": "measured"
   },
   {
@@ -1230,7 +1236,7 @@
   },
   {
    "id": "eff.steady_state_composition",
-   "value": "Steady-state trace (t57, 2026-09-01, profiler window steps 56-76, 1 card on the lane, stage-1 shapes). It settles the 95-vs-187 idle dispute AGAINST my number, and it reverses the TileLang fusion plan and my own cu-bucketing retraction. IDLE, one time base: busy 1600.25 ms, span 1676.63 ms, idle 76.38 ms/step, 95.44% busy. So the steady figure is 76 ms, closer to fb/e1's 95 than to the 186.6 ms I measured in the warmup window, and my 89.6%-busy correction was itself a warmup number. Both earlier figures are superseded. THE COMPILE GAPS PERSIST PAST STEP 50, which is the question fb asked and the answer nobody predicted. 8 gaps over 1 ms remain, 7 of them at the same rms_norm -> flash-attention seam, each 150-166 ms and each containing compile_attempt_1 at 78-80 ms plus build_guards at 38-50 ms. They sum to 54.9 ms/step, i.e. 72% of all steady idle, and CPU compile/guard time inside them is 69.3 ms/step. Recompilation is therefore NOT a warmup cost that amortizes; it recurs at step 260 as it did at step 31. This directly contradicts eff.dynamo_recompile_not_a_lever, where I retracted cu bucketing partly because the cost was 'one-time per shape' and the live run's flat 77K tok/s showed no loss. Flat throughput is consistent with a CONSTANT recompile tax, not with its absence. FUSIONS ARE MOSTLY SATURATED, so the TileLang plan as scoped does not survive. 520.0 ms/step over 273 distinct kernels. Of the top 12 by ms/step: six are at 75-100% achieved occupancy and are LEAVE, five are marginal at 44-63%, and exactly ONE is a clear target: triton_per_fused_mul_sum_0, 26.0 ms/step at 38% occupancy, p50 542 us, p95 942 us. An ideal 2x on it saves 13.0 ms/step = 0.8% of the step, which is under the 3% ship gate on its own. The largest fusion, 41.2 ms/step, runs at 75% occupancy with p50 1703 us and p95 1782 us -- tight distribution, saturated, and the worst possible TileLang target. So 'the hot fusions are bad kernels' is false for this trace: they are mostly good kernels doing real work, and the 517.6 ms is not a pool of recoverable waste.",
+   "value": "Steady-state trace (t57, 2026-09-01, profiler window steps 56-76, 1 card on the lane, stage-1 shapes). It settles the 95-vs-187 idle dispute AGAINST my number, and it reverses the TileLang fusion plan and my own cu-bucketing retraction. IDLE, one time base: busy 1600.25 ms, span 1676.63 ms, idle 76.38 ms/step, 95.44% busy. So the steady figure is 76 ms, closer to fb/e1's 95 than to the 186.6 ms I measured in the warmup window, and my 89.6%-busy correction was itself a warmup number. Both earlier figures are superseded. THE COMPILE GAPS PERSIST PAST STEP 50, which is the question fb asked and the answer nobody predicted. 8 gaps over 1 ms remain, 7 of them at the same rms_norm -> flash-attention seam, each 150-166 ms and each containing compile_attempt_1 at 78-80 ms plus build_guards at 38-50 ms. They sum to 54.9 ms/step, i.e. 72% of all steady idle, and CPU compile/guard time inside them is 69.3 ms/step. Recompilation is therefore NOT a warmup cost that amortizes; it recurs at step 260 as it did at step 31. This directly contradicts eff.dynamo_recompile_not_a_lever, where I retracted cu bucketing partly because the cost was 'one-time per shape' and the live run's flat 77K tok/s showed no loss. Flat throughput is consistent with a CONSTANT recompile tax, not with its absence. FUSIONS ARE MOSTLY SATURATED, so the TileLang plan as scoped does not survive. 520.0 ms/step over 273 distinct kernels. Of the top 12 by ms/step: six are at 75-100% achieved occupancy and are LEAVE, five are marginal at 44-63%, and exactly ONE is a clear target: triton_per_fused_mul_sum_0, 26.0 ms/step at 38% occupancy, p50 542 us, p95 942 us. An ideal 2x on it saves 13.0 ms/step = 0.8% of the step, which is under the 3% ship gate on its own. The largest fusion, 41.2 ms/step, runs at 75% occupancy with p50 1703 us and p95 1782 us -- tight distribution, saturated, and the worst possible TileLang target. So 'the hot fusions are bad kernels' is false for this trace: they are mostly good kernels doing real work, and the 517.6 ms is not a pool of recoverable waste. THE SEAM AS A LEVER, sized per b0/fb and verified against this trace: 54.93 ms of 3.28% measured against the trace's own 1676.63 ms span, with the ceiling being all idle at 76.38 ms = 4.56%. Both figures use the span from this trace's timestamps rather than the 1702 ms throughput-derived step; against 1702 they read 3.23% and 4.49%. Use the span numbers, since mixing a measured kernel window with a throughput-derived step is the two-base error this entry already supersedes. VISIBLE IDLE IS A LOWER BOUND ON THE TAX, and the comparison that establishes it is CPU-compile-in-gaps 69.3 ms against SEAM idle 54.93 ms: 69.3 ms of compile produced only 54.93 ms of visible gap, so 14.4 ms (1.26x) of compile ran while the GPU still had queued work and never appeared as idle. The claim does NOT follow from comparing 69.3 against TOTAL idle 76.38, where the inequality runs the other way and total idle also contains ~21.5 ms of small gaps that are not compile at all. ACCEPTANCE METRIC for any seam fix (b0): report gap COUNT and seam ms directly from a trace, never tok/s alone. A constant tax is invisible to steady tok/s, and a fix that trades compile time for padding waste would show no throughput change while moving both numbers.",
    "measured": "2026-09-01",
    "source": "bench_eff/t57_fusion.py, runs/t57_steady.log; trace on the pod at /work/aupai/bench_eff/ddp_trace_rank0.json (250 MB, not committed)",
    "config": {
@@ -1259,7 +1265,13 @@
     "fusion_candidate_ms": 26.0,
     "fusion_candidate_occ_pct": 38,
     "largest_fusion_ms": 41.2,
-    "largest_fusion_occ_pct": 75
+    "largest_fusion_occ_pct": 75,
+    "seam_pct_of_span": 3.28,
+    "idle_ceiling_pct_of_span": 4.56,
+    "span_ms_used_as_denominator": 1676.63,
+    "cpu_compile_in_gaps_ms": 69.3,
+    "hidden_compile_ms": 14.4,
+    "acceptance_metric": "gap count + seam ms from a trace, not tok/s"
    },
    "uncertainty": "One card, one trace, 20 active steps at steps 56-76. Single-process, so no DDP allreduce or cross-rank skew: the 7-card step has traffic this cannot show, and 76 ms of idle on one card does not bound idle on seven. The occupancy figures are the profiler's estimate and 'achieved occupancy' is not a memory-vs-compute classification -- I could not compute bytes moved per fusion, because inductor names the ops absorbed but not the shapes, so LEAVE/TARGET is a latency-limited proxy and not a roofline. A kernel at 100% occupancy can still be bandwidth-starved. The persistence finding is the solid part: it is 8 gaps with named CPU events inside them at step 260, not an inference. What is NOT established is why frames keep recompiling that late, or whether cu bucketing specifically would stop it -- the frame carrying 2.2 ms/step of GPU work is still not the model body, so the recompile tax and the bucketing fix may not be the same lever.",
    "status": "measured"
@@ -1336,6 +1348,293 @@
     "surface_pct_of_kernel_time": 39
    },
    "uncertainty": "sign unknown; must be A/B'd, and the cited PyTorch case swings both ways on a threshold we have not tuned",
+   "status": "measured"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_surface",
+   "value": "e1's find (e1-3), verified in the installed source and sized against the steady trace, NOT yet A/B'd. torch._inductor.config.pad_dynamic_shapes defaults False (config.py:1193), and ir.py:3941 reads 'if not config.pad_dynamic_shapes and is_dynamic: return in_strides' where is_dynamic is true when ANY entry of in_strides or size is not a plain int/sympy.Integer. So a symbolic dimension turns off 128-byte stride padding for that node. train.py:855's mark_dynamic(cu, 0) is the only source of symbolic shapes in the graph (both torch.compile calls pass dynamic=False), so cu's length is what makes nodes downstream of it dynamic. SURFACE SIZED: the padding-eligible kernels are pointwise/reduction fusions plus non-triton copy/elementwise, and their UNION is 626.9 ms/step = 39.2% of the 1600.3 ms kernel time -- 520.0 ms of triton poi/red/per plus 107.0 ms of aten copy/elementwise. That confirms e1's 39% figure exactly. A CAUTION ON THE BLAST RADIUS, and it corrects how I first sized this myself: the gate is per-NODE, not per-graph. ir.py checks each node's own sizes and strides, so padding is disabled only where a symbolic dim actually reaches, not across the whole graph. 39.2% is the eligible surface, i.e. an upper bound on what the config could touch, and the fraction of it that is currently unpadded is unknown. SIGN IS UNKNOWN. PyTorch's own note records both a 1.09x regression and a 1.05x win from this flag, and padding trades wasted bandwidth on padded tensors against better-aligned access, so it can go either way at our shapes. This is why it is a one-line A/B and not a change to make on reasoning.",
+   "measured": "2026-09-01",
+   "source": "bench_eff/t57_fusion.py, train.py; torch 2.11.0+cu129 _inductor/config.py:1193 and _inductor/ir.py:3941 on the pod",
+   "config": {
+    "finder": "e1 (e1-3)",
+    "measurer": "tilerl",
+    "flag": "torch._inductor.config.pad_dynamic_shapes",
+    "default": false,
+    "gate_site": "_inductor/ir.py:3941",
+    "gate_scope": "per node, not per graph",
+    "symbolic_source": "train.py:855 mark_dynamic(cu, 0)",
+    "kernel_total_ms_per_step": 1600.3,
+    "triton_poi_red_per_ms": 520.0,
+    "aten_copy_elementwise_ms": 107.0,
+    "padding_eligible_union_ms": 626.9,
+    "padding_eligible_pct": 39.2,
+    "ab_status": "queued on the lane after the 8B milestone profile and the fp8 activation absmax"
+   },
+   "uncertainty": "Nothing here is a throughput measurement: the flag has not been flipped. 39.2% is the eligible surface and an upper bound, not an expected gain, and the per-node gate means the actually-unpadded fraction is smaller by an unknown amount. Sizing comes from the single-card steady trace, so the 7-card shares may differ. I first computed the surface as 446.3 ms of 'copy/elementwise' by matching those words anywhere in a kernel name, which double-counted 339.3 ms of triton fusions already inside the 520.0 -- the same naming trap that inverted my first attribution pass. The 107.0 ms figure excludes triton-prefixed names for that reason.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.head_grad_accum_bf16",
+   "value": "The LM head's grad_weight accumulates in bf16, not fp32, and the resulting bias is real but harmless under AdamW. Recorded as a KNOWN PRE-EXISTING DEVIATION that the 15B and 30B numbers carry; b0 ruled it must NOT ship mid-run. MECHANISM. Liger FLCE has an fp32 accumulation path (fused_linear_cross_entropy.py:233-241, torch.addmm with out_dtype=torch.float32 into grad_weight) but it is guarded on grad_weight.dtype == torch.float32. grad_weight is zeros_like(weight) when accum_dtype is None (:76), train.py:1994 never passes accum_dtype, and our weights are bf16 (verified: head.weight and tok.weight are torch.bfloat16 in the step-7000 checkpoint, per t01's bf16-params-no-fp32-master decision). So the else at :257 runs: grad_weight += torch.mm(...).float(), rounding the running sum back to bf16 on each of the 64 chunks. SIZE. 64-chunk accumulation, bf16 vs fp32: median relative error 0.803% (b0 measured 0.75% independently), p99 33%, cosine 0.999954. WHY IT IS HARMLESS, which is b0's finding and the reason the fix is not urgent. The head is in the AdamW 'embed' group, not Muon (train.py:945 routes any parameter whose name contains tok or head there). AdamW divides by sqrt(v) and v tracks g-squared, so an error proportional to the gradient largely cancels in the update. What survives is a direction change, and b0 measured 0.146% sign flips on synthetic uniform gradients. B0'S FALSIFIABLE CONDITION, TESTED AND IT HOLDS. b0 flagged that their figure used a uniform magnitude distribution while real logit gradients are heavy-tailed, and said the ruling inverts if flips concentrate on high-magnitude elements. Measured with a lognormal per-row scale: unweighted flips 0.178%, |g|-WEIGHTED flips 0.0009%, and flip rate among the top-1% largest-|g| elements is 0.0000%. So the flips concentrate on near-zero elements, which is the opposite of the inverting case: the elements that drive the update are unaffected. THE DISQUALIFYING PROPERTY for shipping mid-run is comparability, not size. The head touches every token's loss, so changing its gradient accumulation between stages would confound every per-role row simultaneously, and unlike a reweighting it is not detectable per role -- prereg 7.1's gate is structurally blind to it. Fix path: accum_dtype=torch.float32, one keyword, 33.6M x 4 = 134 MB, after the 30B run completes, as its own change with its own A/B.",
+   "measured": "2026-09-01",
+   "source": "train.py, facts/efficiency.json#eff.lm_head_is_compute_bound, docs/lessons/fp8_lm_head_design.md",
+   "config": {
+    "chunks": 64,
+    "chunk_shape": "2048 x 32784",
+    "vocab": 32784,
+    "hidden": 1024,
+    "accumulator_dtype_actual": "bfloat16",
+    "fp32_path_guard": "grad_weight.dtype == torch.float32",
+    "accum_dtype_passed": null,
+    "weight_dtype": "bfloat16",
+    "median_rel_err_pct": 0.803,
+    "p99_rel_err_pct": 33.0,
+    "cosine": 0.999954,
+    "sign_flips_unweighted_pct": 0.178,
+    "sign_flips_g_weighted_pct": 0.0009,
+    "sign_flips_top1pct_g": 0.0,
+    "optimizer_group": "AdamW embed (train.py:945)",
+    "ruling": "do not ship mid-run (b0, pre-registration owner); after the 30B run, own A/B"
+   },
+   "uncertainty": "The accumulation error is measured on SYNTHETIC gradients, both b0's uniform draw and my lognormal row-scale version, not on real logit gradients from a training step. A lognormal scale is closer to the truth than uniform but it is still a model: real CE gradients are structured by the target distribution, not drawn i.i.d. The elementwise grad_weight comparison against a real step is still the check that settles it, and it has not run -- what these numbers establish is that the inverting case b0 named does not occur under a heavy-tailed distribution, not that the real distribution is heavy-tailed in the same way. The AdamW cancellation argument is also analytic rather than measured: no A/B has been run with an fp32 accumulator to confirm the loss curve is unchanged.",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.launch_reduction_not_a_lever",
+   "value": "Launch-count reduction cannot clear the 3% ship gate for us, by arithmetic on our own steady trace plus three external lines. CEILINGS (eff.steady_state_composition, step 1676.63 ms, busy 1600.25 ms, idle 76.38 ms): all non-kernel time = 4.56% is the hard cap on every process-side lever combined; launch overhead alone at 6684 launches x 5 us host-side = 33.4 ms = 1.99%, overlapping that cap; and 1.99% is an overestimate because launches pipeline -- at 240 us mean kernel duration the GPU does not starve waiting for the host. EXTERNAL EVIDENCE, all different-regime: vLLM PR #20059 (A100, torch 2.6, Qwen2.5-7B-Int4, INFERENCE DECODE) measures full vs piecewise CUDA graph at +4.9% output tok/s with TTFT worse on both backends, and names the mechanism as CPU launch time 56 ms -> 28 ms; vLLM's own baseline is ~5 ms of GPU exec per step for Llama-8B on H100, roughly 320x smaller than our 1607 ms, which is why per-launch cost binds there and not here. COUNTER-CASE, the transferable one: flattening vLLM's FX graph into one region DOUBLED host dispatch (28 -> 56 ms) rather than reducing it, and their FULL mode launched 494 blocks/SM where eager needed 4.6 -- consolidating regions moves cost into the launch path and can freeze a wrong launch config. TorchTitan (arXiv:2410.06511, H100, Llama-3.1-8B) is the only Hopper-class training source with per-block compile numbers, +6.64% at 8 GPUs rising to +14.82% at 128; the rise with GPU count at constant model indicates the computation-communication reordering half dominates, we are single-card, and their eager baseline is already banked since we run inductor. They publish no ablation of per-block vs whole-model compile.",
+   "measured": "2026-09-01",
+   "source": "b0 research (30 claims verified per-claim against primary sources, 2 refuted); vLLM PR #20059; arXiv:2410.06511; arithmetic from eff.steady_state_composition",
+   "config": {
+    "our_step": "1676.63 ms, 1600.25 ms busy, 95.44%",
+    "launches_per_step": 6684,
+    "mean_kernel_us": 240,
+    "assumed_launch_overhead_us": "2-5 host side, <1 GPU side when pipelined"
+   },
+   "uncertainty": "The 5 us/launch figure is a Hopper-class rule of thumb, not measured on our box; at 2 us the launch ceiling falls to 0.8%. No source at any scale measures launch-count reduction in a compute-bound training step -- every published win is inference decode or distributed jitter.",
+   "boundary": "Applies at 95.44% GPU-busy. If a future recipe drops the busy fraction materially the arithmetic must be redone.",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.cu_bucketing_wrong_cause",
+   "value": "cu bucketing is a fix aimed at a cause we have already eliminated, and three external measurements of it are negative. MECHANISM: train.py calls mark_dynamic(cu), which compiles cu's varying length to ONE graph -- if it were specialising, dynamo would raise. So the 25 recompiles the dynamo log reports are not cu shapes; the recurring compile seams measured in eff.steady_state_composition (54.9 ms/step at step 260, 72% of steady idle, 3.27% of the step) have a different and still-undiagnosed cause, and bucketing cu would not touch them. CORROBORATION: every doc-packed distinct-shape count reported in the field is small and bounded -- 9 (torch issue #188150, GB10, torch 2.11), 5 (SiQ_VL after pad-to-64), ours 25 against a cache_size_limit of 64. Nobody reports shape proliferation at steady state from document packing. MEASUREMENTS OF THE LEVER ITSELF, three for three negative: nanogpt speedrun max_num_docs, 8xH100 torch.compile fullgraph dynamic, over-padding cu -0.574% on an 86.74 s baseline, p=0.0000 over 8 runs, no loss regression; nanochat PR #663, over-sized cu_seqlens made varlen SLOWER than plain batching and 512 vs 96 flipped the sign; SiQ_VL at 590M params (within 3x of ours), pad_to_multiple_of=64 gave -6.6% throughput (26,443 vs 28,322 tok/s). No crossover formula exists relating padding waste to recompile saving.",
+   "measured": "2026-09-01",
+   "source": "b0 research; train.py mark_dynamic(cu); pod dynamo log 'cache_size_limit=64 (need 25)'; nanogpt speedrun max_num_docs PR; karpathy/nanochat PR #663; pytorch issue #188150",
+   "config": {
+    "our_shape_count": "25 against a limit of 64",
+    "recompile_tax": "54.9 ms/step, 3.27%, cause not cu"
+   },
+   "uncertainty": "The negative measurements are single-card or 8-card at sequence lengths far below our 4096, and none is at our busy fraction. They establish that the lever's sign is not reliably positive, not that it is always negative. The actual cause of our 25 recompiles is undiagnosed -- a shape-dependent branch somewhere other than cu.",
+   "boundary": "Says nothing about whether the recompile tax is worth fixing; it is 3.27% and real. It says cu bucketing is not the fix.",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.recompile_recurrence_explained",
+   "value": "The recurrence is explained, from the probe log I already had: FlashAttention recompiles on an UNBOUNDED batch_size guard, so the variant set never closes and eviction is permanent. This answers the one open question in eff.recompile_reason_named and eff.steady_state_composition, and it partly un-retracts cu bucketing. HOW IT WAS FOUND. Correlating recompile lines against step lines in runs/t57_recompile.log by position: 202 recompiles total, 172 before step 10, then 12 / 6 / 3 / 5 / 4 in the step bands 10-20 through 50+. The tail does NOT decay to zero. Every one of the four after step 50 is torch_dynamo_resume_in__flash_attn_fwd_at_406, i.e. flash_attn/cute/interface.py:406, and NOT AttnRes.forward. So the late recompiles are a different frame from the 24 early ones I reported. THE GUARD, verbatim: '- 13/0: batch_size == 66  # total_mblocks = batch', then 78, 68, 85, 81, 61, 83, 53, and so on. 45 DISTINCT values appear across ~60 steps, spanning 43 to 116, which is 61% of that range. This 'batch_size' is not Cfg.batch=16: it is FlashAttention's varlen block count, which tracks the number of DOCUMENTS in the batch, and doc count is drawn from a distribution rather than fixed. WHY IT RECURS FOREVER. torch._dynamo.config.recompile_limit is 64 (train.py:1912). With 45 values seen in 60 steps and new ones still appearing, the set does not close before the limit, so dynamo evicts and recompiles indefinitely. That is the mechanism behind gaps containing compile_attempt_1 at step 260, which a finite 25-variant AttnRes set could not produce. Frame 13 is also the frame the live stage-1 run reports as hitting recompile_limit(64) on all 7 ranks -- an identification I had earlier flagged as open. BUCKETING IS BACK, on the doc count rather than on cu's length. Padding the doc count to a multiple of 8 collapses the 45 values to 10 variants, 16 gives 6, and 32 gives 3 -- all far under the 64 limit, so the set closes and eviction stops. This is why I only PARTLY un-retract: my original cu-bucketing proposal targeted mark_dynamic(cu, 0) at train.py:855, and b0 is right that mark_dynamic already gives cu one graph. The correct target is FlashAttention's block count, a different quantity in a different file, and the fix is not ours to make directly -- it lives in the flash_attn varlen wrapper.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_recompile.log, train.py",
+   "config": {
+    "task": "t57",
+    "recompiles_total": 202,
+    "recompiles_before_step_10": 172,
+    "recompiles_by_band": {
+     "10-20": 12,
+     "20-30": 6,
+     "30-40": 3,
+     "40-50": 5,
+     "50+": 4
+    },
+    "late_frame": "torch_dynamo_resume_in__flash_attn_fwd_at_406 (flash_attn/cute/interface.py:406)",
+    "guard": "batch_size == N  # total_mblocks = batch",
+    "distinct_values": 45,
+    "value_range": "43-116",
+    "coverage_of_range_pct": 61,
+    "recompile_limit": 64,
+    "frame_id": 13,
+    "bucketing_pad_8_variants": 10,
+    "bucketing_pad_16_variants": 6,
+    "bucketing_pad_32_variants": 3,
+    "not_cfg_batch": "batch_size here is flash varlen block count ~ document count, not Cfg.batch=16"
+   },
+   "uncertainty": "The step attribution is by POSITION in the log, not by timestamp: I assigned each recompile to the last step line printed before it, which is right if the log is written in order and wrong if stdout and the dynamo logger interleave differently. The counts per band should therefore be read as approximate, though the qualitative result -- the tail does not decay and the late frame is flash, not AttnRes -- does not depend on exact attribution. 45 distinct values in ~60 steps is a lower bound on the true variant count, since more steps would reveal more. The bucketing variant counts are arithmetic on the 45 observed values, not a measurement of a bucketed run, and no throughput claim is attached: the seam is 3.28% measured with a 4.56% ceiling, so even eliminating it entirely sits at the edge of the 3% ship gate. Whether padding the doc count is even correct for flash varlen is unexamined -- a padded block count may require padded cu_seqlens to match, which is a correctness question I have not touched.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.fp8_head_activation_range",
+   "value": "PER-TENSOR fp8 scaling is sufficient for the LM head's activations. This closes the gating unknown in docs/lessons/fp8_lm_head_design.md, measured on real batches rather than reasoned about. b0's gate was the per-CHUNK absmax DISTRIBUTION, not a global absmax, because Liger FLCE sets one fp8 scale per chunk and a single outlier logit would fix that scale for all 32784 columns. Measured over 128 chunks of 2048 rows, running the real model body from ckpt_pretrain_15b_s1.pt.step11000 on real cot rows and taking the PRE-softcap projection absmax per chunk: min 37.36, p50 48.05, p90 53.93, p99 62.24, max 82.43. e4m3's max is 448, so the largest chunk absmax observed is 5.4x under the format's ceiling and ZERO chunks would clip unscaled. The spread is the decisive number: p99/p50 is 1.30x and max/p50 is 1.72x, so no chunk is dominated by an outlier and a per-tensor scale loses almost nothing. Per-chunk or amax-history scaling is NOT needed, which removes the design's largest open risk and its most complicated branch. Note the coincidence worth not over-reading: max/p50 is 1.72x here and 1.71x for the head WEIGHT (eff.lm_head_is_compute_bound). Different quantities, similar spread, no shared cause established.",
+   "measured": "2026-09-01",
+   "source": "probes/t57_absmax.py, runs/t57_absmax.json, docs/lessons/fp8_lm_head_design.md",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "ckpt": "ckpt_pretrain_15b_s1.pt.step11000",
+    "domain": "cot",
+    "batches": 4,
+    "batch": 16,
+    "seq": 4096,
+    "chunk_rows": 2048,
+    "n_chunks": 128,
+    "vocab": 32784,
+    "hidden": 1024,
+    "measured": "pre-softcap head projection absmax per chunk",
+    "absmax_min": 37.36,
+    "absmax_p50": 48.05,
+    "absmax_p90": 53.93,
+    "absmax_p99": 62.24,
+    "absmax_max": 82.43,
+    "e4m3_max": 448.0,
+    "chunks_clipping_pct": 0.0,
+    "p99_over_p50": 1.295,
+    "max_over_p50": 1.72,
+    "verdict": "per-tensor scaling sufficient"
+   },
+   "uncertainty": "One domain (cot) and one checkpoint (step 11000, 68% through stage 1). cot is the smallest warm domain and was chosen for speed; a code- or math-heavy domain could have a different logit distribution, and the range may widen as training continues since logit magnitudes generally grow. 128 chunks over 4 batches is enough to characterise the bulk but not a tail event at 1-in-10000. The measurement is the FORWARD projection only: the backward pass quantises grad_logits, whose distribution is not measured here and is the other operand fp8 would touch. The verdict therefore covers the forward GEMM's input range, not the whole fp8 path.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_ab",
+   "value": "NO-SHIP: torch._inductor.config.pad_dynamic_shapes gains ~1% tok/s, under the 3% gate. e1's find, my measurement, and the val half of the A/B is INVALID for a reason worth more than the throughput result. THROUGHPUT. Both arms, one card, same session, same seed 42, same mix, same 48,820 scheduled rows, config injected by a sitecustomize shim so train.py stayed frozen (the ON arm's log confirms '[padshim] pad_dynamic_shapes = True'). Steady state by step 90: OFF 80K, 80K, 80K at steps 90/100/110; ON 80K, 80K, 81K. So +1 K tok/s = +1.25%, against a 3% ship gate. Under it, and the surface it could touch was 39.2% of kernel time, so the flag reaches far less of that than the eligible fraction suggests -- consistent with the per-NODE gate at ir.py:3941 rather than a per-graph one. THE VAL COMPARISON DOES NOT WORK, and this is the real finding. The two arms diverge at step 10: OFF loss 7.617, ON loss 9.447, then 6.182 vs 6.587 at step 50 and 5.040 vs 5.871 at step 110. Same seed, same params (206.1M both), same world 1, same fa/fp8, same row count. A padding flag changes memory layout, not arithmetic, so it CANNOT move step-10 loss by 1.83 nat. Something else differs run to run, which means single-run loss numbers from this harness are not comparable between arms at all -- so no |delta val| verdict can be read from a 1-vs-1 comparison, for THIS lever or any other. Whatever the cause (unseeded init path, nondeterministic reduction order, data order), the consequence for method is the same and it is larger than the flag: any A/B whose acceptance depends on val must run multiple seeds per arm, or compare against sigma-hat 0.0516 as a noise floor rather than against a single paired difference.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_pad_ab.log, probes/padshim.py, facts/efficiency.json#eff.pad_dynamic_shapes_surface",
+   "config": {
+    "task": "t57",
+    "finder": "e1 (e1-3)",
+    "measurer": "tilerl",
+    "flag": "torch._inductor.config.pad_dynamic_shapes",
+    "injection": "sitecustomize shim, train.py frozen",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "rows_scheduled": 48820,
+    "tok_s_off_90_100_110": [
+     80,
+     80,
+     80
+    ],
+    "tok_s_on_90_100_110": [
+     80,
+     80,
+     81
+    ],
+    "gain_pct": 1.25,
+    "ship_gate_pct": 3,
+    "loss_off_10_50_110": [
+     7.617,
+     6.182,
+     5.04
+    ],
+    "loss_on_10_50_110": [
+     9.447,
+     6.587,
+     5.871
+    ],
+    "val_comparison": "INVALID -- arms diverge at step 10 with identical config",
+    "verdict": "no-ship on throughput; val half unreadable"
+   },
+   "uncertainty": "The throughput figures are the log's own tok/s at 1 K resolution, so +1 K is at the edge of what the display can distinguish: the true gain could be 0.6% or 1.8%. That does not change the verdict, since even 1.8% is under 3%, but it means this is not a precise measurement of the flag's effect. Steady state was taken at steps 90-110 rather than a full 50-step window past compile, so a longer run could differ. Single card, so any effect on multi-rank collectives is unmeasured. And the divergence cause is NOT diagnosed -- I established that it exists and that padding cannot explain it, not what it is. That diagnosis matters more than this flag and is not done.",
+   "status": "retracted",
+   "claim": "The val half of the pad_dynamic_shapes A/B is invalid because the harness diverges run-to-run: identical config gave loss 7.617 vs 9.447 at step 10, so no |delta val| verdict can be read from a 1-vs-1 comparison and every val gate including the fp8 head's 0.04 nat is compromised.",
+   "audit": "WRONG, and the twin run refutes it directly. Two runs with byte-identical config, same seed, same session gave 7.564/6.308/5.013 and 7.542/6.231/5.107 at steps 10/50/110 -- max spread 0.094 nat, and 0.022 at step 10 where I had claimed 1.83 nat of unexplained divergence. The harness reproduces. So the ON arm's +1.830 nat at step 10 is 19.5x the twin spread and 35x b0's sigma-hat 0.0516: it is a REAL EFFECT OF THE FLAG, not noise. pad_dynamic_shapes is not numerics-neutral -- padding strides changes the compiled kernels' arithmetic, which I asserted it could not do ('a padding flag changes memory layout, not arithmetic'). That assertion was the error; everything downstream of it followed. No val gate is compromised, and the fp8 head's 0.04 nat threshold stands. I raised a method alarm to fb, b0 and 44 on the strength of a comparison I had not controlled.",
+   "refuted_by": "eff.pad_dynamic_shapes_twin_control"
+  },
+  {
+   "id": "eff.pad_dynamic_shapes_twin_control",
+   "value": "The harness IS reproducible at single-run level, and pad_dynamic_shapes is NOT numerics-neutral. Twin control for the pad A/B (t57, 2026-09-01), run because I had claimed the opposite. TWO RUNS, byte-identical config, seed 42, same session, one card, mix_smoke_warmup, 110 steps: twin A 7.564 / 6.308 / 5.013 and twin B 7.542 / 6.231 / 5.107 at steps 10 / 50 / 110. Max spread 0.094 nat, and 0.022 at step 10. Both twins also land within 0.05 nat of the pad-OFF arm at steps 10 and 110, so OFF is an ordinary run and the harness reproduces. THEREFORE THE FLAG MOVES LOSS. ON minus OFF is +1.830 nat at step 10, +0.405 at 50, +0.831 at 110. The step-10 figure is 19.5x the twin spread and 35x b0's sigma-hat 0.0516. That is an effect, not noise. Padding strides changes which compiled kernels run and their accumulation order, so it changes arithmetic -- my assertion that 'a padding flag changes memory layout, not arithmetic' was false, and it was the premise for calling the val comparison invalid. CONSEQUENCE. pad_dynamic_shapes is a STRONGER no-ship than the throughput result alone made it: +1.25% tok/s and a loss regression of 0.83 nat at step 110, versus a 3% gain gate and a 0.04 nat loss ceiling. It fails both halves rather than merely missing the throughput bar. And no val gate is compromised: the fp8 head's 50-step 0.04 nat threshold is readable, because 0.094 nat of twin spread is the noise floor to clear and a 1-vs-1 comparison is meaningful against it.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_twin.log, runs/t57_pad_ab.log",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "steps": 110,
+    "twin_a_loss_10_50_110": [
+     7.564,
+     6.308,
+     5.013
+    ],
+    "twin_b_loss_10_50_110": [
+     7.542,
+     6.231,
+     5.107
+    ],
+    "twin_max_spread_nat": 0.094,
+    "twin_spread_step10_nat": 0.022,
+    "pad_off_loss": [
+     7.617,
+     6.182,
+     5.04
+    ],
+    "pad_on_loss": [
+     9.447,
+     6.587,
+     5.871
+    ],
+    "on_minus_off_nat": [
+     1.83,
+     0.405,
+     0.831
+    ],
+    "step10_in_twin_spreads": 19.5,
+    "step10_in_sigma_hat": 35,
+    "sigma_hat": 0.0516,
+    "verdict": "harness reproducible; flag changes arithmetic; no-ship on BOTH tok/s and val"
+   },
+   "uncertainty": "Two runs, not a distribution: 0.094 nat is the observed spread of one pair and a third twin could widen it. It is measured on one card at 110 steps on the smoke mix, so it does not bound the spread for a 7-card 50-step run on the real mix, which is what the fp8 gate will actually use -- that noise floor still has to be established in the configuration the gate runs in. The mechanism by which padding changes loss is not diagnosed: I show that it does, not which kernels changed or whether the direction is systematic. And since both twins sit near the OFF arm, I cannot rule out that the ON arm hit something specific to its session rather than to the flag; a second ON run would settle that and has not been done.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.seam_dynamo_disable",
+   "value": "SHIP CANDIDATE: wrapping flash_attn_varlen_func in torch._dynamo.disable eliminates the flash recompiles entirely, 70 to 0. Both arms one session, one card, seed 42, mix_smoke_warmup, 110 steps, TORCH_LOGS=recompiles and the step lines in the SAME process so a step-N event ties to its own guard -- which neither earlier run could do. RESULT. OFF: 218 total recompiles, 70 flash, 20 of them after step 50. ON: 33 total, ZERO flash, zero after step 50. So the unbounded doc-count guard (eff.recompile_recurrence_explained) is gone and total recompiles fall 85%. The 20-after-step-50 figure is the one that matters: it reproduces the recurrence in this session rather than relying on the earlier trace, so before and after come from one measurement, per b0's protocol. THROUGHPUT IS UNCHANGED AT 81K tok/s IN BOTH ARMS, which is exactly why b0 required the acceptance metric to be trace-based and not tok/s: a constant tax is invisible to steady throughput. Reading tok/s alone would have scored this fix as doing nothing. It is also how I originally misread the flat 77K as evidence the recompile tax did not exist. NUMERICS ARE NEUTRAL, unlike the pad flag. Loss at steps 10/50/110: OFF 7.536/6.255/4.985, ON 7.575/6.233/5.142. Deltas 0.039, 0.022, 0.157 against a measured twin floor of 0.094 nat (eff.pad_dynamic_shapes_twin_control). Two of three are inside the floor; step 110 is 1.7x it, which is the one number that keeps this a candidate rather than a pass. Contrast the pad flag at 8.8x the floor. The prediction held: compile_key (interface.py:678-702) contains no batch_size, so the specialisation had no consumer and removing it should not change arithmetic. It did not, to within 1.7 floors.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_seam.log, probes/t57_seam.py, docs/lessons/flash_recompile_seam_design.md",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "mix": "mix_smoke_warmup",
+    "seed": 42,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "steps": 110,
+    "env": "TORCH_LOGS=recompiles",
+    "change": "train.flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)",
+    "off_total_recompiles": 218,
+    "off_flash_recompiles": 70,
+    "off_flash_after_step50": 20,
+    "on_total_recompiles": 33,
+    "on_flash_recompiles": 0,
+    "on_flash_after_step50": 0,
+    "tok_s_off": 81,
+    "tok_s_on": 81,
+    "loss_off_10_50_110": [
+     7.536,
+     6.255,
+     4.985
+    ],
+    "loss_on_10_50_110": [
+     7.575,
+     6.233,
+     5.142
+    ],
+    "loss_deltas": [
+     0.039,
+     0.022,
+     0.157
+    ],
+    "twin_floor_nat": 0.094,
+    "step110_delta_in_floors": 1.7
+   },
+   "uncertainty": "The seam ms is NOT measured here: this run had TORCH_LOGS but no --profile, so I have the recompile count and not the gap time. b0's acceptance metric asks for BOTH, and the 3.28% seam figure still comes from the earlier steady trace rather than from this session -- a combined --profile plus recompile-log run would close it, and the residual host-sync risk b0 named would show there as a new gap elsewhere. Untested. The step-110 loss delta of 0.157 exceeds the 0.094 twin floor by 1.7x on a single pair, so it could be either noise at the tail of a short run or a real effect; a twin arm would separate them and was not run. One card, 110 steps, smoke mix: none of this bounds the 7-card real-mix behaviour, and a graph break removed on one card may interact differently with DDP collectives.",
    "status": "measured"
   }
  ]
