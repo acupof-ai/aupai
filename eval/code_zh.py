@@ -11,6 +11,7 @@ after carving and after any change to the match path — the same GT round-trip
 discipline as the math reward.
 
 Usage: python eval/code_zh.py --ckpt ckpt_sft_math.pt [--max_new 512] [--batch 32]
+       python eval/code_zh.py --ckpt ckpt_sft_math.pt --k 8 --temperature 0.8
        python eval/code_zh.py --selfcheck
 """
 import argparse
@@ -83,6 +84,8 @@ def main():
     parser.add_argument("--batch", type=int, default=32)
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--shard", type=int, default=0)
+    parser.add_argument("--k", type=int, default=1,
+                        help="samples per problem; reports pass@1 (greedy) and pass@k")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH)
     parser.add_argument(
@@ -108,37 +111,72 @@ def main():
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     rows = rows[args.shard :: args.shards]
+    k = max(1, args.k)
+    temp = args.temperature if k > 1 or args.temperature > 0 else 0.0
+    # pass@k at temperature 0 draws k identical greedy answers, so pass@k == pass@1
+    # by construction; math_hard.py carries the same assert.
+    assert not (k > 1 and temp <= 0), (
+        f"--k {k} at temperature {temp}: the k samples would be identical to the greedy "
+        "answer and pass@k would equal pass@1 by construction. Pass --temperature (0.8 is "
+        "the project's pass@k setting)."
+    )
     preds_path = os.path.join(
         ROOT, "data", "eval", f"preds_code_{os.path.basename(args.ckpt)}"
         + (f".t{args.temperature}" if args.temperature else "")
+        + (f".k{k}" if k > 1 else "")
         + (f".{args.shard}" if args.shards > 1 else "")
         + ".jsonl"
     )
-    correct = total = no_fence = 0
+    per_batch = max(1, args.batch // k)
+    # pass@1 is the greedy answer; the k samples feed only pass@k and the sampled
+    # mean, so pass@k - pass@1 has no sampling noise on the pass@1 side.
+    n_pass1 = n_passk = n_samp_ok = total = no_fence = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
-        for s in range(0, len(rows), args.batch):
-            batch = rows[s : s + args.batch]
+        for s in range(0, len(rows), per_batch):
+            batch = rows[s : s + per_batch]
             prompts = [tok.encode(format_prompt(r["instruction"])).ids for r in batch]
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, None)
-            for r, ids in zip(batch, out):
-                gen = tok.decode(ids)
-                code = extract_code(gen)
-                if code is None:
-                    no_fence += 1
-                    ok = False
-                else:
-                    ok, _, _ = score_code(code, r["expected_output"])
-                correct += int(ok)
+                # k=1 keeps the single-sample semantics (--temperature samples); k>1
+                # makes pass@1 the greedy answer and temperature only the k draws.
+                greedy = generate_batch(model, prompts, args.max_new, args.device,
+                                        0.0 if k > 1 else temp, None)
+                sampled = []
+                if k > 1:
+                    rep = [p for p in prompts for _ in range(k)]
+                    sampled = generate_batch(model, rep, args.max_new, args.device, temp, None)
+            for i, r in enumerate(batch):
+                gens = [tok.decode(greedy[i])]
+                if k > 1:
+                    gens += [tok.decode(ids) for ids in sampled[i * k : (i + 1) * k]]
+                oks = []
+                for gi, gen in enumerate(gens):
+                    code = extract_code(gen)
+                    if code is None:
+                        ok = False
+                        if gi == 0:
+                            no_fence += 1
+                    else:
+                        ok, _, _ = score_code(code, r["expected_output"])
+                    oks.append(ok)
+                    fout.write(json.dumps({"q": r["instruction"], "gen": gen,
+                                           "expected": r["expected_output"],
+                                           "ok": ok, "greedy": gi == 0}, ensure_ascii=False) + "\n")
+                n_pass1 += int(oks[0])
+                if k > 1:
+                    n_samp_ok += sum(oks[1:])
+                    n_passk += int(any(oks[1:]))
                 total += 1
-                fout.write(json.dumps({"q": r["instruction"], "gen": gen,
-                                       "expected": r["expected_output"],
-                                       "ok": ok}, ensure_ascii=False) + "\n")
             if total % 64 == 0 or total == len(rows):
-                print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)
+                print(f"  {total}/{len(rows)} pass@1={n_pass1 / total:.1%}", flush=True)
 
-    print(f"code-500: {correct}/{total} = {correct / total:.1%}")
-    print(f"no-fence rate {no_fence / total:.1%}")
+    if k > 1:
+        print(f"code-500: pass@1(greedy) {n_pass1}/{total} = {n_pass1 / total:.1%} | "
+              f"sampled@T={temp} mean {n_samp_ok / (total * k):.1%} | "
+              f"pass@{k} {n_passk}/{total} = {n_passk / total:.1%} | "
+              f"gap {(n_passk - n_pass1) / total:+.1%} | T={temp}")
+    else:
+        print(f"code-500: {n_pass1}/{total} = {n_pass1 / total:.1%}")
+        print(f"no-fence rate {no_fence / total:.1%}")
     print(f"preds saved: {preds_path}")
 
 
