@@ -32,7 +32,11 @@ DOMAIN_SOURCE = {
     "web_hq": "fineweb2",
     "cci3": "cci3_hq",
     "en": "fineweb2",  # a real-English slice replaces the cosmopedia-mislabeled en; source to be set
-    "code": "rp1t_github",  # 30B code-raw cell: RedPajama-1T github (fetch t21)
+    # 30B code-raw: RedPajama-1T github. Name is code_rp1t, NOT `code` -- the
+    # ladder mix's `code` domain is FROZEN (carries build_corpus's stamp; every
+    # ladder/A-B point reads it). Writing new corpus into `code` broke t01's
+    # stamp assert (2026-08-31). The 30B mix will name this new directory.
+    "code_rp1t": "rp1t_github",
 }
 
 
