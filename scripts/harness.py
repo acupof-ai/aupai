@@ -2206,9 +2206,17 @@ def check_env_importable(root):
     missing = []
     for mod in sorted(req):
         try:
-            if importlib.util.find_spec(mod) is None:
-                missing.append(mod)
+            spec = importlib.util.find_spec(mod)
         except (ImportError, ValueError):
+            missing.append(mod)
+            continue
+        # `spec.origin is None` is a namespace package: the directory survived but the
+        # module did not. 2026-08-30: flash_attn resolved this way after a reinstall, so
+        # this check stayed green while `from flash_attn import flash_attn_func` raised
+        # ImportError -- train.py caught it, set HAS_FA=False and trained the whole
+        # fp32-master A/B on the fallback attention path, silently non-comparable with the
+        # six ladder points that ran with fa True. find_spec is not import.
+        if spec is None or spec.origin is None:
             missing.append(mod)
     if not missing:
         return PASS, f"all {len(req)} imported packages present"
