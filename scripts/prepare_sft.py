@@ -54,6 +54,11 @@ SOURCES = [
     # template recall, not capability (be.sft_v3_code500, dose-acc r=0.69).
     # The family-clean pack builds without it; the file stays on disk for the
     # eval's provenance (cont.code_holdout_carved).
+    # t43 (2026-08-31): v5 addon -- English Evol-Instruct Python tasks, a
+    # different generator and language family from the dropped Chinese carve
+    # source. >12.6pt on code-500 = cross-generator transfer (capability);
+    # ~0 = strong template recall.
+    (os.path.join(DATA, "sft", "v5_evol_code_2300.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "synthetic", "knowledge_qa_zh.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "synthetic", "math_gsm8k_zh.jsonl"), "instruction", "output"),
 ]
