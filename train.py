@@ -124,6 +124,24 @@ except ImportError:
     except ImportError:
         HAS_FA = False
 
+if HAS_FA:
+    # flash's varlen wrapper validates argument SHAPES against a Python int -- `assert
+    # cu_seqlens_k.shape == (batch_size + 1,)` and siblings at cute/interface.py:376/381/384,
+    # where batch_size is cu_seqlens_q.shape[0] - 1, i.e. the document count. Dynamo must burn
+    # that count into a guard to prove the assert, and the count is drawn from a distribution:
+    # 45 distinct values over 60 steps, range 43-116, against recompile_limit 64. The variant
+    # set never closes, so eviction and recompilation are PERMANENT -- 70 flash recompiles in
+    # 110 steps, 20 of them after step 50, costing 54.9 ms/step of gap at the rms_norm -> flash
+    # seam (eff.recompile_recurrence_explained, eff.steady_state_composition).
+    #
+    # The specialisation buys nothing: flash's own compile_key (interface.py:678-702) contains
+    # no batch_size at all -- only dtypes, head dims, causal, mod hashes, and `x is None`
+    # presence booleans -- so the document count cannot select or compile a different kernel.
+    # Disabling tracing here discards a guard with no consumer. Measured 70 -> 0 flash
+    # recompiles, 218 -> 33 total, tok/s unchanged, loss deltas inside the twin floor at 2 of 3
+    # sampled steps (eff.seam_dynamo_disable).
+    flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)
+
 
 # Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
 SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
@@ -425,6 +443,99 @@ def _fp8_ok(mod, name):
     # FoNE heads excluded by NAME: num_head runs on hidden[nmask], whose row count is the batch's
     # [NUM] count -- rarely a multiple of 16, and not visible from the weight shape.
     return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
+
+
+_FP8_WSCALE = {}  # id(weight) -> scale, cleared per step; the head weight is constant within a
+                  # step and reused across all 64 FLCE chunks, so recomputing its absmax 64 times
+                  # is 64 reductions over 32784x1024 for one value (b0). FP8LinearFunction caches
+                  # its scales for the same reason.
+
+
+def _fp8_mm(a, b, out_dtype, cache_b=False):
+    """One fp8 GEMM with per-tensor e4m3 scaling. a @ b, both 2D, b already oriented.
+
+    Same recipe as FP8LinearFunction: scale each operand by its own absmax so the largest
+    element lands at e4m3's 448, multiply in fp8, and let _scaled_mm apply the scales to the
+    accumulator. Measured range on the head's activations is p50 48 / p99 62 / max 82 against
+    448, spread p99/p50 = 1.30x, so per-tensor is sufficient and per-chunk scaling is not
+    needed (eff.fp8_head_activation_range).
+
+    Per-tensor scaling is robust to an outlier, tested rather than assumed (probes/t57_outlier.py,
+    b0's point that the range fact should not simply wave the question off). Planting one element
+    at 82, 448 and 4480 while the rest sit near p50 moves the ORDINARY rows' median relative
+    error only 3.766% -> 3.764% -> 3.791%, cosine 0.99929 throughout. The reason is that the
+    scale is a DIVISOR, not a clamp: a 55x outlier shrinks every element by 55x together, and
+    e4m3 keeps 3 mantissa bits regardless of exponent, so relative precision is scale-invariant.
+    Absolute range would only matter if the outlier pushed ordinary elements below e4m3's
+    subnormal floor, which needs ~10^5 of spread, not 55x.
+    """
+    sa = (a.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    # Every path binds sb explicitly. The earlier walrus form was correct but left the hit case
+    # binding sb only as a side effect of the condition, so any added elif or reorder made it
+    # unbound -- a NameError rather than a wrong number, but a trap for the next reader (b0).
+    if not cache_b:
+        sb = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    elif (cached := _FP8_WSCALE.get(id(b))) is not None:
+        sb = cached
+    else:
+        sb = _FP8_WSCALE[id(b)] = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    qa = (a / sa).to(torch.float8_e4m3fn)
+    qb = (b / sb).to(torch.float8_e4m3fn)
+    return torch._scaled_mm(qa.contiguous(), qb.t().contiguous().t(),
+                            scale_a=sa, scale_b=sb, out_dtype=out_dtype)
+
+
+def patch_liger_flce_fp8():
+    """Route Liger FLCE's three head GEMMs through _scaled_mm. Returns True if patched.
+
+    The head is the largest single lever with a mechanism: arithmetic intensity 668.7 FLOP/B
+    against H20's balance point of 37, so it is compute-bound by 18x, and it is excluded from
+    fp8 today only by _fp8_ok's NAME check (eff.lm_head_is_compute_bound). All three matmuls are
+    the same M=2048 K=1024 N=32784 shape and measure 62.5 / 63.0 / 64.5 ms per step, so
+    converting only the forward buys a third of the ceiling and lands under the ship gate --
+    this patches all three, ideal 2x = 95 ms = 5.6% of a 1702 ms step.
+
+    Patched by source rewrite of the three call sites rather than by vendoring all 487 lines,
+    so a Liger bump surfaces as a failed patch instead of as a silently stale copy. The
+    grad_weight site keeps whatever accumulator dtype is in force: substituting an fp8 GEMM's
+    own output dtype there would replace an accumulator with a single product, which is the one
+    substitution that breaks correctness (b0). Our grad_weight is bf16 today because weights are
+    bf16 and accum_dtype is unset (eff.head_grad_accum_bf16), and that stays true after this.
+    """
+    try:
+        import inspect
+
+        from liger_kernel.ops import fused_linear_cross_entropy as _flce
+    except ImportError:
+        return False
+    src = inspect.getsource(_flce.fused_linear_cross_entropy_forward)
+    # Clear the weight-scale cache at the top of every FLCE call. id() is only unique among LIVE
+    # objects, so a freed tensor's id can be reused by a different one -- caching across calls
+    # would then hand a stale scale to an unrelated weight. Within one call the weight is pinned
+    # by the caller's reference, which is exactly the lifetime the 64 chunks need.
+    src = src.replace("    for chunk_id in range(num_chunks):",
+                      "    _FP8_WSCALE.clear()\n    for chunk_id in range(num_chunks):", 1)
+    subs = [
+        ("logits_chunk = _input_chunk @ weight.t()",
+         "logits_chunk = _fp8_mm(_input_chunk, weight.t(), _input_chunk.dtype, cache_b=True)"),
+        ("grad_input[start_idx:end_idx] = grad_logits_chunk @ weight",
+         "grad_input[start_idx:end_idx] = _fp8_mm(grad_logits_chunk, weight, grad_input.dtype)"),
+        ("grad_weight += torch.mm(grad_logits_chunk.t(), _input_chunk).float()",
+         "grad_weight += _fp8_mm(grad_logits_chunk.t(), _input_chunk, torch.float32).to(grad_weight.dtype)"),
+    ]
+    for old, _ in subs:
+        if old not in src:
+            print(f"fp8 head: PATCH FAILED, Liger source changed -- missing {old[:44]!r}", flush=True)
+            return False
+    for old, new in subs:
+        src = src.replace(old, new)
+    ns = dict(_flce.__dict__)
+    ns["_fp8_mm"] = _fp8_mm
+    ns["_FP8_WSCALE"] = _FP8_WSCALE
+    exec(compile(src, "<fp8_flce>", "exec"), ns)  # noqa: S102
+    _flce.fused_linear_cross_entropy_forward = ns["fused_linear_cross_entropy_forward"]
+    print("fp8 head: Liger FLCE's three GEMMs routed through _scaled_mm", flush=True)
+    return True
 
 
 def convert_to_fp8_compute(model):
@@ -2022,6 +2133,25 @@ def main():
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
+        # Off by default: this is the loss path, so an fp8 error reaches EVERY gradient rather
+        # than one layer's activations. Behind a flag until the four-arm A/B judges it against
+        # an in-config noise floor (docs/lessons/shipment_ab_plan.md).
+        if os.environ.get("FP8_HEAD") == "1":
+            if Cfg.fone:
+                raise SystemExit(
+                    "FP8_HEAD=1 with --fone: FoNE changes the token stream and the head's input "
+                    "distribution, and the digit probe has not been run against an fp8 head. "
+                    "Run the probe first or drop one of the two flags."
+                )
+            # Fail CLOSED. The function detects a Liger bump and returns False; discarding that
+            # return would let FP8_HEAD=1 train in bf16, turning the A/B's fp8 arm into a second
+            # baseline and reading "no difference" for a candidate that never ran. Same class as
+            # --seed 0: a flag declaring a property the consumer relies on, false while set (b0).
+            if not patch_liger_flce_fp8():
+                raise SystemExit(
+                    "FP8_HEAD=1 but the Liger FLCE patch did not apply -- see the line above for "
+                    "which source string is missing. An explicit opt-in must take effect or refuse."
+                )
         if is_main:
             print("FP8 compute enabled", flush=True)
     if is_main:

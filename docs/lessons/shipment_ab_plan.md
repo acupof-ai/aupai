@@ -10,13 +10,19 @@ fb's design: one three-arm set (baseline, baseline-twin, candidate) × two candi
 baseline pair, `--profile` + `TORCH_LOGS=recompiles` on every arm so seam ms, gap counts and val
 all come from the runs that judge them. **Five runs.**
 
+**FOUR arms, not five** (fb, after the clock arithmetic below): the spare is dropped and an
+ambiguous candidate comes back to fb with its number for an explicit fifth-run decision.
+Pre-spending 23 minutes insures a case better handled when it is real.
+
 | # | arm | candidate | reads |
 |---|---|---|---|
-| 1 | baseline | — | val, tok/s, seam ms, gap count |
+| 1 | baseline | — | val, tok/s, seam ms, gap count, **and the `--profile` overhead** |
 | 2 | baseline-twin | — | the in-config noise floor |
-| 3 | fp8 head | fp8 | 3% tok/s, val vs floor, grad_logits absmax |
+| 3 | fp8 head | fp8 | 3% tok/s, val vs floor, `grad_logits` absmax |
 | 4 | seam disable | `_dynamo.disable` | seam ms drop, flash recompile count, val vs floor |
-| 5 | spare / re-run | either | whichever candidate lands ambiguous |
+
+Arm 1 carries one extra job: **log the `--profile` overhead**, so arms 2–4 get a corrected wall
+clock instead of my unmeasured assumption that they run at the live run's 1.70 s/step.
 
 ## Wall clock, from measured numbers
 
@@ -28,7 +34,7 @@ all come from the runs that judge them. **Five runs.**
 | 50 steps compute | 1.70 s/step | 1.4 min |
 | startup, 149 GiB cache load | `eff.cache_load_gates_startup`, 386 s | 6.4 min |
 | **per arm** | | **~7.9 min** |
-| **five arms** | | **~39 min** |
+| **four arms at 600 steps** | | **~94 min** |
 
 **Startup dominates compute 4.5:1.** The window's budget is set by cache loading, not by the
 steps, which means adding steps is nearly free and adding arms is not.
@@ -61,6 +67,32 @@ Two options, and the first is nearly free given the cost table above:
 **Recommendation: both.** 600 steps and report tok/s as a multiple of the twin spread. The second
 costs nothing and is the same discipline b0 already imposed on val; the first costs 1.3 h of a
 window that has no competing use once stage 1 ends.
+
+## The window's clock, and why four arms
+
+Stage 1 was at step 12550 of 16281 at 02:54 local, 3731 steps left at 1.70 s/step, so it ends
+**04:39** — the assumed ~04:40 to the minute.
+
+| | at 5 arms | at 4 arms |
+|---|---|---|
+| stage-1 end | 04:39 | 04:39 |
+| de's shipment commits (+40) | 05:19 | 05:19 |
+| resume rehearsal (+14) | 05:33 | 05:33 |
+| A/B | +120 → 07:33 | **+94 → 07:07** |
+| fold + stage-2 dry (+15) | 07:48 | **07:21** |
+| slack to the 08:00 flag | **+11 min** | **+38 min** |
+
+Eleven minutes is a rounding error, not slack: one commit over budget or one arm re-run puts it
+past 08:00. Dropping the spare is the only recovery that costs no measurement quality — the
+400-step alternative trades into a ~6% cv band against a 3% gate, which is the problem the
+600-step change exists to fix, and cutting a candidate lets the schedule decide what the
+measurement should.
+
+**Two assumptions in that clock are unverified.** The 40 min for de's six commits was budgeted
+without asking; fb has asked and, if it is optimistic, the A/B moves ahead of any commit that is
+not ready and the laggard ships in a later window. And 1.70 s/step assumes the arms run at the
+live run's throughput — the fp8 arm should be faster if the candidate works, but `--profile`'s
+overhead on 7 cards is unmeasured, which is why arm 1 logs it.
 
 ## Ship gates per candidate
 
