@@ -152,13 +152,38 @@ def write_manifest(root=ROOT):
 
 def write_manifest_index(root=ROOT):
     """Manifest from the index (staged blobs), not HEAD. Used by the pre-commit
-    hook so the committed manifest matches HEAD after the commit lands."""
+    hook so the committed manifest matches HEAD after the commit lands.
+
+    Entries unchanged since HEAD are reused from HEAD's manifest (sha only; the
+    class is recomputed -- a changed import elsewhere can reclassify an unchanged
+    file). Rehashing all 174 paths on every commit made the hook take >2min and
+    --no-verify became a habit (4a7dd56, 2026-08-31)."""
     classes = _classify_files()
+    head = {}
+    r = subprocess.run(
+        ["git", "show", "HEAD:data/pod_head_manifest.txt"], cwd=root,
+        capture_output=True, text=True,
+    )
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            parts = line.split("  ", 2)
+            if len(parts) >= 2:
+                head[parts[1]] = parts[0]
+    changed = set(
+        subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "HEAD"], cwd=root,
+            capture_output=True, text=True,
+        ).stdout.split()
+    )
     lines = []
     for p in scoped_paths(root):
-        sha = sha_index(root, p)
-        if sha:
-            lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}")
+        if p in changed or p not in head:
+            sha = sha_index(root, p)
+            if not sha:
+                continue
+        else:
+            sha = head[p]
+        lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}")
     out = os.path.join(root, "data", "pod_head_manifest.txt")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
