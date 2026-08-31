@@ -1,0 +1,21 @@
+t29 family-clean pack verification (2026-08-31, 44)
+pack: data/sft/sft_all_family_clean.pt (47078 rows x 4097, 192.88M tokens, 1.54 GB)
+method: /tmp/verify_clean_pack.py on the pod
+
+check 1 (verbatim, first-24-token exact subsequence, all 500 code-500 questions):
+  0/500
+
+check 2 (sibling rows, source-agnostic): every row's first 256 tokens decoded,
+normalized (numbers->#, lists->[...], whitespace stripped), matched against the
+29 holdout family keys (24 multi-question families + 5 singletons):
+  0 rows, 0 families hit
+
+VERDICT: verbatim=0/500 sibling_rows=0 pack_rows=47078
+
+comparison vs v3's pack (data/sft/sft_all.pt, 46938 rows, built 2026-08-30 13:30):
+all 9 remaining SOURCES files have mtimes <= 2026-08-25, i.e. unchanged since
+the v2/v3 pack build -- the ONLY content difference is the dropped carve source
+(synthetic/code_python_zh.jsonl, ~3000 examples). Row count +140 (0.3%) is
+packing fill/shuffle noise from the changed example set; total tokens 192.88M
+vs 192.30M (+0.3%). The old pack predates fingerprint stamping (carries only
+vocab_id), so source identity is established by mtimes, not sources_fp.
