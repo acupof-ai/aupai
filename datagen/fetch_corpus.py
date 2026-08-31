@@ -241,7 +241,51 @@ def _refuse_prev_fp(source, source_fp):
     return None
 
 
-def fetch(source, target_bytes, stream_n=0, stream_i=0):
+def _mirror_chain(url, modelscope_url=None):
+    """Per-source mirror chain, most-to-least-preferred, same relative path.
+    Default: hf-mirror then huggingface.co (a straightforward host swap, since a
+    failing mirror at fetch time is the case that lost a day, 2026-08-31/30).
+    ModelScope is the SECOND host for sources that specify it (its name map is
+    not a 1:1 host swap, so it is source-supplied) -- and it gets the NO-resume
+    `-C -` skip, because ModelScope's LFS aborts on a range request."""
+    chain = [url]
+    if url.startswith("https://hf-mirror.com/"):
+        chain.append(url.replace("https://hf-mirror.com/", "https://huggingface.co/", 1))
+    if modelscope_url:
+        chain.append(modelscope_url)
+    return chain
+
+
+def _fetch_one(url_chain, part, name, prev_host):
+    """Probe + download one shard across the host chain; continue the SAME .part
+    on the next host. Returns (subprocess.CompletedProcess|None, serving_host).
+    A host that does not answer a 10 s IPv4 HEAD is abandoned in ~10 s and the
+    next serves; ModelScope (the no-resume LFS) is downloaded whole, no -C -."""
+    server = None
+    for u in url_chain:
+        probe = subprocess.run(
+            ["curl", "-4", "-sI", "-m", "10", u],
+            capture_output=True, text=True, timeout=12,
+        )
+        if probe.returncode != 0 or not probe.stdout.startswith(("HTTP/", "HTTP/")):
+            print(f"  {name}: host {_host(u)} unreachable (rc {probe.returncode}) -> next", file=sys.stderr, flush=True)
+            continue
+        args = ["curl", "-4", "-sL", "-o", part, "--retry", "6", "--retry-delay", "3", u]
+        if "modelscope" not in u:
+            args[3:3] = ["-C", "-"]  # resume only off ModelScope (its LFS aborts on range)
+        server = _host(u)
+        r = subprocess.run(args, stdout=subprocess.DEVNULL)
+        if r.returncode == 0:
+            return r, server
+        print(f"  {name}: {_host(u)} download rc {r.returncode} -> next", file=sys.stderr, flush=True)
+    return subprocess.CompletedProcess([], 1), server
+
+
+def _host(u):
+    return u.split("/")[2] if u.startswith("http") else u
+
+
+def fetch(source, target_bytes, stream_n=0, stream_i=0, modelscope_urls=None):
     ensure_raw_location()
     if not disk_ok(target_bytes):
         print(f"REFUSING: data/raw does not hold {target_bytes * 1.5 / 1e9:.1f}G needed", file=sys.stderr)
@@ -312,19 +356,20 @@ def fetch(source, target_bytes, stream_n=0, stream_i=0):
         # seen 2026-08-30: it killed the whole 11-file fetch 12 hours in) nets
         # out to a nonzero curl exit even after its internal --retry 6. So we
         # retry the SAME shard (resuming the .part via -C -) with bounded outer
-        # backoff, and only give up this shard loudly -- never crash the run.
+        # backoff, and -- when the (optional) mirror chain is set -- fail over to
+        # the next host, continuing the SAME .part, recording the serving host.
         attempts = 0
+        serving = {}
+        url_chain = _mirror_chain(url)
         while True:
-            r = subprocess.run(
-                ["curl", "-4", "-sL", "-C", "-", "-o", part, "--retry", "6", "--retry-delay", "3", url],
-                stdout=subprocess.DEVNULL,
-            )
+            r, host = _fetch_one(url_chain, part, name, serving.get("host"))
             if r.returncode == 0:
+                serving["host"] = host
                 break
             attempts += 1
             print(
-                f"  {name}: curl exit {r.returncode} (stream/net err) attempt {attempts}; "
-                f"resuming .part, backing off",
+                f"  {name}: curl exit {r.returncode} (stream/net err) on {host or url_chain[0]}; "
+                f"attempt {attempts}; resuming .part, backing off",
                 file=sys.stderr,
                 flush=True,
             )
@@ -347,7 +392,7 @@ def fetch(source, target_bytes, stream_n=0, stream_i=0):
             )
             return 3
         os.rename(part, dst)  # atomic: a partial shard never masquerades as complete
-        rec = {"shard": name, "bytes": sz, "status": "fetched"}
+        rec = {"shard": name, "bytes": sz, "status": "fetched", "host": serving.get("host") or _host(url)}
         with open(log, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         stats["shards"].append(rec)

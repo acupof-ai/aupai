@@ -7,7 +7,8 @@ Model-generated code is untrusted code executed in a loop. Isolation:
     for /tmp. The process cannot see /work/aupai (eval answers, training
     data) or anything outside the minimal root.
   - network namespace (-n): no sockets.
-  - pid namespace (-p): the whole tree dies with the runner on timeout.
+  - pid namespace (-p) + process-group kill on timeout: the whole tree dies
+    with the runner (os.killpg, not just the unshare parent).
   - rlimits: CPU 5s, address space 2GB, no core dumps.
   - env scrubbed, python -I (no user site, no PYTHON* vars), wall timeout.
 
@@ -20,6 +21,7 @@ Usage:
 """
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 
@@ -67,20 +69,36 @@ def run_sandboxed(code, timeout=10, stdin=None):
         os.makedirs(os.path.join(root, "work"), exist_ok=True)
         with open(os.path.join(root, "work", "code.py"), "w", encoding="utf-8") as f:
             f.write(code)
-        p = subprocess.run(
+        p = subprocess.Popen(
             ["unshare", "-nmp", "--fork", "bash", "-c", _SETUP, "bash", root],
-            capture_output=True,
-            timeout=timeout,
-            input=stdin.encode("utf-8") if stdin is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE if stdin is not None else None,
+            start_new_session=True,
         )
+        try:
+            stdout, stderr = p.communicate(
+                input=stdin.encode("utf-8") if stdin is not None else None,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            # Kill the whole process group, not just unshare — the grandchild
+            # python3 holds the stdout pipes open and blocks communicate() otherwise.
+            os.killpg(p.pid, signal.SIGKILL)
+            stdout, stderr = p.communicate()
+            return -1, (stdout or b"").decode("utf-8", "replace"), "TIMEOUT"
         return (p.returncode,
-                p.stdout.decode("utf-8", "replace"),
-                p.stderr.decode("utf-8", "replace")[-500:])
-    except subprocess.TimeoutExpired as e:
-        return -1, (e.stdout or b"").decode("utf-8", "replace"), "TIMEOUT"
+                stdout.decode("utf-8", "replace"),
+                stderr.decode("utf-8", "replace")[-500:])
     finally:
         # mounts die with the namespace; what remains is empty dirs
         shutil.rmtree(root, ignore_errors=True)
+
+
+def _no_sandbox_survivors():
+    """True if no sandbox python3 process is running on the host."""
+    out = subprocess.run(["ps", "aux"], capture_output=True, text=True).stdout
+    return "python3 -I /work/code.py" not in out
 
 
 def _self_check():
@@ -109,7 +127,16 @@ def _self_check():
             fails += 1
         print(f"  {'OK ' if ok else 'FAIL'} rc={rc} exp {exp_rc} | {label} | "
               f"out={out[:40]!r} err={err[:80]!r}")
-    print(f"sandbox self-check: {len(cases) - fails}/{len(cases)} pass")
+    # Wall timeout must kill the whole process tree — the old subprocess.run
+    # timeout killed only unshare, leaving python3 alive and blocking the pipe.
+    import time as _time
+    _time.sleep(1)
+    if not _no_sandbox_survivors():
+        fails += 1
+        print("  FAIL: sandbox python3 survived after tests")
+    else:
+        print("  OK  no sandbox survivors after tests")
+    print(f"sandbox self-check: {len(cases) + 1 - fails}/{len(cases) + 1} pass")
     return fails
 
 

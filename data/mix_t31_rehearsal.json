@@ -1,0 +1,17 @@
+{
+ "total_tokens": 1200000000.0,
+ "anneal_frac": 0,
+ "_comment": "t31 throughput rehearsal: en_c4+cot (stable fingerprints); code_rp1t dropped, being extended live. Throughput only.",
+ "domains": {
+  "en_c4": {
+   "weight": 0.71222,
+   "epochs": 1,
+   "anneal": 0.71222
+  },
+  "cot": {
+   "weight": 0.28778,
+   "epochs": 3,
+   "anneal": 0.28778
+  }
+ }
+}

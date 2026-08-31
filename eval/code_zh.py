@@ -81,7 +81,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ckpt")
     parser.add_argument("--max_new", type=int, default=512)
-    parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--batch", type=int, default=256)
     parser.add_argument("--shards", type=int, default=1)
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--k", type=int, default=1,
@@ -147,11 +147,12 @@ def main():
                 # k=1 keeps the single-sample semantics (--temperature samples); k>1
                 # makes pass@1 the greedy answer and temperature only the k draws.
                 greedy = generate_batch(model, prompts, args.max_new, args.device,
-                                        0.0 if k > 1 else temp, None)
+                                        0.0 if k > 1 else temp, None, tokenizer=tok)
                 sampled = []
                 if k > 1:
                     rep = [p for p in prompts for _ in range(k)]
-                    sampled = generate_batch(model, rep, args.max_new, args.device, temp, None)
+                    sampled = generate_batch(model, rep, args.max_new, args.device, temp, None,
+                                             tokenizer=tok)
             for i, r in enumerate(batch):
                 gens = [tok.decode(greedy[i])]
                 if k > 1:
