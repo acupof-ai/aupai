@@ -4597,6 +4597,33 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_milestone_selection():
+    """The watcher never labels a below-target checkpoint as the milestone.
+
+    Known answer from the live incident: target 3500, saves {2000,2500,3000},
+    save_every 500. min(|s-target|) picks 3000 -- exactly save_every away, so the
+    `> save_every` guard does not fire -- and the row then claims 3.24B for a
+    checkpoint that saw 2.753B (e1, 2026-08-31)."""
+    def pick(saved, target, save_every, alive):
+        at_or_past = [x for x in saved if x >= target]
+        if at_or_past:
+            return min(at_or_past)
+        if max(saved) >= target - save_every and alive:
+            return None  # wait for the exact save
+        return max(saved)
+
+    assert pick([2000, 2500, 3000], 3500, 500, True) is None, "must wait, not take step3000"
+    assert pick([2000, 2500, 3000, 3500], 3500, 500, True) == 3500, "exact save wins"
+    assert pick([3500, 4000], 3500, 500, True) == 3500, "never overshoot past an exact hit"
+    assert pick([3600], 3500, 500, True) == 3600, "a save just past the target is a real reading"
+    # the run died before reaching the target: the last save is the best available read
+    assert pick([2000, 2500, 3000], 3500, 500, False) == 3000, "a dead run must not wait forever"
+    # token accounting: the shortfall the label would have hidden
+    short = 1 - (3000 * TOKENS_PER_STEP) / 3.24e9
+    assert 0.14 < short < 0.16, f"step3000 vs the 3.24B label is ~15%, got {short:.3f}"
+    print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
+
+
 def _selftest_monitor_suppression():
     """The monitor writes no row once a run has a terminal one.
 
@@ -5181,6 +5208,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_gate_timeout()
     _selftest_register_union()
@@ -6344,6 +6372,23 @@ def cmd_kill(argv):
     return 0
 
 
+#: Tokens per optimizer step for the stage-1 recipe: batch 16 x accum 2 x seq 4096
+#: x 7 ranks = 917,504. Used to state what a checkpoint actually saw, against the
+#: milestone's nominal budget.
+TOKENS_PER_STEP = 16 * 2 * 4096 * 7
+
+
+def _run_alive(run):
+    """True if the training run still has a process. A watcher that waits for an
+    exact save must not wait forever after the run ends."""
+    try:
+        r = subprocess.run([os.path.expanduser("~/bin/pod"), f"pgrep -f 'name {run}' | head -1"],
+                           capture_output=True, text=True, timeout=20)
+        return bool(r.stdout.strip())
+    except Exception:
+        return True  # unknown: prefer waiting over mislabelling
+
+
 MILESTONE_TOKENS = {"3.24b": 3.24e9, "8b": 8e9, "15b": 15e9, "16b": 16e9, "30b": 30e9}
 
 
@@ -6453,11 +6498,26 @@ def cmd_milestone(argv):
             return "score_matrix timeout"
         if st != 0:
             return f"score_matrix exit {st}"
+        m_step = re.search(r"\.step(\d+)$", ckpt)
+        actual_tokens = int(m_step.group(1)) * TOKENS_PER_STEP if m_step else None
+        # The pair's budget: a milestone row for it, else the ladder point's nominal.
+        paired_tokens = None
+        ms_path = os.path.join(ROOT, "runs", "milestones.jsonl")
+        if os.path.exists(ms_path):
+            for line in open(ms_path, encoding="utf-8"):
+                if line.strip():
+                    pr = json.loads(line)
+                    if pr.get("ckpt") == paired:
+                        paired_tokens = pr.get("actual_tokens") or pr.get("tokens")
+        if paired_tokens is None and paired == "ckpt_p324.pt":
+            paired_tokens = 3.24e9
         readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
         r = subprocess.run(
             [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
              "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-             "--milestone-profile", "milestone", "--paired-profile", "full"],
+             "--milestone-profile", "milestone", "--paired-profile", "full"]
+            + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
+            + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
             capture_output=True, text=True,
         )
         with open(readout_path, "w", encoding="utf-8") as f:
@@ -6471,8 +6531,16 @@ def cmd_milestone(argv):
             os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
             os.path.join(ROOT, "data", "eval", f"preds_code_v2_{ckpt}.jsonl"),
         ) if os.path.exists(p)]
+        m_step = re.search(r"\.step(\d+)$", ckpt)
+        actual_step = int(m_step.group(1)) if m_step else None
+        # tokens is the milestone's NOMINAL budget; actual_tokens is what this
+        # checkpoint saw. readout_30b compares against a paired budget, so a gap
+        # between them is a confound and must be visible in the row, not inferred.
+        actual_tokens = actual_step * TOKENS_PER_STEP if actual_step else None
         row = {
             "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
+            "step": actual_step, "actual_tokens": actual_tokens,
+            "token_shortfall": (round(1 - actual_tokens / tokens, 4) if actual_tokens and tokens else None),
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
             "preds": [os.path.relpath(p, ROOT) for p in preds],
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
@@ -6527,7 +6595,19 @@ def cmd_milestone(argv):
             for tok, target in spec.items():
                 if tok in scored or not saved:
                     continue
-                step = min(saved, key=lambda s: abs(s - target))
+                # Never score BELOW the target while the exact save is still coming.
+                # min(|s-target|) took step3000 for target 3500 because 500 is not
+                # > save_every, labelled a 2.753B checkpoint as the 3.24B milestone --
+                # 15% short, and run_one records the nominal budget regardless (e1,
+                # 2026-08-31). A save at or past the target is a real reading; one
+                # before it is a different budget wearing the milestone's name.
+                at_or_past = [x for x in saved if x >= target]
+                if at_or_past:
+                    step = min(at_or_past)
+                elif max(saved) >= target - a.save_every and _run_alive(a.run):
+                    continue  # the exact save is one interval away and training is up
+                else:
+                    step = max(saved)  # run ended short; the last save is the best read
                 if abs(step - target) > a.save_every:
                     continue  # nearest save is too far from the milestone step; wait
                 ckpt = saved[step]
