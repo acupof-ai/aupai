@@ -522,7 +522,115 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
 
 
 def _run_workers(a, target_chars):
+    # Parallel exact-dup + holdout global pass (fb ruling 2026-08-31): stage-2
+    # consolidates already-cleaned w* shards; exact-dedup is hash-set and
+    # parallelisable, the near-dedup MinHash is replaced by a later calibrated
+    # pass (44), so stage-2 runs exact-only and stamps near_dedup:false.
+    if a.global_only and a.no_near_dedup and a.workers > 1:
+        return _parallel_exact_pass(a)
     return _global_pass(a)
+
+
+def _emit_slice(args):
+    """Phase A worker: emit (exact_key, base+ordinal) for non-holdout docs of one
+    w* shard. Module-level so Pool can pickle it; uses only module globals."""
+    _path, _base = args
+    emit = []
+    holdout = 0
+    ords = 0
+    with open(_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+            if not t:
+                continue
+            if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                holdout += 1
+                continue
+            emit.append((exact_key(t), _base + ords))
+            ords += 1
+    return emit, holdout
+
+
+def _parallel_exact_pass(a):
+    """Two-phase global EXACT-dup + holdout, byte-identical to the serial pass.
+    Phase A (parallel): globally-order the w* shards, for each non-holdout doc
+    emit (exact_key, ordinal); Phase B (serial, compact): keep the min ordinal
+    per key -> survivor ordinals (first occurrence, same rule the serial pass
+    keeps); Phase C (parallel): re-read in the same global order and rewrite
+    only survivor docs. The output equals serial exact+holdout byte-for-byte."""
+    import glob as _g
+    import multiprocessing as mp
+
+    paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
+    if not paths:
+        raise SystemExit(f"REFUSE: no w*_*.jsonl shards in {a.out}")
+    for p in _g.glob(f"{a.out}/{a.domain}_*.jsonl"):
+        os.remove(p)
+
+    # Global ordinal per doc: slice bases are prefix sums of per-shard doc counts,
+    # so phase A is embarrassingly parallel and phase C restores the same order.
+    doc_counts = []
+    for p in paths:
+        n = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+        doc_counts.append(n)
+    bases = []
+    acc = 0
+    for n in doc_counts:
+        bases.append(acc)
+        acc += n
+    total_docs = acc
+
+    with mp.Pool(a.workers) as pool:
+        phase_a = pool.map(_emit_slice, [(p, bases[i]) for i, p in enumerate(paths)])
+
+    # Phase B: survivor = min ordinal per exact key (first occurrence)
+    seen = {}
+    for emit, _ in phase_a:
+        for k, o in emit:
+            if k not in seen or o < seen[k]:
+                seen[k] = o
+    survivor = set(seen.values())
+    exact_dups = total_docs - len(seen)
+    holdout_total = sum(h for _, h in phase_a)
+
+    # Phase C: re-read and write survivors, in global order.
+    w = ShardWriter(a.out, a.domain)
+    kept = kept_chars = 0
+    reasons = Counter()
+    for i, p in enumerate(paths):
+        ords = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                t = SPECIAL_TOKEN.sub("", d.get("content") or "").strip()
+                if not t:
+                    continue
+                if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                    continue  # holdout counted in A; skip in rewrite
+                if (bases[i] + ords) in survivor:
+                    kept += 1
+                    kept_chars += len(t)
+                    reasons["kept"] += 1
+                    w.write(d)
+                ords += 1
+    w.close()
+    for p in paths:
+        os.remove(p)
+    nshards = len(_g.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    reasons["holdout"] = holdout_total
+    reasons["exact_dup"] = exact_dups
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
+    return 0
 
 
 def _ladder_frozen_domains():
