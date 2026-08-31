@@ -31,7 +31,7 @@ code-500（v1）的 40% pass@1 是**模板召回**而非能力：v3 SFT 打包�
 | base p324 | — | 0.0% | 基座零代码能力，v2 是有效能力度量 |
 | v3（含 carve source） | 40.0% | **0.0%** | 40% 全是模板召回，closed |
 | v4（family-clean） | 0.0% | **0.0%** | 无格式、无能力 |
-| v5（English addon） | 0.0% | *pending* | — |
+| v5（English addon） | 0.0% | **0.0%** | 无格式、无能力 |
 
 v3 在 v2 上 = 0% 是**预注册判决**：v3 ≈ 0 = 模板召回 closed；v3 ≥ 12.6pt = 迁移存在、SFT 判决重开。实测 0.0%，模板召回 closed。
 
