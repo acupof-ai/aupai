@@ -871,7 +871,13 @@ def merge_took_one_side(root, merge_sha="HEAD"):
 
 
 def check_merge_complete(root):
-    """A merge must not resolve a contested file by discarding one side."""
+    """A merge must not resolve a contested file by discarding one side.
+
+    Judges the STAGED blob when one is staged for a contested path, not HEAD's. A
+    bad merge is refused; the commit that FIXES it must not be. Without this the
+    check deadlocks: the amend re-reads HEAD, HEAD is still the bad merge, and
+    --no-verify becomes the only way out -- which trains people to bypass the check
+    at exactly the moment it is working (de + fb, 2026-08-31, first real catch)."""
     if not os.path.exists(os.path.join(root, ".git")):
         return SKIP, "no .git (pod or partial checkout)"
     r = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
@@ -890,6 +896,23 @@ def check_merge_complete(root):
     # resolution discarded anything. Seven of the nine hits over one day's 93 merges
     # were this shape.
     took = [t for t in took if t[2] > 0]
+    # A path whose STAGED blob differs from the parent the merge took whole is being
+    # fixed right now. Judge what is about to be committed, not what was.
+    parents = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
+                             capture_output=True, text=True).stdout.split()
+    ours, theirs = (parents[1], parents[2]) if len(parents) >= 3 else (None, None)
+    fixed = []
+    for path, side, n in list(took):
+        staged = subprocess.run(["git", "-C", root, "rev-parse", f":{path}"],
+                                capture_output=True, text=True).stdout.strip()
+        if not staged:
+            continue  # nothing staged for it; the merge's own blob stands
+        offending = ours if side == "ours" else theirs
+        blob = subprocess.run(["git", "-C", root, "rev-parse", f"{offending}:{path}"],
+                              capture_output=True, text=True).stdout.strip()
+        if blob and staged != blob:
+            took.remove((path, side, n))
+            fixed.append(path)
     if took:
         return FAIL, (
             f"{len(took)} contested file(s) resolved by taking one side whole: "
@@ -897,6 +920,8 @@ def check_merge_complete(root):
                         for p, side, n in took[:3])
             + ". Re-resolve by hand and grep a marker from each side before committing."
         )
+    if fixed:
+        return PASS, f"{len(fixed)} contested file(s) re-resolved in the staged tree: {', '.join(fixed[:3])}"
     contested = len([1 for _ in merge_took_one_side(root)]) or 0
     n_both = len(set(subprocess.run(
         ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
@@ -4950,6 +4975,58 @@ def _selftest_gate_timeout():
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
 
 
+def _selftest_gpu_descendants():
+    """Known answer: a child whose cmdline shares nothing with its parent's is still
+    found, because descent is what is walked.
+
+    The failing case is the real one -- score_matrix (parent) shells out to
+    math_zh.py (child). On 2026-08-31 a kill matched children by the parent's
+    cmdline pattern, math_zh.py could not match, and it survived holding 12.7 GB on
+    GPU 7. The verification greped the same pattern, so `killed; exp row closed`
+    printed over a live orphan.
+
+    Pure-function test on the ppid walk: no pod, no GPU.
+    """
+    def walk(gpu_pids, ppid, root, limit=12):
+        out = []
+        for p in gpu_pids:
+            seen, cur = 0, p
+            while cur in ppid and seen < limit:
+                cur = ppid[cur]
+                seen += 1
+                if cur == str(root):
+                    out.append(p)
+                    break
+        return out
+
+    # score_matrix 200 -> bash eval_math.sh 250 (NO GPU) -> math_zh 300; 400 is a stranger.
+    # The intermediate shell is the case that broke the first implementation: a ppid
+    # map built only over GPU-holding pids stops at 250 and finds nothing. The map
+    # must come from the whole process table.
+    ppid = {"200": "100", "250": "200", "300": "250", "400": "999"}
+    got = walk(["300", "400"], ppid, 100)
+    assert got == ["300"], f"descent must cross the non-GPU shell and exclude the stranger: {got}"
+
+    # The regression itself: a map missing the shell must NOT find the child. If this
+    # ever passes, the map has silently narrowed back to GPU pids only.
+    gpu_only = {"200": "100", "300": "250"}
+    assert walk(["300"], gpu_only, 100) == [], "a map missing the intermediate shell must find nothing"
+
+    # The failing case: pattern matching cannot find it. This is what the old code did.
+    parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
+    child_cmdline = "math_zh.py --ckpt X --shards 1"
+    assert parent_cmdline not in child_cmdline, "the premise: the child shares no cmdline text"
+
+    # A cycle must not hang the kill path.
+    got = walk(["1"], {"1": "2", "2": "1"}, 999)
+    assert got == [], "a ppid cycle must terminate and match nothing"
+
+    # A direct child is found too, not just a grandchild.
+    assert walk(["200"], {"200": "100"}, 100) == ["200"]
+    print("  gpu descendants: child found across a non-GPU shell; narrowed map finds nothing; "
+          "cycle terminates; stranger excluded")
+
+
 def _selftest_devs_map():
     """Known answer: eval/_devs.sh maps shards onto the caller's cards, and refuses
     when there are more shards than cards.
@@ -5461,6 +5538,7 @@ def _demo():
     _selftest_register_union()
     _selftest_auto_resume()
     _selftest_devs_map()
+    _selftest_gpu_descendants()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
