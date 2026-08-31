@@ -49,7 +49,11 @@ SOURCES = [
     (os.path.join(DATA, "school_math_r1_zh.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "s1k.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "sft", "fable5_cot.jsonl"), "prompt", "response"),
-    (os.path.join(DATA, "synthetic", "code_python_zh.jsonl"), "instruction", "output"),
+    # t29 (2026-08-31): dropped -- this IS the code-500 carve source. Its 2413
+    # same-template sibling rows made SFT code-500 measure in-distribution
+    # template recall, not capability (be.sft_v3_code500, dose-acc r=0.69).
+    # The family-clean pack builds without it; the file stays on disk for the
+    # eval's provenance (cont.code_holdout_carved).
     (os.path.join(DATA, "synthetic", "knowledge_qa_zh.jsonl"), "instruction", "output"),
     (os.path.join(DATA, "synthetic", "math_gsm8k_zh.jsonl"), "instruction", "output"),
 ]
@@ -315,6 +319,9 @@ def _selftest():
 
 
 def main():
+    out_path = OUT_PATH
+    if "--out" in sys.argv:
+        out_path = sys.argv[sys.argv.index("--out") + 1]
     random.seed(42)
     tok = Tokenizer.from_file(TOK_PATH)
     eos = tok.token_to_id("<eos>")
@@ -326,7 +333,7 @@ def main():
         examples = examples[:MAX_EXAMPLES]
     print(f"total examples: {len(examples)}", flush=True)
 
-    pack_and_save(examples, tok, eos, OUT_PATH, SEQ)
+    pack_and_save(examples, tok, eos, out_path, SEQ)
 
 
 if __name__ == "__main__":
