@@ -966,6 +966,40 @@
    },
    "status": "measured",
    "uncertainty": "15B projection assumes the measured rates hold across the remaining stage-1 domains; the 64-proc zh_web/textbook counts (26-44M/s) bracket the 8-proc rates, so the projection is if anything conservative. Non-fone path only. /data00 is the overlay the 11:58 restart wiped: a 120 GB cache regenerates in ~15 min at 8 workers, so a mid-run restart costs that plus the .srcfp check. Single-process rayon pool does not scale (1x180 threads 2.45M/s) -- process parallelism is the lever."
+  },
+  {
+   "id": "eff.microbatch_32_oom",
+   "value": "t52 pair1 (2026-08-31): micro-batch 32 x accum 1 OOMs at seq 4096 fp8 (93.8/95.2 GB per card, ranks 3/6 first). Activation scales linearly with micro-batch; batch 32's forward peak exceeds H20 memory. Baseline 16x2 = 72K tok/s/gpu MFU 30% val 5.623. Verdict: keep micro-batch 16; grow effective batch via accum, not micro-batch.",
+   "measured": "2026-08-31",
+   "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
+   "config": {
+    "mix": "mix_scale_0.2b",
+    "seq": 4096,
+    "fp8": true,
+    "cards": 7,
+    "variant": "batch 32 accum 1",
+    "baseline": "batch 16 accum 2 = 72K tok/s",
+    "result": "CUDA OOM 93.8/95.2 GB"
+   },
+   "uncertainty": "single 50-step attempt per arm; pair2 killed before completion, verdict is qualitative (never converged)",
+   "status": "measured"
+  },
+  {
+   "id": "eff.max_autotune_dynamic_shape_noship",
+   "value": "t52 pair2 (2026-08-31): torch.compile mode=max-autotune is unusable with the doc-mask dynamic cu shape. train.py mark_dynamic(cu) makes each distinct document-boundary shape a fresh graph; max-autotune re-benchmarks 106 GEMM choices per shape, so it never reaches steady state -- ~40 min of autotune, stuck at step 10, 1K tok/s/gpu MFU 0%. Default mode baseline = 72K tok/s. Verdict: no-ship; max-autotune needs static shapes, which doc-mask packing does not have.",
+   "measured": "2026-08-31",
+   "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
+   "config": {
+    "mix": "mix_scale_0.2b",
+    "seq": 4096,
+    "fp8": true,
+    "cards": 7,
+    "compile": "max-autotune",
+    "baseline": "default compile = 72K tok/s",
+    "result": "1K tok/s MFU 0%, never reached steady state, killed"
+   },
+   "uncertainty": "single 50-step attempt per arm; pair2 killed before completion, verdict is qualitative (never converged)",
+   "status": "measured"
   }
  ]
 }
