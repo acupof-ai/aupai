@@ -158,7 +158,9 @@ def write_manifest_index(root=ROOT):
         sha = sha_index(root, p)
         if sha:
             lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}")
-    with open(MANIFEST, "w", encoding="utf-8") as f:
+    out = os.path.join(root, "data", "pod_head_manifest.txt")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
 
@@ -305,6 +307,33 @@ def selftest():
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest3.items()))
     ok_train2, _ = check_pod(d, scope="training")
     assert not ok_train2, "training-scope drift must fail --scope training"
+
+    # GIT_INDEX_FILE: `git commit B` with A also staged sets GIT_INDEX_FILE to a
+    # temp index holding only B. write_manifest_index must read THAT index, so the
+    # committed manifest names B and not A. (2026-08-31: the hook regenerated from
+    # the shared index and swept another session's staged paths into the manifest.)
+    import tempfile
+    g = tempfile.mkdtemp()
+    subprocess.run(["git", "init"], cwd=g, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=g, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=g, capture_output=True)
+    open(os.path.join(g, "b.py"), "w").write("# b\n")
+    subprocess.run(["git", "add", "b.py"], cwd=g, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=g, capture_output=True)
+    open(os.path.join(g, "a.py"), "w").write("# a: staged in shared index, not in this commit\n")
+    subprocess.run(["git", "add", "a.py"], cwd=g, capture_output=True)
+    tmp_index = os.path.join(g, ".git", "commit-index")
+    env = dict(os.environ, GIT_INDEX_FILE=tmp_index)
+    subprocess.run(["git", "read-tree", "HEAD"], cwd=g, env=env, capture_output=True, check=True)
+    # git runs the hook with GIT_INDEX_FILE set in the environment, not as a flag.
+    os.environ["GIT_INDEX_FILE"] = tmp_index
+    try:
+        write_manifest_index(g)
+    finally:
+        os.environ.pop("GIT_INDEX_FILE", None)
+    m = read_manifest(os.path.join(g, "data", "pod_head_manifest.txt"))
+    assert "a.py" not in m, "manifest named a.py, absent from the commit's index"
+    assert "b.py" in m, "manifest dropped b.py, present in the commit's index"
     print("pod_drift selftest OK:", evidence)
 
 
