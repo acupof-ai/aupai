@@ -5010,12 +5010,22 @@ def cmd_install_hooks(rest):
     if not os.path.exists(hook_src):
         print(f"hook source missing: {hook_src}")
         return 1
+    # The common dir: in a linked worktree .git is a FILE, and the common dir's
+    # hooks/ is what git consults -- installing there covers every worktree once.
+    common = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"], cwd=ROOT,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if not common:
+        print("cannot resolve git common dir (run inside the repo)")
+        return 1
+    hooks_dir = os.path.join(ROOT, common, "hooks") if not os.path.isabs(common) else os.path.join(common, "hooks")
     for name in ("pre-commit", "pre-merge-commit"):
-        hook_dst = os.path.join(ROOT, ".git", "hooks", name)
-        os.makedirs(os.path.dirname(hook_dst), exist_ok=True)
+        hook_dst = os.path.join(hooks_dir, name)
+        os.makedirs(hooks_dir, exist_ok=True)
         if os.path.lexists(hook_dst):
             os.remove(hook_dst)
-        os.symlink(os.path.relpath(hook_src, os.path.dirname(hook_dst)), hook_dst)
+        os.symlink(os.path.relpath(hook_src, hooks_dir), hook_dst)
         print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, ROOT)}")
     return 0
 
