@@ -2459,7 +2459,10 @@ def cmd_task(argv):
     is a session reporting itself complete, which is the one thing the board footer forbids.
     `reopen` keeps the prior evidence and appends the reason; the check accepts the transition.
     """
-    if not os.path.isdir(os.path.join(ROOT, ".git")):
+    # os.path.exists, not isdir: in a linked worktree .git is a FILE pointing at the
+    # common dir, and isdir refused every task command from a worktree (2026-08-31,
+    # the same shape as install-hooks' NotADirectoryError).
+    if not os.path.exists(os.path.join(ROOT, ".git")):
         print("refusing: the register lives in the repo; run this in the tree", file=sys.stderr)
         return 1
     ap = argparse.ArgumentParser(prog="harness task")
