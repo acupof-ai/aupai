@@ -23,9 +23,22 @@ cd "$(dirname "$0")/.."
 # The pushed files themselves must be committed -- pushing uncommitted code is what the
 # drift guard forbids. The rest of the tree may be dirty (another session's work) and is
 # left exactly as it is.
+# They must also be reachable from main: the pod runs main's tree, and a branch-only
+# version pushed there would be rolled back by the next pusher's merge (2026-08-31
+# worktree ruling). Compare the working blob against main's -- commit to your branch,
+# merge, then push.
 for f in "$@"; do
   if [ -n "$(git status --porcelain -- "$f")" ]; then
     echo "refusing: $f has uncommitted changes -- commit or stash it first"
+    exit 1
+  fi
+  want=$(git rev-parse "main:$f" 2>/dev/null)
+  if [ -z "$want" ]; then
+    echo "refusing: $f is not in main -- merge your branch first"
+    exit 1
+  fi
+  if [ "$(git hash-object "$f")" != "$want" ]; then
+    echo "refusing: $f differs from main -- merge your branch first (the pod runs main, not your branch)"
     exit 1
   fi
 done
