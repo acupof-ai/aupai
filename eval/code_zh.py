@@ -130,6 +130,9 @@ def main():
     per_batch = max(1, args.batch // k)
     # pass@1 is the greedy answer; the k samples feed only pass@k and the sampled
     # mean, so pass@k - pass@1 has no sampling noise on the pass@1 side.
+    # restartable: each problem's row is written to the preds file as soon as it is
+    # scored, so an interrupt costs at most one batch of in-flight generations; the
+    # partial file is valid up to its last row.
     n_pass1 = n_passk = n_samp_ok = total = no_fence = 0
     with open(preds_path, "w", encoding="utf-8") as fout:
         for s in range(0, len(rows), per_batch):
