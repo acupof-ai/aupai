@@ -64,6 +64,26 @@ The fallback exp row carries the per-domain exposure distribution — head, midd
 tail — never the mean. A mean hides the shape that decides whether the tail was
 read at all.
 
+## What the cursor records
+
+**As of the step, not the plan.** A checkpoint at step k has read `k x batch x accum`
+rows per rank; the plan-complete counts describe a run that finished. Seeding stage 2
+from the plan-complete figure skips everything between k and the end, and
+`--auto-resume 2` makes a mid-plan checkpoint the expected case. Measured on the real
+shape: at step 8000 of 16281 the honest cursor is ~49% of the plan-complete count.
+
+`build_mix` keeps the per-row domain index for the rank (int8, ~0.5MB at 523,158 rows);
+`save_checkpoint` counts the prefix the step consumed. A run-end save has no step and
+keeps the plan-complete counts, which is correct there.
+
+### Measured truncation
+
+Replaying stage 1 reconstructs 3,646,940 rows against 3,646,944 actually consumed --
+**4 rows short across seven domains**, from `int()` truncation once per domain per
+phase. Recorded rather than rounded away: it bounds what the reconstruction can claim,
+and a future discrepancy larger than single-digit rows is a different fault, not this
+one.
+
 ## Rehearsal before stage 2
 
 Two assertions, the second easy to forget:

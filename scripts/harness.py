@@ -7504,7 +7504,13 @@ def _pin_milestone(watch_dir, run, ckpt, token):
     queued: at save_every 500 the save-to-rotation window is ~22 minutes, so a pin at
     scoring start loses the same race the 3.24B rescore lost (b0, fb, 2026-08-31)."""
     src = os.path.join(watch_dir, ckpt)
-    dst = os.path.join(watch_dir, f"ckpt_{run or 'run'}.milestone_{token}.pt")
+    # The STEP goes in the name. Once the roller deletes ckpt_<run>.pt.step8500 the
+    # pinned copy is the only survivor, and a name carrying only the token cannot say
+    # which step it holds -- the milestone label is nominal (8b) while the checkpoint is
+    # 8500 steps and 7.799B tokens, 2.5% apart (fb, 2026-09-01).
+    m_step = re.search(r"\.step(\d+)$", ckpt)
+    step_part = f"_step{m_step.group(1)}" if m_step else "_final"
+    dst = os.path.join(watch_dir, f"ckpt_{run or 'run'}.milestone_{token}{step_part}.pt")
     if os.path.exists(dst) or not os.path.exists(src):
         return dst if os.path.exists(dst) else None
     try:
