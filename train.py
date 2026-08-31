@@ -463,10 +463,15 @@ def _fp8_mm(a, b, out_dtype, cache_b=False):
     subnormal floor, which needs ~10^5 of spread, not 55x.
     """
     sa = (a.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
-    if cache_b and (sb := _FP8_WSCALE.get(id(b))) is None:
-        sb = _FP8_WSCALE[id(b)] = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
-    elif not cache_b:
+    # Every path binds sb explicitly. The earlier walrus form was correct but left the hit case
+    # binding sb only as a side effect of the condition, so any added elif or reorder made it
+    # unbound -- a NameError rather than a wrong number, but a trap for the next reader (b0).
+    if not cache_b:
         sb = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    elif (cached := _FP8_WSCALE.get(id(b))) is not None:
+        sb = cached
+    else:
+        sb = _FP8_WSCALE[id(b)] = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
     qa = (a / sa).to(torch.float8_e4m3fn)
     qb = (b / sb).to(torch.float8_e4m3fn)
     return torch._scaled_mm(qa.contiguous(), qb.t().contiguous().t(),
