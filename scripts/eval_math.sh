@@ -15,8 +15,13 @@ trap 'rm -rf "$LOGDIR"' EXIT
 EXPECTED=$(wc -l < data/eval/math_test_500.jsonl)
 
 pids=()
+# Shard i maps to the i-th device the CALLER exposed; an unset caller means the
+# physical first N. CUDA_VISIBLE_DEVICES=$i outright would override an outer
+# restriction -- a lane-card launch (CUDA_VISIBLE_DEVICES=7) would land on
+# physical GPU 0, a training-block card.
+IFS=',' read -ra _DEVS <<< "${CUDA_VISIBLE_DEVICES:-}"
 for i in $(seq 0 $((N-1))); do
-  CUDA_VISIBLE_DEVICES=$i python3 eval/math_zh.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
+  CUDA_VISIBLE_DEVICES=${_DEVS[$i]:-$i} python3 eval/math_zh.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
     > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
 done
