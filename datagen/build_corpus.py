@@ -525,11 +525,203 @@ def _run_workers(a, target_chars):
     return _global_pass(a)
 
 
+def _ladder_frozen_domains():
+    """Domain names any mix_scale_*.json freezes. Writing into one is a silent
+    fingerprint break (2026-08-31: ten shards into data/corpus/code/); new corpus
+    goes to a fresh dir. Read from the live mixes so a rename self-heals."""
+    frozen = set()
+    for p in glob.glob(os.path.join(ROOT, "data", "mix_scale_*.json")):
+        try:
+            with open(p) as f:
+                frozen |= set(json.load(f).get("domains", {}).keys())
+        except (OSError, ValueError):
+            continue
+    return frozen
+
+
+def _preflight(a):
+    """Refuse a clean that will waste the run (fb order 2026-08-31). Four gates,
+    each independent and each with a failing-case --selftest:
+      (a) no other live writer holds this domain        unique writer by pgrep
+      (b) output dir exists and is not a ladder-frozen name
+      (c) filter family matches the domain family       the web chain deletes code
+      (d) a 1000-doc sample passes end-to-end           wrong filters for this source
+    SystemExit on the first refusal. Run once, at start, before any fetch or clean."""
+    out = os.path.normpath(os.path.join(OUT_DIR, a.domain) if a.out is None else a.out)
+    base = os.path.basename(out)
+    # (b) not a ladder-frozen name, and the dir exists
+    if base in _ladder_frozen_domains():
+        raise SystemExit(
+            f"REFUSE: {out} is a ladder-frozen domain {base!r}; write new corpus to a fresh dir"
+        )
+    if not a.dry and not os.path.isdir(out):
+        raise SystemExit(f"REFUSE: output dir {out} does not exist; mkdir is the operator's step")
+    # (a) unique writer: another live session's build_corpus already holds this
+    # domain or output. Excluded by process group: the harness launches a job as
+    # its own session, so every process in MY job shares my pgid and is skipped;
+    # another job writing the same domain has a different pgid and is refused.
+    import subprocess as _sp
+
+    my_pgid = str(os.getpgrp())
+    try:
+        lines = _sp.check_output(["ps", "-eo", "pid=,pgid=,args="], text=True).splitlines()
+    except (OSError, _sp.CalledProcessError):
+        lines = []
+    for ln in lines:
+        parts = ln.split(None, 2)
+        if len(parts) != 3:
+            continue
+        pid, pgid, args = parts
+        if pgid == my_pgid:
+            continue  # this job's own processes
+        if "build_corpus.py" in args and (a.domain in args or out in args):
+            raise SystemExit(
+                f"REFUSE: another build_corpus is already writing {a.domain} "
+                f"(pid {pid}, pgid {pgid}):\n  {args[:120]}"
+            )
+    # (c) filter family matches the domain family
+    CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
+    if a.domain in CODE_DOMAINS and a.filters != "light":
+        raise SystemExit(
+            f"REFUSE: domain {a.domain} is code-family; --filters must be light, got {a.filters}"
+        )
+    # (d) a 1000-doc sample passes end-to-end: 0-keep or a single reject reason
+    # dominating the sample means the filter set is wrong for this source. The
+    # existing REJECT_EARLY_AT catches it mid-run at 20k docs; this is the same
+    # check moved to the start on a 1000-doc sample (cheap, no fetch for jsonl).
+    _sample_ok(a, out)
+    return out
+
+
+def _sample_ok(a, out):
+    """Run the filter chain + exact dedup on up to 1000 input docs; refuse if none
+    keep or one reject reason dominates. --global-only samples the already-cleaned
+    w* shards, so it normally passes; the check targets a fresh clean's raw input."""
+    reject = reject_light if a.filters == "light" else reject_reason
+    seen = 0
+    kept = 0
+    reasons = Counter()
+    exact = set()
+    if a.global_only:
+        paths = sorted(glob.glob(os.path.join(out, "w*_*.jsonl")))
+    else:
+        paths = []
+        for spec in a.source:
+            g = spec[6:] if spec.startswith("jsonl:") else spec[8:] if spec.startswith("parquet:") else spec
+            paths += sorted(glob.glob(g)) if ("jsonl:" in spec or "parquet:" in spec) else []
+    for p in paths:
+        for text, _ in iter_jsonl(p):
+            text = SPECIAL_TOKEN.sub("", text).strip()
+            if not text:
+                continue
+            seen += 1
+            why = reject(text)
+            if why is None:
+                k = exact_key(text)
+                if k in exact:
+                    why = "exact_dup"
+                else:
+                    exact.add(k)
+            reasons[why or "kept"] += 1
+            if not why:
+                kept += 1
+            if seen >= 1000:
+                break
+        if seen >= 1000:
+            break
+    if not seen:
+        return  # no input sampled; nothing to judge (a later gate handles empty input)
+    if kept == 0:
+        dom = reasons.most_common(1)
+        raise SystemExit(
+            f"REFUSE: {seen}-doc sample kept 0 (top reject {(dom[0][0], dom[0][1]) if dom else '?'}); "
+            f"filters {a.filters!r} are wrong for this source -- check --filters/--source"
+        )
+    if not a.global_only:
+        top, topn = reasons.most_common(1)[0]
+        if top != "kept" and topn / seen > 0.95:
+            raise SystemExit(
+                f"REFUSE: {seen}-doc sample rejects {topn}/{seen} as {top!r}; "
+                f"filters {a.filters!r} are wrong for this source"
+            )
+
+
+def _selftest_preflight():
+    """Failing-case worlds for the four gates: each must REFUSE. Broken worlds
+    mutate a real artifact (the ladder mix and a live pgrep line), per harness."""
+    import tempfile
+
+    ok = 0
+
+    class A:  # a fake argparse namespace
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    # (b) frozen-name output -> REFUSE
+    frozen = _ladder_frozen_domains()
+    assert frozen, "selftest needs at least one ladder-frozen domain"
+    name = sorted(frozen)[0]
+    try:
+        _preflight(A(domain=name, out=None, filters="light", dry=True, source=["jsonl:/dev/null"], global_only=False))
+        raise AssertionError("(b) frozen output name did not REFUSE")
+    except SystemExit:
+        ok += 1
+    # (c) code-family domain with wrong filters -> REFUSE
+    try:
+        _preflight(A(domain="en_c4", out=None, filters="web", dry=True, source=["jsonl:/dev/null"], global_only=False))
+        raise AssertionError("(c) code-family with web filters did not REFUSE")
+    except SystemExit:
+        ok += 1
+    # (a) a live other-session build_corpus naming a held domain -> REFUSE.
+    # Patch the `ps pid pgid args` probe to return a foreign pgid line (99999).
+    import subprocess as _sp
+
+    real_ck = _sp.check_output
+    src = tempfile.mkdtemp()
+    marker = os.path.join(src, "held_domain")
+    os.makedirs(marker)
+    with open(os.path.join(marker, "x.jsonl"), "w") as fh:
+        fh.write(json.dumps({"content": "x" * 500, "url": "u"}) + "\n")
+    try:
+        held = "held_domain"
+
+        def fake_ck(*a, **k):
+            s = f"12345 99999 python3 datagen/build_corpus.py --domain {held} --out x\n"
+            return s if k.get("text") else s.encode()
+
+        _sp.check_output = fake_ck
+        try:
+            _preflight(A(domain="held_domain", out=None, filters="light", dry=True,
+                         source=[f"jsonl:{os.path.join(marker, 'x.jsonl')}"], global_only=False))
+            raise AssertionError("(a) duplicate writer did not REFUSE")
+        except SystemExit:
+            ok += 1
+    finally:
+        _sp.check_output = real_ck
+        import shutil
+        shutil.rmtree(src, ignore_errors=True)
+    # (d) a source whose 1000-doc sample keeps 0 (all <100 chars under light) -> REFUSE
+    bad = tempfile.mkdtemp()
+    bf = os.path.join(bad, "junk.jsonl")
+    with open(bf, "w") as fh:
+        for _ in range(50):
+            fh.write(json.dumps({"content": "hi" * 5, "url": "u"}) + "\n")  # 10 chars, <100 -> short
+    try:
+        _preflight(A(domain="bad_dom", out=bad, filters="light", dry=True,
+                     source=[f"jsonl:{bf}"], global_only=False))
+        raise AssertionError("(d) 0-kept sample did not REFUSE")
+    except SystemExit:
+        ok += 1
+    shutil.rmtree(bad, ignore_errors=True)
+    print(f"build_corpus preflight selftest OK: {ok}/4 gates refuse on their failing world")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", action="append", required=True, help="fineweb2 | skypile | jsonl:<glob>")
+    ap.add_argument("--source", action="append", default=None, help="fineweb2 | skypile | jsonl:<glob>")
     ap.add_argument("--target_tokens", type=float, default=8e9)
-    ap.add_argument("--domain", required=True, help="a default-mix domain -> data/corpus/<domain>/")
+    ap.add_argument("--domain", default=None, help="a default-mix domain -> data/corpus/<domain>/")
     ap.add_argument("--out", default=None, help="output dir (default data/corpus/<domain>)")
     ap.add_argument(
         "--host_cap",
@@ -575,24 +767,22 @@ def main():
     )
     ap.add_argument("--workers", type=int, default=1, help="parallel clean: N workers over disjoint source-file slices; worker id in the shard prefix; global near-dup+holdout+stamp at the end")
     ap.add_argument("--global-only", action="store_true", help="skip the worker phase; re-run the global pass over existing w*_*.jsonl shards (a killed serial pass leaves them)")
+    ap.add_argument("--selftest", action="store_true", help="run the pre-flight failing-case worlds and exit")
     a = ap.parse_args()
+    if a.selftest:
+        return _selftest_preflight()
+    if not a.source or not a.domain:
+        ap.error("--source and --domain are required (or pass --selftest)")
     a.out = a.out or os.path.join(OUT_DIR, a.domain)
+    # Pre-flight: refuse a clean that will waste the run before any fetch or
+    # worker starts (unique writer, non-frozen existing output dir, filter-family
+    # match, 1000-doc sample). Raises SystemExit on the first failure.
+    _preflight(a)
 
     target_chars = a.target_tokens * CHARS_PER_TOKEN
     reasons, hosts = Counter(), Counter()
     exact, near = set(), MinHashLSH()
     reject = reject_light if a.filters == "light" else reject_reason
-    # (a) refuse at START: a code-family / English-leaning domain run with the
-    # web chain rejects ~100% as not_zh after processing millions of docs (2026-
-    # 08-31, twice, ~1h each) -- the final 0-kept guard is too late. Keyed on
-    # the explicit domain names; a rename creates a new domain and must rejoin.
-    CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
-    if a.domain in CODE_DOMAINS and a.filters != "light":
-        raise SystemExit(
-            f"REFUSE: domain '{a.domain}' is code-family / English-leaning; --filters must be "
-            f"'light' (the web CJK/digit/symbol chain rejects it ~100%). Got --filters "
-            f"'{a.filters}'."
-        )
     for pat in a.exclude:
         n0 = len(exact)
         for path in sorted(glob.glob(pat)):
