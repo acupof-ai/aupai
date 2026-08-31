@@ -121,6 +121,21 @@ activations. That is a stronger parity requirement than the body linears carry.
 
 ### Ship gate, stricter here than for the body linears (fb, 2026-09-01)
 
+**THREE ARMS, not two** (fb, after the pad A/B): baseline, baseline-twin, fp8 — all in the real
+7-card 50-step configuration, from one session. The twin arm measures the noise floor **in the
+exact setting the threshold is judged in**, which two arms cannot do.
+
+Why this is not bureaucracy: the pad A/B's floor came out at 0.094 nat on one card, 110 steps,
+smoke mix. That is larger than the 0.04 nat threshold itself. If the real-config floor is
+similarly placed, a 1-vs-1 fp8 comparison is unreadable for reasons of scale rather than of
+determinism, and no amount of care in running two arms would reveal it. **If the in-config floor
+exceeds 0.04 nat, stop and send the number to b0 for a paired-step form — do not stretch the
+threshold to fit.**
+
+This is the protocol answer to a question I first raised as an alarm about the harness being
+nondeterministic. It was not; the harness reproduces to 0.094 nat. But the floor still has to be
+measured where the gate runs, and a twin arm is how.
+
 This is the loss path, so the standing gate is not sufficient on its own:
 
 | check | bar |
