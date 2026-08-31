@@ -40,6 +40,9 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 # Per-check deadline. A check that hangs blocks the pre-commit hook and trains
 # people to --no-verify; a timed-out check SKIPs and names itself in the output.
 _CHECK_TIMEOUT = 5
+# Checks that legitimately scan more data than the 5s default allows. The
+# template scan reads ~850k text fields on a full-data checkout (27s measured).
+_CHECK_TIMEOUTS = {"eval_sft_template_contamination": 90}
 
 
 class SelftestSkip(Exception):
@@ -1277,6 +1280,161 @@ def _broken_sft_pack_uncontaminated():
         },
         os.path.join(d, "data", "sft", "sft_all.pt"),
     )
+    return d
+
+
+_TEMPLATE_EVAL_FILES = [
+    os.path.join("data", "eval", "code_holdout_500.jsonl"),
+    os.path.join("data", "eval", "code_holdout_v2_500.jsonl"),
+]
+# Every file that fed an SFT pack. Mirrors SOURCES in scripts/census_code_v2.py.
+_TEMPLATE_SFT_SOURCES = [
+    "data/alpaca_gpt4_zh.jsonl",
+    "data/coig.jsonl",
+    "data/openo1_sft.jsonl",
+    "data/gsm8k_zh.jsonl",
+    "data/school_math_r1_zh.jsonl",
+    "data/s1k.jsonl",
+    "data/sft/fable5_cot.jsonl",
+    "data/sft/v5_evol_code_2300.jsonl",
+    "data/synthetic/knowledge_qa_zh.jsonl",
+    "data/synthetic/math_gsm8k_zh.jsonl",
+    "data/synthetic/code_python_zh.jsonl",
+]
+_TEMPLATE_RETIRED = {
+    "code_holdout_500.jsonl": "v1: SFT trained on the same synthetic generator canon (code_python_zh); v2 is the live set",
+}
+_TEMPLATE_BASELINE = os.path.join("data", "eval", "template_contamination_baseline.json")
+_TEMPLATE_TEXT_FIELDS = ("instruction", "output", "prompt", "response", "input", "q", "a")
+
+
+def _template_norm(s):
+    """Family-level key: lowercase, digit runs to #, quoted strings to ", whitespace collapsed.
+
+    Two instances of one generator template with different parameters normalize equal."""
+    s = str(s).lower()
+    s = re.sub(r"\d+(?:st|nd|rd|th)", "#", s)  # ordinals: 17th and 92nd are one parameter
+    s = re.sub(r"\d+", "#", s)
+    s = re.sub(r'"[^"\n]*"|\'[^\'\n]*\'', '"', s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def check_eval_sft_template_contamination(root):
+    """No code eval problem shares a generator template with an SFT source.
+
+    sft_pack_uncontaminated matches verbatim token subsequences. The 2026-08-31
+    code-500 v1 failure sat one level above it: SFT trained on the same synthetic
+    generator, so the model learned the template itself and scored 40% on variants
+    it had never seen. This check normalizes literals away and tests containment of
+    the first 200 normalized chars of each sampled eval problem in every SFT
+    source's text fields.
+
+    Live eval files FAIL on any hit. Retired files ratchet against a per-file
+    baseline: FAIL on increase, WARN when unbaselined hits exist (same shape as
+    sft_pack_uncontaminated)."""
+    file_probes = {}
+    for rel in _TEMPLATE_EVAL_FILES:
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue
+        lines = [l for l in open(p, encoding="utf-8") if l.strip()]
+        step = max(1, len(lines) // 40)
+        needles = []
+        for line in lines[::step][:40]:
+            try:
+                q = json.loads(line)["instruction"]
+            except (json.JSONDecodeError, KeyError):
+                continue
+            n = _template_norm(q)[:200]
+            if len(n) >= 32:
+                needles.append(n)
+        if needles:
+            file_probes[os.path.basename(rel)] = needles
+    if not file_probes:
+        return SKIP, "no eval questions found"
+
+    sources = [s for s in _TEMPLATE_SFT_SOURCES if os.path.isfile(os.path.join(root, s))]
+    if not sources:
+        return SKIP, "no SFT sources present"
+
+    baseline = {}
+    bl_path = os.path.join(root, _TEMPLATE_BASELINE)
+    if os.path.isfile(bl_path):
+        try:
+            with open(bl_path, encoding="utf-8") as f:
+                baseline = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    remaining = {name: set(range(len(v))) for name, v in file_probes.items()}
+    # One alternation regex over all needles: a single C-level scan per field
+    # instead of len(needles) Python-level `in` checks (31 live needles over
+    # hundreds of thousands of source lines otherwise blows the check timeout).
+    all_needles = [n for needles in file_probes.values() for n in needles]
+    pattern = re.compile("|".join(re.escape(n) for n in all_needles))
+    for rel in sources:
+        if not any(remaining.values()):
+            break
+        with open(os.path.join(root, rel), encoding="utf-8") as f:
+            for line in f:
+                if not any(remaining.values()):
+                    break
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                for field in _TEMPLATE_TEXT_FIELDS:
+                    t = d.get(field)
+                    if not isinstance(t, str) or len(t) < 32:
+                        continue
+                    tn = _template_norm(t)
+                    if not pattern.search(tn):
+                        continue
+                    # A field matched: attribute exactly, needle by needle.
+                    # Alternation alone reports one needle per start position,
+                    # so a short needle that prefixes a long one would be lost.
+                    for name, needles in file_probes.items():
+                        for i in [i for i in remaining[name] if needles[i] in tn]:
+                            remaining[name].discard(i)
+
+    worst = PASS
+    parts = []
+    for name, needles in sorted(file_probes.items()):
+        hits = len(needles) - len(remaining[name])
+        n = len(needles)
+        if name in _TEMPLATE_RETIRED:
+            reason = _TEMPLATE_RETIRED[name]
+            base = baseline.get(name)
+            if base is None:
+                if hits and worst == PASS:
+                    worst = WARN
+                parts.append(f"{name}: {hits}/{n} template hits (retired: {reason}; no baseline -- stamp {_TEMPLATE_BASELINE})")
+            elif hits > base:
+                worst = FAIL
+                parts.append(f"{name}: {hits}/{n} template hits > baseline {base} (retired: {reason}; INCREASE = new leakage)")
+            else:
+                parts.append(f"{name}: {hits}/{n} template hits (retired: {reason}; baseline {base})")
+        else:
+            if hits:
+                worst = FAIL
+                parts.append(f"{name}: {hits}/{n} sampled problems share a template with an SFT source (LIVE -- must be 0)")
+            else:
+                parts.append(f"{name}: 0/{n} (live, template-clean)")
+    return worst, "; ".join(parts)
+
+
+def _broken_eval_sft_template_contamination():
+    """An eval problem and an SFT doc from one generator template, different parameters."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w").close()
+    os.makedirs(os.path.join(d, "data", "eval"), exist_ok=True)
+    os.makedirs(os.path.join(d, "data", "sft"), exist_ok=True)
+    with open(os.path.join(d, "data", "eval", "code_holdout_v2_500.jsonl"), "w") as f:
+        f.write(json.dumps({"instruction": "Write a Python function fib(n) that returns the 17th Fibonacci number. Show the full recursive definition with docstring and type hints."}) + "\n")
+    with open(os.path.join(d, "data", "sft", "v5_evol_code_2300.jsonl"), "w") as f:
+        f.write(json.dumps({"instruction": "Write a Python function fib(n) that returns the 92nd Fibonacci number. Show the full recursive definition with docstring and type hints.", "output": "def fib(n): ..."}) + "\n")
     return d
 
 
@@ -3273,6 +3431,13 @@ CHECKS = [
         _broken_sft_pack_uncontaminated,
     ),
     (
+        "eval_sft_template_contamination",
+        "no code eval problem shares a generator template with an SFT source",
+        "verbatim matching misses the family level: SFT on the same synthetic generator teaches the template itself, which made code-500 v1 useless",
+        check_eval_sft_template_contamination,
+        _broken_eval_sft_template_contamination,
+    ),
+    (
         "restartability",
         "no NEW script accumulates in a loop and writes only at the end",
         "a two-hour scoring job wrote once at the end; killed at 50% it lost 100% of the work",
@@ -3511,10 +3676,10 @@ def run_checks(root=ROOT, quiet=False):
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
         try:
-            signal.alarm(_CHECK_TIMEOUT)
+            signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUT}s"
+            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)}s"
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
