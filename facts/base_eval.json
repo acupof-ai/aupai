@@ -689,6 +689,35 @@
    },
    "uncertainty": "single run, greedy; the 0.2pt present-rate difference from the retracted value is one problem",
    "status": "measured"
+  },
+  {
+   "id": "be.adjacent_checkpoint_jitter",
+   "value": "Two checkpoints from the SAME run at the same seed and config, scored on the same stage-1 heads under the milestone profile: step16000 and the run-end save (ckpt_pretrain_15b_s1.pt, no step suffix). Per-role domain loss moves 0.005-0.027 nat. C-Eval moves 22.5 -> 25.4, i.e. 2.9 pt. code_500 degeneration moves 0.522 -> 0.628, i.e. 10.6 pt. So at fixed seed a generative or MC metric's checkpoint-to-checkpoint jitter is far larger than its seed-to-seed variance, while per-role domain loss is stable to within a fifth of its own threshold.\n\nTHE ASYMMETRY IS THE FINDING. Loss is stable and the generative metrics are not, over a gap small enough that no real capability change is plausible. Anything read off ceval or a degeneration rate between two nearby checkpoints is mostly which checkpoint you took.\n\nWHAT IT IMPLIES FOR THE CEVAL GATE, recorded here as an observation and referred to 44 as a prereg amendment rather than applied: the pre-registered threshold is 5.9 pt = 4.65 x seed SD 1.27 (be.panel_expressive_seed_variance). Adjacent-checkpoint jitter of 2.9 pt is 2.3x that seed SD, so the threshold rests on the smaller of two independent noise terms. No verdict recorded on 2026-08-31/09-01 changes: every ceval reading was floor, and a larger threshold only makes floor more certain -- including the 25.4, which read as the first move out of the 22-23 band and sits inside this jitter. The live consequence is forward-looking: a future ceval move between roughly 6 and 13 pt would be unsafe to call on the 5.9 figure. The 5.9 stays the record of what was pre-registered.\n\nStage-1 ceval series: 22.4 (p324) / 22.8 (step3500) / 22.3 (step8500) / 22.5 (step16000) / 25.4 (run-end).",
+   "measured": "2026-09-01",
+   "source": "runs/score_matrix.jsonl rows ckpt_pretrain_15b_s1.pt.step16000 and ckpt_pretrain_15b_s1.pt, both profile=milestone (synced from the pod at 8b3970d)",
+   "config": {
+    "same_run": true,
+    "same_seed": true,
+    "profile": "milestone",
+    "heads": "stage-1 (7 roles)",
+    "gap": "281 steps, LOG-ATTRIBUTED: the run log's last step line is 16280/16281 and the run-end save follows the loop exit; the final checkpoint records step: None, so the gap is not readable from the artifact",
+    "per_role_delta_nat": "0.005-0.027",
+    "per_role_threshold_nat": 0.1176,
+    "ceval_pt": {
+     "step16000": 22.5,
+     "run_end": 25.4,
+     "delta": 2.9,
+     "seed_sd": 1.27,
+     "prereg_threshold": 5.9
+    },
+    "code_500_degeneration": {
+     "step16000": 0.522,
+     "run_end": 0.628
+    }
+   },
+   "uncertainty": "n=1: one adjacent pair at one gap size. 2.9 pt is a single observed difference, not an estimate with df, and jitter may scale with the gap rather than being constant. The gap itself is log-attributed rather than read from the checkpoint. Re-specifying the ceval gate needs several pairs, which end-of-run checkpoints make cheap.",
+   "boundary": "Per-role domain loss is NOT implicated: 0.005-0.027 nat is 4-20x below its own 0.1176 threshold, so the 8B->15B per-role verdicts sit far outside this band. The finding is about generative and MC metrics only.",
+   "status": "recorded"
   }
  ]
 }
