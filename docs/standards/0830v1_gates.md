@@ -435,7 +435,7 @@ appearance of having been checked. Both guards below close that gap.
   who measures what and which reading counts, not an estimate.
 - No kernel proposal without a `torch.compile` baseline, **and the baseline must carry
   evidence that compilation took effect.** `compile=True` and a silently-eager model are
-  indistinguishable from the outside: `profile_step.py` omitted `cache_size_limit`, dynamo
+  indistinguishable from the outside: `probes/profile_step.py` omitted `cache_size_limit`, dynamo
   fell back to eager past the 9th of AttnRes's 25 sources, the header printed
   `compile True`, and the profiled model ran 36% slow with every elementwise row inflated
   threefold. Evidence means zero recompile-limit warnings or a recorded limit. The
@@ -514,7 +514,7 @@ appearance of having been checked. Both guards below close that gap.
   disagrees** — disagreement starts an investigation, agreement ends one. Two instances
   today: `ds.mde_recomputed_from_measured_sigma` at 0.1021 (two-sided detection, normal
   approximation) sitting next to §7's δ_res at 0.104 (one-sided non-inferiority, t-form),
-  which answer different questions and match by coincidence; and `profile_step.py`
+  which answer different questions and match by coincidence; and `probes/profile_step.py`
   printing `compile True` over a half-eager model.
 - **When the upper bound on the benefit is below the lower bound on the cost, the
   experiment is redundant — decline it in arithmetic, not on a card.** Three retirements

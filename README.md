@@ -76,4 +76,4 @@ pre-registered 30B readout is `docs/lessons/readout_30b_prereg.md` (`scripts/rea
 BPE splits numbers by frequency (1640 → `16|40`). `--fone` gives each number one `[NUM]`
 token with a Fourier-encoded value and decodes digits ten-way. The flag changes the data
 format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees
-with the pack refuses. `scripts/fone_digit_acc.py --ckpt X` scores the digit head.
+with the pack refuses. `probes/fone_digit_acc.py --ckpt X` scores the digit head.

@@ -58,7 +58,7 @@ CUDA_VISIBLE_DEVICES=0 python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK
 #    the always-0 and copy-previous baselines.
 if [ "$IS_FONE" = "True" ]; then
   say "--- FoNE digit head"
-  CUDA_VISIBLE_DEVICES=0 python3 scripts/fone_digit_acc.py --ckpt "$CKPT" --domain math \
+  CUDA_VISIBLE_DEVICES=0 python3 probes/fone_digit_acc.py --ckpt "$CKPT" --domain math \
     2>&1 | tee -a "$LOG" | tail -4 || say "  FAILED"
 fi
 

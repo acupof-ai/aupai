@@ -272,7 +272,7 @@
    "measured": "2026-08-30",
    "source": "kernel trace of the real model, tileRL-bench-harness-plan session",
    "config": {
-    "compile_verified": "AttnRes really compiled: scripts/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after scripts/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
+    "compile_verified": "AttnRes really compiled: probes/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after probes/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
     "gpu": "NVIDIA H20, single GPU, no DDP",
     "batch": 16,
     "seq": 4096,
@@ -290,7 +290,7 @@
     "iters": "3 warmup + 3 measured",
     "step_ms": 982.65,
     "peaks": "HBM 4.0 TB/s; bf16 148 TFLOPS; fp8 296 TFLOPS",
-    "script": "scripts/attn_res_cpu_gap.py, scripts/lm_head_gemm.py"
+    "script": "probes/attn_res_cpu_gap.py, probes/lm_head_gemm.py"
    },
    "uncertainty": "GEMM FLOP counts are exact; every GB/s figure is an analytic estimate from tensor shapes, not a measured byte count. Do not read the two as equally reliable. CORRECTION 2026-08-30: the KDA row's 0.31 TB/s was 3.7x too low; ncu measures 14.79 GB in 12.77 ms = 1.16 TB/s (29% of peak). It was flagged est and it deserved to be.",
    "boundary": "single GPU, no DDP, and vocab is pre-padding (32773). The LM head row collapses from 216.1 to ~96.9 ms once vocab is padded, which changes every other row's percentage. The AttnRes row is a DELTA against the plain-residual path, not that operator's standalone cost.",
@@ -302,7 +302,7 @@
    "claim": "padding vocab from 32773 to a multiple of 8 more than doubles LM head GEMM throughput",
    "value": "vocab 32773: 215.6 ms/step, 61.2 TFLOPS, 41% of bf16 peak, cutlass_75_tensorop_bf16_s1688gemm_128x128_align1. vocab 32776/32784/32832: ~96.8 ms/step, ~136 TFLOPS, 92% of peak, nvjet_tst kernels. End-to-end single GPU: plain residual 846.7 -> 731.1 ms (+15.8% throughput); AttnRes Full 980.8 -> 861.1 ms (+13.9%).",
    "measured": "2026-08-30",
-   "source": "scripts/lm_head_gemm.py plus end-to-end A/B in the same session",
+   "source": "probes/lm_head_gemm.py plus end-to-end A/B in the same session",
    "config": {
     "gpu": "NVIDIA H20, single GPU, no DDP",
     "batch": 16,
@@ -321,7 +321,7 @@
     "iters": "3 warmup + 3 measured",
     "step_ms": 982.65,
     "peaks": "HBM 4.0 TB/s; bf16 148 TFLOPS; fp8 296 TFLOPS",
-    "script": "scripts/attn_res_cpu_gap.py, scripts/lm_head_gemm.py",
+    "script": "probes/attn_res_cpu_gap.py, probes/lm_head_gemm.py",
     "note": "microbenchmark predicted 215.6 ms, the real model measured 216.07 ms"
    },
    "uncertainty": "single GPU; the DDP figure is unmeasured. Padding adds 3 logit columns (ids 32773-32775) that never appear as targets but do enter the softmax denominator and need masking at sampling time. CALIBER: this row is a model-internal trace (216 -> ~97 ms/step). A separate CUDA-event microbenchmark of the bare GEMM on another card reports 184.5 -> ~104 ms/step. The two differ by ~17% in absolute time and agree on the ratio (1.77-1.78x). They are two different quantities -- bare GEMM vs the same GEMM inside the model -- not a disagreement, and were deliberately not reconciled further: nothing depends on the absolute value.",
@@ -387,7 +387,7 @@
    "measured": "2026-08-30",
    "source": "kernel-name grouping of the full trace; supersedes the 17.2% 'remainder' row in eff.roofline_per_operator_prepad",
    "config": {
-    "compile_verified": "AttnRes really compiled: scripts/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after scripts/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
+    "compile_verified": "AttnRes really compiled: probes/attn_res_cpu_gap.py:115 sets recompile_limit=64 (25 sources need 25) and the trace carries no recompile-limit warning. Checked 2026-08-30 after probes/profile_step.py was found doing the opposite -- default limit 8, silent eager fallback past the 9th source, header still printing compile True, 36% slower step (fixed in b994fc9). Corroborated by shape: 3427 launches/step and 10.5% pointwise here, versus 5973 elementwise launches alone and 47.7% pointwise on a partially-eager run.",
     "gpu": "NVIDIA H20, single GPU, no DDP",
     "batch": 16,
     "seq": 4096,
@@ -557,7 +557,7 @@
    "claim": "GPU4 sustained bf16 GEMM throughput vs GPU0",
    "value": "GPU4 137.0 TFLOPS, GPU0 137.3 TFLOPS — identical, no hardware throttling",
    "measured": "2026-08-30",
-   "source": "bench_gpu_probe.py, 8192^3 bf16 GEMM, 30 iters",
+   "source": "probes/bench_gpu_probe.py, 8192^3 bf16 GEMM, 30 iters",
    "config": {
     "gpu4_tflops": 137.0,
     "gpu0_tflops": 137.3,
@@ -574,7 +574,7 @@
    "claim": "vocab 32776 (cuBLAS aligned) is numerically neutral vs 32773 in training",
    "value": "per-step loss delta <= 0.0046 across 10 steps (loss ~8-10), no growth, no sign bias; step-0 delta 1e-4",
    "measured": "2026-08-30",
-   "source": "scripts/ab_vocab_loss.py on GPU0, pod; runs/ab_vocab.log",
+   "source": "probes/ab_vocab_loss.py on GPU0, pod; runs/ab_vocab.log",
    "config": {
     "mix": "data/mix_sample.json",
     "batch": 4,
@@ -595,7 +595,7 @@
    "claim": "fla chunk_kda chunk_size 32 is numerically neutral vs the default 64 in training",
    "value": "per-step loss delta <= 0.0017 across 10 steps (loss ~8-10), no growth, sign-oscillating; step-0 delta 0.0000",
    "measured": "2026-08-30",
-   "source": "scripts/ab_vocab_loss.py AB_AXIS=chunk on GPU0, pod; runs/ab_chunk.log",
+   "source": "probes/ab_vocab_loss.py AB_AXIS=chunk on GPU0, pod; runs/ab_chunk.log",
    "config": {
     "mix": "data/mix_sample.json",
     "batch": 4,
@@ -834,7 +834,7 @@
    "claim": "the fp8 quantize overhead is a second, transposed cast per tensor, and no torchao config removes it at a profit",
    "value": "torchao 0.17.0 casts input, weight and grad_output TWICE per step -- once per GEMM, in two different layouts. The second is the transposed one, and it is 59% of the fp8 overhead (71.08 of 120.12 ms at batch 32; the four largest kernels in the group all carry _t_ in their inductor names). Float8LinearConfig exposes six cast configs for exactly this, and ROWWISE_WITH_GW_HP is the one recipe that removes two of them: it sets cast_config_input_for_grad_weight and cast_config_grad_output_for_grad_weight to ScalingType.DISABLED, so grad_weight runs in bf16 and its transposed fp8 casts never happen. REJECTED on arithmetic: the three GEMMs have identical FLOPs (all MKN), so moving grad_weight from fp8 to bf16 costs about a third of the 247.25 ms fp8 GEMM row at half throughput, roughly +82 ms, while the entire fp8 quantize row is only 60.93 ms. Even removing ALL of the quantize overhead loses. Separately it scales AXISWISE, which is what makes stock `rowwise` raise 'aten.clone.default with axiswise scaling is not supported yet' under compile on the AttnRes .chunk() path, so it is very likely unrunnable here as well.",
    "measured": "2026-08-30",
-   "source": "torchao/float8/config.py:353-379 and float8_linear.py:95-150 read directly; kernel split from scripts/profile_step.py on GPU 0",
+   "source": "torchao/float8/config.py:353-379 and float8_linear.py:95-150 read directly; kernel split from probes/profile_step.py on GPU 0",
    "config": {
     "torchao": "0.17.0+cu129",
     "recipe_in_use": "e4m3_tensorwise (train.py:402, a custom config, not a stock recipe)",
@@ -878,7 +878,7 @@
    "value": "--fp8 casts the whole model to bf16 before training (train.py:1626) and run_ddp.sh always passes --fp8, so there are no fp32 master weights: the optimizers hold bf16 parameters, their state is bf16, and every step() rounds the result back to bf16. Fraction of parameter ELEMENTS whose bf16 bit pattern is unchanged across optimizer.step(), by lr_scale: 1.0 -> 32.00%, 0.5 -> 48.38%, 0.2 -> 71.56%, 0.1 -> 84.19%, 0.05 -> 91.29%, 0.01 -> 98.26%. The schedule's own floor is final_lr_frac=0.05 with warmdown=0.65, so a run spends its last 65% of steps decaying into the regime where 91.3% of updates are discarded. bfloat16 carries 8 mantissa bits, so an update below ~2^-9 of a parameter's magnitude cannot change its bit pattern: it is computed, applied, and dropped with nothing raising. A stalled parameter is indistinguishable from a converged one on the loss curve, which is why this needed a bit-level count rather than a loss reading.",
    "unit": "percent of parameter elements unchanged per optimizer step",
    "measured": "2026-08-30",
-   "source": "E2E_GPU=6 python scripts/bf16_update_loss.py --ckpt ckpt_p324.pt --steps 6 --batch 4; runs/bf16_update_loss.log and runs/bf16_update_loss2.log",
+   "source": "E2E_GPU=6 python probes/bf16_update_loss.py --ckpt ckpt_p324.pt --steps 6 --batch 4; runs/bf16_update_loss.log and runs/bf16_update_loss2.log",
    "config": {
     "ckpt": "ckpt_p324.pt (all 176 tensors bfloat16; no optimizer state saved)",
     "data": "data/sft/sft_all.pt, real tokens and real gradients",

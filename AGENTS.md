@@ -206,7 +206,7 @@ One distinction decides the mix weight: **anchored rephrasing** vs **from-scratc
 
 ### Numbers — `--fone`
 
-BPE splits numbers by frequency, not place value (1640 → `16|40`). FoNE gives each number one `[NUM]` token carrying a Fourier value, scored ten-way per digit. `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees with the pack raises. `scripts/fone_digit_acc.py --ckpt X` scores the digit head. Failure mode: multiple answer formats on identical prompts leave termination underdetermined — one format per prompt.
+BPE splits numbers by frequency, not place value (1640 → `16|40`). FoNE gives each number one `[NUM]` token carrying a Fourier value, scored ten-way per digit. `--fone` changes the data format everywhere: pack with `prepare_sft_math.py --fone`; a checkpoint whose flag disagrees with the pack raises. `probes/fone_digit_acc.py --ckpt X` scores the digit head. Failure mode: multiple answer formats on identical prompts leave termination underdetermined — one format per prompt.
 
 ### Vocabulary identity
 

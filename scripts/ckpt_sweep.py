@@ -1,7 +1,7 @@
 """Selective activation recompute: (peak memory, step time) for a few module combinations.
 
 The full-model grad_ckpt is 25% slower; not checkpointing at all OOMs at batch 32. This sweeps
-the middle: wrap only the modules that actually hold the activations, per scripts/mem_account.py
+the middle: wrap only the modules that actually hold the activations, per probes/mem_account.py
 (DeltaRecurrence 30.2%, SwiGLU 26.7%, RMSNorm 11.1% of saved bytes).
 
 Each combination is printed as it finishes, so a run killed partway still leaves usable rows.
