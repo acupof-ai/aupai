@@ -6422,7 +6422,10 @@ def cmd_milestone(argv):
                 for l in open(ms, encoding="utf-8"):
                     if l.strip():
                         r = json.loads(l)
-                        if r.get("milestone"):
+                        # is not None, not truthiness: light-profile rows carry
+                        # milestone=null and must be skipped, but a token of "" or 0
+                        # would be skipped too -- the --seed 0 class (tilerl, t58).
+                        if r.get("milestone") is not None:
                             scored[r["milestone"]] = r["ckpt"]
             saved = {}
             for p in glob.glob(os.path.join(a.watch, f"ckpt_{a.run}.pt.step*")):

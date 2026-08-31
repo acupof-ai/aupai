@@ -756,6 +756,32 @@
    },
    "uncertainty": "Single reader. PL classifier mislabeled PHP files (the `use`/`class` regexes matched python/rust patterns) -- labels were corrected by hand in the tally, counts above use corrected labels. Six kept docs are real-but-trivial (thin interfaces, 6-line exception class, one-assertion test); a stricter rubric would put keep rate at ~34/50 = 68%. Sample is shard-head, not uniform over docs (defensible because shards are shuffled). 80% keepable is a description of this 197-shard stage-1 subset; the 39 rest shards were not in the sample frame.",
    "status": "measured"
+  },
+  {
+   "id": "dq.near_dedup_literature",
+   "value": "Five-source survey for the stage-2 MinHash hard gate. Lee 2021 (C4 360M docs): word 5-gram, Jaccard 0.8 + edit-sim 0.8, removed 3.04% C4 / 13.63% RealNews / 0.39% Wiki-40B, memorization ~10x lower, PPL equal or better. FineWeb (15T tok): word 5-gram, Jaccard 0.75, removed 44% per-snapshot (36T to 20T tokens), global iterative up to 90% rejected. Dolma (3T tok): exact URL/doc/paragraph, removed 53.2%/14.9%/18.7%; code (the Stack) MinHash settings unreported. SemDeDup: embedding cosine eps 0.03, up to 37% removed at no perf drop. D4 (600M docs): MinHash shingle/threshold unreported. Adoption rule outcome: only one <=1B source reports a Jaccard threshold (Lee 0.8); FineWeb 0.75 is 15T-scale; condition not met, stricter is 0.75, but calibration (dq.near_dedup_gate_calibration) shows neither catches the observed class.",
+   "measured": "2026-08-31",
+   "source": "arXiv:2107.06499, 2406.17557, 2402.00159, 2303.09540, 2308.12284; docs/lessons/near_dedup_gate.md",
+   "config": {
+    "survey": "Lee/FineWeb/Dolma/SemDeDup/D4",
+    "extraction": "full-text HTML, exact quotes"
+   },
+   "uncertainty": "FineWeb/D4 removal rates conflate dedup with other pipeline stages; Dolma code settings unreported",
+   "status": "recorded"
+  },
+  {
+   "id": "dq.near_dedup_gate_calibration",
+   "value": "Calibrated on the 50-doc t24 hand-read sample (2 template clusters, 6-8 docs: Yii CRUD {3,24,30,38}, Java POJO {5,7,19,35}). Literature standard (raw word 5-gram, J 0.75-0.8) catches 0/8: Yii tops out at raw J 0.181, POJO under 0.01. Chosen gate: normalize (comments/strings/numbers/identifiers stripped, 70-word keyword stoplist), 3-word shingles, Jaccard >= 0.5, union-find, keep one per cluster. Catches 5/8 cluster docs {5,7,19,30,38} with 0 false pairs among the other 42 (nearest false pair 0.462, python-rust boilerplate). Implied removed fraction 5/50 = 10% (Wilson 95% CI 3.4-21%); the sample is language-stratified (PHP 32%) so the corpus-wide fraction is measured by 3b at re-stamp. Misses the most divergent cluster members (docs 24, 35). Normalized containment (threshold 0.77) catches the same 5 with a thinner margin (0.778 vs 0.739).",
+   "measured": "2026-08-31",
+   "source": "data/corpus/sample/code_rp1t_handread50.jsonl; docs/lessons/near_dedup_gate.md",
+   "config": {
+    "sample": "t24 stratified 50 docs",
+    "shingle": "3-word, normalized",
+    "threshold": "Jaccard 0.5",
+    "cluster_membership": "post-hoc reconstruction, 8 candidates vs hand-read tally 6"
+   },
+   "uncertainty": "n=50, Wilson CI 3.4-21%; cluster membership reconstructed post-hoc; corpus-wide fraction unmeasured",
+   "status": "recorded"
   }
  ]
 }
