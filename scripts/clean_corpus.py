@@ -32,6 +32,7 @@ DOMAIN_SOURCE = {
     "web_hq": "fineweb2",
     "cci3": "cci3_hq",
     "en": "fineweb2",  # a real-English slice replaces the cosmopedia-mislabeled en; source to be set
+    "code": "rp1t_github",  # 30B code-raw cell: RedPajama-1T github (fetch t21)
 }
 
 
