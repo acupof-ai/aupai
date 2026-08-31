@@ -65,6 +65,31 @@ correctness questions, which I can now answer partly:
 **3. Raise `recompile_limit`.** Does not work: the distribution is unbounded, so any finite limit
 is eventually exceeded. It moves the recurrence later, not away.
 
+## The specialisation has no downstream consumer (b0, verified here)
+
+I argued option 1 from "the break exists today, I am only relocating it", and flagged that as
+insufficient. b0 supplied the sufficient version and it checks out on the pod.
+
+Flash's own `compile_key` (`interface.py:678-702`) contains **zero** references to `batch_size`.
+It keys on `dtype`, `head_dim`, `head_dim_v`, `qhead_per_kvhead`, `causal`, the score/mask mod
+hashes, sparsity flags, and a run of `x is None` / `x is not None` **presence booleans** —
+including `cu_seqlens_q is None` and `cu_seqlens_k is None`, which are booleans, not shapes.
+
+So the document count cannot change which kernel is compiled or selected. Dynamo's
+specialisation on `batch_size` buys nothing: there is no selection or fusion decision downstream
+that depends on it.
+
+That closes the second failure mode I could not settle. Making the wrapper opaque cannot cost
+fusion across a boundary that has no math on the far side: `:406`'s `if not is_fake_mode()` is a
+host-side branch, `:463`'s `if seqlen_k == 0 or total_q == 0` is an early-exit doing `out.zero_()`,
+and both sit **before** any kernel launch. The traced region is argument validation and
+allocation.
+
+`.unique()` also confirms the padding contraindication structurally rather than by convention:
+`doc_cu_seqlens` ends with `torch.cat([rows, starts, end]).unique()`, and `.unique()` returns
+sorted distinct values, so a duplicated offset **cannot survive it by construction**. Padding by
+appending repeated final offsets is exactly what that line removes.
+
 ## Recommendation
 
 **Test option 1 before designing option 2 further.** It is one line, has no numerics or segment
@@ -81,7 +106,18 @@ while moving both trace numbers.
 
 ## What this does not establish
 
-Whether `_dynamo.disable()` at that call site actually removes the guard, whether the extra graph
-break costs more than the 3.28% it saves, and whether flash varlen tolerates zero-length
-segments. All three are measurements, none has been made. The 3.28% also caps the whole prize:
-even a perfect fix sits at the edge of the 3% ship gate.
+Whether `_dynamo.disable()` at that call site actually removes the guard, and whether it turns
+the current partial break into one that forces a **host sync** — b0's residual worry, and the
+right one now that the fusion question is closed. A host sync would appear as a NEW gap
+elsewhere in the trace, so the same gap-count measurement catches it: seam count 8 → 8 with the
+ms collapsing is a win, a new gap appearing elsewhere means the cost moved rather than went away.
+
+Whether flash varlen tolerates a zero-length segment mid-batch is **deliberately unanswered**.
+It only matters if padding is on the table and it is not, rejected on two independent grounds.
+`num_splits_heuristic`'s `total_mblocks == 0` guard and the `:463` early-exit concern an empty
+*batch*, not a zero-length segment inside one, so they are evidence for neither side. Recording
+the question as open rather than spending lane time on a fix we reject. The 3.28% also caps the whole prize: even a perfect fix sits at the edge of the 3% ship gate.
+**And the measurement is one 20-step window** — b0's point, and it changes the protocol: 54.9 ms
+against a 1676.63 ms span from a single trace, thin enough against a 3% gate that window-to-window
+variance could put the lever under it on a re-measure. So the before-number must come from the
+SAME trace as the after-number, not from the recorded fact.
