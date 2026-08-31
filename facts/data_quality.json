@@ -742,7 +742,7 @@
   },
   {
    "id": "dq.code_rp1t_handread_50",
-   "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each.",
+   "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each. Near-dup rate 6/50 = 12% (Wilson 95% CI ~5-24% at n=50) -- this is the number that makes stage 2's parallel MinHash re-stamp non-optional. The stage-1 run trains on the set as is.",
    "measured": "2026-08-31",
    "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
    "config": {
