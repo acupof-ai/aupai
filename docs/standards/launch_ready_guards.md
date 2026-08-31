@@ -303,4 +303,39 @@ with byte-identical `--dry` output.
 `harness.py` sends SIGTERM to `proc.pid`, which is `bash run_ddp.sh`; `run_ddp.sh:5`
 calls torchrun without `exec` and installs no trap. Reproduced locally: bash exits −15
 and the child survives. When the startup gate fires, the exp row records a kill, no
-monitor is armed, and seven cards stay occupied by an orphan. Fix is `exec torchrun`.
+monitor is armed, and seven cards stay occupied by an orphan.
+
+Two fixes suggest themselves and **both are wrong**. `exec torchrun` is unavailable
+because `run_ddp.sh` scores after torchrun returns, and exec would discard that. A TERM
+trap does not help either: bash defers traps while blocked on a foreground child, so the
+handler never runs. Verified — with a trap installed, bash does not even exit, and the
+child outlives the signal:
+
+```
+bash rc: None
+child 26135 alive after TERM+trap: True
+```
+
+The shipping fix is background-and-wait with a group kill, verified against a real
+torchrun process tree rather than a sleep (tilerl, d87feb4;
+facts/efficiency.json#eff.wrapper_orphans_torchrun).
+
+This one is itself an instance of the class. `exec` and `trap` are both checks on the
+wrong property — they assume the signal reaches the process holding the GPUs, and what
+actually determines that is the process-group topology, not the wrapper's syntax.
+
+## Sequencing
+
+The window is between stages. Order by whether the fix prevents a wrong number or an
+idle block.
+
+| order | fix | owner | why here |
+|---|---|---|---|
+| 1 | background-and-wait + group kill in run_ddp.sh | tilerl | today a gate miss leaves seven cards held by an orphan the ledger calls dead |
+| 2 | G0: READY consumes the contract; stamp read as 16 hex | tilerl | reproduced; the gate is currently weaker than the runtime it gates |
+| 3 | seed in the token-cache name | de | one line, the `--fone` pattern, closes a silent-wrong-data class |
+| 4 | G2: pod manifest checked against the committed one | de | changes what "pod drift green" is allowed to mean |
+| 5 | G1 `.tokfp` sidecar; G3 env baseline | de | larger, and neither is currently red |
+
+Rows 3 and 4 ship with the `is not None` flag fix and the `used[]` persistence, since all
+four touch train.py and harness and share the same between-stages constraint.
