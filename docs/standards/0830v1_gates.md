@@ -977,6 +977,20 @@ A review reports what it *ran*, not what it read.
   apart). Rule: **a config flag that a code path can ignore must assert, not degrade** —
   `assert not (Cfg.doc_mask and not HAS_FA)` at startup, beside the shape audit. Any
   boolean that gates behaviour in one place and is checked in another is this bug waiting.
+  **Landed 2026-08-31, and the assertion's premise changed with it.** The fallback now
+  builds the block-diagonal causal mask from `cu` (`bucketize` over `cu[1:]`, `fcc6cb3`),
+  so a missing package can no longer switch a frozen key off; it is checked against the
+  per-document gold standard, against plain causal (the test can fail), and for
+  cross-document leakage in `test_arch_compat.py`. It is a correctness floor, not a
+  training path: fwd 624 ms / fwd+bwd 1451 ms at B=2, T=4096, H=8 bf16 on an H20, against
+  0.5 ms warm for flash-attn 4 varlen at the same shape. The startup assertion therefore
+  refuses `not HAS_FA` on a GPU for being ~20× slower, not for being wrong, and
+  `--allow_slow_attn` is the explicit override; `--no_doc_mask` is gone. Speed comes from
+  `flash_attn.cute` (flash-attn 4, `32fd9a7`), called by keyword because its fourth
+  positional is `qv`, not `cu_seqlens_q`. Rule kept: **correctness must never depend on
+  which package is installed; only speed may.** Open at the time of writing: the GPU
+  flash-vs-fallback check has no B-property, no proof that the flash branch ran (a
+  max-diff of 0.0000 is also what two fallback calls print), and only a one-tile shape.
 - **`check=True` is the wrong guard on a network fetch.** The 28GB code fetch died 12h22m
   before anyone noticed, on `subprocess.run(curl, check=True)` meeting curl exit 92 — a
   transient HTTP/2 stream error after curl's own six retries. A transient non-zero from a
