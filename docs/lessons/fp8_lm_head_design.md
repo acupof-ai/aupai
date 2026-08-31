@@ -110,7 +110,10 @@ activations. That is a stronger parity requirement than the body linears carry.
    spread that decides the question is **p99/p50 = 1.30×**. So **per-tensor scaling is sufficient**
    and the per-chunk / amax-history branch is not needed — the design's largest open risk is closed
    and its most complicated option is removed. Measured on the forward projection only; the
-   backward's `grad_logits` distribution is the other fp8 operand and is not yet measured.
+   backward's `grad_logits` distribution is the other fp8 operand and is measured DURING the
+   shipment A/B rather than beforehand (fb), so the range comes from the run that gates shipping.
+   A code_rp1t sweep to close the single-domain caveat is piggybacked on the next warm lane slot
+   and gets no dedicated schedule.
 2. **Loss curvature.** Cross-entropy is sensitive where the softmax is confident; a quantisation
    error that is invisible in the projection can move the loss. Gate: `|Δval| ≤ 0.04 nat` on a
    50-step A/B, which is the standing rule, plus a parity check of loss and grad-norm against
@@ -127,6 +130,7 @@ This is the loss path, so the standing gate is not sufficient on its own:
 | per-domain loss | every domain's delta within seed noise (σ̂ 0.0516) |
 | digit/FoNE probe | **assertion, not a note** (b0): the fp8 head path must REFUSE when `Cfg.fone` is set until the digit probe has run against it. `--fone` changes the token stream and the head's input distribution, and an n/a note is a check on the reader where an assertion is a check on the code. b0 writes it when the head path lands. |
 | parity | loss and grad-norm against the bf16 path on the same batch |
+| backward operand range | **log `grad_logits` per-chunk absmax during the A/B itself** (fb): a hook on the vendored path printing to the run log, so the unmeasured half of the fp8 path gets its range from the very run that gates shipping, rather than from a separate probe that could differ in config |
 
 The per-domain bar is the one the aggregate can hide: a single domain moving while the mean
 holds is exactly what an fp8 range failure on rare tokens would look like.
