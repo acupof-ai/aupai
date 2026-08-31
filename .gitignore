@@ -42,3 +42,4 @@ data/_corpus_unsanitized/
 # SKIPped on a dev checkout (same three-state rule as data/corpus/*).
 data/raw/
 data/eval/preds_*.jsonl
+runs/board.html
