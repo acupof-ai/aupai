@@ -13,6 +13,11 @@ with capability; plain continuation is the clean bridge.
 Usage: CUDA_VISIBLE_DEVICES=7 python3 eval/l1_fewshot.py --ckpt ckpt_p324.pt
 """
 import argparse
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
+from eval_artifacts import open_artifact  # noqa: E402
 import json
 import os
 import re
@@ -74,6 +79,10 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature; 0 = greedy")
     ap.add_argument("--out", default=None, help="write JSON summary to this path")
+    ap.add_argument("--force", action="store_true",
+        help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
+    ap.add_argument("--run", default=None,
+        help="name this run so predictions version instead of colliding: preds_x.<run>.jsonl")
     args = ap.parse_args()
 
     # dtype goes through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to
@@ -94,7 +103,7 @@ def main():
                               + ".jsonl")
     correct = total = 0
     n_box = 0
-    with open(preds_path, "w", encoding="utf-8") as fout:
+    with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
             texts_in = [build_prompt(demos[:args.demos], r["instruction"]) for r in batch]
