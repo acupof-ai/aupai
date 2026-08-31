@@ -21,6 +21,8 @@ import math
 import multiprocessing as mp
 import random
 import re
+import shutil
+import tempfile
 import time
 from typing import NamedTuple
 
@@ -1245,9 +1247,12 @@ def scatter_values(ids, vals, num_id):
     return out
 
 
-def _encode_worker(i, lo, hi, q):
+def _encode_worker(i, lo, hi, path):
+    # Part-files, not a Queue: mp.Queue's feeder thread can be killed when the
+    # worker exits before flushing an over-pipe-buffer payload, and the parent's
+    # q.get() then blocks forever (observed 2026-08-31, 4/4 workers zombied).
     ids, vals = encode(_PARALLEL_TEXTS[lo:hi], _PARALLEL_TOK)
-    q.put((i, ids.numpy(), vals.numpy() if Cfg.fone else None))
+    np.savez(path, ids=ids.numpy(), vals=vals.numpy() if Cfg.fone else np.empty(0))
 
 
 def _encode_domain(texts, tok, workers, log=None):
@@ -1264,8 +1269,8 @@ def _encode_domain(texts, tok, workers, log=None):
     live rayon pool does not survive fork() (the child deadlocks in inherited
     locks -- observed 2026-08-31). pretokenize.py --workers N satisfies this by
     construction: with N>1 the parent never encodes.
-    Streams ride a queue back, so this is for per-domain streams up to a few GB;
-    past that, workers should write part-files instead.
+    Workers write part-files (see _encode_worker), so per-domain stream size is
+    bounded by disk, not by a pipe buffer.
     """
     if workers <= 1:
         return encode(texts, tok, log=log)
@@ -1273,26 +1278,26 @@ def _encode_domain(texts, tok, workers, log=None):
     _PARALLEL_TEXTS, _PARALLEL_TOK = texts, tok
     n = len(texts)
     bounds = [int(k * n / workers) for k in range(workers + 1)]
+    tmpdir = tempfile.mkdtemp(prefix="encode_parts_")
     ctx = mp.get_context("fork")
-    q = ctx.Queue()
     procs = [
-        ctx.Process(target=_encode_worker, args=(i, bounds[i], bounds[i + 1], q))
+        ctx.Process(target=_encode_worker, args=(i, bounds[i], bounds[i + 1], os.path.join(tmpdir, f"p{i}.npz")))
         for i in range(workers)
     ]
-    for p in procs:
-        p.start()
-    parts = [None] * workers
-    for _ in procs:
-        i, ids_np, vals_np = q.get()
-        parts[i] = (ids_np, vals_np)
-    for p in procs:
-        p.join()
-        if p.exitcode != 0:
-            raise RuntimeError(f"encode worker {p.pid} exited {p.exitcode}")
-    ids = torch.from_numpy(np.concatenate([p[0] for p in parts]))
-    if Cfg.fone:
-        return ids, torch.from_numpy(np.concatenate([p[1] for p in parts]))
-    return ids
+    try:
+        for p in procs:
+            p.start()
+        for p in procs:
+            p.join()
+            if p.exitcode != 0:
+                raise RuntimeError(f"encode worker {p.pid} exited {p.exitcode}")
+        parts = [np.load(os.path.join(tmpdir, f"p{i}.npz")) for i in range(workers)]
+        ids = torch.from_numpy(np.concatenate([p["ids"] for p in parts]))
+        if Cfg.fone:
+            return ids, torch.from_numpy(np.concatenate([p["vals"] for p in parts]))
+        return ids
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _domain_cache_path(domain):
