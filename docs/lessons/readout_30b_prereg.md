@@ -153,6 +153,8 @@ stage-1 实际调度 3,647,072 行 = **14.9384B tokens,不是合同的 15.000B**
 
 前向规则:任何在**已退役 mix 的头**上对新 mix 打分的里程碑读数,适用同一条件——阶梯头的存在不是错,用错了 mix 才是错。代码侧已强制执行:readout_30b 对 head 集合不一致的配对直接拒绝输出判决(de 19bea53,selftest 第 4 例即今夜这对)。
 
+**基线丢失(2026-08-31 深夜)**:step3500 checkpoint 在重打分前被 newest-3 轮换窗口删除,3.24B 本 mix 基线不可恢复(fb 裁决)。own-mix 趋势序列从 8B 开始——8B 无更早本 mix 参照,读绝对值;15B 对 8B 做差;30B 处与 stage-2 配对不变。里程碑 checkpoint 自此钉出轮换(de,step 8500 前落地);ad-hoc step6000 基线被否(非里程碑 token 数,无预注册地位,事后造基线是事后 instrumentation)。
+
 ### 7.1 跨阶段配对:逐角色,按权重变化设闸(2026-08-31,b0 提案 / 44 落地)
 
 stage 2 与 stage 1 域集相同、权重不同,因此跨阶段的 per-role delta 中混有**重配效应**:剂量变了,loss 变化里机械地含有剂量项,语料效应分离不出来。de 的 19bea53 异头拒绝管不住这一类(头集合相等,筛子通过)。规则改为逐角色:
@@ -190,3 +192,23 @@ cap 可以压缩权重变化:cot 的 w1 想要 310,546 行、被 pool×3 = 295,5
 3. **打印 banner**:语料变了的角色,读数旁打印 `srcfp A→B`,让读者知道 delta 是语料效应。
 
 即:不是一律拒绝,也不是沉默脚注——**默认拒绝,验证后降级为注记**(同文本 + 无污染 + 阈值 provisional)。30B 跨阶段读数对每个 `*_stage2` 重建域都会撞上本条。
+
+### 7.3 守卫必须对真实产物自检(2026-08-31,b0 提案 / 44 落地)
+
+本节的每条规则都要有一个**跑在真实文件上**的自检,不能只跑合成夹具。
+
+2026-08-31 的实例:重配闸的首个版本(e178f17)合成用例全绿,对真实的 stage-1/stage-2 文件却**每个角色都返回 None**——三处原因合成夹具都看不见(stage-2 键带 `_stage2` 后缀、六个角色尚在 `_blocked`、池字段叫 `stage1_pool_rows`)。夹具是按作者**对文件的设想**写的,所以它无法证伪那个设想。
+
+失败不是"夹具太简单",是**共享出处**:同一个人写代码和夹具,同一个假设编码了两次,夹具抓不到假设本身错了。写更丰富的合成夹具照样抓不到。修法是 `readout_30b.py` 的 selftest 5b:直接读 `data/mix_15b_stage1.json` 与 `data/mix_30b_stage2.json`,断言没有角色不可读;pod 实测 3 refuse、cot 按 cap 后抽取相等判可判读(ratio 0.952,draws_equal True)。harness 的 broken world 是同一模式的另一实现(44)——**变异真实产物,而不是构造一个想象中的产物**。
+
+fail-open 方向让失败是沉默的而不是响亮的:只读 `domains` 使未落地的角色"因缺席而不可判",而不可判不产生拒绝——守卫在最需要它的角色上最宽松。守卫对缺席数据的行为必须是写明的选择,不能继承自某个恰好返回 None 的分支。
+
+判据:**一个读不到它所守护的数据的守卫,与不存在无异,且更糟——它显示为绿。**
+
+### 7.4 复用域的治疗标注与 pool 算术约定(2026-08-31,tilerl 实测)
+
+**治疗标注**:复用域的 epoch 数必须写明新鲜/重复行的拆分。cot 的 stage-2 抽取 295,512 行 = pool×3,全部是 stage 1 已读过 3 次的行——**零新鲜行**;"6 pool-epochs" 算术正确但读作比实际更多的数据,表格须写 "6 epochs, no fresh rows" 或等价。de-7 的 cursor 修复也不改变这一点(cot 的 want 恰为 3×pool,无行可读)。对照:zh_web/textbook_30b/wiki_chat 的 stage-2 抽取在 cursor 下全部是未读行(supply 余量 13×/3.2×/2.8×)。同样写 "N epochs",治疗不同——重复是 A′ 依据(2605.12715,constrained-domain r 15–20)许可的,但必须可见。
+
+**pool 算术**:pool = cache_rows − n_val,n_val = min(int(cache_rows × 0.05), 5000),**从 cache 行数起算,不从 pool 起算**。wiki_chat 是第一个 5% 侧绑定的域:69,295 cache 行 → n_val 3,464,pool 65,831;cot 是 5,000 cap 侧绑定(103,504 → 5,175 > 5,000 → 5,000,pool 98,504)。用 "5% of pool" 反推是循环论证,只在 5,000 cap 绑定时碰巧抵消;sub-100K 行的域 cap 不绑定,循环算法会出错。d633dee 的 pool-model 检查从 cache_rows 起算,是对的。
+
+**2026-08-31 验证(tilerl,caf4b4b)**:五个复用域与 stage-1 训练字节一致,§7.2 的范围声明成立。决定性证据是 `ckpt_pretrain_15b_s1.pt.step5500` 的 corpus_fp(save_checkpoint 从活 run 写入),五域全部等于 live;live `_corpus_fp` 对 cache 旁 `.srcfp` 5/5 匹配——但后者只证 cache 现行,不证 stage-1 身份(两者可一起移动),故两者都跑。**复验走 checkpoint 的 corpus_fp,不走 mix 文件**(后者只在散文里记了 code_rp1t 一个域)。两个已知边界:checkpoint 截至 step 5500,其后由 pod_drift + 语料写入方已完工覆盖(且现在跑的 live-vs-.srcfp 能抓到 5500 之后的改写);`_corpus_fp` 只哈希 shard 名/大小/首尾 64KB,shard 中部改动两侧都看不见——文档化设计,接受。

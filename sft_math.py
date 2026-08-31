@@ -232,7 +232,12 @@ def main():
                 if is_main:
                     save_checkpoint(args.out + f".step{step}", good_state, Cfg, ck_vocab, step=step)
             if is_main and step % LOG_INTERVAL == 0:
-                runlog(f"step {step}/{total_steps} loss {last:.3f} {time.time() - t0:.0f}s")
+                # The elapsed figure covers LOG_INTERVAL steps, not one: t0 resets on
+                # every log line. Naming the interval is the whole fix -- read as
+                # seconds-per-step it turned a 9-minute run into a 2.3-hour estimate
+                # (e1, 2026-08-31). A number that does not carry its unit gets one.
+                runlog(f"step {step}/{total_steps} loss {last:.3f} "
+                       f"{time.time() - t0:.0f}s/{LOG_INTERVAL}steps")
                 t0 = time.time()
             if args.max_steps and step >= args.max_steps:
                 break

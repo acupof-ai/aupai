@@ -200,6 +200,72 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_no_duplicate_defs(root):
+    """No module defines the same top-level name twice.
+
+    A merge can land two copies of one function without any conflict: tonight two
+    sessions restored the same dropped selftest from different commits, and
+    harness.py carried _selftest_gpu_descendants twice, 200 lines apart. Python
+    silently binds the second, so the FIRST copy is dead and the two drift the day
+    one is edited -- and the selftest ran twice, which looks like coverage.
+
+    ruff's F811 does not fire on this: the copies were separated by other defs and
+    the name is called from a list of selftests, not shadowed in an obvious way.
+    """
+    bad = []
+    scanned = 0
+    for rel in ("scripts", "eval", "datagen", "filters", "algorithms"):
+        for path in sorted(glob.glob(os.path.join(root, rel, "**", "*.py"), recursive=True)):
+            try:
+                tree = ast.parse(open(path, encoding="utf-8").read())
+            except (OSError, SyntaxError):
+                continue
+            scanned += 1
+            seen = {}
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if node.name in seen:
+                        bad.append(f"{os.path.relpath(path, root)}:{node.lineno} "
+                                   f"{node.name} (first at :{seen[node.name]})")
+                    seen[node.name] = node.lineno
+    for path in (os.path.join(root, f) for f in ("train.py", "sft.py", "sft_math.py")):
+        if not os.path.exists(path):
+            continue
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except (OSError, SyntaxError):
+            continue
+        scanned += 1
+        seen = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name in seen:
+                    bad.append(f"{os.path.basename(path)}:{node.lineno} {node.name} "
+                               f"(first at :{seen[node.name]})")
+                seen[node.name] = node.lineno
+    if bad:
+        return FAIL, f"{len(bad)} duplicate top-level def(s): {'; '.join(bad[:3])}"
+    return PASS, f"{scanned} module(s), no duplicate top-level definitions"
+
+
+def _broken_no_duplicate_defs():
+    """The REAL harness.py with one of its own functions defined a second time --
+    the shape a merge produces, appended rather than hand-written."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "harness.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    marker = "def cfg_default(field):"
+    if marker not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
+        text + "\n\ndef cfg_default(field):\n    return None  # the duplicate a merge lands\n"
+    )
+    return d
+
+
 def check_agents_rules_covered(root):
     """Every AGENTS.md rule maps to a check name or an explicit manual reason.
 
@@ -806,6 +872,67 @@ def _broken_blob():
     return d
 
 
+def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
+    """Definitions the merge base had that the merge result no longer has, where the
+    losing side never deleted them. Returns [(path, name, side_taken)].
+
+    The complement of merge_took_one_side, and the more dangerous shape. That
+    function only examines paths BOTH parents changed since the base, on the
+    reasoning that taking an untouched side whole IS the merge. That reasoning is
+    wrong whenever the untouched side is behind the base: it carries an older copy
+    forward and silently reverts the other side's work. 21da619 did exactly that to
+    _selftest_gpu_descendants -- base had it, ours had it, the merged side had never
+    seen it, and main lost a test while keeping the function it tests.
+
+    A side that never had the content is not deleting it. Deliberate deletion is
+    tested operationally (fb's rule): the removal counts as intended only when the
+    removing side's OWN commits, merge-base..parent, contain a diff that removes the
+    name. Otherwise the content is simply older than that branch.
+
+    Scope: top-level `def NAME(` in tracked .py files. Definitions are what a merge
+    can silently revert without breaking an import, and a name is cheap to test for.
+    A body gutted while the signature survives is not caught here."""
+    def git(*args):
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    parents = git("rev-list", "--parents", "-n", "1", merge_sha).split()
+    if len(parents) < 3:
+        return []
+    m, ours, theirs = parents[0], parents[1], parents[2]
+    base = git("merge-base", ours, theirs).strip()
+    if not base:
+        return []
+    defs = re.compile(r"^def\s+([A-Za-z_]\w*)\s*\(", re.M)
+    out = []
+    changed = [p for p in set(git("diff", "--name-only", base, m).split()) if p.endswith(".py")]
+    for path in sorted(changed)[:max_files]:
+        base_src = git("show", f"{base}:{path}")
+        merged_src = git("show", f"{m}:{path}")
+        if not base_src or not merged_src:
+            continue
+        lost = set(defs.findall(base_src)) - set(defs.findall(merged_src))
+        for name in sorted(lost):
+            # Which side dropped it, and did that side's own history delete it?
+            in_ours = name in set(defs.findall(git("show", f"{ours}:{path}")))
+            in_theirs = name in set(defs.findall(git("show", f"{theirs}:{path}")))
+            if not in_ours and not in_theirs:
+                continue  # gone from both parents; the merge did not lose it
+            # fb's operational test, applied to the side that DROPPED it rather than
+            # the side that kept it. Someone deliberately retiring a function deletes
+            # it on their branch; that branch is the one now missing it. A side that
+            # merely never had the content deleted nothing, and taking that side whole
+            # is the silent revert this function exists to find.
+            dropper = theirs if in_ours else ours
+            side = "ours" if in_ours else "theirs"  # the side whose copy survived in the base sense
+            deleted_deliberately = bool(
+                git("log", "--format=%h", "-S", f"def {name}(", f"{base}..{dropper}", "--", path).strip()
+            )
+            if not deleted_deliberately:
+                out.append((path, name, side))
+    return out
+
+
 def merge_took_one_side(root, merge_sha="HEAD"):
     """Files a merge resolved by taking one parent WHOLE, when both parents had
     changed them. Returns [(path, "ours"|"theirs", n_lost_commits)].
@@ -871,7 +998,13 @@ def merge_took_one_side(root, merge_sha="HEAD"):
 
 
 def check_merge_complete(root):
-    """A merge must not resolve a contested file by discarding one side."""
+    """A merge must not resolve a contested file by discarding one side.
+
+    Judges the STAGED blob when one is staged for a contested path, not HEAD's. A
+    bad merge is refused; the commit that FIXES it must not be. Without this the
+    check deadlocks: the amend re-reads HEAD, HEAD is still the bad merge, and
+    --no-verify becomes the only way out -- which trains people to bypass the check
+    at exactly the moment it is working (de + fb, 2026-08-31, first real catch)."""
     if not os.path.exists(os.path.join(root, ".git")):
         return SKIP, "no .git (pod or partial checkout)"
     r = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
@@ -890,12 +1023,42 @@ def check_merge_complete(root):
     # resolution discarded anything. Seven of the nine hits over one day's 93 merges
     # were this shape.
     took = [t for t in took if t[2] > 0]
+    # A path whose STAGED blob differs from the parent the merge took whole is being
+    # fixed right now. Judge what is about to be committed, not what was.
+    parents = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
+                             capture_output=True, text=True).stdout.split()
+    ours, theirs = (parents[1], parents[2]) if len(parents) >= 3 else (None, None)
+    fixed = []
+    for path, side, n in list(took):
+        staged = subprocess.run(["git", "-C", root, "rev-parse", f":{path}"],
+                                capture_output=True, text=True).stdout.strip()
+        if not staged:
+            continue  # nothing staged for it; the merge's own blob stands
+        offending = ours if side == "ours" else theirs
+        blob = subprocess.run(["git", "-C", root, "rev-parse", f"{offending}:{path}"],
+                              capture_output=True, text=True).stdout.strip()
+        if blob and staged != blob:
+            took.remove((path, side, n))
+            fixed.append(path)
     if took:
         return FAIL, (
             f"{len(took)} contested file(s) resolved by taking one side whole: "
             + "; ".join(f"{p} == {side} ({n} commit(s) from the other side lost)"
                         for p, side, n in took[:3])
             + ". Re-resolve by hand and grep a marker from each side before committing."
+        )
+    if fixed:
+        return PASS, f"{len(fixed)} contested file(s) re-resolved in the staged tree: {', '.join(fixed[:3])}"
+    # The other shape: a side that never had the content carries an older copy forward
+    # and silently reverts the other side. merge_took_one_side cannot see it, because
+    # it only examines files BOTH parents changed (21da619, 2026-08-31).
+    reverted = merge_reverted_content(root)
+    if reverted:
+        return FAIL, (
+            f"{len(reverted)} definition(s) present in the merge base and gone from the "
+            "result, with no side deleting them: "
+            + "; ".join(f"{name} in {path}" for path, name, _ in reverted[:3])
+            + ". A side that never had the content did not delete it -- restore from the base."
         )
     contested = len([1 for _ in merge_took_one_side(root)]) or 0
     n_both = len(set(subprocess.run(
@@ -2926,6 +3089,18 @@ def check_mix_supply(root, mix_glob=None):
     lands entirely in the anneal phase (roughly 2x the per-domain loss the
     whole-budget figure suggests), not spread across both phases. SKIP without
     caches (CPU CI, dev box)."""
+    # An all-blocked mix is answerable without a cache, so report it before the
+    # cache-dir SKIP -- otherwise a dev box says "no cache" and the real state (every
+    # domain deliberately blocked, pre-corpus) is invisible (fb, 2026-08-31).
+    pat = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
+    for f in glob.glob(pat if os.path.isabs(pat) else os.path.join(root, pat)):
+        try:
+            obj = json.load(open(f, encoding="utf-8"))
+        except Exception:
+            continue
+        if not obj.get("domains") and obj.get("_blocked"):
+            return SKIP, (f"{os.path.basename(f)}: all {len(obj['_blocked'])} domains blocked "
+                          f"(pre-corpus, by design) -- nothing to gate yet")
     cache_dir = _token_cache_dir()
     if not os.path.isdir(cache_dir):
         return SKIP, f"token cache dir {cache_dir} not present"
@@ -2938,6 +3113,9 @@ def check_mix_supply(root, mix_glob=None):
     pattern = mix_glob or os.path.join(root, "data", "mix_scale_[0-9]*.json")
     mixes = sorted(glob.glob(pattern if os.path.isabs(pattern) else os.path.join(root, pattern)))
     if not mixes:
+        # Distinguish "no such file" from "the file exists and every domain is blocked":
+        # a mix with all domains under _blocked is a deliberate pre-corpus state, and a
+        # SKIP that calls it "no matching files" gets filed as a gap (fb, 2026-08-31).
         return SKIP, f"no mix files match {os.path.basename(pattern)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
@@ -4155,6 +4333,13 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "no_duplicate_defs",
+        "no module defines the same top-level name twice",
+        "two sessions restored one dropped selftest from different commits and harness.py carried it twice; Python binds the second, so the first is dead code that drifts, and ruff F811 does not fire across intervening defs",
+        check_no_duplicate_defs,
+        _broken_no_duplicate_defs,
+    ),
+    (
         "agents_rules_covered",
         "every AGENTS.md rule maps to a check name or an explicit manual reason",
         "the register refusal in a worktree pushed a session into the shared tree tonight: a rule that is only prose is one people break for cause",
@@ -4774,6 +4959,30 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_refusal_writes_no_row():
+    """A refused launch leaves the ledger untouched.
+
+    The start row was written at step 1 and the lane check ran at 2a, so launching a
+    second job under a LIVE run's name closed that run's row as fail: l1_rerun_0831
+    read running/running/fail while pid 550586 was alive and writing (e1,
+    2026-08-31). Asserts the ordering directly -- the refusal path must reach `return`
+    before any exp.py call, so a ledger seeded with a running row is byte-identical
+    after it."""
+    import inspect
+
+    src = inspect.getsource(cmd_launch)
+    lane_at = src.index("_lane_occupant(lane_card)")
+    row_at = src.index('"start", "--name", args.name')
+    assert lane_at < row_at, (
+        "the lane check must run BEFORE the start row is written, or a refused launch "
+        "closes a live run's row")
+    # and the refusal itself must write nothing
+    refusal = src[lane_at:src.index("return 1", lane_at)]
+    assert "exp.py" not in refusal, f"the refusal path writes a ledger row:\n{refusal}"
+    assert "No ledger row" in refusal, "the refusal must say it wrote nothing"
+    print("  launch: a lane refusal returns before the start row, writing no ledger row")
+
+
 def _selftest_pool_not_raw_supply():
     """A mix whose demand fits the raw cache but exceeds the pool must FAIL.
 
@@ -4787,12 +4996,24 @@ def _selftest_pool_not_raw_supply():
     pool_rows = cache_rows - n_val
     assert n_val == 1000 and pool_rows == 99_000, (n_val, pool_rows)
     raw_cap, pool_cap = cache_rows * epochs, pool_rows * epochs
-    want = 297_500  # fits 300,000 raw, exceeds 297,000 pool -- the accepted-then-short case
+    # Fits 300,000 raw, and exceeds 297,000 pool by more than the check's own 0.5%
+    # rounding tolerance (298,485). The previous 297,500 cleared pool but NOT the
+    # tolerance, so the check would have accepted it -- the dead assert 44 found was
+    # hiding a case that did not test what it claimed.
+    want = 299_000
     assert want <= raw_cap, "sanity: the case must fit RAW supply"
     assert want > pool_cap, "sanity: the case must exceed POOL supply"
-    assert want > pool_cap * 1.005 or want > pool_cap, "the pool model must reject it"
+    # The check's own tolerance, not a restatement of the line above: 44 caught the
+    # previous version as `want > pool_cap * 1.005 or want > pool_cap`, whose second
+    # clause is the preceding assert, so it could not fail. The live question is
+    # whether the case clears the 0.5% rounding tolerance the check actually applies.
+    assert want > pool_cap * 1.005, (
+        f"the case must exceed pool by more than the check's 0.5% tolerance: "
+        f"{want} vs {pool_cap * 1.005:.0f}")
     shortfall = 1 - pool_cap / want
     print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
+
+
 
 
 def _selftest_killpg_reaps_children():
@@ -4948,6 +5169,139 @@ def _selftest_gate_timeout():
     assert secs is None and "unreadable" in note, f"a missing mix must not produce a gate: {secs} {note}"
     shutil.rmtree(d, ignore_errors=True)
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
+
+
+def _selftest_merge_fix_not_deadlocked():
+    """The check must refuse a bad merge AND accept the commit that fixes it.
+
+    Without the second half it deadlocks: the amend re-reads HEAD, HEAD is still the
+    bad merge, and --no-verify becomes the only exit -- which teaches people to
+    bypass the check at the moment it is working (de + fb, 2026-08-31)."""
+    import shutil
+
+    d = _broken_merge_complete()
+    try:
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, f"a bad merge must be refused, got {state}"
+        rel = os.path.join("scripts", "loader.py")
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("def f():\n    OURS_MARKER = 'kept by us'\n"
+                    "    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, evidence = check_merge_complete(d)
+        assert state == PASS, f"the fix for a bad merge must be accepted, got {state}: {evidence}"
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("def f():\n    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, "restaging the offending content must not pass as a fix"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
+
+
+def _selftest_merge_reverted_content():
+    """Real merges as the cases, plus the deliberate deletion that must NOT fire.
+
+    21da619 is the instance that exposed the gap: base and ours had
+    _selftest_gpu_descendants, the merged side had never seen it, the merge took that
+    side, and main lost a test while keeping the function it tests.
+    merge_took_one_side saw nothing, because it only examines files BOTH parents
+    changed.
+
+    41294c1 is the near-miss I first reported alongside it and got wrong: no side had
+    the content, so nothing was lost. Kept as a case precisely because I misread it.
+
+    The constructed case is the one that decides whether the check is usable: someone
+    retiring a function on purpose must not be flagged, or every intentional deletion
+    becomes a red and the check gets bypassed."""
+    import shutil
+    import tempfile
+
+    real = "/Users/bytedance/code/aupai"
+    if os.path.exists(os.path.join(real, ".git")):
+        hit = merge_reverted_content(real, "21da619")
+        assert any(n == "_selftest_gpu_descendants" for _, n, _ in hit), \
+            f"21da619 must be caught, got {hit}"
+        assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
+
+    d = tempfile.mkdtemp(prefix="delib_")
+    try:
+        def sh(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        sh("init", "-q"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        f = os.path.join(d, "scripts", "loader.py")
+        open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n    return 2\n")
+        sh("add", "-A"); sh("commit", "-qm", "base"); sh("branch", "other")
+        open(f, "w").write("def keep_me():\n    return 1\n")          # deliberate retire
+        sh("add", "-A"); sh("commit", "-qm", "retire retire_me on purpose")
+        sh("checkout", "-q", "other")
+        open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n"
+                           "    return 2\n\n\ndef added():\n    return 3\n")
+        sh("add", "-A"); sh("commit", "-qm", "unrelated add")
+        back = "master" if sh("rev-parse", "--verify", "-q", "master").returncode == 0 else "main"
+        sh("checkout", "-q", back)
+        sh("merge", "--no-commit", "other")
+        sh("checkout", "--ours", "scripts/loader.py"); sh("add", "scripts/loader.py")
+        sh("commit", "-qm", "merge")
+        assert not merge_reverted_content(d), \
+            "a deliberate deletion must not be flagged, or every intended removal is a red"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
+
+
+def _selftest_gpu_descendants():
+    """Known answer: a child whose cmdline shares nothing with its parent's is still
+    found, because descent is what is walked.
+
+    The failing case is the real one -- score_matrix (parent) shells out to
+    math_zh.py (child). On 2026-08-31 a kill matched children by the parent's
+    cmdline pattern, math_zh.py could not match, and it survived holding 12.7 GB on
+    GPU 7. The verification greped the same pattern, so `killed; exp row closed`
+    printed over a live orphan.
+
+    Pure-function test on the ppid walk: no pod, no GPU.
+    """
+    def walk(gpu_pids, ppid, root, limit=12):
+        out = []
+        for p in gpu_pids:
+            seen, cur = 0, p
+            while cur in ppid and seen < limit:
+                cur = ppid[cur]
+                seen += 1
+                if cur == str(root):
+                    out.append(p)
+                    break
+        return out
+
+    # score_matrix 200 -> bash eval_math.sh 250 (NO GPU) -> math_zh 300; 400 is a stranger.
+    # The intermediate shell is the case that broke the first implementation: a ppid
+    # map built only over GPU-holding pids stops at 250 and finds nothing. The map
+    # must come from the whole process table.
+    ppid = {"200": "100", "250": "200", "300": "250", "400": "999"}
+    got = walk(["300", "400"], ppid, 100)
+    assert got == ["300"], f"descent must cross the non-GPU shell and exclude the stranger: {got}"
+
+    # The regression itself: a map missing the shell must NOT find the child. If this
+    # ever passes, the map has silently narrowed back to GPU pids only.
+    gpu_only = {"200": "100", "300": "250"}
+    assert walk(["300"], gpu_only, 100) == [], "a map missing the intermediate shell must find nothing"
+
+    # The failing case: pattern matching cannot find it. This is what the old code did.
+    parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
+    child_cmdline = "math_zh.py --ckpt X --shards 1"
+    assert parent_cmdline not in child_cmdline, "the premise: the child shares no cmdline text"
+
+    # A cycle must not hang the kill path.
+    got = walk(["1"], {"1": "2", "2": "1"}, 999)
+    assert got == [], "a ppid cycle must terminate and match nothing"
+
+    # A direct child is found too, not just a grandchild.
+    assert walk(["200"], {"200": "100"}, 100) == ["200"]
+    print("  gpu descendants: child found across a non-GPU shell; narrowed map finds nothing; "
+          "cycle terminates; stranger excluded")
 
 
 def _selftest_devs_map():
@@ -5453,6 +5807,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
@@ -5461,6 +5816,9 @@ def _demo():
     _selftest_register_union()
     _selftest_auto_resume()
     _selftest_devs_map()
+    _selftest_gpu_descendants()
+    _selftest_merge_fix_not_deadlocked()
+    _selftest_merge_reverted_content()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
@@ -6335,11 +6693,30 @@ def cmd_launch(rest):
         if any(any(c in part for c in _CORPUS_CMDS) for part in cmd):
             args.no_gpu = True
 
-    # 1. exp.py start row first.
-    # The row's `cmd` is the CHILD command only, so launcher configuration was
-    # invisible in the ledger: on 2026-08-31 the controller checked whether the 15B
-    # run had --auto-resume and the row said no, while the supervisor was running it
-    # (visible only in ps). The flags that govern the run belong in its record.
+    # 1. Allocation and the lane check FIRST: a refusal must write no ledger row.
+    # Card allocation from the controller's config
+    if args.no_gpu:
+        cards = ""
+    else:
+        cards = _allocation_cards(args.training)
+
+    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
+    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
+    if not args.training and not args.no_gpu and cards:
+        lane_card = cards.split(",")[0].strip()
+        occupant = _lane_occupant(lane_card)
+        if occupant:
+            # No ledger row. The refusal happens BEFORE the start row is written, so a
+            # second launch under a live run's name cannot close that run's row: on
+            # 2026-08-31 l1_rerun_0831 read running/running/fail while pid 550586 was
+            # alive and writing, because the row was written at step 1 and this refusal
+            # ran at 2a (e1). A job that never starts leaves no trace in the ledger.
+            print(f"REFUSED: {args.name} - lane GPU {lane_card} occupied by pid {occupant}. "
+                  f"No ledger row written; the lane holds one job at a time.", file=sys.stderr)
+            return 1
+
+
+    # 2. The start row, once the job is known to be runnable.
     launcher = f"--gate-timeout {args.gate_timeout}"
     if args.auto_resume:
         launcher += f" --auto-resume {args.auto_resume}"
@@ -6353,30 +6730,6 @@ def cmd_launch(rest):
          "--hypothesis", args.hypothesis],
         check=True,
     )
-
-    # 2. Card allocation from the controller's config
-    if args.no_gpu:
-        cards = ""
-    else:
-        cards = _allocation_cards(args.training)
-
-    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
-    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
-    if not args.training and not args.no_gpu and cards:
-        lane_card = cards.split(",")[0].strip()
-        occupant = _lane_occupant(lane_card)
-        if occupant:
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py"),
-                 "done", "--name", args.name,
-                 "--result", f"refused: lane GPU {lane_card} occupied by pid {occupant}",
-                 "--finding", f"lane card {lane_card} has a running process (pid {occupant})",
-                 "--decision", "wait for the lane to free, or use --no-gpu for corpus jobs",
-                 "--status", "fail"],
-                capture_output=True,
-            )
-            print(f"REFUSED: {args.name} — lane GPU {lane_card} occupied by pid {occupant}", file=sys.stderr)
-            return 1
 
     # 2b. Training jobs: verify training-scope drift before launch.
     # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
@@ -6942,7 +7295,10 @@ def cmd_milestone(argv):
             r = subprocess.run(
                 [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
                  "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-                 "--milestone-profile", "milestone", "--paired-profile", "full"]
+                 "--milestone-profile", "milestone", "--paired-profile", "full",
+                 "--milestone-mix", mix]
+                + (["--paired-mix", _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) or ""]
+                   if _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) else [])
                 + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
                 + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
                 capture_output=True, text=True,

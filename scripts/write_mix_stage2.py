@@ -31,6 +31,43 @@ SEQ = 4096
 # the stage-2 corpus exists: the real pool is rows-of-seq+1 minus n_val, which only the cache gives.
 LANDED = {
     "en_c4": (2_403_694_865, "05e0fc6f14704056"),
+    "cot": (424_056_227, "388496b76ed9bf88"),
+    "code_rp1t": (7_569_415_401, "d8b9b18ba080f487"),
+    "zh_web": (21_293_403_945, "a0d44fc44a289d60"),
+    "textbook_30b": (1_610_210_330, "3f237c5191cb8571"),
+    "wiki_chat": (283_903_257, "b864d32f9452a7c8"),
+    # fb's message quoted fp a67cde07d3b3 (12 chars); the stamp itself reads a67cde07d3b3f63d and
+    # _corpus_fp returns 16, so the message was truncated. Stamp value used.
+    "math_owm": (6_513_329_302, "a67cde07d3b3f63d"),
+}
+# Domains that keep their STAGE-1 name in the stage-2 mix, so the mix binds to the stage-1
+# corpus directory rather than a *_stage2 copy. fb ruling 2026-08-31 for cot: the name binds a
+# mix to a corpus and cot's corpus IS the stage-1 one, so a copy under a new name would falsify
+# that binding rather than honour a convention. Mechanically required too -- _assert_mix_domains
+# raises on a domain with no data/corpus/<name>/*.jsonl, _domain_cache_path derives
+# tokens_<name>.pt from the name, and a symlink is the one case _assert_mix_domains refuses
+# outright (a symlinked domain is a different corpus wearing another domain's name).
+SAME_CORPUS_AS_STAGE1 = {"cot", "code_rp1t", "zh_web", "textbook_30b", "wiki_chat"}
+# POOLS: domain -> stage-2 trainable pool rows, MEASURED from its token cache, not from the stamp.
+# A stamp gives tokens; a pool is rows of seq+1 minus n_val = min(int(rows*0.05), 5000), which only
+# the cache yields. A domain here gets its epochs re-derived against its OWN pool; without an entry
+# the epochs value is the stage-1-pool figure and is provisional.
+STAGE2_POOLS = {
+    "en_c4": 581_073,  # cache 2,401,144,188 tok = 586,073 rows of 4097, minus 5,000 val
+    # cot reuses the stage-1 cache, so its stage-2 pool IS the stage-1 pool: 424,056,227 tok =
+    # 103,504 rows of 4097; int(103,504*0.05) = 5,175 exceeds the 5,000 cap so n_val = 5,000.
+    # Start from the CACHE row count, never from the pool -- computing 5% of 98,504 to derive
+    # 98,504 is circular, and 3b and I both did it and got the right answer only by cancellation.
+    "cot": 98_504,
+    # The other reused dirs, pools measured from their own caches (identical to the stage-1
+    # figures, as expected for the same corpus -- verified, not assumed).
+    "code_rp1t": 1_842_469,   # 1,847,469 rows - 5,000
+    "zh_web": 5_192_316,      # 5,197,316 rows - 5,000
+    "textbook_30b": 388_021,  # 393,021 rows - 5,000
+    # wiki_chat is the one domain where the 5% side of min() binds: 69,295 rows, 5% = 3,464
+    # < the 5,000 cap, so n_val = 3,464. This is why the arithmetic must start from the cache
+    # row count -- for a sub-100,000-row domain the cap does NOT bind.
+    "wiki_chat": 65_831,      # 69,295 rows - 3,464
 }
 
 SPEC = {
@@ -70,7 +107,16 @@ def build():
         w, places = _weight_for_rows(s2)
         runtime = int(ROWS * w)
         assert runtime == s2, f"{name}: weight {w} draws {runtime}, want {s2}"
-        epochs = math.ceil(runtime / pool)
+        key = name if name in SAME_CORPUS_AS_STAGE1 else f"{name}_stage2"
+        s2_pool = STAGE2_POOLS.get(name)
+        cap_pool = s2_pool if s2_pool else pool
+        epochs = math.ceil(runtime / cap_pool)
+        # A provisional cap on a *_stage2 domain is measured against the STAGE-1 corpus, which is a
+        # different body of text. math_owm_stage2 is the live case: its stamp is 6.513B against
+        # stage 1's 4.035B, so its real pool is ~62% larger and its cap is probably 1, not the 2 the
+        # stage-1 pool implies. A too-high cap never truncates -- int(pool*epochs) only grows -- but
+        # it does misstate the recipe, since epochs 2 reads as "this domain repeats" when it may not.
+        provisional_new_corpus = s2_pool is None and name not in SAME_CORPUS_AS_STAGE1
         total += runtime
         entry = {
             "weight": w,
@@ -85,34 +131,56 @@ def build():
             "stage1_pool_rows": pool,
             "cumulative_rows": s1 + runtime,
             "cumulative_epochs_on_stage1_pool": round((s1 + runtime) / pool, 4),
+            "pool_rows": cap_pool,  # alias b0's readout draws_equal() reads
+            "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (PROVISIONAL, different corpus)",
+            "stage2_pool_rows": s2_pool,
             "epoch_cap_note": (
-                f"epochs {epochs} = ceil({runtime}/{pool}) on the STAGE-1 pool. build_mix caps at "
-                f"int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio "
-                f"{runtime / pool:.3f}: a fractional cap re-creates stage 1's 61,593,088-token under-draw."
+                f"epochs {epochs} = ceil({runtime}/{cap_pool}) on the "
+                f"{'STAGE-2 pool measured from its token cache' if s2_pool else 'STAGE-1 pool, PROVISIONAL until its cache exists'}. "
+                f"build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never "
+                f"the ratio {runtime / cap_pool:.4f}: a fractional cap re-creates stage 1's "
+                f"61,593,088-token under-draw. Headroom {(cap_pool - runtime) / runtime * 100:+.2f}%."
             ),
         }
         if name in LANDED:
             supply, fp = LANDED[name]
             want_tok = runtime * SEQ
-            assert supply >= want_tok, (
-                f"{name}: stamp supply {supply} < want {want_tok} -- do not land a domain that "
-                "cannot cover its draw"
+            # supply is ONE epoch. A domain drawing >1 epoch covers its want by repeating, so the
+            # test is supply*epochs, not supply. cot draws 3 epochs of a 0.424B corpus for 1.210B
+            # tokens and a bare supply >= want would have refused a correct recipe.
+            assert supply * epochs >= want_tok, (
+                f"{name}: supply {supply} x {epochs} epochs = {supply * epochs} < want {want_tok} "
+                "-- do not land a domain that cannot cover its draw"
             )
             entry["supply_tokens"] = supply
             entry["fingerprint"] = fp
-            entry["supply_margin_pct"] = round((supply / want_tok - 1) * 100, 2)
+            if provisional_new_corpus:
+                est_rows = supply // (SEQ + 1)
+                est_pool = est_rows - min(max(1, int(est_rows * 0.05)), 5000)
+                entry["cap_provisional_warning"] = (
+                    f"epochs {epochs} is derived from the STAGE-1 pool ({cap_pool} rows) because this "
+                    f"corpus has no token cache yet, but it is a DIFFERENT corpus: the stamp's "
+                    f"{supply} tokens imply ~{est_pool} pool rows and a cap of "
+                    f"{math.ceil(runtime / est_pool)}. Safe (a high cap cannot truncate) but it "
+                    f"overstates repetition -- re-derive from the cache before launch."
+                )
+                entry["cap_from_stamp_estimate"] = math.ceil(runtime / est_pool)
+                entry["pool_rows_from_stamp_estimate"] = est_pool
+            entry["supply_epochs"] = epochs
+            entry["supply_x_epochs_tokens"] = supply * epochs
+            entry["supply_margin_pct"] = round((supply * epochs / want_tok - 1) * 100, 2)
             entry["status"] = (
-                f"LANDED: data/corpus/{name}_stage2 stamped, fp {fp}, supply {supply} tokens covers the "
-                f"want of {want_tok} by {entry['supply_margin_pct']}%. epochs {epochs} is still measured "
+                f"LANDED: data/corpus/{key} stamped, fp {fp}, supply {supply} tokens covers the "
+                f"want of {want_tok} at {epochs} epoch(s) by {entry['supply_margin_pct']}%. epochs {epochs} is still measured "
                 "on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
             )
-            landed[f"{name}_stage2"] = entry
+            landed[key] = entry
         else:
             entry["status"] = (
-                f"BLOCKED: data/corpus/{name}_stage2 is not stamped (no build_corpus_stats.json). "
+                f"BLOCKED: data/corpus/{key} is not stamped (no build_corpus_stats.json). "
                 "Move to domains only when it is stamped AND its supply covers its want."
             )
-            blocked[f"{name}_stage2"] = entry
+            blocked[key] = entry
     assert total == ROWS, f"runtime rows {total} != {ROWS}"
     wsum = sum(b["weight"] for b in list(landed.values()) + list(blocked.values()))
     assert abs(wsum - 1.0) < 1e-3, f"weights sum {wsum}, outside the contract's 1e-3"
@@ -149,6 +217,19 @@ def build():
             "de-7 persists used[] and seeds it on resume; that check must compare against the RUN'S LOG",
             "(3,647,072 total and the per-domain startup lines), never against this table -- cot's two",
             "figures agree only because its cap happened to fire at exactly 3x pool.",
+            "",
+            "CORPUS REUSE, five of seven (fb ruling 2026-08-31, 44 confirmed). cot, code_rp1t, zh_web,",
+            "textbook_30b and wiki_chat keep their BARE stage-1 names and reuse those directories and",
+            "caches; only en_c4_stage2 and math_owm_stage2 are new builds. The name binds a mix to a",
+            "corpus, so a copy under a *_stage2 name would falsify that binding rather than honour a",
+            "convention -- and mechanically, _assert_mix_domains raises on a domain with no",
+            "data/corpus/<name>/*.jsonl, _domain_cache_path derives tokens_<name>.pt from the name, and a",
+            "symlink is the one case _assert_mix_domains refuses outright.",
+            "",
+            "CROSS-STAGE JUDGEABILITY (44, prereg 7.1/7.2). code_rp1t is unjudgeable by 7.1 alone, a",
+            "weight-only change caught by the ratio guard. en_c4 and math_owm carry 7.1 plus 7.2's",
+            "rebuilt-corpus verification. The four weight-stable reused domains -- cot, zh_web,",
+            "textbook_30b, wiki_chat -- keep identical .srcfp and ARE judgeable cross-stage.",
             "",
             "Cooldown constraint (arXiv 2408.10914, fb): the 10% warmdown holds >=20% code; A-prime",
             "carries 29.33%. Code stays at the 30B cumulative third: the paper's 25% optimum is for",
