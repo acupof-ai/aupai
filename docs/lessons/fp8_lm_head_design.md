@@ -83,7 +83,27 @@ activations. That is a stronger parity requirement than the body linears carry.
    50-step A/B, which is the standing rule, plus a parity check of loss and grad-norm against
    the bf16 path on the same batch.
 
-Ship gate unchanged: 50-step 7-card A/B, tok/s ≥ +3%, `|Δval| ≤ 0.04 nat`, parity test.
+### Ship gate, stricter here than for the body linears (fb, 2026-09-01)
+
+This is the loss path, so the standing gate is not sufficient on its own:
+
+| check | bar |
+|---|---|
+| throughput | tok/s ≥ +3%, 50 steps, 7 cards |
+| validation | `\|Δval\| ≤ 0.04 nat` |
+| per-domain loss | every domain's delta within seed noise (σ̂ 0.0516) |
+| digit/FoNE probe | unchanged — **n/a while `--fone` is off**, state it rather than skip it |
+| parity | loss and grad-norm against the bf16 path on the same batch |
+
+The per-domain bar is the one the aggregate can hide: a single domain moving while the mean
+holds is exactly what an fp8 range failure on rare tokens would look like.
+
+### The forward-only refusal is the gate working
+
+Forward-only measures 37 ms = 2.2%, and it is refused for being under 3% even though it is the
+smallest and safest diff available. That is the ship gate doing its job rather than an obstacle
+to route around: a 2.2% change to the loss path carries the same parity risk as a 6.6% one and
+a third of the return.
 
 ## What this design does not establish
 
