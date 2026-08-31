@@ -501,11 +501,12 @@ print("MasterWeights: p.grad cleared every step, m.grad does not accumulate OK")
 # nat off the ladder with nothing in the log looking wrong. Three checks, and B is the one
 # that matters: without it, A can pass on an implementation that drops the mask entirely.
 _torch = torch
+import contextlib  # noqa: E402
 import torch.nn.functional as _F  # noqa: E402
 
 
-class _C:  # smallest cfg GatedMLA reads
-    d, heads = 8, 2
+class _C:  # smallest cfg GatedMLA reads; head_dim 16 because flash-attn 4 on SM90
+    d, heads = 32, 2   # rejects head_dim < 8 or not divisible by 8
 
 
 _torch.manual_seed(0)
@@ -515,9 +516,20 @@ _x = _torch.randn(_B, _T, _C.d)
 _cu = _torch.tensor([0, 3, 8, 13, 16])  # row 0: docs [0,3) [3,8); row 1: [8,13) [13,16)
 
 
+@contextlib.contextmanager
+def _no_flash():
+    """This block is about the fallback: on a flash machine the module would take the
+    flash path and never exercise the mask being checked (and refuse fp32 besides)."""
+    was, _train.HAS_FA = _train.HAS_FA, False
+    try:
+        yield
+    finally:
+        _train.HAS_FA = was
+
+
 def _fallback(x, cu):
     """The real branch, not a copy of it -- a copy drifts from the code it vouches for."""
-    with _torch.no_grad():
+    with _no_flash(), _torch.no_grad():
         return _mla(x, cu)
 
 
@@ -526,7 +538,7 @@ def _per_doc(x, cu):
     flash_attn_varlen_func computes. Same module, cu=None, one document at a time."""
     flat = x.reshape(-1, x.shape[-1])
     out = _torch.empty_like(flat)
-    with _torch.no_grad():
+    with _no_flash(), _torch.no_grad():
         for a, b in zip(cu[:-1].tolist(), cu[1:].tolist()):
             out[a:b] = _mla(flat[a:b].unsqueeze(0), None)[0]
     return out.view_as(x)
@@ -545,3 +557,24 @@ assert _torch.allclose(_masked[0, 3:8], _out2[0, 3:8], atol=1e-6), \
 assert not _torch.allclose(_masked[0, :3], _out2[0, :3], atol=1e-6), \
     "the rewritten document did not change"
 print("doc-mask fallback: == per-document attention, != plain causal, no cross-document leak OK")
+
+# GPU: the flash path must agree with the masked fallback. This is the only shape that
+# catches a mis-bound cu -- flash-attn 4 exports the same two names as v2 with a different
+# positional order (its 4th positional is qv), so a positional call would pass cu as qv and
+# silently drop the mask instead of raising. Same test, two jobs: it is also the
+# correctness check for the fallback on a card.
+if _torch.cuda.is_available() and _train.HAS_FA:
+    _xg = _x.cuda().to(_torch.bfloat16)
+    _mg = _train.GatedMLA(_C).cuda().to(_torch.bfloat16).eval()
+    _mg.load_state_dict({k: v.cuda().to(_torch.bfloat16) for k, v in _mla.state_dict().items()})
+    # autocast, as training does: rms_norm returns fp32 otherwise and flash refuses it.
+    with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
+        _flash = _mg(_xg, _cu.cuda().to(_torch.int32))
+        _train.HAS_FA = False          # same module, same weights, the masked-SDPA branch
+        _ref = _mg(_xg, _cu.cuda().to(_torch.int32))
+        _train.HAS_FA = True
+    _d = (_flash.float() - _ref.float()).abs().max().item()
+    assert _d < 5e-2, f"flash varlen != masked SDPA (max diff {_d:.4f}) -- cu may be mis-bound"
+    print(f"flash varlen == masked fallback on GPU (max diff {_d:.4f}) OK")
+else:
+    print("flash varlen vs fallback SKIP (no CUDA or no flash_attn)")

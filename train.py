@@ -110,7 +110,16 @@ try:
 
     HAS_FA = True
 except ImportError:
-    HAS_FA = False
+    try:
+        # flash-attn 4 keeps the same two names under .cute with a DIFFERENT positional
+        # order: its fourth positional is `qv`, not cu_seqlens_q. Every call below passes
+        # cu and the max lengths by keyword, which is correct for both versions and is the
+        # only thing standing between this import and a silently mis-bound mask.
+        from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
+
+        HAS_FA = True
+    except ImportError:
+        HAS_FA = False
 
 
 # Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
@@ -296,7 +305,8 @@ class GatedMLA(nn.Module):
         k = F.rms_norm(k, (self.hd,))
         if HAS_FA and cu is not None:
             q, k, v = (t.reshape(B * T, self.h, self.hd) for t in (q, k, v))
-            y = flash_attn_varlen_func(q, k, v, cu, cu, T, T, causal=True)
+            y = flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                       max_seqlen_q=T, max_seqlen_k=T, causal=True)
         elif HAS_FA:
             y = flash_attn_func(q, k, v, causal=True)
         else:
@@ -318,6 +328,8 @@ class GatedMLA(nn.Module):
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
             y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=mask is None)
             y = y.transpose(1, 2)
+        if isinstance(y, tuple):
+            y = y[0]  # flash-attn 4 returns (out, lse); v2 and the fallback return a tensor
         y = y.reshape(B, T, D)
         return self.o(y * torch.sigmoid(gate))
 
