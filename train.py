@@ -1388,21 +1388,13 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
-    # An UNSTAMPED cache is adopted, not rebuilt: every cache on the pod predates this
-    # stamp (17 files, 196 GiB), and rebuilding them all would cost hours at the worst
-    # moment for a number that has not changed -- they were built at the default seed,
-    # which is what is running. Stamp it on adoption so the NEXT seed change is caught.
-    # A wrong adoption is impossible while the default holds; a caller who has already
-    # changed Cfg.seed and wants the old cache invalidated should delete it.
-    if os.path.exists(cache) and not os.path.exists(seedfp):
-        try:
-            with open(seedfp, "w") as f:
-                f.write(str(_sample_seed()))
-            if is_main:
-                print(f"mix: {domain} cache predates the seed stamp, adopting at "
-                      f"sample_seed {_sample_seed()}", flush=True)
-        except OSError:
-            pass  # read-only mount: fall through to the freshness test, which rebuilds
+    # An unstamped cache REBUILDS. The 17 caches that predate this stamp were written
+    # explicitly by scripts/stamp_cache_seeds.py after auditing what each was actually
+    # shuffled at (all 42: the ladder caches predate the seed-1/2/3 arms, and every
+    # stage-1 cache was built by a run passing --seed 0, which the truthiness bug
+    # dropped). Lazy adoption was the first version and 44 was right to reject it: it
+    # cannot distinguish "predates the stamp" from "written by a seed nobody recorded",
+    # so it would launder exactly the wrong-order cache this exists to catch.
     same_seed = os.path.exists(seedfp) and open(seedfp).read().strip() == str(_sample_seed())
     fresh = (
         os.path.exists(cache)
