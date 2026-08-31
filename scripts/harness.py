@@ -4006,7 +4006,7 @@ def cmd_clean(rest):
         "   if p not in m:\n"
         "    st=os.stat(p)\n"
         "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
-        "    print(f'{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.localtime(st.st_mtime))}\\t{prd}')\n"
+        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.localtime(st.st_mtime))}\\t{prd}')\n"
     )
     for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
         parts = ln.split("\t")
