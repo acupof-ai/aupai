@@ -4597,6 +4597,53 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_killpg_reaps_children():
+    """A kill must reap a child running a DIFFERENT script.
+
+    Local processes, not the pod: the defect is in how the target set is chosen, and
+    that logic is the same either way. pgrep -f on the parent's cmdline cannot match
+    a child with another name -- score_matrix shells out to math_zh, code_zh,
+    run_eval and domain_loss, so one parent kill leaked a child holding 12.7GB on
+    GPU7 while the parent exited cleanly (e1, 2026-08-31)."""
+    import shutil
+    import signal as sig
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="killpg_")
+    child = os.path.join(d, "differently_named_child.py")
+    parent = os.path.join(d, "parent_runner.py")
+    open(child, "w").write("import time\nwhile True: time.sleep(0.2)\n")
+    open(parent, "w").write(
+        f"import subprocess, time\n"
+        f"subprocess.Popen(['{sys.executable}', {child!r}])\n"
+        f"while True: time.sleep(0.2)\n"
+    )
+    proc = sp.Popen([sys.executable, parent], start_new_session=True)
+    try:
+        time.sleep(1.5)
+        pgid = os.getpgid(proc.pid)
+        # the old approach: match the PARENT's cmdline. It cannot see the child.
+        by_pattern = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        assert str(proc.pid) in by_pattern.stdout.split(), "sanity: parent must match its own pattern"
+        child_match = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        kids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        missed = [k for k in kids if k not in child_match.stdout.split()]
+        assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
+        # the group is what sees everything
+        os.killpg(pgid, sig.SIGTERM)
+        time.sleep(1.5)
+        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        assert not left, f"killpg must reap the whole group, {left} survived"
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+    print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
+
+
 def _selftest_milestone_selection():
     """The watcher never labels a below-target checkpoint as the milestone.
 
@@ -5208,6 +5255,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_gate_timeout()
@@ -6348,19 +6396,41 @@ def cmd_kill(argv):
     print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, monitor {monitor_pids or 'none'}")
     if a.dry:
         return 0
-    for hp in children:
-        subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
-    if parent:
-        time.sleep(1)
-        subprocess.run(["tn", "exec", f"kill {parent}"], capture_output=True)
+    # Kill the process GROUP, not a cmdline match. Launches are setsid'd, so the whole
+    # job shares one pgid; pgrep -f on the PARENT's cmdline cannot see a child running a
+    # different script, and score_matrix shells out to math_zh, code_zh, run_eval and
+    # domain_loss. One such child survived a parent kill tonight holding 12.7GB on GPU7
+    # while the parent exited cleanly -- a silent leak (e1, fb, 2026-08-31).
+    pgids = set()
+    for hp in ([parent] if parent else []) + children:
+        r = subprocess.run(["tn", "exec", f"ps -o pgid= -p {hp}"], capture_output=True, text=True)
+        if r.stdout.strip():
+            pgids.add(r.stdout.strip())
+    for pg in pgids:
+        subprocess.run(["tn", "exec", f"kill -TERM -{pg}"], capture_output=True)
+    time.sleep(2)
     for hp in monitor_pids:
         subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
     time.sleep(2)
+    # Verify by DESCENDANCY, not by pattern: anything still in the job's group is alive.
+    left = []
+    for pg in pgids:
+        r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
+        left += [x for x in r.stdout.split() if x.strip()]
     chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    left = [p for p in chk.stdout.split() if p.strip()]
+    left += [p for p in chk.stdout.split() if p.strip() and p not in left]
     if left:
-        print(f"STILL ALIVE: {' '.join(left)} -- kill -9 by hand", file=sys.stderr)
-        return 1
+        for hp in left:  # a job that ignores TERM still must not hold a card
+            subprocess.run(["tn", "exec", f"kill -9 {hp}"], capture_output=True)
+        time.sleep(2)
+        again = []
+        for pg in pgids:
+            r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
+            again += [x for x in r.stdout.split() if x.strip()]
+        if again:
+            print(f"STILL ALIVE after KILL: {' '.join(again)}", file=sys.stderr)
+            return 1
+        print(f"  {len(left)} process(es) needed SIGKILL: {' '.join(left)}", file=sys.stderr)
     subprocess.run(
         [os.path.expanduser("~/bin/pod"),
          f"cd /work/aupai && python3 scripts/exp.py done --name {a.name} --status fail "
@@ -6531,12 +6601,12 @@ def cmd_milestone(argv):
             os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
             os.path.join(ROOT, "data", "eval", f"preds_code_v2_{ckpt}.jsonl"),
         ) if os.path.exists(p)]
-        m_step = re.search(r"\.step(\d+)$", ckpt)
+        # actual_step/actual_tokens were computed once above and passed to the
+        # readout's budget gate. Reusing them here rather than recomputing keeps the
+        # number that GATES and the number that is RECORDED from drifting apart --
+        # the shape that produced tonight's l1 retraction, where a fact cited an
+        # artifact whose contents had moved underneath it (e1).
         actual_step = int(m_step.group(1)) if m_step else None
-        # tokens is the milestone's NOMINAL budget; actual_tokens is what this
-        # checkpoint saw. readout_30b compares against a paired budget, so a gap
-        # between them is a confound and must be visible in the row, not inferred.
-        actual_tokens = actual_step * TOKENS_PER_STEP if actual_step else None
         row = {
             "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
             "step": actual_step, "actual_tokens": actual_tokens,
