@@ -4789,6 +4789,30 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_refusal_writes_no_row():
+    """A refused launch leaves the ledger untouched.
+
+    The start row was written at step 1 and the lane check ran at 2a, so launching a
+    second job under a LIVE run's name closed that run's row as fail: l1_rerun_0831
+    read running/running/fail while pid 550586 was alive and writing (e1,
+    2026-08-31). Asserts the ordering directly -- the refusal path must reach `return`
+    before any exp.py call, so a ledger seeded with a running row is byte-identical
+    after it."""
+    import inspect
+
+    src = inspect.getsource(cmd_launch)
+    lane_at = src.index("_lane_occupant(lane_card)")
+    row_at = src.index('"start", "--name", args.name')
+    assert lane_at < row_at, (
+        "the lane check must run BEFORE the start row is written, or a refused launch "
+        "closes a live run's row")
+    # and the refusal itself must write nothing
+    refusal = src[lane_at:src.index("return 1", lane_at)]
+    assert "exp.py" not in refusal, f"the refusal path writes a ledger row:\n{refusal}"
+    assert "No ledger row" in refusal, "the refusal must say it wrote nothing"
+    print("  launch: a lane refusal returns before the start row, writing no ledger row")
+
+
 def _selftest_pool_not_raw_supply():
     """A mix whose demand fits the raw cache but exceeds the pool must FAIL.
 
@@ -5478,6 +5502,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
@@ -6360,11 +6385,30 @@ def cmd_launch(rest):
         if any(any(c in part for c in _CORPUS_CMDS) for part in cmd):
             args.no_gpu = True
 
-    # 1. exp.py start row first.
-    # The row's `cmd` is the CHILD command only, so launcher configuration was
-    # invisible in the ledger: on 2026-08-31 the controller checked whether the 15B
-    # run had --auto-resume and the row said no, while the supervisor was running it
-    # (visible only in ps). The flags that govern the run belong in its record.
+    # 1. Allocation and the lane check FIRST: a refusal must write no ledger row.
+    # Card allocation from the controller's config
+    if args.no_gpu:
+        cards = ""
+    else:
+        cards = _allocation_cards(args.training)
+
+    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
+    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
+    if not args.training and not args.no_gpu and cards:
+        lane_card = cards.split(",")[0].strip()
+        occupant = _lane_occupant(lane_card)
+        if occupant:
+            # No ledger row. The refusal happens BEFORE the start row is written, so a
+            # second launch under a live run's name cannot close that run's row: on
+            # 2026-08-31 l1_rerun_0831 read running/running/fail while pid 550586 was
+            # alive and writing, because the row was written at step 1 and this refusal
+            # ran at 2a (e1). A job that never starts leaves no trace in the ledger.
+            print(f"REFUSED: {args.name} - lane GPU {lane_card} occupied by pid {occupant}. "
+                  f"No ledger row written; the lane holds one job at a time.", file=sys.stderr)
+            return 1
+
+
+    # 2. The start row, once the job is known to be runnable.
     launcher = f"--gate-timeout {args.gate_timeout}"
     if args.auto_resume:
         launcher += f" --auto-resume {args.auto_resume}"
@@ -6378,30 +6422,6 @@ def cmd_launch(rest):
          "--hypothesis", args.hypothesis],
         check=True,
     )
-
-    # 2. Card allocation from the controller's config
-    if args.no_gpu:
-        cards = ""
-    else:
-        cards = _allocation_cards(args.training)
-
-    # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
-    # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
-    if not args.training and not args.no_gpu and cards:
-        lane_card = cards.split(",")[0].strip()
-        occupant = _lane_occupant(lane_card)
-        if occupant:
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py"),
-                 "done", "--name", args.name,
-                 "--result", f"refused: lane GPU {lane_card} occupied by pid {occupant}",
-                 "--finding", f"lane card {lane_card} has a running process (pid {occupant})",
-                 "--decision", "wait for the lane to free, or use --no-gpu for corpus jobs",
-                 "--status", "fail"],
-                capture_output=True,
-            )
-            print(f"REFUSED: {args.name} — lane GPU {lane_card} occupied by pid {occupant}", file=sys.stderr)
-            return 1
 
     # 2b. Training jobs: verify training-scope drift before launch.
     # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
