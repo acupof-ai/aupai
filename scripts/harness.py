@@ -1353,16 +1353,55 @@ def _broken_entrypoint_help():
     return d
 
 
-def check_no_stale_running(root):
+def _exp_events(root, folded=True):
+    """runs/experiments.jsonl. Folded by (name, started): the last event for a run wins.
+
+    The ledger is an EVENT LOG, not a table -- exp.py `done` appends a closing event
+    carrying the start row's `started` rather than rewriting the start row, so that a
+    union merge of two branches cannot produce two half-closed runs. A reader that
+    walks raw lines and looks at `status` therefore sees every closed run as still
+    running, forever.
+
+    That is not hypothetical: p02_fp32m_s0 was correctly closed on 2026-09-01 with an
+    appended event on the exact (name, started) pair, and check_no_stale_running kept
+    failing on it, because the check re-implemented the read without the fold. exp.py
+    has folded since it was written; four readers here had not."""
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
+        return None
+    evs = []
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evs.append(json.loads(line))
+        except Exception:
+            continue  # a line another session is mid-append
+    if not folded:
+        return evs
+    out = {}
+    for r in evs:
+        key = (r.get("name"), r.get("started"))
+        prev = out.get(key)
+        # A close is TERMINAL. Last-write-wins alone reopens a finished run when a
+        # duplicate start event lands after its close -- which the ledger contains:
+        # (sft_p324_v3, 2026-08-31 03:44) has an ok event at line 44 and a running
+        # event at line 132, and folding on order alone reported a run that finished
+        # in 32 minutes as 26 hours stale. A union merge of two branches can order
+        # events however it likes, so order is not evidence of sequence.
+        if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
+            continue
+        out[key] = r
+    return list(out.values())
+
+
+def check_no_stale_running(root):
+    evs = _exp_events(root)  # folded: an appended close must clear its start row
+    if evs is None:
         return SKIP, "runs/experiments.jsonl not present"
     rows = []
-    for line in open(p, encoding="utf-8"):
-        try:
-            r = json.loads(line)
-        except Exception:
-            continue
+    for r in evs:
         if r.get("status") != "running":
             continue
         # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
@@ -5546,6 +5585,50 @@ def _selftest_merge_reverted_content():
     print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
 
 
+def _selftest_exp_fold():
+    """The ledger is an event log: a close clears its start, and a stray later start
+    does not reopen a closed run.
+
+    Both halves are real defects from 2026-09-01. p02_fp32m_s0 was correctly closed
+    with an appended event on the exact (name, started) pair and check_no_stale_running
+    kept failing, because it walked raw lines. Then (sft_p324_v3, 03:44) turned out to
+    carry an ok event at line 44 and a running event at line 132 — folding on file
+    order alone reported a run that finished in 32 minutes as 26 hours stale."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="expfold_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        ev = [
+            {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
+            {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
+            # a duplicate START appended AFTER the close, the sft_p324_v3 shape
+            {"name": "b", "started": "2026-08-31 03:44", "status": "ok", "ended": "2026-08-31 04:16"},
+            {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
+            # a genuinely open run must survive the fold
+            {"name": "c", "started": "2026-08-31 12:45", "status": "running", "ended": ""},
+        ]
+        with open(p, "w", encoding="utf-8") as f:
+            for r in ev:
+                f.write(json.dumps(r) + "\n")
+
+        folded = {(r["name"], r["started"]): r for r in _exp_events(d)}
+        assert folded[("a", "2026-08-31 05:08")]["status"] == "fail", "an appended close must clear its start"
+        assert folded[("b", "2026-08-31 03:44")]["status"] == "ok", \
+            "a start appended after a close must NOT reopen the run"
+        assert folded[("c", "2026-08-31 12:45")]["status"] == "running", \
+            "a genuinely open run must still read as running"
+        assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
+
+        state, evidence = check_no_stale_running(d)
+        assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  exp fold: close clears its start; a later start does not reopen; open runs survive")
+
+
 def _selftest_gpu_descendants():
     """Known answer: a child whose cmdline shares nothing with its parent's is still
     found, because descent is what is walked.
@@ -5894,12 +5977,21 @@ def _demo():
         # failure mode 1: a truncated pod row -> refuse, never ride into the ledger
         _, err = _merge_jsonl(pod_fake + [pod_fake[0][:20]], real, eid, "selftest")
         assert err and "parse" in err, f"sync selftest: truncated pod row not caught: {err}"
-        # failure mode 2: a merged output missing a pod row -> verify catches it
+        # failure mode 2: a merged output missing a pod row -> verify catches it.
+        # Drop an identity, not a LINE. Two events legitimately share (name, started)
+        # -- a start and its close -- so dropping the last line can leave its identity
+        # present through the sibling event and the check correctly reports nothing
+        # lost. This selftest used to pass only because the real ledger's last line
+        # happened to be identity-unique; closing p02_fp32m_s0 made it a duplicate and
+        # the assert stopped firing (2026-09-01). It was testing the fixture.
         pod_ids = [eid(json.loads(l)) for l in pod_fake]
         pod_set = set(pod_ids)
         repo_only_ids = [eid(json.loads(l)) for l in real if eid(json.loads(l)) not in pod_set]
         merged_ids = [eid(json.loads(l)) for l in merged.strip().split("\n")]
-        err = _verify_merge(pod_ids, repo_only_ids, merged_ids[:-1], "selftest")
+        dropped = pod_ids[0]
+        kept = [i for i in merged_ids if i != dropped]
+        assert len(kept) < len(merged_ids), "the selftest must actually drop something"
+        err = _verify_merge(pod_ids, repo_only_ids, kept, "selftest")
         assert err and "lost" in err, f"sync selftest: lost row not caught: {err}"
 
     # pod_push manifest freshness: --check-head must fail when a scoped file changed
@@ -6112,6 +6204,7 @@ def _demo():
     _selftest_auto_resume()
     _selftest_devs_map()
     _selftest_gpu_descendants()
+    _selftest_exp_fold()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_reverted_content()
 
@@ -7467,14 +7560,16 @@ def _milestone_token(name):
 
 def _exp_row_status(name):
     """Last status of an exp row; rows are append-only, last row with the name wins."""
-    p = os.path.join(ROOT, "runs", "experiments.jsonl")
-    status = None
-    if os.path.exists(p):
-        for line in open(p, encoding="utf-8"):
-            r = json.loads(line)
-            if r.get("name") == name:
-                status = r.get("status")
-    return status
+    # Folded by (name, started), then the latest start for that name. Folding by
+    # NAME alone attaches a close to whichever row came last in the file, which is
+    # how a close landed on the wrong start of p02_fp32m_s0 (fb, 2026-09-01).
+    evs = _exp_events(ROOT)
+    if not evs:
+        return None
+    mine = [r for r in evs if r.get("name") == name]
+    if not mine:
+        return None
+    return max(mine, key=lambda r: str(r.get("started", ""))).get("status")
 
 
 def _wait_launched(name, timeout):
