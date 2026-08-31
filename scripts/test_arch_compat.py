@@ -563,18 +563,41 @@ print("doc-mask fallback: == per-document attention, != plain causal, no cross-d
 # positional order (its 4th positional is qv), so a positional call would pass cu as qv and
 # silently drop the mask instead of raising. Same test, two jobs: it is also the
 # correctness check for the fallback on a card.
+def _gpu_check(cfg, B, T, cu):
+    """flash == masked, flash != plain-causal, and the flash branch actually ran -- three
+    asserts at one shape. Tolerance is a fraction of the flash-vs-naive gap, not an absolute
+    picked after the fact: agreement must be small NEXT TO the difference the mask makes."""
+    xg = _torch.randn(B, T, cfg.d).cuda().to(_torch.bfloat16)
+    mg = _train.GatedMLA(cfg).cuda().to(_torch.bfloat16).eval()
+    cug = cu.cuda().to(_torch.int32)
+    real = _train.flash_attn_varlen_func
+    n = [0]
+    def _shim(*a, **k):
+        n[0] += 1
+        return real(*a, **k)
+    _train.flash_attn_varlen_func = _shim
+    try:
+        # autocast, as training does: rms_norm returns fp32 otherwise and flash refuses it.
+        with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
+            flash = mg(xg, cug)
+            assert n[0] == 1, f"flash branch did not run (called {n[0]}x) -- max diff 0 would be two fallbacks"
+            _train.HAS_FA = False      # same module, same weights, the masked-SDPA branch
+            ref = mg(xg, cug)
+            naive = mg(xg, None)       # no cu: plain causal, the mask absent
+            _train.HAS_FA = True
+    finally:
+        _train.flash_attn_varlen_func = real
+    d = (flash.float() - ref.float()).abs().max().item()
+    gap = (ref.float() - naive.float()).abs().max().item()
+    assert gap > 10 * d, f"mask barely changes output (gap {gap:.4f} vs diff {d:.4f}) -- test cannot fail"
+    assert d < 0.1 * gap, f"flash varlen != masked SDPA (diff {d:.4f}, mask gap {gap:.4f}) -- cu may be mis-bound"
+    print(f"flash==masked (diff {d:.4f}) != plain-causal (gap {gap:.4f}) at B={B} T={T} hd={cfg.d // cfg.heads} OK")
+
+
 if _torch.cuda.is_available() and _train.HAS_FA:
-    _xg = _x.cuda().to(_torch.bfloat16)
-    _mg = _train.GatedMLA(_C).cuda().to(_torch.bfloat16).eval()
-    _mg.load_state_dict({k: v.cuda().to(_torch.bfloat16) for k, v in _mla.state_dict().items()})
-    # autocast, as training does: rms_norm returns fp32 otherwise and flash refuses it.
-    with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
-        _flash = _mg(_xg, _cu.cuda().to(_torch.int32))
-        _train.HAS_FA = False          # same module, same weights, the masked-SDPA branch
-        _ref = _mg(_xg, _cu.cuda().to(_torch.int32))
-        _train.HAS_FA = True
-    _d = (_flash.float() - _ref.float()).abs().max().item()
-    assert _d < 5e-2, f"flash varlen != masked SDPA (max diff {_d:.4f}) -- cu may be mis-bound"
-    print(f"flash varlen == masked fallback on GPU (max diff {_d:.4f}) OK")
+    _gpu_check(_C, _B, _T, _cu)
+    class _CBig:  # T=4096, hd=128 -- a real training shape, spanning many beta-kernel tiles
+        d, heads = 256, 2
+    _gpu_check(_CBig, 2, 4096, _torch.tensor([0, 1500, 4096, 4700, 8192]))
 else:
     print("flash varlen vs fallback SKIP (no CUDA or no flash_attn)")
