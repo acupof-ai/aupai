@@ -28,6 +28,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 
 import torch
 
@@ -48,6 +49,13 @@ APPLIES = {
     "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like", "l1_fewshot"],
     "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
     "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
+}
+# Fixed subset for every stage-1/stage-2 milestone: the metrics that fit in
+# <60 min on the lane card. pass_at_k and math_hard stay out (hours); they run
+# only at 15B and 30B. de's harness milestone (t39) and b0's readout_30b.py
+# consume the record.
+PROFILES = {
+    "milestone": ["domain_loss", "mc_full", "math_500", "code_500", "code_500_v2"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
@@ -493,14 +501,20 @@ def selftest():
 
 def _metric(name, fn, record, *args, **kwargs):
     """Run a metric, print start/result, store it. Real-time output so a 2h
-    silent run doesn't look dead."""
+    silent run doesn't look dead. Wall time recorded so a milestone profile
+    has a measured budget, not a guess."""
     print(f"  {name:15s} ... running", flush=True)
+    t0 = time.time()
     v, err = fn(*args, **kwargs)
-    record["metrics"][name] = v if v else {"error": err}
+    elapsed = round(time.time() - t0, 1)
+    entry = v if v else {"error": err}
+    if isinstance(entry, dict):
+        entry["_wall_s"] = elapsed
+    record["metrics"][name] = entry
     if err:
-        print(f"  {name:15s} ERROR: {err}", flush=True)
+        print(f"  {name:15s} ERROR: {err} ({elapsed}s)", flush=True)
     else:
-        print(f"  {name:15s} {v}", flush=True)
+        print(f"  {name:15s} {v} ({elapsed}s)", flush=True)
 
 
 def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
@@ -591,6 +605,8 @@ def main():
                     help="GPUs for sharded evals (1 on the lane card, 7 on the training block)")
     ap.add_argument("--metrics", nargs="+", default=None,
                     help="subset of metrics to run (default: all that apply to the ckpt type)")
+    ap.add_argument("--profile", choices=list(PROFILES), default=None,
+                    help="predefined metric subset (overrides --metrics)")
     a = ap.parse_args()
     if a.selftest:
         selftest()
@@ -598,11 +614,13 @@ def main():
     if not a.ckpt:
         ap.error("--ckpt is required")
 
+    metrics = PROFILES[a.profile] if a.profile else a.metrics
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     records = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, a.metrics)
+            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics)
         except Exception as e:
             print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
             continue
