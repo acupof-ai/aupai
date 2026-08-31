@@ -504,6 +504,29 @@
       },
       "uncertainty": "single greedy run, single checkpoint; per-leg KDA-vs-MLA attribution not measured; zero-crossing is a linear interpolation of binned means, not a direct measurement; held-out head is the score_matrix domain_loss data, comparable to the ladder val figure",
       "status": "measured"
+    },
+    {
+      "id": "be.readout_30b_prereg",
+      "value": "Pre-registered readout for the 30B-token pretrain (t22), frozen before launch (docs/lessons/readout_30b_prereg.md). Milestones 3.24B/8B/16B/30B tokens; the 3.24B milestone is PAIRED against ladder point ckpt_p324 (same arch, same tokens, old mix) to isolate the corpus change. Per-metric n, change-threshold, decision rule: code-500 accuracy n=500 threshold 12.6pt (binomial 2delta, delta=1.4/sqrt(500)=6.3pt) -- >12.6% at 30B = code generation exists, continue to RL gate; floor = stop the reasoning-axis claim, report negative. math-hard pass@1 n>=1000 threshold 8.8pt (2delta @ n=1036), same rule. pass@8-pass@1 gap threshold 15pt = the RL gate (>=15pt: RL may start; <15pt: nothing to amplify, reading 'not RL is useless but nothing on this checkpoint for RL to amplify'). MC suite (ceval+mmlu+arc-easy): ceval readable move 5.9pt (seed SD 1.27pt x 4.65, be.panel_expressive_seed_variance), English three at chance+2delta floor (25% each) -- tripwire not a stop: ceval drop >=5.9pt = mix damaged general capability, change mix; rise = supporting only. Per-role domain loss (8 roles, 4000 rows/role) threshold 0.1176 nat (2.28 x sigma-hat, sigma-hat=0.0516, ds.seed_variance_0p2b): improvement >=0.1176 vs the ladder point on the same held-out heads = mix bought that role; flat at 30B = role weight buys nothing measurable, change-mix candidate -- the only metric that can say 'change mix' per role. degenerate_rate: binomial 2delta at its n, reported BESIDE every accuracy, never as substitute (v2: 55.8% degenerate at greedy vs 2.2% correct); format metrics carry their temperature. What the 3.24B pair CANNOT say: (1) anything about the 30B mix beyond 3.24B tokens -- execution-signal (7%) and long-CoT (15%) roles have only 0.23B/0.49B tokens seen at that point, and generation is on the floor anyway; (2) anything where base-eval resolution is below the expected effect -- resolution stated next to each metric, 'no readable effect' is not 'no effect'; (3) causal attribution between roles (all 8 change at once; per-role loss localizes WHERE not WHICH; causal needs the reweight A/B); (4) the pair has a WARMUP CONFOUND: ladder point warmup=20 vs 30B run warmup=300 (8.5% vs 0.57% of the 3.24B run at reduced LR; direction known to drag early loss, 0.2b smoke: warmup 2 vs 20 cost 0.52 val) -- if the 30B milestone reads BETTER past threshold the corpus effect is real (warmup drag can only attenuate); if it reads WORSE the pair is unreadable for the mix question, clean reads at 8B/16B/30B (warmup share 3.7%/1.9%/0.9%); escape hatch = same-recipe warmup=300 3.24B control (~1.7h), not mandatory. Reading rules: floor != no effect (floor readings labelled floor-unjudgeable, pre-registered text never deleted); final 30B verdict is three-state per metric -- moved (past threshold, with direction) / floor (unjudgeable) / flat (readable but under threshold) -- flat and floor are distinct negatives, never merged.",
+      "measured": "2026-08-31",
+      "source": "docs/lessons/readout_30b_prereg.md (frozen before t22 launch); recipe docs/lessons/scale_36b_plan.md §1b; thresholds from be.panel_expressive_seed_variance (ceval 5.9pt), ds.seed_variance_0p2b (sigma-hat 0.0516), be.degeneration_rate (2delta binomial), be.ctx_length_p324 (seq 4096 unchanged)",
+      "config": {
+        "run": "t22, 30B tokens, seq 4096, warmup 300, 7x16x2 (effective batch 224), ~16h @ 524K tok/s, mix data/mix_scale_30b.json",
+        "milestones_tokens": [3240000000, 8000000000, 16000000000, 30000000000],
+        "pair_baseline": "ckpt_p324.pt (ladder 3.24B point, same arch, warmup=20 -- confound declared)",
+        "thresholds": {
+          "code_500_accuracy_pt": 12.6,
+          "math_hard_pass_at_1_pt": "8.8 at n=1036 (2delta, scales with n)",
+          "rl_gate_pass8_minus_pass1_pt": 15,
+          "ceval_readable_move_pt": 5.9,
+          "english_mc_floor": "chance + 2delta (25% each)",
+          "per_role_domain_loss_nat": 0.1176,
+          "degenerate_rate": "binomial 2delta at its n, beside accuracy"
+        },
+        "status": "pre-registered, no data seen"
+      },
+      "uncertainty": "thresholds are binomial/seed-variance derived, not effect-size guesses; the warmup confound on the 3.24B pair is declared with its direction but its magnitude at 3.24B is unmeasured; math-hard n is a lower bound (actual n recorded at run time, threshold scales as 1.4/sqrt(n))",
+      "status": "recorded"
     }
   ]
 }
