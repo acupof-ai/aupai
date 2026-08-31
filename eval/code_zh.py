@@ -88,6 +88,10 @@ def main():
                         help="samples per problem; reports pass@1 (greedy) and pass@k")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH)
+    parser.add_argument("--data", default=None,
+                        help="holdout jsonl (default: code_holdout_500.jsonl)")
+    parser.add_argument("--tag", default="",
+                        help="preds filename tag when --data is used (e.g. 'v2')")
     parser.add_argument(
         "--temperature", type=float, default=0.0,
         help="0.0 = greedy, the default every published number used. Raised only to test whether "
@@ -109,7 +113,8 @@ def main():
     model = model.to(torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
 
-    rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
+    test_path = args.data or TEST_PATH
+    rows = [json.loads(l) for l in open(test_path, encoding="utf-8")]
     rows = rows[args.shard :: args.shards]
     k = max(1, args.k)
     temp = args.temperature if k > 1 or args.temperature > 0 else 0.0
@@ -121,7 +126,7 @@ def main():
         "the project's pass@k setting)."
     )
     preds_path = os.path.join(
-        ROOT, "data", "eval", f"preds_code_{os.path.basename(args.ckpt)}"
+        ROOT, "data", "eval", f"preds_code_{args.tag + '_' if args.tag else ''}{os.path.basename(args.ckpt)}"
         + (f".t{args.temperature}" if args.temperature else "")
         + (f".k{k}" if k > 1 else "")
         + (f".{args.shard}" if args.shards > 1 else "")
