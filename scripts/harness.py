@@ -3761,7 +3761,7 @@ def _refresh_board():
 
 
 def _selftest_gate_timeout():
-    """Known answer: the gate is cache bytes / 1.5 GiB/s x2, floored at 600 s.
+    """Known answer: the gate is cache bytes / _CACHE_READ_GIBPS x2, floored at 600 s.
 
     Tonight's real numbers are the case that matters -- 149 GiB must exceed the
     6m26s the run actually took, and the old 120 s default must not."""
@@ -4996,7 +4996,7 @@ def _derive_gate_timeout(cmd, cache_dir=None):
     first step. On 2026-08-31 that was 149 GiB and the first step line came 6m26s
     after launch -- the 120 s default would have killed a healthy run. The gate is
     a property of the mix, not something an operator should have to measure again:
-    total cache bytes / 1.5 GiB/s, doubled for contention, floor 600 s.
+    total cache bytes / _CACHE_READ_GIBPS, doubled for contention, floor 600 s.
     """
     mix = None
     for i, c in enumerate(cmd):

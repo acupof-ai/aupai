@@ -69,19 +69,14 @@ else
   READY=1
 fi
 
-# Startup gate: build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
-# (train.py:1886), and train.py:1396 torch.loads every domain's FULL cache on every rank.
-# Stage 1's seven caches are 149 GiB (zh_web alone is 79 GiB: its 21.29B-token supply, not
-# the 1.65B drawn), so 7 ranks read ~1.0 TiB. Measured on the pod: 1.4 GB/s raw sequential
-# (dd), 1.5-1.6 GiB/s through torch.load once warm -> ~13 min if every rank misses page
-# cache. 1800 = 2x that, per the "gate = 2x measured load, floor 600" rule. The 10-minute
-# silence monitor still catches a genuine hang after the gate.
-if [ -z "$GATE" ]; then
-  GATE=120; [ -n "$RESUME" ] && GATE=300   # a 959MB+ ckpt load exceeds the default gate (t38)
-  [ "$STAGE" = 1 ] && GATE=1800
-fi
+# Startup gate: derived by `harness launch` from the mix's own cache bytes (de), so this
+# script names no number. build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
+# (train.py:1886) and train.py:1396 torch.loads every domain's FULL cache on every rank --
+# 149 GiB x 7 ranks for stage 1, which took 386 s on 2026-08-31 and would have been killed
+# by the 120 s default. --gate-timeout still overrides for a case the derivation cannot see.
+if [ -n "$GATE" ]; then GATE_ARG="--gate-timeout $GATE"; else GATE_ARG=""; fi
 echo "== resolved command =="
-echo "python3 scripts/harness.py launch $NAME --training --gate-timeout $GATE --auto-resume 2 \\"
+echo "python3 scripts/harness.py launch $NAME --training $GATE_ARG --auto-resume 2 \\"
 echo "  --hypothesis 'staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')' \\"
 echo "  -- bash run_ddp.sh $FLAGS"
 
@@ -94,6 +89,6 @@ if [ "$READY" != 1 ]; then
 fi
 # --auto-resume makes harness launch a BLOCKING supervisor that must outlive the child, so
 # this whole script has to be detached (setsid nohup), not just the torchrun inside it.
-exec python3 scripts/harness.py launch "$NAME" --training --gate-timeout "$GATE" --auto-resume 2 \
+exec python3 scripts/harness.py launch "$NAME" --training $GATE_ARG --auto-resume 2 \
   --hypothesis "staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')" \
   -- bash run_ddp.sh $FLAGS
