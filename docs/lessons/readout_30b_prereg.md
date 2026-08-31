@@ -124,6 +124,7 @@ ceval 5.9pt、per-role domain loss 0.1176 nat、degenerate_rate 2δ)。**终判�
 Stage-1 3.24B 配对隔离的对比与 30B run 的 3.24B 配对**不是同一个对比**:后者隔离完整
 30B mix,前者隔离 stage-1 mix(种子 math/cot + 重配 code/en)。两者都是"固定 arch+tokens
 下的 mix 变更",§1 的读法规则(好于且过阈值 = 语料效应为真,warmup 拖拽只会衰减它;
-差于 = 此配对对语料问题不可读)通用。Stage-1 的 per-role domain loss 对 8 角色读数,
+差于 = 此配对对语料问题不可读)通用。Stage-1 的 per-role domain loss 对 7 角色读数
+(code_tests 已 drop——mining 未落地,1.0B 折进 code_rp1t,stage 2 回归;fb 2026-08-31),
 其中 math_seed/cot 是 stage-1 角色名(math_seed 替代 math_owm;cot = numina 直接落地;
 cot_seed 已 drop——fable5 不可训练,fb 2026-08-31),其余 6 角色同名。
