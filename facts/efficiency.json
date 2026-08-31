@@ -910,7 +910,19 @@
    "value": "ShortConv 改 K 个 shifted multiply-add 替 nn.Conv1d(t02, 2026-08-31):微基准 D=512 B=16 T=4096 compiled 3.44x(conv1d 0.777→shifted 0.226 ms/call),eager 0.61x(反而慢,只在 torch.compile 下赢);train.py 编译模型体,所以走 compiled regime。end-to-end 7 卡 0.2b 50 步稳态:baseline 71K tok/s/gpu(MFU 30%)vs patched 72K(MFU 30%),约 +1.4%——per-op 3.44x 在一个占 step 极小比例的 op 上,end-to-end 微增。数值与 conv 逐值等价(parity 3e-7),loss 一致(val 5.594 vs 5.602,种子噪声内)。verdict:patched ≥ baseline,ship。",
    "measured": "2026-08-31",
    "source": "runs/p02_sc_base.log, runs/p02_sc_patched.log, bench_short_conv2.py",
-   "config": "0.2b mix_scale_0.2b, batch 16 accum 2 seq 4096 grad_ckpt False, world 7, fp8, compile on, max_steps 50, compile warmup excluded from steady-state window",
+   "config": {
+    "cards": 7,
+    "mix": "mix_scale_0.2b.json",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "steps": 50,
+    "compile": true,
+    "fp8": true,
+    "warmup": 20,
+    "window": "steady-state (last 4 steps), compile warmup excluded",
+    "arms": "baseline nn.Conv1d vs patched K shifted multiply-adds"
+   },
    "uncertainty": "single 50-step run per arm; steady-state tok/s read from last 4 steps; +1.4% is within run-to-run noise, treat as 'no regression, per-op win real but end-to-end negligible'",
    "status": "measured"
   }
