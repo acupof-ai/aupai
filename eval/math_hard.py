@@ -8,6 +8,11 @@ Usage: python eval/math_hard.py --ckpt ckpt_sft_v5.pt [--shards N --shard I]
 """
 
 import argparse
+import os as _os
+import sys as _sys
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
+from eval_artifacts import open_artifact  # noqa: E402
 import json
 import os
 import sys
@@ -59,6 +64,10 @@ def main():
         default=None,
         help="write {instruction, greedy, gens} per problem here, for the solve-rate probe",
     )
+    p.add_argument("--force", action="store_true",
+        help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
+    p.add_argument("--run", default=None,
+        help="name this run so predictions version instead of colliding: preds_x.<run>.jsonl")
     a = p.parse_args()
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
@@ -91,7 +100,7 @@ def main():
     n_eq = n_bad = tot_len = n_gen = 0
     per_batch = max(1, a.batch // k)
     dump = open(a.dump, "w", encoding="utf-8") if a.dump else None
-    with open(preds, "w", encoding="utf-8") as f:
+    with open_artifact(preds, force=a.force, run=a.run) as f:
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
             texts_in = [format_prompt(r["instruction"]) for r in batch]

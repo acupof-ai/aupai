@@ -68,8 +68,18 @@ for r in rows:
     by.setdefault(r["level"], [0, 0])
     by[r["level"]][0] += int(r["ok"]); by[r["level"]][1] += 1
 print("  " + ", ".join(f"{k}: {v[0]}/{v[1]}={v[0] / v[1]:.0%}" for k, v in sorted(by.items())))
-with open(f"{base}.jsonl", "w", encoding="utf-8") as f:
+# The MERGED file is what facts cite; guarding only the per-shard opens leaves the
+# clobber path wide open (e1, 2026-08-31). FORCE=1 to replace, RUN=<name> to version.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath("eval")), "scripts"))
+sys.path.insert(0, "scripts")
+from eval_artifacts import open_artifact, seal  # noqa: E402
+
+with open_artifact(f"{base}.jsonl", force=os.environ.get("FORCE") == "1",
+                   run=os.environ.get("RUN") or None) as f:
+    out_path = f.name
     for r in rows:
         f.write(json.dumps(r, ensure_ascii=False) + "\n")
+sealed, msg = seal(out_path, expected, written=len(rows))
+print(("  " if sealed else "  INCOMPLETE: ") + msg)
 print(f"TOTAL math-hard: {ok:.0f}/{len(rows)} = {ok / len(rows):.1%}")
 PY
