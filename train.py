@@ -169,6 +169,13 @@ class Cfg:
     clip = 1.0
     val_frac = 0.05
     seed = 42
+    #: The seed for the corpus shuffle, separate from `seed` so a seed sweep does not
+    #: rebuild every cache. Cfg.seed also drives weight init, the val permutation and
+    #: the batch generator, and the p02_s* arms exist to measure INIT variance at a
+    #: fixed corpus -- binding the cache to it would change their training data and fold
+    #: data variance into ds.seed_variance_0p2b, which the readout's thresholds derive
+    #: from. None means "follow Cfg.seed" (de-7 design).
+    sample_seed = None
     compile = True  # model body only; FLCE loss kept outside (Liger compile-incompatible)
     grad_ckpt = False  # costs 25% wall-clock for ~15GB savings; batch 32 fits without it on H20
     attn_res = True  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
@@ -1337,6 +1344,17 @@ def _encode_domain(texts, tok, workers, log=None):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _sample_seed():
+    """The corpus-shuffle seed: Cfg.sample_seed when set, else Cfg.seed.
+
+    Separate from Cfg.seed on purpose. Cfg.seed also drives weight init, the val
+    permutation and the batch generator, and the p02_s* arms measure INIT variance at a
+    fixed corpus -- binding the cache to Cfg.seed would change their training data and
+    fold data variance into ds.seed_variance_0p2b, the number the readout's thresholds
+    derive from. Pinning sample_seed lets a seed sweep share one cache (de-7)."""
+    return Cfg.seed if Cfg.sample_seed is None else Cfg.sample_seed
+
+
 def _domain_cache_path(domain):
     """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
     token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
@@ -1355,6 +1373,13 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     srcfp = cache + ".srcfp"
+    # The shuffle below is seeded (Random(Cfg.seed).shuffle), so the seed decides WHICH
+    # rows land where in the pool -- two caches built at different seeds hold the same
+    # documents in different order. A resume cursor is a row count into that order, so a
+    # seed change silently reinterprets every cursor rather than invalidating it. A
+    # sidecar, not a name: unlike --fone the stream is identical, so two seeds must not
+    # coexist as two caches, they must force one rebuild (de-7 prerequisite).
+    seedfp = cache + ".seed"
     shards = sorted(
         p
         for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
@@ -1363,23 +1388,45 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
+    # An UNSTAMPED cache is adopted, not rebuilt: every cache on the pod predates this
+    # stamp (17 files, 196 GiB), and rebuilding them all would cost hours at the worst
+    # moment for a number that has not changed -- they were built at the default seed,
+    # which is what is running. Stamp it on adoption so the NEXT seed change is caught.
+    # A wrong adoption is impossible while the default holds; a caller who has already
+    # changed Cfg.seed and wants the old cache invalidated should delete it.
+    if os.path.exists(cache) and not os.path.exists(seedfp):
+        try:
+            with open(seedfp, "w") as f:
+                f.write(str(_sample_seed()))
+            if is_main:
+                print(f"mix: {domain} cache predates the seed stamp, adopting at "
+                      f"sample_seed {_sample_seed()}", flush=True)
+        except OSError:
+            pass  # read-only mount: fall through to the freshness test, which rebuilds
+    same_seed = os.path.exists(seedfp) and open(seedfp).read().strip() == str(_sample_seed())
     fresh = (
         os.path.exists(cache)
         and shards
         and same_vocab
         and same_source
+        and same_seed
         and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
     )
     if is_main and not fresh and os.path.exists(cache) and not same_vocab:
         print(f"mix: {domain} cache was built by another vocabulary, retokenizing", flush=True)
     if is_main and not fresh and os.path.exists(cache) and not same_source:
         print(f"mix: {domain} cache's source changed since caching, retokenizing", flush=True)
+    if is_main and not fresh and os.path.exists(cache) and same_source and same_vocab and not same_seed:
+        was = open(seedfp).read().strip() if os.path.exists(seedfp) else "unstamped"
+        print(f"mix: {domain} cache was shuffled at sample_seed {was}, now "
+              f"{_sample_seed()}: retokenizing (the row ORDER differs, so a resume "
+              f"cursor into the old order is meaningless)", flush=True)
     if is_main and not fresh:
         texts = []
         for p in shards:
             texts += _jsonl_content(p)
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
-        random.Random(Cfg.seed).shuffle(texts)
+        random.Random(_sample_seed()).shuffle(texts)
         print(f"mix: tokenizing {domain} ({len(texts)} docs, workers={workers}) -> {cache}", flush=True)
         data = _encode_domain(texts, tok, workers, log=lambda m: print(m, flush=True))
         del texts
@@ -1388,6 +1435,8 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
             f.write(VOCAB_ID or "")
         with open(srcfp, "w") as f:
             f.write(live_fp)
+        with open(seedfp, "w") as f:
+            f.write(str(_sample_seed()))
         n_tok = len(data[0] if Cfg.fone else data)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
