@@ -43,3 +43,4 @@ data/_corpus_unsanitized/
 data/raw/
 data/eval/preds_*.jsonl
 runs/board.html
+.cache/

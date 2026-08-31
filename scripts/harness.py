@@ -1089,7 +1089,67 @@ def _template_norm(s):
     return s.strip()
 
 
+_TEMPLATE_CACHE = os.path.join(".cache", "template_contamination.json")
+_TEMPLATE_CACHE_VERSION = "v1"  # bump when the scan logic changes
+
+
+def _template_inputs_key(root):
+    """Content fingerprint of the scan's inputs, corpus_fingerprint-style: whole-file
+    sha256 for the small eval files, head+tail 64KB for the large SFT sources.
+    Head+tail catches same-size edits (a same-size rewrite moves head or tail);
+    mtime-only would not, and a copy/podput changes mtime without touching a byte."""
+    import hashlib
+
+    h = hashlib.sha256(_TEMPLATE_CACHE_VERSION.encode())
+    for rel in _TEMPLATE_EVAL_FILES:
+        p = os.path.join(root, rel)
+        if os.path.isfile(p):
+            with open(p, "rb") as f:
+                h.update(rel.encode() + b"\0" + hashlib.sha256(f.read()).digest())
+    for rel in _TEMPLATE_SFT_SOURCES:
+        p = os.path.join(root, rel)
+        if not os.path.isfile(p):
+            continue
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            head = f.read(65536)
+            if size > 65536:
+                f.seek(-65536, os.SEEK_END)
+                tail = f.read(65536)
+            else:
+                tail = b""
+        h.update(
+            f"{rel}:{size}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}\n".encode()
+        )
+    return h.hexdigest()[:16]
+
+
 def check_eval_sft_template_contamination(root):
+    """Cache wrapper: the scan costs ~27s on a full-data checkout, which is the
+    hook-cost class that bred the --no-verify habit. Keyed on a content fingerprint
+    of its inputs, so a hit path is stat calls plus one small hash, under 0.2s."""
+    cache_path = os.path.join(root, _TEMPLATE_CACHE)
+    key = _template_inputs_key(root)
+    if os.path.isfile(cache_path):
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cached = json.load(f)
+            if cached.get("key") == key:
+                return cached["state"], cached["evidence"] + " (cached)"
+        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+            pass  # corrupt or stale cache: recompute
+
+    state, evidence = _template_scan(root)
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"key": key, "state": state, "evidence": evidence}, f)
+    except OSError:
+        pass
+    return state, evidence
+
+
+def _template_scan(root):
     """No code eval problem shares a generator template with an SFT source.
 
     sft_pack_uncontaminated matches verbatim token subsequences. The 2026-08-31
