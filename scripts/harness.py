@@ -4861,8 +4861,11 @@ def cmd_launch(rest):
             env=env, cwd=ROOT,
             start_new_session=True,  # setsid: detach from the controlling terminal
         )
+    # Pid file: container pid AND the cmdline. A kill that uses the container pid
+    # from the host fails silently (host has no such pid -- 2026-08-31, twice);
+    # `harness kill <name>` resolves the host pid from the cmdline via tn exec.
     with open(pid_path, "w") as f:
-        f.write(str(proc.pid))
+        f.write(f"{proc.pid}\n{' '.join(cmd)}\n")
 
     # 4. Training jobs: verify the startup gate line
     if args.training:
@@ -4887,6 +4890,73 @@ def cmd_launch(rest):
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")
     print(f"  exp: python scripts/exp.py done --name {args.name} --result ... --finding ... --decision ...")
+    return 0
+
+
+def cmd_kill(argv):
+    """`harness kill <name> [--dry]` — kill a launched job by name, not pid.
+
+    The pid file holds the CONTAINER pid and cmdline; a host-side kill with that
+    pid no-ops (the host has no such pid -- 2026-08-31, twice, while 32 workers
+    kept writing). Resolves host pids with `tn exec pgrep -f` on the cmdline,
+    matches the parent via /proc NSpid, kills workers first, then the parent and
+    the monitor, and closes the exp row. --dry prints the resolution, kills nothing."""
+    ap = argparse.ArgumentParser(prog="harness kill")
+    ap.add_argument("name")
+    ap.add_argument("--dry", action="store_true", help="print resolved pids, kill nothing")
+    a = ap.parse_args(argv)
+    pid_path = f"/work/aupai/runs/{a.name}.pid"
+    r = subprocess.run(
+        [os.path.expanduser("~/bin/pod"), f"cat {pid_path}"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print(f"no pid file on the pod: runs/{a.name}.pid", file=sys.stderr)
+        return 1
+    lines = r.stdout.splitlines()
+    cpid, cmdline = lines[0], lines[1] if len(lines) > 1 else ""
+    if not cmdline:
+        print(f"pid file predates the cmdline record; resolve by hand: tn exec pgrep -f {a.name}", file=sys.stderr)
+        return 1
+    pattern = re.escape(cmdline)
+    r = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
+    host_pids = [p for p in r.stdout.split() if p.strip()]
+    parent, children = None, []
+    for hp in host_pids:
+        s = subprocess.run(["tn", "exec", f"grep -h NSpid /proc/{hp}/status"], capture_output=True, text=True)
+        nsp = s.stdout.split()
+        innermost = nsp[-1] if len(nsp) >= 2 else (nsp[0] if nsp else None)
+        if innermost == cpid:
+            parent = hp
+        else:
+            children.append(hp)
+    # The monitor's embedded code names the container pid; it is the only other match.
+    r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
+    monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
+    print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, monitor {monitor_pids or 'none'}")
+    if a.dry:
+        return 0
+    for hp in children:
+        subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
+    if parent:
+        time.sleep(1)
+        subprocess.run(["tn", "exec", f"kill {parent}"], capture_output=True)
+    for hp in monitor_pids:
+        subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
+    time.sleep(2)
+    chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
+    left = [p for p in chk.stdout.split() if p.strip()]
+    if left:
+        print(f"STILL ALIVE: {' '.join(left)} -- kill -9 by hand", file=sys.stderr)
+        return 1
+    subprocess.run(
+        [os.path.expanduser("~/bin/pod"),
+         f"cd /work/aupai && python3 scripts/exp.py done --name {a.name} --status fail "
+         f"--result 'killed by harness kill' --finding 'operator kill of container pid {cpid}' "
+         f"--decision 'relaunch or close'"],
+        capture_output=True,
+    )
+    print(f"killed {a.name}; exp row closed")
     return 0
 
 
@@ -4922,6 +4992,8 @@ def main():
         return cmd_install_hooks(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "launch":
         return cmd_launch(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "kill":
+        return cmd_kill(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

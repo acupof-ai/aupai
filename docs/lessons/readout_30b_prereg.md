@@ -97,3 +97,30 @@ mix = `data/mix_scale_30b.json`(8 能力角色,zh:en ≈ 35:65)。
 - MC 是 tripwire:掉 = change mix,升 = 佐证。
 - 30B 终判时,每个指标给三态之一:**动了(过阈值,方向)/ 地板(不可判读)/ 平了
   (可读但没过阈值)**——"平了"和"地板"是两种不同的阴性,不许合并。
+
+## 5. Stage-1(15B WSD)里程碑集(t46,2026-08-31)
+
+Stage-1 run 配方:15B tokens,seq 4096,warmup 300(同 §1b),7 卡 × batch 16 × accum 2
+(有效 batch 224,与阶梯一致),mix = `data/mix_15b_stage1.json`(math_owm/cot 绑定 pod
+现有种子数据 math_seed/cot_seed,缺口按 8:5.5 转 code_rp1t+en_c4),WSD:
+`--warmdown 0 --anneal_frac 0`(stage 1 保持 lr 稳定,终在 lr_mult 1.0;stage 2 在此
+resume,`--warmdown 0.10`,resume 机制以 t47 排练为准)。
+
+| 里程碑 | tokens | 步数 | 读法 |
+|---|---|---|---|
+| **3.24B** | 3.24B | ~3,531 | **配对读数**:对阶梯点 ckpt_p324(同 arch、同 tokens、stage-1 mix vs 阶梯 mix)。warmup 混杂同 §1(stage-1 warmup=300,与 30B run 同),读法规则不变 |
+| 8B | 8B | ~8,720 | 趋势读数 |
+| 15B | 15B | ~16,349 | **stage-1 终判** |
+
+阈值与决策规则同 §2,逐字不改(code-500 12.6pt、math-hard 8.8pt、RL gap 15pt 闸、
+ceval 5.9pt、per-role domain loss 0.1176 nat、degenerate_rate 2δ)。**终判动作映射不同**:
+30B 表的"continue 进 RL 闸"在 stage-1 终判处读作"continue 进 stage 2(resume)";
+"stop"读作"stage 2 不 resume,按阴性报";"change mix"读作"stage-2 mix 调整候选"。
+3.24B 配对的逃生舱(同配 warmup=300 对照 run,~1.7h)同样**仅当**配对读"差于"阶梯点
+时才跑,在此之前不跑。
+
+Stage-1 3.24B 配对隔离的对比与 30B run 的 3.24B 配对**不是同一个对比**:后者隔离完整
+30B mix,前者隔离 stage-1 mix(种子 math/cot + 重配 code/en)。两者都是"固定 arch+tokens
+下的 mix 变更",§1 的读法规则(好于且过阈值 = 语料效应为真,warmup 拖拽只会衰减它;
+差于 = 此配对对语料问题不可读)通用。Stage-1 的 per-role domain loss 对 8 角色读数,
+其中 math_seed/cot_seed 是 stage-1 角色名(替代 math_owm/cot),其余 6 角色同名。
