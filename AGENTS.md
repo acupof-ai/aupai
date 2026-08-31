@@ -68,6 +68,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 
 | task | command |
 |---|---|
+| Launch any GPU or corpus job | `python scripts/harness.py launch <name> [--training] [--hypothesis "..."] -- <cmd>` — exp row first, card allocation from controller config, startup gate for training, monitor on process-gone/log-silent |
 | Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on all 8 GPUs |
 | SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` |
 | Eval, one metric | `scripts/eval_hard.sh <ckpt> [ngpu]` |

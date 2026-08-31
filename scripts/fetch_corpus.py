@@ -125,10 +125,22 @@ def _manifest_rp1t_github():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_fineweb_edu_10bt():
+    """en cell (5.5B): fineweb-edu sample/10BT -- 14 parquet (~28.5GB, >10B GPT-2
+    tokens; edu-filtered, the selection we would hand-make for reasoning). File
+    names are 000_00000.parquet..013_00000.parquet under sample/10BT/. Reachable
+    via hf-mirror resolve with curl -4 (the pod's IPv6 egress is broken). The
+    manifest is the shipped names file (source_fp = its content hash)."""
+    names = open(os.path.join(ROOT, "data", "raw", "fineweb_edu_10bt_manifest.txt")).read().split()
+    base = "https://hf-mirror.com/datasets/HuggingFaceFW/fineweb-edu/resolve/main/sample/10BT/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
     "rp1t_github": _manifest_rp1t_github,
+    "en_fineweb_edu": _manifest_fineweb_edu_10bt,
 }
 
 

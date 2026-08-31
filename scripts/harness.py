@@ -3638,10 +3638,53 @@ def _demo():
     # a log with them must pass immediately.
     gate_log = os.path.join(tempfile.mkdtemp(), "gate.log")
     open(gate_log, "w").write("params 200M | device cuda | world 7 | fa True | fp8 True\n")
-    assert not _wait_for_startup(gate_log, timeout=3), "gate must FAIL without doc_mask line"
+    ok, _ = _wait_for_startup(gate_log, timeout=3)
+    assert not ok, "gate must FAIL without doc_mask line"
     open(gate_log, "a").write("cfg batch 16 doc_mask True attn_res 0/0\n")
-    assert _wait_for_startup(gate_log, timeout=3), "gate must PASS with both lines"
+    ok, _ = _wait_for_startup(gate_log, timeout=3)
+    assert ok, "gate must PASS with both lines True"
+    # fa False must kill immediately, not wait for timeout
+    open(gate_log, "w").write("params 200M | device cuda | world 7 | fa False | fp8 True\n")
+    open(gate_log, "a").write("cfg batch 16 doc_mask True attn_res 0/0\n")
+    t0 = time.time()
+    ok, reason = _wait_for_startup(gate_log, timeout=30)
+    assert not ok and "fa False" in reason, f"gate must FAIL on fa False, got {ok} {reason}"
+    assert time.time() - t0 < 5, "fa False must kill immediately, not wait for timeout"
     shutil.rmtree(os.path.dirname(gate_log), ignore_errors=True)
+
+    # task reopen: done -> open keeps prior evidence, appends reason, check accepts the transition.
+    # Operates on a temp copy of the real register, never the ledger itself.
+    import tempfile as _tf
+    tmp_root = os.path.join(_tf.mkdtemp())
+    tmp_tasks = os.path.join(tmp_root, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(tmp_tasks), exist_ok=True)
+    real_rows = _read_tasks()
+    if real_rows:
+        _write_tasks(real_rows, tmp_tasks)
+        test_row = dict(real_rows[0])
+        test_row.update(id="t_selftest", state="done", evidence="prior evidence",
+                        owner="selftest", why="test", closed=time.strftime("%Y-%m-%d %H:%M"))
+        rows = _read_tasks(tmp_tasks) + [test_row]
+        _write_tasks(rows, tmp_tasks)
+        # Reopen: same transition as cmd_task
+        rows = _read_tasks(tmp_tasks)
+        hit = [r for r in rows if r.get("id") == "t_selftest"]
+        assert hit and hit[0]["state"] == "done", "selftest row must start done"
+        prior = hit[0].get("evidence", "")
+        hit[0].update(state="open", reopen_reason="selftest reopen",
+                      reopened=time.strftime("%Y-%m-%d %H:%M"), evidence=prior)
+        hit[0].pop("closed", None)
+        _write_tasks(rows, tmp_tasks)
+        # Verify: state=open, evidence preserved, reopen_reason present, check accepts
+        rows = _read_tasks(tmp_tasks)
+        hit = [r for r in rows if r.get("id") == "t_selftest"][0]
+        assert hit["state"] == "open", "reopen must set state=open"
+        assert hit["evidence"] == "prior evidence", "reopen must preserve prior evidence"
+        assert hit.get("reopen_reason") == "selftest reopen", "reopen must carry the reason"
+        assert "closed" not in hit, "reopen must remove closed"
+        state, _ = check_tasks_well_formed(tmp_root)
+        assert state == PASS, f"tasks_well_formed must accept a reopened row, got {state}"
+        shutil.rmtree(tmp_root, ignore_errors=True)
 
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
@@ -4285,20 +4328,23 @@ def _allocation_cards(training):
 
 
 def _wait_for_startup(log_path, timeout):
-    """Poll the log for the training startup gate lines (fa and doc_mask).
+    """Poll the log for the training startup gate lines.
 
     train.py prints two runlog lines at startup:
       params ... | device cuda | world 7 | fa True | fp8 True
       cfg batch ... doc_mask True attn_res ...
-    Both must appear before the job counts as started."""
+    Both must read True. fa False kills immediately (the incident: a log printed
+    fa False beside doc_mask True and nothing objected)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if os.path.isfile(log_path):
             text = open(log_path, errors="ignore").read()
-            if "fa " in text and "doc_mask " in text:
-                return True
+            if "fa False" in text:
+                return False, "fa False in log"
+            if "fa True" in text and "doc_mask True" in text:
+                return True, "gate passed"
         time.sleep(2)
-    return False
+    return False, "timeout"
 
 
 def _arm_monitor(name, pid, log_path):
@@ -4394,18 +4440,19 @@ def cmd_launch(rest):
 
     # 4. Training jobs: verify the startup gate line
     if args.training:
-        if not _wait_for_startup(log_path, args.gate_timeout):
+        ok, reason = _wait_for_startup(log_path, args.gate_timeout)
+        if not ok:
             os.kill(proc.pid, signal.SIGTERM)
             subprocess.run(
                 [sys.executable, os.path.join(HERE, "exp.py"),
                  "done", "--name", args.name,
-                 "--result", "killed: startup gate timeout",
-                 "--finding", f"no fa/doc_mask line in {args.gate_timeout}s",
+                 "--result", f"killed: startup gate {reason}",
+                 "--finding", f"gate failed: {reason}",
                  "--decision", "fix the startup issue",
                  "--status", "fail"],
                 capture_output=True,
             )
-            print(f"FAILED: {args.name} killed — no startup gate line in {args.gate_timeout}s", file=sys.stderr)
+            print(f"FAILED: {args.name} killed — {reason}", file=sys.stderr)
             return 1
 
     # 5. Arm monitor
