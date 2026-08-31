@@ -68,16 +68,18 @@ def main():
     fp = stats.get("filters_fp")
 
     per_file = tokens / max(1, len(SHARDS))
-    project = 751303817  # 751.3M tokens/file projection measured 2026-08-30
-    gap = (per_file - project) / project
-
     print(f"shards: {len(SHARDS)}  filters_fp: {fp or 'MISSING -> FAILS the derived-artifact rule'}")
     print(f"fetched docs (sample): {raw_docs}   kept docs: {kept}")
     print(f"retention (kept/fetched, one-file denominator): {kept / max(1, raw_docs):.2%}")
     print(f"landed tokens (frozen tok over cleaned text): {tokens} ({tokens / 1e9:.2f}B)")
     print(f"landed tok/byte: {tokens / max(1, tb):.4f}")
-    print(f"per-file tokens: {per_file / 1e6:.2f}M  vs projection 751.3M: gap {gap:+.1%} "
-          f"({'WITHIN 10%' if abs(gap) <= 0.10 else 'BEYOND 10% -> 73.6B changes by ' + f'{gap:+.1%}'})")
+    # Per-file projection check. DENOMINATOR WARNING: SHARDS are 235 CLEANED output
+    # shards; the 751.3M/file projection is per RAW FETCH file (98 files for the
+    # full supply, modeled under the stage-1 budget's raw bytes). Comparing per
+    # shard to per raw file is apples-to-oranges and prints a false -95% gap; the
+    # number that matters is total landed tokens against the domain's cap/budget.
+    print(f"per cleaned shard: {per_file / 1e6:.2f}M tok/shard x {len(SHARDS)} shards = {tokens / 1e9:.2f}B landed "
+          f"(NOT comparable to the 751.3M-raw-file supply projection -- different denominator)")
     print(f"disk /work free: {os.statvfs(os.path.join(ROOT,'data')).f_bavail * os.statvfs(os.path.join(ROOT,'data')).f_frsize / 1e9:.0f}G")
 
 

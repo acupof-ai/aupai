@@ -6422,6 +6422,48 @@ def _ckpt_env_fp(path):
         return None
 
 
+def _gpu_descendants(root_host_pid):
+    """Host pids holding GPU memory that descend from root_host_pid.
+
+    The cmdline pattern cannot see them: score_matrix shells out to math_zh.py,
+    code_zh.py, run_eval.py and domain_loss.py, so a child's cmdline shares no
+    text with its parent's. Walk /proc/<pid>/stat's PPid field up from each pid
+    nvidia-smi reports instead -- descent is the real relation, cmdline was a
+    proxy for it (de + e1, 2026-08-31: a kill left math_zh.py holding 12.7 GB
+    and the verification greped the same blind pattern, so it printed success).
+
+    The chain runs through NON-GPU processes: score_matrix (383102) -> bash
+    eval_math.sh (400242, no GPU) -> math_zh.py (400379, 6.5 GB). A ppid map
+    built only over GPU pids stops at the shell and reports nothing, which is
+    exactly how the first version of this function failed. Read the whole
+    process table's ppid map, not just the GPU pids'."""
+    r = subprocess.run(
+        ["tn", "exec", "nvidia-smi --query-compute-apps=pid --format=csv,noheader"],
+        capture_output=True, text=True,
+    )
+    gpu_pids = [p.strip() for p in r.stdout.split() if p.strip().isdigit()]
+    if not gpu_pids:
+        return []
+    # Whole-table ppid map in one call: intermediate shells are not GPU processes,
+    # so a map over gpu_pids alone breaks the chain.
+    r = subprocess.run(["tn", "exec", "ps -eo pid=,ppid="], capture_output=True, text=True)
+    ppid = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            ppid[parts[0]] = parts[1]
+    out = []
+    for p in gpu_pids:
+        seen, cur = 0, p
+        while cur in ppid and seen < 64:  # bounded: a cycle must not hang a kill
+            cur = ppid[cur]
+            seen += 1
+            if cur == str(root_host_pid):
+                out.append(p)
+                break
+    return out
+
+
 def cmd_kill(argv):
     """`harness kill <name> [--dry]` — kill a launched job by name, not pid.
 
@@ -6429,7 +6471,11 @@ def cmd_kill(argv):
     pid no-ops (the host has no such pid -- 2026-08-31, twice, while 32 workers
     kept writing). Resolves host pids with `tn exec pgrep -f` on the cmdline,
     matches the parent via /proc NSpid, kills workers first, then the parent and
-    the monitor, and closes the exp row. --dry prints the resolution, kills nothing."""
+    the monitor, and closes the exp row. --dry prints the resolution, kills nothing.
+
+    Children whose cmdline differs from the parent's are found by DESCENT, not by
+    pattern: see _gpu_descendants. The pattern alone cannot see them, and using it
+    to verify the kill made the failure silent."""
     ap = argparse.ArgumentParser(prog="harness kill")
     ap.add_argument("name")
     ap.add_argument("--dry", action="store_true", help="print resolved pids, kill nothing")
@@ -6462,14 +6508,18 @@ def cmd_kill(argv):
     # The monitor's embedded code names the container pid; it is the only other match.
     r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
     monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
-    print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, monitor {monitor_pids or 'none'}")
+    # Differently-named children holding GPU memory (score_matrix -> math_zh.py etc).
+    gpu_kids = [p for p in _gpu_descendants(parent) if p not in host_pids] if parent else []
+    print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, "
+          f"monitor {monitor_pids or 'none'}, gpu descendants {gpu_kids or 'none'}")
     if a.dry:
         return 0
-    # Kill the process GROUP, not a cmdline match. Launches are setsid'd, so the whole
-    # job shares one pgid; pgrep -f on the PARENT's cmdline cannot see a child running a
-    # different script, and score_matrix shells out to math_zh, code_zh, run_eval and
-    # domain_loss. One such child survived a parent kill tonight holding 12.7GB on GPU7
-    # while the parent exited cleanly -- a silent leak (e1, fb, 2026-08-31).
+    # Two mechanisms, because they catch different escapes (de + e1, 2026-08-31):
+    # the process GROUP sweeps everything the setsid'd launch spawned, including
+    # processes holding no card, but misses anything that has left the group (a
+    # double-setsid, a re-parented orphan). GPU descent catches exactly what holds a
+    # card regardless of group. Group kill is the sweep; GPU occupancy is the
+    # acceptance test, because a card held is the thing that actually costs us.
     pgids = set()
     for hp in ([parent] if parent else []) + children:
         r = subprocess.run(["tn", "exec", f"ps -o pgid= -p {hp}"], capture_output=True, text=True)
@@ -6478,16 +6528,28 @@ def cmd_kill(argv):
     for pg in pgids:
         subprocess.run(["tn", "exec", f"kill -TERM -{pg}"], capture_output=True)
     time.sleep(2)
+    for hp in children + gpu_kids:  # anything the group missed
+        subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
+    if parent:
+        time.sleep(1)
+        subprocess.run(["tn", "exec", f"kill {parent}"], capture_output=True)
     for hp in monitor_pids:
         subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
     time.sleep(2)
-    # Verify by DESCENDANCY, not by pattern: anything still in the job's group is alive.
+    # Verify three ways, because each is blind to what the others see: the group
+    # (everything the launch spawned), the cmdline pattern (the historical check),
+    # and GPU occupancy (the resource). The pattern that could not SEE the orphan
+    # cannot prove it is gone, and a kill that reports success while 12.7 GB stays
+    # held is worse than one that fails loudly.
     left = []
     for pg in pgids:
         r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
-        left += [x for x in r.stdout.split() if x.strip()]
+        left += [x for x in r.stdout.split() if x.strip() and x not in left]
     chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
     left += [p for p in chk.stdout.split() if p.strip() and p not in left]
+    still_gpu = [p for p in _gpu_descendants(parent)] if parent else []
+    reparented = [p for p in still_gpu if p not in left]
+    left += reparented
     if left:
         for hp in left:  # a job that ignores TERM still must not hold a card
             subprocess.run(["tn", "exec", f"kill -9 {hp}"], capture_output=True)
@@ -6496,9 +6558,16 @@ def cmd_kill(argv):
         for pg in pgids:
             r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
             again += [x for x in r.stdout.split() if x.strip()]
+        again += [p for p in (_gpu_descendants(parent) if parent else []) if p not in again]
         if again:
             print(f"STILL ALIVE after KILL: {' '.join(again)}", file=sys.stderr)
             return 1
+        if reparented:
+            # Out of the group but still on a card: the escape the group sweep cannot
+            # see. Worth naming rather than silently reaping -- it means something
+            # re-parented, and the next one may not hold a card to be found by.
+            print(f"  REPARENTED (outside the job's group, found by GPU occupancy): "
+                  f"{' '.join(reparented)}", file=sys.stderr)
         print(f"  {len(left)} process(es) needed SIGKILL: {' '.join(left)}", file=sys.stderr)
     subprocess.run(
         [os.path.expanduser("~/bin/pod"),
