@@ -10,6 +10,8 @@ source: fb tasking 2026-08-31; docs/lessons/scale_36b_plan.md §1b (recipe), §1
 n 和判变阈值、以及判完之后的动作(continue / stop / change mix)。**没有决策规则
 的指标不进读数。**
 
+实现:`scripts/readout_30b.py`(t34)——本预注册即代码,里程碑落地时直接跑判定,不争论。
+
 Run 配方(scale_36b_plan.md §1b 定稿):30B tokens,seq 4096,warmup 300 步,
 7 卡 × batch 16 × accum 2(有效 batch 224,与阶梯一致),~16h @ 524K tok/s,
 mix = `data/mix_scale_30b.json`(8 能力角色,zh:en ≈ 35:65)。

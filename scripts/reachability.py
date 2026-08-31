@@ -63,7 +63,7 @@ for dirpath, dirnames, filenames in os.walk(ROOT):
         if fn.endswith((".py", ".sh")):
             ALL_FILES.add(os.path.relpath(os.path.join(dirpath, fn), ROOT))
 
-SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|filters|mathbank|algorithms)/[\w./-]+\.(?:py|sh)")
+SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|filters|mathbank|algorithms|probes)/[\w./-]+\.(?:py|sh)")
 TOPLEVEL_RE = re.compile(r"(?<![\w/])([\w.-]+\.(?:py|sh))")
 
 # Basename -> full path, for resolving bare names like "rlvr.py" -> "algorithms/rlvr.py"
