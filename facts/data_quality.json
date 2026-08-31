@@ -739,6 +739,23 @@
    },
    "uncertainty": "近重是启发式(MinHash ~0.8 Jac);形状特征是分类器非原始 token;code 源 0% 未见多样性可能因 code 答案有确定结构",
    "status": "measured"
+  },
+  {
+   "id": "dq.code_rp1t_handread_50",
+   "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each.",
+   "measured": "2026-08-31",
+   "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
+   "config": {
+    "n": 50,
+    "denominator": "all 50 sampled docs, single-reader hand-read",
+    "sampling": "first 400 lines of each of 197 shards (78,800 docs scanned; shards are shuffled corpus slices, so shard-head is effectively uniform), reservoir per detected PL, cap 8 docs/PL, shuffled to 50",
+    "stratification": "by programming language via head-600-char regex heuristic; labels corrected by hand in the tally",
+    "rubric": "keepable = real, non-trivial, hand-written code (tests, configs, interfaces, thin real classes kept); reject reasons: view/template glue, POJO boilerplate, generated, dead/commented",
+    "near_dedup": "false on this domain (accepted risk, t48 stage-2 re-stamp prerequisite); visible near-dups among the 50 tallied as required",
+    "threshold": "none pre-registered for keep rate -- descriptive; cci3 handread precedent dq.cci3.handread_150"
+   },
+   "uncertainty": "Single reader. PL classifier mislabeled PHP files (the `use`/`class` regexes matched python/rust patterns) -- labels were corrected by hand in the tally, counts above use corrected labels. Six kept docs are real-but-trivial (thin interfaces, 6-line exception class, one-assertion test); a stricter rubric would put keep rate at ~34/50 = 68%. Sample is shard-head, not uniform over docs (defensible because shards are shuffled). 80% keepable is a description of this 197-shard stage-1 subset; the 39 rest shards were not in the sample frame.",
+   "status": "measured"
   }
  ]
 }
