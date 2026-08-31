@@ -182,7 +182,7 @@ def _manifest_ms_om2():
 
 def _manifest_hf_finemath_4plus():
     names = open(os.path.join(ROOT, "data", "raw", "hf_finemath_4plus_manifest.txt")).read().split()
-    base = "https://hf-mirror.com/datasets/HuggingFaceTB/finemath/resolve/refs%2Fconvert%2Fparquet/"
+    base = "https://hf-mirror.com/datasets/HuggingFaceTB/finemath/resolve/refs%2Fconvert%2Fparquet/finemath-4plus/train/"
     return [(n, base + n, 0) for n in names]
 
 
