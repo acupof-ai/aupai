@@ -132,7 +132,7 @@ def main():
                                 "q": r["instruction"],
                                 "answer": r["answer"],
                                 "level": r["level"],
-                                "gen": gen[-300:],
+                                "gen": gen,
                                 "ok": ok,
                                 "greedy": len(oks) == 1,
                             },

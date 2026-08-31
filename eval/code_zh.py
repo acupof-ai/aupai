@@ -131,7 +131,8 @@ def main():
                     ok, _, _ = score_code(code, r["expected_output"])
                 correct += int(ok)
                 total += 1
-                fout.write(json.dumps({"q": r["instruction"], "gen": gen[-300:],
+                fout.write(json.dumps({"q": r["instruction"], "gen": gen,
+                                       "expected": r["expected_output"],
                                        "ok": ok}, ensure_ascii=False) + "\n")
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)

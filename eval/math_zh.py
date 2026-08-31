@@ -100,7 +100,7 @@ def main():
                 k = min(check_steps(r["output"])[0], 3)  # difficulty bucket by gold step count
                 by_steps.setdefault(k, [0, 0]); by_steps[k][0] += int(ok); by_steps[k][1] += 1
                 fout.write(json.dumps({"q": r["instruction"], "gold": r["output"][-80:],
-                                       "gen": gen[-300:], "ok": ok}, ensure_ascii=False) + "\n")
+                                       "gen": gen, "ok": ok}, ensure_ascii=False) + "\n")
             if total % 64 == 0 or total == len(rows):
                 print(f"  {total}/{len(rows)} acc={correct / total:.1%}", flush=True)
 

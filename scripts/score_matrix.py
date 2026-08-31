@@ -343,7 +343,10 @@ def degeneration_rate(path, temperature, greedy=None):
             if greedy is not None and r.get("greedy") != greedy:
                 continue
             n += 1  # denominator = every row; a short generation is non-degenerate, not absent
-            words = r.get("gen", "").split()
+            # The eval scripts now store the FULL gen; the metric's window is the tail
+            # (DEGEN_CONFIG["window"]). Old files already store the tail, and [-300:] of
+            # a 300-char string is itself, so this is backward compatible.
+            words = r.get("gen", "")[-300:].split()
             if len(words) < cfg["min_words"]:
                 continue  # cannot form the n-gram -> non-degenerate
             counts = {}
