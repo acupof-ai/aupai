@@ -200,6 +200,72 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_no_duplicate_defs(root):
+    """No module defines the same top-level name twice.
+
+    A merge can land two copies of one function without any conflict: tonight two
+    sessions restored the same dropped selftest from different commits, and
+    harness.py carried _selftest_gpu_descendants twice, 200 lines apart. Python
+    silently binds the second, so the FIRST copy is dead and the two drift the day
+    one is edited -- and the selftest ran twice, which looks like coverage.
+
+    ruff's F811 does not fire on this: the copies were separated by other defs and
+    the name is called from a list of selftests, not shadowed in an obvious way.
+    """
+    bad = []
+    scanned = 0
+    for rel in ("scripts", "eval", "datagen", "filters", "algorithms"):
+        for path in sorted(glob.glob(os.path.join(root, rel, "**", "*.py"), recursive=True)):
+            try:
+                tree = ast.parse(open(path, encoding="utf-8").read())
+            except (OSError, SyntaxError):
+                continue
+            scanned += 1
+            seen = {}
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if node.name in seen:
+                        bad.append(f"{os.path.relpath(path, root)}:{node.lineno} "
+                                   f"{node.name} (first at :{seen[node.name]})")
+                    seen[node.name] = node.lineno
+    for path in (os.path.join(root, f) for f in ("train.py", "sft.py", "sft_math.py")):
+        if not os.path.exists(path):
+            continue
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except (OSError, SyntaxError):
+            continue
+        scanned += 1
+        seen = {}
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if node.name in seen:
+                    bad.append(f"{os.path.basename(path)}:{node.lineno} {node.name} "
+                               f"(first at :{seen[node.name]})")
+                seen[node.name] = node.lineno
+    if bad:
+        return FAIL, f"{len(bad)} duplicate top-level def(s): {'; '.join(bad[:3])}"
+    return PASS, f"{scanned} module(s), no duplicate top-level definitions"
+
+
+def _broken_no_duplicate_defs():
+    """The REAL harness.py with one of its own functions defined a second time --
+    the shape a merge produces, appended rather than hand-written."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "harness.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    marker = "def cfg_default(field):"
+    if marker not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
+        text + "\n\ndef cfg_default(field):\n    return None  # the duplicate a merge lands\n"
+    )
+    return d
+
+
 def check_agents_rules_covered(root):
     """Every AGENTS.md rule maps to a check name or an explicit manual reason.
 
@@ -4195,6 +4261,13 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "no_duplicate_defs",
+        "no module defines the same top-level name twice",
+        "two sessions restored one dropped selftest from different commits and harness.py carried it twice; Python binds the second, so the first is dead code that drifts, and ruff F811 does not fire across intervening defs",
+        check_no_duplicate_defs,
+        _broken_no_duplicate_defs,
+    ),
+    (
         "agents_rules_covered",
         "every AGENTS.md rule maps to a check name or an explicit manual reason",
         "the register refusal in a worktree pushed a session into the shared tree tonight: a rule that is only prose is one people break for cause",
@@ -4869,47 +4942,6 @@ def _selftest_pool_not_raw_supply():
     print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
 
 
-def _selftest_gpu_descendants():
-    """Known answer: a child whose cmdline shares nothing with its parent's is still
-    found, because descent is what is walked.
-
-    The failing case is the real one -- score_matrix (parent) shells out to
-    math_zh.py (child). On 2026-08-31 a kill matched children by the parent's
-    cmdline pattern, math_zh.py could not match, and it survived holding 12.7 GB on
-    GPU 7. The verification greped the same pattern, so `killed; exp row closed`
-    printed over a live orphan.
-
-    Pure-function test on the ppid walk: no pod, no GPU.
-    """
-    def walk(gpu_pids, ppid, root, limit=12):
-        out = []
-        for p in gpu_pids:
-            seen, cur = 0, p
-            while cur in ppid and seen < limit:
-                cur = ppid[cur]
-                seen += 1
-                if cur == str(root):
-                    out.append(p)
-                    break
-        return out
-
-    # parent 100 -> score_matrix 200 -> math_zh 300; 400 is someone else's job.
-    ppid = {"200": "100", "300": "200", "400": "999"}
-    got = walk(["300", "400"], ppid, 100)
-    assert got == ["300"], f"descent must find the grandchild and only it: {got}"
-
-    # The failing case: pattern matching cannot find it. This is what the old code did.
-    parent_cmdline = "score_matrix.py --ckpt X --profile milestone"
-    child_cmdline = "math_zh.py --ckpt X --shards 1"
-    assert parent_cmdline not in child_cmdline, "the premise: the child shares no cmdline text"
-
-    # A cycle must not hang the kill path.
-    got = walk(["1"], {"1": "2", "2": "1"}, 999)
-    assert got == [], "a ppid cycle must terminate and match nothing"
-
-    # A direct child is found too, not just a grandchild.
-    assert walk(["200"], {"200": "100"}, 100) == ["200"]
-    print("  gpu descendants: grandchild with a foreign cmdline found; cycle terminates; stranger excluded")
 
 
 def _selftest_killpg_reaps_children():
@@ -5624,7 +5656,6 @@ def _demo():
 
     _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
-    _selftest_gpu_descendants()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
