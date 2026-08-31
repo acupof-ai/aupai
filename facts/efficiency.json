@@ -1085,6 +1085,40 @@
    },
    "uncertainty": "One trace, one card, 20 active steps inside the warmup tail, so the amortized 244 ms/step is a property of that window and not of the run. The steady-state cost of the 25 variants is not measured here and may be zero once every shape is compiled; what is measured is that the variants exist and that compiling them costs 4.89 s. The bucketing fix is a proposal with no A/B behind it: the ship gate is >=3% tok/s with |delta val| <= 0.04 nat, and it needs the 7-card block, so it cannot be tested until stage 1 ends. Gap attribution assumes the largest cpu_op inside a gap explains it; the compile ops account for 151 of the 154-157 ms in the gaps I inspected.",
    "status": "measured"
+  },
+  {
+   "id": "eff.light_profile_wall",
+   "value": "Per-metric wall time for the light eval profile (t58: domain_loss + mc_full), read from the score records' own _wall_s field rather than estimated. TWO measurements of the same two metrics on ckpt_p324, and they differ by 1.8x, so the range is the fact and neither number alone is: runs/score_matrix.jsonl line 28 (profile=milestone, the canonical ledger) reads domain_loss 154.2 s + mc_full 202.2 s = 356.4 s, i.e. 5.9 min; runs/milestone_p324_v2.jsonl (profile=None, the v2 milestone run) reads 71.5 s + 122.6 s = 194.1 s, i.e. 3.2 min. Both are under the 8-minute target set for t58, which is the decision the number was needed for, and the canonical ledger's 5.9 min is the figure to schedule against. The three generative metrics are what make the full milestone profile expensive: math_500 733.9 s, code_500 722.5 s, code_500_v2 810.3 s, 2267 s together. Light is therefore 16% of the full profile's metric wall time on the ledger figures, 8% on the v2 figures. This is the measured basis for lane scheduling: a light run is minutes and does not need a protected slot, while a full milestone profile does.",
+   "measured": "2026-08-31",
+   "source": "runs/score_matrix.jsonl, eval/score_matrix.py; second measurement on the pod at /work/aupai/runs/milestone_p324_v2.jsonl (not committed)",
+   "config": {
+    "profile_light": [
+     "domain_loss",
+     "mc_full"
+    ],
+    "profile_milestone": [
+     "domain_loss",
+     "mc_full",
+     "math_500",
+     "code_500",
+     "code_500_v2"
+    ],
+    "ckpt": "ckpt_p324.pt",
+    "cards": 1,
+    "card_id": 7,
+    "ledger_domain_loss_s": 154.2,
+    "ledger_mc_full_s": 202.2,
+    "ledger_light_total_s": 356.4,
+    "v2run_domain_loss_s": 71.5,
+    "v2run_mc_full_s": 122.6,
+    "v2run_light_total_s": 194.1,
+    "math_500_s": 733.9,
+    "code_500_s": 722.5,
+    "code_500_v2_s": 810.3,
+    "target_s": 480
+   },
+   "uncertainty": "One checkpoint, and the 1.8x spread between the two records is unexplained: they are the same two metrics on the same checkpoint, so the difference is run conditions (lane contention, page-cache state, or a different eval subset size in the v2 run) rather than model or metric. I did not resolve which; scheduling should assume the slower figure. I first quoted 194.1 s to three sessions from the v2 file before checking the canonical ledger, which is the error this entry records both numbers to prevent. Neither figure includes checkpoint load or process startup, only the metric's own _wall_s, so an end-to-end light run is longer than 356 s.",
+   "status": "measured"
   }
  ]
 }
