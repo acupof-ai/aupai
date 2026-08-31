@@ -124,6 +124,24 @@ except ImportError:
     except ImportError:
         HAS_FA = False
 
+if HAS_FA:
+    # flash's varlen wrapper validates argument SHAPES against a Python int -- `assert
+    # cu_seqlens_k.shape == (batch_size + 1,)` and siblings at cute/interface.py:376/381/384,
+    # where batch_size is cu_seqlens_q.shape[0] - 1, i.e. the document count. Dynamo must burn
+    # that count into a guard to prove the assert, and the count is drawn from a distribution:
+    # 45 distinct values over 60 steps, range 43-116, against recompile_limit 64. The variant
+    # set never closes, so eviction and recompilation are PERMANENT -- 70 flash recompiles in
+    # 110 steps, 20 of them after step 50, costing 54.9 ms/step of gap at the rms_norm -> flash
+    # seam (eff.recompile_recurrence_explained, eff.steady_state_composition).
+    #
+    # The specialisation buys nothing: flash's own compile_key (interface.py:678-702) contains
+    # no batch_size at all -- only dtypes, head dims, causal, mod hashes, and `x is None`
+    # presence booleans -- so the document count cannot select or compile a different kernel.
+    # Disabling tracing here discards a guard with no consumer. Measured 70 -> 0 flash
+    # recompiles, 218 -> 33 total, tok/s unchanged, loss deltas inside the twin floor at 2 of 3
+    # sampled steps (eff.seam_dynamo_disable).
+    flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)
+
 
 # Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
 SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
