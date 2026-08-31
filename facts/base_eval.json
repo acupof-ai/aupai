@@ -594,7 +594,7 @@
   {
    "id": "be.l1_3shot_retracted",
    "claim": "L1 3-shot on p324, math-500: exact-match 1/497 = 0.2%, answer-present rate 63.6%, degeneration 8.9%. The 63.6% is load-bearing for the demo dose-response 25.4/53.5/63.6 that be.degeneration_rate calls the evidence for the demo-gain mechanism.",
-   "value": "retracted: no artifact reproduces these three numbers",
+   "value": "retracted: no artifact reproduces these three numbers SUPERSEDED by be.l1_3shot_rerun (2026-08-31): the rerun reproduces the retracted numbers, so the original measurement was sound and only its artifact was lost.",
    "measured": "2026-08-31",
    "source": "originally eval/l1_fewshot.py --demos 3 on pod GPU 7, runs/l1_p324.log, data/eval/preds_l1_d3.jsonl (497 lines)",
    "config": {
@@ -671,6 +671,24 @@
    },
    "uncertainty": "the cloze-vs-MCF delta on our own checkpoints is unmeasured",
    "status": "recorded"
+  },
+  {
+   "id": "be.l1_3shot_rerun",
+   "value": "L1 3-shot on ckpt_p324, math-500, rerun 2026-08-31 after the original artifact was overwritten: exact-match 1/497 = 0.2%, answer-present 317/497 = 63.8%, degeneration 39/497 = 7.8% (whitespace 8-gram x3 on the last 300 chars). Binomial delta 6.3%, instrument-exists threshold 2*delta = 12.6%, so the reading is unchanged: INSTRUMENT DOES NOT EXIST on this axis. Replaces be.l1_3shot_retracted, and reproduces it: 0.2% vs 0.2%, 63.8% vs 63.6%. The 0.2pt gap on answer-present is one problem out of 497 and is within run-to-run variation of greedy decode; the accuracy is the same single correct answer. Degeneration is 7.8% against the retracted 8.9%, and the difference is the artifact rather than the model: the old file stored gen[-300:] and this one stores the full generation (max 1174 chars, all 497 rows over 300), so 7.8% is the same tail measurement on a file that also permits the full-text one. For the record, full-text degeneration on the same rows is 164/497 = 33.0% -- 4.2x the tail figure, which is the size of the window effect this metric has been carrying unmeasured.",
+   "measured": "2026-08-31",
+   "source": "eval/l1_fewshot.py --ckpt ckpt_p324.pt --demos 3 --run l1_rerun_0831, GPU 7 via harness launch; artifact data/eval/preds_l1_d3.l1_rerun_0831.jsonl (497 rows, full gen text). The launcher log lives only on the pod and is untracked, so it is not cited as a source path.",
+   "config": {
+    "demos": 3,
+    "n": 497,
+    "temperature": 0,
+    "max_new": 512,
+    "metric": "exact match on the final answer",
+    "present_rule": "boxed or 答案是",
+    "degeneration": "whitespace 8-gram x3, min 8 words, window gen[-300:]",
+    "artifact": "versioned via --run, so the Aug 30 files were not touched"
+   },
+   "uncertainty": "single run, greedy; the 0.2pt present-rate difference from the retracted value is one problem",
+   "status": "measured"
   }
  ]
 }
