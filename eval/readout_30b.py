@@ -504,25 +504,48 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
 
 
 def selftest():
-    """Two known-answer dry runs. A verdict engine that cannot pass these is not an engine."""
+    """Known-answer dry runs. A verdict engine that cannot pass these is not an engine.
+
+    Every exit prints the case count, and a skipped case is named. "selftest OK" from a
+    directory where ROOT resolves elsewhere would otherwise report success with the
+    real-mix case silently skipped -- the §7.3 failure one level up, in how the test is
+    invoked rather than in what it reads (aupai-5b, 2026-08-31)."""
+    ran, skipped = [], []
+
+    def _done():
+        if not ran:
+            print(f"\nselftest FAILED: 0 cases ran. A skip is not a pass. ROOT resolved to "
+                  f"{ROOT}; run this file from inside the repo, not a copy elsewhere.",
+                  file=sys.stderr)
+            return 1
+        print(f"\nselftest OK -- {len(ran)} case(s) ran: {', '.join(ran)}")
+        if skipped:
+            print(f"  SKIPPED {len(skipped)}: {', '.join(skipped)}. A skip is not a pass; "
+                  f"ROOT resolved to {ROOT}.", file=sys.stderr)
+        return 0
+
     sm = os.path.join(ROOT, "runs", "score_matrix.jsonl")
     # find the ladder 0.2b and 3.24b (p324) records
     rec_0p2 = load_score_record(sm, "ckpt_0830v1_0.2b.pt")
     rec_3p24 = load_score_record(sm, "ckpt_p324.pt")
     if rec_0p2 is None or rec_3p24 is None:
-        print("selftest SKIP: ladder records not in runs/score_matrix.jsonl", file=sys.stderr)
-        return 0
+        skipped += ["1", "1b", "2", "2b", "2c", "3", "4", "5", "5b", "6"]
+        print(f"selftest SKIP: ladder records not in {sm}", file=sys.stderr)
+        return _done()
     # 1. p324 against itself -> never moved (domain-loss path)
+    ran.append("1")
     print("--- selftest 1: p324 vs itself (must be floor/flat everywhere, never moved) ---")
     moved1 = readout("ckpt_p324.pt", "ckpt_p324.pt", sm, None, None, None,
                      milestone_profile="full", paired_profile="full", selftest=True)
     assert not moved1, "p324 vs itself read as MOVED -- the engine is broken"
     # 1b. sft_v2 against itself -> never moved (generative-metric path: code_500/pass_at_k/mc_full)
+    ran.append("1b")
     print("\n--- selftest 1b: sft_v2 vs itself (generative metrics must be floor/flat, never moved) ---")
     moved1b = readout("ckpt_sft_p324_v2.pt", "ckpt_sft_p324_v2.pt", sm, None, None, None,
                       milestone_profile="full", paired_profile="full", selftest=True)
     assert not moved1b, "sft_v2 vs itself read as MOVED -- the engine is broken"
     # 2. p324 vs 0.2b -> domain losses moved in the known direction (lower at 3.24b)
+    ran.append("2")
     print("\n--- selftest 2: p324 vs 0.2b (domain losses must be moved, lower) ---")
     # domain losses live in the score_matrix records for ladder points (same heads)
     dl_0p2 = {"ckpt": "ckpt_0830v1_0.2b.pt", "domains": {k: v for k, v in rec_0p2["metrics"]["domain_loss"].items() if isinstance(v, dict)}}
@@ -540,6 +563,7 @@ def selftest():
     # 2b. param_line distinguishes a TIED head from two equal-but-separate tables. Value
     # Storage identity is primary; value equality on the known tied pair is the fallback.
     # Both are needed: see param_line's docstring for why either alone is wrong.
+    ran.append("2b")
     print("\n--- selftest 2b: param_line reads tying by storage, then by value ---")
     try:
         import tempfile
@@ -579,6 +603,7 @@ def selftest():
     # base profile that scored the ladder point writes mc_ceval and leaves mc_full null.
     # Without FIELD_ALIASES the pair reads ABSENT and the tripwire is silently unarmed --
     # ABSENT looks like "not measured", so nobody goes looking for the number that exists.
+    ran.append("2c")
     print("\n--- selftest 2c: ceval reads across the milestone/base profile boundary ---")
     spec = METRICS["ceval"]
     milestone_side = {"metrics": {"mc_full": {"C-Eval (zh)": 27.1}}}
@@ -595,6 +620,7 @@ def selftest():
 
     # 3. a record missing a metric prints ABSENT, never floor (t39 acceptance:
     # a milestone whose score_matrix record lacks a metric is unmeasured, not floor)
+    ran.append("3")
     print("\n--- selftest 3: missing metric -> ABSENT, never floor ---")
     rec_full = load_score_record(sm, "ckpt_sft_p324_v2.pt", "full")
     if rec_full is None:
@@ -623,6 +649,7 @@ def selftest():
     assert "ABSENT" in section and "verdict:" not in section, f"missing metric misread:\n{section}"
     print("  code_500 absent from the record -> ABSENT, never floor")
     # 4. tonight's exact pair: disjoint heads must refuse, not report a regression
+    ran.append("4")
     print("\n--- selftest 4: different heads -> REFUSE, never a verdict ---")
     import contextlib as _c
     import io as _io
@@ -651,6 +678,7 @@ def selftest():
     # pass the different-heads guard, so without this gate the reweighting shows up as
     # capability. cot is the post-cap case -- its weight moved 0.95x AND both mixes clamp
     # to the same 295,512 rows, so it is judgeable for the stronger reason.
+    ran.append("5")
     print("\n--- selftest 5: a reweighted role refuses, an unchanged one is judged ---")
     import tempfile as _t5
     W1 = {"code_rp1t": 0.37200, "math_owm": 0.18333, "cot": 0.08480, "en_c4": 0.20987,
@@ -699,6 +727,7 @@ def selftest():
     real_s1 = os.path.join(ROOT, "data", "mix_15b_stage1.json")
     real_s2 = os.path.join(ROOT, "data", "mix_30b_stage2.json")
     if os.path.exists(real_s1) and os.path.exists(real_s2):
+        ran.append("5b")
         print("\n--- selftest 5b: the gate reads the real stage-1/stage-2 pair ---")
         got = {d: (weight_ratio(d, real_s2, real_s1), draws_equal(d, real_s2, real_s1))
                for d in ("code_rp1t", "math_owm", "cot", "en_c4", "zh_web",
@@ -718,9 +747,10 @@ def selftest():
         print(f"  real pair: 3 refuse, cot judged on post-cap draw equality "
               f"(ratio {got['cot'][0]:.3f}, draws_equal True)")
     else:
+        skipped.append("5b (real mix pair absent)")
         print("\n--- selftest 5b: SKIP (real mix pair not on this box) ---", file=sys.stderr)
 
-    print("\nselftest OK")
+    return _done()
     return 0
 
 
