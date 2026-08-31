@@ -1775,6 +1775,14 @@ def _broken_ledgers_one_line_per_row():
     if good is None:
         return None
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    # .gitattributes too: the ledger list is derived from it, so a world without it
+    # has no ledgers and the check SKIPs instead of failing.
+    ga = os.path.join(ROOT, ".gitattributes")
+    if not os.path.exists(ga):
+        return None
+    import shutil as _sh
+
+    _sh.copy(ga, os.path.join(d, ".gitattributes"))
     with open(os.path.join(d, "runs", "retro.jsonl"), "w", encoding="utf-8") as f:
         f.write(json.dumps(good, ensure_ascii=False, indent=1) + "\n")  # the pretty-printed row
     return d
