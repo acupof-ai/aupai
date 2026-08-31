@@ -1,22 +1,17 @@
 {
- "total_tokens": 1500000000.0,
+ "total_tokens": 1200000000.0,
  "anneal_frac": 0,
- "_comment": "t31 real-packing throughput rehearsal: the 3 stage-1 domains with real fingerprints (en_c4/code_rp1t/cot; math_seed/zh_web/textbook_30b/wiki_chat had UNKNOWN, being re-stamped). Weights renormalised. Throughput measurement only, not a training mix.",
+ "_comment": "t31 throughput rehearsal: en_c4+cot (stable fingerprints); code_rp1t dropped, being extended live. Throughput only.",
  "domains": {
   "en_c4": {
-   "weight": 0.333381,
+   "weight": 0.71222,
    "epochs": 1,
-   "anneal": 0.333381
-  },
-  "code_rp1t": {
-   "weight": 0.5649,
-   "epochs": 1,
-   "anneal": 0.5649
+   "anneal": 0.71222
   },
   "cot": {
-   "weight": 0.101719,
+   "weight": 0.28778,
    "epochs": 3,
-   "anneal": 0.101719
+   "anneal": 0.28778
   }
  }
 }
