@@ -1,0 +1,32 @@
+t29 per-source composition: sft_all.pt (v2/v3 pack) vs sft_all_family_clean.pt
+(2026-08-31, 44; exact shuffle simulation, seed=42, cap 500000; tokens from
+300-example sample per source x count; /tmp/per_source_compose.py on the pod)
+
+cap binds: pool9=530,616, pool_old=533,029 (cap 500,000) -- dropping the carve
+source refilled the pack with 2,278 tail examples from the nine sources.
+This is a COMPOSITION SHIFT, not less data.
+
+source                                  pool  old_pk  new_pk   d_ex     d_tok
+alpaca_gpt4_zh.jsonl                   52049   48852   49114   +262    +36369
+coig.jsonl                            163443  153223  153937   +714   +156928
+openo1_sft.jsonl                       77685   73012   73332   +320   +430912
+gsm8k_zh.jsonl                          7471    6987    7019    +32     +4199
+school_math_r1_zh.jsonl               222605  208717  209638   +921   +244090
+s1k.jsonl                               1000     934     942     +8    +41426
+sft/fable5_cot.jsonl                     353     333     334     +1     +1156
+synthetic/knowledge_qa_zh.jsonl         1010     955     958     +3      +135
+synthetic/math_gsm8k_zh.jsonl           5000    4709    4726    +17     +1149
+synthetic/code_python_zh.jsonl(carve)   2413    2278       0  -2278   -281614
+TOTAL                                 533029  500000  500000      +0
+
+carve in old pack: 2278 examples (~0.28M tokens, mean 124 tok/ex -- short)
+nine-source refill: +2278 examples (~+0.92M tokens, weighted mean ~404 tok/ex)
+net token delta: +0.64M tokens (+0.33%, matches the packs' 192.30M -> 192.88M)
+
+Reading for the v3-vs-v4 comparison: v4's pack differs from v3's by (a) the
+carve source removed (the recall channel: 2278 same-template sibling examples),
+and (b) +2278 tail examples from the nine shared sources (~0.48% of the pack,
+longer-form examples the cap previously excluded). Both are stated beside the
+two numbers. Caveat: packing drops 1076/500000 over-length examples (0.2%) in
+the new build; per-source drop attribution not computed, cannot move the
+composition picture.
