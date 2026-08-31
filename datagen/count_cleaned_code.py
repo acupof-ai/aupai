@@ -18,6 +18,7 @@ Usage (on pod): python3 datagen/count_cleaned_code.py
 """
 import glob
 import json
+import multiprocessing as mp
 import os
 
 from tokenizers import Tokenizer  # type: ignore
@@ -25,25 +26,32 @@ from tokenizers import Tokenizer  # type: ignore
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOK = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
 SHARDS = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "code_rp1t", "*.jsonl")))
+WORKERS = int(os.environ.get("COUNT_WORKERS", "8"))
+
+
+def _count_shard(shard):
+    kept = tokens = tb = 0
+    with open(shard, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            d = json.loads(line)
+            t = d.get("content") or d.get("text") or ""
+            if not t:
+                continue
+            kept += 1
+            tb += len(t.encode("utf-8"))
+            tokens += len(TOK.encode(t).ids)
+    return kept, tokens, tb
 
 
 def main():
-    kept = 0
-    tokens = 0
-    tb = 0  # text UTF-8 bytes of kept docs
-    for shard in SHARDS:
-        with open(shard, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                d = json.loads(line)
-                t = d.get("content") or d.get("text") or ""
-                if not t:
-                    continue
-                kept += 1
-                tb += len(t.encode("utf-8"))
-                tokens += len(TOK.encode(t).ids)
+    with mp.Pool(WORKERS) as pool:
+        counts = pool.map(_count_shard, SHARDS)
+    kept = sum(c[0] for c in counts)
+    tokens = sum(c[1] for c in counts)
+    tb = sum(c[2] for c in counts)  # text UTF-8 bytes of kept docs
     # fetched docs: the raw fetch wrote N jsonl docs; counted as kept+rejected is
     # not available, so fetched is derived from the raw files (the clean's reject
     # reasons live in build_corpus_stats / the raw). We count raw docs here.
