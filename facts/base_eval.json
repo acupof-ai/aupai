@@ -559,6 +559,21 @@
    },
    "uncertainty": "dose counts SOURCE rows, not pack rows -- prepare_sft may drop some at pack time (direction: overstates dose slightly). Sibling containment is unweighted; the scanner's IDF-weighted 0.8 on the same file (incl. self-matches) was 438/490, same ballpark. v3 hparams identical-to-v2 is per e1's readout, not independently re-derived.",
    "status": "measured"
+  },
+  {
+   "id": "be.sft_v4_code500",
+   "value": "SFT v4 (family-clean pack: carve source synthetic/code_python_zh.jsonl dropped, v3 recipe otherwise identical, fa/doc_mask True, 7 cards) code-500 greedy = 0/500 = 0.0%, no-fence rate 98.8% (e1 ran, fb read data/eval/preds_code_ckpt_sft_p324_v4.pt.jsonl + code500_v4g.log). Verdict (t29, 2026-08-31): v3's 40.0% was in-distribution template recall, CONFIRMED -- 0.0% is far below the 12.6pt threshold. Confound quantified: the family-clean pack still carries 14,021 code-fence rows (29.8%) from 4 other sources (openo1 ~13.1K, coig ~1.2K, alpaca ~0.7K, fable5_cot 13); the carve source was not the only code source but the only source of the synthetic generator's template canon -- 14K fence rows of other-style code data gave zero transfer to code-500's templates, so the verdict is stronger than 'no code data': the 200M learns only the canon it is shown. v5 proposed (not run): ~2,300 code instructions from a different generator/language family (English code instructions or a second Chinese template family) added to the family-clean pack, same recipe, then code-500 -- >12.6pt = cross-generator generalization (capability), ~0 = template recall confirmed in the stronger sense. Base 0/497 stays the no-SFT reference.",
+   "measured": "2026-08-31",
+   "source": "data/eval/preds_code_ckpt_sft_p324_v4.pt.jsonl + code500_v4g.log (pod, read by fb); fence census runs/t29_fence_census.txt; composition runs/t29_composition.txt; pack verification runs/t29_pack_verify.txt",
+   "config": {
+    "n": 500,
+    "denominator": "all 500 code-holdout questions, greedy",
+    "threshold": "12.6pt (2delta, delta=1.4/sqrt(500)) -- 0.0% far below",
+    "variable": "carve source removed from SOURCES; everything else identical (v3 recipe, same base ckpt_p324, same hparams); pack 47078 rows vs v3's 46938, fence rows 14021 vs 15555",
+    "v3_pair": "be.sft_v3_code500 (200/500 = 40.0% with the carve source's 2278 sibling examples in pack)"
+   },
+   "uncertainty": "code-asking question share per source is a keyword upper bound (openo1's 54% includes math-CoT questions using 实现/算法/函数). v4's no-fence 98.8% read by fb from the log, not independently re-derived by 44.",
+   "status": "measured"
   }
  ]
 }
