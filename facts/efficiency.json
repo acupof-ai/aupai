@@ -1054,7 +1054,36 @@
     "distinct_triton_fusion_kernels": 273,
     "fusion_launches_per_step": 3762
    },
-   "uncertainty": "One trace, one card, 20 active steps. Single-process on the lane: no DDP allreduce and no cross-rank skew, so the 7-card step has NCCL and straggler time this trace cannot show, and group percentages are of single-card kernel time rather than of the training step. The 1702 ms step is derived from the reported 77K tok/s, not timed independently. Occupancy figures are the profiler's estimate. fb's brief named a 978 ms baseline, which this configuration does not reproduce; fb has since confirmed 978 was a stale figure and these numbers supersede it. Percentages are stated against the measured 1607 ms so the arithmetic is checkable. The first version of this entry had the top two levers inverted by the naming trap described in the value field; it was corrected the same day, before any lever was acted on.",
+   "uncertainty": "One trace, one card, 20 active steps. Single-process on the lane: no DDP allreduce and no cross-rank skew, so the 7-card step has NCCL and straggler time this trace cannot show, and group percentages are of single-card kernel time rather than of the training step. The 1702 ms step is derived from the reported 77K tok/s, not timed independently. Occupancy figures are the profiler's estimate. fb's brief named a 978 ms baseline, which this configuration does not reproduce; fb has since confirmed 978 was a stale figure and these numbers supersede it. Percentages are stated against the measured 1607 ms so the arithmetic is checkable. The first version of this entry had the top two levers inverted by the naming trap described in the value field; it was corrected the same day, before any lever was acted on. WINDOW IS NOT STEADY STATE, found 2026-08-31 after the entry was written. The 20 active steps sit in the compile warmup tail: GPU idle is 186.6 ms/step over 138460 gaps, but 95.3% of gaps are under 5 us and sum to only 10.2 ms, while the largest 20 gaps sum to 164.9 ms with the biggest at 645 ms. The cpu_op ops inside those gaps are compile_attempt_1 (81 ms), bytecode_tracing (36 ms) and build_guards (34 ms), i.e. dynamo recompilation from mark_dynamic(cu, 0) at train.py:855, which the log confirms as 'dynamo cache_size_limit=64 (need 25)' -- 25 graph variants for varying doc-boundary counts. Compile plus guards totals 4.89 s across the window, 244 ms/step amortized, and it is ONE-TIME per new cu shape: the same job read 20K tok/s at step 10 and 78K by step 50. So the group ms/step figures hold for this window and must not be read as steady-state step composition; the 1607 ms kernel total is device time and is unaffected by the compile gaps, since those are CPU-side. A steady-state trace would need the profiler window moved past step ~50.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.dynamo_recompile_from_dynamic_cu",
+   "value": "Dynamo recompiles the model graph once per distinct doc-boundary count, and the compile time lands as GPU idle. Measured on the t56 trace (2026-08-31, 1 card, stage-1 shapes): GPU idle is 186.6 ms/step across 138460 gaps, but the distribution is the finding. 95.3% of gaps are under 5 us and sum to 10.2 ms/step; the largest 20 gaps sum to 164.9 ms/step, the biggest is 645 ms, and every one of them sits at the same seam, after triton_red_fused__fused_rms_norm_split_view and before flash attention forward. The cpu_op ops inside those gaps are compile_attempt_1 81 ms, bytecode_tracing 36 ms, build_guards 34 ms. Cause is mark_dynamic(cu, 0) at train.py:855: cu length varies with the number of documents in the batch, so each distinct length is a fresh graph. The log reads 'dynamo cache_size_limit=64 (need 25)', i.e. 25 variants. Compile plus guards totals 4.89 s over the 20-step window, 244 ms/step amortized. This is NOT launch overhead and CUDA graphs do not address it: the time is dynamo compiling on the CPU while the GPU waits, not kernel launch cost. It is also one-time per shape, so it is a warmup cost, not a steady-state tax: the same job read 20K tok/s/GPU at step 10 and 78K by step 50. PROPOSED FIX, not yet measured: bucket the cu length, pad to a multiple of 16 or 32 so the 25 variants collapse to single digits. mark_dynamic cannot simply be dropped -- a static cu is a correctness bug, since fla's varlen grid is per-document and a fixed shape hit CUDA's gridDim.Y=65535 limit at batch 16 (train.py:840). Bucketing keeps the dynamic contract and shrinks the variant count.",
+   "measured": "2026-08-31",
+   "source": "bench_eff/ddp_trace_rank0.json, bench_eff/t56_attr.py, runs/t56_profile.log",
+   "config": {
+    "task": "t56 / tilerl-4 follow-up",
+    "cards": 1,
+    "card_id": 7,
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "vocab": 32784,
+    "fp8": true,
+    "gpu_idle_ms_per_step": 186.6,
+    "n_gaps_per_step": 6923,
+    "gaps_under_5us_pct": 95.3,
+    "gaps_under_5us_sum_ms": 10.2,
+    "top20_gaps_sum_ms": 164.9,
+    "largest_gap_ms": 645,
+    "compile_guards_total_s": 4.89,
+    "graph_variants": 25,
+    "dynamo_cache_size_limit": 64,
+    "throughput_step10_k": 20,
+    "throughput_step50_k": 78
+   },
+   "uncertainty": "One trace, one card, 20 active steps inside the warmup tail, so the amortized 244 ms/step is a property of that window and not of the run. The steady-state cost of the 25 variants is not measured here and may be zero once every shape is compiled; what is measured is that the variants exist and that compiling them costs 4.89 s. The bucketing fix is a proposal with no A/B behind it: the ship gate is >=3% tok/s with |delta val| <= 0.04 nat, and it needs the 7-card block, so it cannot be tested until stage 1 ends. Gap attribution assumes the largest cpu_op inside a gap explains it; the compile ops account for 151 of the 154-157 ms in the gaps I inspected.",
    "status": "measured"
   }
  ]
