@@ -38,8 +38,16 @@ Findings the suite locks in (measured 2026-08-30, rlvr_clean.jsonl 217,953 rows)
     Wider contract debt: 361 GTs (0.17%) are solution-form aligned blocks
     with no extractable final answer — they pass the round trip only because
     the gen is artificially the GT itself; in training the reward can never
-    fire on them. Flagged to 3b as a data requirement (extract the final
-    value at build time), not a reward change.
+    fire on them.
+  - ROUTED 2026-08-30 at build (rlvr_data.prepare): the 4 multi-answer
+    aligned blocks + the 米米 unit-collapse row + the 361 dead solution-form
+    GTs are classified non-verifiable and written to rlvr_nonverifiable.jsonl;
+    the verifiable pool (rlvr_math.jsonl) never carries a row the reward
+    cannot score. The shipped rlvr_clean.jsonl still holds them until fb rules
+    the producer/consumer switch — audit with `--clean-audit`. (44
+    commissioned; multiple final values have no single reward target.)
+  - standing rule: every checker that becomes a reward gets the GT round
+    trip before a single RL step (load_problems now enforces it)
 """
 import json
 import os
