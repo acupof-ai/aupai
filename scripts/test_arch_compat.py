@@ -495,3 +495,53 @@ assert _norms == [0.0, 0.0, 0.0], f"pull_grads must leave p.grad cleared, got {_
 _grads = [float(m.grad.abs().max()) for _, m in _mw.pairs]
 assert all(abs(g - 2.0) < 1e-6 for g in _grads), f"each step's grad must be the step's own, got {_grads}"
 print("MasterWeights: p.grad cleared every step, m.grad does not accumulate OK")
+
+# The attention fallback must honour cu. It used to take cu and ignore it, so doc_mask=True
+# trained with every document attending across every boundary -- five A/B arms landed 0.293
+# nat off the ladder with nothing in the log looking wrong. Three checks, and B is the one
+# that matters: without it, A can pass on an implementation that drops the mask entirely.
+_torch = torch
+import torch.nn.functional as _F  # noqa: E402
+
+
+class _C:  # smallest cfg GatedMLA reads
+    d, heads = 8, 2
+
+
+_torch.manual_seed(0)
+_mla = _train.GatedMLA(_C).eval()
+_B, _T = 2, 8
+_x = _torch.randn(_B, _T, _C.d)
+_cu = _torch.tensor([0, 3, 8, 13, 16])  # row 0: docs [0,3) [3,8); row 1: [8,13) [13,16)
+
+
+def _fallback(x, cu):
+    """The real branch, not a copy of it -- a copy drifts from the code it vouches for."""
+    with _torch.no_grad():
+        return _mla(x, cu)
+
+
+def _per_doc(x, cu):
+    """Gold standard: every document attended on its own, then concatenated -- what
+    flash_attn_varlen_func computes. Same module, cu=None, one document at a time."""
+    flat = x.reshape(-1, x.shape[-1])
+    out = _torch.empty_like(flat)
+    with _torch.no_grad():
+        for a, b in zip(cu[:-1].tolist(), cu[1:].tolist()):
+            out[a:b] = _mla(flat[a:b].unsqueeze(0), None)[0]
+    return out.view_as(x)
+
+
+_masked, _gold = _fallback(_x, _cu), _per_doc(_x, _cu)
+assert _torch.allclose(_masked, _gold, atol=1e-5), "masked SDPA != per-document attention"
+_naive = _fallback(_x, None)
+assert not _torch.allclose(_naive, _gold, atol=1e-5), \
+    "plain causal matches the gold standard -- this test cannot fail"
+_x2 = _x.clone()
+_x2[0, 0:3] += 5.0  # rewrite document 0; the document after it must not move
+_out2 = _fallback(_x2, _cu)
+assert _torch.allclose(_masked[0, 3:8], _out2[0, 3:8], atol=1e-6), \
+    "a later document moved when an earlier one changed"
+assert not _torch.allclose(_masked[0, :3], _out2[0, :3], atol=1e-6), \
+    "the rewritten document did not change"
+print("doc-mask fallback: == per-document attention, != plain causal, no cross-document leak OK")

@@ -299,9 +299,24 @@ class GatedMLA(nn.Module):
             y = flash_attn_varlen_func(q, k, v, cu, cu, T, T, causal=True)
         elif HAS_FA:
             y = flash_attn_func(q, k, v, causal=True)
-        else:  # CPU fallback: causal only, no document mask (ponytail: block-diag mask if ever needed)
+        else:
+            # No flash_attn: SDPA with an explicit block-diagonal causal mask built from cu.
+            # This branch used to take cu and ignore it, so doc_mask=True trained with every
+            # document attending across every boundary and nothing in the log looked wrong.
+            # Correct but ~20x slower per step -- a correctness fallback, not a training path.
+            # cu indexes the flat B*T stream and every row start is a boundary (documents do
+            # not span rows), so a per-row mask is exact. Every query sees at least itself, so
+            # no row is fully masked and no NaN appears.
+            if cu is not None:
+                pos = torch.arange(B * T, device=q.device)
+                doc = torch.bucketize(pos, cu[1:].to(pos.dtype), right=True).view(B, T)
+                mask = (doc[:, :, None] == doc[:, None, :]) & torch.ones(
+                    T, T, dtype=torch.bool, device=q.device).tril()
+                mask = mask[:, None]
+            else:
+                mask = None
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=mask is None)
             y = y.transpose(1, 2)
         y = y.reshape(B, T, D)
         return self.o(y * torch.sigmoid(gate))
@@ -1552,7 +1567,8 @@ def main():
         action="store_true",
         help="report what fraction of elements step() left bit-identical, on the last step",
     )
-    parser.add_argument("--no_doc_mask", action="store_true", help="let KDA state / attention cross <eos>")
+    parser.add_argument("--allow_slow_attn", action="store_true",
+                        help="run without flash_attn on a GPU (~20x slower, correct)")
     parser.add_argument(
         "--mix", type=str, default=None, help='domain mix json (default Cfg.mix; "" = flat corpus)'
     )
@@ -1590,8 +1606,6 @@ def main():
     for k, v in vars(args).items():
         if hasattr(Cfg, k) and v:
             setattr(Cfg, k, v)
-    if args.no_doc_mask:
-        Cfg.doc_mask = False
     if args.no_attn_res:
         Cfg.attn_res = False
 
@@ -1724,15 +1738,14 @@ def main():
             f"params {n_params / 1e6:.1f}M | tokens {len(data)} | seqs {len(X)} | "
             f"device {device} | world {world} | fa {HAS_FA} | fp8 {fp8}"
         )
-        # doc_mask is a frozen recipe key, and the only code that honours it is
-        # flash_attn_varlen_func: the fallback branch takes `cu` and ignores it, so every
-        # document attends across every boundary while the banner still prints doc_mask
-        # True. That is how five A/B arms trained 0.293 nat off the ladder without one
-        # line of the log looking wrong. On CUDA it is a wrong run, not a slow one.
-        assert not (Cfg.doc_mask and torch.cuda.is_available() and not HAS_FA), (
-            "doc_mask=True but flash_attn is unavailable -- the attention fallback ignores "
-            "cu, so documents would attend across boundaries. Install flash-attn, or pass "
-            "--no_doc_mask to say you meant it."
+        # The fallback is correct now, so this no longer guards correctness -- it guards
+        # against a run nobody meant to start. Measured on an H20: bool-mask SDPA is ~20x
+        # slower per step, which turns a 16-hour run into 13 days while every log line looks
+        # normal. A 20x-slower run is a wrong run unless someone says otherwise, out loud.
+        assert not (torch.cuda.is_available() and not HAS_FA and not args.allow_slow_attn), (
+            "flash_attn is unavailable, so attention falls back to masked SDPA: correct, and "
+            "~20x slower -- a 16h run becomes 13 days. Install flash-attn, or pass "
+            "--allow_slow_attn to say you meant it."
         )
         runlog(
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "

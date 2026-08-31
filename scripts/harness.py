@@ -3474,8 +3474,10 @@ _FROZEN_KEYS = (
 # with what was intended (fb regenerated the manifest mid-ladder, blinding pod_drift).
 _CODE_FROZEN_KEYS = ("chunk_size", "layers", "d", "heads", "ffn_hidden")
 
-# CLI flags whose name differs from their Cfg field (--no_doc_mask sets Cfg.doc_mask).
-_FLAG_TO_CFG = {"no_doc_mask": "doc_mask", "no_attn_res": "attn_res"}
+# CLI flags whose name differs from their Cfg field (--no_attn_res sets Cfg.attn_res).
+# --no_doc_mask is gone: it existed because the attention fallback could not honour
+# doc_mask, and now it can, so the flag was only a way to turn a frozen recipe key off.
+_FLAG_TO_CFG = {"no_attn_res": "attn_res"}
 
 # Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
 # architecture or the recipe is frozen; these are run-management, measurement, or
@@ -3495,6 +3497,10 @@ _UNFROZEN_ALLOWLIST = {
     # is one a launch can silently omit.
     "fp32_master",
     "frozen_probe",       # measurement switch; does not change what is measured
+    # Not a recipe key: it changes how attention is computed, not what is computed. It
+    # exists so the ~20x-slower fallback cannot be entered by accident, which is the
+    # opposite of a knob a launch may vary quietly.
+    "allow_slow_attn",
 }
 
 
@@ -3524,7 +3530,7 @@ def _strip_frozen(passthrough, frozen):
         fv = frozen[cfg_key]
         if isinstance(fv, bool):
             sets_true = flag == cfg_key  # --attn_res, --fone, etc.
-            sets_false = flag in _FLAG_TO_CFG  # --no_attn_res, --no_doc_mask
+            sets_false = flag in _FLAG_TO_CFG  # --no_attn_res
             if (sets_true and not fv) or (sets_false and fv):
                 conflicts.append(f"{a} (frozen {cfg_key}={fv})")
             else:
