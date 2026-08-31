@@ -1036,3 +1036,10 @@ A review reports what it *ran*, not what it read.
   ladder mix are frozen; a restart is not complete until the old PID is gone (`pgrep -af`
   before reporting); a fingerprint that differs across ranks means a live writer, not a
   stale stamp.**
+- **A wrapper's death is not the process's death.** The same afternoon the code_rp1t clean
+  was reported "killed by SIGTERM" and relaunched; the host view then showed both: the
+  original python (1h13m, `setsid`, alive) and the relaunch (14 min), two writers on one
+  domain. What had died was the launch wrapper. The monitor had watched the wrapper's
+  container PID. Rule: **liveness and death are both read from the host view of the
+  executing python (`tn exec pgrep -af '<cmd>'`), never from a wrapper, a container PID, or
+  an exit status; before any relaunch, that command must return nothing.**
