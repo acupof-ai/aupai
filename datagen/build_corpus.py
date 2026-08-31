@@ -433,8 +433,12 @@ def _global_pass(a):
                 t = d.get("content") or ""
                 if not t:
                     continue
-                h = reject_holdout(t)
-                if h:
+                # Holdout was already applied per doc in the worker phase (reject_light
+                # ends in reject_holdout, per-line scan included); a doc reaching a w*
+                # shard passed it on the same bytes. The global pass re-checks the whole
+                # doc only, as the last gate before the stamp. The per-line scan is
+                # O(lines) sha1s per doc and dominated this serial pass on code.
+                if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
                     reasons["holdout"] += 1
                     continue
                 k = exact_key(t)
