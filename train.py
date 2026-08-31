@@ -1920,8 +1920,10 @@ def main():
         # A stage-1 checkpoint predates the field. Say so rather than resuming silently
         # from row 0, which is the bug this exists to fix wearing a resume's clothes.
         print("resume: checkpoint carries no row_cursor (predates the field). Every "
-              "domain restarts at row 0; reconstruct with scripts/replay_cursor.py if "
-              "the unread tail matters.", flush=True)
+              "domain restarts at row 0, leaving each pool's tail unread (92% of "
+              "zh_web at stage-1 weights). Reconstruct it with "
+              "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
+              "launching stage 2 if that tail matters.", flush=True)
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
                        row_cursor=_cursor, cursor_srcfp=_cursor_fp)
     (seqs, num_tr), (vseqs, num_va) = (tr, va) if Cfg.fone else ((tr, None), (va, None))

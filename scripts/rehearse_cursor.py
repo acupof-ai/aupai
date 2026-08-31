@@ -15,28 +15,19 @@ Three assertions, run in the stopped window against the stage-1 checkpoint.
    not enough, because a cursor into a differently-shuffled pool is self-consistent
    and points at the wrong documents. The test compares reconstructed rows against
    what the original run actually consumed, so a reshuffle shows up as a content
-   mismatch rather than passing silently.
+   mismatch rather than passing silently. Implemented as srcfp + .seed rather than a
+   content digest: the digest would need the pool loaded, and those two fields already
+   determine the order -- same bytes, same shuffle seed, same order.
 
 Usage on the pod, in the stopped window:
     python3 scripts/rehearse_cursor.py --ckpt ckpt_pretrain_15b_s1.pt --steps 50
 """
 import argparse
-import hashlib
 import json
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def row_digest(rows):
-    """Content hash of a row set. Two pools shuffled differently give the same COUNT
-    and different content -- the count is what a cursor stores, so only content can
-    tell a correct resume from a reshuffled one."""
-    h = hashlib.sha256()
-    for r in rows:
-        h.update(bytes(memoryview(r.numpy() if hasattr(r, "numpy") else r)))
-    return h.hexdigest()[:16]
 
 
 def main():
@@ -79,10 +70,17 @@ def main():
         if live != want:
             drift.append(dom)
     if drift:
-        print(f"\nWRONG ORDER: {drift} rebuilt since the cursor was written. Their cursors "
-              f"are counts into a pool that no longer exists in that order; train.py "
-              f"discards them per domain and restarts those at row 0. That is correct, "
-              f"but it means the rehearsal cannot prove continuity for them.", file=sys.stderr)
+        # exit 1, not a warning (44). A discarded cursor means that domain restarts at
+        # row 0 and its tail is never read -- 92% of zh_web in the stage-1 measurement.
+        # That is a deviation from what stage 2 was signed off to train on, not a caveat
+        # to note and proceed past.
+        print(f"\nFAIL: {drift} rebuilt since the cursor was written. Their cursors are "
+              f"counts into a pool that no longer exists in that order, so train.py "
+              f"discards them and those domains restart at row 0 with their tails unread "
+              f"(zh_web was 92% unread at stage-1 weights). Re-stamp the cursor against "
+              f"the current corpus, or accept the deviation explicitly before launching.",
+              file=sys.stderr)
+        return 1
 
     # The seed the pool was shuffled at must also match, or the order differs with an
     # identical corpus fingerprint -- the case the .seed sidecar exists for.
