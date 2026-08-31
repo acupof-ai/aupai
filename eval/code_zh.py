@@ -99,9 +99,13 @@ def main():
                         help="preds filename tag when --data is used (e.g. 'v2')")
     parser.add_argument(
         "--temperature", type=float, default=0.0,
+        # argparse %-formats help strings, so a literal percent must be doubled.
+        # "55.8% of" made "% o" read as a %o conversion and --help died with
+        # "TypeError: %o format: an integer is required, not dict" -- the script
+        # could not print its own help (found by de, 2026-09-01).
         help="0.0 = greedy, the default every published number used. Raised only to test whether "
-             "the degenerate repetition loop (55.8% of SFT generations repeat an 8-gram 3+ times, "
-             "vs 24.7% for base 0-shot) is produced by greedy decoding rather than by the model.")
+             "the degenerate repetition loop (55.8%% of SFT generations repeat an 8-gram 3+ times, "
+             "vs 24.7%% for base 0-shot) is produced by greedy decoding rather than by the model.")
     parser.add_argument("--selfcheck", action="store_true",
                         help="known-answer round-trip, no model")
     parser.add_argument("--force", action="store_true",
