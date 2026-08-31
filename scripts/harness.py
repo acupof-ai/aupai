@@ -1357,12 +1357,33 @@ def check_no_stale_running(root):
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
         return SKIP, "runs/experiments.jsonl not present"
-    rows = []
+    # Fold by (name, started) FIRST: the ledger is an event log, so a run has a running
+    # row and later a terminal one. Filtering for status=="running" before folding
+    # counts a row that a later `done` already superseded -- sft_p324_v3 has
+    # running@03:44 and killed@03:44, and this check failed on the running row while
+    # the run was long closed, refusing every merge in the shipment window. Same missed
+    # reader as score_matrix_present: experiments() grew a fold and this reader did not
+    # adopt it (fb, 2026-09-01).
+    folded = {}
     for line in open(p, encoding="utf-8"):
         try:
             r = json.loads(line)
         except Exception:
             continue
+        k = (r.get("name"), r.get("started"))
+        prev = folded.get(k)
+        # Terminal beats running regardless of POSITION. Union merge concatenates two
+        # branches' rows, so a `running` row can land after the `ok` that closed it --
+        # sft_p324_v3 has ok at line 44 and running at 132 for the same (name, started).
+        # Position-based last-wins reads that as an open run 25h old and refuses every
+        # merge. A run does not reopen; only `task reopen` does that, and it is a
+        # different ledger.
+        if prev is None or (prev.get("status") == "running" and r.get("status") != "running"):
+            folded[k] = r
+        elif prev.get("status") != "running" and r.get("status") != "running":
+            folded[k] = r  # two terminal events: the later one wins
+    rows = []
+    for r in folded.values():
         if r.get("status") != "running":
             continue
         # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
