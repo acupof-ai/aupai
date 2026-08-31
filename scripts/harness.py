@@ -2874,7 +2874,12 @@ def check_dirty_aged(root):
     cutoff = time.time() - 30 * 60
     aged = []
     for line in r.stdout.splitlines():
-        if len(line) < 4 or line[:2].strip() not in ("M", "A"):
+        # XY porcelain: X = index status, Y = worktree status. A file staged and then
+        # further modified reads "AM" -- `line[:2].strip() not in ("M","A")` filtered
+        # that out, and on a box without git identity every broken-world commit fails
+        # and leaves "AM", so the selftest went green while the check saw nothing (CI
+        # 2026-08-31). Any M or A in either column is uncommitted work.
+        if len(line) < 4 or not (set(line[:2]) & {"M", "A"}):
             continue  # untracked (??) is untracked_aged's job; deletes have no mtime
         p = os.path.join(root, line[3:])
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
@@ -2885,18 +2890,21 @@ def check_dirty_aged(root):
 
 
 def _broken_dirty_aged():
-    """A real git repo with one tracked file dirty for 31 minutes."""
+    """A real git repo with one tracked file dirty for 2 hours. No git identity is
+    configured, so the commit fails and the file sits staged-and-modified ("AM" in
+    porcelain) -- the exact shape the old line[:2].strip() parser missed on CI."""
     import shutil
     import subprocess as sp
 
     d = _tmp_repo()
-    sp.run(["git", "init"], cwd=d, capture_output=True)
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
-    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
-    sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True)
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("\n# dirty\n")
-    old = time.time() - 31 * 60
+    old = time.time() - 2 * 60 * 60
     os.utime(os.path.join(d, "AGENTS.md"), (old, old))
     return d
 
