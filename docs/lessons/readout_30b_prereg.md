@@ -138,3 +138,9 @@ stage-1 实际调度 3,647,072 行 = **14.9384B tokens,不是合同的 15.000B**
 - 若 math-hard 或任何 cot 敏感指标在任一里程碑读 **flat**,"cot 抽得比配方少"是预注册此前未命名的**活替代解释**——flat 不可直接读作 mix 无效。3.24B 里程碑处绝对差小(cot 占实际调度 8.10% vs 名义 8.48%),随里程碑增大。
 - 所有里程碑的 **n 以实际步数计**(k × 224 × 4096),不以名义 tokens 计;3.24B 配对的 p324 同 tokens 配对不受影响(p324 是独立 run)。
 - 根因已立档:check_mix_supply 用 raw supply × epochs 验证,而 build_mix 在 pool(supply 减 val)× epochs 上 cap——任何被 cap 的域都会少抽。修复已报 de(pool 模型 + broken world)。
+
+## 7. Per-role domain loss 的适用域(2026-08-31,step3500 读数争议时立)
+
+per-role domain loss 的配对比较只在**两 run 训练域有重叠**时有效:同一份 held-out 文本必须对两个 checkpoint 都 in-distribution,否则差值测的是 OOD 惩罚,不是语料效应。stage-1 mix 与阶梯 mix(mix_scale_3.24b)域零重叠,故 3.24B 配对的 per-role loss 在**任何头**上都不可判读——阶梯头(stage-1 OOD,实测 −0.32..−0.85 nat)与 stage-1 头(p324 OOD)是镜像混杂,换头不换性质。
+
+读法:该指标在 3.24B 配对处读**地板(不可判读)**,不得报"6/7 退化"。stage-1 自己的 own-mix 分数仍要测(30B 读数的基线,stage-1↔stage-2 共享域,同文本 own-mix 头,该指标在 30B 处有效),但不与 p324 配对。
