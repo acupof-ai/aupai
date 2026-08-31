@@ -1371,7 +1371,7 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
 
 def _corpus_fp(ddir):
     """Hash of sorted (shard name, size, sha256 of first/last 64KB) for one domain dir.
-    Canonical implementation: scripts/corpus_fingerprint.py (fp_dir); inline so train.py
+    Canonical implementation: datagen/corpus_fingerprint.py (fp_dir); inline so train.py
     imports nothing from scripts/ -- this is the same value save_checkpoint writes into
     the checkpoint under corpus_fp. The two must agree bit-for-bit; corpus_fingerprint.py
     --self-check asserts parity on every run. Content-based, not mtime-based: a transfer

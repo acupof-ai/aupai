@@ -10,7 +10,7 @@ allowed to touch the corpus.
 Rule (automatable, no RNG state):
   1. A source is eligible only if it has never been in the corpus (no ledger entry,
      not in data/PROVENANCE.md). Re-scans of existing sources never feed the holdout.
-  2. Each question's qhash (same key as scripts/holdout.py) is tested:
+  2. Each question's qhash (same key as datagen/holdout.py) is tested:
      int(qhash[:8], 16) % 100 < SPLIT_PCT -> holdout, else corpus remainder.
      Deterministic: the same source always splits the same way on any machine.
   3. The remainder is scanned against the active holdout (HOLDOUT_FILES in
@@ -21,7 +21,7 @@ Rule (automatable, no RNG state):
      plus a ledger row recording the split.
 
 Usage:
-    python scripts/holdout_split.py <new_source.jsonl|parquet> [--pct 2] [--q-field NAME] [--domain math]
+    python datagen/holdout_split.py <new_source.jsonl|parquet> [--pct 2] [--q-field NAME] [--domain math]
 
 Exit code: 0 = split written, remainder clean; 1 = refused (contaminated or ineligible).
 """

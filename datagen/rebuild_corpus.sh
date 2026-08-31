@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Rebuild corpus domains from reproducible sources, dropping belle-derived data.
 #
-#   bash scripts/rebuild_corpus.sh math     # rebuild just one domain (fast, verifies)
-#   bash scripts/rebuild_corpus.sh web      # the big fineweb2 pull
-#   bash scripts/rebuild_corpus.sh          # all domains
+#   bash datagen/rebuild_corpus.sh math     # rebuild just one domain (fast, verifies)
+#   bash datagen/rebuild_corpus.sh web      # the big fineweb2 pull
+#   bash datagen/rebuild_corpus.sh          # all domains
 #
 # Each domain rm's its old data/corpus/<domain>/ first, so stale shards do not survive.
 # Small domains run before web; web --excludes all of them.

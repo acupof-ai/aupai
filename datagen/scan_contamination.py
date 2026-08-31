@@ -1,11 +1,11 @@
 """Every new source has to be scanned for eval questions before it enters the corpus.
 
-    python scripts/scan_contamination.py [glob]
+    python datagen/scan_contamination.py [glob]
 """
 
-import glob, json, sys
+import glob, json, os, sys
 
-sys.path.insert(0, "scripts")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from holdout import is_holdout
 
 

@@ -10,7 +10,7 @@
     "exact_matches": 0
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py union run over data/corpus/math/*.jsonl (9 shards, 530,234 rows)",
+   "source": "datagen/scan_math_contamination.py union run over data/corpus/math/*.jsonl (9 shards, 530,234 rows)",
    "config": {
     "host": "local macOS checkout -- a corpus copy that never trained anything (see cont.union_pod for the training corpus)",
     "paths": "data/corpus/math/{ape210k,gsm8k_zh,math23k,math_short_sol_v1,math_short_v6,v7,v8,mxode_000,mxode_001}.jsonl",
@@ -34,7 +34,7 @@
     "math_hard_1k": "73/1032 (7.1%) at 0.8"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py union run, split by holdout file of origin",
+   "source": "datagen/scan_math_contamination.py union run, split by holdout file of origin",
    "config": {
     "host": "local macOS checkout (never trained)",
     "note": "150+73=223=cont.union hit_0.8; no holdout text appears in both files"
@@ -55,7 +55,7 @@
     "fpr": "0/1498 on 269 pod web-prose docs"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py union run on the training pod (iv-yeozpb5g5cbw80bls64e), /work/aupai/data/corpus/math/ (5 shards, 181,684 rows)",
+   "source": "datagen/scan_math_contamination.py union run on the training pod (iv-yeozpb5g5cbw80bls64e), /work/aupai/data/corpus/math/ (5 shards, 181,684 rows)",
    "config": {
     "host": "training pod iv-yeozpb5g5cbw80bls64e",
     "paths": "/work/aupai/data/corpus/math/{en_math_text_000,en_math_text_001,en_math_text_002,math_short_v10_000,math_short_v8_000}.jsonl",
@@ -95,7 +95,7 @@
     }
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py on the training pod, one run per shard",
+   "source": "datagen/scan_math_contamination.py on the training pod, one run per shard",
    "config": {
     "host": "training pod iv-yeozpb5g5cbw80bls64e",
     "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
@@ -116,7 +116,7 @@
     "meaning": "identical number multiset with a zh holdout -- review queue, not confirmed contamination"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py number-multiset screen on the training pod",
+   "source": "datagen/scan_math_contamination.py number-multiset screen on the training pod",
    "config": {
     "host": "training pod iv-yeozpb5g5cbw80bls64e",
     "screen": "number multiset, >= 2 numbers, cross-language only",
@@ -136,7 +136,7 @@
     "resolution": "CLOSED 2026-08-30 by v2's construction, not by a bank fix: math_short batches never contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are mxode's) -- they only ever contaminated math-hard v1, which is retired (cont.math_hard_v1_void). v2 is generated from type-disjoint families and all 7 batches pass the gate (cont.math_hard_v2). 'Fix the bank' is no longer a todo."
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py over data/synthetic/math_short_v{3,5,6,7,8,11}.jsonl (local) + pod v8/v10; mathbank/split_bank.py, mathbank/make_v11_band.py docstrings",
+   "source": "datagen/scan_math_contamination.py over data/synthetic/math_short_v{3,5,6,7,8,11}.jsonl (local) + pod v8/v10; mathbank/split_bank.py, mathbank/make_v11_band.py docstrings",
    "config": {
     "generator": "mathbank/run_math_short.py instantiating math_programs_l*.py (943 L3/L4 programs)",
     "leak_path": "shared template DNA across two generator generations of the same curriculum -- not seed leakage, not a shared pool"
@@ -149,7 +149,7 @@
    "value": {
     "what": "per-domain sha1 of (shard name, size, mtime); stamped into build_corpus_stats.json at build time and into checkpoints next to vocab_id",
     "tools": [
-     "scripts/corpus_fingerprint.py",
+     "datagen/corpus_fingerprint.py",
      "harness check corpus_fp_matches",
      "train.py save_checkpoint corpus_fp"
     ],
@@ -157,7 +157,7 @@
     "stamped": "local math c108de08e0fa4a86; pod chat f4b03c9f, code 4317ab46, en 64888926, math 45a430e0, textbook 632a09b4, wiki 466e012d"
    },
    "measured": "2026-08-30",
-   "source": "scripts/corpus_fingerprint.py --self-check; scripts/harness.py corpus_fp_matches (15 checks, selftest OK)",
+   "source": "datagen/corpus_fingerprint.py --self-check; scripts/harness.py corpus_fp_matches (15 checks, selftest OK)",
    "config": {
     "ceiling": "stat-only (name+size+mtime): misses same-size same-mtime edits; row counts excluded because wc -l on 108GB costs minutes",
     "incident": "two corpora both called data/corpus/math, 0.0% vs 30.0% contaminated, indistinguishable before this"
@@ -174,7 +174,7 @@
     "threshold": 0.8
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py over data/corpus/sample/batch_*.jsonl",
+   "source": "datagen/scan_math_contamination.py over data/corpus/sample/batch_*.jsonl",
    "config": {
     "host": "local macOS checkout",
     "clean_corpus": "web prose sample batches, assumed clean",
@@ -214,7 +214,7 @@
     "decision_by": "aupai-fb 2026-08-30"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py --full-doc vs holdout (math-500 + math-hard v1), run on the training pod (iv-yeozpb5g5cbw80bls64e); CCI3-HQ = data/raw/cci3_hq 96 shards, web_hq = data/corpus/web_hq 124 shards",
+   "source": "datagen/scan_math_contamination.py --full-doc vs holdout (math-500 + math-hard v1), run on the training pod (iv-yeozpb5g5cbw80bls64e); CCI3-HQ = data/raw/cci3_hq 96 shards, web_hq = data/corpus/web_hq 124 shards",
    "config": {
     "host": "training pod, holdout hash 654cfbd7c5efdb84",
     "field": "cci3 jsonl field 'text' (--q-field text); web_hq field 'content'",
@@ -353,7 +353,7 @@
     }
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py, one run per shard at thresholds 0.7/0.8/0.9",
+   "source": "datagen/scan_math_contamination.py, one run per shard at thresholds 0.7/0.8/0.9",
    "config": {
     "host": "local macOS checkout (never trained)",
     "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
@@ -384,7 +384,7 @@
    "claim": "of the 223 containment hits, the subset sharing the holdout's exact number multiset (true contamination) versus number-swapped template variants",
    "value": "unmeasured",
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py union run recorded hit holdout indices only, not corpus rows",
+   "source": "datagen/scan_math_contamination.py union run recorded hit holdout indices only, not corpus rows",
    "config": {
     "required_for": "deciding whether REJECTED shards are salvageable by row-level filtering vs wholly template-derived"
    },
@@ -403,7 +403,7 @@
     "lsh": "rejected -- approximate, needs a recall proof against the 223 known hits; exact scan clears the 2h budget"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py sparse-matmul rewrite, timed on data/corpus/math/ (245 MB, 530,234 rows, ~73M tok)",
+   "source": "datagen/scan_math_contamination.py sparse-matmul rewrite, timed on data/corpus/math/ (245 MB, 530,234 rows, ~73M tok)",
    "config": {
     "machine": "14-core macOS, 9 fork workers",
     "method": "R (rows x vocab) sparse @ H (vocab x 1532) dense, float64 containment, chunk 20k rows",
@@ -435,7 +435,7 @@
     "holdout_change": "invalidates every entry -> full rescan"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py --jobs 9, second run over data/corpus/math/*.jsonl",
+   "source": "datagen/scan_math_contamination.py --jobs 9, second run over data/corpus/math/*.jsonl",
    "config": {
     "fingerprint": "bytes+mtime, make-style; --force bypasses; FPR baseline runs are not ledgered"
    },
@@ -474,12 +474,12 @@
    "id": "cont.gate",
    "value": {
     "script": "eval/gate_math_short.sh",
-    "rule": "every math_short_* batch passes scripts/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
-    "wired_into": "scripts/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
+    "rule": "every math_short_* batch passes datagen/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
+    "wired_into": "datagen/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
     "verified": "gate passes all 6 local math_short batches vs math-500+v2 (2026-08-30, rate-based scanner with gsm8k_zh baseline); still REJECTs mxode (141 math-500 holdouts, 7278 hit rows)"
    },
    "measured": "2026-08-30",
-   "source": "eval/gate_math_short.sh, wired into scripts/build_math_expand.sh",
+   "source": "eval/gate_math_short.sh, wired into datagen/build_math_expand.sh",
    "config": {
     "consequence": "build_math_expand.sh is UNBLOCKED for math_short batches as of 2026-08-30 (they are clean vs the active evals math-500+v2). mxode stays REJECT. The earlier 'refuses until the bank is fixed' state is obsolete -- see cont.math_short_leak.resolution.",
     "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"
@@ -491,12 +491,12 @@
    "id": "cont.holdout_v2",
    "value": {
     "rule": "carve the holdout out of each NEW source BEFORE ingest: qhash[:8] % 100 < 2 -> holdout_v2, else corpus; gate the remainder against the full holdout (any hit -> REFUSED, nothing written)",
-    "tool": "scripts/holdout_split.py",
+    "tool": "datagen/holdout_split.py",
     "eligibility": "only never-ingested sources (no ledger entry, not in PROVENANCE.md)",
     "status_of_v2_set": "empty -- no eligible new source has arrived; math-500 stays the active eval until the first v2 slice exists"
    },
    "measured": "2026-08-30",
-   "source": "scripts/holdout_split.py, broken-world tested (verbatim-holdout source REFUSED with slice discarded; clean source split 100 -> 5+95)",
+   "source": "datagen/holdout_split.py, broken-world tested (verbatim-holdout source REFUSED with slice discarded; clean source split 100 -> 5+95)",
    "config": {
     "split_pct": 2,
     "determinism": "qhash-based, no RNG state -- same source splits identically on any machine",
@@ -531,7 +531,7 @@
     }
    },
    "measured": "2026-08-30",
-   "source": "mathbank/eval_hard_v2_gen.py; scripts/scan_math_contamination.py --holdout",
+   "source": "mathbank/eval_hard_v2_gen.py; datagen/scan_math_contamination.py --holdout",
    "config": {
     "host": "local macOS checkout",
     "scanner_default_holdout": "math-500 + v2 (math-hard-1k retired from the default set 2026-08-30)"
@@ -593,7 +593,7 @@
     "residual_fp_class": "mojibake docs share rare bigrams by coincidence and IDF UPweights them (cont.gsm8k_zh_webhq_scan hit #1)"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py self-check + /tmp/harden_scan.py validation on math-500 vs web_hq",
+   "source": "datagen/scan_math_contamination.py self-check + /tmp/harden_scan.py validation on math-500 vs web_hq",
    "config": {
     "threshold": 0.8,
     "idf": "log((N+1)/(df+1))+1 over scanned corpus",
@@ -614,7 +614,7 @@
     "holdout_split": "train (7,473 rows); test split would need fetching for the actual eval - train serves as the canary"
    },
    "measured": "2026-08-30",
-   "source": "scripts/scan_math_contamination.py (IDF-weighted) + /tmp/gsm_hit_detail.py",
+   "source": "datagen/scan_math_contamination.py (IDF-weighted) + /tmp/gsm_hit_detail.py",
    "config": {
     "threshold": 0.8,
     "baseline": "web_hq self-baseline",

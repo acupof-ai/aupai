@@ -19,7 +19,7 @@ for src in "$@"; do
     # baseline: gsm8k_zh -- the accepted clean math shard (same distribution family,
     # 0 hits). The scanner REQUIRES a same-scale baseline; without one a FPR number
     # has no binding power (cont.cci3_scale_failure).
-    python3 scripts/scan_math_contamination.py "$src" \
+    python3 datagen/scan_math_contamination.py "$src" \
         --fpr-baseline data/corpus/math/gsm8k_zh_000.jsonl || rc=1
 done
 if [ "$rc" -ne 0 ]; then

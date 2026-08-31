@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datagen"))
 import train  # noqa: E402
 
 if train.chunk_kda is None:  # no fla on this machine: shape-preserving stand-in

@@ -10,9 +10,9 @@
 #             or mismatched is an ERROR.
 #   fetch   — fetched tier via the fetchers; frozen tier from $ARCHIVE (skipped
 #             until ARCHIVE points at a real archive).
-#   build   — scripts/build_domains.sh -> data/corpus/<domain>/
+#   build   — datagen/build_domains.sh -> data/corpus/<domain>/
 #   vocab   — scripts/build_tokenizer.py --force (needs the default mix + the corpus)
-#   check   — scripts/check_mix.py: dry-run the schedule before burning GPUs.
+#   check   — datagen/check_mix.py: dry-run the schedule before burning GPUs.
 #
 # NOT included: launching the pretrain. That is a human decision.
 set -uo pipefail
@@ -30,7 +30,7 @@ want() { [ "$STAGE" = "all" ] || [ "$STAGE" = "$1" ]; }
 # --- verify -----------------------------------------------------------------
 if want verify; then
   say "stage verify"
-  python3 scripts/data_verify.py --missing-only --root "$PWD" || {
+  python3 datagen/data_verify.py --missing-only --root "$PWD" || {
     echo "  (empty pod expected: frozen tier not yet archived) — continuing to fetch"
   }
   say "stage verify: done (missing listed above)"
@@ -47,16 +47,16 @@ if want fetch; then
     say "  ARCHIVE=$ARCHIVE not set/absent — SKIPPING frozen (5 sources); requires user decision"
   fi
   # fetched tier via the fetchers; each skips files already present (idempotent)
-  python3 scripts/fetch_math_data.py ape210k belle gsm8k_zh math23k mxode || die "fetch_math_data"
-  python3 scripts/fetch_sft_data.py fetch || die "fetch_sft"
-  python3 scripts/fetch_chat_data.py || die "fetch_chat"
+  python3 datagen/fetch_math_data.py ape210k belle gsm8k_zh math23k mxode || die "fetch_math_data"
+  python3 datagen/fetch_sft_data.py fetch || die "fetch_sft"
+  python3 datagen/fetch_chat_data.py || die "fetch_chat"
   say "stage fetch: done — rerun data_verify fetch to confirm"
 fi
 
 # --- build corpus -----------------------------------------------------------
 if want build; then
   say "stage build"
-  bash scripts/build_domains.sh || die "build_domains"
+  bash datagen/build_domains.sh || die "build_domains"
   say "stage build: done"
 fi
 
@@ -72,7 +72,7 @@ fi
 # --- mix dry-run ------------------------------------------------------------
 if want check; then
   say "stage check"
-  python3 scripts/check_mix.py || die "check_mix"
+  python3 datagen/check_mix.py || die "check_mix"
   say "stage check: done — review the schedule before launching"
 fi
 

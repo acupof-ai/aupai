@@ -171,7 +171,7 @@ def main():
                     + "\n"
                 )
         pack = os.path.join(tmp, "sft.pt")
-        run([sys.executable, "prepare_sft_math.py", "--sources", sft_jsonl, "--out", pack])
+        run([sys.executable, "datagen/prepare_sft_math.py", "--sources", sft_jsonl, "--out", pack])
         pk = torch.load(pack, map_location="cpu", weights_only=False)
         pack_fp = pk.get("vocab_id") if isinstance(pk, dict) else None
         assert pack_fp == fp, (

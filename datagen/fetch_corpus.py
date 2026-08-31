@@ -14,8 +14,8 @@ free bytes of its backing fs but is wiped on restart, so free space alone is
 not a guard), and data/raw as a real dir on /work (never a symlink to an
 overlay). Exit 0 on success, non-zero otherwise.
 
-    python scripts/fetch_corpus.py --source fineweb2 --target_bytes 30e9
-    python scripts/fetch_corpus.py --source cci3_hq --target_bytes 50e9
+    python datagen/fetch_corpus.py --source fineweb2 --target_bytes 30e9
+    python datagen/fetch_corpus.py --source cci3_hq --target_bytes 50e9
 """
 
 import argparse

@@ -4,11 +4,11 @@
 Finding #1 of docs/review_2026-08-26.md was stage-1 SFT on the corpus the eval problems
 were drawn from. Every new source gets this scan before it enters the mix, and every
 existing source can be re-scanned. This is the math-specific sibling of
-scripts/scan_contamination.py (which scans generic corpus with exact line matching):
+datagen/scan_contamination.py (which scans generic corpus with exact line matching):
 this one adds containment and a cross-language screen.
 
 Screens, cheapest first:
-  1. exact-normalized match (same key as scripts/holdout.py: whitespace/punctuation-insensitive)
+  1. exact-normalized match (same key as datagen/holdout.py: whitespace/punctuation-insensitive)
   2. containment: |holdout bigrams ∩ text bigrams| / |holdout bigrams| >= threshold,
      IDF-WEIGHTED over the scanned corpus (pass 1 accumulates document frequency per
      holdout bigram; pass 2 scores). Without weighting, generic bigrams (学生/班级)
@@ -48,10 +48,10 @@ containment, and hit counts at 0.7 / 0.8 / 0.9, so the reader can see how sensit
 verdict is to the threshold.
 
 Usage:
-    python scripts/scan_math_contamination.py <path> --fpr-baseline BASELINE_PATH
+    python datagen/scan_math_contamination.py <path> --fpr-baseline BASELINE_PATH
                                                  [--q-field NAME] [--full-doc]
                                                  [--threshold 0.8] [--jobs N] [--force]
-    python scripts/scan_math_contamination.py --self-check
+    python datagen/scan_math_contamination.py --self-check
 
     --fpr-baseline is REQUIRED: the same-scale in-training corpus. The verdict is
     the candidate's per-GB hit rate vs the baseline's -- REJECT if > 2x (fb's
@@ -502,7 +502,7 @@ def main():
                  "(e.g. the web_hq shards or data/corpus/math/gsm8k_zh_000.jsonl for math batches)")
     holdouts = load_holdouts(args.holdout)
     if not holdouts:
-        sys.exit("no holdout files found; run scripts/holdout.py first or run from repo root")
+        sys.exit("no holdout files found; run datagen/holdout.py first or run from repo root")
     idx = HoldoutIndex(holdouts)
     hhash = holdout_hash(holdouts)
     paths = sorted(glob.glob(args.path)) if "*" in args.path else [args.path]

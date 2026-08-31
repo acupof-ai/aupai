@@ -1,13 +1,13 @@
 ---
 question: Does the math SFT corpus (data/corpus/math/) contaminate the eval holdouts (math-500, math-hard-1k)?
 status: measured
-source: scripts/scan_math_contamination.py, 2026-08-30
+source: datagen/scan_math_contamination.py, 2026-08-30
 ---
 
 # Audit — math SFT corpus vs eval holdouts
 
-Run 2026-08-30. Scanner: `scripts/scan_math_contamination.py` (broken-world tests:
-`scripts/test_scan_math_contamination.py`). No mix was edited.
+Run 2026-08-30. Scanner: `datagen/scan_math_contamination.py` (broken-world tests:
+`datagen/test_scan_math_contamination.py`). No mix was edited.
 
 ## Which corpus — read this first
 
@@ -111,7 +111,7 @@ closed 2026-08-30 not by a fix but by v2's construction: math_short batches neve
 contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are
 mxode's), they only ever contaminated math-hard v1, which is retired. The v1
 REJECT records above are history, not open work. The executable gate is
-`eval/gate_math_short.sh`, wired into `scripts/build_math_expand.sh`: it scans
+`eval/gate_math_short.sh`, wired into `datagen/build_math_expand.sh`: it scans
 against math-500 + v2, and all six local batches pass with 0 hits
 (`facts/contamination.json#cont.gate`, `#cont.math_short_leak`).
 
@@ -121,7 +121,7 @@ for human review (`facts/contamination.json#cont.cross_language_pod`).
 
 ## Corpus identity
 
-`scripts/corpus_fingerprint.py` hashes each domain's (shard name, size, mtime);
+`datagen/corpus_fingerprint.py` hashes each domain's (shard name, size, mtime);
 build_corpus.py stamps it into `build_corpus_stats.json`, `save_checkpoint` stamps
 it next to `vocab_id`, and harness check `corpus_fp_matches` fails on drift
 (`facts/contamination.json#cont.corpus_fp`). The pod/local divergence that motivated
@@ -165,7 +165,7 @@ math-500 is 30.0% contaminated **by the local corpus** and 0.0% by the pod corpu
 that trained 0830v1 (`facts/contamination.json#cont.union_pod`) — host-specific
 numbers, never merge them — and stays only as the active eval until a replacement
 exists. The v2 rule (`facts/contamination.json#cont.holdout_v2`, tool:
-`scripts/holdout_split.py`): each **new** source is split *before* ingest —
+`datagen/holdout_split.py`): each **new** source is split *before* ingest —
 `qhash[:8] % 100 < 2` goes to `data/eval/holdout_v2/`, the rest is the corpus
 candidate — and the remainder is gated against the full holdout; any hit refuses the
 whole source and discards the slice. Eligibility is enforced: only never-ingested

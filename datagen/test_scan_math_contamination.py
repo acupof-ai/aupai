@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Broken-world tests for scripts/scan_math_contamination.py.
+"""Broken-world tests for datagen/scan_math_contamination.py.
 
 Rule: broken worlds MUTATE REAL ARTIFACTS — copy a real shard, rename fields, inject
 empties — never hand-write fixture rows. The field-fall-through defect recurred twice
 because its test was a hand-written toy that bypassed the real schema.
 
-Run from the repo root: python scripts/test_scan_math_contamination.py
+Run from the repo root: python datagen/test_scan_math_contamination.py
 """
 
 import glob

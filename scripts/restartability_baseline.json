@@ -28,16 +28,16 @@
     "probes/bench_gated_mla.py",
     "scripts/build_tokenizer.py",
     "scripts/ckpt_sweep.py",
-    "scripts/data_verify.py",
+    "datagen/data_verify.py",
     "eval/domain_loss.py",
     "scripts/fit_scaling.py",
-    "scripts/gen_0094.py",
+    "datagen/gen_0094.py",
     "scripts/harness.py",
-    "scripts/holdout_split.py",
-    "scripts/make_mixed.py",
+    "datagen/holdout_split.py",
+    "datagen/make_mixed.py",
     "probes/mem_account.py",
     "scripts/pod_drift.py",
-    "scripts/prepare_sft.py",
+    "datagen/prepare_sft.py",
     "eval/score_matrix.py"
   ]
 }

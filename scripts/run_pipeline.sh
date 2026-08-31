@@ -42,7 +42,7 @@ if want sft && [ ! -f "ckpt_$SFT.pt" ]; then
   say "stage sft: packing"
   # --fone is not optional against a FoNE base: it has only ever seen a number as one
   # [NUM] carrying a Fourier value, and sft_math.py refuses a pack without values.
-  python3 prepare_sft_math.py --fone --out "$SFT_PT" --sources "$SFT_SOURCES" >> "$LOG" 2>&1 \
+  python3 datagen/prepare_sft_math.py --fone --out "$SFT_PT" --sources "$SFT_SOURCES" >> "$LOG" 2>&1 \
     || die "sft packing"
   say "stage sft: training on ckpt_$PRETRAIN.pt"
   NGPU=$NGPU PORT=29660 bash scripts/run_sft.sh "$SFT" "ckpt_$PRETRAIN.pt" "$SFT_PT" \

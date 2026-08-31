@@ -25,7 +25,7 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
 from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
-from scripts.sandbox_exec import run_sandboxed  # noqa: E402
+from datagen.sandbox_exec import run_sandboxed  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "code_holdout_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")

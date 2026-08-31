@@ -13,7 +13,7 @@ Measure (meta-only, fast - no tokenization, runs on the sampled file):
      executable verification" candidate supply, token/byte-weighted.
 Also reports the gross test-file fraction and per-language split.
 
-Usage (on pod): python3 scripts/scan_scm_tests.py data/raw/code_supply/github_00.sampled.jsonl
+Usage (on pod): python3 datagen/scan_scm_tests.py data/raw/code_supply/github_00.sampled.jsonl
 """
 import argparse
 import json

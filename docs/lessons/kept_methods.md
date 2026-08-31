@@ -112,7 +112,7 @@ Two categories the literature measures, and the test that assigns a source:
 
 ## 9. Contamination scanning
 
-- Run `scripts/scan_contamination.py` on every new source, before it enters a mix. This rule recurs whenever skipped.
+- Run `datagen/scan_contamination.py` on every new source, before it enters a mix. This rule recurs whenever skipped.
 - A census (every row of a shard) beats a sample: a zero in a census gives a rule-of-three upper bound on the rate; a zero in a sample bounds only the sampled slice.
 - Scan whole document plus the first lines; contamination can sit past the head.
 - Seed pages are a blind spot: clean outputs do not certify clean seeds. If you do not hold the seeds, say the seed contamination is unmeasured.

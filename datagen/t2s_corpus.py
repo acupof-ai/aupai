@@ -5,7 +5,7 @@ Conversion uses a cached opencc character table with str.translate (~7M chars/s 
 opencc.convert's 0.5M/s; the two agree exactly on sampled text -- this opencc build does
 no phrase-level substitution, so nothing is lost).
 
-    python scripts/t2s_corpus.py [--dir data/corpus] [--domains web,chat] [--workers 32]
+    python datagen/t2s_corpus.py [--dir data/corpus] [--domains web,chat] [--workers 32]
 """
 
 import argparse

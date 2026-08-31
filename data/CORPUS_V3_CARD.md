@@ -136,8 +136,8 @@ in building it.
 
 ## Provenance and contamination
 
-`scripts/scan_contamination.py`, 60,000 documents per source, whole document and
-every line up to 500 characters against `scripts/holdout.py`: **zero eval questions**
+`datagen/scan_contamination.py`, 60,000 documents per source, whole document and
+every line up to 500 characters against `datagen/holdout.py`: **zero eval questions**
 in cosmopedia, wiki-zh and the R1 distill set.
 
 `data/pretrain_full.jsonl` was dropped from the rebuild. `data/PROVENANCE.md`

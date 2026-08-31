@@ -12,8 +12,8 @@ encoding-flag pass (44's census: near-perfect precision, near-zero recall -- a
 legitimate baseline, not a quality scorer). The register-aware scorer that 36B
 needs is lessons-44's research; it slots in here via the registry.
 
-    python scripts/score_corpus.py --domain web_hq
-    python scripts/score_corpus.py --domain web_hq --scorer register_v1   # when 44 ships it
+    python datagen/score_corpus.py --domain web_hq
+    python datagen/score_corpus.py --domain web_hq --scorer register_v1   # when 44 ships it
 
 Contract: output data/scores/<domain>/score_stats.json with scorer_fp. Shard-level
 resumability (per-shard score write in the loop). Exit 0/non-zero.

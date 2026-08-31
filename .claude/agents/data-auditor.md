@@ -39,7 +39,7 @@ about provenance, not about content**.
 
 ### 2. Measure, in this order — cheapest disqualifier first
 
-1. **Contamination.** `python scripts/scan_contamination.py` against every eval set. Any hit is
+1. **Contamination.** `python datagen/scan_contamination.py` against every eval set. Any hit is
    a REJECT of the shard and an alarm, not a filtered row. This is finding #1 of
    `docs/review_2026-08-26.md` and it recurs whenever it is skipped.
 2. **Near-duplication** against the existing corpus, and within the candidate. Report the rate.
@@ -71,7 +71,7 @@ A verdict is not enough: the CUT predicate has to be executable over hundreds of
 documents, and that means a **per-document score with a threshold**, not a category.
 
 - Run our own scorer: `CKPT=ckpt_k5_clean_0827.pt TOKENIZER=data/tokenizer_k5.json
-  scripts/score_corpus.sh <ngpu> '<glob>'` — the logistic head on the frozen 200M's mean
+  datagen/score_corpus.sh <ngpu> '<glob>'` — the logistic head on the frozen 200M's mean
   hidden state, **AUC 0.823** against hand labels, above the 27B teacher's own 0.739 (the
   teacher's hard yes/no ties cap its AUC; the student's continuous score recovers the
   ordering). 231 documents/s per H20 against the 27B's 0.76/s.

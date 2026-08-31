@@ -47,7 +47,7 @@ SCOPE = [
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
 ]
-EXCLUDE_DIRS = ("datagen", "filters", "mathbank", "workflows")
+EXCLUDE_DIRS = ("filters", "mathbank", "workflows")
 
 # Job-class entry points: BFS from these through imports derives the class of
 # every manifest file. Priority: training > eval > corpus > docs.
@@ -55,8 +55,8 @@ _ENTRY_POINTS = {
     "training": ["train.py", "sft.py", "sft_math.py", "run_ddp.sh", "scripts/run_sft.sh"],
     "eval": ["eval/run_eval.py", "eval/math_hard.py", "eval/eval_hard.sh",
              "eval/eval_all.sh", "eval/score_matrix.py"],
-    "corpus": ["scripts/fetch_corpus.py", "scripts/clean_corpus.py",
-               "scripts/count_cleaned_code.py"],
+    "corpus": ["datagen/fetch_corpus.py", "datagen/clean_corpus.py",
+               "datagen/count_cleaned_code.py"],
 }
 
 
@@ -76,6 +76,7 @@ def _imports(path):
                          os.path.join("scripts", mod.split(".")[-1] + ".py"),
                          os.path.join("eval", mod.split(".")[-1] + ".py"),
                          os.path.join("algorithms", mod.split(".")[-1] + ".py"),
+                         os.path.join("datagen", mod.split(".")[-1] + ".py"),
                          mod.split(".")[-1] + ".py"):
                 if os.path.isfile(os.path.join(ROOT, cand)):
                     deps.add(cand)
@@ -272,11 +273,11 @@ def selftest():
     import tempfile
 
     d = tempfile.mkdtemp()
-    for sub in ("scripts", "datagen", "data"):
+    for sub in ("scripts", "datagen", "data", "mathbank"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
     open(os.path.join(d, "scripts", "real.py"), "w").write("# registered\n")
     open(os.path.join(d, "probe.py"), "w").write("# throwaway\n")
-    open(os.path.join(d, "datagen", "gen.py"), "w").write("# excluded dir\n")
+    open(os.path.join(d, "mathbank", "gen.py"), "w").write("# excluded dir\n")
     open(os.path.join(d, "data", "tool.py"), "w").write("# data dir\n")
     manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
@@ -290,7 +291,7 @@ def selftest():
     corpus_sha = sha_disk(os.path.join(d, "scripts", "real.py"))
     manifest2 = {
         "scripts/real.py": (corpus_sha, "training"),
-        "scripts/fetch_corpus.py": ("0" * 64, "corpus"),  # stale sha, corpus class
+        "datagen/fetch_corpus.py": ("0" * 64, "corpus"),  # stale sha, corpus class
     }
     with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest2.items()))
