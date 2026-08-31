@@ -56,6 +56,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 - **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
+- **A deletion needs a per-file check for glob and runtime loaders.** No static analysis sees a runtime glob. `scripts/reachability.py` is a citation graph -- a doc mention is an edge, so "reachable" can mean "named by a doc nobody runs" -- and `mathbank/vet_programs.py:37` globs `math_programs_l*_ext*.py`, so 23 live generators read as unreferenced to a name scan. Grep for `glob`/`importlib` over a directory before deleting anything in it.
 - **Derived artifacts carry the fingerprint of what produced them.** The failure mode: a derived artifact stays valid after its source changes, and nothing raises. Three instances, each bought with an incident: checkpoints carry `vocab_id` (a k5 SFT trained at loss 4.77 instead of 1.28 with nothing raising); token caches carry `.srcfp` of their source directory (the 0.2b run — source swapped, cache rebuilt against the new source, training kept reusing it); corpus shards carry `filters_fp`, a content hash of the `filters/*.py` that produced them. The fingerprint covers what actually takes effect, not the nominal version: content hash, not git sha — uncommitted edits still change what a build keeps, and a sha cannot see them (same reasoning as `corpus_fingerprint`'s "content-based, not mtime-based").
 
 ## Entry points
@@ -262,6 +263,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
+| A deletion needs a per-file check for glob and runtime loaders | manual: no static analysis sees a runtime glob; reachability.py is a citation graph and its header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators a name scan reads as unreferenced (near-miss, 2026-08-31) |
 | Derived artifacts carry the fingerprint of what produced them | `corpus_fp_matches` |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
 | `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
@@ -287,7 +289,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-34 rules: 14 checked, 20 manual.
+35 rules: 14 checked, 21 manual.
 
 ## Rules kept from before the reset
 

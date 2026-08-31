@@ -130,6 +130,10 @@ _MANUAL_RULES = {
     "Run `ruff format` over a whole file only if you created it": "reformat scope is a review judgement",
     "Commit as soon as a change works": "dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement",
     "Each session works in its own worktree on its own branch": "worktree topology is per-machine, not in the repo",
+    "A deletion needs a per-file check for glob and runtime loaders":
+        "no static analysis sees a runtime glob; reachability.py is a citation graph and its "
+        "header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators "
+        "a name scan reads as unreferenced (near-miss, 2026-08-31)",
     "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
     "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
@@ -138,7 +142,7 @@ _MANUAL_RULES = {
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
 #: Raising it needs a message saying which rule became unenforceable and why.
-_MANUAL_BASELINE = 20
+_MANUAL_BASELINE = 21
 
 
 def _norm_rule(text):
