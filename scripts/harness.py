@@ -7240,6 +7240,26 @@ def cmd_kill(argv):
 TOKENS_PER_STEP = 16 * 2 * 4096 * 7
 
 
+def _paired_profile(paired, matrix=None):
+    """The profile the pair's record actually carries: 'milestone' when one exists,
+    else 'full'. Asking the ledger beats assuming -- a pair scored only under the
+    milestone profile has no full record, and a missing record reads as ABSENT
+    rather than as an error."""
+    path = matrix or os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    have = set()
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if r.get("ckpt") == paired:
+                have.add(r.get("profile", "full"))
+    return "milestone" if "milestone" in have and "full" not in have else "full"
+
+
 def _pin_milestone(watch_dir, run, ckpt, token):
     """Take a milestone checkpoint out of train.py's rotation. Returns the pinned path.
 
@@ -7475,7 +7495,15 @@ def cmd_milestone(argv):
             r = subprocess.run(
                 [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
                  "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-                 "--milestone-profile", "milestone", "--paired-profile", "full",
+                 "--milestone-profile", "milestone",
+                 # The PAIR's profile, resolved from what exists rather than assumed.
+                 # Hardcoding "full" was right while the pair was ckpt_p324 (a ladder
+                 # checkpoint with a full record) and wrong the moment a milestone
+                 # became the pair: the 8B baseline exists only under profile=milestone,
+                 # so the lookup missed and the 15B readout printed ABSENT on every
+                 # metric -- a "no metric moved" verdict resting on a lookup miss, which
+                 # is worse than a wrong number because it reads as a measurement (fb).
+                 "--paired-profile", _paired_profile(paired),
                  "--milestone-mix", mix]
                 + (["--paired-mix", _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) or ""]
                    if _ckpt_train_mix(os.path.join(a.watch or ROOT, paired)) else [])
