@@ -279,6 +279,19 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             if m_dl is None or p_dl is None:
                 print(f"\n{name}: ABSENT (domain-loss records missing)")
                 continue
+            # Different heads means the two models were scored on text neither shares.
+            # Tonight: stage-1 (code_rp1t/cot/en_c4/math_owm/textbook_30b/wiki_chat/
+            # zh_web) against the ladder's (chat/code/en/math/textbook/web_hq/wiki),
+            # zero overlap, reported as "6 of 7 domains degraded". A partial overlap is
+            # the more dangerous version -- it yields a verdict that looks whole.
+            m_heads, p_heads = set(m_dl["domains"]), set(p_dl["domains"])
+            if m_heads != p_heads:
+                only_m, only_p = sorted(m_heads - p_heads), sorted(p_heads - m_heads)
+                print(f"\n{name}: REFUSING -- the pair was scored on DIFFERENT heads. "
+                      f"milestone-only {only_m or 'none'}, paired-only {only_p or 'none'}. "
+                      f"Domain loss across different corpora measures the corpora, not the "
+                      f"models. Rescore both on one mix.")
+                continue
             common = sorted(set(m_dl["domains"]) & set(p_dl["domains"]))
             if not common:
                 print(f"\n{name}: ABSENT (no shared domains -- score both checkpoints on the same mix heads)")
@@ -436,6 +449,30 @@ def selftest():
     # "reachable: moved/floor" is the spec label, not a verdict -- do not grep for "floor".
     assert "ABSENT" in section and "verdict:" not in section, f"missing metric misread:\n{section}"
     print("  code_500 absent from the record -> ABSENT, never floor")
+    # 4. tonight's exact pair: disjoint heads must refuse, not report a regression
+    print("\n--- selftest 4: different heads -> REFUSE, never a verdict ---")
+    import contextlib as _c
+    import io as _io
+    import tempfile as _t
+    m4 = {"ckpt": "m.pt", "profile": "milestone",
+          "metrics": {"domain_loss": {k: {"loss": 2.4} for k in
+                      ("code_rp1t", "cot", "en_c4", "math_owm", "textbook_30b", "wiki_chat", "zh_web")}}}
+    p4 = {"ckpt": "p.pt", "profile": "full",
+          "metrics": {"domain_loss": {k: {"loss": 1.6} for k in
+                      ("chat", "code", "en", "math", "textbook", "web_hq", "wiki")}}}
+    with _t.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
+        tf.write(json.dumps(m4) + "\n" + json.dumps(p4) + "\n")
+        tmp4 = tf.name
+    try:
+        buf = _io.StringIO()
+        with _c.redirect_stdout(buf):
+            readout("m.pt", "p.pt", tmp4, None, None, 3.24e9, paired_profile="full")
+        out4 = buf.getvalue()
+    finally:
+        os.unlink(tmp4)
+    assert "REFUSING" in out4 and "DIFFERENT heads" in out4, out4[-400:]
+    assert "moved (degraded)" not in out4, "disjoint heads must never produce a verdict"
+    print("  disjoint heads refuse; no per-domain verdict is printed")
     print("\nselftest OK")
     return 0
 

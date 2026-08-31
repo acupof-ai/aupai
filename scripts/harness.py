@@ -6414,6 +6414,25 @@ def _env_fp_now():
         return None
 
 
+def _ckpt_train_mix(path):
+    """The mix a checkpoint was TRAINED on, from its own cfg.
+
+    Scoring domain loss on a different mix's heads compares two models on text
+    neither shares: the 3.24B milestone was scored on the ladder's heads
+    (chat/code/en/math/textbook/web_hq/wiki) while stage 1 trains on
+    code_rp1t/cot/en_c4/math_owm/textbook_30b/wiki_chat/zh_web -- zero overlap, and
+    the readout called it a 6-of-7-domain regression (2026-08-31). The checkpoint
+    knows what it read; asking it beats a default."""
+    try:
+        import torch
+
+        cfg = torch.load(path, map_location="cpu", weights_only=False).get("cfg", {})
+        mix = cfg.get("mix") if isinstance(cfg, dict) else getattr(cfg, "mix", None)
+        return mix or None
+    except Exception:
+        return None
+
+
 def _ckpt_env_fp(path):
     try:
         import torch
@@ -6676,7 +6695,8 @@ def cmd_milestone(argv):
     ap.add_argument("ckpt", nargs="?", help="checkpoint file (single-run mode)")
     ap.add_argument("--paired", default=None, help="paired checkpoint (default: previous milestone, else ckpt_p324.pt)")
     ap.add_argument("--tokens", type=float, default=None, help="milestone token budget (default: parsed from the name)")
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"), help="domain-loss heads mix")
+    ap.add_argument("--mix", default=None,
+                    help="domain-loss heads mix (default: the mix each checkpoint was trained on)")
     ap.add_argument("--watch", default=None, help="poll this directory for step checkpoints")
     ap.add_argument("--run", default=None, help="watch: run name (checkpoints are ckpt_<run>.pt.step<N>)")
     ap.add_argument("--milestones", default=None, help="watch: '3.24b=3500,8b=8500,15b=16500' (token=nearest-saved-step)")
@@ -6687,9 +6707,17 @@ def cmd_milestone(argv):
 
     def run_one(ckpt, paired, tokens, milestone=None):
         stem = ckpt[:-3] if ckpt.endswith(".pt") else ckpt
+        # Heads come from the checkpoint's own training mix unless overridden. A
+        # hardcoded default scored the 3.24B milestone on the ladder's heads while
+        # stage 1 trained on a disjoint set, and the readout reported it as a
+        # 6-of-7-domain regression (2026-08-31).
+        mix = a.mix or _ckpt_train_mix(os.path.join(a.watch or ROOT, ckpt)) \
+            or os.path.join(ROOT, "data/mix_scale_3.24b.json")
+        if not os.path.isabs(mix):
+            mix = os.path.join(ROOT, mix)
         if a.dry:
             print(f"harness launch ms_{stem} -- eval/score_matrix.py --ckpt {ckpt} "
-                  f"--profile milestone --mix {os.path.relpath(a.mix, ROOT)} --json runs/score_matrix.jsonl")
+                  f"--profile milestone --mix {os.path.relpath(mix, ROOT)} --json runs/score_matrix.jsonl")
             print(f"python3 eval/readout_30b.py --milestone {ckpt} --paired {paired} "
                   f"--milestone-tokens {tokens} --milestone-profile milestone --paired-profile full "
                   f"> runs/readout_{stem}.txt")
@@ -6697,7 +6725,7 @@ def cmd_milestone(argv):
         rc = cmd_launch([
             f"ms_{stem}", "--hypothesis", f"milestone {tokens / 1e9:.2f}B score_matrix profile", "--",
             "eval/score_matrix.py", "--ckpt", ckpt, "--profile", "milestone",
-            "--mix", a.mix, "--json", "runs/score_matrix.jsonl",
+            "--mix", mix, "--json", "runs/score_matrix.jsonl",
         ])
         if rc != 0:
             return "refused"  # lane occupied; the watcher retries next poll
@@ -6746,7 +6774,7 @@ def cmd_milestone(argv):
         # artifact whose contents had moved underneath it (e1).
         actual_step = int(m_step.group(1)) if m_step else None
         row = {
-            "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
+            "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(mix, ROOT),
             "step": actual_step, "actual_tokens": actual_tokens,
             "token_shortfall": (round(1 - actual_tokens / tokens, 4) if actual_tokens and tokens else None),
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
