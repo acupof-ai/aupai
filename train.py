@@ -1788,6 +1788,10 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                     print(f"mix: {name} resuming at row {used[name]} "
                           f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
                           flush=True)
+    # True only when a cursor SEEDED used[] before the plan was built -- that is what
+    # trims it. Computed here, before the phase loop mutates used[] into post-plan
+    # counts, which are non-zero on every run and would make the flag meaningless.
+    Cfg._plan_trimmed = any(v > 0 for v in used.values())
     plan = []
     for frac, key in phases:
         parts = []
@@ -2237,6 +2241,15 @@ def main():
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
     good_opt = [None] * len(optimizers)
     total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))
+    # A trimmed plan holds only the rows THIS stage will read, so the count above is
+    # stage-2's steps alone -- but `step` stays absolute at the resume point because it
+    # drives the LR schedule, which the cursor does not relieve it of. Leaving them on
+    # different scales makes total_steps smaller than the resume step, and the loop
+    # exits without running: the rehearsal saw 16000/7998, zero steps (fb's ruling on
+    # tilerl's challenge). Rebasing `step` instead would restart the schedule and break
+    # the t47 join, so the totals are what move.
+    if getattr(Cfg, "_plan_trimmed", False) and resume_step:
+        total_steps += resume_step
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
@@ -2264,7 +2277,17 @@ def main():
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
-        i0 = step * Cfg.batch * Cfg.accum
+        # 0 when the plan was TRIMMED by a row cursor, because the trim already removed
+        # every consumed row: build_mix indexes each domain from arange(used, used+want),
+        # so the plan holds only unread rows and seeking into it skips them a second
+        # time. The rehearsal saw exactly that -- 16000 * 16 * 2 = 512,000 into a
+        # 1,791,741-row trimmed plan, past the end, zero steps executed.
+        #
+        # Without a cursor the seek is still required: the plan is then the WHOLE run's
+        # rows and a resume must skip what it already read (the within-run case that has
+        # always worked). `step` stays absolute either way -- it drives the LR schedule,
+        # which the cursor does not relieve it of (tilerl's challenge, fb's ruling).
+        i0 = 0 if getattr(Cfg, "_plan_trimmed", False) else step * Cfg.batch * Cfg.accum
         t0 = time.time()
         last = 0.0
         t_log = time.time()

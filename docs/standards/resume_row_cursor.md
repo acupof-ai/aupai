@@ -84,6 +84,26 @@ phase. Recorded rather than rounded away: it bounds what the reconstruction can 
 and a future discrepancy larger than single-digit rows is a different fault, not this
 one.
 
+## The stage-1 cursor is reconstructed, not recorded
+
+Verbatim in the rehearsal report and in the stage-2 launch exp row's `hypothesis`
+(fb), because the first person debugging a stage-2 data anomaly must meet it before
+anything else:
+
+> Stage-2 data continuity rests on a RECONSTRUCTED cursor, not a recorded one.
+> ckpt_pretrain_15b_s1.pt.step16000 predates the row_cursor field, so its cursor
+> was replayed by scripts/replay_cursor.py from (mix, step, pool sizes) rather
+> than read from an artifact stage 1 wrote. No record of stage-1's actual
+> consumption exists; the run finished before the field did. Two independent
+> cross-checks agree with the replay: cot capped at 295,512 rows (44's measured
+> figure) and zh_web at 0.08 epochs (b0's 92%-unread finding), neither supplied
+> to the tool. That is good evidence and it is not a recorded artifact. A
+> stage-2 data anomaly should suspect this before anything else.
+
+The distinction the sentence protects: a passing rehearsal proves a resume *continues
+from these counts*. It cannot prove the counts are what stage 1 consumed — no artifact
+of that exists, and none can be made now.
+
 ## Rehearsal before stage 2
 
 Two assertions, the second easy to forget:

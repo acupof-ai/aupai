@@ -691,6 +691,35 @@
    "status": "measured"
   },
   {
+   "id": "be.adjacent_checkpoint_jitter",
+   "value": "NAME IS OVERSTATED, read the confound first (44, 2026-09-01). The pair below is a STEP-SAVE vs a RUN-END SAVE, which are different code paths: the run-end save happens after the training loop, carries no optimizer state and records step: None. A post-loop save could differ SYSTEMATICALLY from a mid-training snapshot, not just randomly, so the 2.9 pt may be a step-save/run-end-save OFFSET with jitter on top rather than jitter. The measurement is one difference correctly measured and possibly wrongly named.\n\nTwo checkpoints from the SAME run at the same seed and config, scored on the same stage-1 heads under the milestone profile: step16000 and the run-end save (ckpt_pretrain_15b_s1.pt, no step suffix). Per-role domain loss moves 0.005-0.027 nat. C-Eval moves 22.5 -> 25.4, i.e. 2.9 pt. code_500 degeneration moves 0.522 -> 0.628, i.e. 10.6 pt. So at fixed seed a generative or MC metric's checkpoint-to-checkpoint jitter is far larger than its seed-to-seed variance, while per-role domain loss is stable to within a fifth of its own threshold.\n\nTHE ASYMMETRY IS THE FINDING. Loss is stable and the generative metrics are not, over a gap small enough that no real capability change is plausible. Anything read off ceval or a degeneration rate between two nearby checkpoints is mostly which checkpoint you took.\n\nWHAT IT IMPLIES FOR THE CEVAL GATE, recorded here as an observation and referred to 44 as a prereg amendment rather than applied: the pre-registered threshold is 5.9 pt = 4.65 x seed SD 1.27 (be.panel_expressive_seed_variance). Adjacent-checkpoint jitter of 2.9 pt is 2.3x that seed SD, so the threshold rests on the smaller of two independent noise terms. No verdict recorded on 2026-08-31/09-01 changes: every ceval reading was floor, and a larger threshold only makes floor more certain -- including the 25.4, which read as the first move out of the 22-23 band and sits inside this jitter. The live consequence is forward-looking: a future ceval move between roughly 6 and 13 pt would be unsafe to call on the 5.9 figure. The 5.9 stays the record of what was pre-registered.\n\nStage-1 ceval series: 22.4 (p324) / 22.8 (step3500) / 22.3 (step8500) / 22.5 (step16000) / 25.4 (run-end).",
+   "measured": "2026-09-01",
+   "source": "runs/score_matrix.jsonl rows ckpt_pretrain_15b_s1.pt.step16000 and ckpt_pretrain_15b_s1.pt, both profile=milestone (synced from the pod at 8b3970d)",
+   "config": {
+    "same_run": true,
+    "same_seed": true,
+    "profile": "milestone",
+    "heads": "stage-1 (7 roles)",
+    "gap": "281 steps, LOG-ATTRIBUTED: the run log's last step line is 16280/16281 and the run-end save follows the loop exit; the final checkpoint records step: None, so the gap is not readable from the artifact",
+    "per_role_delta_nat": "0.005-0.027",
+    "per_role_threshold_nat": 0.1176,
+    "ceval_pt": {
+     "step16000": 22.5,
+     "run_end": 25.4,
+     "delta": 2.9,
+     "seed_sd": 1.27,
+     "prereg_threshold": 5.9
+    },
+    "code_500_degeneration": {
+     "step16000": 0.522,
+     "run_end": 0.628
+    }
+   },
+   "uncertainty": "CONFOUNDED n=1. Two problems, not one. (a) The pair crosses code paths -- step-save vs run-end save -- so the difference may be systematic; a clean estimate needs step-save vs step-save pairs. (b) n=1 at one gap size: 2.9 pt is a single observed difference, not an estimate with df, and jitter may scale with the gap. The gap itself is log-attributed rather than read from the checkpoint.\n\nTHE CLEAN TEST, specified and pending: score ckpt_pretrain_15b_s1.pt.step15000 and .step15500 under the milestone profile, giving two step-save-vs-step-save pairs at a 500-step gap (15000-15500, 15500-16000) on one code path. 44's pre-registered rule: ceval step-save jitter >= 1.5 pt keeps 13.5 at n=3; < 1.0 pt means run-end is an offset and the threshold revises down to 4.65 x max(1.27, step-save SD), likely 5.9-8; 1.0-1.5 pt keeps 13.5 provisional. For degeneration: step-save jitter < 5 pt makes the clean +11.0 pt rise real, >= 8 pt withdraws the trend to 'base degenerate, trend unreadable'.\n\nDEGENERATION IS HALF-CLEAN ALREADY (44): step8500 0.412 and step16000 0.522 are BOTH step-saves, so +11.0 pt is a same-code-path comparison needing no new scoring. Only the step16000 -> run-end leg (+10.6 pt) carries the confound, and that leg is the one this fact contributed.",
+   "boundary": "Per-role domain loss is NOT implicated: 0.005-0.027 nat is 4-20x below its own 0.1176 threshold, so the 8B->15B per-role verdicts sit far outside this band. The finding is about generative and MC metrics only.",
+   "status": "recorded"
+  },
+  {
    "id": "be.l1_3shot_15b",
    "value": "L1 3-shot on the 15B stage-1 final, math-500, greedy: exact-match 13/497 = 2.6%, answer-present 370/497 = 74.4%. Binomial delta 6.3%, pre-registered instrument-exists threshold 2*delta = 12.6%. VERDICT UNCHANGED: the instrument does not exist on this axis. Both numbers moved against p324 (be.l1_3shot_rerun: 1/497 = 0.2%, present 63.8%) -- accuracy 13x and answer-present +10.6pt -- so the model is emitting answer-shaped output far more often and getting a few more right. That is a real movement in the right direction and it is not a capability reading: 2.6% is less than a quarter of the threshold, and the threshold is what the pre-registration says separates a usable instrument from noise. Degeneration 10/497 = 2.0% on the tail-300 window, 122/497 = 24.5% on the full text -- the same 4-12x window effect recorded in be.l1_3shot_rerun, measured here on a second checkpoint. STEP ATTRIBUTION, external: the file is a weights-only save whose `step` field is None, so it cannot self-report. It is believed to be step 16281 on the basis of its mtime (09-01 04:42 CST) against ckpt_pretrain_15b_s1.pt.step16000 (04:33) and the reported 15B readout carrying the same identity. The checkpoint does not assert this; step16000 is the last save that carries a step field, and it is the one stage 2 resumes from, so this number describes a model no later stage continues from.",
    "measured": "2026-09-01",

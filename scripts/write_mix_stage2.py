@@ -38,7 +38,9 @@ LANDED = {
     "wiki_chat": (283_903_257, "b864d32f9452a7c8"),
     # fb's message quoted fp a67cde07d3b3 (12 chars); the stamp itself reads a67cde07d3b3f63d and
     # _corpus_fp returns 16, so the message was truncated. Stamp value used.
-    "math_owm": (6_513_329_302, "a67cde07d3b3f63d"),
+    # re-stamped after the U+2028 strip settled: the first stamp was taken mid-rewrite,
+    # with shards newer than the cache beside it (3b, fb).
+    "math_owm": (6_513_304_690, "1e687e4b5ce37598"),
 }
 # Domains that keep their STAGE-1 name in the stage-2 mix, so the mix binds to the stage-1
 # corpus directory rather than a *_stage2 copy. fb ruling 2026-08-31 for cot: the name binds a
@@ -48,6 +50,27 @@ LANDED = {
 # tokens_<name>.pt from the name, and a symlink is the one case _assert_mix_domains refuses
 # outright (a symlinked domain is a different corpus wearing another domain's name).
 SAME_CORPUS_AS_STAGE1 = {"cot", "code_rp1t", "zh_web", "textbook_30b", "wiki_chat"}
+
+# The stage-1 row cursor from ckpt_pretrain_15b_s1.pt.step16000, which seeds used[] in
+# build_mix. THE CAP MUST COVER used + want, NOT want alone: build_mix computes
+# cap = int(pool * epochs) - used[name] (train.py:1802) and then draws
+# arange(used, used+want) (:1810). Deriving epochs from want/pool alone -- which is what the
+# first version of this writer did -- gave cot 3 against a need of 6, so its cap left ~5K rows
+# of a 295,512-row draw and stage 2 would have trained on essentially NO cot. It killed the
+# first stage-2 launch at the JOIN line: total_steps 28,505 instead of 32,348.
+#
+# The cursor is keyed by the MIX's domain name (train.py:1774 looks up row_cursor[name]), so a
+# renamed domain does not match and seeds used = 0. en_c4_stage2 and math_owm_stage2 are new
+# dirs with new names, so they legitimately start at row 0 and their epochs 1 already suffices.
+STAGE1_CURSOR = {
+    "code_rp1t": 1_338_744,
+    "cot": 290_401,
+    "zh_web": 395_865,
+    "textbook_30b": 119_947,
+    "wiki_chat": 24_003,
+    # en_c4 755,274 and math_owm 659,763 are in the checkpoint but keyed to the OLD names;
+    # the stage-2 mix calls them en_c4_stage2 / math_owm_stage2, so they do not seed.
+}
 # POOLS: domain -> stage-2 trainable pool rows, MEASURED from its token cache, not from the stamp.
 # A stamp gives tokens; a pool is rows of seq+1 minus n_val = min(int(rows*0.05), 5000), which only
 # the cache yields. A domain here gets its epochs re-derived against its OWN pool; without an entry
@@ -73,7 +96,7 @@ STAGE2_POOLS = {
     # 4097, minus 5,000 val. want/pool 0.7391, so it draws 0.74 epochs and repeats NOTHING --
     # the A-prime table's "math_owm repeats at 1.88 cumulative" was an artifact of measuring
     # against the stage-1 pool. Cumulative on its own pool is 1.16, not 1.88.
-    "math_owm": 1_588_514,
+    "math_owm": 1_588_494,  # 1,593,494 rows of 4097 - 5,000 val; was 1,588,514 pre-restrip (-20)
 }
 
 SPEC = {
@@ -116,7 +139,14 @@ def build():
         key = name if name in SAME_CORPUS_AS_STAGE1 else f"{name}_stage2"
         s2_pool = STAGE2_POOLS.get(name)
         cap_pool = s2_pool if s2_pool else pool
-        epochs = math.ceil(runtime / cap_pool)
+        key_for_cursor = name if name in SAME_CORPUS_AS_STAGE1 else f"{name}_stage2"
+        used = STAGE1_CURSOR.get(key_for_cursor, 0)
+        epochs = math.ceil((used + runtime) / cap_pool)
+        assert cap_pool * epochs >= used + runtime, (
+            f"{name}: pool {cap_pool} x epochs {epochs} = {cap_pool * epochs} < used {used} + "
+            f"want {runtime} = {used + runtime} -- build_mix would clamp the draw and silently "
+            "under-train this domain"
+        )
         # A provisional cap on a *_stage2 domain is measured against the STAGE-1 corpus, which is a
         # different body of text. math_owm_stage2 is the live case: its stamp is 6.513B against
         # stage 1's 4.035B, so its real pool is ~62% larger and its cap is probably 1, not the 2 the
@@ -149,6 +179,8 @@ def build():
                     "shared pool to count epochs against. The A-prime table's cumulative figure for "
                     "this domain was computed against the stage-1 pool and is an artifact.")}),
             "pool_rows": cap_pool,  # alias b0's readout draws_equal() reads
+            "cursor_used_rows": used,
+            "cap_covers": used + runtime,
             "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (PROVISIONAL, different corpus)",
             "stage2_pool_rows": s2_pool,
             "epoch_cap_note": (

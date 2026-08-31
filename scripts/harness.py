@@ -463,6 +463,14 @@ def _broken_agents_rules_covered():
     return d
 
 
+def _ppid_of(pid):
+    """Parent pid on the pod, or None. ppid 1 means init adopted the process -- the
+    launching shell exited and it survived, which is the property setsid provides."""
+    r = subprocess.run([os.path.expanduser("~/bin/pod"), f"ps -o ppid= -p {pid}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
 def check_no_foreground_pod_training(root):
     """No training process on the pod outside a setsid session.
 
@@ -490,7 +498,15 @@ def check_no_foreground_pod_training(root):
     rows = [x for x in rows if not (len(x) > 3 and "setsid" in x[3] and x[3].startswith("bash -lc"))]
     if not rows:
         return PASS, "no training process on the pod"
-    attached = [x for x in rows if len(x) >= 3 and x[0] != x[1]]  # pid != sid -> not a session leader
+    # ppid == 1 means init adopted it: the launching shell is gone and the process
+    # survived, which IS what setsid buys. Its session leader may be a zombie ([bash]
+    # <defunct>, sid alive but absent from ps output), so a leader-presence test reads
+    # a correctly detached trainer as unsupervised -- this refused a commit while
+    # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
+    # this check).
+    detached = {x[0] for x in rows if len(x) >= 4 and x[3].startswith(("/usr/bin/python3", "python3"))
+                and _ppid_of(x[0]) == "1"}
+    attached = [x for x in rows if len(x) >= 3 and x[0] != x[1] and x[0] not in detached]
     # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
     leaders = {x[1] for x in rows if len(x) >= 2 and x[0] == x[1]}
     orphans = [x for x in attached if len(x) >= 2 and x[1] not in leaders]
