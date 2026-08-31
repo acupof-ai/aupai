@@ -160,7 +160,7 @@ def main():
                     ok = score_code(code, r["expected_output"])
                 correct += int(ok)
                 total += 1
-                fout.write(json.dumps({"q": r["instruction"], "gen": cont[-300:],
+                fout.write(json.dumps({"q": r["instruction"], "gen": cont,
                                        "ok": ok}, ensure_ascii=False) + "\n")
             if total % 64 < args.batch or total == len(evals):
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)

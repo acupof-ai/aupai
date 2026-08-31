@@ -111,7 +111,7 @@ def main():
                 correct += int(ok)
                 total += 1
                 n_box += int("\\boxed" in gen or "答案是" in gen)
-                fout.write(json.dumps({"q": r["instruction"], "gen": gen[-300:], "ok": ok},
+                fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
             if total % 64 < args.batch or total == len(evals):
                 print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)

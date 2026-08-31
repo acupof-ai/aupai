@@ -3247,6 +3247,100 @@ def _broken_lane_respected():
     return d
 
 
+# A CUDA_VISIBLE_DEVICES assignment is safe when its value comes from the shard map
+# eval/_devs.sh builds (${_DEVS[...]}) or defers to the caller
+# (${CUDA_VISIBLE_DEVICES:-...}). Anything else -- a literal, a bare $i, a seq
+# expansion -- is a physical index that REPLACES the caller's restriction.
+_CVD_SAFE = re.compile(r"^\$\{_DEVS\[|^\$\{CUDA_VISIBLE_DEVICES:-")
+_CVD_ASSIGN = re.compile(r"(?:^|\s)(?:export\s+)?CUDA_VISIBLE_DEVICES=(\S+)")
+# A script that reads _DEVS must have sourced eval/_devs.sh, which is what refuses a
+# shard with no device to land on. Reconstructing the array with a bare `read -ra`
+# reintroduces the :-$i fallback the helper exists to remove.
+_CVD_SOURCE = re.compile(r"source\s+eval/_devs\.sh|\.\s+eval/_devs\.sh")
+# Scripts whose whole job is to own the block; they define the allocation rather
+# than live inside someone else's. Each is exempt for a reason recorded here, not
+# because it was inconvenient to fix.
+_CVD_EXEMPT = {
+    "run_ddp.sh",          # the block launcher itself; its default is the full 8
+    "scripts/run_pretrain.sh",   # direct-invocation launchers; harness launch overrides
+    "scripts/run_sft.sh",        # CUDA_VISIBLE_DEVICES from the controller's card list
+    "scripts/run_pipeline.sh",
+    "eval/_devs.sh",       # the helper itself: it BUILDS the map
+}
+
+
+def check_device_set_honoured(root):
+    """A shard script must take its device from eval/_devs.sh, never write a physical index.
+
+    CUDA_VISIBLE_DEVICES is not additive: setting it in a child REPLACES the parent's
+    restriction. A script that writes `=0` or `=$i` therefore escapes whatever lane the
+    caller confined it to. On 2026-08-31 a lane-card launch (CUDA_VISIBLE_DEVICES=7) of
+    eval/code_zh.py landed on physical GPU 0, a training-block card, and blocked t01
+    (2f97e4a). Two survivals of that fix show why the class needs a check rather than
+    five hand-edits:
+
+    | survival | shape |
+    |---|---|
+    | eval_all.sh:54,61 | never edited; kept a bare `=0` for nine more hours |
+    | all five shard scripts | `${_DEVS[$i]:-$i}` still spills when N exceeds the caller's device count -- `CUDA_VISIBLE_DEVICES=7` with the default N=6 puts shards 1-5 on physical 1-5 |
+
+    Ceiling: this reads the assignment's syntax, not what runs. A script that computes a
+    physical index into a variable and assigns the variable passes. Detecting that needs
+    shell dataflow; the cheaper guarantee is one accepted idiom that greps."""
+    bad = []
+    checked = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in (".git", "__pycache__", "node_modules")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".sh"):
+                continue
+            path = os.path.join(dirpath, fn)
+            rel = os.path.relpath(path, root)
+            if rel in _CVD_EXEMPT or os.path.basename(rel) in _CVD_EXEMPT:
+                continue
+            try:
+                text = open(path, encoding="utf-8").read()
+            except OSError:
+                continue
+            checked += 1
+            body = [l for l in text.splitlines() if not l.lstrip().startswith("#")]
+            for n, line in enumerate(text.splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                m = _CVD_ASSIGN.search(line)
+                if m and not _CVD_SAFE.match(m.group(1)):
+                    bad.append(f"{rel}:{n} CUDA_VISIBLE_DEVICES={m.group(1)}")
+            if any("_DEVS" in l for l in body) and not _CVD_SOURCE.search("\n".join(body)):
+                bad.append(f"{rel} reads _DEVS without sourcing eval/_devs.sh")
+    if bad:
+        return FAIL, (
+            f"{len(bad)} assignment(s) write a physical index instead of taking the "
+            f"caller's: {', '.join(bad[:4])}. Use `source eval/_devs.sh \"$N\"` then "
+            f"${{_DEVS[$i]}}."
+        )
+    return PASS, f"{checked} shell scripts take their device from the caller's set"
+
+
+def _broken_device_set_honoured():
+    """The real eval_all.sh with its fixed assignment reverted to the bare `=0` it
+    carried until 2026-08-31 -- the exact line the check was written for."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    src = os.path.join(ROOT, "eval", "eval_all.sh")
+    dst = os.path.join(d, "eval", "eval_all.sh")
+    shutil.copy(src, dst)
+    shutil.copy(os.path.join(ROOT, "eval", "_devs.sh"), os.path.join(d, "eval", "_devs.sh"))
+    s = open(dst, encoding="utf-8").read()
+    fixed = "CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 eval/run_eval.py"
+    assert fixed in s, "eval_all.sh no longer carries the fixed assignment; update _broken_device_set_honoured"
+    open(dst, "w", encoding="utf-8").write(
+        s.replace(fixed, "CUDA_VISIBLE_DEVICES=0 python3 eval/run_eval.py")
+    )
+    return d
+
+
 def check_untracked_aged(root):
     """Untracked files older than 24h in the shared tree — someone's unfinished work.
 
@@ -3626,6 +3720,13 @@ CHECKS = [
         "a 10-min eval on one training card blocks a 55-min 7-card run; the lane rule was announced in docs but nothing enforced it",
         check_lane_respected,
         _broken_lane_respected,
+    ),
+    (
+        "device_set_honoured",
+        "every shell script indexes the caller's CUDA_VISIBLE_DEVICES instead of writing a physical index",
+        "a lane-card launch (CUDA_VISIBLE_DEVICES=7) landed on physical GPU 0 and blocked t01; three scripts were fixed by hand and eval_all.sh kept the same bug for another nine hours",
+        check_device_set_honoured,
+        _broken_device_set_honoured,
     ),
     (
         "untracked_aged",
@@ -4217,6 +4318,48 @@ def _selftest_gate_timeout():
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
 
 
+def _selftest_devs_map():
+    """Known answer: eval/_devs.sh maps shards onto the caller's cards, and refuses
+    when there are more shards than cards.
+
+    The grep check (device_set_honoured) proves the scripts spell the idiom; this
+    proves the idiom does the right thing. The case that matters is the incident:
+    CUDA_VISIBLE_DEVICES=7 with eval_hard.sh's default N=6. The 2f97e4a fix mapped
+    shard 0 to card 7 and let shards 1-5 fall back to physical 1-5, five
+    training-block cards, so the spill survived its own fix.
+    """
+    helper = os.path.join(ROOT, "eval", "_devs.sh")
+    if not os.path.exists(helper):
+        raise SelftestSkip("eval/_devs.sh not present")
+
+    def devs(cvd, n):
+        env = dict(os.environ)
+        if cvd is None:
+            env.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            env["CUDA_VISIBLE_DEVICES"] = cvd
+        r = subprocess.run(
+            ["bash", "-c", f'source eval/_devs.sh {n} && echo "${{_DEVS[*]}}"'],
+            cwd=ROOT, env=env, capture_output=True, text=True,
+        )
+        return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+    rc, out, err = devs("7", 6)
+    assert rc != 0, f"lane card with 6 shards must refuse, got rc=0 and {out!r}"
+    assert "1" in err and "6 shards" in err, err
+
+    rc, out, _ = devs("7", 1)
+    assert (rc, out) == (0, "7"), f"lane card with 1 shard -> {out!r} rc={rc}"
+
+    rc, out, _ = devs("2,5", 2)
+    assert (rc, out) == (0, "2 5"), f"two cards -> {out!r} rc={rc}"
+
+    rc, out, _ = devs(None, 6)
+    assert (rc, out) == (0, "0 1 2 3 4 5"), f"unset caller -> {out!r} rc={rc}"
+
+    print("  devs: CVD=7 N=6 refuses; CVD=7 N=1 -> [7]; CVD=2,5 N=2 -> [2 5]; unset N=6 -> [0..5]")
+
+
 def _selftest_register_union():
     """fb's case: two branches each close a DIFFERENT row, the files union-merge,
     and the result reads as both closed with no duplicate complaint.
@@ -4668,6 +4811,7 @@ def _demo():
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
+    _selftest_devs_map()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the

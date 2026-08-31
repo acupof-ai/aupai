@@ -47,18 +47,24 @@ NGPU=$NGPU TOKENIZER=$TOK bash eval/eval_hard.sh "$CKPT" "$NGPU" 2>&1 | tee -a "
 say "--- math-500 (post-SFT inflated by SFT-corpus overlap; base values clean)"
 NGPU=$NGPU TOKENIZER=$TOK bash eval/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "$LOG" | grep TOTAL || say "  FAILED"
 
+# Stages 3 and 4 are single-card and run on the caller's first exposed device. A bare
+# CUDA_VISIBLE_DEVICES=0 replaces the caller's restriction instead of taking from it, so
+# a lane-card launch (CUDA_VISIBLE_DEVICES=7) landed on physical GPU 0, a training-block
+# card. 2f97e4a fixed the sharded scripts; this driver was missed. See eval/_devs.sh.
+source eval/_devs.sh 1
+
 # 3. MC suite -- a 200M Chinese model at the 25% chance line; a regression tripwire,
 #    not a capability measure.
 say "--- MC suite (regression tripwire; chance is 25%)"
 say "    ceval is the only Chinese one; the rest are English and this is a Chinese model."
-CUDA_VISIBLE_DEVICES=0 python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK" \
+CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK" \
   --benchmarks ceval mmlu arc-easy hellaswag piqa 2>&1 | tee -a "$LOG" | tail -10 || say "  FAILED"
 
 # 4. FoNE digit head -- --fone checkpoints only; raw accuracy is unreadable without
 #    the always-0 and copy-previous baselines.
 if [ "$IS_FONE" = "True" ]; then
   say "--- FoNE digit head"
-  CUDA_VISIBLE_DEVICES=0 python3 probes/fone_digit_acc.py --ckpt "$CKPT" --domain math \
+  CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 probes/fone_digit_acc.py --ckpt "$CKPT" --domain math \
     2>&1 | tee -a "$LOG" | tail -4 || say "  FAILED"
 fi
 

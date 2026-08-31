@@ -323,8 +323,12 @@ DEGEN_CONFIG = {
     # 0-shot by 5.4pt (16.9% -> 22.3%).
     "min_words": 8,
     "unit": "whitespace",
-    # The eval scripts store gen[-300:] (code_zh.py:128, math_zh.py:103, math_hard.py:135),
-    # so this metric sees the TAIL, not the full generation. See the two pitfalls below.
+    # This metric reads the last 300 characters of each generation, not the whole one.
+    # The comment here used to say the eval scripts store gen[-300:]; they store the
+    # full text (code_500 preds run to 1020 chars, 21/500 over 300), so the truncation
+    # is this scorer's own and discards data already on disk. Measured cost on p324:
+    # whitespace code_500 58.2% tail vs 58.8% full, every other field unchanged.
+    # Widening it changes recorded numbers, so it is fb's call, not a silent edit.
     "window": "gen[-300:]",
     # CJK character n-gram: Chinese text has no whitespace word boundaries, so the
     # whitespace 8-gram undercounts CJK degeneration (math_500 25.6% is a floor).
@@ -348,9 +352,10 @@ def degeneration_rate(path, temperature, greedy=None):
     A number without a temperature cannot go on the board.
 
     Two known pitfalls (measured, not theoretical):
-    1. The eval scripts store gen[-300:], so this measures TAIL degeneration. A
-       model that is correct-then-verbose is misjudged. Negligible at 2.2% accuracy;
-       revisit (full storage or online computation) when capability rises.
+    1. This scorer reads gen[-300:], so it measures TAIL degeneration. The preds files
+       hold the full generation, so widening the window costs nothing but a rescore.
+       On p324 it moves one field: whitespace code_500 58.2% -> 58.8%. Left as the tail
+       because the recorded numbers were measured that way.
     2. The 300-char window holds different token counts across languages (Chinese
        is dense), so cross-domain absolute values carry a density confound.
        Within-domain comparison is unaffected.
