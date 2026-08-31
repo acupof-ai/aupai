@@ -2620,6 +2620,51 @@ def _broken_lane_respected():
     return d
 
 
+def check_untracked_aged(root):
+    """Untracked files older than 24h in the shared tree — someone's unfinished work.
+
+    In a multi-session tree an untracked file belongs to the session that made it.
+    After 24h it is either forgotten or blocked; either way the owner should give
+    it a fate (commit, gitignore, delete). WARN, not FAIL: the file is not wrong,
+    it is just unowned."""
+    if not os.path.isdir(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=root, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        return SKIP, f"git ls-files failed: {r.stderr.strip()}"
+    cutoff = time.time() - 24 * 3600
+    aged = []
+    for f in r.stdout.splitlines():
+        p = os.path.join(root, f)
+        if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
+            aged.append(f)
+    if aged:
+        return WARN, f"{len(aged)} untracked file(s) older than 24h: {', '.join(aged[:5])}"
+    return PASS, "no aged untracked files"
+
+
+def _broken_untracked_aged():
+    """A real git repo with one aged untracked file — the violation this check catches."""
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    sp.run(["git", "init"], cwd=d, capture_output=True)
+    # A real tracked file so the selftest's repo-real-path check passes.
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
+    sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True)
+    # An untracked file with a 48h-old mtime.
+    stale = os.path.join(d, "stale_untracked.py")
+    open(stale, "w").write("# stale\n")
+    old = time.time() - 48 * 3600
+    os.utime(stale, (old, old))
+    return d
+
+
 CHECKS = [
     (
         "env_importable",
@@ -2866,6 +2911,13 @@ CHECKS = [
         "a 10-min eval on one training card blocks a 55-min 7-card run; the lane rule was announced in docs but nothing enforced it",
         check_lane_respected,
         _broken_lane_respected,
+    ),
+    (
+        "untracked_aged",
+        "untracked files older than 24h in the shared tree get a fate",
+        "a session's unfinished work sits unowned for days; nobody knows if it is safe to delete",
+        check_untracked_aged,
+        _broken_untracked_aged,
     ),
 ]
 
@@ -3305,6 +3357,8 @@ def _demo():
     # env_importable joins it for the same reason: its artifact is process import state,
     # not a tree, so no world it builds can hold a repo file.
     synthetic_world = {"no_oversized_blob", "env_importable"}
+    # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
+    warn_only = {"untracked_aged"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -3321,7 +3375,10 @@ def _demo():
                 untested.append(f"{name}: broken world holds no file at a repo-real path -- hand-written?")
                 continue
             state, evidence = fn(root)
-            if state != FAIL:
+            if name in warn_only:
+                if state in (PASS, SKIP):
+                    untested.append(f"{name} reported {state} on its broken world ({evidence})")
+            elif state != FAIL:
                 untested.append(f"{name} reported {state} on its broken world ({evidence})")
         except Exception as e:
             untested.append(f"{name} raised instead of reporting FAIL: {e}")
