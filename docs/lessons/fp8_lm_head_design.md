@@ -29,14 +29,34 @@ from fp8 today by `_fp8_ok`'s **name** check on `"head"` — not by alignment (3
 | 232 | `grad_input = grad_logits_chunk @ weight` | M×N·N×K | 137.5 |
 | 236 | `grad_weight += grad_logits.t() @ _input_chunk` | N×M·M×K | 137.5 |
 
-All three are the same size, so **the measured 224.0 ms/step splits roughly 75 / 75 / 75**.
-That matters for scoping: converting only the forward buys ~1/3 of the ceiling.
+**MEASURED, not inferred (b0, reproduced by me).** Each of the three is separately identifiable
+in the trace by its transpose signature, at exactly 1280 calls over 20 steps = 64/step, matching
+FLCE's chunk count:
+
+| kernel | ms/step | share | µs/call |
+|---|---|---|---|
+| `nvjet_tst_272x128_..._coopA_TNN` | 62.5 | 32.9% | 977.0 |
+| `nvjet_tst_128x160_..._splitK_NNT` | 63.0 | 33.1% | 984.0 |
+| `nvjet_tst_256x160_..._coopA_NTT` | 64.5 | 34.0% | 1008.5 |
+| **head total** | **190.0** | | |
+
+The FLOP-equality inference held — 32.9 / 33.1 / 34.0, equal within 3% — but b0's prior that it
+would NOT was the better-reasoned one: grad_W is a thin-K GEMM (M=32784, K=2048, N=1024) writing
+33.6M output elements, classically the least efficient of the three on tensor cores. It came in
+largest by 1.1 points. cuBLAS chose splitK for one and coop variants for the others, which is
+presumably what levels them.
+
+**The head is 190.0 ms/step, not 224.0.** The 224 figure was the whole `nvjet_tst` NAME family:
+6328 calls and 221.3 ms, of which the head is 3840 calls and 190.0 ms. The remaining 2488 calls
+and 31.2 ms are `aten::bmm` and `aten::baddbmm` — attention's batched matmuls, confirmed by
+correlation id to cpu_op. Same naming-family trap as the `_scaled_mm` misattribution: a regex on
+a kernel-name prefix is not a semantic group.
 
 | scope | ideal 2× saving | % of a 1702 ms step |
 |---|---|---|
-| forward only | 37 ms | 2.2% — **under the ship gate** |
-| forward + grad_input | 75 ms | 4.4% |
-| all three | **112 ms** | **6.6%** |
+| forward only | 31 ms | 1.8% — **under the ship gate** |
+| forward + grad_input | 63 ms | 3.7% |
+| all three | **95 ms** | **5.6%** |
 
 Forward-only cannot pass the ≥3% gate on its own. The design therefore has to cover at least
 two GEMMs to be worth shipping, which makes it a backward change and not a forward tweak.
@@ -57,14 +77,22 @@ scaled-mm path we already trust", by one of:
   per-chunk scales. Smallest diff, but it edits a site-packages file, so it needs vendoring or
   a runtime monkeypatch and it re-breaks on every Liger bump.
 - **B. Replace FLCE for the head with our own chunked loss.** Reuses `FP8LinearFunction`
-  directly and drops the Liger dependency for this path. Larger diff, and it gives up Liger's
-  in-place logits-gradient trick, which is what keeps the V=32784 logits from materialising
-  twice — a memory regression we have not budgeted.
+  directly and drops the Liger dependency for this path. **The memory cost is now priced and it
+  is small (b0's number, my verification): 2048 × 32784 × 2 bytes = 134.3 MB for one chunk, and
+  `logits_chunk` is created inside a SEQUENTIAL `for chunk_id in range(num_chunks)` loop
+  (fused_linear_cross_entropy.py:108-114), so one chunk is live at a time, not all 64.** The 8.6 GB
+  worst case b0 asked about does not occur. 134.3 MB against 52.7 GB used of 55 is 0.25% of card
+  memory, so my original rejection of B rested on a cost that is negligible.
 - **C. Keep FLCE, precompute the projection in fp8 outside it.** Not viable: the fusion's whole
   point is that logits never leave the kernel.
 
-**A is the default** on the AGENTS.md rule of the laziest correct implementation, with vendoring
-rather than monkeypatching so the version is pinned in-tree.
+**A remains the default, but on a different argument than the one I first gave.** My original
+reason for rejecting B — an unbudgeted memory regression — is void: the cost is 134.3 MB, one
+chunk at a time. What survives is narrower: A keeps Liger's in-place logits-gradient write and
+its fused CE kernel, so it changes only the matmuls and leaves the numerically delicate part
+untouched, whereas B reimplements the loss itself on the path where an error reaches every
+gradient. A is the smaller correctness surface, not the smaller memory footprint. Vendored
+rather than monkeypatched so the version is pinned in-tree.
 
 ## The two ways it is wrong, and the gates
 
@@ -76,8 +104,10 @@ activations. That is a stronger parity requirement than the body linears carry.
    absmax is p50 15.69, p99 19.84, max 26.88 — **max/p50 is only 1.71×**, so no single row
    dominates and per-tensor scaling costs little. What is still unmeasured is the **activation**
    side: the pre-softcap projection is unbounded and one outlier logit sets the scale for a
-   32784-wide chunk. Gate before any A/B: max |logit| and its per-chunk spread on real batches,
-   the same way the weight was just checked.
+   32784-wide chunk. Gate before any A/B, per b0: the **per-chunk** absmax DISTRIBUTION, not the
+   global absmax, since a global figure hides how often a chunk is dominated by one outlier.
+   **p99 of per-chunk absmax against e4m3's 448 is the number that decides per-tensor vs
+   per-chunk scaling.**
 2. **Loss curvature.** Cross-entropy is sensitive where the softmax is confident; a quantisation
    error that is invisible in the projection can move the loss. Gate: `|Δval| ≤ 0.04 nat` on a
    50-step A/B, which is the standing rule, plus a parity check of loss and grad-norm against
@@ -92,7 +122,7 @@ This is the loss path, so the standing gate is not sufficient on its own:
 | throughput | tok/s ≥ +3%, 50 steps, 7 cards |
 | validation | `\|Δval\| ≤ 0.04 nat` |
 | per-domain loss | every domain's delta within seed noise (σ̂ 0.0516) |
-| digit/FoNE probe | unchanged — **n/a while `--fone` is off**, state it rather than skip it |
+| digit/FoNE probe | **assertion, not a note** (b0): the fp8 head path must REFUSE when `Cfg.fone` is set until the digit probe has run against it. `--fone` changes the token stream and the head's input distribution, and an n/a note is a check on the reader where an assertion is a check on the code. b0 writes it when the head path lands. |
 | parity | loss and grad-norm against the bf16 path on the same batch |
 
 The per-domain bar is the one the aggregate can hide: a single domain moving while the mean
@@ -112,4 +142,6 @@ work is not free, FLCE's chunking overhead is untouched by a faster matmul, and 
 `_scaled_mm` path has its own alignment constraints at N=32784. No implementation exists to
 measure yet, and the 224.0 ms itself comes from a single-card trace
 (`eff.steady_state_composition`), so the 7-card share may differ. Treat 6.6% as the ceiling to
-measure against, never as the expected gain.
+measure against, never as the expected gain. The 190.0 ms is single-card, so the 7-card share
+may differ, and every percentage above uses a 1702 ms step derived from 77K tok/s rather than a
+timed step.

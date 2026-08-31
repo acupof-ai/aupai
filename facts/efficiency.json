@@ -1173,7 +1173,7 @@
   },
   {
    "id": "eff.lm_head_is_compute_bound",
-   "value": "The LM head is COMPUTE-bound, not memory-bound, and an fp8 path through it is a real lever worth ~112 ms/step. This RETRACTS the claim I gave fb and the user that FP8 has no headroom left, which rested on asserting the head was memory-bound from its vocab size without computing arithmetic intensity. Codex adversarial review caught it; I verified the roofline independently. Liger FLCE processes the head as chunked GEMMs of M=2048, K=1024, N=32784 (probes/lm_head_gemm.py): 2MKN = 137.506 GFLOP against bf16 traffic of A+B+C = 196.09 MiB, so arithmetic intensity is 668.7 FLOP/B. H20's balance point is 148 TFLOPS / 4 TB/s = 37 FLOP/B. At AI 668.7 the bandwidth roof is 2.675 PFLOP/s, eighteen times the 148 TFLOPS bf16 peak, so the GEMM sits far inside the compute-bound region. Even counting a second read of the logits it is 404.5 FLOP/B, still 11x past the balance point. The head measures 224.0 ms/step in the t56 trace, so an ideal fp8 2x saves ~112 ms/step = 6.6% of a 1702 ms step. Two corrections to why it is excluded. _fp8_ok excludes it by NAME ('head'), not by detecting a tied parameter, and the alignment argument does not apply: head is 32832x1024 and the FLCE slice is 32784x1024, both multiples of 16. And Liger 0.8.2 has no fp8 switch -- its kernel multiplies in the incoming dtype -- so this is a patch-plus-parity job, not a one-line change to _fp8_ok. Consequence for the lever order: the head is not a distant third behind fusion and KDA. It is the only group with a mechanism (fp8 tensor cores), a computed ceiling (112 ms) and a bounded scope (one kernel), where fusion's 517.6 ms has no established mechanism yet.",
+   "value": "CORRECTED 2026-09-01: the head is 190.0 ms/step, not 224.0. The 224 was the whole nvjet_tst kernel-NAME family (6328 calls, 221.3 ms), of which the head is 3840 calls and 190.0 ms; the other 2488 calls and 31.2 ms are aten::bmm and aten::baddbmm from attention, confirmed by correlation id to cpu_op. Same trap as the _scaled_mm misattribution: a kernel-name prefix is not a semantic group. The three head GEMMs are now MEASURED separately (b0, reproduced by me), each at 1280 calls over 20 steps = 64/step matching FLCE's chunk count: TNN 62.5 ms (32.9%), splitK_NNT 63.0 ms (33.1%), coopA_NTT 64.5 ms (34.0%). So the FLOP-equality inference held within 3%, and the ideal-2x ceiling is 95 ms = 5.6% of a 1702 ms step, not 112 ms and 6.6%.\n\nThe LM head is COMPUTE-bound, not memory-bound, and an fp8 path through it is a real lever worth ~112 ms/step. This RETRACTS the claim I gave fb and the user that FP8 has no headroom left, which rested on asserting the head was memory-bound from its vocab size without computing arithmetic intensity. Codex adversarial review caught it; I verified the roofline independently. Liger FLCE processes the head as chunked GEMMs of M=2048, K=1024, N=32784 (probes/lm_head_gemm.py): 2MKN = 137.506 GFLOP against bf16 traffic of A+B+C = 196.09 MiB, so arithmetic intensity is 668.7 FLOP/B. H20's balance point is 148 TFLOPS / 4 TB/s = 37 FLOP/B. At AI 668.7 the bandwidth roof is 2.675 PFLOP/s, eighteen times the 148 TFLOPS bf16 peak, so the GEMM sits far inside the compute-bound region. Even counting a second read of the logits it is 404.5 FLOP/B, still 11x past the balance point. The head measures 224.0 ms/step in the t56 trace, so an ideal fp8 2x saves ~112 ms/step = 6.6% of a 1702 ms step. Two corrections to why it is excluded. _fp8_ok excludes it by NAME ('head'), not by detecting a tied parameter, and the alignment argument does not apply: head is 32832x1024 and the FLCE slice is 32784x1024, both multiples of 16. And Liger 0.8.2 has no fp8 switch -- its kernel multiplies in the incoming dtype -- so this is a patch-plus-parity job, not a one-line change to _fp8_ok. Consequence for the lever order: the head is not a distant third behind fusion and KDA. It is the only group with a mechanism (fp8 tensor cores), a computed ceiling (112 ms) and a bounded scope (one kernel), where fusion's 517.6 ms has no established mechanism yet.",
    "measured": "2026-08-31",
    "source": "probes/lm_head_gemm.py, facts/efficiency.json#eff.step_remainder_attribution, train.py",
    "config": {
@@ -1188,14 +1188,20 @@
     "h20_bf16_tflops": 148,
     "h20_hbm_tb_s": 4,
     "bandwidth_roof_pflops_at_this_ai": 2.675,
-    "measured_head_ms_per_step": 224.0,
-    "ideal_fp8_saving_ms": 112,
-    "ideal_fp8_saving_pct_of_step": 6.6,
+    "measured_head_ms_per_step": 190.0,
+    "ideal_fp8_saving_ms": 95,
+    "ideal_fp8_saving_pct_of_step": 5.6,
     "liger_version": "0.8.2",
     "liger_has_fp8_switch": false,
-    "excluded_by": "_fp8_ok name check on 'head', not tied-parameter detection"
+    "excluded_by": "_fp8_ok name check on 'head', not tied-parameter detection",
+    "nvjet_tst_family_ms_per_step": 221.3,
+    "non_head_in_family_ms": 31.2,
+    "non_head_source": "aten::bmm and aten::baddbmm (attention)",
+    "gemm_fwd_ms": 62.5,
+    "gemm_grad_input_ms": 63.0,
+    "gemm_grad_weight_ms": 64.5
    },
-   "uncertainty": "The 112 ms is an IDEAL 2x on the measured GEMM time and will not be realised in full: fp8 needs per-tensor or per-row scaling work, the accumulation stays higher precision, and FLCE's chunking adds fixed overhead the GEMM speedup does not touch. No implementation exists to measure, and Liger 0.8.2 would need patching. The roofline is arithmetic from shapes and H20's published peaks, not a measured kernel efficiency, so it establishes that the head CAN use faster tensor cores rather than that it will get 2x. The parity risk is the real gate: the head feeds the loss directly, so an fp8 error lands on every gradient. Ship path is a minimal parity check plus a 50-step A/B under the same >=3% tok/s and |delta val| <= 0.04 nat rule, on an idle card.",
+   "uncertainty": "The 112 ms is an IDEAL 2x on the measured GEMM time and will not be realised in full: fp8 needs per-tensor or per-row scaling work, the accumulation stays higher precision, and FLCE's chunking adds fixed overhead the GEMM speedup does not touch. No implementation exists to measure, and Liger 0.8.2 would need patching. The roofline is arithmetic from shapes and H20's published peaks, not a measured kernel efficiency, so it establishes that the head CAN use faster tensor cores rather than that it will get 2x. The parity risk is the real gate: the head feeds the loss directly, so an fp8 error lands on every gradient. Ship path is a minimal parity check plus a 50-step A/B under the same >=3% tok/s and |delta val| <= 0.04 nat rule, on an idle card. The 224.0 ms in the original version of this entry was a name-family total and overstated the head by 34.0 ms; every percentage derived from it was correspondingly high. b0 caught it while measuring the three-way split I had only inferred.",
    "status": "measured"
   },
   {
