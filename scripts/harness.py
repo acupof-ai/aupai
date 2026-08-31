@@ -2894,6 +2894,26 @@ def _broken_doc_commands():
     return d
 
 
+def _is_probe_mix(root, mix_path):
+    """True when a mix is a smoke/probe fixture rather than a real corpus draw.
+
+    Read from the mix itself: a `_comment` disclaiming its content, or a token budget
+    far below the smallest ladder point. Not a filename match -- a name test would
+    pass the day someone copies the fixture, and would miss a probe that used a
+    differently-named one."""
+    p = mix_path if os.path.isabs(mix_path) else os.path.join(root, mix_path)
+    try:
+        obj = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return False
+    comment = " ".join(obj.get("_comment", [])) if isinstance(obj.get("_comment"), list) \
+        else str(obj.get("_comment") or "")
+    if "smoke" in comment.lower() or "content is irrelevant" in comment.lower():
+        return True
+    # 0.2b is the smallest ladder point; anything an order below it is not a real run
+    return float(obj.get("total_tokens") or 0) < 2e8
+
+
 def check_score_matrix(root):
     """Every status=ok training run has a score-matrix record for the checkpoint it
     produced. 'Trained but not scored' must be impossible: an ok row with no matrix
@@ -2931,6 +2951,17 @@ def check_score_matrix(root):
         cmd = str(r.get("cmd", ""))
         if not any(t in cmd for t in ("train.py", "sft_math", "rlvr", "run_ddp.sh", "run_sft.sh")):
             continue
+        # A probe is not a scoreable training run. The test is the MIX it read, not the
+        # run's name: a mix whose own _comment says the content is irrelevant produces a
+        # checkpoint whose scores mean nothing, and scoring it would waste a lane slot on
+        # a number nobody can interpret. t56_profile, t57_recompile and t57_steady are
+        # optimiser probes on mix_smoke_warmup.json; they blocked the ledger sync for two
+        # sessions (fb, 2026-09-01).
+        m_mix = re.search(r"--mix\s+(\S+)", cmd)
+        if m_mix and _is_probe_mix(root, m_mix.group(1)):
+            continue
+        if "--profile" in cmd or "--profile_steps" in cmd:
+            continue  # a torch profiler run stops after a handful of steps
         cand = produced_checkpoint(cmd, str(r.get("name", "?")))
         if cand and f"{cand}.pt" not in scored:
             missing.append(cand)
@@ -5223,6 +5254,30 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_milestone_reachable():
+    """A milestone target past the run's final step refuses; the run-end checkpoint
+    (no .step suffix) is visible to the watcher.
+
+    Both halves of one near-miss: the 15B milestone was armed at step 16500 against a
+    16281-step run, so it could never fire -- and the artifact it would have wanted,
+    ckpt_<run>.pt written by train.py:2168, carries no .step suffix and the watcher's
+    glob cannot see it. That checkpoint is also the stage-2 resume source, so missing
+    it costs the first real per-role verdict AND the resume (fb, 2026-09-01)."""
+    import inspect
+
+    src = inspect.getsource(cmd_milestone)
+    i = src.index("past the run's final step")
+    assert "return 2" in src[i:i + 400], "an unreachable target must refuse, not wait forever"
+    j = src.index('f"ckpt_{a.run}.pt"')
+    assert "saved.setdefault(a.final_step" in src[j:j + 300], (
+        "the run-end checkpoint must be registered at the final step")
+    # the arithmetic that made it unreachable
+    total, save_every = 16281, 500
+    assert 16500 > total, "the armed target really was past the end"
+    assert (total // save_every) * save_every == 16000, "last save_every multiple"
+    print(f"  milestone: a target past step {total} refuses; ckpt_<run>.pt registers at the end")
+
+
 def _selftest_cold_cache_refuses():
     """A training launch with no token caches refuses instead of taking a short gate.
 
@@ -6101,6 +6156,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_milestone_reachable()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_pool_not_raw_supply()
@@ -7543,6 +7599,9 @@ def cmd_milestone(argv):
     ap.add_argument("--watch", default=None, help="poll this directory for step checkpoints")
     ap.add_argument("--run", default=None, help="watch: run name (checkpoints are ckpt_<run>.pt.step<N>)")
     ap.add_argument("--milestones", default=None, help="watch: '3.24b=3500,8b=8500,15b=16500' (token=nearest-saved-step)")
+    ap.add_argument("--final-step", type=int, default=None,
+                    help="the run's total step count; registers the suffix-less run-end "
+                         "checkpoint (ckpt_<run>.pt) at this step so a final milestone fires")
     ap.add_argument("--save-every", type=int, default=500, help="watch: max distance from the milestone step to score a save")
     ap.add_argument("--interval", type=int, default=120, help="watch poll interval in seconds")
     ap.add_argument("--dry", action="store_true", help="print the commands, run nothing")
@@ -7700,6 +7759,13 @@ def cmd_milestone(argv):
             if tok not in MILESTONE_TOKENS:
                 ap.error(f"unknown milestone token {tok!r}; known: {sorted(MILESTONE_TOKENS)}")
             spec[tok] = int(step)
+        if a.final_step:
+            unreachable = {t: v for t, v in spec.items() if v > a.final_step}
+            if unreachable:
+                print(f"REFUSING: milestone target(s) past the run's final step "
+                      f"{a.final_step}: {unreachable}. They can never fire -- the run ends "
+                      f"first and the milestone is silently skipped.", file=sys.stderr)
+                return 2
         print(f"watching {a.watch} for ckpt_{a.run}.pt.step<N>; "
               f"milestones {spec}; pair = previous milestone, else ckpt_p324.pt", flush=True)
         ms = os.path.join(ROOT, "runs", "milestones.jsonl")
@@ -7719,6 +7785,15 @@ def cmd_milestone(argv):
                 m = re.search(r"\.step(\d+)$", p)
                 if m:
                     saved[int(m.group(1))] = os.path.basename(p)
+            # The run-end checkpoint has NO .step suffix (train.py:2168 writes
+            # ckpt_<run>.pt), so the glob above cannot see it and a final-step milestone
+            # would never fire. It is also the stage-2 resume source, so it is the one
+            # artifact that must never be missed. Register it at the run's true final
+            # step, which a target past the end (16500 armed against a 16281-step run)
+            # would otherwise skip entirely (fb, 2026-09-01).
+            final = os.path.join(a.watch, f"ckpt_{a.run}.pt")
+            if os.path.exists(final) and a.final_step:
+                saved.setdefault(a.final_step, os.path.basename(final))
             for tok, target in spec.items():
                 if tok in scored or not saved:
                     continue
