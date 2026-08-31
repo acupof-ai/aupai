@@ -91,10 +91,30 @@ FIELD_ALIASES = {"mc_full": ("mc_ceval",), "mc_ceval": ("mc_full",)}
 WEIGHT_CHANGE_LIMIT = 0.05
 
 
-def _mix_weights(mix_path):
-    """{domain: weight} for a mix file, or {} when the path is absent or unreadable.
-    Absent means "cannot check", which reads as no refusal -- the caller treats a missing
-    mix as an unknown ratio rather than a zero one."""
+#: Stage-2 domains bind to new stamped corpus directories, so their mix keys carry a
+#: "_stage2" suffix -- check_mix_30b_contract's second invariant REFUSES a mix that reuses
+#: a frozen ladder directory name. The suffix is load-bearing there and meaningless when
+#: pairing a role across the boundary, so the readout normalises it here. This is the only
+#: place that pairs across stages; the mix files must keep the suffix (tilerl, 2026-08-31).
+_STAGE_SUFFIXES = ("_stage2", "_stage3")
+
+
+def _base_role(name):
+    """'math_owm_stage2' -> 'math_owm'. The role identity a cross-stage pair shares."""
+    for suf in _STAGE_SUFFIXES:
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return name
+
+
+def _mix_entries(mix_path):
+    """{base role: entry} for a mix file, reading domains AND _blocked.
+
+    _blocked is included because a mix under construction is the normal state: stage-2
+    domains move from _blocked into domains one at a time as they are stamped, and a role
+    that has not landed yet still carries the weight and epochs this comparison needs.
+    Reading only `domains` made every unlanded role unjudgeable-by-absence, which reads as
+    no refusal -- a fail-open on the roles most likely to have been reweighted."""
     if not mix_path or not os.path.exists(mix_path):
         return {}
     try:
@@ -102,47 +122,78 @@ def _mix_weights(mix_path):
             mix = json.load(f)
     except Exception:  # noqa: BLE001
         return {}
-    return {k: float(v.get("weight", 0)) for k, v in (mix.get("domains") or {}).items()}
+    out = {}
+    for section in ("domains", "_blocked"):
+        for k, v in (mix.get(section) or {}).items():
+            if isinstance(v, dict):
+                out[_base_role(k)] = v
+    return out
+
+
+def _mix_weights(mix_path):
+    """{base role: weight}; {} when the path is absent or unreadable. Absent means
+    "cannot check", which reads as no refusal -- the caller treats a missing mix as an
+    unknown ratio rather than a zero one."""
+    return {k: float(v.get("weight", 0)) for k, v in _mix_entries(mix_path).items()}
 
 
 def weight_ratio(domain, milestone_mix, paired_mix):
-    """milestone weight / paired weight for one domain; None when either is unavailable.
+    """milestone weight / paired weight for one role; None when either is unavailable.
 
     None means unjudgeable-by-absence and must not be read as 1.0: a missing mix file
     would otherwise silently assert the weights are equal, which is the failure this
     whole document is about."""
     mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
-    if domain not in mw or domain not in pw or not pw[domain]:
+    d = _base_role(domain)
+    if d not in mw or d not in pw or not pw[d]:
         return None
-    return mw[domain] / pw[domain]
+    return mw[d] / pw[d]
+
+
+#: Field names a mix may use for a domain's trainable pool, in preference order. The pool
+#: is packed rows of seq+1 minus the validation holdout, so it exists only once a token
+#: cache has been built; a stage-2 mix written before its caches land publishes
+#: stage1_pool_rows (the pool the stage-1 draw was capped against) and nothing else.
+_POOL_FIELDS = ("pool_rows", "stage1_pool_rows")
+
+
+def _pool_rows(entry):
+    for f in _POOL_FIELDS:
+        v = entry.get(f)
+        if v:
+            return int(v)
+    return None
 
 
 def draws_equal(domain, milestone_mix, paired_mix, seq=4096):
-    """True when both mixes DRAW the same row count for a domain despite different weights.
+    """True when both mixes DRAW the same row count for a role despite different weights.
 
     The weight ratio is a proxy; the exact condition is post-cap draw equality (44, prereg
     §7.1). build_mix computes want = int(total_rows * weight) and then caps it at
     int(pool_rows * epochs), so two different weights that both exceed the cap produce the
-    identical draw and carry no reweighting effect at all. cot is the live case: w1 wants
-    310,546 rows and w2 wants 295,495, and both clamp to 295,512.
+    identical draw and carry no reweighting effect at all. cot is the live case: stage 1
+    wants int(3,662,109 x 0.0848) = 310,546 rows and clamps to int(98,504 x 3) = 295,512,
+    while stage 2 wants 295,512 and is already at the cap -- both draw 295,512.
 
-    None when the mixes do not carry what this needs (row totals, epochs, a pool size),
-    which sends the caller back to the conservative weight-ratio test."""
-    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
-    if domain not in mw or domain not in pw:
+    None when the mixes do not carry what this needs, which sends the caller back to the
+    conservative weight-ratio test. None is common and must stay visible: the caller says
+    so in the output, otherwise the exact test silently degrades and nobody learns the
+    field is missing (tilerl, 2026-08-31)."""
+    me, pe = _mix_entries(milestone_mix), _mix_entries(paired_mix)
+    d = _base_role(domain)
+    if d not in me or d not in pe:
         return None
+    mw, pw = _mix_weights(milestone_mix), _mix_weights(paired_mix)
     try:
-        m = json.load(open(milestone_mix, encoding="utf-8"))
-        p = json.load(open(paired_mix, encoding="utf-8"))
-        pool = m["domains"][domain].get("pool_rows") or p["domains"][domain].get("pool_rows")
+        pool = _pool_rows(me[d]) or _pool_rows(pe[d])
         if not pool:
             return None
-        m_rows = int(m["total_tokens"] / seq)
-        p_rows = int(p["total_tokens"] / seq)
-        m_ep = m["domains"][domain].get("epochs", 1)
-        p_ep = p["domains"][domain].get("epochs", 1)
-        m_draw = min(int(m_rows * mw[domain]), int(pool * m_ep))
-        p_draw = min(int(p_rows * pw[domain]), int(pool * p_ep))
+        m_tot = json.load(open(milestone_mix, encoding="utf-8")).get("total_tokens")
+        p_tot = json.load(open(paired_mix, encoding="utf-8")).get("total_tokens")
+        if not m_tot or not p_tot:
+            return None
+        m_draw = min(int(int(m_tot / seq) * mw[d]), int(pool * me[d].get("epochs", 1)))
+        p_draw = min(int(int(p_tot / seq) * pw[d]), int(pool * pe[d].get("epochs", 1)))
     except Exception:  # noqa: BLE001
         return None
     return m_draw == p_draw
@@ -396,6 +447,10 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
                 # it would ask a reader to discount 1.75x by eye.
                 wr = weight_ratio(d, milestone_mix, paired_mix)
                 same_draw = draws_equal(d, milestone_mix, paired_mix)
+                if same_draw is None and wr is not None:
+                    # Say so. A silent degradation to the proxy means nobody learns the
+                    # exact test never ran -- which is how a guard becomes decorative.
+                    print(f"  {d:15s} (post-cap draw unknown; using the weight-ratio proxy)")
                 if wr is not None and abs(wr - 1.0) > WEIGHT_CHANGE_LIMIT and not same_draw:
                     w_p = _mix_weights(paired_mix).get(d)
                     w_m = _mix_weights(milestone_mix).get(d)
@@ -622,18 +677,48 @@ def selftest():
                     milestone_mix=m5p, paired_mix=p5p)
         out5 = buf5.getvalue()
     for role, ratio in (("math_owm", 1.75), ("code_rp1t", 0.79), ("en_c4", 0.74)):
-        line = next((ln for ln in out5.splitlines() if ln.strip().startswith(role)), "")
+        # the role may occupy several lines (proxy note, verdict, note) -- join them
+        line = " ".join(ln for ln in out5.splitlines() if ln.strip().startswith(role))
         assert "reweighted, unjudgeable" in line, (
             f"{role} moved {ratio}x and was still judged: {line!r}. Equal domain sets pass "
             "the different-heads guard, so nothing else catches this."
         )
     for role in ("cot", "zh_web", "textbook_30b", "wiki_chat"):
-        line = next((ln for ln in out5.splitlines() if ln.strip().startswith(role)), "")
+        line = " ".join(ln for ln in out5.splitlines() if ln.strip().startswith(role))
         assert "moved" in line and "reweighted" not in line, (
             f"{role} held its weight and was refused anyway: {line!r}. Refusing the whole "
             "metric would discard four honest reads."
         )
     print("  3 reweighted roles refuse (1.75x/0.79x/0.74x); 4 unchanged roles judged")
+
+    # 5b. The gate must reach the REAL mix files, not only synthetic ones. e178f17 passed
+    # its synthetic case and returned None for every role against the live pair, for three
+    # reasons a synthetic fixture cannot show: stage-2 keys carry a "_stage2" suffix, most
+    # stage-2 roles sit in _blocked until stamped, and the pool field is stage1_pool_rows
+    # (tilerl, 2026-08-31). A guard that cannot read production data is decorative.
+    real_s1 = os.path.join(ROOT, "data", "mix_15b_stage1.json")
+    real_s2 = os.path.join(ROOT, "data", "mix_30b_stage2.json")
+    if os.path.exists(real_s1) and os.path.exists(real_s2):
+        print("\n--- selftest 5b: the gate reads the real stage-1/stage-2 pair ---")
+        got = {d: (weight_ratio(d, real_s2, real_s1), draws_equal(d, real_s2, real_s1))
+               for d in ("code_rp1t", "math_owm", "cot", "en_c4", "zh_web",
+                         "textbook_30b", "wiki_chat")}
+        unreadable = [d for d, (wr, _) in got.items() if wr is None]
+        assert not unreadable, (
+            f"weight_ratio is None for {unreadable} against the real mixes -- the gate "
+            "cannot see production data and every role would pass unrefused"
+        )
+        for d in ("math_owm", "code_rp1t", "en_c4"):
+            wr, de = got[d]
+            assert abs(wr - 1.0) > WEIGHT_CHANGE_LIMIT and not de, f"{d}: ratio {wr}, draws_equal {de}"
+        assert got["cot"][1] is True, (
+            f"cot post-cap draw equality not detected: {got['cot']}. Both mixes clamp to "
+            "295,512 rows, so cot is judgeable for a stronger reason than its 0.95x."
+        )
+        print(f"  real pair: 3 refuse, cot judged on post-cap draw equality "
+              f"(ratio {got['cot'][0]:.3f}, draws_equal True)")
+    else:
+        print("\n--- selftest 5b: SKIP (real mix pair not on this box) ---", file=sys.stderr)
 
     # A cap that NEUTRALISES a weight change: both mixes clamp to the same draw, so the
     # role is judgeable despite a 2x weight ratio. Synthetic, because no live mix presents
