@@ -24,7 +24,7 @@ from tokenizers import Tokenizer  # type: ignore
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOK = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
-SHARDS = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "code", "*.jsonl")))
+SHARDS = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "code_rp1t", "*.jsonl")))
 
 
 def main():
@@ -53,7 +53,7 @@ def main():
             raw_docs += sum(1 for l in f if l.strip())
     # filters_fp present?
     stats = {}
-    sp = os.path.join(ROOT, "data", "corpus", "code", "build_corpus_stats.json")
+    sp = os.path.join(ROOT, "data", "corpus", "code_rp1t", "build_corpus_stats.json")
     if os.path.exists(sp):
         with open(sp, encoding="utf-8") as fh:
             stats = json.load(fh)
