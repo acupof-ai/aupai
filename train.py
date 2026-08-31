@@ -1899,7 +1899,7 @@ def main():
                 print(f"dynamo cache_size_limit={_dynamo_limit} (need {_dynamo_need})", flush=True)
         if os.environ.get("COMPILE_SUPPRESS_ERRORS", "0") == "1":
             torch._dynamo.config.suppress_errors = True
-        model = torch.compile(model, dynamic=False)
+        model = torch.compile(model, dynamic=False, mode=os.environ.get("COMPILE_MODE") or None)
 
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
     good_opt = [None] * len(optimizers)
