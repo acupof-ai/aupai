@@ -1,532 +1,564 @@
 {
-  "facts": [
-    {
-      "id": "be.generative_zero",
-      "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
-      "measured": "2026-08-30",
-      "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
-      "config": {
-        "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
-        "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.probe_degeneration",
-      "value": "a zero from a degenerate probe carries no difficulty information: the v2 zero is compatible with both 'problems too hard' and 'model cannot attempt this surface form'. A probe that reads the same under opposite facts is not a probe (aupai-fb standard). Resolution: inconclusive(退化), not 'no resolution'; the pre-registered score-threshold criterion lacked a generation-validity precondition",
-      "measured": "2026-08-30",
-      "source": "facts/contamination.json#cont.math_hard_v2.resolution_probe (criterion_lesson, audit); aupai-fb ruling 2026-08-30",
-      "config": {
-        "evidence": "9/1080 boxed, 8/1080 coherent-attempt, colon repetition loops; math-500 control 2.8% same checkpoint"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.mc_chance",
-      "value": "3 of 5 MC benchmarks are pinned at the 25% chance line on the 0830v1 ladder; ceval (the only Chinese one) is among the two that move",
-      "measured": "2026-08-30",
-      "source": "aupai-fb, relaying the existing MC eval record (docs/lessons/base_eval_at_200m.md §4)",
-      "config": {
-        "suite": "5 MC benchmarks, 4 English + ceval",
-        "model": "0830v1 ladder, 200M-class"
-      },
-      "uncertainty": "the exact 5 benchmarks and per-benchmark numbers were not re-derived this session; the 3/5-at-chance + ceval-moves pattern is from fb's record",
-      "status": "recorded"
-    },
-    {
-      "id": "be.loss_moves",
-      "value": "domain loss moves 1.66-1.99 nat across the 0.2B->3.24B ladder (16x data span) while every capability metric sits at floor — the instrument gap this research addresses",
-      "measured": "2026-08-30",
-      "source": "facts/data_scaling.json; aupai-fb task statement",
-      "config": {
-        "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.lit_small_scale",
-      "value": "the Pythia/OLMo/SmolLM lineage scores base models with zero-shot LIKELIHOOD only (continuation log-prob MC + perplexity), never generation. What moves below 400M: perplexity, LAMBADA-style last-word prediction (Pythia-70M already 0.24-0.27), minimal-pair acceptability (BLiMP: knowledge detectable where task accuracy is at floor). MC commonsense needs ~410M+",
-      "measured": "2026-08-30",
-      "source": "Biderman et al. 2023 Pythia arXiv 2304.01373 (suite: LAMBADA/PIQA/WinoGrande/WSC/ARC/SciQ/LogiQA; Fig.6); Warstadt et al. 2020 BLiMP; SmolLM 2024 (eval every 2B tokens)",
-      "config": {
-        "pythia": "70M-12B, 300B tokens, 154 checkpoints each",
-        "smollm": "135M/360M/1.7B, 600B tokens"
-      },
-      "uncertainty": "SmolLM's exact 135M/360M per-benchmark numbers are in paper figures not transcribable from fetched sources; the qualitative claim (eval every 2B tokens, gains slowing after 400B tokens on some benchmarks) is from the SmolLM blog text",
-      "status": "recorded"
-    },
-    {
-      "id": "be.schaeffer_smooth_metrics",
-      "value": "Schaeffer et al. 2023: emergent abilities are largely a metric artifact — with smooth token-level metrics (target logprob, acceptability) improvement is continuous from early training; discontinuous metrics (exact match, pass@1) manufacture the phase transition. Practical transfer: score the log-probability of the correct answer against matched wrong ones instead of exact-matching generation",
-      "measured": "2026-08-30",
-      "source": "Schaeffer et al. 2023, arXiv 2304.15004",
-      "config": {
-        "paper": "arXiv 2304.15004",
-        "scope": "metric granularity vs apparent emergence; token-level smooth metrics show continuous improvement"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.climp_prior_art",
-      "value": "CLiMP (Xiang et al. 2021) is the Chinese minimal-pair prior art: 16 syntactic contrasts across 9 Mandarin phenomena, 1000 pairs/contrast, 95.8% human agreement, template-generated over an annotated vocab (3456 words, 84 features), matched sentence length per pair, one paradigm discarded for <85% human agreement. Best: classifier-noun agreement, verb complement selection; worst: ba construction, binding, filler-gap. Chinese BERT 81.8%, LSTMs moderately above chance. github.com/beileixiang/CLiMP. Newer: ZhoBLiMP (arXiv 2411.06096), MultiBLiMP (arXiv 2504.02768)",
-      "measured": "2026-08-30",
-      "source": "Xiang et al. 2021, arXiv 2101.11131 (full text extracted); docs/lessons/base_eval_at_200m.md §2",
-      "config": {
-        "phenomena_named": "classifier-noun, verb complement, ba construction, coverbs, NP head finality, binding, filler-gap, anaphora/agreement (8 of 9 named in paper text; 16 paradigms in repo)"
-      },
-      "uncertainty": "the 9th phenomenon family is not named in the paper's prose (Table 1 is a figure); the repo lists all 16 paradigms",
-      "status": "recorded"
-    },
-    {
-      "id": "be.minimal_pair_rules",
-      "value": "construction rules for zh minimal pairs: (1) one controlled edit, matched character length AND matched tokenization — BPE merges across the edit boundary break the comparison (22% of our first draft failed: 他在 merges while 他再 does not, 吃了 merges in SVO but not SOV, 这本书 is one token); assert equal token length, contiguous diff span for substitutions, identical token multiset for permutations; skip and report failures. (2) score = full-sentence sum logprob, length-matched so no normalization. (3) known-answer: swap labels, must invert, >=60pt spread on the strongest checkpoint. (4) human spot-check per dimension (CLiMP discarded a paradigm below 85% agreement)",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §2; eval/base_matrix.py align_pairs() (277/303 pairs aligned after the merge fixes)",
-      "config": {
-        "prototype": "eval/base_matrix.py: 5 dims (word_order 99, numeric 100, classifier 42, function_word 20, factual 16), self-test passing"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.sample_size_math",
-      "value": "at a 50% floor, SE=sqrt(0.25/n): n=100 -> 5.0%, n=277 -> 3.0%, n=1000 (BLiMP/CLiMP) -> 1.6%, n=4900 -> 0.7%. Minimum detectable delta at 80% power: ~14pt at n=100, ~8.4pt at n=277, ~4.4pt at n=1000, 2pt at n=4900. Resolving 2 points needs ~4900 pairs/dimension; 1000/dimension is the proven operating point for tracking a 16x ladder",
-      "measured": "2026-08-30",
-      "source": "computed: n=((z_a+z_b)*0.5/delta)^2, z_a=1.96 two-sided, z_b=0.84; docs/lessons/base_eval_at_200m.md §2",
-      "config": {
-        "assumption": "binomial, p=0.5 worst case",
-        "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.mc_language_confound",
-      "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire. Recheck 2026-08-30 against measured English share 0.75% of tokens (en domain is 85% Chinese-cosmopedia, mlm.corpus.en_domain_is_mostly_chinese; analysis was built against declared 4.95%): conclusions unchanged and strengthened — lower English exposure makes chance-level English MC even more expected, language-confound explanation stronger relative to size. Corollary: the `en` domain NLL row is a second Chinese-cosmopedia sample, NOT an English-ability signal; its steep E2 slope (-0.26, same as textbook) is source-confounded with textbook (same source). Cause traced 2026-08-30: scripts/build_domains.sh:32 builds `--domain en` from cosmopedia_extra.jsonl + en_textbook.jsonl, the larger source is Chinese -- the directory name was a container label that everything downstream read as a language label",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis); recheck vs mlm.corpus.en_domain_is_mostly_chinese (fb 2026-08-30)",
-      "config": {
-        "suite": "5 MC benchmarks, 4 English + ceval",
-        "model": "0830v1 ladder, 200M-class",
-        "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale",
-        "english_share_assumed_original": "4.95% of tokens (declared mix weight)",
-        "english_share_measured": "0.75% of tokens (en domain 85% Chinese-cosmopedia)",
-        "recheck_2026_08_30": "conclusions unchanged, strengthened; en-domain NLL relabeled as Chinese-cosmopedia"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.early_signal_ordering",
-      "value": "synthesized ordering of when metrics leave the floor: domain loss -> token-level target logprob / acceptability minimal pairs -> LAMBADA-style constrained prediction -> MC commonsense (~410M+) -> few-shot ICL -> generation. The 'loss moves but capability does not' gap is mostly metric granularity (Schaeffer), not a model waiting period. Likelihood measures recognition not production — necessary, not sufficient",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §3; Schaeffer 2304.15004; BLiMP; Pythia Fig.6",
-      "config": {
-        "synthesized_from": "Schaeffer 2304.15004, BLiMP 2020, Pythia Fig.6 (separate studies, not one ladder)",
-        "validation": "the 0830v1 six-checkpoint run is the direct test (aupai-de's implementation)"
-      },
-      "uncertainty": "the ordering is synthesized from separate studies, not measured on one ladder; the 0830v1 six-checkpoint run is the direct test and belongs to de's implementation",
-      "status": "recorded"
-    },
-    {
-      "id": "be.math_v2_likelihood_twin",
-      "value": "recommended continuous math signal at 200M: rescore math-hard v2 as likelihood — p(correct solution) vs p(matched wrong solution) per problem — instead of generation. Should move across the 16x ladder where generative pass@1 is structurally zero. Caveat: recognition, not production",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_at_200m.md §3 (recommendation); Schaeffer 2304.15004",
-      "config": {
-        "data": "data/synthetic/math_hard_eval_v2_1k.jsonl (1080 problems, construction-from-answer golds)"
-      },
-      "uncertainty": "not yet built or measured; it is a recommendation for de",
-      "status": "recorded"
-    },
-    {
-      "id": "be.eval_panel_200m",
-      "value": "pre-registered base-model eval panel, frozen before the first 0830v1 pretrain: (1) per-domain NLL, (2) CLiMP-backbone minimal pairs 1000/paradigm, (3) LAMBADA-zh last-word, (4) math-hard v2 likelihood twin, (5) ceval MC as z-value tripwire, (6) generative evals are NOT base metrics (post-SFT only). Likelihood-first; per-dimension reporting, never aggregate-only. Doc: docs/lessons/base_eval_panel.md",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_panel.md; aupai-fb task 2026-08-30",
-      "config": {
-        "frozen": "before first 0830v1 pretrain",
-        "change_rule": "new version only, no edits to frozen numbers",
-        "architecture": "KDA + full causal MLA + AttnRes, sliding window removed (b3cad87)"
-      },
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "be.known_answer_panel_3_4",
-      "value": "known-answer validation of the two new panel runners on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30; OLD architecture -- 1024 sliding window + attn_res_blocks=4, retired to pod retired_pre0830v2/; valid only as runner calibration, not as a point on the new curve): math_v2_like gold-win 96.25% vs wrong-win 3.75% (spread 92.5pt, 1040 pairs, 40/1080 skipped on token-length mismatch = 3.7%); lambada_zh two-way 92.7% vs 7.3% (spread 85.4pt, 1000 items), open-vocab top-1 24.0% / top-5 41.3%. Both swap-stable (0.9625/0.9625, 0.927/0.926 -- no position bias). Both clear the panel's >=60pt freeze gate. Caveat: the lambada items were built from data/corpus/batch_00{1..9}.jsonl (training-domain prose, calibration only -- memorization inflates the 24%); the panel metric needs held-out text",
-      "measured": "2026-08-30",
-      "source": "eval/math_v2_like.py; eval/lambada_zh.py; pod runs /tmp/ka_{math,lzh}_{norm,swap}.json",
-      "config": {
-        "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
-        "lambada_source": "data/corpus/batch_00{1..9}.jsonl (training-domain, calibration only)",
-        "math_wrong_answer": "one deterministic digit edit d->(d+1)%10 on the answer's last digit, same char length"
-      },
-      "uncertainty": "lambada open_acc1=24% is measured on training-domain text and is an upper bound; the held-out number is unmeasured",
-      "status": "recorded"
-    },
-    {
-      "id": "be.lambada_zh_heldout_3p24b",
-      "value": "first held-out LAMBADA-zh reading on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30): open-vocab top-1 0.356, top-5 0.598, two-way (real target vs same-length distractor) 0.960, swap-stable (0.9603/0.9603). ARCHITECTURE CAVEAT: 0830v1 is the OLD architecture (1024 sliding window + attn_res_blocks=4), retired to pod retired_pre0830v2/ with its experiment row ruled fail -- this reading is valid ONLY as a known-answer/resolution check (the metric has 35.6pt of headroom above floor at 200M scale), it must NOT be plotted alongside the new-architecture curve. Likelihood eval on short contexts is unaffected by the eval/training attention-width mismatch that contaminated generative evals. 1000 items built from 523 held-out fineweb2 docs (data/eval/holdout_v2/lambada_zh_src.jsonl, carved by 3b: sha1(content[:100]) split, removed from data/corpus/web before fingerprinting). Independent acceptance check (b0): 0/523 holdout ids found in 4,731,988 remaining web docs (exact-match, one streaming pass); holdout ids round-trip. The earlier 0.24 reading was training-domain calibration and is superseded",
-      "measured": "2026-08-30",
-      "source": "eval/lambada_zh.py; held-out item bank at data/eval (lambada_zh.jsonl); pod runs /tmp/lzh_holdout_{norm,swap}.json",
-      "config": {
-        "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
-        "items": "1000, single-token targets, distractor = another item's same-char-length target",
-        "acceptance": "0/523 exact-match hits in data/corpus/web (4,731,988 docs), 2026-08-30"
-      },
-      "uncertainty": "acceptance is exact-match only; near-duplicates of holdout docs could survive in the corpus (the scanner has near-dedup machinery, not run for this acceptance)",
-      "status": "recorded"
-    },
-    {
-      "id": "be.math_v2_5k_known_answer",
-      "value": "math-hard v2 likelihood twin on the expanded bank (ckpt_0830v1_3.24b.pt.ep1, GPU7, 2026-08-30; OLD architecture, runner calibration only): gold-win 94.92% vs wrong-win 5.08%, spread 89.8pt, swap-stable (0.9492/0.9492), 3012 pairs, 149/3161 token-length skips (4.7%). Bank expansion: generator at 280/family yields 5040 rows but only 3161 unique -- 9 families saturate their parameter spaces (number_array_cross 3 unique of 280, perfect_square_pattern 10, right_triangle_3060 26, quadratic_func 79, factorize 95, quadratic 138, inverse_prop 142, pythagoras 168, similar_triangle 124); the 1k bank itself had 848/1080 unique (232 dups). 3161 pairs -> MDE 2.5pt at 80% power under the panel's frozen formula delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n) (two-sided alpha=0.05, z_b=0.84, p=0.5 worst case): n=1040 -> 4.3pt, n=3161 -> 2.5pt, n=5000 -> 2.0pt. Reconciliation: the '8.4pt at 1040' quoted earlier was the n=277 minimal-pairs MDE (be.sample_size_math) misattributed to this metric; 8.4/1.74 != 2.5 exposed it. The 5000-pair/3.9pt target was also off-formula (true 2.0pt) -- 3161 pairs already beats it -- reported to fb, generator not widened (fb ruling 2026-08-30: accepted, metric no longer the bottleneck)",
-      "measured": "2026-08-30",
-      "source": "eval/math_v2_like.py; mathbank/eval_hard_v2_gen.py; pod runs /tmp/ka5k_{norm,swap}.json",
-      "config": {
-        "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
-        "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)",
-        "resolution_formula": "delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n); z_a=1.96 two-sided alpha=0.05, z_b=0.84 power=0.8, p=0.5 worst case",
-        "mde_pt": {
-          "1040": 4.3,
-          "3161": 2.5,
-          "5000": 2.0
-        }
-      },
-      "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
-      "status": "recorded"
-    },
-    {
-      "id": "be.panel_resolution_rules",
-      "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_panel.md; computed n=((1.96+0.84)*0.5/delta)^2",
-      "config": {
-        "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt",
-        "power": "0.8, two-sided alpha 0.05",
-        "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
-        "panel_version": "v1.3 (2026-08-30 resolution audit; two frozen numbers corrected, see docs/lessons/base_eval_panel.md changelog)"
-      },
-      "uncertainty": "the ladder spread is empirical and unfilled until de runs the six checkpoints; the cut thresholds are pre-registered",
-      "status": "recorded"
-    },
-    {
-      "id": "be.panel_v13_resolution_audit",
-      "value": "full resolution audit of the six frozen panel metrics under one formula, MDE=2.8*sqrt(p(1-p)/n) (p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8), fb-ordered 2026-08-30 after the 8.4pt misattribution was found: TWO frozen numbers wrong, both in docs/lessons/base_eval_panel.md (fixed in v1.3). (3) LAMBADA-zh: '3.6pt at p=0.3' used a one-sided z_a=1.645 (2.485*sqrt(0.21/1000)=3.60), violating the appendix's frozen two-sided formula -> 4.1pt at p=0.3, 4.4pt worst case. (4) math v2: '8.4pt at 1040 pairs' was the n=277 minimal-pair MDE misattributed -> 4.3pt; '3.9pt at 5000' not reproducible under the frozen formula -> 2.0pt; the '5000+ to reach 4pt' claim is void (1000 pairs already gives 4.4pt). Clean: metric 1 (no binomial MDE, block bootstrap), metric 2 (4.4pt/paradigm at n=1000 correct), metric 5 (ceval uses z, no MDE claimed), metric 6 (not a base metric). Propagation: the 8.4pt traveled from the panel text into fb's '5000->3.9pt' anchor and b0's delivery report -- three sites, one source. Lesson: a wrong number in a frozen document gets quoted downstream as an anchor; the audit exists because misattributions cluster (same copy-paste action)",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/base_eval_panel.md (v1.3 changelog); computed under the panel appendix formula",
-      "config": {
-        "formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
-        "checked": [
-          "domain NLL (bootstrap, no binomial MDE)",
-          "minimal pairs 4.4pt@1000 OK",
-          "LAMBADA-zh 3.6->4.1pt FIXED",
-          "math v2 8.4->4.3pt@1040, 3.9->2.0pt@5000 FIXED",
-          "ceval z-only OK",
-          "generative not a base metric"
-        ]
-      },
-      "uncertainty": "the 3.9pt's origin could not be reconstructed; recorded as not reproducible under the frozen formula rather than guessing the wrong formula that produced it",
-      "status": "recorded"
-    },
-    {
-      "id": "be.panel_expressive_seed_variance",
-      "value": "seed variance of the expressive-ability panel metrics at 0.2b (new arch, attn_every 4), the noise floor for decision-tree section 8. df=3 from all four seeds (s0..s3, merged at d803238 -- the local runs/score_matrix.jsonl was stale, pod-written and gitignored): L2 two-way mean 89.72% s=0.54pt; O1 open acc@1 mean 15.88% s=1.02pt; O5 acc@5 mean 37.05% s=1.47pt; C-Eval mean 23.02% s=1.27pt (near chance, seed SD less meaningful); GAP=L2-O1 mean 73.84pt s=0.90pt. Readable-move threshold (tree section 8): |Delta M| >= 4.65*s_M (t-based, df=3, 4-seed mean vs 1-seed) -> L2 2.5pt, O1 4.8pt, O5 6.8pt, CE 5.9pt, GAP 4.2pt. The 74pt GAP is readable to ~4pt. Note the partial s0/s1 estimate (s_GAP~0.3pt) was optimistic -- s2/s3 moved it to 0.90pt; the df=3 values supersede. Corollary recorded per fb: a 0.2b composition A/B on O1 has 4v4 MDE = 2.371*1.02 = 2.4pt -- READABLE; the reason tree section 8 declines it is wrong scale (tests 0.2b, hypothesis is about 36B), not lack of resolution. Generalising the val-NLL resolution failure (MDE 0.20) to the whole design was the over-reach, corrected",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl (merged d803238, p02_s0..s3); fb cross-session messages",
-      "config": {
-        "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
-        "metrics": "lambada-zh two_way_acc / open_acc1 / open_acc5 (n=1000), C-Eval, GAP=L2-O1",
-        "n_seeds": 4,
-        "df": 3,
-        "threshold_formula": "4.65*s_M = (t_0.975,3 + t_0.8,3)*sqrt(1/4+1)*s_M",
-        "thresholds_pt": {
-          "L2": 2.5,
-          "O1": 4.8,
-          "O5": 6.8,
-          "CE": 5.9,
-          "GAP": 4.2
-        }
-      },
-      "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
-      "status": "measured"
-    },
-    {
-      "id": "be.expressive_ladder_reading_p02_p04",
-      "value": "first reading of decision-tree section 8 shapes on the ladder (p02/p03/p04, 2026-08-30): SHAPE A (capacity-limited) -- O1 +9.22pt (15.88->25.10, threshold 4.8) and GAP -6.66pt (73.84->67.18, threshold 4.2) both clear the noise floor; L2 +2.56 (threshold 2.5, borderline/saturating); C-Eval -1.12 (threshold 5.9, unreadable, at chance 25 all three points). The composition hypothesis (10x same-mix moves knowledge not expression) is WEAKENED by the ladder; the template premise (6.38x, mlm.corpus.cosmopedia_template_concentration) stands separately -- templated text and volume-buys-generation can both be true. Verdict carries a rate, not just a label: GAP closure ~7pt/doubling at the small end, linear extrapolation closes the remaining 67pt in ~9 doublings (512x); 10x (~3.3 doublings) buys ~24pt of closure as an UPPER BOUND (rate decays with D -- loss slope fell 0.910->0.567 nat/e-fold in one segment); the six-point fit's local slope at 3.24b is the number for the 10x projection. 'Volume is a real but insufficient lever' -- volume-moves-it is supported, volume-closes-it is not. C-Eval framing: a floor metric at chance is uninformative (same class as English MC); knowledge IS moving -- math_v2_like +11.19pt (76.69->87.88, past its 4.3pt resolution). Baseline note: fb's table used p02_s0 single-seed; the frozen rule uses the 4-seed mean (deltas +9.22/-6.66 vs +9.10/-7.22), verdict unchanged. Asymmetry stands: the ladder weakened but did not kill the hypothesis; the 10x build's same-mix control arm remains the confirmation test and is still required",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl (p02_s0..s3, p03, p04); docs/lessons/scaling_decision_tree.md section 8",
-      "config": {
-        "points": "p02 (4-seed mean), p03, p04",
-        "thresholds_pt": {
-          "L2": 2.5,
-          "O1": 4.8,
-          "O5": 6.8,
-          "CE": 5.9,
-          "GAP": 4.2
-        },
-        "shape_rule": "tree section 8, frozen before the points landed"
-      },
-      "uncertainty": "3 of 6 points; the closure rate is a small-end estimate and will decay; the 24pt/10x figure is an upper bound",
-      "status": "measured"
-    },
-    {
-      "id": "be.expressive_ladder_reading_p08",
-      "value": "p08 update to the Shape A reading: GAP closure rate is decelerating, measured -- -11.46/-8.95/-4.75 pt per e-fold across 0.2-0.3b/0.3-0.4b/0.4-0.8b, all clear of the 4.2pt threshold. Decomposition: GAP rate = O1 rate - L2 rate; O1 rate +16.7/+10.9/+8.3 (decelerating but still readable at the largest segment), L2 rate +3.6/+2.1/+3.6 (saturating but still moving) -- the GAP deceleration is O1-driven. Ruling: the constant-rate extrapolation (24pt/10x) is dead; the 10x build's expected expression gain is 3-18pt of a 64pt gap under any projection, so the 10x build is NOT justified on expression grounds (even the high end leaves 46pt). But 'volume substantially stops at 0.8b' is NOT supported: O1 still rises at +8.3pt/e-fold, and the power-law integration (~3pt remaining) is a 3-secant extrapolation with an unchosen form -- signal, not number, the same chained-extrapolation shape fb flagged for tilerl. p16/p324 pin the curvature: 0.8b->1.6b rate near -2.4 supports the power law, near -4.75 means the deceleration was a small-end artefact. Sentence for 3b: 'volume buys expression but is decelerating; the 10x build does not close the expression gap under any measured projection and should not be justified on expression grounds; the composition cap's independent reasoning is unaffected.' Shape A mechanism unchanged",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl (p08); docs/lessons/scaling_decision_tree.md section 8",
-      "config": {
-        "point": "p08 = 0.8b",
-        "gap_rates_per_efold": [
-          -11.46,
-          -8.95,
-          -4.75
-        ],
-        "o1_rates_per_efold": [
-          16.7,
-          10.9,
-          8.3
-        ],
-        "l2_rates_per_efold": [
-          3.6,
-          2.1,
-          3.6
-        ],
-        "threshold_pt": 4.2
-      },
-      "uncertainty": "3 secants estimating curvature from 4 points; the power-law form was not pre-registered; the 3-18pt range spans the constant-rate-from-0.8b and aggressive-deceleration ends",
-      "status": "measured"
-    },
-    {
-      "id": "be.expressive_ladder_reading_p16",
-      "value": "p16 update: the pre-registered curvature test (near -2.4 power law / near -4.75 small-end artefact) came back at -10.29 pt/e-fold -- a third branch that kills both the power law and the 3-18pt magnitude qualifier; the test had two branches and the data took a third, recorded as such. Decomposition: O1 rate did not decelerate (14.55/11.12/8.37/9.23 per e-fold, flat-to-up in the last segment); the earlier 'deceleration' was L2 rising and eating GAP closure. L2 has now saturated (94.78->94.05, -0.73 inside the 2.5pt threshold), so GAP/ef converges to O1/ef. Ruling 1: Shape A stands, strengthened -- L2 actually saturated, not merely slowing. Magnitude restated: the gap closes at whatever rate O1 sustains, and O1's rate is unresolved; fb's three illustrative scenarios (9.23/6/4 sustained to 36B) leave GAP 29/39/45 -> 35/25/19pt closure of the 64pt gap; no projection licensed (one non-decaying segment refutes decay without establishing its opposite). Ruling 2 (pre-registered): p324 L2 < 94.05 = 'peaked' (non-monotonic, max <=1.6b), >= 94.05 = 'saturated'; either way L2 retires as a steering metric at 94. Ruling 3 (pre-registered): |p324 O1/ef - 9.23| < 3pt (2x secant noise ~1.5pt derived from O1 seed SD 1.02) makes 'flat ~9' the working assumption for the 10x decision; otherwise the rate is unresolved and the 10x flies without a rate estimate, control arm decides. minimal_pairs 81.23->75.09 is unreadable (no seed variance on file); cheap fix is running it on the 4 existing 0.2b seeds, threshold 4.65*s_M. C-Eval 23.7 at chance across five points: floor metric, no information. 44 ruled math-500 contamination hits false positives (0 exact) -> L1 clean to run",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl (p16); docs/lessons/scaling_decision_tree.md section 8",
-      "config": {
-        "point": "p16 = 1.6b",
-        "gap_rates_per_efold": [
-          -11.47,
-          -8.93,
-          -4.76,
-          -10.29
-        ],
-        "o1_rates_per_efold": [
-          14.55,
-          11.12,
-          8.37,
-          9.23
-        ],
-        "l2_rates_per_efold": [
-          3.08,
-          2.19,
-          3.61,
-          -1.05
-        ],
-        "l2_levels": [
-          94.78,
-          94.05
-        ],
-        "thresholds_pt": {
-          "L2": 2.5,
-          "GAP": 4.2
-        },
-        "p324_prereg": {
-          "l2_peaked_if": "L2 < 94.05",
-          "o1_flat_band_pt": 3.0
-        }
-      },
-      "uncertainty": "the curvature test had two pre-registered branches and the data took a third; the 19-35pt range is fb's illustrative scenarios, not a projection; one segment does not establish a flat rate",
-      "status": "measured"
-    },
-    {
-      "id": "be.reasoning_panel_prereg",
-      "value": "pre-registered instrument stack for the reasoning-model objective (code+math, ~30B tokens), written before 3.24b lands (docs/lessons/reasoning_panel.md). Core gap: math_v2_like 94.69 is the two-way for math; there is NO open-ended math number -- the generation half does not exist. Stack: L0 math_v2_like (discrimination, exists, moving) + code discrimination by execution-ranked likelihood (GAP, needs building); L1 few-shot continuation math (zero GPU, prompt change, the format bridge -- base models read 0/500 on zero-shot partly for format reasons, not pure capability); L2 light SFT -> pass@k (the real instrument, one SFT run). Q1 verdict experiment: L1 on 3.24b, N>=500 -- non-zero (>2delta, delta=1.4/sqrt(N)=6.3pt@500) means the instrument exists; zero means L2 is the only path, and if L2 also reads zero, reasoning production has NO instrument at 200M (the round's most important conclusion -- changes measurability before achievability). Verifiability asymmetry: math/code answers are execution-checkable -- label error is binomial (1.4/sqrt(N)), no judge, no seed variance in the label, sharper than NLL's sigma-hat=0.0516; A/B on reasoning mixes uses pass@k with binomial+seed error, likely sharper than NLL A/B. Section 8 shapes: the LOGIC carries over (discrimination saturates while generation moves = capacity; discrimination moves, generation flat = composition) but the METRICS do not (lambada is expression, not reasoning) -- section 8 stays, reasoning gets a sibling with its own generation half (L1/L2 pass@k) and discrimination half (math_v2_like + code); the shapes cannot fire until the generation half exists. Code discrimination instrument is a parallel prerequisite for the 30B build",
-      "measured": "2026-08-30",
-      "source": "docs/lessons/reasoning_panel.md; aupai-fb task 2026-08-30 (objective change)",
-      "config": {
-        "objective": "reasoning model (code+math, ~30B tokens)",
-        "instruments": [
-          "L0 math_v2_like",
-          "L0' code discrimination (gap)",
-          "L1 few-shot continuation",
-          "L2 SFT pass@k"
-        ],
-        "q1_test": "L1 few-shot math on 3.24b, N>=500, delta=6.3pt",
-        "binomial_resolution": "delta=1.4/sqrt(N), 500->6.3pt, 1000->4.4pt"
-      },
-      "uncertainty": "L1 is a prompt bridge, not a capability guarantee -- non-zero is necessary but not sufficient for L2; the format/capability decomposition is itself uncertain",
-      "status": "recorded"
-    },
-    {
-      "id": "be.minimal_pairs_seed_variance",
-      "value": "minimal_pairs seed variance at 0.2b (new arch, attn_every 4): mean 73.74%, sd 2.47pt, range 5.78pt (s0=72.92, s1=74.73, s2=76.53, s3=70.76). df=3. Readable-move threshold: |Delta| >= 4.65*2.47 = 11.5pt (t-based, df=3, 4-seed mean vs 1-seed). The ladder wobble (81.23->75.09->77.26) is mostly within seed noise; 81.23->75.09 (6.14pt) is ~2.5sigma, suggestive not conclusive.",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl, ckpt_p02_s0..s3, minimal_pairs.overall",
-      "config": {
-        "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
-        "metric": "minimal_pairs.overall (277 pairs, 5 dimensions)",
-        "n_seeds": 4,
-        "df": 3
-      },
-      "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
-      "status": "measured",
-      "boundary": "277 pairs is a de-risked prototype, not the 1000-pairs-per-dimension target. sd may shrink with more pairs. Per-dimension sd not computed (some dimensions have n<50)."
-    },
-    {
-      "id": "be.math_v2_like_seed_variance",
-      "value": "math_v2_like seed variance at 0.2b (new arch, attn_every 4): mean 79.05%, sd 3.11pt, range 6.84pt (s0=76.69, s1=77.22, s2=83.53, s3=78.75). df=3. Readable-move threshold: |Delta| >= 4.65*3.11 = 14.5pt (t-based, df=3, 4-seed mean vs 1-seed).",
-      "measured": "2026-08-30",
-      "source": "runs/score_matrix.jsonl, ckpt_p02_s0..s3, math_v2_like.overall",
-      "config": {
-        "checkpoints": "ckpt_p02_s0..s3",
-        "metric": "math_v2_like.overall (3012 items, 9 families)",
-        "n_seeds": 4,
-        "df": 3
-      },
-      "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
-      "status": "measured",
-      "boundary": "s2 is an outlier (83.53 vs mean 79.05); with only 4 seeds, one outlier inflates sd. Per-family sd not computed."
-    },
-    {
-      "id": "be.expressive_ladder_reading_p324",
-      "value": "p324 panel: L2 95.51, O1 41.30, GAP 54.21, math 95.25, mp 77.26, CE 22.4; O1/ef=+5.67 (1.6b->3.24b). Both pre-registered rules fired as written: (1) L2 95.51 > 94.05 -> saturated not peaked, the 1.6b dip was noise; L2 retires as a steering metric at ~95 either way. (2) O1/ef 5.67 is outside the +-3pt band around 9.23 -> rate UNRESOLVED; the 10x build proceeds without a rate estimate, same-composition control arm decides. No trend read into the five secants 14.55/11.12/8.37/9.23/5.67. minimal_pairs reversed (75.09->77.26): both of the round's negative readings were at 1.6b and both reverted at 3.24b -- recorded as a pattern; but p16's fit residual is -0.0002, exactly on the curve, so the 1.6b oddity lives in the panel metrics, not the NLL. GAP across the full ladder: 74.40 -> 54.21, 16x in D for 20pt, still 54pt wide. Lesson carried (fb): a pre-registered test needs the 'neither' branch stated -- the curvature test had two branches (-2.4/-4.75) and the data took a third (-10.29); a test with no cell for the observed outcome is under-specified and the reading is post-hoc even though the test was written first.",
-      "measured": "2026-08-30",
-      "source": "aupai-fb panel scores 2026-08-30; docs/lessons/scaling_decision_tree.md section 8 (p324 update)",
-      "config": {
-        "point": "p324 = 3.24b",
-        "l2_rule": "L2 < 94.05 = peaked, >= 94.05 = saturated; either way retires",
-        "o1_band_pt": 3.0,
-        "gap_ladder_pt": [74.40, 54.21]
-      },
-      "uncertainty": "five secants do not establish a rate either way; the 1.6b-reverts pattern is n=2",
-      "status": "measured"
-    },
-    {
-      "id": "be.panel_independence_ruling",
-      "value": "Ruling on fb's correlation matrix (n=6 ladder points): the WEAK reading is correct and sufficient -- L2/O1/O5/math_v2_like/dloss are redundant ALONG THE D AXIS, not in general. Along a single scaling axis anything that improves with scale correlates with anything else that improves with scale; the matrix cannot separate 'redundant metric' from 'different capability that happens to scale together'. But D-axis decisions only need D-axis redundancy: a metric that is an approximate deterministic function of val loss along D carries no D-decision information regardless of what capability it measures. The matrix does NOT license retiring them as capability measures -- the counterexample is in the panel: L2 and O1 correlate 0.94 along D yet their CONTRAST (GAP) is the expression steering quantity. n=6 CIs are wide (r=0.90 -> 95% CI ~[0.36, 0.99]): 'one dimension' is suggestive not conclusive; the action (demote from D-steering voices) is robust to the CI, GAP kept either way. Panel reorganised by capability axis: dloss (D master), GAP (L2/O1 demoted to inputs), math_v2_like (math-axis representative, not D-steering), minimal_pairs (only verified independent signal), C-Eval dead (floor), O5 demoted to diagnostic (r=1.00 with dloss). Admission criterion for new metrics (e1's reasoning metrics, 44's code eval): a seat is earned by separating on a NON-D axis -- (1) composition: 10x same-mix control arm vs build arm; (2) training stage: base vs SFT; (3) architecture: attn_every A/B. Operationalised: regress on D (or val loss), residuals are noise -> D-redundant, then test separation on a non-D axis. D-redundant AND never tested on another axis = candidate for demotion from the D panel, never for deletion. Code discrimination and L1/pass@k will correlate with everything along D -- expected, not a defect; their seats are guaranteed by capability-axis coverage, the independence test decides their steering voice not their existence.",
-      "measured": "2026-08-30",
-      "source": "aupai-fb correlation matrix 2026-08-30; docs/lessons/reasoning_panel.md section 8",
-      "config": {
-        "matrix_n": 6,
-        "redundant_block": "L2/O1/O5/math/dloss, pairwise r=0.90-1.00",
-        "independent_signal": "minimal_pairs r=0.48-0.72",
-        "admission_axes": ["composition (10x control arm)", "training stage (base vs SFT)", "architecture (attn_every A/B)"]
-      },
-      "uncertainty": "n=6 correlation CIs are wide; the weak-vs-strong distinction is load-bearing for the deletion question and the weak reading is deliberately all that is claimed",
-      "status": "recorded"
-    },
-    {
-      "id": "be.l1_fewshot_p324",
-      "value": "L1 verdict (pre-registered 2026-08-30 before p324 landed): base p324 + 3-shot plain-text continuation, math-500, exact-match: 1/497 = 0.2%, binomial delta=6.3%, instrument-exists threshold 2*delta=12.6% -> INSTRUMENT DOES NOT EXIST on this axis. The zero is VALID, not degenerate: answer-present rate 63.6% (model emits boxed/答案是 answers in coherent Chinese math text) but the answers are wrong -- generations continue the demo pattern instead of binding to the target question; a capability/instruction gap, not a format gap, not token salad. dtype verified clean: 44's direct measurement logit diff 0.00000 (A_log/dt_bias were always bf16 in training, train.py:1626 whole-model cast, --fp8 no fp32 master; the inference .to(bf16) was a no-op; loader a3a0de0 upcasts to fp32 for the Triton path regardless). Second leg: base 3-shot code-500 = 0/497 = 0.0% (fb, code_fewshot_p324.log) -- both domains below the 12.6pt instrument threshold. SFT axis CLEAN reading (final 2026-08-30): code_zh.py on ckpt_sft_p324_v2.pt = 11/500 = 2.2% -- still below the 12.6pt instrument threshold, reads zero; the 11 correct are all simplest-template problems (9 list-sum/mean, 2 sum/diff, 1 list-find), single-template pattern completion not generalization, no-fence rate 87.8%; pack verified clean (de's sft_pack_uncontaminated 0/36 on code_holdout_500 + fb manual per-token probe 0/40). v1 (contaminated pack, 19/20 code holdout inside) is void; its code-500 = 83/500 = 16.6% (runs/code_zero_sft_v1.log) is contamination-contrast only, with the caveat that v1 vs v2 also differ in a short_conv implementation (v1 inside the 12:42-13:25 multiply-add window, v2 outside; mathematically equivalent, bf16 accumulation order differs, seed-noise magnitude, cannot move 13 points, but the caveat is carried). Post-SFT math_zh is a retired metric (30% containment) and takes no part in the verdict. Demo-count sweep (--demos 0|1|3): 0-shot = 0/497 = 0.0% (empty-continuation 2.2%), 1-shot = 0/497 = 0.0% (empty-continuation 0.0%), 3-shot = 0/497 = 0.0% (non-empty 98.4%) -- demo-interference hypothesis FALSIFIED: 0-shot does not beat 3-shot, the failure is not demo regurgitation, base has no code generation in this regime with or without demos. Present rate 97.8% / 100% / 98.4% -- ceiling-pinned, no range, cannot confirm or falsify the demo-gain prediction (same disease as the accuracy floor: one at ceiling, one at floor, neither has resolution; a probe that cannot give the opposite result is not evidence). The pre-registered present-rate branch landed: 0-shot present 97.8% ~= 3-shot 98.4% => format comes from pretraining, demos added nothing (code side; math side 0-shot 25.4% vs 3-shot 63.6%, demos +38.2pt -- unified in the mechanism below). Math-arm accuracies 0.4%/1.4%/0.2% all floor, 2delta=12.6pt: no difference between them is interpretable; accuracy criterion labelled floor-unjudgeable, pre-registered text retained. 1-shot final: 7/497 = 1.4% accuracy (floor), present rate 53.5% -- math dose-response 25.4%/53.5%/63.6% across 0/1/3 demos, monotone with diminishing returns (+28.1pt then +10.1pt), consistent with saturation as the format gap closes. Zero-mechanism asymmetry (fb 2026-08-30): base 0-shot 97.8% writes code-shaped text all wrong (shape right, content wrong); SFT v2 no-fence 87.8% (shape degraded) -- both read zero but SFT made the code shape WORSE; 'shape improves monotonically after SFT' is falsified at the only place it was measured -- a law with a counterexample cannot be a default. SFT's format effect direction is measured negative on code; whether it is also negative on L2 is unmeasured, therefore L2 prompt format is verified separately (counterexample = fact, extrapolation = extrapolation, kept apart). Demo-gain mechanism (b0 math numbers merged 2026-08-30, written as prediction not summary): the math side (25.4->53.5->63.6, monotone, diminishing, 38pt span) is the EVIDENCE -- a dose-response curve that can falsify the mechanism; the code side (97.8-100%) is ceiling, boundary condition only. PREDICTION: in any domain, the higher the present-rate baseline, the smaller the demo gain; the next test needs a domain with baseline present-rate in the middle range (30-70%). CONCLUSION (fb 2026-08-30, written into the panel): 200M has no measurable code generation in this regime -- base zero at all three demo doses, clean SFT also reads zero. L2 (pass@k) is the only remaining path, and the SFT-shape-degradation counterexample means L2 prompt format must be verified separately, not inherited from SFT assumptions.",
-      "measured": "2026-08-30",
-      "source": "eval/l1_fewshot.py run on pod GPU 7, runs/l1_p324.log, preds_l1_d3.jsonl (497 lines); code legs eval/code_fewshot.py runs/code_base_0shot.log + code_fewshot_p324.log, eval/code_zh.py runs/codezh_sft_v2.log (GPU 6 shared with eval_all, no timing numbers); dtype 44 direct measurement 2026-08-30",
-      "config": {
-        "n": 497,
-        "demos": 3,
-        "delta_pt": 6.3,
-        "threshold_pt": 12.6,
-        "acc": 0.002,
-        "answer_present_rate": 0.636,
-        "format": "plain-text continuation, no ChatML (base saw 1.18% chat domain)",
-        "code_leg": "0/497 = 0.0%",
-        "code_0shot": "0/497 = 0.0%, empty-cont 2.2%",
-        "code_1shot": "0/497 = 0.0%, empty-cont 0.0%",
-        "code_sft_v2": "11/500 = 2.2% (reads zero; 11 correct all simplest-template; no-fence 87.8%)",
-        "demo_interference": "falsified (0-shot == 3-shot == 0/497)",
-        "math_0shot_answer_present": 0.254,
-        "demo_gain_prediction": "higher baseline present-rate => smaller demo gain; math dose-response 25.4->53.5->63.6 is the evidence, code 97.8-100% ceiling-pinned (no range, cannot confirm/falsify); next test needs a 30-70% baseline domain"
-      },
-      "uncertainty": "single greedy run per prompt, no seed variance estimated; the 1/497 correct item is within noise of zero",
-      "status": "measured"
-    },
-    {
-      "id": "be.degeneration_rate",
-      "value": "Degenerate-repetition rate (8-gram occurring >=3 times, whitespace-tokenized, on the stored gen tail): code base 3-shot 6.6% (33/497), code base 0-shot 25.4% (126/497), code SFT v2 greedy 55.8% (279/500), code SFT v2 t=0.8 17.0% (85/500, final; fb's 20.1% was the 60/299 interim) -- under greedy decoding SFT MORE THAN DOUBLES degeneration vs the zero-shot base (+30.4pt, ~5 delta), but at t=0.8 degeneration drops to 17.0%, BELOW base 0-shot 25.4%: the loop is a property of greedy decoding on this model, not something SFT installed; format-class metrics (fence rate, degeneration) must be reported WITH TEMPERATURE. Capability-class metrics are unaffected and now firmer: t=0.8 accuracy 0.5% vs greedy 2.2%, both floor -- the loop disappeared and the answers are still wrong, the loop was not hiding anything; the suspicion that floor accuracy is a bad-decoder artefact was checked and rejected. Math side (L1 preds, same definition): 0-shot 16.9%, 1-shot 9.3%, 3-shot 8.9% -- demos SUPPRESS degeneration in both domains (code 0->3 shot -18.8pt, math -8.0pt); demos and sampling both break loops, SFT does not -- all three act on the same thing (greedy's deterministic attractors), itself evidence. Cross-domain at 3-shot: math 8.9% vs code 6.6%, comparable. Why the metric belongs: it was measurable all along and stayed invisible for five checkpoints because the panel only recorded accuracy, which reads zero at this scale -- a metric that always reads zero is no metric (the measurement version of the gate rule 'a PASS must say how many things it verified'). History: 363c491 attributed degeneration to 'content, not format'; that attribution was untestable because degeneration was never measured, and it is wrong in spirit -- SFT corpus answers are 89% fenced (model saw the format) yet SFT raised degeneration 2x; format and content are not separable by assertion. Replication note (resolved): fb's first implementation carried a len>=3n floor guard that excluded 3 true positives (a fully-overlapping 8-gram x3 fits in 10 words); fb's 24.7% vs the 25.4% (126/497) canonical value. Guard removed; the other three figures replicate exactly. Lesson (4th this year): a metric's config is bigger than its name -- n=8/k=3 did not define the metric, the min-length guard was part of the definition and went unsaid. KNOWN CEILING: code_zh.py:128 stores gen[-300:] (characters), so the metric measures TAIL degeneration -- a model that answers correctly first and rambles after is misjudged; negligible at 2.2% accuracy but the bias grows as capability rises, then switch to full-storage or online computation. Cross-language caveat: the 300-char window contains different token counts per language (Chinese is denser), so cross-domain absolute levels carry a window-density confound; within-domain comparisons (the SFT-vs-base and demo-dose readings) are unaffected.",
-      "measured": "2026-08-30",
-      "source": "fb report 2026-08-30 (code figures); re-computed on pod: data/eval/preds_code_fewshot.jsonl, data/eval/preds_code_fewshot_0shot.jsonl, data/eval/preds_code_ckpt_sft_p324_v2.pt.jsonl, data/eval/preds_l1_d0.jsonl, data/eval/preds_l1_d1.jsonl, data/eval/preds_l1_d3.jsonl, whitespace-token 8-gram >=3 (definition replicated: 6.6% and 55.8% exact)",
-      "config": {
-        "ngram_len": 8,
-        "repeat_threshold": 3,
-        "min_words": "n -- flag condition only: a generation shorter than n words cannot be degenerate and is counted as non-degenerate IN the denominator (denominator = all rows; de's first implementation excluded short rows from N, which moves math 0-shot from 16.9% to 22.3% -- rejected). A 3n floor was used in fb's first implementation and excluded 3 true positives (24.7% vs 25.4%); a metric's config is bigger than its name",
-        "unit": "whitespace tokens",
-        "window": "gen[-300:] characters (stored tail)",
-        "n": "497 (base code, math arms) / 500 (SFT v2 greedy, SFT v2 t=0.8)",
-        "delta_pt": 6.3,
-        "verdict_rule": "any 8-gram with count >= 3 flags the generation; rate = flagged/N"
-      },
-      "uncertainty": "base-0shot code 24.7/25.4 gap resolved (3n floor guard, removed); SFT greedy canonical 55.8% from the completed 14:04 run, a rerun was in progress at record time (51/85 consistent); single greedy run per arm; gen[-300:] tail window biases against correct-then-ramble models (negligible now, grows with capability)",
-      "guard_phrases": ["退化是内容问题", "content, not format"],
-      "status": "measured"
-    },
-    {
-      "id": "be.agentic_loop_tokens",
-      "value": "Agentic loop token cost under our frozen vocab (t19, 2026-08-31, 44; e1's two-turn format byte-exact, real answers from sft_all.pt rendered): code call turns (Thought prose + code block, sandbox execution as tool) cost p50=994 / p90=1729 / p99=2608 tokens, so 4096 fits only 1.9 rounds at p90 -- a HARD CONSTRAINT under the current data shape; math call turns (GSM8K expression = call, result = tool) cost p50=18 / p90=21 / p99=22, 188 rounds fit, no constraint. The constraint comes from long Thought prose in the call turn (SFT source shape), not from the context itself -- tool turns are cheap (400 real executions: p50=35 chars, p90=327). Conditional conclusion: try short-call-turn rendering first (nanochat-style '12/60 = ' stops after a few tokens; touches neither architecture nor the frozen recipe); extend context only if that fails. Untested half: whether the model can still reason with short call turns -- a capability question, not a context question, kept separate. zh-en prompt asymmetry: an equivalent-meaning agentic system prompt costs 33 tokens in Chinese vs 36 in English -- per-character more expensive != per-instruction more expensive (Chinese is denser); the 35:65 zh:en token cost is asymmetric. Tool output length is a known upper bound (400 samples; code printing large lists raises it) -- usable in reverse for 30B corpus mining: filter impl+test pairs by tool output length.",
-      "measured": "2026-08-31",
-      "source": "sft_all.pt answer spans (16,543 code / 3,357 gsm with expressions), e1's verified two-turn format (im_start=32768, im_end=32769), 400 sandbox executions for tool output sizing; docs/lessons/scale_36b_plan.md t19 section",
-      "config": {
-        "code_round_tokens_p50": 994,
-        "code_round_tokens_p90": 1729,
-        "code_round_tokens_p99": 2608,
-        "code_rounds_fit_4096_p90": 1.9,
-        "gsm_round_tokens_p90": 21,
-        "gsm_rounds_fit_4096_p90": 188,
-        "tool_output_chars_p50": 35,
-        "tool_output_chars_p90": 327,
-        "zh_prompt_tokens": 33,
-        "en_prompt_tokens": 36,
-        "zh_en_prompt_delta": -3,
-        "zh_en_note": "per-char more expensive != per-instruction more expensive; Chinese denser"
-      },
-      "uncertainty": "tool output sized on 400 random code spans (long-output code is rare but unbounded); code spans come from a Thought-reasoning source -- short-call rendering changes the call-turn length distribution, unmeasured; user question tokens sampled every 11th row",
-      "status": "measured"
-    },
-    {
-      "id": "be.ctx_length_p324",
-      "value": "NoPE context-length probe on ckpt_p324 (eval/ctx_probe.py, pre-registered 2026-08-31 before running): (1) BEYOND 4096 -- paired delta-NLL, each held-out row b scored fresh (4096) and after a (8192); seam delta (distance 4096-4352) = -0.198 nat: extra context HELPS past the training length, no hard boundary. Degradation is SMOOTH: +0.10 nat per 1024 tokens of distance, tail (7936-8190) +0.104 nat; zero-crossing ~6.2K absolute distance -- carried context is useful to ~6K, neutral to ~8K, harmful past that. Reading per pre-registration: SMOOTH DEGRADATION, usable past 4096, solvable with training length -- NOT a hard 4096 wall for the agent loop. (2) WITHIN 4096 -- per-position curve flat after the cold-start bin (pos 0-255 = 3.72, steady state 3.46-3.57, min 3.4575 at 3072-3327, no sustained rise > +0.10 nat): effective budget = 4096, the full nominal context is usable, no hidden shortening. Window NLL over the 8192 run: 3.52/3.49/3.51/3.64. Architecture note: NoPE (no RoPE, no learned positions; 3 gated-MLA full-causal layers mechanically length-free, 9 KDA layers carry position in fixed-size recurrent state) generalizes to unseen distances smoothly -- the two legs' per-leg attribution (which one degrades) is unmeasured, whole-model only; ablation is the follow-up. Design implication: agent loops may exceed 4096 with graceful degradation (~0.1 nat/1024tok); the 30B design is not walled at training length, but context beyond ~6K should be compressed/summarized rather than carried raw.",
-      "measured": "2026-08-31",
-      "source": "eval/ctx_probe.py (commits 847c8da, 95902eb, b34cdd7); pod GPU 7 run, durable artifact runs/ctx_probe_p324.json (committed); same held-out head as score_matrix domain_loss (domain_files + head_texts, packed with EOS)",
-      "config": {
-        "ckpt": "ckpt_p324.pt",
-        "train_seq": 4096,
-        "probe_seq": 8192,
-        "n_pairs": 256,
-        "bin_tokens": 256,
-        "seam_threshold_nat": 0.10,
-        "seam_delta_nat": -0.1984,
-        "slope_nat_per_1024": 0.1007,
-        "tail_delta_nat": 0.1038,
-        "effective_budget": 4096,
-        "zero_crossing_distance": "~6200 tokens (linear interpolation of the delta curve)"
-      },
-      "uncertainty": "single greedy run, single checkpoint; per-leg KDA-vs-MLA attribution not measured; zero-crossing is a linear interpolation of binned means, not a direct measurement; held-out head is the score_matrix domain_loss data, comparable to the ladder val figure",
-      "status": "measured"
-    },
-    {
-      "id": "be.readout_30b_prereg",
-      "value": "Pre-registered readout for the 30B-token pretrain (t22), frozen before launch (docs/lessons/readout_30b_prereg.md). Milestones 3.24B/8B/16B/30B tokens; the 3.24B milestone is PAIRED against ladder point ckpt_p324 (same arch, same tokens, old mix) to isolate the corpus change. Per-metric n, change-threshold, decision rule: code-500 accuracy n=500 threshold 12.6pt (binomial 2delta, delta=1.4/sqrt(500)=6.3pt) -- >12.6% at 30B = code generation exists, continue to RL gate; floor = stop the reasoning-axis claim, report negative. math-hard pass@1 n>=1000 threshold 8.8pt (2delta @ n=1036), same rule. pass@8-pass@1 gap threshold 15pt = the RL gate (>=15pt: RL may start; <15pt: nothing to amplify, reading 'not RL is useless but nothing on this checkpoint for RL to amplify'). MC suite (ceval+mmlu+arc-easy): ceval readable move 5.9pt (seed SD 1.27pt x 4.65, be.panel_expressive_seed_variance), English three at chance+2delta floor (25% each) -- tripwire not a stop: ceval drop >=5.9pt = mix damaged general capability, change mix; rise = supporting only. Per-role domain loss (8 roles, 4000 rows/role) threshold 0.1176 nat (2.28 x sigma-hat, sigma-hat=0.0516, ds.seed_variance_0p2b): improvement >=0.1176 vs the ladder point on the same held-out heads = mix bought that role; flat at 30B = role weight buys nothing measurable, change-mix candidate -- the only metric that can say 'change mix' per role. degenerate_rate: binomial 2delta at its n, reported BESIDE every accuracy, never as substitute (v2: 55.8% degenerate at greedy vs 2.2% correct); format metrics carry their temperature. What the 3.24B pair CANNOT say: (1) anything about the 30B mix beyond 3.24B tokens -- execution-signal (7%) and long-CoT (15%) roles have only 0.23B/0.49B tokens seen at that point, and generation is on the floor anyway; (2) anything where base-eval resolution is below the expected effect -- resolution stated next to each metric, 'no readable effect' is not 'no effect'; (3) causal attribution between roles (all 8 change at once; per-role loss localizes WHERE not WHICH; causal needs the reweight A/B); (4) the pair has a WARMUP CONFOUND: ladder point warmup=20 vs 30B run warmup=300 (8.5% vs 0.57% of the 3.24B run at reduced LR; direction known to drag early loss, 0.2b smoke: warmup 2 vs 20 cost 0.52 val) -- if the 30B milestone reads BETTER past threshold the corpus effect is real (warmup drag can only attenuate); if it reads WORSE the pair is unreadable for the mix question, clean reads at 8B/16B/30B (warmup share 3.7%/1.9%/0.9%); escape hatch = same-recipe warmup=300 3.24B control (~1.7h), run ONLY if the 3.24B milestone reads worse than the ladder point (block time is the scarcest resource; a better/flat pair buys nothing from the control). Reading rules: floor != no effect (floor readings labelled floor-unjudgeable, pre-registered text never deleted); final 30B verdict is three-state per metric -- moved (past threshold, with direction) / floor (unjudgeable) / flat (readable but under threshold) -- flat and floor are distinct negatives, never merged. Reachable states per metric (44 review focus): code-500, math-hard pass@1, ceval, per-role domain loss can only be moved-or-floor (decision threshold = readability limit, no flat band); the RL pass@8-pass@1 gap can be moved/flat/floor (15pt decision threshold > ~1-2pt readability of the paired gap at n=1036 -- the 200M reading of 3.5pt is FLAT, not floor); degenerate_rate is a beside-accuracy metric, not a standalone verdict. Floor and flat have different follow-ups (floor -> change instrument or add n; flat -> effect is genuinely small, change lever).",
-      "measured": "2026-08-31",
-      "source": "docs/lessons/readout_30b_prereg.md (frozen before t22 launch); recipe docs/lessons/scale_36b_plan.md §1b; thresholds from be.panel_expressive_seed_variance (ceval 5.9pt), ds.seed_variance_0p2b (sigma-hat 0.0516), be.degeneration_rate (2delta binomial), be.ctx_length_p324 (seq 4096 unchanged)",
-      "config": {
-        "run": "t22, 30B tokens, seq 4096, warmup 300, 7x16x2 (effective batch 224), ~16h @ 524K tok/s, mix data/mix_scale_30b.json",
-        "milestones_tokens": [3240000000, 8000000000, 16000000000, 30000000000],
-        "pair_baseline": "ckpt_p324.pt (ladder 3.24B point, same arch, warmup=20 -- confound declared)",
-        "thresholds": {
-          "code_500_accuracy_pt": 12.6,
-          "math_hard_pass_at_1_pt": "8.8 at n=1036 (2delta, scales with n)",
-          "rl_gate_pass8_minus_pass1_pt": 15,
-          "ceval_readable_move_pt": 5.9,
-          "english_mc_floor": "chance + 2delta (25% each)",
-          "per_role_domain_loss_nat": 0.1176,
-          "degenerate_rate": "binomial 2delta at its n, beside accuracy"
-        },
-        "status": "pre-registered, no data seen"
-      },
-      "uncertainty": "thresholds are binomial/seed-variance derived, not effect-size guesses; the warmup confound on the 3.24B pair is declared with its direction but its magnitude at 3.24B is unmeasured; math-hard n is a lower bound (actual n recorded at run time, threshold scales as 1.4/sqrt(n))",
-      "status": "recorded"
+ "facts": [
+  {
+   "id": "be.generative_zero",
+   "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
+   "measured": "2026-08-30",
+   "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
+   "config": {
+    "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
+    "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.probe_degeneration",
+   "value": "a zero from a degenerate probe carries no difficulty information: the v2 zero is compatible with both 'problems too hard' and 'model cannot attempt this surface form'. A probe that reads the same under opposite facts is not a probe (aupai-fb standard). Resolution: inconclusive(退化), not 'no resolution'; the pre-registered score-threshold criterion lacked a generation-validity precondition",
+   "measured": "2026-08-30",
+   "source": "facts/contamination.json#cont.math_hard_v2.resolution_probe (criterion_lesson, audit); aupai-fb ruling 2026-08-30",
+   "config": {
+    "evidence": "9/1080 boxed, 8/1080 coherent-attempt, colon repetition loops; math-500 control 2.8% same checkpoint"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.mc_chance",
+   "value": "3 of 5 MC benchmarks are pinned at the 25% chance line on the 0830v1 ladder; ceval (the only Chinese one) is among the two that move",
+   "measured": "2026-08-30",
+   "source": "aupai-fb, relaying the existing MC eval record (docs/lessons/base_eval_at_200m.md §4)",
+   "config": {
+    "suite": "5 MC benchmarks, 4 English + ceval",
+    "model": "0830v1 ladder, 200M-class"
+   },
+   "uncertainty": "the exact 5 benchmarks and per-benchmark numbers were not re-derived this session; the 3/5-at-chance + ceval-moves pattern is from fb's record",
+   "status": "recorded"
+  },
+  {
+   "id": "be.loss_moves",
+   "value": "domain loss moves 1.66-1.99 nat across the 0.2B->3.24B ladder (16x data span) while every capability metric sits at floor — the instrument gap this research addresses",
+   "measured": "2026-08-30",
+   "source": "facts/data_scaling.json; aupai-fb task statement",
+   "config": {
+    "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.lit_small_scale",
+   "value": "the Pythia/OLMo/SmolLM lineage scores base models with zero-shot LIKELIHOOD only (continuation log-prob MC + perplexity), never generation. What moves below 400M: perplexity, LAMBADA-style last-word prediction (Pythia-70M already 0.24-0.27), minimal-pair acceptability (BLiMP: knowledge detectable where task accuracy is at floor). MC commonsense needs ~410M+",
+   "measured": "2026-08-30",
+   "source": "Biderman et al. 2023 Pythia arXiv 2304.01373 (suite: LAMBADA/PIQA/WinoGrande/WSC/ARC/SciQ/LogiQA; Fig.6); Warstadt et al. 2020 BLiMP; SmolLM 2024 (eval every 2B tokens)",
+   "config": {
+    "pythia": "70M-12B, 300B tokens, 154 checkpoints each",
+    "smollm": "135M/360M/1.7B, 600B tokens"
+   },
+   "uncertainty": "SmolLM's exact 135M/360M per-benchmark numbers are in paper figures not transcribable from fetched sources; the qualitative claim (eval every 2B tokens, gains slowing after 400B tokens on some benchmarks) is from the SmolLM blog text",
+   "status": "recorded"
+  },
+  {
+   "id": "be.schaeffer_smooth_metrics",
+   "value": "Schaeffer et al. 2023: emergent abilities are largely a metric artifact — with smooth token-level metrics (target logprob, acceptability) improvement is continuous from early training; discontinuous metrics (exact match, pass@1) manufacture the phase transition. Practical transfer: score the log-probability of the correct answer against matched wrong ones instead of exact-matching generation",
+   "measured": "2026-08-30",
+   "source": "Schaeffer et al. 2023, arXiv 2304.15004",
+   "config": {
+    "paper": "arXiv 2304.15004",
+    "scope": "metric granularity vs apparent emergence; token-level smooth metrics show continuous improvement"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.climp_prior_art",
+   "value": "CLiMP (Xiang et al. 2021) is the Chinese minimal-pair prior art: 16 syntactic contrasts across 9 Mandarin phenomena, 1000 pairs/contrast, 95.8% human agreement, template-generated over an annotated vocab (3456 words, 84 features), matched sentence length per pair, one paradigm discarded for <85% human agreement. Best: classifier-noun agreement, verb complement selection; worst: ba construction, binding, filler-gap. Chinese BERT 81.8%, LSTMs moderately above chance. github.com/beileixiang/CLiMP. Newer: ZhoBLiMP (arXiv 2411.06096), MultiBLiMP (arXiv 2504.02768)",
+   "measured": "2026-08-30",
+   "source": "Xiang et al. 2021, arXiv 2101.11131 (full text extracted); docs/lessons/base_eval_at_200m.md §2",
+   "config": {
+    "phenomena_named": "classifier-noun, verb complement, ba construction, coverbs, NP head finality, binding, filler-gap, anaphora/agreement (8 of 9 named in paper text; 16 paradigms in repo)"
+   },
+   "uncertainty": "the 9th phenomenon family is not named in the paper's prose (Table 1 is a figure); the repo lists all 16 paradigms",
+   "status": "recorded"
+  },
+  {
+   "id": "be.minimal_pair_rules",
+   "value": "construction rules for zh minimal pairs: (1) one controlled edit, matched character length AND matched tokenization — BPE merges across the edit boundary break the comparison (22% of our first draft failed: 他在 merges while 他再 does not, 吃了 merges in SVO but not SOV, 这本书 is one token); assert equal token length, contiguous diff span for substitutions, identical token multiset for permutations; skip and report failures. (2) score = full-sentence sum logprob, length-matched so no normalization. (3) known-answer: swap labels, must invert, >=60pt spread on the strongest checkpoint. (4) human spot-check per dimension (CLiMP discarded a paradigm below 85% agreement)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §2; eval/base_matrix.py align_pairs() (277/303 pairs aligned after the merge fixes)",
+   "config": {
+    "prototype": "eval/base_matrix.py: 5 dims (word_order 99, numeric 100, classifier 42, function_word 20, factual 16), self-test passing"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.sample_size_math",
+   "value": "at a 50% floor, SE=sqrt(0.25/n): n=100 -> 5.0%, n=277 -> 3.0%, n=1000 (BLiMP/CLiMP) -> 1.6%, n=4900 -> 0.7%. Minimum detectable delta at 80% power: ~14pt at n=100, ~8.4pt at n=277, ~4.4pt at n=1000, 2pt at n=4900. Resolving 2 points needs ~4900 pairs/dimension; 1000/dimension is the proven operating point for tracking a 16x ladder",
+   "measured": "2026-08-30",
+   "source": "computed: n=((z_a+z_b)*0.5/delta)^2, z_a=1.96 two-sided, z_b=0.84; docs/lessons/base_eval_at_200m.md §2",
+   "config": {
+    "assumption": "binomial, p=0.5 worst case",
+    "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.mc_language_confound",
+   "value": "the MC floor is mostly a suite problem: ceval (Chinese) moves while 4 English benchmarks don't on the SAME model and scale — benchmark language is isolated as the cause. A zh-pretrained model on English MC measures English exposure (~0 by corpus design), confounded twice: size (MC near chance below ~400M even in-language) and language (English fragments under a zh-optimized 32K vocab). Supporting: Pythia's BLOOM analysis — multilinguality penalty is benchmark-dependent. Recommendation: drop English MC from the base matrix, keep ceval as a z-value tripwire. Recheck 2026-08-30 against measured English share 0.75% of tokens (en domain is 85% Chinese-cosmopedia, mlm.corpus.en_domain_is_mostly_chinese; analysis was built against declared 4.95%): conclusions unchanged and strengthened — lower English exposure makes chance-level English MC even more expected, language-confound explanation stronger relative to size. Corollary: the `en` domain NLL row is a second Chinese-cosmopedia sample, NOT an English-ability signal; its steep E2 slope (-0.26, same as textbook) is source-confounded with textbook (same source). Cause traced 2026-08-30: scripts/build_domains.sh:32 builds `--domain en` from cosmopedia_extra.jsonl + en_textbook.jsonl, the larger source is Chinese -- the directory name was a container label that everything downstream read as a language label",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §4; Biderman et al. 2023 (BLOOM curse-of-multilinguality analysis); recheck vs mlm.corpus.en_domain_is_mostly_chinese (fb 2026-08-30)",
+   "config": {
+    "suite": "5 MC benchmarks, 4 English + ceval",
+    "model": "0830v1 ladder, 200M-class",
+    "pattern": "ceval moves, 4 English benchmarks at chance, same model and scale",
+    "english_share_assumed_original": "4.95% of tokens (declared mix weight)",
+    "english_share_measured": "0.75% of tokens (en domain 85% Chinese-cosmopedia)",
+    "recheck_2026_08_30": "conclusions unchanged, strengthened; en-domain NLL relabeled as Chinese-cosmopedia"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.early_signal_ordering",
+   "value": "synthesized ordering of when metrics leave the floor: domain loss -> token-level target logprob / acceptability minimal pairs -> LAMBADA-style constrained prediction -> MC commonsense (~410M+) -> few-shot ICL -> generation. The 'loss moves but capability does not' gap is mostly metric granularity (Schaeffer), not a model waiting period. Likelihood measures recognition not production — necessary, not sufficient",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §3; Schaeffer 2304.15004; BLiMP; Pythia Fig.6",
+   "config": {
+    "synthesized_from": "Schaeffer 2304.15004, BLiMP 2020, Pythia Fig.6 (separate studies, not one ladder)",
+    "validation": "the 0830v1 six-checkpoint run is the direct test (aupai-de's implementation)"
+   },
+   "uncertainty": "the ordering is synthesized from separate studies, not measured on one ladder; the 0830v1 six-checkpoint run is the direct test and belongs to de's implementation",
+   "status": "recorded"
+  },
+  {
+   "id": "be.math_v2_likelihood_twin",
+   "value": "recommended continuous math signal at 200M: rescore math-hard v2 as likelihood — p(correct solution) vs p(matched wrong solution) per problem — instead of generation. Should move across the 16x ladder where generative pass@1 is structurally zero. Caveat: recognition, not production",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_at_200m.md §3 (recommendation); Schaeffer 2304.15004",
+   "config": {
+    "data": "data/synthetic/math_hard_eval_v2_1k.jsonl (1080 problems, construction-from-answer golds)"
+   },
+   "uncertainty": "not yet built or measured; it is a recommendation for de",
+   "status": "recorded"
+  },
+  {
+   "id": "be.eval_panel_200m",
+   "value": "pre-registered base-model eval panel, frozen before the first 0830v1 pretrain: (1) per-domain NLL, (2) CLiMP-backbone minimal pairs 1000/paradigm, (3) LAMBADA-zh last-word, (4) math-hard v2 likelihood twin, (5) ceval MC as z-value tripwire, (6) generative evals are NOT base metrics (post-SFT only). Likelihood-first; per-dimension reporting, never aggregate-only. Doc: docs/lessons/base_eval_panel.md",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md; aupai-fb task 2026-08-30",
+   "config": {
+    "frozen": "before first 0830v1 pretrain",
+    "change_rule": "new version only, no edits to frozen numbers",
+    "architecture": "KDA + full causal MLA + AttnRes, sliding window removed (b3cad87)"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "be.known_answer_panel_3_4",
+   "value": "known-answer validation of the two new panel runners on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30; OLD architecture -- 1024 sliding window + attn_res_blocks=4, retired to pod retired_pre0830v2/; valid only as runner calibration, not as a point on the new curve): math_v2_like gold-win 96.25% vs wrong-win 3.75% (spread 92.5pt, 1040 pairs, 40/1080 skipped on token-length mismatch = 3.7%); lambada_zh two-way 92.7% vs 7.3% (spread 85.4pt, 1000 items), open-vocab top-1 24.0% / top-5 41.3%. Both swap-stable (0.9625/0.9625, 0.927/0.926 -- no position bias). Both clear the panel's >=60pt freeze gate. Caveat: the lambada items were built from data/corpus/batch_00{1..9}.jsonl (training-domain prose, calibration only -- memorization inflates the 24%); the panel metric needs held-out text",
+   "measured": "2026-08-30",
+   "source": "eval/math_v2_like.py; eval/lambada_zh.py; pod runs /tmp/ka_{math,lzh}_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "lambada_source": "data/corpus/batch_00{1..9}.jsonl (training-domain, calibration only)",
+    "math_wrong_answer": "one deterministic digit edit d->(d+1)%10 on the answer's last digit, same char length"
+   },
+   "uncertainty": "lambada open_acc1=24% is measured on training-domain text and is an upper bound; the held-out number is unmeasured",
+   "status": "recorded"
+  },
+  {
+   "id": "be.lambada_zh_heldout_3p24b",
+   "value": "first held-out LAMBADA-zh reading on ckpt_0830v1_3.24b.pt.ep1 (GPU7, 2026-08-30): open-vocab top-1 0.356, top-5 0.598, two-way (real target vs same-length distractor) 0.960, swap-stable (0.9603/0.9603). ARCHITECTURE CAVEAT: 0830v1 is the OLD architecture (1024 sliding window + attn_res_blocks=4), retired to pod retired_pre0830v2/ with its experiment row ruled fail -- this reading is valid ONLY as a known-answer/resolution check (the metric has 35.6pt of headroom above floor at 200M scale), it must NOT be plotted alongside the new-architecture curve. Likelihood eval on short contexts is unaffected by the eval/training attention-width mismatch that contaminated generative evals. 1000 items built from 523 held-out fineweb2 docs (data/eval/holdout_v2/lambada_zh_src.jsonl, carved by 3b: sha1(content[:100]) split, removed from data/corpus/web before fingerprinting). Independent acceptance check (b0): 0/523 holdout ids found in 4,731,988 remaining web docs (exact-match, one streaming pass); holdout ids round-trip. The earlier 0.24 reading was training-domain calibration and is superseded",
+   "measured": "2026-08-30",
+   "source": "eval/lambada_zh.py; held-out item bank at data/eval (lambada_zh.jsonl); pod runs /tmp/lzh_holdout_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "items": "1000, single-token targets, distractor = another item's same-char-length target",
+    "acceptance": "0/523 exact-match hits in data/corpus/web (4,731,988 docs), 2026-08-30"
+   },
+   "uncertainty": "acceptance is exact-match only; near-duplicates of holdout docs could survive in the corpus (the scanner has near-dedup machinery, not run for this acceptance)",
+   "status": "recorded"
+  },
+  {
+   "id": "be.math_v2_5k_known_answer",
+   "value": "math-hard v2 likelihood twin on the expanded bank (ckpt_0830v1_3.24b.pt.ep1, GPU7, 2026-08-30; OLD architecture, runner calibration only): gold-win 94.92% vs wrong-win 5.08%, spread 89.8pt, swap-stable (0.9492/0.9492), 3012 pairs, 149/3161 token-length skips (4.7%). Bank expansion: generator at 280/family yields 5040 rows but only 3161 unique -- 9 families saturate their parameter spaces (number_array_cross 3 unique of 280, perfect_square_pattern 10, right_triangle_3060 26, quadratic_func 79, factorize 95, quadratic 138, inverse_prop 142, pythagoras 168, similar_triangle 124); the 1k bank itself had 848/1080 unique (232 dups). 3161 pairs -> MDE 2.5pt at 80% power under the panel's frozen formula delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n) (two-sided alpha=0.05, z_b=0.84, p=0.5 worst case): n=1040 -> 4.3pt, n=3161 -> 2.5pt, n=5000 -> 2.0pt. Reconciliation: the '8.4pt at 1040' quoted earlier was the n=277 minimal-pairs MDE (be.sample_size_math) misattributed to this metric; 8.4/1.74 != 2.5 exposed it. The 5000-pair/3.9pt target was also off-formula (true 2.0pt) -- 3161 pairs already beats it -- reported to fb, generator not widened (fb ruling 2026-08-30: accepted, metric no longer the bottleneck)",
+   "measured": "2026-08-30",
+   "source": "eval/math_v2_like.py; mathbank/eval_hard_v2_gen.py; pod runs /tmp/ka5k_{norm,swap}.json",
+   "config": {
+    "checkpoint": "ckpt_0830v1_3.24b.pt.ep1",
+    "bank": "math_hard_eval_v2_5k.jsonl, 3161 unique problems, 18 families, seed 20260830 (superset of the 1k bank)",
+    "resolution_formula": "delta=(z_a+z_b)*0.5/sqrt(n)=1.4/sqrt(n); z_a=1.96 two-sided alpha=0.05, z_b=0.84 power=0.8, p=0.5 worst case",
+    "mde_pt": {
+     "1040": 4.3,
+     "3161": 2.5,
+     "5000": 2.0
     }
-  ]
+   },
+   "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
+   "status": "recorded"
+  },
+  {
+   "id": "be.panel_resolution_rules",
+   "value": "ladder (0.2b->3.24b, 16x data) verdict per metric: best-worst spread <10pt = no resolution, CUT; 10-30pt = weak, trend only; >=30pt = full, report point values. Every metric needs a known-answer pair with >=60pt spread on the strongest checkpoint or it is cut at freeze time. Sample size: binomial SE=sqrt(p(1-p)/n); at 50% floor resolving 2pt needs ~4900 pairs, 1000 pairs resolves 4.4pt; NLL uses document-block bootstrap (token-level sigma/sqrt(N) overstates resolution under autocorrelation)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md; computed n=((1.96+0.84)*0.5/delta)^2",
+   "config": {
+    "ladder": "ckpt_0830v1_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.pt",
+    "power": "0.8, two-sided alpha 0.05",
+    "resolution_formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
+    "panel_version": "v1.3 (2026-08-30 resolution audit; two frozen numbers corrected, see docs/lessons/base_eval_panel.md changelog)"
+   },
+   "uncertainty": "the ladder spread is empirical and unfilled until de runs the six checkpoints; the cut thresholds are pre-registered",
+   "status": "recorded"
+  },
+  {
+   "id": "be.panel_v13_resolution_audit",
+   "value": "full resolution audit of the six frozen panel metrics under one formula, MDE=2.8*sqrt(p(1-p)/n) (p=0.5 worst case -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8), fb-ordered 2026-08-30 after the 8.4pt misattribution was found: TWO frozen numbers wrong, both in docs/lessons/base_eval_panel.md (fixed in v1.3). (3) LAMBADA-zh: '3.6pt at p=0.3' used a one-sided z_a=1.645 (2.485*sqrt(0.21/1000)=3.60), violating the appendix's frozen two-sided formula -> 4.1pt at p=0.3, 4.4pt worst case. (4) math v2: '8.4pt at 1040 pairs' was the n=277 minimal-pair MDE misattributed -> 4.3pt; '3.9pt at 5000' not reproducible under the frozen formula -> 2.0pt; the '5000+ to reach 4pt' claim is void (1000 pairs already gives 4.4pt). Clean: metric 1 (no binomial MDE, block bootstrap), metric 2 (4.4pt/paradigm at n=1000 correct), metric 5 (ceval uses z, no MDE claimed), metric 6 (not a base metric). Propagation: the 8.4pt traveled from the panel text into fb's '5000->3.9pt' anchor and b0's delivery report -- three sites, one source. Lesson: a wrong number in a frozen document gets quoted downstream as an anchor; the audit exists because misattributions cluster (same copy-paste action)",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/base_eval_panel.md (v1.3 changelog); computed under the panel appendix formula",
+   "config": {
+    "formula": "MDE=2.8*sqrt(p(1-p)/n); p=0.5 -> 1.4/sqrt(n); two-sided alpha=0.05, power=0.8",
+    "checked": [
+     "domain NLL (bootstrap, no binomial MDE)",
+     "minimal pairs 4.4pt@1000 OK",
+     "LAMBADA-zh 3.6->4.1pt FIXED",
+     "math v2 8.4->4.3pt@1040, 3.9->2.0pt@5000 FIXED",
+     "ceval z-only OK",
+     "generative not a base metric"
+    ]
+   },
+   "uncertainty": "the 3.9pt's origin could not be reconstructed; recorded as not reproducible under the frozen formula rather than guessing the wrong formula that produced it",
+   "status": "recorded"
+  },
+  {
+   "id": "be.panel_expressive_seed_variance",
+   "value": "seed variance of the expressive-ability panel metrics at 0.2b (new arch, attn_every 4), the noise floor for decision-tree section 8. df=3 from all four seeds (s0..s3, merged at d803238 -- the local runs/score_matrix.jsonl was stale, pod-written and gitignored): L2 two-way mean 89.72% s=0.54pt; O1 open acc@1 mean 15.88% s=1.02pt; O5 acc@5 mean 37.05% s=1.47pt; C-Eval mean 23.02% s=1.27pt (near chance, seed SD less meaningful); GAP=L2-O1 mean 73.84pt s=0.90pt. Readable-move threshold (tree section 8): |Delta M| >= 4.65*s_M (t-based, df=3, 4-seed mean vs 1-seed) -> L2 2.5pt, O1 4.8pt, O5 6.8pt, CE 5.9pt, GAP 4.2pt. The 74pt GAP is readable to ~4pt. Note the partial s0/s1 estimate (s_GAP~0.3pt) was optimistic -- s2/s3 moved it to 0.90pt; the df=3 values supersede. Corollary recorded per fb: a 0.2b composition A/B on O1 has 4v4 MDE = 2.371*1.02 = 2.4pt -- READABLE; the reason tree section 8 declines it is wrong scale (tests 0.2b, hypothesis is about 36B), not lack of resolution. Generalising the val-NLL resolution failure (MDE 0.20) to the whole design was the over-reach, corrected",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (merged d803238, p02_s0..s3); fb cross-session messages",
+   "config": {
+    "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
+    "metrics": "lambada-zh two_way_acc / open_acc1 / open_acc5 (n=1000), C-Eval, GAP=L2-O1",
+    "n_seeds": 4,
+    "df": 3,
+    "threshold_formula": "4.65*s_M = (t_0.975,3 + t_0.8,3)*sqrt(1/4+1)*s_M",
+    "thresholds_pt": {
+     "L2": 2.5,
+     "O1": 4.8,
+     "O5": 6.8,
+     "CE": 5.9,
+     "GAP": 4.2
+    }
+   },
+   "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
+   "status": "measured"
+  },
+  {
+   "id": "be.expressive_ladder_reading_p02_p04",
+   "value": "first reading of decision-tree section 8 shapes on the ladder (p02/p03/p04, 2026-08-30): SHAPE A (capacity-limited) -- O1 +9.22pt (15.88->25.10, threshold 4.8) and GAP -6.66pt (73.84->67.18, threshold 4.2) both clear the noise floor; L2 +2.56 (threshold 2.5, borderline/saturating); C-Eval -1.12 (threshold 5.9, unreadable, at chance 25 all three points). The composition hypothesis (10x same-mix moves knowledge not expression) is WEAKENED by the ladder; the template premise (6.38x, mlm.corpus.cosmopedia_template_concentration) stands separately -- templated text and volume-buys-generation can both be true. Verdict carries a rate, not just a label: GAP closure ~7pt/doubling at the small end, linear extrapolation closes the remaining 67pt in ~9 doublings (512x); 10x (~3.3 doublings) buys ~24pt of closure as an UPPER BOUND (rate decays with D -- loss slope fell 0.910->0.567 nat/e-fold in one segment); the six-point fit's local slope at 3.24b is the number for the 10x projection. 'Volume is a real but insufficient lever' -- volume-moves-it is supported, volume-closes-it is not. C-Eval framing: a floor metric at chance is uninformative (same class as English MC); knowledge IS moving -- math_v2_like +11.19pt (76.69->87.88, past its 4.3pt resolution). Baseline note: fb's table used p02_s0 single-seed; the frozen rule uses the 4-seed mean (deltas +9.22/-6.66 vs +9.10/-7.22), verdict unchanged. Asymmetry stands: the ladder weakened but did not kill the hypothesis; the 10x build's same-mix control arm remains the confirmation test and is still required",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (p02_s0..s3, p03, p04); docs/lessons/scaling_decision_tree.md section 8",
+   "config": {
+    "points": "p02 (4-seed mean), p03, p04",
+    "thresholds_pt": {
+     "L2": 2.5,
+     "O1": 4.8,
+     "O5": 6.8,
+     "CE": 5.9,
+     "GAP": 4.2
+    },
+    "shape_rule": "tree section 8, frozen before the points landed"
+   },
+   "uncertainty": "3 of 6 points; the closure rate is a small-end estimate and will decay; the 24pt/10x figure is an upper bound",
+   "status": "measured"
+  },
+  {
+   "id": "be.expressive_ladder_reading_p08",
+   "value": "p08 update to the Shape A reading: GAP closure rate is decelerating, measured -- -11.46/-8.95/-4.75 pt per e-fold across 0.2-0.3b/0.3-0.4b/0.4-0.8b, all clear of the 4.2pt threshold. Decomposition: GAP rate = O1 rate - L2 rate; O1 rate +16.7/+10.9/+8.3 (decelerating but still readable at the largest segment), L2 rate +3.6/+2.1/+3.6 (saturating but still moving) -- the GAP deceleration is O1-driven. Ruling: the constant-rate extrapolation (24pt/10x) is dead; the 10x build's expected expression gain is 3-18pt of a 64pt gap under any projection, so the 10x build is NOT justified on expression grounds (even the high end leaves 46pt). But 'volume substantially stops at 0.8b' is NOT supported: O1 still rises at +8.3pt/e-fold, and the power-law integration (~3pt remaining) is a 3-secant extrapolation with an unchosen form -- signal, not number, the same chained-extrapolation shape fb flagged for tilerl. p16/p324 pin the curvature: 0.8b->1.6b rate near -2.4 supports the power law, near -4.75 means the deceleration was a small-end artefact. Sentence for 3b: 'volume buys expression but is decelerating; the 10x build does not close the expression gap under any measured projection and should not be justified on expression grounds; the composition cap's independent reasoning is unaffected.' Shape A mechanism unchanged",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (p08); docs/lessons/scaling_decision_tree.md section 8",
+   "config": {
+    "point": "p08 = 0.8b",
+    "gap_rates_per_efold": [
+     -11.46,
+     -8.95,
+     -4.75
+    ],
+    "o1_rates_per_efold": [
+     16.7,
+     10.9,
+     8.3
+    ],
+    "l2_rates_per_efold": [
+     3.6,
+     2.1,
+     3.6
+    ],
+    "threshold_pt": 4.2
+   },
+   "uncertainty": "3 secants estimating curvature from 4 points; the power-law form was not pre-registered; the 3-18pt range spans the constant-rate-from-0.8b and aggressive-deceleration ends",
+   "status": "measured"
+  },
+  {
+   "id": "be.expressive_ladder_reading_p16",
+   "value": "p16 update: the pre-registered curvature test (near -2.4 power law / near -4.75 small-end artefact) came back at -10.29 pt/e-fold -- a third branch that kills both the power law and the 3-18pt magnitude qualifier; the test had two branches and the data took a third, recorded as such. Decomposition: O1 rate did not decelerate (14.55/11.12/8.37/9.23 per e-fold, flat-to-up in the last segment); the earlier 'deceleration' was L2 rising and eating GAP closure. L2 has now saturated (94.78->94.05, -0.73 inside the 2.5pt threshold), so GAP/ef converges to O1/ef. Ruling 1: Shape A stands, strengthened -- L2 actually saturated, not merely slowing. Magnitude restated: the gap closes at whatever rate O1 sustains, and O1's rate is unresolved; fb's three illustrative scenarios (9.23/6/4 sustained to 36B) leave GAP 29/39/45 -> 35/25/19pt closure of the 64pt gap; no projection licensed (one non-decaying segment refutes decay without establishing its opposite). Ruling 2 (pre-registered): p324 L2 < 94.05 = 'peaked' (non-monotonic, max <=1.6b), >= 94.05 = 'saturated'; either way L2 retires as a steering metric at 94. Ruling 3 (pre-registered): |p324 O1/ef - 9.23| < 3pt (2x secant noise ~1.5pt derived from O1 seed SD 1.02) makes 'flat ~9' the working assumption for the 10x decision; otherwise the rate is unresolved and the 10x flies without a rate estimate, control arm decides. minimal_pairs 81.23->75.09 is unreadable (no seed variance on file); cheap fix is running it on the 4 existing 0.2b seeds, threshold 4.65*s_M. C-Eval 23.7 at chance across five points: floor metric, no information. 44 ruled math-500 contamination hits false positives (0 exact) -> L1 clean to run",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl (p16); docs/lessons/scaling_decision_tree.md section 8",
+   "config": {
+    "point": "p16 = 1.6b",
+    "gap_rates_per_efold": [
+     -11.47,
+     -8.93,
+     -4.76,
+     -10.29
+    ],
+    "o1_rates_per_efold": [
+     14.55,
+     11.12,
+     8.37,
+     9.23
+    ],
+    "l2_rates_per_efold": [
+     3.08,
+     2.19,
+     3.61,
+     -1.05
+    ],
+    "l2_levels": [
+     94.78,
+     94.05
+    ],
+    "thresholds_pt": {
+     "L2": 2.5,
+     "GAP": 4.2
+    },
+    "p324_prereg": {
+     "l2_peaked_if": "L2 < 94.05",
+     "o1_flat_band_pt": 3.0
+    }
+   },
+   "uncertainty": "the curvature test had two pre-registered branches and the data took a third; the 19-35pt range is fb's illustrative scenarios, not a projection; one segment does not establish a flat rate",
+   "status": "measured"
+  },
+  {
+   "id": "be.reasoning_panel_prereg",
+   "value": "pre-registered instrument stack for the reasoning-model objective (code+math, ~30B tokens), written before 3.24b lands (docs/lessons/reasoning_panel.md). Core gap: math_v2_like 94.69 is the two-way for math; there is NO open-ended math number -- the generation half does not exist. Stack: L0 math_v2_like (discrimination, exists, moving) + code discrimination by execution-ranked likelihood (GAP, needs building); L1 few-shot continuation math (zero GPU, prompt change, the format bridge -- base models read 0/500 on zero-shot partly for format reasons, not pure capability); L2 light SFT -> pass@k (the real instrument, one SFT run). Q1 verdict experiment: L1 on 3.24b, N>=500 -- non-zero (>2delta, delta=1.4/sqrt(N)=6.3pt@500) means the instrument exists; zero means L2 is the only path, and if L2 also reads zero, reasoning production has NO instrument at 200M (the round's most important conclusion -- changes measurability before achievability). Verifiability asymmetry: math/code answers are execution-checkable -- label error is binomial (1.4/sqrt(N)), no judge, no seed variance in the label, sharper than NLL's sigma-hat=0.0516; A/B on reasoning mixes uses pass@k with binomial+seed error, likely sharper than NLL A/B. Section 8 shapes: the LOGIC carries over (discrimination saturates while generation moves = capacity; discrimination moves, generation flat = composition) but the METRICS do not (lambada is expression, not reasoning) -- section 8 stays, reasoning gets a sibling with its own generation half (L1/L2 pass@k) and discrimination half (math_v2_like + code); the shapes cannot fire until the generation half exists. Code discrimination instrument is a parallel prerequisite for the 30B build",
+   "measured": "2026-08-30",
+   "source": "docs/lessons/reasoning_panel.md; aupai-fb task 2026-08-30 (objective change)",
+   "config": {
+    "objective": "reasoning model (code+math, ~30B tokens)",
+    "instruments": [
+     "L0 math_v2_like",
+     "L0' code discrimination (gap)",
+     "L1 few-shot continuation",
+     "L2 SFT pass@k"
+    ],
+    "q1_test": "L1 few-shot math on 3.24b, N>=500, delta=6.3pt",
+    "binomial_resolution": "delta=1.4/sqrt(N), 500->6.3pt, 1000->4.4pt"
+   },
+   "uncertainty": "L1 is a prompt bridge, not a capability guarantee -- non-zero is necessary but not sufficient for L2; the format/capability decomposition is itself uncertain",
+   "status": "recorded"
+  },
+  {
+   "id": "be.minimal_pairs_seed_variance",
+   "value": "minimal_pairs seed variance at 0.2b (new arch, attn_every 4): mean 73.74%, sd 2.47pt, range 5.78pt (s0=72.92, s1=74.73, s2=76.53, s3=70.76). df=3. Readable-move threshold: |Delta| >= 4.65*2.47 = 11.5pt (t-based, df=3, 4-seed mean vs 1-seed). The ladder wobble (81.23->75.09->77.26) is mostly within seed noise; 81.23->75.09 (6.14pt) is ~2.5sigma, suggestive not conclusive.",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl, ckpt_p02_s0..s3, minimal_pairs.overall",
+   "config": {
+    "checkpoints": "ckpt_p02_s0..s3, new arch, attn_every 4, 0.2b, seeds differ only",
+    "metric": "minimal_pairs.overall (277 pairs, 5 dimensions)",
+    "n_seeds": 4,
+    "df": 3
+   },
+   "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
+   "status": "measured",
+   "boundary": "277 pairs is a de-risked prototype, not the 1000-pairs-per-dimension target. sd may shrink with more pairs. Per-dimension sd not computed (some dimensions have n<50)."
+  },
+  {
+   "id": "be.math_v2_like_seed_variance",
+   "value": "math_v2_like seed variance at 0.2b (new arch, attn_every 4): mean 79.05%, sd 3.11pt, range 6.84pt (s0=76.69, s1=77.22, s2=83.53, s3=78.75). df=3. Readable-move threshold: |Delta| >= 4.65*3.11 = 14.5pt (t-based, df=3, 4-seed mean vs 1-seed).",
+   "measured": "2026-08-30",
+   "source": "runs/score_matrix.jsonl, ckpt_p02_s0..s3, math_v2_like.overall",
+   "config": {
+    "checkpoints": "ckpt_p02_s0..s3",
+    "metric": "math_v2_like.overall (3012 items, 9 families)",
+    "n_seeds": 4,
+    "df": 3
+   },
+   "uncertainty": "df=3 -- sigma CI factor ~[0.6, 2.9]; point estimates as computed",
+   "status": "measured",
+   "boundary": "s2 is an outlier (83.53 vs mean 79.05); with only 4 seeds, one outlier inflates sd. Per-family sd not computed."
+  },
+  {
+   "id": "be.expressive_ladder_reading_p324",
+   "value": "p324 panel: L2 95.51, O1 41.30, GAP 54.21, math 95.25, mp 77.26, CE 22.4; O1/ef=+5.67 (1.6b->3.24b). Both pre-registered rules fired as written: (1) L2 95.51 > 94.05 -> saturated not peaked, the 1.6b dip was noise; L2 retires as a steering metric at ~95 either way. (2) O1/ef 5.67 is outside the +-3pt band around 9.23 -> rate UNRESOLVED; the 10x build proceeds without a rate estimate, same-composition control arm decides. No trend read into the five secants 14.55/11.12/8.37/9.23/5.67. minimal_pairs reversed (75.09->77.26): both of the round's negative readings were at 1.6b and both reverted at 3.24b -- recorded as a pattern; but p16's fit residual is -0.0002, exactly on the curve, so the 1.6b oddity lives in the panel metrics, not the NLL. GAP across the full ladder: 74.40 -> 54.21, 16x in D for 20pt, still 54pt wide. Lesson carried (fb): a pre-registered test needs the 'neither' branch stated -- the curvature test had two branches (-2.4/-4.75) and the data took a third (-10.29); a test with no cell for the observed outcome is under-specified and the reading is post-hoc even though the test was written first.",
+   "measured": "2026-08-30",
+   "source": "aupai-fb panel scores 2026-08-30; docs/lessons/scaling_decision_tree.md section 8 (p324 update)",
+   "config": {
+    "point": "p324 = 3.24b",
+    "l2_rule": "L2 < 94.05 = peaked, >= 94.05 = saturated; either way retires",
+    "o1_band_pt": 3.0,
+    "gap_ladder_pt": [
+     74.4,
+     54.21
+    ]
+   },
+   "uncertainty": "five secants do not establish a rate either way; the 1.6b-reverts pattern is n=2",
+   "status": "measured"
+  },
+  {
+   "id": "be.panel_independence_ruling",
+   "value": "Ruling on fb's correlation matrix (n=6 ladder points): the WEAK reading is correct and sufficient -- L2/O1/O5/math_v2_like/dloss are redundant ALONG THE D AXIS, not in general. Along a single scaling axis anything that improves with scale correlates with anything else that improves with scale; the matrix cannot separate 'redundant metric' from 'different capability that happens to scale together'. But D-axis decisions only need D-axis redundancy: a metric that is an approximate deterministic function of val loss along D carries no D-decision information regardless of what capability it measures. The matrix does NOT license retiring them as capability measures -- the counterexample is in the panel: L2 and O1 correlate 0.94 along D yet their CONTRAST (GAP) is the expression steering quantity. n=6 CIs are wide (r=0.90 -> 95% CI ~[0.36, 0.99]): 'one dimension' is suggestive not conclusive; the action (demote from D-steering voices) is robust to the CI, GAP kept either way. Panel reorganised by capability axis: dloss (D master), GAP (L2/O1 demoted to inputs), math_v2_like (math-axis representative, not D-steering), minimal_pairs (only verified independent signal), C-Eval dead (floor), O5 demoted to diagnostic (r=1.00 with dloss). Admission criterion for new metrics (e1's reasoning metrics, 44's code eval): a seat is earned by separating on a NON-D axis -- (1) composition: 10x same-mix control arm vs build arm; (2) training stage: base vs SFT; (3) architecture: attn_every A/B. Operationalised: regress on D (or val loss), residuals are noise -> D-redundant, then test separation on a non-D axis. D-redundant AND never tested on another axis = candidate for demotion from the D panel, never for deletion. Code discrimination and L1/pass@k will correlate with everything along D -- expected, not a defect; their seats are guaranteed by capability-axis coverage, the independence test decides their steering voice not their existence.",
+   "measured": "2026-08-30",
+   "source": "aupai-fb correlation matrix 2026-08-30; docs/lessons/reasoning_panel.md section 8",
+   "config": {
+    "matrix_n": 6,
+    "redundant_block": "L2/O1/O5/math/dloss, pairwise r=0.90-1.00",
+    "independent_signal": "minimal_pairs r=0.48-0.72",
+    "admission_axes": [
+     "composition (10x control arm)",
+     "training stage (base vs SFT)",
+     "architecture (attn_every A/B)"
+    ]
+   },
+   "uncertainty": "n=6 correlation CIs are wide; the weak-vs-strong distinction is load-bearing for the deletion question and the weak reading is deliberately all that is claimed",
+   "status": "recorded"
+  },
+  {
+   "id": "be.l1_fewshot_p324",
+   "value": "L1 verdict (pre-registered 2026-08-30 before p324 landed): base p324 + 3-shot plain-text continuation, math-500, exact-match: 1/497 = 0.2%, binomial delta=6.3%, instrument-exists threshold 2*delta=12.6% -> INSTRUMENT DOES NOT EXIST on this axis. The zero is VALID, not degenerate: answer-present rate 63.6% (model emits boxed/答案是 answers in coherent Chinese math text) but the answers are wrong -- generations continue the demo pattern instead of binding to the target question; a capability/instruction gap, not a format gap, not token salad. dtype verified clean: 44's direct measurement logit diff 0.00000 (A_log/dt_bias were always bf16 in training, train.py:1626 whole-model cast, --fp8 no fp32 master; the inference .to(bf16) was a no-op; loader a3a0de0 upcasts to fp32 for the Triton path regardless). Second leg: base 3-shot code-500 = 0/497 = 0.0% (fb, code_fewshot_p324.log) -- both domains below the 12.6pt instrument threshold. SFT axis CLEAN reading (final 2026-08-30): code_zh.py on ckpt_sft_p324_v2.pt = 11/500 = 2.2% -- still below the 12.6pt instrument threshold, reads zero; the 11 correct are all simplest-template problems (9 list-sum/mean, 2 sum/diff, 1 list-find), single-template pattern completion not generalization, no-fence rate 87.8%; pack verified clean (de's sft_pack_uncontaminated 0/36 on code_holdout_500 + fb manual per-token probe 0/40). v1 (contaminated pack, 19/20 code holdout inside) is void; its code-500 = 83/500 = 16.6% (runs/code_zero_sft_v1.log) is contamination-contrast only, with the caveat that v1 vs v2 also differ in a short_conv implementation (v1 inside the 12:42-13:25 multiply-add window, v2 outside; mathematically equivalent, bf16 accumulation order differs, seed-noise magnitude, cannot move 13 points, but the caveat is carried). Post-SFT math_zh is a retired metric (30% containment) and takes no part in the verdict. Demo-count sweep (--demos 0|1|3): 0-shot = 0/497 = 0.0% (empty-continuation 2.2%), 1-shot = 0/497 = 0.0% (empty-continuation 0.0%), 3-shot = 0/497 = 0.0% (non-empty 98.4%) -- demo-interference hypothesis FALSIFIED: 0-shot does not beat 3-shot, the failure is not demo regurgitation, base has no code generation in this regime with or without demos. Present rate 97.8% / 100% / 98.4% -- ceiling-pinned, no range, cannot confirm or falsify the demo-gain prediction (same disease as the accuracy floor: one at ceiling, one at floor, neither has resolution; a probe that cannot give the opposite result is not evidence). The pre-registered present-rate branch landed: 0-shot present 97.8% ~= 3-shot 98.4% => format comes from pretraining, demos added nothing (code side; math side 0-shot 25.4% vs 3-shot 63.6%, demos +38.2pt -- unified in the mechanism below). Math-arm accuracies 0.4%/1.4%/0.2% all floor, 2delta=12.6pt: no difference between them is interpretable; accuracy criterion labelled floor-unjudgeable, pre-registered text retained. 1-shot final: 7/497 = 1.4% accuracy (floor), present rate 53.5% -- math dose-response 25.4%/53.5%/63.6% across 0/1/3 demos, monotone with diminishing returns (+28.1pt then +10.1pt), consistent with saturation as the format gap closes. Zero-mechanism asymmetry (fb 2026-08-30): base 0-shot 97.8% writes code-shaped text all wrong (shape right, content wrong); SFT v2 no-fence 87.8% (shape degraded) -- both read zero but SFT made the code shape WORSE; 'shape improves monotonically after SFT' is falsified at the only place it was measured -- a law with a counterexample cannot be a default. SFT's format effect direction is measured negative on code; whether it is also negative on L2 is unmeasured, therefore L2 prompt format is verified separately (counterexample = fact, extrapolation = extrapolation, kept apart). Demo-gain mechanism (b0 math numbers merged 2026-08-30, written as prediction not summary): the math side (25.4->53.5->63.6, monotone, diminishing, 38pt span) is the EVIDENCE -- a dose-response curve that can falsify the mechanism; the code side (97.8-100%) is ceiling, boundary condition only. PREDICTION: in any domain, the higher the present-rate baseline, the smaller the demo gain; the next test needs a domain with baseline present-rate in the middle range (30-70%). CONCLUSION (fb 2026-08-30, written into the panel): 200M has no measurable code generation in this regime -- base zero at all three demo doses, clean SFT also reads zero. L2 (pass@k) is the only remaining path, and the SFT-shape-degradation counterexample means L2 prompt format must be verified separately, not inherited from SFT assumptions.",
+   "measured": "2026-08-30",
+   "source": "eval/l1_fewshot.py run on pod GPU 7, runs/l1_p324.log, preds_l1_d3.jsonl (497 lines); code legs eval/code_fewshot.py runs/code_base_0shot.log + code_fewshot_p324.log, eval/code_zh.py runs/codezh_sft_v2.log (GPU 6 shared with eval_all, no timing numbers); dtype 44 direct measurement 2026-08-30",
+   "config": {
+    "n": 497,
+    "demos": 3,
+    "delta_pt": 6.3,
+    "threshold_pt": 12.6,
+    "acc": 0.002,
+    "answer_present_rate": 0.636,
+    "format": "plain-text continuation, no ChatML (base saw 1.18% chat domain)",
+    "code_leg": "0/497 = 0.0%",
+    "code_0shot": "0/497 = 0.0%, empty-cont 2.2%",
+    "code_1shot": "0/497 = 0.0%, empty-cont 0.0%",
+    "code_sft_v2": "11/500 = 2.2% (reads zero; 11 correct all simplest-template; no-fence 87.8%)",
+    "demo_interference": "falsified (0-shot == 3-shot == 0/497)",
+    "math_0shot_answer_present": 0.254,
+    "demo_gain_prediction": "higher baseline present-rate => smaller demo gain; math dose-response 25.4->53.5->63.6 is the evidence, code 97.8-100% ceiling-pinned (no range, cannot confirm/falsify); next test needs a 30-70% baseline domain"
+   },
+   "uncertainty": "single greedy run per prompt, no seed variance estimated; the 1/497 correct item is within noise of zero",
+   "status": "measured"
+  },
+  {
+   "id": "be.degeneration_rate",
+   "value": "Degenerate-repetition rate (8-gram occurring >=3 times, whitespace-tokenized, on the stored gen tail): code base 3-shot 6.6% (33/497), code base 0-shot 25.4% (126/497), code SFT v2 greedy 55.8% (279/500), code SFT v2 t=0.8 17.0% (85/500, final; fb's 20.1% was the 60/299 interim) -- under greedy decoding SFT MORE THAN DOUBLES degeneration vs the zero-shot base (+30.4pt, ~5 delta), but at t=0.8 degeneration drops to 17.0%, BELOW base 0-shot 25.4%: the loop is a property of greedy decoding on this model, not something SFT installed; format-class metrics (fence rate, degeneration) must be reported WITH TEMPERATURE. Capability-class metrics are unaffected and now firmer: t=0.8 accuracy 0.5% vs greedy 2.2%, both floor -- the loop disappeared and the answers are still wrong, the loop was not hiding anything; the suspicion that floor accuracy is a bad-decoder artefact was checked and rejected. Math side (L1 preds, same definition): 0-shot 16.9%, 1-shot 9.3%, 3-shot 8.9% -- demos SUPPRESS degeneration in both domains (code 0->3 shot -18.8pt, math -8.0pt); demos and sampling both break loops, SFT does not -- all three act on the same thing (greedy's deterministic attractors), itself evidence. Cross-domain at 3-shot: math 8.9% vs code 6.6%, comparable. Why the metric belongs: it was measurable all along and stayed invisible for five checkpoints because the panel only recorded accuracy, which reads zero at this scale -- a metric that always reads zero is no metric (the measurement version of the gate rule 'a PASS must say how many things it verified'). History: 363c491 attributed degeneration to 'content, not format'; that attribution was untestable because degeneration was never measured, and it is wrong in spirit -- SFT corpus answers are 89% fenced (model saw the format) yet SFT raised degeneration 2x; format and content are not separable by assertion. Replication note (resolved): fb's first implementation carried a len>=3n floor guard that excluded 3 true positives (a fully-overlapping 8-gram x3 fits in 10 words); fb's 24.7% vs the 25.4% (126/497) canonical value. Guard removed; the other three figures replicate exactly. Lesson (4th this year): a metric's config is bigger than its name -- n=8/k=3 did not define the metric, the min-length guard was part of the definition and went unsaid. KNOWN CEILING: code_zh.py:128 stores gen[-300:] (characters), so the metric measures TAIL degeneration -- a model that answers correctly first and rambles after is misjudged; negligible at 2.2% accuracy but the bias grows as capability rises, then switch to full-storage or online computation. Cross-language caveat: the 300-char window contains different token counts per language (Chinese is denser), so cross-domain absolute levels carry a window-density confound; within-domain comparisons (the SFT-vs-base and demo-dose readings) are unaffected.",
+   "measured": "2026-08-30",
+   "source": "fb report 2026-08-30 (code figures); re-computed on pod: data/eval/preds_code_fewshot.jsonl, data/eval/preds_code_fewshot_0shot.jsonl, data/eval/preds_code_ckpt_sft_p324_v2.pt.jsonl, data/eval/preds_l1_d0.jsonl, data/eval/preds_l1_d1.jsonl, data/eval/preds_l1_d3.jsonl, whitespace-token 8-gram >=3 (definition replicated: 6.6% and 55.8% exact)",
+   "config": {
+    "ngram_len": 8,
+    "repeat_threshold": 3,
+    "min_words": "n -- flag condition only: a generation shorter than n words cannot be degenerate and is counted as non-degenerate IN the denominator (denominator = all rows; de's first implementation excluded short rows from N, which moves math 0-shot from 16.9% to 22.3% -- rejected). A 3n floor was used in fb's first implementation and excluded 3 true positives (24.7% vs 25.4%); a metric's config is bigger than its name",
+    "unit": "whitespace tokens",
+    "window": "gen[-300:] characters (stored tail)",
+    "n": "497 (base code, math arms) / 500 (SFT v2 greedy, SFT v2 t=0.8)",
+    "delta_pt": 6.3,
+    "verdict_rule": "any 8-gram with count >= 3 flags the generation; rate = flagged/N"
+   },
+   "uncertainty": "base-0shot code 24.7/25.4 gap resolved (3n floor guard, removed); SFT greedy canonical 55.8% from the completed 14:04 run, a rerun was in progress at record time (51/85 consistent); single greedy run per arm; gen[-300:] tail window biases against correct-then-ramble models (negligible now, grows with capability)",
+   "guard_phrases": [
+    "退化是内容问题",
+    "content, not format"
+   ],
+   "status": "measured"
+  },
+  {
+   "id": "be.agentic_loop_tokens",
+   "value": "Agentic loop token cost under our frozen vocab (t19, 2026-08-31, 44; e1's two-turn format byte-exact, real answers from sft_all.pt rendered): code call turns (Thought prose + code block, sandbox execution as tool) cost p50=994 / p90=1729 / p99=2608 tokens, so 4096 fits only 1.9 rounds at p90 -- a HARD CONSTRAINT under the current data shape; math call turns (GSM8K expression = call, result = tool) cost p50=18 / p90=21 / p99=22, 188 rounds fit, no constraint. The constraint comes from long Thought prose in the call turn (SFT source shape), not from the context itself -- tool turns are cheap (400 real executions: p50=35 chars, p90=327). Conditional conclusion: try short-call-turn rendering first (nanochat-style '12/60 = ' stops after a few tokens; touches neither architecture nor the frozen recipe); extend context only if that fails. Untested half: whether the model can still reason with short call turns -- a capability question, not a context question, kept separate. zh-en prompt asymmetry: an equivalent-meaning agentic system prompt costs 33 tokens in Chinese vs 36 in English -- per-character more expensive != per-instruction more expensive (Chinese is denser); the 35:65 zh:en token cost is asymmetric. Tool output length is a known upper bound (400 samples; code printing large lists raises it) -- usable in reverse for 30B corpus mining: filter impl+test pairs by tool output length.",
+   "measured": "2026-08-31",
+   "source": "sft_all.pt answer spans (16,543 code / 3,357 gsm with expressions), e1's verified two-turn format (im_start=32768, im_end=32769), 400 sandbox executions for tool output sizing; docs/lessons/scale_36b_plan.md t19 section",
+   "config": {
+    "code_round_tokens_p50": 994,
+    "code_round_tokens_p90": 1729,
+    "code_round_tokens_p99": 2608,
+    "code_rounds_fit_4096_p90": 1.9,
+    "gsm_round_tokens_p90": 21,
+    "gsm_rounds_fit_4096_p90": 188,
+    "tool_output_chars_p50": 35,
+    "tool_output_chars_p90": 327,
+    "zh_prompt_tokens": 33,
+    "en_prompt_tokens": 36,
+    "zh_en_prompt_delta": -3,
+    "zh_en_note": "per-char more expensive != per-instruction more expensive; Chinese denser"
+   },
+   "uncertainty": "tool output sized on 400 random code spans (long-output code is rare but unbounded); code spans come from a Thought-reasoning source -- short-call rendering changes the call-turn length distribution, unmeasured; user question tokens sampled every 11th row",
+   "status": "measured"
+  },
+  {
+   "id": "be.ctx_length_p324",
+   "value": "NoPE context-length probe on ckpt_p324 (eval/ctx_probe.py, pre-registered 2026-08-31 before running): (1) BEYOND 4096 -- paired delta-NLL, each held-out row b scored fresh (4096) and after a (8192); seam delta (distance 4096-4352) = -0.198 nat: extra context HELPS past the training length, no hard boundary. Degradation is SMOOTH: +0.10 nat per 1024 tokens of distance, tail (7936-8190) +0.104 nat; zero-crossing ~6.2K absolute distance -- carried context is useful to ~6K, neutral to ~8K, harmful past that. Reading per pre-registration: SMOOTH DEGRADATION, usable past 4096, solvable with training length -- NOT a hard 4096 wall for the agent loop. (2) WITHIN 4096 -- per-position curve flat after the cold-start bin (pos 0-255 = 3.72, steady state 3.46-3.57, min 3.4575 at 3072-3327, no sustained rise > +0.10 nat): effective budget = 4096, the full nominal context is usable, no hidden shortening. Window NLL over the 8192 run: 3.52/3.49/3.51/3.64. Architecture note: NoPE (no RoPE, no learned positions; 3 gated-MLA full-causal layers mechanically length-free, 9 KDA layers carry position in fixed-size recurrent state) generalizes to unseen distances smoothly -- the two legs' per-leg attribution (which one degrades) is unmeasured, whole-model only; ablation is the follow-up. Design implication: agent loops may exceed 4096 with graceful degradation (~0.1 nat/1024tok); the 30B design is not walled at training length, but context beyond ~6K should be compressed/summarized rather than carried raw.",
+   "measured": "2026-08-31",
+   "source": "eval/ctx_probe.py (commits 847c8da, 95902eb, b34cdd7); pod GPU 7 run, durable artifact runs/ctx_probe_p324.json (committed); same held-out head as score_matrix domain_loss (domain_files + head_texts, packed with EOS)",
+   "config": {
+    "ckpt": "ckpt_p324.pt",
+    "train_seq": 4096,
+    "probe_seq": 8192,
+    "n_pairs": 256,
+    "bin_tokens": 256,
+    "seam_threshold_nat": 0.1,
+    "seam_delta_nat": -0.1984,
+    "slope_nat_per_1024": 0.1007,
+    "tail_delta_nat": 0.1038,
+    "effective_budget": 4096,
+    "zero_crossing_distance": "~6200 tokens (linear interpolation of the delta curve)"
+   },
+   "uncertainty": "single greedy run, single checkpoint; per-leg KDA-vs-MLA attribution not measured; zero-crossing is a linear interpolation of binned means, not a direct measurement; held-out head is the score_matrix domain_loss data, comparable to the ladder val figure",
+   "status": "measured"
+  },
+  {
+   "id": "be.readout_30b_prereg",
+   "value": "Pre-registered readout for the 30B-token pretrain (t22), frozen before launch (docs/lessons/readout_30b_prereg.md). Milestones 3.24B/8B/16B/30B tokens; the 3.24B milestone is PAIRED against ladder point ckpt_p324 (same arch, same tokens, old mix) to isolate the corpus change. Per-metric n, change-threshold, decision rule: code-500 accuracy n=500 threshold 12.6pt (binomial 2delta, delta=1.4/sqrt(500)=6.3pt) -- >12.6% at 30B = code generation exists, continue to RL gate; floor = stop the reasoning-axis claim, report negative. math-hard pass@1 n>=1000 threshold 8.8pt (2delta @ n=1036), same rule. pass@8-pass@1 gap threshold 15pt = the RL gate (>=15pt: RL may start; <15pt: nothing to amplify, reading 'not RL is useless but nothing on this checkpoint for RL to amplify'). MC suite (ceval+mmlu+arc-easy): ceval readable move 5.9pt (seed SD 1.27pt x 4.65, be.panel_expressive_seed_variance), English three at chance+2delta floor (25% each) -- tripwire not a stop: ceval drop >=5.9pt = mix damaged general capability, change mix; rise = supporting only. Per-role domain loss (8 roles, 4000 rows/role) threshold 0.1176 nat (2.28 x sigma-hat, sigma-hat=0.0516, ds.seed_variance_0p2b): improvement >=0.1176 vs the ladder point on the same held-out heads = mix bought that role; flat at 30B = role weight buys nothing measurable, change-mix candidate -- the only metric that can say 'change mix' per role. degenerate_rate: binomial 2delta at its n, reported BESIDE every accuracy, never as substitute (v2: 55.8% degenerate at greedy vs 2.2% correct); format metrics carry their temperature. What the 3.24B pair CANNOT say: (1) anything about the 30B mix beyond 3.24B tokens -- execution-signal (7%) and long-CoT (15%) roles have only 0.23B/0.49B tokens seen at that point, and generation is on the floor anyway; (2) anything where base-eval resolution is below the expected effect -- resolution stated next to each metric, 'no readable effect' is not 'no effect'; (3) causal attribution between roles (all 8 change at once; per-role loss localizes WHERE not WHICH; causal needs the reweight A/B); (4) the pair has a WARMUP CONFOUND: ladder point warmup=20 vs 30B run warmup=300 (8.5% vs 0.57% of the 3.24B run at reduced LR; direction known to drag early loss, 0.2b smoke: warmup 2 vs 20 cost 0.52 val) -- if the 30B milestone reads BETTER past threshold the corpus effect is real (warmup drag can only attenuate); if it reads WORSE the pair is unreadable for the mix question, clean reads at 8B/16B/30B (warmup share 3.7%/1.9%/0.9%); escape hatch = same-recipe warmup=300 3.24B control (~1.7h), run ONLY if the 3.24B milestone reads worse than the ladder point (block time is the scarcest resource; a better/flat pair buys nothing from the control). Reading rules: floor != no effect (floor readings labelled floor-unjudgeable, pre-registered text never deleted); final 30B verdict is three-state per metric -- moved (past threshold, with direction) / floor (unjudgeable) / flat (readable but under threshold) -- flat and floor are distinct negatives, never merged. Reachable states per metric (44 review focus): code-500, math-hard pass@1, ceval, per-role domain loss can only be moved-or-floor (decision threshold = readability limit, no flat band); the RL pass@8-pass@1 gap can be moved/flat/floor (15pt decision threshold > ~1-2pt readability of the paired gap at n=1036 -- the 200M reading of 3.5pt is FLAT, not floor); degenerate_rate is a beside-accuracy metric, not a standalone verdict. Floor and flat have different follow-ups (floor -> change instrument or add n; flat -> effect is genuinely small, change lever).",
+   "measured": "2026-08-31",
+   "source": "docs/lessons/readout_30b_prereg.md (frozen before t22 launch); recipe docs/lessons/scale_36b_plan.md §1b; thresholds from be.panel_expressive_seed_variance (ceval 5.9pt), ds.seed_variance_0p2b (sigma-hat 0.0516), be.degeneration_rate (2delta binomial), be.ctx_length_p324 (seq 4096 unchanged)",
+   "config": {
+    "run": "t22, 30B tokens, seq 4096, warmup 300, 7x16x2 (effective batch 224), ~16h @ 524K tok/s, mix data/mix_scale_30b.json",
+    "milestones_tokens": [
+     3240000000,
+     8000000000,
+     16000000000,
+     30000000000
+    ],
+    "pair_baseline": "ckpt_p324.pt (ladder 3.24B point, same arch, warmup=20 -- confound declared)",
+    "thresholds": {
+     "code_500_accuracy_pt": 12.6,
+     "math_hard_pass_at_1_pt": "8.8 at n=1036 (2delta, scales with n)",
+     "rl_gate_pass8_minus_pass1_pt": 15,
+     "ceval_readable_move_pt": 5.9,
+     "english_mc_floor": "chance + 2delta (25% each)",
+     "per_role_domain_loss_nat": 0.1176,
+     "degenerate_rate": "binomial 2delta at its n, beside accuracy"
+    },
+    "status": "pre-registered, no data seen"
+   },
+   "uncertainty": "thresholds are binomial/seed-variance derived, not effect-size guesses; the warmup confound on the 3.24B pair is declared with its direction but its magnitude at 3.24B is unmeasured; math-hard n is a lower bound (actual n recorded at run time, threshold scales as 1.4/sqrt(n))",
+   "status": "recorded"
+  },
+  {
+   "id": "be.sft_v3_code500",
+   "value": "SFT v3 (document mask fa True, same pack/base/hparams as v2) code-500 greedy = 200/500 = 40.0%, degenerate_rate 21.8%; v2 = 11/500 = 2.2%; base 0-shot = 0/497. Three-state verdict (t20 review, 2026-08-31): (1) the doc-mask effect is REAL -- 2.2->40.0 with one variable changed; (2) the 40% is in-distribution TEMPLATE RECALL, not capability: 0/500 questions verbatim in the current pack (first-24-token exact subsequence probe over all 46938 rows; cont.sft_all_code_holdout_leak's 19/20 was the OLD 53,104-row pack, rebuilt 13:30 with fresh holdout hashes), but the holdout was carved from synthetic/code_python_zh.jsonl which remains prepare_sft.py SOURCES[7], so 2413 same-template sibling rows entered the pack (2026 assignable to the 24 holdout families); 389/500 questions have a >=0.8 bigram sibling; corr(family training dose, v3 acc) = 0.69 over 29 families -- v3 learned 8/10 families with >=120 same-template rows (sum/mean 132 rows->100%, even-filter 143->89%, sum/diff 120->83%, bubble-sort 139->79%, max/min 143->73%, find-index 158->52%, GCD 149->51%, even-sum 149->42%) and ~0/19 families below 120 rows; dose is necessary not sufficient (vector-sum 162 rows->0%, dedup 120->0%, count-threshold 141->3%); v2's 11 correct sit in the same high-dose families (sum/mean 8, sum/diff 2, find 1) -- v2 saw the templates but greedy degeneration (55.8%) collapsed the loop, the mask fixed the loop and recalled the same templates; (3) base 0/497 stays the no-SFT reference. The 40% is not evidence of code capability: it is evidence the mask unlocked recall of template families with sufficient training dose.",
+   "measured": "2026-08-31",
+   "source": "preds_code_ckpt_sft_p324_v3.pt.jsonl / preds_code_ckpt_sft_p324_v2.pt.jsonl / preds_code_fewshot_0shot.jsonl (pod data/eval/); family dose table runs/t20_family_dose.txt; verbatim probe /tmp/probe_pack_leak.py on the pod (current sft_all.pt, 46938x4097)",
+   "config": {
+    "n": 500,
+    "denominator": "all 500 code-holdout questions, greedy, max_new=512",
+    "threshold": "12.6pt (2delta, delta=1.4/sqrt(500)) -- 40.0% clears it but the reading is template recall by the family dose-response",
+    "variable": "document mask fa True only; same pack sft_all.pt (46938 rows), same base ckpt_p324, same hyperparameters (per e1's t20 readout)",
+    "family_metric": "normalized-instruction clustering (numbers->#, lists->[...], whitespace stripped): 24 multi-question families cover 495/500",
+    "dose_metric": "sibling rows from the carve source (synthetic/code_python_zh.jsonl minus the 500 carved questions) assignable to a holdout family by normalized instruction",
+    "sibling_containment": "unweighted char-bigram coverage of the holdout question by its nearest sibling row; differs from the scanner's IDF-weighted metric (cont.scanner_idf_weighting)"
+   },
+   "uncertainty": "dose counts SOURCE rows, not pack rows -- prepare_sft may drop some at pack time (direction: overstates dose slightly). Sibling containment is unweighted; the scanner's IDF-weighted 0.8 on the same file (incl. self-matches) was 438/490, same ballpark. v3 hparams identical-to-v2 is per e1's readout, not independently re-derived.",
+   "status": "measured"
+  }
+ ]
 }
