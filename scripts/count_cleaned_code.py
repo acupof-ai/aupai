@@ -17,10 +17,8 @@ were the fetch target); if not, the 73.6B code-supply figure changes by the gap.
 Usage (on pod): python3 scripts/count_cleaned_code.py
 """
 import glob
-import hashlib
 import json
 import os
-import sys
 
 from tokenizers import Tokenizer  # type: ignore
 
@@ -33,7 +31,6 @@ def main():
     kept = 0
     tokens = 0
     tb = 0  # text UTF-8 bytes of kept docs
-    fp_checked = True
     for shard in SHARDS:
         with open(shard, encoding="utf-8") as f:
             for line in f:
@@ -60,8 +57,6 @@ def main():
     if os.path.exists(sp):
         stats = json.load(open(sp))
     fp = stats.get("filters_fp")
-    if not fp:
-        fp_checked = False
 
     per_file = tokens / max(1, len(SHARDS))
     project = 751303817  # 751.3M tokens/file projection measured 2026-08-30
