@@ -35,6 +35,11 @@ SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 
+
+class SelftestSkip(Exception):
+    """A broken world cannot be built on this checkout (missing untracked file).
+    The check itself SKIPs for the same reason, so the selftest skips too, out loud."""
+
 # --------------------------------------------------------------------------- workspace root
 # One root, configured once. AUPAI_ROOT resolves to an absolute path; every data
 # location the pipeline steps write derives from it. Default: the repo root.
@@ -308,6 +313,8 @@ def _tiny_tokenizer_json(eos_id=1, with_num=True):
 
 
 def _broken_tokenizer(eos_id=1, with_num=True):
+    if not os.path.isfile(os.path.join(ROOT, "data", "tokenizer.json")):
+        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it")
     d = _tmp_repo()
     json.dump(
         _tiny_tokenizer_json(eos_id, with_num),
@@ -934,7 +941,10 @@ def _broken_sft_pack_uncontaminated():
     open(os.path.join(d, "scripts", "harness.py"), "w").close()
 
     # Real tokenizer and eval files, so the probe encodes real questions.
-    shutil.copy(os.path.join(ROOT, "data", "tokenizer.json"), os.path.join(d, "data", "tokenizer.json"))
+    tok_src = os.path.join(ROOT, "data", "tokenizer.json")
+    if not os.path.isfile(tok_src):
+        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it")
+    shutil.copy(tok_src, os.path.join(d, "data", "tokenizer.json"))
     eval_dir = os.path.join(d, "data", "eval")
     os.makedirs(eval_dir, exist_ok=True)
     for fname in ["math_test_500.jsonl", "code_holdout_500.jsonl"]:
@@ -3297,7 +3307,11 @@ def _demo():
     synthetic_world = {"no_oversized_blob", "env_importable"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
-        root = broken()
+        try:
+            root = broken()
+        except SelftestSkip as e:
+            print(f"  SKIP {name}: {e}")
+            continue
         try:
             if name not in synthetic_world and not any(
                 os.path.exists(os.path.join(ROOT, os.path.relpath(os.path.join(dp, f), root)))
