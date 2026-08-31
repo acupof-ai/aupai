@@ -1007,3 +1007,32 @@ A review reports what it *ran*, not what it read.
   this not moved". Rule: **a long fetch needs a per-file progress log under `runs/`,
   bounded retry per shard rather than a fatal check, resume from `.part`, and a monitor
   that fires on both "process gone" and "bytes unchanged while process alive".**
+- **The SFT verdict was measured on a broken objective.** Every SFT number of 2026-08-31
+  morning came from `ckpt_sft_p324_v2`, trained after the 11:58 restart with `fa False`,
+  i.e. no document mask: ~11–12 packed documents attending across each other per 4097-token
+  row. The 7-card replica with the mask on (`ckpt_sft_p324_v3`, same pack, base, batch,
+  epoch) scores code-500 greedy **40.0% (200/500)** against v2's 2.2%; degenerate_rate
+  21.8% vs 55.8%; base 0/497 unchanged (single prompts, no `cu`). "SFT installs shape, not
+  capability" and "the lever is pretraining volume" are withdrawn as measured conclusions;
+  the RL gate (1.0/4.5 on v2) is void and re-measured on v3 (t27). Whether 40% is capability
+  or template recall is open (per-family breakdown + code-holdout containment, t20 review).
+  Rule: **a checkpoint's provenance includes the attention path it trained under; `fa`
+  and `doc_mask` are printed at startup and are part of the row.**
+- **`gen[-300:]` in a preds file is not the generation.** The controller held the 40% for
+  twenty minutes because the first two `ok=True` rows read as pure repetition — the stored
+  field was the tail of a generation whose front held correct code (162/500 rows sat at
+  the cap). The scorer was sound (execution match on the full generation); the artifact
+  could not show it. Fixed: preds carry the full generation and the expected output, and
+  `scripts/rescore_code.py` reproduces the accuracy from the file alone (t28). Rule: **a
+  score's artifact must be sufficient to recompute the score; otherwise it is a log.**
+- **A frozen corpus directory had a live writer, and the gate saw it three times.** A
+  `build_corpus.py --domain code --filters light` process (started 11:55 for the new
+  RedPajama code) wrote ten shards into `data/corpus/code/`, the domain every ladder mix
+  and A/B arm reads. `_assert_mix_domains` stopped the A/B at startup: first with a
+  changed fingerprint, then — after the shards were moved out but the process was not
+  killed — with a fingerprint that differed *between ranks* (rank0 `4d4c81…`, rank1/4/5
+  `e18a9c85…`), the signature of bytes changing while being read. The writer was killed by
+  exact PID; new corpus goes to `data/corpus/code_rp1t/`. Rules: **directories named by a
+  ladder mix are frozen; a restart is not complete until the old PID is gone (`pgrep -af`
+  before reporting); a fingerprint that differs across ranks means a live writer, not a
+  stale stamp.**
