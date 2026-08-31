@@ -173,10 +173,14 @@ def _manifest_ms_finemath_4plus():
 
 def _manifest_ms_om2():
     """cot role (ModelScope, 2026-08-31): OpenMathInstruct-2, 55 data parquet
-    (small, under the finemath large-file abort; direct, no chunking)."""
+    (small, under the finemath large-file abort; direct, no chunking). The
+    manifest names carry a `data/` subdir prefix; the download writes
+    `-o <out>/<name>.part`, so a non-empty dir part fails to create and curls
+    exit 23 (write error) -- flatten the LOCAL name to the basename, keep the
+    URL path so the file still resolves on the LFS repo."""
     names = open(os.path.join(ROOT, "data", "raw", "ms_om2_manifest.txt")).read().split()
     base = "https://www.modelscope.cn/datasets/AI-ModelScope/OpenMathInstruct-2/resolve/master/"
-    return [(n, base + n, 0) for n in names]
+    return [(n.split("/")[-1], base + n, 0) for n in names]
 
 
 

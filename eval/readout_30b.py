@@ -226,8 +226,17 @@ def param_line(ckpt_name, ckpt_dir=None):
     return f"{uniq / 1e6:.1f}M (tied head; state_dict {total / 1e6:.1f}M)"
 
 
+#: Two checkpoints differenced across different token budgets bias every metric
+#: toward "flat" -- the false negative this readout exists to prevent. 5%: the
+#: readable-move thresholds are 2-5% effects, so a larger budget gap can produce or
+#: erase one on its own (fb, 2026-08-31, after a 2.753B checkpoint was nearly
+#: differenced against a 3.24B pair).
+BUDGET_MISMATCH_LIMIT = 0.05
+
+
 def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens,
-            milestone_profile="milestone", paired_profile="full", selftest=False, ckpt_dir=None):
+            milestone_profile="milestone", paired_profile="full", selftest=False, ckpt_dir=None,
+            actual_tokens=None, paired_tokens=None):
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
     m_rec = load_score_record(score_matrix, milestone, milestone_profile)
     p_rec = load_score_record(score_matrix, paired, paired_profile)
@@ -239,6 +248,22 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
     if p_dl is None and p_rec and "domain_loss" in p_rec.get("metrics", {}):
         p_dl = {"ckpt": paired, "domains": {k: v for k, v in p_rec["metrics"]["domain_loss"].items() if isinstance(v, dict)}}
 
+    # Budget header, and a refusal when the two are not comparable.
+    if actual_tokens or paired_tokens:
+        a_t = actual_tokens or milestone_tokens
+        p_t = paired_tokens or milestone_tokens
+        print(f"budgets: milestone {a_t / 1e9:.3f}B tokens, paired {p_t / 1e9:.3f}B tokens", end="")
+        if a_t and p_t:
+            gap = abs(a_t - p_t) / max(a_t, p_t)
+            print(f", gap {gap:.1%}")
+            if gap > BUDGET_MISMATCH_LIMIT:
+                print(f"\nREFUSING to judge: the budgets differ by {gap:.1%} (limit "
+                      f"{BUDGET_MISMATCH_LIMIT:.0%}). Differencing metrics across different "
+                      f"token budgets biases every one toward 'flat' -- the false negative this "
+                      f"readout exists to prevent. Score a checkpoint at the pair's budget.")
+                return False
+        else:
+            print()
     print(f"=== 30B readout: {milestone} vs {paired}" + (" (3.24B pair, warmup confound active)" if is_3p24b else "") + " ===")
     # params for BOTH sides, so a run-log 206.1M paired against a state_dict 239.7M does not
     # read as a size change. Silent when a checkpoint is not on this box -- the readout is a
@@ -424,6 +449,10 @@ def main():
     ap.add_argument("--paired-domain-loss", help="domain_loss.py --json for the paired checkpoint (same heads)")
     ap.add_argument("--milestone-tokens", type=float, help="milestone token budget (3.24e9/8e9/16e9/30e9); activates the warmup-confound rule at 3.24B")
     ap.add_argument("--ckpt-dir", default=ROOT, help="where the checkpoints live (for the params header)")
+    ap.add_argument("--actual-tokens", type=float, default=None,
+                    help="tokens the milestone checkpoint actually saw (step x tokens/step)")
+    ap.add_argument("--paired-tokens", type=float, default=None,
+                    help="tokens the paired checkpoint saw; a >5%% gap refuses the comparison")
     ap.add_argument("--milestone-profile", default="milestone", help="score_matrix profile of the milestone record")
     ap.add_argument("--paired-profile", default="full", help="score_matrix profile of the paired record")
     ap.add_argument("--selftest", action="store_true", help="known-answer dry runs")

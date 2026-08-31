@@ -128,3 +128,13 @@ Stage-1 3.24B 配对隔离的对比与 30B run 的 3.24B 配对**不是同一个
 (code_tests 已 drop——mining 未落地,1.0B 折进 code_rp1t,stage 2 回归;fb 2026-08-31),
 其中 math_seed/cot 是 stage-1 角色名(math_seed 替代 math_owm;cot = numina 直接落地;
 cot_seed 已 drop——fable5 不可训练,fb 2026-08-31),其余 6 角色同名。
+
+## 6. 启动后发现的混杂:stage-1 实际抽取(2026-08-31,tilerl 挑战 / 44 核验)
+
+stage-1 实际调度 3,647,072 行 = **14.9384B tokens,不是合同的 15.000B**。cot 的 epoch cap 在 pool 行上截断(want 310,546 > pool×3 = 295,512),切掉 15,037 行 = 61.6M tokens;cot 是唯一被 cap 的域。cot 实际跑 **2.855 raw-supply-epochs**(3.00 pool-epochs,295,512 行),不是配方的 3.00。步数交叉验证:16,281 步 × 224 × 4096 = 14.9379B,与计划一致。
+
+读法后果:
+
+- 若 math-hard 或任何 cot 敏感指标在任一里程碑读 **flat**,"cot 抽得比配方少"是预注册此前未命名的**活替代解释**——flat 不可直接读作 mix 无效。3.24B 里程碑处绝对差小(cot 占实际调度 8.10% vs 名义 8.48%),随里程碑增大。
+- 所有里程碑的 **n 以实际步数计**(k × 224 × 4096),不以名义 tokens 计;3.24B 配对的 p324 同 tokens 配对不受影响(p324 是独立 run)。
+- 根因已立档:check_mix_supply 用 raw supply × epochs 验证,而 build_mix 在 pool(supply 减 val)× epochs 上 cap——任何被 cap 的域都会少抽。修复已报 de(pool 模型 + broken world)。

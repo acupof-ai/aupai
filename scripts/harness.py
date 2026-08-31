@@ -18,6 +18,7 @@ import argparse
 import ast
 import functools
 import glob
+import inspect
 import json
 import os
 import re
@@ -1619,8 +1620,25 @@ def _is_gitignored(path, root):
 
 
 #: Ledgers that merge by union. Every one must be one JSON object per physical line.
-_UNION_LEDGERS = ("runs/retro.jsonl", "runs/tasks.jsonl", "runs/experiments.jsonl",
-                  "runs/score_matrix.jsonl", "runs/milestones.jsonl")
+def _union_ledgers(root):
+    """Ledgers .gitattributes merges by union, read from .gitattributes itself.
+
+    A hand-kept copy of this list drifts from the file that decides the behaviour:
+    runs/review.jsonl was union-merged from the moment it existed but sat outside the
+    hardcoded tuple, so a pretty-printed review row -- exactly the class this check
+    exists for -- would not have been caught (44's review, 2026-08-31)."""
+    p = os.path.join(root, ".gitattributes")
+    if not os.path.exists(p):
+        return ()
+    out = []
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if line.startswith("#") or "merge=union" not in line:
+            continue
+        path = line.split()[0]
+        if path.endswith(".jsonl"):
+            out.append(path)
+    return tuple(out)
 
 
 def check_review_present(root):
@@ -1716,7 +1734,7 @@ def check_ledgers_one_line_per_row(root):
     merge touching it would have corrupted the neighbouring rows too."""
     bad = []
     checked = 0
-    for rel in _UNION_LEDGERS:
+    for rel in _union_ledgers(root):
         p = os.path.join(root, rel)
         if not os.path.exists(p):
             continue
@@ -1758,6 +1776,14 @@ def _broken_ledgers_one_line_per_row():
     if good is None:
         return None
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    # .gitattributes too: the ledger list is derived from it, so a world without it
+    # has no ledgers and the check SKIPs instead of failing.
+    ga = os.path.join(ROOT, ".gitattributes")
+    if not os.path.exists(ga):
+        return None
+    import shutil as _sh
+
+    _sh.copy(ga, os.path.join(d, ".gitattributes"))
     with open(os.path.join(d, "runs", "retro.jsonl"), "w", encoding="utf-8") as f:
         f.write(json.dumps(good, ensure_ascii=False, indent=1) + "\n")  # the pretty-printed row
     return d
@@ -4571,6 +4597,74 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_milestone_selection():
+    """The watcher never labels a below-target checkpoint as the milestone.
+
+    Known answer from the live incident: target 3500, saves {2000,2500,3000},
+    save_every 500. min(|s-target|) picks 3000 -- exactly save_every away, so the
+    `> save_every` guard does not fire -- and the row then claims 3.24B for a
+    checkpoint that saw 2.753B (e1, 2026-08-31)."""
+    def pick(saved, target, save_every, alive):
+        at_or_past = [x for x in saved if x >= target]
+        if at_or_past:
+            return min(at_or_past)
+        if max(saved) >= target - save_every and alive:
+            return None  # wait for the exact save
+        return max(saved)
+
+    assert pick([2000, 2500, 3000], 3500, 500, True) is None, "must wait, not take step3000"
+    assert pick([2000, 2500, 3000, 3500], 3500, 500, True) == 3500, "exact save wins"
+    assert pick([3500, 4000], 3500, 500, True) == 3500, "never overshoot past an exact hit"
+    assert pick([3600], 3500, 500, True) == 3600, "a save just past the target is a real reading"
+    # the run died before reaching the target: the last save is the best available read
+    assert pick([2000, 2500, 3000], 3500, 500, False) == 3000, "a dead run must not wait forever"
+    # token accounting: the shortfall the label would have hidden
+    short = 1 - (3000 * TOKENS_PER_STEP) / 3.24e9
+    assert 0.14 < short < 0.16, f"step3000 vs the 3.24B label is ~15%, got {short:.3f}"
+    print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
+
+
+def _selftest_monitor_suppression():
+    """The monitor writes no row once a run has a terminal one.
+
+    Runs the real embedded monitor source against a temp ledger, because the bug
+    was in that source and a reimplementation would test the wrong code: t56_profile
+    closed ok 13:34, the monitor appended fail 'log silent' 13:47, and the log stops
+    growing exactly when a run succeeds."""
+    import shutil
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="monsup_")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    exp_log = os.path.join(d, "runs", "experiments.jsonl")
+    with open(exp_log, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-08-31 13:25", "status": "running"}) + "\n")
+
+    # Extract settled() from the real monitor source rather than retyping it.
+    src = _arm_monitor.__doc__ and None  # keep the reference explicit for readers
+    code = inspect.getsource(_arm_monitor)
+    body = code[code.index("def settled():"):code.index("while True:")]
+    ns = {"os": os, "json": json, "exp_log": exp_log, "name": "r1"}
+    exec(compile(body, "<monitor>", "exec"), ns)  # noqa: S102 -- the real source, by design
+    settled = ns["settled"]
+    assert settled() is False, "a running row is not settled"
+
+    with open(exp_log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-08-31 13:25", "status": "ok",
+                            "result": "profile complete"}) + "\n")
+    assert settled() is True, "an ok row must settle the run and silence the monitor"
+
+    with open(exp_log, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "x", "status": "running"}) + "\n")
+        f.write(json.dumps({"name": "r1", "started": "x", "status": "fail",
+                            "result": "killed by harness kill"}) + "\n")
+    assert settled() is True, "a kill record must silence the monitor too"
+    shutil.rmtree(d, ignore_errors=True)
+    del src, sp
+    print("  monitor: no row after a run reaches ok or fail")
+
+
 def _selftest_gate_timeout():
     """Known answer: the gate is cache bytes / _CACHE_READ_GIBPS x2, floored at 600 s.
 
@@ -4609,6 +4703,53 @@ def _selftest_gate_timeout():
     assert secs is None and "unreadable" in note, f"a missing mix must not produce a gate: {secs} {note}"
     shutil.rmtree(d, ignore_errors=True)
     print(f"  gate: 149 GiB -> {int(149 / _CACHE_READ_GIBPS * 2)}s (> the 6m26s real startup), small mix -> {_GATE_FLOOR_S}s floor")
+
+
+def _selftest_killpg_reaps_children():
+    """A kill must reap a child running a DIFFERENT script.
+
+    Local processes, not the pod: the defect is in how the target set is chosen, and
+    that logic is the same either way. pgrep -f on the parent's cmdline cannot match
+    a child with another name -- score_matrix shells out to math_zh, code_zh,
+    run_eval and domain_loss, so one parent kill leaked a child holding 12.7GB on
+    GPU7 while the parent exited cleanly (e1, 2026-08-31)."""
+    import shutil
+    import signal as sig
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="killpg_")
+    child = os.path.join(d, "differently_named_child.py")
+    parent = os.path.join(d, "parent_runner.py")
+    open(child, "w").write("import time\nwhile True: time.sleep(0.2)\n")
+    open(parent, "w").write(
+        f"import subprocess, time\n"
+        f"subprocess.Popen(['{sys.executable}', {child!r}])\n"
+        f"while True: time.sleep(0.2)\n"
+    )
+    proc = sp.Popen([sys.executable, parent], start_new_session=True)
+    try:
+        time.sleep(1.5)
+        pgid = os.getpgid(proc.pid)
+        # the old approach: match the PARENT's cmdline. It cannot see the child.
+        by_pattern = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        assert str(proc.pid) in by_pattern.stdout.split(), "sanity: parent must match its own pattern"
+        child_match = sp.run(["pgrep", "-f", "parent_runner.py"], capture_output=True, text=True)
+        kids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        missed = [k for k in kids if k not in child_match.stdout.split()]
+        assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
+        # the group is what sees everything
+        os.killpg(pgid, sig.SIGTERM)
+        time.sleep(1.5)
+        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        assert not left, f"killpg must reap the whole group, {left} survived"
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+    print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
 
 
 def _selftest_gpu_descendants():
@@ -5166,10 +5307,13 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_milestone_selection()
+    _selftest_monitor_suppression()
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
     _selftest_devs_map()
+    _selftest_killpg_reaps_children()
     _selftest_gpu_descendants()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
@@ -5866,16 +6010,40 @@ def _wait_for_startup(log_path, timeout):
 
 def _arm_monitor(name, pid, log_path, output_path=None):
     """Start a background monitor that marks the exp row when the process dies
-    or the log (and declared output) goes silent for 10 minutes."""
+    or the log (and declared output) goes silent for 10 minutes.
+
+    The monitor never writes a row for a run that already reached a terminal state:
+    t56_profile closed ok at 13:34 and the monitor appended 'log silent' fail at
+    13:47, because the log stops growing precisely when a run finishes. A fail row
+    after a real result is worse than no row -- it inverts the verdict, and
+    score_matrix_present read that stale fail's predecessor as an unscored ok."""
     output_repr = repr(output_path) if output_path else "None"
     monitor_code = f'''
-import os, subprocess, sys, time
+import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
 output = {output_repr}
+exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
 silent_limit = 600
 last_size, last_grow = 0, time.time()
+
+def settled():
+    """True once this run has a terminal row: someone closed it, or harness kill did."""
+    try:
+        with open(exp_log, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if r.get("name") == name and r.get("status") in ("ok", "fail"):
+                    return True
+    except (OSError, ValueError):
+        pass
+    return False
+
 while True:
     time.sleep(60)
+    if settled():
+        break  # a result exists; anything the monitor adds now can only contradict it
     try:
         os.kill(pid, 0)
     except OSError:
@@ -6330,7 +6498,21 @@ def cmd_kill(argv):
           f"monitor {monitor_pids or 'none'}, gpu descendants {gpu_kids or 'none'}")
     if a.dry:
         return 0
-    for hp in children + gpu_kids:
+    # Two mechanisms, because they catch different escapes (de + e1, 2026-08-31):
+    # the process GROUP sweeps everything the setsid'd launch spawned, including
+    # processes holding no card, but misses anything that has left the group (a
+    # double-setsid, a re-parented orphan). GPU descent catches exactly what holds a
+    # card regardless of group. Group kill is the sweep; GPU occupancy is the
+    # acceptance test, because a card held is the thing that actually costs us.
+    pgids = set()
+    for hp in ([parent] if parent else []) + children:
+        r = subprocess.run(["tn", "exec", f"ps -o pgid= -p {hp}"], capture_output=True, text=True)
+        if r.stdout.strip():
+            pgids.add(r.stdout.strip())
+    for pg in pgids:
+        subprocess.run(["tn", "exec", f"kill -TERM -{pg}"], capture_output=True)
+    time.sleep(2)
+    for hp in children + gpu_kids:  # anything the group missed
         subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
     if parent:
         time.sleep(1)
@@ -6338,20 +6520,39 @@ def cmd_kill(argv):
     for hp in monitor_pids:
         subprocess.run(["tn", "exec", f"kill {hp}"], capture_output=True)
     time.sleep(2)
+    # Verify three ways, because each is blind to what the others see: the group
+    # (everything the launch spawned), the cmdline pattern (the historical check),
+    # and GPU occupancy (the resource). The pattern that could not SEE the orphan
+    # cannot prove it is gone, and a kill that reports success while 12.7 GB stays
+    # held is worse than one that fails loudly.
+    left = []
+    for pg in pgids:
+        r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
+        left += [x for x in r.stdout.split() if x.strip() and x not in left]
     chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    left = [p for p in chk.stdout.split() if p.strip()]
-    # Verify by GPU occupancy too: the pattern that could not SEE the orphan cannot
-    # prove it is gone, and a kill that reports success while 12.7 GB stays held is
-    # worse than one that fails loudly.
-    still_gpu = subprocess.run(
-        ["tn", "exec", f"kill -0 {' '.join(gpu_kids)} 2>/dev/null && echo ALIVE" if gpu_kids else "true"],
-        capture_output=True, text=True,
-    )
-    if "ALIVE" in still_gpu.stdout:
-        left += [p for p in gpu_kids]
+    left += [p for p in chk.stdout.split() if p.strip() and p not in left]
+    still_gpu = [p for p in _gpu_descendants(parent)] if parent else []
+    reparented = [p for p in still_gpu if p not in left]
+    left += reparented
     if left:
-        print(f"STILL ALIVE: {' '.join(left)} -- kill -9 by hand", file=sys.stderr)
-        return 1
+        for hp in left:  # a job that ignores TERM still must not hold a card
+            subprocess.run(["tn", "exec", f"kill -9 {hp}"], capture_output=True)
+        time.sleep(2)
+        again = []
+        for pg in pgids:
+            r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
+            again += [x for x in r.stdout.split() if x.strip()]
+        again += [p for p in (_gpu_descendants(parent) if parent else []) if p not in again]
+        if again:
+            print(f"STILL ALIVE after KILL: {' '.join(again)}", file=sys.stderr)
+            return 1
+        if reparented:
+            # Out of the group but still on a card: the escape the group sweep cannot
+            # see. Worth naming rather than silently reaping -- it means something
+            # re-parented, and the next one may not hold a card to be found by.
+            print(f"  REPARENTED (outside the job's group, found by GPU occupancy): "
+                  f"{' '.join(reparented)}", file=sys.stderr)
+        print(f"  {len(left)} process(es) needed SIGKILL: {' '.join(left)}", file=sys.stderr)
     subprocess.run(
         [os.path.expanduser("~/bin/pod"),
          f"cd /work/aupai && python3 scripts/exp.py done --name {a.name} --status fail "
@@ -6361,6 +6562,23 @@ def cmd_kill(argv):
     )
     print(f"killed {a.name}; exp row closed")
     return 0
+
+
+#: Tokens per optimizer step for the stage-1 recipe: batch 16 x accum 2 x seq 4096
+#: x 7 ranks = 917,504. Used to state what a checkpoint actually saw, against the
+#: milestone's nominal budget.
+TOKENS_PER_STEP = 16 * 2 * 4096 * 7
+
+
+def _run_alive(run):
+    """True if the training run still has a process. A watcher that waits for an
+    exact save must not wait forever after the run ends."""
+    try:
+        r = subprocess.run([os.path.expanduser("~/bin/pod"), f"pgrep -f 'name {run}' | head -1"],
+                           capture_output=True, text=True, timeout=20)
+        return bool(r.stdout.strip())
+    except Exception:
+        return True  # unknown: prefer waiting over mislabelling
 
 
 MILESTONE_TOKENS = {"3.24b": 3.24e9, "8b": 8e9, "15b": 15e9, "16b": 16e9, "30b": 30e9}
@@ -6472,11 +6690,26 @@ def cmd_milestone(argv):
             return "score_matrix timeout"
         if st != 0:
             return f"score_matrix exit {st}"
+        m_step = re.search(r"\.step(\d+)$", ckpt)
+        actual_tokens = int(m_step.group(1)) * TOKENS_PER_STEP if m_step else None
+        # The pair's budget: a milestone row for it, else the ladder point's nominal.
+        paired_tokens = None
+        ms_path = os.path.join(ROOT, "runs", "milestones.jsonl")
+        if os.path.exists(ms_path):
+            for line in open(ms_path, encoding="utf-8"):
+                if line.strip():
+                    pr = json.loads(line)
+                    if pr.get("ckpt") == paired:
+                        paired_tokens = pr.get("actual_tokens") or pr.get("tokens")
+        if paired_tokens is None and paired == "ckpt_p324.pt":
+            paired_tokens = 3.24e9
         readout_path = os.path.join(ROOT, "runs", f"readout_{stem}.txt")
         r = subprocess.run(
             [sys.executable, os.path.join(ROOT, "eval", "readout_30b.py"),
              "--milestone", ckpt, "--paired", paired, "--milestone-tokens", str(tokens),
-             "--milestone-profile", "milestone", "--paired-profile", "full"],
+             "--milestone-profile", "milestone", "--paired-profile", "full"]
+            + (["--actual-tokens", str(actual_tokens)] if actual_tokens else [])
+            + (["--paired-tokens", str(paired_tokens)] if paired_tokens else []),
             capture_output=True, text=True,
         )
         with open(readout_path, "w", encoding="utf-8") as f:
@@ -6490,8 +6723,16 @@ def cmd_milestone(argv):
             os.path.join(ROOT, "data", "eval", f"preds_code_{ckpt}.jsonl"),
             os.path.join(ROOT, "data", "eval", f"preds_code_v2_{ckpt}.jsonl"),
         ) if os.path.exists(p)]
+        m_step = re.search(r"\.step(\d+)$", ckpt)
+        actual_step = int(m_step.group(1)) if m_step else None
+        # tokens is the milestone's NOMINAL budget; actual_tokens is what this
+        # checkpoint saw. readout_30b compares against a paired budget, so a gap
+        # between them is a confound and must be visible in the row, not inferred.
+        actual_tokens = actual_step * TOKENS_PER_STEP if actual_step else None
         row = {
             "ckpt": ckpt, "paired": paired, "tokens": tokens, "mix": os.path.relpath(a.mix, ROOT),
+            "step": actual_step, "actual_tokens": actual_tokens,
+            "token_shortfall": (round(1 - actual_tokens / tokens, 4) if actual_tokens and tokens else None),
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
             "preds": [os.path.relpath(p, ROOT) for p in preds],
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
@@ -6546,7 +6787,19 @@ def cmd_milestone(argv):
             for tok, target in spec.items():
                 if tok in scored or not saved:
                     continue
-                step = min(saved, key=lambda s: abs(s - target))
+                # Never score BELOW the target while the exact save is still coming.
+                # min(|s-target|) took step3000 for target 3500 because 500 is not
+                # > save_every, labelled a 2.753B checkpoint as the 3.24B milestone --
+                # 15% short, and run_one records the nominal budget regardless (e1,
+                # 2026-08-31). A save at or past the target is a real reading; one
+                # before it is a different budget wearing the milestone's name.
+                at_or_past = [x for x in saved if x >= target]
+                if at_or_past:
+                    step = min(at_or_past)
+                elif max(saved) >= target - a.save_every and _run_alive(a.run):
+                    continue  # the exact save is one interval away and training is up
+                else:
+                    step = max(saved)  # run ended short; the last save is the best read
                 if abs(step - target) > a.save_every:
                     continue  # nearest save is too far from the milestone step; wait
                 ckpt = saved[step]
