@@ -438,6 +438,69 @@ def _fp8_ok(mod, name):
     return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
 
 
+def _fp8_mm(a, b, out_dtype):
+    """One fp8 GEMM with per-tensor e4m3 scaling. a @ b, both 2D, b already oriented.
+
+    Same recipe as FP8LinearFunction: scale each operand by its own absmax so the largest
+    element lands at e4m3's 448, multiply in fp8, and let _scaled_mm apply the scales to the
+    accumulator. Measured range on the head's activations is p50 48 / p99 62 / max 82 against
+    448, spread p99/p50 = 1.30x, so per-tensor is sufficient and per-chunk scaling is not
+    needed (eff.fp8_head_activation_range).
+    """
+    sa = (a.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    sb = (b.detach().abs().amax().clamp(min=1e-12) / _FP8_MAX_E4M3).float()
+    qa = (a / sa).to(torch.float8_e4m3fn)
+    qb = (b / sb).to(torch.float8_e4m3fn)
+    return torch._scaled_mm(qa.contiguous(), qb.t().contiguous().t(),
+                            scale_a=sa, scale_b=sb, out_dtype=out_dtype)
+
+
+def patch_liger_flce_fp8():
+    """Route Liger FLCE's three head GEMMs through _scaled_mm. Returns True if patched.
+
+    The head is the largest single lever with a mechanism: arithmetic intensity 668.7 FLOP/B
+    against H20's balance point of 37, so it is compute-bound by 18x, and it is excluded from
+    fp8 today only by _fp8_ok's NAME check (eff.lm_head_is_compute_bound). All three matmuls are
+    the same M=2048 K=1024 N=32784 shape and measure 62.5 / 63.0 / 64.5 ms per step, so
+    converting only the forward buys a third of the ceiling and lands under the ship gate --
+    this patches all three, ideal 2x = 95 ms = 5.6% of a 1702 ms step.
+
+    Patched by source rewrite of the three call sites rather than by vendoring all 487 lines,
+    so a Liger bump surfaces as a failed patch instead of as a silently stale copy. The
+    grad_weight site keeps whatever accumulator dtype is in force: substituting an fp8 GEMM's
+    own output dtype there would replace an accumulator with a single product, which is the one
+    substitution that breaks correctness (b0). Our grad_weight is bf16 today because weights are
+    bf16 and accum_dtype is unset (eff.head_grad_accum_bf16), and that stays true after this.
+    """
+    try:
+        import inspect
+
+        from liger_kernel.ops import fused_linear_cross_entropy as _flce
+    except ImportError:
+        return False
+    src = inspect.getsource(_flce.fused_linear_cross_entropy_forward)
+    subs = [
+        ("logits_chunk = _input_chunk @ weight.t()",
+         "logits_chunk = _fp8_mm(_input_chunk, weight.t(), _input_chunk.dtype)"),
+        ("grad_input[start_idx:end_idx] = grad_logits_chunk @ weight",
+         "grad_input[start_idx:end_idx] = _fp8_mm(grad_logits_chunk, weight, grad_input.dtype)"),
+        ("grad_weight += torch.mm(grad_logits_chunk.t(), _input_chunk).float()",
+         "grad_weight += _fp8_mm(grad_logits_chunk.t(), _input_chunk, torch.float32).to(grad_weight.dtype)"),
+    ]
+    for old, _ in subs:
+        if old not in src:
+            print(f"fp8 head: PATCH FAILED, Liger source changed -- missing {old[:44]!r}", flush=True)
+            return False
+    for old, new in subs:
+        src = src.replace(old, new)
+    ns = dict(_flce.__dict__)
+    ns["_fp8_mm"] = _fp8_mm
+    exec(compile(src, "<fp8_flce>", "exec"), ns)  # noqa: S102
+    _flce.fused_linear_cross_entropy_forward = ns["fused_linear_cross_entropy_forward"]
+    print("fp8 head: Liger FLCE's three GEMMs routed through _scaled_mm", flush=True)
+    return True
+
+
 def convert_to_fp8_compute(model):
     """FP8 linears via torchao Float8Linear; falls back to FP8Linear (dynamo-disabled -> ~200
     graph breaks) when torchao is missing. FP8_RECIPE=rowwise|tensorwise|legacy overrides.
@@ -1879,6 +1942,17 @@ def main():
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
+        # Off by default: this is the loss path, so an fp8 error reaches EVERY gradient rather
+        # than one layer's activations. Behind a flag until the four-arm A/B judges it against
+        # an in-config noise floor (docs/lessons/shipment_ab_plan.md).
+        if os.environ.get("FP8_HEAD") == "1":
+            if Cfg.fone:
+                raise SystemExit(
+                    "FP8_HEAD=1 with --fone: FoNE changes the token stream and the head's input "
+                    "distribution, and the digit probe has not been run against an fp8 head. "
+                    "Run the probe first or drop one of the two flags."
+                )
+            patch_liger_flce_fp8()
         if is_main:
             print("FP8 compute enabled", flush=True)
     if is_main:
