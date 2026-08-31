@@ -1,199 +1,199 @@
 PATH                                                     LINES  LAST COMMIT           REACHED FROM
 --------------------------------------------------------------------------------------------------------------
-algorithms/__init__.py                                      49  8f5c8ad 2026-08-27    none
+algorithms/__init__.py                                      49  8f5c8ad 2026-08-27    import:algorithms/rlvr_data.py
 algorithms/prepare_rlvr.py                                  13  aa3a8b9 2026-08-26    none
-algorithms/rlvr.py                                          13  aa3a8b9 2026-08-26    none
-algorithms/rlvr_data.py                                    236  a85a54e 2026-08-30    none
-algorithms/rlvr_generate.py                                 43  9176f85 2026-08-30    none
-algorithms/rlvr_reward.py                                   99  39c3ff3 2026-08-30    eval/math_hard.py
-algorithms/rlvr_trainer.py                                 381  9176f85 2026-08-30    none
+algorithms/rlvr.py                                          13  aa3a8b9 2026-08-26    ENTRY
+algorithms/rlvr_data.py                                    236  a85a54e 2026-08-30    registry:algorithms/__init__.py
+algorithms/rlvr_generate.py                                 43  9176f85 2026-08-30    registry:algorithms/__init__.py
+algorithms/rlvr_reward.py                                   99  39c3ff3 2026-08-30    registry:algorithms/__init__.py
+algorithms/rlvr_trainer.py                                 381  9176f85 2026-08-30    ENTRY
 algorithms/test_rlvr_reward_suite.py                       151  79f8089 2026-08-31    none
-bench_gpu_probe.py                                          36  d535674 2026-08-31    none
+bench_gpu_probe.py                                          36  d535674 2026-08-31    facts:facts/efficiency.json
 bench_mem.py                                                75  b87fa94 2026-08-30    none
 chat.py                                                     50  3f6c3ad 2026-08-29    ENTRY
 data/sft/quality_check.py                                  297  aecba2d 2026-08-29    none
-datagen/annotate_quality.py                                139  9176f85 2026-08-30    none
-datagen/audit_source_score.py                              100  9176f85 2026-08-30    none
-datagen/augment_data.py                                    114  9176f85 2026-08-30    none
+datagen/annotate_quality.py                                139  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+datagen/audit_source_score.py                              100  9176f85 2026-08-30    docs:docs/lessons/kept_methods.md
+datagen/augment_data.py                                    114  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
 datagen/build_corpus.py                                    428  26c14d9 2026-08-30    ENTRY
-datagen/clean_web.py                                       157  9176f85 2026-08-30    none
-datagen/distil_traces.py                                   168  9176f85 2026-08-30    none
-datagen/fasttext_junk.py                                   147  cd8f37e 2026-08-30    none
-datagen/gen_code.py                                        340  9176f85 2026-08-30    none
-datagen/gen_knowledge.py                                   575  9b7242b 2026-08-27    none
-datagen/gen_knowledge2.py                                  433  9176f85 2026-08-30    none
-datagen/quality_clf.py                                     169  9176f85 2026-08-30    none
-datagen/sample_pattern_discovery.py                         79  d535674 2026-08-31    none
-datagen/score_27b_zero.py                                  220  d535674 2026-08-31    none
-datagen/score_web_27b.py                                   280  9176f85 2026-08-30    none
-datagen/train_quality_head.py                              161  9176f85 2026-08-30    none
-eval/__init__.py                                            43  234356f 2026-08-30    none
-eval/arc.py                                                 82  5604d42 2026-08-29    none
+datagen/clean_web.py                                       157  9176f85 2026-08-30    docs:docs/standards/corpus_rebuild.md
+datagen/distil_traces.py                                   168  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+datagen/fasttext_junk.py                                   147  cd8f37e 2026-08-30    facts:facts/data_quality.json
+datagen/gen_code.py                                        340  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+datagen/gen_knowledge.py                                   575  9b7242b 2026-08-27    facts:scripts/restartability_baseline.json
+datagen/gen_knowledge2.py                                  433  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+datagen/quality_clf.py                                     169  9176f85 2026-08-30    facts:facts/data_quality.json
+datagen/sample_pattern_discovery.py                         79  d535674 2026-08-31    facts:scripts/restartability_baseline.json
+datagen/score_27b_zero.py                                  220  d535674 2026-08-31    facts:scripts/restartability_baseline.json
+datagen/score_web_27b.py                                   280  9176f85 2026-08-30    facts:facts/data_quality.json
+datagen/train_quality_head.py                              161  9176f85 2026-08-30    ENTRY
+eval/__init__.py                                            43  234356f 2026-08-30    import:eval/run_eval.py
+eval/arc.py                                                 82  5604d42 2026-08-29    registry:eval/run_eval.py
 eval/base_matrix.py                                        422  60e2436 2026-08-30    ENTRY
-eval/boolq.py                                               60  5604d42 2026-08-29    none
-eval/ceval.py                                               60  9176f85 2026-08-30    none
-eval/chid_probe.py                                          79  9176f85 2026-08-30    eval/base_matrix.py
-eval/code_fewshot.py                                       177  c51019a 2026-08-30    none
-eval/code_zh.py                                            146  89e7f9d 2026-08-31    none
-eval/ctx_probe.py                                          218  3b32e69 2026-08-31    none
-eval/gsm8k.py                                               65  c51019a 2026-08-30    eval/math_hard.py
-eval/hellaswag.py                                           64  9176f85 2026-08-30    none
-eval/l1_fewshot.py                                         136  c51019a 2026-08-30    none
-eval/lambada_zh.py                                         242  ef40a44 2026-08-30    none
+eval/boolq.py                                               60  5604d42 2026-08-29    registry:eval/run_eval.py
+eval/ceval.py                                               60  9176f85 2026-08-30    registry:eval/run_eval.py
+eval/chid_probe.py                                          79  9176f85 2026-08-30    import:eval/base_matrix.py
+eval/code_fewshot.py                                       177  c51019a 2026-08-30    docs:EXPERIMENTS.md
+eval/code_zh.py                                            184  8ca02e7 2026-08-31    ENTRY
+eval/ctx_probe.py                                          218  3b32e69 2026-08-31    facts:facts/base_eval.json
+eval/gsm8k.py                                               65  c51019a 2026-08-30    registry:eval/run_eval.py
+eval/hellaswag.py                                           64  9176f85 2026-08-30    registry:eval/run_eval.py
+eval/l1_fewshot.py                                         136  c51019a 2026-08-30    ENTRY
+eval/lambada_zh.py                                         242  ef40a44 2026-08-30    ENTRY
 eval/math_hard.py                                          181  89e7f9d 2026-08-31    ENTRY
-eval/math_v2_like.py                                       176  e33a97e 2026-08-30    none
-eval/math_zh.py                                            115  89e7f9d 2026-08-31    eval/math_hard.py
-eval/mmlu.py                                                67  5604d42 2026-08-29    none
-eval/openbookqa.py                                          67  5604d42 2026-08-29    none
-eval/piqa.py                                                74  5604d42 2026-08-29    none
+eval/math_v2_like.py                                       176  e33a97e 2026-08-30    ENTRY
+eval/math_zh.py                                            115  89e7f9d 2026-08-31    ENTRY
+eval/mmlu.py                                                67  5604d42 2026-08-29    registry:eval/run_eval.py
+eval/openbookqa.py                                          67  5604d42 2026-08-29    registry:eval/run_eval.py
+eval/piqa.py                                                74  5604d42 2026-08-29    registry:eval/run_eval.py
 eval/ppl.py                                                 84  26c14d9 2026-08-30    none
 eval/run_eval.py                                           340  c51019a 2026-08-30    ENTRY
-eval/winogrande.py                                          69  9176f85 2026-08-30    none
+eval/winogrande.py                                          69  9176f85 2026-08-30    registry:eval/run_eval.py
 filters/clean_school_math.py                                38  aa3a8b9 2026-08-26    none
-filters/pass1_garbage.py                                   126  aa3a8b9 2026-08-26    none
-filters/pass2_garbage.py                                    65  9176f85 2026-08-30    none
-filters/pass3_garbage.py                                    70  df2b774 2026-08-30    none
-fone.py                                                    307  9176f85 2026-08-30    chat.py
+filters/pass1_garbage.py                                   126  aa3a8b9 2026-08-26    ENTRY
+filters/pass2_garbage.py                                    65  9176f85 2026-08-30    facts:facts/data_quality.json
+filters/pass3_garbage.py                                    70  df2b774 2026-08-30    facts:facts/data_quality.json
+fone.py                                                    307  9176f85 2026-08-30    import:algorithms/rlvr.py
 infer.py                                                    23  5604d42 2026-08-29    ENTRY
 infer_local.py                                             441  b3cad87 2026-08-30    ENTRY
-mathbank/arith_curriculum.py                               220  9176f85 2026-08-30    none
-mathbank/dist_check.py                                     117  9176f85 2026-08-30    none
-mathbank/eval_hard_v2_gen.py                               467  4c8a550 2026-08-30    none
-mathbank/make_v11.py                                       127  9176f85 2026-08-30    none
-mathbank/make_v11_band.py                                  225  96a4308 2026-08-29    none
-mathbank/math_programs_l1.py                               269  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l1_ext1.py                          769  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l1_ext2.py                         1329  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l1_ext3.py                         1443  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l2.py                               223  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l2_ext1.py                         1238  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l2_ext2.py                         1272  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l2_ext3.py                         2050  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3.py                               241  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3_ext1.py                         1218  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3_ext2.py                         1785  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3_ext3.py                         2156  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3_ext4.py                         2019  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l3_ext5.py                         2230  df30c3a 2026-08-26    none
-mathbank/math_programs_l3_ext6.py                         1606  152f68e 2026-08-26    none
-mathbank/math_programs_l3_ext7.py                         1632  3f3ed39 2026-08-26    none
-mathbank/math_programs_l3_ext8.py                         1913  b1c3760 2026-08-26    none
-mathbank/math_programs_l4.py                               168  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l4_ext2.py                         1597  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l4_ext3.py                         1799  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l4_ext4.py                         2001  aa3a8b9 2026-08-26    none
-mathbank/math_programs_l4_ext5.py                         1875  df30c3a 2026-08-26    none
-mathbank/math_programs_l4_ext6.py                         2211  152f68e 2026-08-26    none
-mathbank/math_programs_l4_ext7.py                         1641  3f3ed39 2026-08-26    none
-mathbank/math_programs_l4_ext8.py                         1785  b1c3760 2026-08-26    none
-mathbank/math_programs_short_l3.py                        1069  5bb773a 2026-08-27    none
-mathbank/math_programs_short_l4.py                         941  5bb773a 2026-08-27    none
-mathbank/mathcommon.py                                      41  aa3a8b9 2026-08-26    none
-mathbank/procedure_curriculum.py                           277  9176f85 2026-08-30    none
-mathbank/program_probe.py                                  158  9176f85 2026-08-30    none
-mathbank/run_math_short.py                                 252  9176f85 2026-08-30    none
-mathbank/run_short_sol.py                                   95  9176f85 2026-08-30    none
-mathbank/split_bank.py                                      65  3ed1eb6 2026-08-28    none
+mathbank/arith_curriculum.py                               220  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+mathbank/dist_check.py                                     117  9176f85 2026-08-30    import
+mathbank/eval_hard_v2_gen.py                               467  4c8a550 2026-08-30    docs:docs/audits/audit_math_corpus.md
+mathbank/make_v11.py                                       127  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+mathbank/make_v11_band.py                                  225  96a4308 2026-08-29    docs:docs/audits/audit_math_corpus.md
+mathbank/math_programs_l1.py                               269  aa3a8b9 2026-08-26    registry:mathbank/vet_programs.py
+mathbank/math_programs_l1_ext1.py                          769  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l1_ext2.py                         1329  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l1_ext3.py                         1443  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l2.py                               223  aa3a8b9 2026-08-26    registry:mathbank/vet_programs.py
+mathbank/math_programs_l2_ext1.py                         1238  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l2_ext2.py                         1272  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l2_ext3.py                         2050  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3.py                               241  aa3a8b9 2026-08-26    registry:mathbank/vet_programs.py
+mathbank/math_programs_l3_ext1.py                         1218  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext2.py                         1785  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext3.py                         2156  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext4.py                         2019  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext5.py                         2230  df30c3a 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext6.py                         1606  152f68e 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext7.py                         1632  3f3ed39 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l3_ext8.py                         1913  b1c3760 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4.py                               168  aa3a8b9 2026-08-26    registry:mathbank/vet_programs.py
+mathbank/math_programs_l4_ext2.py                         1597  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext3.py                         1799  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext4.py                         2001  aa3a8b9 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext5.py                         1875  df30c3a 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext6.py                         2211  152f68e 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext7.py                         1641  3f3ed39 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_l4_ext8.py                         1785  b1c3760 2026-08-26    registry:mathbank/run_math_short.py
+mathbank/math_programs_short_l3.py                        1069  5bb773a 2026-08-27    registry:mathbank/run_short_sol.py
+mathbank/math_programs_short_l4.py                         941  5bb773a 2026-08-27    registry:mathbank/run_short_sol.py
+mathbank/mathcommon.py                                      41  aa3a8b9 2026-08-26    import
+mathbank/procedure_curriculum.py                           277  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+mathbank/program_probe.py                                  158  9176f85 2026-08-30    docs:scripts/probe_band.sh
+mathbank/run_math_short.py                                 252  9176f85 2026-08-30    docs:docs/audits/audit_math_corpus.md
+mathbank/run_short_sol.py                                   95  9176f85 2026-08-30    docs:scripts/build_math_expand.sh
+mathbank/split_bank.py                                      65  3ed1eb6 2026-08-28    docs:docs/audits/audit_math_corpus.md
 mathbank/vet_programs.py                                    51  aa3a8b9 2026-08-26    none
-prepare_sft_math.py                                         91  907920c 2026-08-29    none
-run_ddp.sh                                                  18  8033d98 2026-08-30    none
-sampling.py                                                 17  7b21241 2026-08-27    chat.py
-scripts/ab_vocab_loss.py                                   110  db762ca 2026-08-30    none
+prepare_sft_math.py                                         91  907920c 2026-08-29    ENTRY
+run_ddp.sh                                                  18  8033d98 2026-08-30    ENTRY
+sampling.py                                                 17  7b21241 2026-08-27    import:chat.py
+scripts/ab_vocab_loss.py                                   110  db762ca 2026-08-30    facts:facts/efficiency.json
 scripts/assemble_lambda_probe.py                            93  42d75d9 2026-08-31    none
-scripts/assert_vocab.sh                                     19  4c669ba 2026-08-30    scripts/eval_all.sh
+scripts/assert_vocab.sh                                     19  4c669ba 2026-08-30    docs:scripts/eval_code.sh
 scripts/attn_every_probe.py                                114  bce33b8 2026-08-30    none
-scripts/attn_res_bench.py                                  233  8991782 2026-08-30    none
-scripts/attn_res_cpu_gap.py                                168  a037324 2026-08-30    none
+scripts/attn_res_bench.py                                  233  8991782 2026-08-30    facts:scripts/restartability_baseline.json
+scripts/attn_res_cpu_gap.py                                168  a037324 2026-08-30    facts:facts/efficiency.json
 scripts/attn_res_gap.py                                    137  a037324 2026-08-30    none
 scripts/audit_ocsg.py                                      111  9176f85 2026-08-30    none
-scripts/bench_gated_mla.py                                 222  7340bab 2026-08-30    none
-scripts/bf16_update_loss.py                                122  9b2b65d 2026-08-30    none
-scripts/bootstrap_pod.sh                                    79  26c14d9 2026-08-30    none
-scripts/build_domains.sh                                    78  26c14d9 2026-08-30    none
+scripts/bench_gated_mla.py                                 222  7340bab 2026-08-30    facts:scripts/restartability_baseline.json
+scripts/bf16_update_loss.py                                122  9b2b65d 2026-08-30    facts:facts/efficiency.json
+scripts/bootstrap_pod.sh                                    79  26c14d9 2026-08-30    docs:scripts/bootstrap_pod.sh
+scripts/build_domains.sh                                    78  26c14d9 2026-08-30    docs:docs/standards/0830v1_gates.md
 scripts/build_math.py                                       93  9176f85 2026-08-30    none
-scripts/build_math_expand.sh                                39  d535674 2026-08-31    none
+scripts/build_math_expand.sh                                39  d535674 2026-08-31    docs:docs/audits/audit_math_corpus.md
 scripts/build_tokenizer.py                                 150  26c14d9 2026-08-30    ENTRY
-scripts/build_web_hq.sh                                     54  26c14d9 2026-08-30    none
+scripts/build_web_hq.sh                                     54  26c14d9 2026-08-30    docs:docs/standards/corpus_rebuild.md
 scripts/chat_remote.py                                      65  9176f85 2026-08-30    none
-scripts/check_mix.py                                       100  26c14d9 2026-08-30    none
+scripts/check_mix.py                                       100  26c14d9 2026-08-30    docs:scripts/build_web_hq.sh
 scripts/ckpt_diff.py                                        67  24823cf 2026-08-27    none
 scripts/ckpt_info.py                                        66  9176f85 2026-08-30    none
-scripts/ckpt_sweep.py                                      127  dbf3765 2026-08-30    none
+scripts/ckpt_sweep.py                                      127  dbf3765 2026-08-30    facts:scripts/restartability_baseline.json
 scripts/clean_corpus.py                                    118  f9b5c61 2026-08-31    ENTRY
-scripts/corpus_fingerprint.py                              156  bce33b8 2026-08-30    datagen/build_corpus.py
+scripts/corpus_fingerprint.py                              156  bce33b8 2026-08-30    docs:docs/audits/audit_math_corpus.md
 scripts/count_cleaned_code.py                               78  0d8a185 2026-08-31    none
 scripts/dashboard.py                                       445  c669a4f 2026-08-31    none
-scripts/data_overview.py                                   159  7359a56 2026-08-30    none
-scripts/data_verify.py                                     183  9176f85 2026-08-30    none
+scripts/data_overview.py                                   159  7359a56 2026-08-30    import
+scripts/data_verify.py                                     183  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh
 scripts/dedup_corpus.py                                    113  1b42176 2026-08-30    ENTRY
-scripts/domain_loss.py                                     192  f626b45 2026-08-30    scripts/score_matrix.py
-scripts/env_fp.py                                           54  6ef7e7a 2026-08-30    chat.py
+scripts/domain_loss.py                                     192  f626b45 2026-08-30    docs:docs/lessons/quality_ab_design.md
+scripts/env_fp.py                                           54  6ef7e7a 2026-08-30    import:algorithms/rlvr.py
 scripts/eqcheck.py                                          61  9176f85 2026-08-30    ENTRY
 scripts/eval_all.sh                                         88  dc8bd37 2026-08-30    ENTRY
-scripts/eval_code.sh                                        46  2f97e4a 2026-08-31    none
+scripts/eval_code.sh                                        46  2f97e4a 2026-08-31    ENTRY
 scripts/eval_hard.sh                                        77  2f97e4a 2026-08-31    ENTRY
-scripts/eval_math.sh                                        49  2f97e4a 2026-08-31    scripts/eval_all.sh
+scripts/eval_math.sh                                        49  2f97e4a 2026-08-31    ENTRY
 scripts/exp.py                                             186  9176f85 2026-08-30    ENTRY
-scripts/fetch_chat_data.py                                  81  9176f85 2026-08-30    none
+scripts/fetch_chat_data.py                                  81  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh
 scripts/fetch_corpus.py                                    286  e0258fa 2026-08-31    ENTRY
-scripts/fetch_math_data.py                                 221  9176f85 2026-08-30    none
-scripts/fetch_sft_data.py                                  179  9176f85 2026-08-30    none
-scripts/fit_scaling.py                                     138  c669a4f 2026-08-31    none
+scripts/fetch_math_data.py                                 221  9176f85 2026-08-30    docs:scripts/build_math_expand.sh
+scripts/fetch_sft_data.py                                  179  9176f85 2026-08-30    docs:scripts/bootstrap_pod.sh
+scripts/fit_scaling.py                                     138  c669a4f 2026-08-31    docs:docs/standards/0830v1_gates.md
 scripts/fone_digit_acc.py                                   96  9176f85 2026-08-30    ENTRY
 scripts/fone_probe.py                                      164  b3cad87 2026-08-30    none
-scripts/gate_math_short.sh                                  28  0f203e0 2026-08-30    none
-scripts/gen_0094.py                                        133  aecba2d 2026-08-29    none
-scripts/harness.py                                        4132  36bdb01 2026-08-31    ENTRY
+scripts/gate_math_short.sh                                  28  0f203e0 2026-08-30    docs:docs/audits/audit_math_corpus.md
+scripts/gen_0094.py                                        133  aecba2d 2026-08-29    facts:scripts/restartability_baseline.json
+scripts/harness.py                                        4239  4e08d5b 2026-08-31    ENTRY
 scripts/holdout.py                                         100  2b7efbd 2026-08-30    ENTRY
-scripts/holdout_split.py                                   126  c669a4f 2026-08-31    none
-scripts/kda_probe.py                                       181  daa7352 2026-08-30    none
-scripts/lm_head_gemm.py                                    120  a037324 2026-08-30    none
+scripts/holdout_split.py                                   126  c669a4f 2026-08-31    docs:docs/audits/audit_math_corpus.md
+scripts/kda_probe.py                                       181  daa7352 2026-08-30    facts:facts/efficiency.json
+scripts/lm_head_gemm.py                                    120  a037324 2026-08-30    facts:facts/efficiency.json
 scripts/loader.py                                          287  da1d4b5 2026-08-31    ENTRY
-scripts/make_mixed.py                                       39  9176f85 2026-08-30    none
-scripts/measure_sft_termination.py                         213  70a9dd9 2026-08-31    none
-scripts/mem_account.py                                     175  5d31bc4 2026-08-30    none
+scripts/make_mixed.py                                       39  9176f85 2026-08-30    facts:scripts/restartability_baseline.json
+scripts/measure_sft_termination.py                         213  70a9dd9 2026-08-31    facts:facts/data_quality.json
+scripts/mem_account.py                                     175  5d31bc4 2026-08-30    facts:scripts/restartability_baseline.json
 scripts/nan_probe.py                                       131  9176f85 2026-08-30    ENTRY
 scripts/ocsg_determ.py                                      71  aecba2d 2026-08-29    none
-scripts/plot_curves.py                                      97  9176f85 2026-08-30    scripts/run_sft.sh
-scripts/pod_drift.py                                       219  d535674 2026-08-31    ENTRY
+scripts/plot_curves.py                                      97  9176f85 2026-08-30    docs:scripts/run_pretrain.sh
+scripts/pod_drift.py                                       245  4e08d5b 2026-08-31    ENTRY
 scripts/pod_push.sh                                         67  d535674 2026-08-31    ENTRY
 scripts/pod_sync_check.sh                                   19  a65bbbe 2026-08-30    ENTRY
-scripts/prepare_sft.py                                     336  8d8ade3 2026-08-30    scripts/test_arch_compat.py
+scripts/prepare_sft.py                                     343  4d53bf2 2026-08-31    docs:docs/lessons/reasoning_panel.md
 scripts/pretokenize.py                                      53  26c14d9 2026-08-30    ENTRY
 scripts/probe_arith.py                                      91  9176f85 2026-08-30    none
-scripts/probe_band.sh                                       46  9176f85 2026-08-30    none
+scripts/probe_band.sh                                       49  c2933e1 2026-08-31    docs:scripts/run_pipeline.sh
 scripts/probe_procedure.py                                 187  9176f85 2026-08-30    none
-scripts/profile_step.py                                    139  b994fc9 2026-08-30    none
-scripts/reachability.py                                    244  never                 none
-scripts/rebuild_corpus.sh                                   74  9176f85 2026-08-30    none
+scripts/profile_step.py                                    139  b994fc9 2026-08-30    docs:docs/standards/0830v1_gates.md
+scripts/reachability.py                                    326  d01967d 2026-08-31    none
+scripts/rebuild_corpus.sh                                   74  9176f85 2026-08-30    docs:docs/standards/0830v1_gates.md
 scripts/repeat_check.py                                    167  9176f85 2026-08-30    none
-scripts/rescore_code.py                                    104  89e7f9d 2026-08-31    none
+scripts/rescore_code.py                                    104  89e7f9d 2026-08-31    docs:docs/standards/0830v1_gates.md
 scripts/rescore_v2.py                                       95  5c28add 2026-08-30    none
 scripts/restartability_audit.py                            237  9bf64d6 2026-08-30    ENTRY
 scripts/rl_delta_cos.py                                    132  9176f85 2026-08-30    none
 scripts/run_ablation.sh                                     27  c5c04b2 2026-08-30    ENTRY
-scripts/run_pipeline.sh                                     92  9176f85 2026-08-30    none
-scripts/run_pretrain.sh                                     47  9176f85 2026-08-30    none
+scripts/run_pipeline.sh                                     92  9176f85 2026-08-30    docs:scripts/run_pipeline.sh
+scripts/run_pretrain.sh                                     47  9176f85 2026-08-30    docs:scripts/run_pretrain.sh
 scripts/run_sft.sh                                          56  66bc906 2026-08-28    ENTRY
 scripts/sandbox_batch.py                                   166  5a83948 2026-08-30    none
-scripts/sandbox_exec.py                                    118  a52ec68 2026-08-30    none
-scripts/scan_contamination.py                               54  9176f85 2026-08-30    none
-scripts/scan_math_contamination.py                         574  80e8ae6 2026-08-31    none
-scripts/scan_scm_tests.py                                  100  e01c08f 2026-08-31    none
+scripts/sandbox_exec.py                                    118  a52ec68 2026-08-30    import:eval/code_zh.py
+scripts/scan_contamination.py                               54  9176f85 2026-08-30    docs:docs/lessons/kept_methods.md
+scripts/scan_math_contamination.py                         574  80e8ae6 2026-08-31    docs:docs/audits/audit_math_corpus.md
+scripts/scan_scm_tests.py                                  100  e01c08f 2026-08-31    facts:facts/data_scaling.json
 scripts/score_corpus.py                                    117  fd5f164 2026-08-30    ENTRY
-scripts/score_corpus.sh                                     39  9176f85 2026-08-30    none
+scripts/score_corpus.sh                                     43  9176f85 2026-08-30    docs:docs/standards/corpus_rebuild.md
 scripts/score_matrix.py                                    619  89e7f9d 2026-08-31    ENTRY
-scripts/select_band.py                                      66  9176f85 2026-08-30    none
+scripts/select_band.py                                      66  9176f85 2026-08-30    docs:scripts/probe_band.sh
 scripts/shape_audit.py                                     138  db762ca 2026-08-30    ENTRY
 scripts/short_conv_bench.py                                 82  8781c63 2026-08-30    none
-scripts/t2s_corpus.py                                      131  9176f85 2026-08-30    none
+scripts/t2s_corpus.py                                      131  9176f85 2026-08-30    import
 scripts/test_arch_compat.py                                602  c669a4f 2026-08-31    ENTRY
 scripts/test_e2e.py                                        254  26c14d9 2026-08-30    ENTRY
-scripts/test_scan_math_contamination.py                    116  d535674 2026-08-31    none
+scripts/test_scan_math_contamination.py                    116  d535674 2026-08-31    docs:docs/audits/audit_math_corpus.md
 scripts/test_sft_pack.py                                   145  da1d4b5 2026-08-31    ENTRY
 scripts/tokenizer_eval.py                                  360  9176f85 2026-08-30    ENTRY
 scripts/tokenizer_report.py                                485  9176f85 2026-08-30    ENTRY
-scripts/tokenizer_sweep.py                                 135  9176f85 2026-08-30    scripts/tokenizer_eval.py
+scripts/tokenizer_sweep.py                                 135  9176f85 2026-08-30    import:scripts/tokenizer_eval.py
 scripts/train_vocab_variants.py                            113  9176f85 2026-08-30    none
 scripts/validate_lambda_probe.py                            58  238c4a1 2026-08-30    none
 serve.py                                                   176  9176f85 2026-08-30    ENTRY
@@ -202,153 +202,35 @@ sft_math.py                                                251  1419b2c 2026-08-
 train.py                                                  2043  32fd9a7 2026-08-31    ENTRY
 
 ==============================================================================================================
-Total: 200 files, 39 entry points, 53 reachable, 147 unreachable
+Total: 200 files, 52 entry points, 169 BFS-reachable, 159 citation edges, 29 unreachable
 
 Unreachable (deletion candidates):
-  algorithms/__init__.py
   algorithms/prepare_rlvr.py
-  algorithms/rlvr.py
-  algorithms/rlvr_data.py
-  algorithms/rlvr_generate.py
-  algorithms/rlvr_trainer.py
   algorithms/test_rlvr_reward_suite.py
-  bench_gpu_probe.py
   bench_mem.py
   data/sft/quality_check.py
-  datagen/annotate_quality.py
-  datagen/audit_source_score.py
-  datagen/augment_data.py
-  datagen/clean_web.py
-  datagen/distil_traces.py
-  datagen/fasttext_junk.py
-  datagen/gen_code.py
-  datagen/gen_knowledge.py
-  datagen/gen_knowledge2.py
-  datagen/quality_clf.py
-  datagen/sample_pattern_discovery.py
-  datagen/score_27b_zero.py
-  datagen/score_web_27b.py
-  datagen/train_quality_head.py
-  eval/__init__.py
-  eval/arc.py
-  eval/boolq.py
-  eval/ceval.py
-  eval/code_fewshot.py
-  eval/code_zh.py
-  eval/ctx_probe.py
-  eval/hellaswag.py
-  eval/l1_fewshot.py
-  eval/lambada_zh.py
-  eval/math_v2_like.py
-  eval/mmlu.py
-  eval/openbookqa.py
-  eval/piqa.py
   eval/ppl.py
-  eval/winogrande.py
   filters/clean_school_math.py
-  filters/pass1_garbage.py
-  filters/pass2_garbage.py
-  filters/pass3_garbage.py
-  mathbank/arith_curriculum.py
-  mathbank/dist_check.py
-  mathbank/eval_hard_v2_gen.py
-  mathbank/make_v11.py
-  mathbank/make_v11_band.py
-  mathbank/math_programs_l1.py
-  mathbank/math_programs_l1_ext1.py
-  mathbank/math_programs_l1_ext2.py
-  mathbank/math_programs_l1_ext3.py
-  mathbank/math_programs_l2.py
-  mathbank/math_programs_l2_ext1.py
-  mathbank/math_programs_l2_ext2.py
-  mathbank/math_programs_l2_ext3.py
-  mathbank/math_programs_l3.py
-  mathbank/math_programs_l3_ext1.py
-  mathbank/math_programs_l3_ext2.py
-  mathbank/math_programs_l3_ext3.py
-  mathbank/math_programs_l3_ext4.py
-  mathbank/math_programs_l3_ext5.py
-  mathbank/math_programs_l3_ext6.py
-  mathbank/math_programs_l3_ext7.py
-  mathbank/math_programs_l3_ext8.py
-  mathbank/math_programs_l4.py
-  mathbank/math_programs_l4_ext2.py
-  mathbank/math_programs_l4_ext3.py
-  mathbank/math_programs_l4_ext4.py
-  mathbank/math_programs_l4_ext5.py
-  mathbank/math_programs_l4_ext6.py
-  mathbank/math_programs_l4_ext7.py
-  mathbank/math_programs_l4_ext8.py
-  mathbank/math_programs_short_l3.py
-  mathbank/math_programs_short_l4.py
-  mathbank/mathcommon.py
-  mathbank/procedure_curriculum.py
-  mathbank/program_probe.py
-  mathbank/run_math_short.py
-  mathbank/run_short_sol.py
-  mathbank/split_bank.py
   mathbank/vet_programs.py
-  prepare_sft_math.py
-  run_ddp.sh
-  scripts/ab_vocab_loss.py
   scripts/assemble_lambda_probe.py
   scripts/attn_every_probe.py
-  scripts/attn_res_bench.py
-  scripts/attn_res_cpu_gap.py
   scripts/attn_res_gap.py
   scripts/audit_ocsg.py
-  scripts/bench_gated_mla.py
-  scripts/bf16_update_loss.py
-  scripts/bootstrap_pod.sh
-  scripts/build_domains.sh
   scripts/build_math.py
-  scripts/build_math_expand.sh
-  scripts/build_web_hq.sh
   scripts/chat_remote.py
-  scripts/check_mix.py
   scripts/ckpt_diff.py
   scripts/ckpt_info.py
-  scripts/ckpt_sweep.py
   scripts/count_cleaned_code.py
   scripts/dashboard.py
-  scripts/data_overview.py
-  scripts/data_verify.py
-  scripts/eval_code.sh
-  scripts/fetch_chat_data.py
-  scripts/fetch_math_data.py
-  scripts/fetch_sft_data.py
-  scripts/fit_scaling.py
   scripts/fone_probe.py
-  scripts/gate_math_short.sh
-  scripts/gen_0094.py
-  scripts/holdout_split.py
-  scripts/kda_probe.py
-  scripts/lm_head_gemm.py
-  scripts/make_mixed.py
-  scripts/measure_sft_termination.py
-  scripts/mem_account.py
   scripts/ocsg_determ.py
   scripts/probe_arith.py
-  scripts/probe_band.sh
   scripts/probe_procedure.py
-  scripts/profile_step.py
   scripts/reachability.py
-  scripts/rebuild_corpus.sh
   scripts/repeat_check.py
-  scripts/rescore_code.py
   scripts/rescore_v2.py
   scripts/rl_delta_cos.py
-  scripts/run_pipeline.sh
-  scripts/run_pretrain.sh
   scripts/sandbox_batch.py
-  scripts/sandbox_exec.py
-  scripts/scan_contamination.py
-  scripts/scan_math_contamination.py
-  scripts/scan_scm_tests.py
-  scripts/score_corpus.sh
-  scripts/select_band.py
   scripts/short_conv_bench.py
-  scripts/t2s_corpus.py
-  scripts/test_scan_math_contamination.py
   scripts/train_vocab_variants.py
   scripts/validate_lambda_probe.py

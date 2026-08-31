@@ -21,6 +21,10 @@ mapfile -t SHARDS < <(ls $GLOB | sort)
 N=${#SHARDS[@]}
 echo "$N shards over $NGPU gpus"
 
+# Respect an outer CUDA_VISIBLE_DEVICES: worker g maps to the g-th visible device,
+# not physical device g+1 (same fix as eval_hard.sh, 2f97e4a).
+IFS=',' read -ra _DEVS <<< "${CUDA_VISIBLE_DEVICES:-}"
+
 for ((g = 0; g < NGPU; g++)); do
   # Contiguous blocks, not a stride: clean_web.py concatenates the per-worker
   # score arrays in worker order, so worker g must own a contiguous run of the
@@ -29,7 +33,7 @@ for ((g = 0; g < NGPU; g++)); do
   hi=$(((g + 1) * N / NGPU))
   [ "$lo" -ge "$hi" ] && continue
   printf '%s\n' "${SHARDS[@]:lo:hi-lo}" > "runs/shards_$g.txt"
-  CUDA_VISIBLE_DEVICES=$((g + 1)) setsid nohup python3 -u datagen/train_quality_head.py \
+  CUDA_VISIBLE_DEVICES=${_DEVS[$g]:-$((g + 1))} setsid nohup python3 -u datagen/train_quality_head.py \
     --score "@runs/shards_$g.txt" --head "$HEAD" --ckpt "$CKPT" --tokenizer "$TOK" \
     --out "data/web_scores.$g.npy" --device cuda:0 > "runs/score_$g.log" 2>&1 &
   echo "  gpu $((g + 1)): shards $lo..$((hi - 1)) -> data/web_scores.$g.npy"
