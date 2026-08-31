@@ -7176,6 +7176,39 @@ def cmd_kill(argv):
 TOKENS_PER_STEP = 16 * 2 * 4096 * 7
 
 
+def _pin_milestone(watch_dir, run, ckpt, token):
+    """Take a milestone checkpoint out of train.py's rotation. Returns the pinned path.
+
+    HARDLINK, not copy: instant, and it adds no 959MB write to the training box's disk
+    during a save window. The inode survives the pruner's os.remove of the .step name,
+    since that only drops one link.
+
+    The name must sit outside the pruner's glob. train.py:2091 globs
+    `ckpt_<run>.pt.step*`; `ckpt_<run>.milestone_<token>.pt` has no `.pt.step`, so the
+    roller cannot see it. A name the glob matches is not a pin.
+
+    Called the MOMENT the watcher detects the milestone save, before scoring is even
+    queued: at save_every 500 the save-to-rotation window is ~22 minutes, so a pin at
+    scoring start loses the same race the 3.24B rescore lost (b0, fb, 2026-08-31)."""
+    src = os.path.join(watch_dir, ckpt)
+    dst = os.path.join(watch_dir, f"ckpt_{run or 'run'}.milestone_{token}.pt")
+    if os.path.exists(dst) or not os.path.exists(src):
+        return dst if os.path.exists(dst) else None
+    try:
+        os.link(src, dst)  # same filesystem by construction: both live beside the run
+        return dst
+    except OSError:
+        try:
+            import shutil as _sh
+
+            _sh.copy2(src, dst)
+            return dst
+        except OSError as e:
+            print(f"WARNING: could not pin {ckpt}: {e}; the rescore window is ~3 saves wide",
+                  file=sys.stderr)
+            return None
+
+
 def _run_alive(run):
     """True if the training run still has a process. A watcher that waits for an
     exact save must not wait forever after the run ends."""
@@ -7300,26 +7333,10 @@ def cmd_milestone(argv):
                   f"--milestone-tokens {tokens} --milestone-profile milestone --paired-profile full "
                   f"> runs/readout_{stem}.txt")
             return "dry"
-        # Pin the checkpoint OUT of train.py's rotation before scoring it. train.py keeps
-        # the newest 3 step checkpoints (train.py:2089), so a milestone file survives
-        # ~3 x save_every steps -- about 70 minutes at stage-1 speed. On 2026-08-31 the
-        # 3.24B rescore was queued behind another job's lane slot, step3500 rotated out
-        # while it waited, and that baseline is unrecoverable. A milestone is a thing we
-        # promise to keep; the rotation does not know that.
-        watch_dir = a.watch or ROOT
-        src_ck = os.path.join(watch_dir, ckpt)
-        if os.path.exists(src_ck) and milestone:
-            pinned = os.path.join(watch_dir, f"ckpt_{a.run or 'run'}.milestone_{milestone}.pt")
-            if not os.path.exists(pinned):
-                try:
-                    import shutil as _sh
-
-                    _sh.copy2(src_ck, pinned)
-                    print(f"pinned {ckpt} -> {os.path.basename(pinned)} "
-                          f"(out of the newest-3 rotation)", flush=True)
-                except OSError as e:
-                    print(f"WARNING: could not pin {ckpt}: {e}; the rescore window is "
-                          f"~3 saves wide", file=sys.stderr)
+        # Idempotent second attempt: the watcher already pinned this at detection, but a
+        # single-run invocation (harness milestone <ckpt>) has no watcher to have done it.
+        if milestone:
+            _pin_milestone(a.watch or ROOT, a.run, ckpt, milestone)
         rc = cmd_launch([
             f"ms_{stem}", "--hypothesis", f"milestone {tokens / 1e9:.2f}B score_matrix profile", "--",
             "eval/score_matrix.py", "--ckpt", ckpt, "--profile", "milestone",
@@ -7489,6 +7506,11 @@ def cmd_milestone(argv):
                 paired = a.paired or (scored[prev[-1]] if prev else "ckpt_p324.pt")
                 print(f"[{time.strftime('%H:%M:%S')}] milestone {tok} @ step {step} "
                       f"(target {target}): {ckpt} vs {paired}", flush=True)
+                # Pin BEFORE scoring: run_one may queue behind an occupied lane, and the
+                # rotation does not wait for the queue.
+                pinned = _pin_milestone(a.watch, a.run, ckpt, tok)
+                if pinned:
+                    print(f"  pinned -> {os.path.basename(pinned)} (outside the roller)", flush=True)
                 res = run_one(ckpt, paired, MILESTONE_TOKENS[tok], milestone=tok)
                 print(f"  -> {res}", flush=True)
             time.sleep(a.interval)
