@@ -1940,7 +1940,15 @@ def main():
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
             f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
-            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone}"
+            f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone} "
+            # The EFFECTIVE values, from Cfg after the flags are applied -- not the
+            # argv the caller typed. --seed 0 was silently dropped for weeks and
+            # nothing in the log said so, because the log did not print the seed at
+            # all: the invisibility is what let the truthiness bug live (44).
+            f"seed {Cfg.seed} sample_seed {_sample_seed()}"
+            + (" (pinned)" if Cfg.sample_seed is not None else " (follows seed)")
+            + f" warmdown {Cfg.warmdown} anneal_frac {Cfg.anneal_frac} "
+            f"val_every {Cfg.val_every} attn_every {Cfg.attn_every}"
         )
 
     master = MasterWeights(raw_model) if args.fp32_master else None
