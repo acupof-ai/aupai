@@ -102,7 +102,9 @@ mix = `data/mix_scale_30b.json`(8 能力角色,zh:en ≈ 35:65)。
 
 Stage-1 run 配方:15B tokens,seq 4096,warmup 300(同 §1b),7 卡 × batch 16 × accum 2
 (有效 batch 224,与阶梯一致),mix = `data/mix_15b_stage1.json`(math_owm/cot 绑定 pod
-现有种子数据 math_seed/cot_seed,缺口按 8:5.5 转 code_rp1t+en_c4),WSD:
+现有种子数据 math_seed(81.68M 实测),cot = numina 直接落地(424M 实测);cot_seed
+(fable5)已 drop——4,665 段全 <100 字符、轻过滤 0 留存,不可训练(fb 2026-08-31);
+缺口按 8:5.5 转 code_rp1t+en_c4),WSD:
 `--warmdown 0 --anneal_frac 0`(stage 1 保持 lr 稳定,终在 lr_mult 1.0;stage 2 在此
 resume,`--warmdown 0.10`,resume 机制以 t47 排练为准)。
 
@@ -123,4 +125,5 @@ Stage-1 3.24B 配对隔离的对比与 30B run 的 3.24B 配对**不是同一个
 30B mix,前者隔离 stage-1 mix(种子 math/cot + 重配 code/en)。两者都是"固定 arch+tokens
 下的 mix 变更",§1 的读法规则(好于且过阈值 = 语料效应为真,warmup 拖拽只会衰减它;
 差于 = 此配对对语料问题不可读)通用。Stage-1 的 per-role domain loss 对 8 角色读数,
-其中 math_seed/cot_seed 是 stage-1 角色名(替代 math_owm/cot),其余 6 角色同名。
+其中 math_seed/cot 是 stage-1 角色名(math_seed 替代 math_owm;cot = numina 直接落地;
+cot_seed 已 drop——fable5 不可训练,fb 2026-08-31),其余 6 角色同名。

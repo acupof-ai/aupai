@@ -4,14 +4,14 @@
   "domains": {},
   "_blocked": {
     "code_rp1t": {
-      "weight": 0.38893,
+      "weight": 0.40427,
       "epochs": 1,
-      "anneal": 0.38893,
+      "anneal": 0.40427,
       "role": "code raw (RedPajama-1T github)",
-      "tokens": 5834000000,
+      "tokens": 6064000000,
       "source": "RedPajama-1T github, 73.6B reachable, exact count",
       "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b)",
-      "status": "blocked: raw fetched, corpus build+stamp pending. Stage-1 weight is 5.834B vs the 4.000B scaled-15B target (+1.834B) -- it absorbs 8/13.5 of the math/cot seed shortfall (see _comment)"
+      "status": "blocked: raw fetched, corpus build+stamp pending. Stage-1 weight is 6.064B vs the 4.000B scaled-15B target (+2.064B) -- it absorbs 8/13.5 of the math/cot shortfall (see _comment)"
     },
     "code_tests": {
       "weight": 0.06667,
@@ -24,34 +24,34 @@
       "status": "blocked: mining pending (3b). Unchanged from scaled-15B target (1.000B)"
     },
     "math_seed": {
-      "weight": 0.08440,
+      "weight": 0.01633,
       "epochs": 3,
-      "anneal": 0.08440,
-      "role": "verifiable math SEED -- stage-1 stand-in for math_owm (OpenWebMath+proof-pile not landed); pod-existing math corpora only",
-      "tokens": 1266000000,
-      "source": "data/corpus/math 320M (cleaned) + mathinstruct_zh 89M + blossom-math 10M + gsm8k_chinese 3M = 422M unique, pod-existing (pre-stamp estimates, fb 2026-08-31)",
-      "supply": "422M x 3 epochs = 1.266B = demand (binding: epochs=3 is FORCED by supply=demand, not a choice -- check_mix_supply FAILs at epochs<=2). 3b stamps these into data/corpus/math_seed",
-      "status": "blocked: 3b stamp pending. math/cot seed split is provisional -- role attribution pending 44's content read, same discipline as math_owm/cot in mix_30b.json. Stage-1 weight is 1.266B vs the 2.750B scaled-15B math_owm target (-1.484B)"
+      "anneal": 0.01633,
+      "role": "verifiable math SEED -- stage-1 stand-in for math_owm (finemath not landed); pod-existing math corpora only",
+      "tokens": 245000000,
+      "source": "data/corpus/math_seed: 74.27M English en_math_text (91%) + 7.41M Chinese math_short (9%) = 81.68M tokens MEASURED (44, t49: 5 shards, 320M bytes, train.encode exact). mathinstruct_zh/blossom/gsm8k do not exist as corpus dirs",
+      "supply": "81.68M measured x 3 epochs = 245M = demand (binding: epochs=3 is FORCED by supply=demand, not a choice -- check_mix_supply FAILs at epochs<=2). The 422M byte estimate was 5.2x the token count (byte-vs-token error, t49 44)",
+      "status": "blocked: stamped (44 measured 81.68M). Stage-1 weight is 0.245B vs the 2.750B scaled-15B math_owm target (-2.505B) -- the math shortfall is fb's call (see _comment)"
     },
-    "cot_seed": {
-      "weight": 0.04260,
+    "cot": {
+      "weight": 0.08480,
       "epochs": 3,
-      "anneal": 0.04260,
-      "role": "long-CoT SEED -- stage-1 stand-in for cot (OpenThoughts+Skywork-OR1 not landed); pod-existing reasoning traces only",
-      "tokens": 639000000,
-      "source": "raw fable5_traces 140M + fable5_sft 73M = 213M unique, pod-existing (pre-stamp estimates, fb 2026-08-31)",
-      "supply": "213M x 3 epochs = 639M = demand (binding: epochs=3 FORCED by supply=demand -- check_mix_supply FAILs at epochs<=2). 3b stamps these into data/corpus/cot_seed",
-      "status": "blocked: 3b stamp pending. fable5_* classed as cot (reasoning traces), not math -- provisional pending 44's content read. Stage-1 weight is 0.639B vs the 2.250B scaled-15B cot target (-1.611B)"
+      "anneal": 0.08480,
+      "role": "long CoT (NuminaMath-CoT)",
+      "tokens": 1272000000,
+      "source": "NuminaMath-CoT, 1.2G raw, cleaned (de global pass: holdout + exact dedup), 851,965 docs",
+      "supply": "424,056,227 tokens MEASURED (44, 2026-08-31: 13 shards, 64 procs, 44.4s, train.encode exact; written to data/corpus/cot/build_corpus_stats.json tokens/tokens_status=measured). 424M x 3 epochs = 1.272B = demand (binding: epochs=3 FORCED by supply=demand -- check_mix_supply FAILs at epochs<=2). de's kept_tokens self-estimate was 805.9M (chars/1.5), 1.89x the exact count -- estimate not used",
+      "status": "blocked: stamped (44 measured 424M). Stage-1 weight is 1.272B vs the 2.250B scaled-15B cot target (-0.978B); the shortfall goes to code/en per the 8:5.5 rule (fb ruling 2026-08-31). cot_seed (fable5) DROPPED: 4,665 snippets all under 100 chars, 0 kept under light filters -- not trainable (fb ruling 2026-08-31)"
     },
     "en_c4": {
-      "weight": 0.26740,
+      "weight": 0.27793,
       "epochs": 1,
-      "anneal": 0.26740,
+      "anneal": 0.27793,
       "role": "English general (RedPajama-1T c4, reachable stand-in)",
-      "tokens": 4011000000,
+      "tokens": 4169000000,
       "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
       "supply": "open",
-      "status": "blocked: not fetched. fineweb-edu sample/10BT remains the PREFERRED source: if the hf-mirror returns before en is half landed, switch back at the same weight (fb ruling 2026-08-31). Stage-1 weight is 4.011B vs the 2.750B scaled-15B target (+1.261B) -- it absorbs 5.5/13.5 of the math/cot seed shortfall"
+      "status": "blocked: not fetched. fineweb-edu sample/10BT remains the PREFERRED source: if the hf-mirror returns before en is half landed, switch back at the same weight (fb ruling 2026-08-31). Stage-1 weight is 4.169B vs the 2.750B scaled-15B target (+1.419B) -- it absorbs 5.5/13.5 of the math/cot shortfall"
     },
     "zh_web": {
       "weight": 0.11000,
@@ -84,5 +84,5 @@
       "status": "blocked: needs a fresh stamped build. Unchanged from scaled-15B target (0.100B); weight kept so ChatML and the two-turn tool rendering are not learned from nothing (same rationale as mix_30b.json)"
     }
   },
-  "_comment": "15B stage-1 WSD mix (t46, fb 2026-08-31). The 30B table (mix_30b.json) scaled to 15e9, with math_owm/cot BOUND TO POD-EXISTING SEED DATA because OpenWebMath/proof-pile/OpenThoughts/Skywork are not fetched -- stage 1 buys an early read on the math/cot bet at half the tokens, without waiting on those fetches. SCALED-15B TARGET -> STAGE-1 ACTUAL (deviation per role, in tokens): code_rp1t 4.000B -> 5.834B (+1.834B); code_tests 1.000B -> 1.000B (0); math_owm -> math_seed 2.750B -> 1.266B (-1.484B); cot -> cot_seed 2.250B -> 0.639B (-1.611B); en_c4 2.750B -> 4.011B (+1.261B); zh_web 1.650B -> 1.650B (0); textbook_30b 0.500B -> 0.500B (0); wiki_chat 0.100B -> 0.100B (0). math+cot: 5.000B -> 1.905B (-3.095B); the whole shortfall is reassigned to code_rp1t + en_c4 in their existing 8:5.5 ratio (8/13.5 = +1.834B to code_rp1t, 5.5/13.5 = +1.261B to en_c4). SEED BINDING: math_seed = data/corpus/math 320M + mathinstruct_zh 89M + blossom-math 10M + gsm8k_chinese 3M = 422M unique; cot_seed = fable5_traces 140M + fable5_sft 73M = 213M unique. Both at epochs=3, the cap (fb: epoch cap <=3) -- and epochs=3 is FORCED, not chosen: 422M x 3 = 1.266B = math_seed demand and 213M x 3 = 639M = cot_seed demand, so check_mix_supply FAILs at epochs<=2. Seed sizes are pre-stamp estimates; 3b's stamp counts are the gate-enforced truth (if a stamp lands under 422M/213M the supply gate FAILs and the weight is re-cut then, not now). The math/cot seed split is provisional: fable5_* classed as cot (traces), the named math corpora as math; role attribution is pending 44's content read, the same discipline as math_owm/cot in mix_30b.json. math_seed/cot_seed are NEW stamped dirs, not ladder names (web_hq/textbook/en/math/code/wiki/chat stay banned). ANNEAL: anneal_frac = 0 (WSD stage 1 -- no anneal phase). Launch flags: --warmdown 0 --anneal_frac 0 (stage 1 keeps lr at stable, ends at lr_mult 1.0); stage 2 resumes at lr_mult 1.0 and decays with --warmdown 0.10. train.py already handles the falsy-0.0 case (warmdown/anneal_frac are floats whose valid value 0.0 is falsy; the CLI loop would skip them and silently keep the 0.65/0.10 defaults -- train.py:1690 applies them explicitly). NOTE: harness cfg_default('anneal_frac') reads the run config (data/mix_scale_run_config.json), not this mix file -- the anneal_frac field here is the CONTRACT; launch must set it in the run config + CLI. STAGE 2: the remaining 15B runs under mix_30b.json (its weights applied to 15e9 = the scaled-15B target column above) once finemath/CoT land -- real math_owm/cot replace the seeds, code_rp1t/en_c4 return to their scaled targets. Stage 2 is a RESUME from the stage-1 15B checkpoint, not a fresh run, IF t47 (tlerl's resume rehearsal) confirms the mechanics; otherwise fresh. The stage-1 deviations are front-loaded: stage 1 over-weights code/en and under-weights math/cot relative to the 30B table, and stage 2 does not pay that back (it runs the standard scaled table) -- the two-stage path is a different composition than a straight 30B run, bought for the earlier read. CONTRACT: same three invariants as mix_30b.json -- weights(domains)+weights(_blocked) sum to 1.0 (here 1.00000), no frozen ladder directory name, every landed domain stamped. The harness check check_mix_30b_contract is hardcoded to data/mix_30b.json and does not read this file; the invariants are satisfied here and verified by hand (de to parameterize the check onto mix_*.json when harness.py is free). domains is EMPTY today: nothing is stamped. t46-stage-1 MUST NOT launch until _blocked is empty and weights(domains) sum to 1.0."
+  "_comment": "15B stage-1 WSD mix (t46, fb 2026-08-31). The 30B table (mix_30b.json) scaled to 15e9, with math_owm/cot BOUND TO LANDED/POD-EXISTING DATA because OpenWebMath/proof-pile/OpenThoughts/Skywork are not fetched -- stage 1 buys an early read on the math/cot bet at half the tokens, without waiting on those fetches. SCALED-15B TARGET -> STAGE-1 ACTUAL (deviation per role, in tokens): code_rp1t 4.000B -> 6.064B (+2.064B); code_tests 1.000B -> 1.000B (0); math_owm -> math_seed 2.750B -> 0.245B (-2.505B); cot 2.250B -> 1.272B (-0.978B); en_c4 2.750B -> 4.169B (+1.419B); zh_web 1.650B -> 1.650B (0); textbook_30b 0.500B -> 0.500B (0); wiki_chat 0.100B -> 0.100B (0). math+cot: 5.000B -> 1.517B (-3.483B); the whole shortfall is reassigned to code_rp1t + en_c4 in their existing 8:5.5 ratio (8/13.5 = +2.064B to code_rp1t, 5.5/13.5 = +1.419B to en_c4). MEASURED SUPPLIES (44, t49, train.encode exact -- byte estimates were 1.9-5.2x off and are NOT used): math_seed = 81,681,834 tokens (5 shards, 320M bytes; 74.27M English 91% + 7.41M Chinese 9%); cot (numina) = 424,056,227 tokens (13 shards, 851,965 docs). Both at epochs=3, the cap (fb: epoch cap <=3) -- epochs=3 is FORCED, not chosen: 81.68M x 3 = 245M = math_seed demand and 424M x 3 = 1.272B = cot demand, so check_mix_supply FAILs at epochs<=2. COT_SEED DROPPED (fb ruling 2026-08-31): fable5_traces + fable5_sft = 4,665 snippets all under 100 characters, 0 kept under light filters -- not trainable corpus. cot = numina alone (fb ruling). MATH SHORTFALL IS FB'S CALL: math_seed is 0.245B vs the 2.750B target (-2.505B) because finemath (math_owm) is not landed (de not started as of 2026-08-31 ~19:30). The 2.505B is provisionally assigned to code/en per the 8:5.5 rule; fb owns the decision (accept the math-starved stage 1, wait for finemath, or re-cut). When finemath lands, math_owm = finemath (primary) + math_seed (top-up <=3 epochs) and the weights are re-cut then. math_seed/cot are NEW stamped dirs, not ladder names (web_hq/textbook/en/math/code/wiki/chat stay banned). ANNEAL: anneal_frac = 0 (WSD stage 1 -- no anneal phase). Launch flags: --warmdown 0 --anneal_frac 0 (stage 1 keeps lr at stable, ends at lr_mult 1.0); stage 2 resumes at lr_mult 1.0 and decays with --warmdown 0.10. train.py already handles the falsy-0.0 case (warmdown/anneal_frac are floats whose valid value 0.0 is falsy; the CLI loop would skip them and silently keep the 0.65/0.10 defaults -- train.py:1690 applies them explicitly). NOTE: harness cfg_default('anneal_frac') reads the run config (data/mix_scale_run_config.json), not this mix file -- the anneal_frac field here is the CONTRACT; launch must set it in the run config + CLI. STAGE 2: the remaining 15B runs under mix_30b.json (its weights applied to 15e9 = the scaled-15B target column above) once finemath lands -- real math_owm replaces math_seed, code_rp1t/en_c4 return to their scaled targets. Stage 2 is a RESUME from the stage-1 15B checkpoint, not a fresh run, IF t47 (tlerl's resume rehearsal) confirms the mechanics; otherwise fresh. The stage-1 deviations are front-loaded: stage 1 over-weights code/en and under-weights math/cot relative to the 30B table, and stage 2 does not pay that back (it runs the standard scaled table) -- the two-stage path is a different composition than a straight 30B run, bought for the earlier read. CONTRACT: same three invariants as mix_30b.json -- weights(domains)+weights(_blocked) sum to 1.0 (here 1.00000), no frozen ladder directory name, every landed domain stamped. The harness check check_mix_30b_contract is hardcoded to data/mix_30b.json and does not read this file; the invariants are satisfied here and verified by hand (de to parameterize the check onto mix_*.json when harness.py is free). domains is EMPTY today: no domain is stamped into domains/ (math_seed/cot are measured but still in _blocked until 3b moves them). t46-stage-1 MUST NOT launch until _blocked is empty and weights(domains) sum to 1.0."
 }
