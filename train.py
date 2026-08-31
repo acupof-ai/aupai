@@ -18,6 +18,7 @@ import glob
 import hashlib
 import json
 import math
+import multiprocessing as mp
 import random
 import re
 import time
@@ -1035,6 +1036,11 @@ def _jsonl_content(path):
 
 VOCAB_ID = None  # fingerprint of the id->token map the run trained against
 
+# t50: fork()ed encode workers inherit these globals (copy-on-write, no pickling
+# the doc list). Set by _encode_domain right before it spawns workers.
+_PARALLEL_TEXTS = None
+_PARALLEL_TOK = None
+
 
 # Greedy/sampled decoding, the ONE implementation. There were seven near-identical copies
 # (three probes, infer.py, test_e2e.py, rlvr_generate.py, and this one); only this one
@@ -1239,6 +1245,52 @@ def scatter_values(ids, vals, num_id):
     return out
 
 
+def _encode_worker(i, lo, hi, q):
+    ids, vals = encode(_PARALLEL_TEXTS[lo:hi], _PARALLEL_TOK)
+    q.put((i, ids.numpy(), vals.numpy() if Cfg.fone else None))
+
+
+def _encode_domain(texts, tok, workers, log=None):
+    """t50: encode a domain's (already shuffled) docs into the <eos>-separated stream.
+
+    workers>1 splits the doc list into CONTIGUOUS blocks across fork()ed processes
+    and concatenates streams in worker order, so the result is element-identical to
+    the single-process encode() (t49: stream_sum matched on math_seed and wiki_chat).
+    Process parallelism is the lever: the tokenizers rayon pool inside one process
+    does not scale (t49: 1 proc x 180 threads 2.45M tok/s vs 8 proc x 22 threads
+    18.2M on math_seed). Callers MUST set RAYON_NUM_THREADS=nproc/workers before
+    importing tokenizers so the inherited pools sum to nproc; pretokenize.py does.
+    Streams ride a queue back, so this is for per-domain streams up to a few GB;
+    past that, workers should write part-files instead.
+    """
+    if workers <= 1:
+        return encode(texts, tok, log=log)
+    global _PARALLEL_TEXTS, _PARALLEL_TOK
+    _PARALLEL_TEXTS, _PARALLEL_TOK = texts, tok
+    n = len(texts)
+    bounds = [int(k * n / workers) for k in range(workers + 1)]
+    ctx = mp.get_context("fork")
+    q = ctx.Queue()
+    procs = [
+        ctx.Process(target=_encode_worker, args=(i, bounds[i], bounds[i + 1], q))
+        for i in range(workers)
+    ]
+    for p in procs:
+        p.start()
+    parts = [None] * workers
+    for _ in procs:
+        i, ids_np, vals_np = q.get()
+        parts[i] = (ids_np, vals_np)
+    for p in procs:
+        p.join()
+        if p.exitcode != 0:
+            raise RuntimeError(f"encode worker {p.pid} exited {p.exitcode}")
+    ids = torch.from_numpy(np.concatenate([p[0] for p in parts]))
+    if Cfg.fone:
+        return ids, torch.from_numpy(np.concatenate([p[1] for p in parts]))
+    return ids
+
+
 def _domain_cache_path(domain):
     """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
     token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
@@ -1247,7 +1299,7 @@ def _domain_cache_path(domain):
     return os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
 
 
-def _domain_seqs(domain, tok, is_main, ddp):
+def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
     Reused only while newer than every shard, carrying the same vocabulary fingerprint, AND
@@ -1282,8 +1334,8 @@ def _domain_seqs(domain, tok, is_main, ddp):
             texts += _jsonl_content(p)
         assert texts, f"mix domain {domain}: no data/corpus/{domain}/*.jsonl"
         random.Random(Cfg.seed).shuffle(texts)
-        print(f"mix: tokenizing {domain} ({len(texts)} docs) -> {cache}", flush=True)
-        data = encode(texts, tok, log=lambda m: print(m, flush=True))
+        print(f"mix: tokenizing {domain} ({len(texts)} docs, workers={workers}) -> {cache}", flush=True)
+        data = _encode_domain(texts, tok, workers, log=lambda m: print(m, flush=True))
         del texts
         torch.save(data, cache)
         with open(stamp, "w") as f:

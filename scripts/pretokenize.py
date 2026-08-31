@@ -6,6 +6,7 @@ Doing it up front instead means a tokenizer or missing-domain failure shows up i
 than after eight ranks have allocated their GPUs, and the training launch starts on warm caches.
 
     python scripts/pretokenize.py [--mix data/mix_scale_3.24b.json] [--domains web,math]
+    python scripts/pretokenize.py --workers 8   # t50: process-parallel, 9-14 min for 15B
 """
 
 import argparse
@@ -13,6 +14,15 @@ import json
 import os
 import sys
 import time
+
+# t50: with --workers N>1, cap the tokenizers rayon pool per process BEFORE
+# importing train (which imports tokenizers). fork()ed encode workers inherit the
+# pool, so workers x (nproc/workers) = nproc total threads; setting it any later
+# has no effect on an already-initialized pool.
+if "--workers" in sys.argv:
+    _w = int(sys.argv[sys.argv.index("--workers") + 1])
+    if _w > 1:
+        os.environ.setdefault("RAYON_NUM_THREADS", str(max(1, (os.cpu_count() or 1) // _w)))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -27,6 +37,8 @@ def main():
     # The configured mix, not a hardcoded name: a hardcoded path goes stale when the mix is retired.
     ap.add_argument("--mix", default=os.path.join(ROOT, harness.cfg_default("mix")))
     ap.add_argument("--domains", help="comma-separated subset (default: every domain in the mix)")
+    ap.add_argument("--workers", type=int, default=1,
+                    help="processes per domain for tokenization (t50; 1 = train.py's own path)")
     a = ap.parse_args()
 
     mix = json.load(open(a.mix, encoding="utf-8"))
@@ -37,7 +49,7 @@ def main():
     total = 0
     for d in names:
         t0 = time.time()
-        seqs = train._domain_seqs(d, tok, is_main=True, ddp=False)
+        seqs = train._domain_seqs(d, tok, is_main=True, ddp=False, workers=a.workers)
         n = seqs.numel()
         total += n
         print(
