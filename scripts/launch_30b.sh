@@ -18,14 +18,17 @@
 #   scripts/launch_30b.sh --stage 1 [--dry]              stage 1 (15B)
 #   scripts/launch_30b.sh --stage 2 --resume <ckpt> [--dry]   stage 2 (resume into 30B)
 #   --dry prints the resolved torchrun line + the STAGE's own readiness, exit non-zero while blocked.
+#   --gate-timeout N overrides the startup gate; raise it when the first tick is behind a
+#     slow load (68GB of warm token caches off /data00 has taken >120s).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-STAGE=""; RESUME=""; DRY=0
+STAGE=""; RESUME=""; DRY=0; GATE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --stage) STAGE=$2; shift 2 ;;
     --resume) RESUME=$2; shift 2 ;;
+    --gate-timeout) GATE=$2; shift 2 ;;
     --dry) DRY=1; shift ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
@@ -66,7 +69,7 @@ else
   READY=1
 fi
 
-GATE=120; [ -n "$RESUME" ] && GATE=300   # a 959MB+ ckpt load exceeds the default gate (t38)
+if [ -z "$GATE" ]; then GATE=120; [ -n "$RESUME" ] && GATE=300; fi   # a 959MB+ ckpt load exceeds the default gate (t38)
 echo "== resolved command =="
 echo "python3 scripts/harness.py launch $NAME --training --gate-timeout $GATE \\"
 echo "  --hypothesis 'staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')' \\"
