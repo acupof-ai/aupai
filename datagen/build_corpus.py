@@ -272,13 +272,13 @@ class ShardWriter:
         if self.f is None or self.size >= SHARD_BYTES:
             if self.f:
                 self.f.close()
-                # a killed writer leaves a truncated complete-looking file if we
-                # wrote the final name directly (2026-08-31: a killed duplicate
-                # truncated shard _002 and the survivor won't revisit it). Write
-                # .part, rename on close -- existence of the final name == whole.
+                # rename the shard JUST closed (self.n still its index), then
+                # advance -- renaming after advancing looked for the wrong path
+                # (e2e282f bug: closed _000, renamed _001 => FileNotFoundError).
                 os.rename(self._path(True), self._path(False))
+                self.n += 1
             self.f = open(self._path(True), "w", encoding="utf-8")
-            self.n, self.size = self.n + 1, 0
+            self.size = 0
         line = json.dumps(row, ensure_ascii=False) + "\n"
         self.f.write(line)
         self.size += len(line.encode("utf-8"))
