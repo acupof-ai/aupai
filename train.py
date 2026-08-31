@@ -1881,9 +1881,11 @@ def main():
                     continue
                 n_skip = 0
                 set_schedule(optimizers, step, total_steps, Cfg, args.lr_scale)
-                # Two readings, because the fix does NOT lower the first one: the model stays
-                # bf16, so a small step still rounds away there. What changes is that the
-                # optimizer's own copy keeps it, and it accumulates until the weight moves.
+                # Two readings. Measured 2026-08-30 at 0.2b: model bf16 84.5% frozen without
+                # master, 77.9-79.1% with -- a single step still rounds away in bf16, but the
+                # fp32 copy keeps it and over 217 steps part of the accumulation clears the
+                # bf16 ULP and moves the weight. So the first reading DOES fall, just far less
+                # than the second (0.1%), which is where the update is actually kept.
                 probe = None
                 if args.frozen_probe and step == total_steps - 1:
                     probe = ([(p, p.detach().clone()) for p in raw_model.parameters()],
@@ -1896,6 +1898,12 @@ def main():
                 if master is not None:
                     master.push()
                 if probe is not None and is_main:
+                    if probe[1] is None:
+                        # Say it, or the next reader takes the missing line for a dropped
+                        # measurement: without --fp32_master the optimizer steps the model's
+                        # own parameters, so the two readings would be one number.
+                        runlog("frozen[optimizer] n/a — no --fp32_master, the optimizer holds "
+                               "the model's own parameters")
                     for tag, pairs, bits in (("model bf16", probe[0], torch.int16),
                                              ("optimizer", probe[1], torch.int32)):
                         if pairs is None:
