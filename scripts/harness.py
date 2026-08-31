@@ -3352,6 +3352,56 @@ def _demo():
     )
     real = [v for v in vacuous if not v.startswith("fake_vacuous_pass")]
     assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
+
+    # sync selftest: a merge that loses a row must FAIL. The incident: a hand-merge
+    # keyed by name dropped 9 rows (p02_s0 x4, p03 x5 share a name; identity is
+    # (name, started)). Two failure modes, both on the REAL file:
+    exp_path = os.path.join(ROOT, "runs", "experiments.jsonl")
+    real = [l for l in open(exp_path, encoding="utf-8") if l.strip()]
+    if len(real) >= 5:
+        eid = lambda r: (r.get("name", ""), r.get("started", ""))
+        pod_fake = real[:10] if len(real) >= 10 else real[:5]
+        merged, err = _merge_jsonl(pod_fake, real, eid, "selftest")
+        assert err is None, f"sync selftest: clean merge refused: {err}"
+        # failure mode 1: duplicate (name, started) in the pod copy -> merge would lose a row
+        _, err = _merge_jsonl(pod_fake + [pod_fake[0]], real, eid, "selftest")
+        assert err and "duplicate" in err, f"sync selftest: duplicate pod identity not caught: {err}"
+        # failure mode 2: a merged output missing a pod row -> verify catches it
+        pod_ids = [eid(json.loads(l)) for l in pod_fake]
+        pod_set = set(pod_ids)
+        repo_only_ids = [eid(json.loads(l)) for l in real if eid(json.loads(l)) not in pod_set]
+        merged_ids = [eid(json.loads(l)) for l in merged.strip().split("\n")]
+        err = _verify_merge(pod_ids, repo_only_ids, merged_ids[:-1], "selftest")
+        assert err and "lost" in err, f"sync selftest: lost row not caught: {err}"
+
+    # pod_push manifest freshness: --check-head must fail when a scoped file changed
+    # in HEAD without a regenerated manifest. pod_push runs this before any transfer,
+    # so a stale manifest refuses before a byte is pushed.
+    import tempfile
+    d = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
+    os.makedirs(os.path.join(d, "scripts"))
+    open(os.path.join(d, "scripts", "real.py"), "w").write("# v1\n")
+    subprocess.run(["git", "add", "."], cwd=d, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "v1"], cwd=d, capture_output=True)
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    _old_manifest = pod_drift.MANIFEST
+    pod_drift.MANIFEST = os.path.join(d, "data", "pod_head_manifest.txt")
+    try:
+        n = pod_drift.write_manifest(d)
+        assert n == 1, f"expected 1 scoped file, got {n}"
+        ok, _ = pod_drift.check_head(d)
+        assert ok, "fresh manifest should pass check_head"
+        open(os.path.join(d, "scripts", "real.py"), "w").write("# v2\n")
+        subprocess.run(["git", "add", "."], cwd=d, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "v2"], cwd=d, capture_output=True)
+        ok, evidence = pod_drift.check_head(d)
+        assert not ok, f"stale manifest should fail check_head: {evidence}"
+    finally:
+        pod_drift.MANIFEST = _old_manifest
+
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")
 
@@ -3777,6 +3827,204 @@ def run_dispatch(rest):
     return 2
 
 
+# --------------------------------------------------------------------------- sync
+
+
+def _verify_merge(pod_ids, repo_only_ids, merged_ids, label):
+    """Assert merged == pod rows + repo-only rows. Returns an error string or None.
+    The incident this guards: a hand-merge keyed by name dropped 9 rows because
+    repeated attempts (p02_s0 x4, p03 x5) share a name -- identity is (name, started),
+    not name."""
+    if len(pod_ids) != len(set(pod_ids)):
+        seen, dups = set(), []
+        for i in pod_ids:
+            if i in seen and i not in dups:
+                dups.append(i)
+            seen.add(i)
+        return f"{label}: pod has {len(dups)} duplicate identit(ies) -- a merge would lose rows"
+    merged_set = set(merged_ids)
+    lost = set(pod_ids) - merged_set
+    if lost:
+        return f"{label}: {len(lost)} pod row(s) lost in merge"
+    lost_repo = set(repo_only_ids) - merged_set
+    if lost_repo:
+        return f"{label}: {len(lost_repo)} repo-only row(s) lost in merge"
+    if len(merged_ids) != len(set(merged_ids)):
+        return f"{label}: merged output has duplicate identities"
+    if len(merged_ids) != len(pod_ids) + len(repo_only_ids):
+        return f"{label}: merged {len(merged_ids)} rows, expected {len(pod_ids) + len(repo_only_ids)}"
+    return None
+
+
+def _merge_jsonl(pod_lines, repo_lines, identity_fn, label):
+    """Merge pod (producer) + repo-only lines by identity. Returns (merged_text, error).
+    The pod is the producer: its rows are authoritative. Repo rows whose identity is
+    not in the pod are kept (degen_t08, fetch_* -- runs recorded on this machine)."""
+    pod_rows, repo_rows = [], []
+    for l in pod_lines:
+        l = l.strip()
+        if l:
+            pod_rows.append((json.loads(l), l))
+    for l in repo_lines:
+        l = l.strip()
+        if l:
+            repo_rows.append((json.loads(l), l))
+    pod_ids = [identity_fn(r) for r, _ in pod_rows]
+    pod_id_set = set(pod_ids)
+    repo_only = [(r, l) for r, l in repo_rows if identity_fn(r) not in pod_id_set]
+    merged = [l for _, l in pod_rows] + [l for _, l in repo_only]
+    merged_ids = [identity_fn(json.loads(l)) for l in merged]
+    repo_only_ids = [identity_fn(r) for r, _ in repo_only]
+    err = _verify_merge(pod_ids, repo_only_ids, merged_ids, label)
+    if err:
+        return None, err
+    return "\n".join(merged) + "\n", None
+
+
+def cmd_sync(rest):
+    """`harness sync` -- pull runs/experiments.jsonl and runs/score_matrix.jsonl from
+    the pod, merging by producer identity. The pod is the producer; repo-only rows
+    (degen_t08, fetch_*) are kept. A merge that loses a row refuses."""
+    import base64
+
+    pod = os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod):
+        print("~/bin/pod not found -- sync runs from a dev box with pod access")
+        return 2
+    syncs = [
+        ("runs/experiments.jsonl", lambda r: (r.get("name", ""), r.get("started", "")), "experiments"),
+        ("runs/score_matrix.jsonl", lambda r: r.get("ckpt", ""), "score_matrix"),
+    ]
+    for relpath, idfn, label in syncs:
+        r = subprocess.run(
+            [pod, f"base64 /work/aupai/{relpath}"], capture_output=True, text=True, timeout=30
+        )
+        if r.returncode != 0:
+            print(f"  {label}: pod read failed: {r.stderr.strip()[:200]}")
+            return 1
+        pod_text = base64.b64decode(r.stdout).decode("utf-8")
+        repo_path = os.path.join(ROOT, relpath)
+        repo_text = open(repo_path, encoding="utf-8").read() if os.path.exists(repo_path) else ""
+        merged, err = _merge_jsonl(pod_text.splitlines(), repo_text.splitlines(), idfn, label)
+        if err:
+            print(f"  REFUSING {label}: {err}")
+            return 1
+        with open(repo_path, "w", encoding="utf-8") as f:
+            f.write(merged)
+        n_pod = len([l for l in pod_text.splitlines() if l.strip()])
+        n_repo = len([l for l in repo_text.splitlines() if l.strip()])
+        n_merged = len([l for l in merged.splitlines() if l.strip()])
+        print(f"  {label}: {n_pod} pod + {n_merged - n_pod} repo-only = {n_merged} rows (was {n_repo})")
+    return 0
+
+
+# --------------------------------------------------------------------------- clean
+
+
+def cmd_clean(rest):
+    """`harness clean --dry` -- list superseded artifacts, do not delete.
+    Deletion is a separate step from this committed listing, by exact path.
+    Each line: path, bytes, producer, why superseded."""
+    if "--dry" not in rest:
+        print("usage: harness.py clean --dry (list only; deletion is a separate step)")
+        return 2
+    pod = os.path.expanduser("~/bin/pod")
+    rows = []
+
+    def pod_lines(cmd):
+        if not os.path.exists(pod):
+            return []
+        r = subprocess.run([pod, cmd], capture_output=True, text=True, timeout=30)
+        return r.stdout.splitlines() if r.returncode == 0 else []
+
+    # 1. Checkpoints: scan pod for ckpt_*.pt, flag known-superseded names.
+    for ln in pod_lines("ls -la /work/aupai/ckpt_*.pt 2>/dev/null"):
+        parts = ln.split()
+        if len(parts) < 9:
+            continue
+        sz, name = parts[4], parts[-1]
+        base = os.path.basename(name)
+        why = ""
+        if base == "ckpt_sft_p324_v2.pt":
+            why = "superseded by t20/t01 rerun (verify rerun exists before deleting)"
+        elif "faFalse" in base or "fa_false" in base or "fa0" in base:
+            why = "fa=False ablation arm, superseded by t20/t01 rerun (verify rerun exists)"
+        if why:
+            rows.append((name, sz, "training run", why))
+
+    # 2. eval_hard shard residue: .N.jsonl files left by multi-GPU eval.
+    for ln in pod_lines("find /work/aupai/data/eval -name '*.\\d.jsonl' 2>/dev/null"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
+        rows.append((ln, sz[0] if sz else "?", "eval_hard.sh multi-GPU shard",
+                      "shard residue: a single-card run read 7 shard leftovers as 148/1032 preds"))
+
+    # 3. Orphan .part files under data/raw.
+    for ln in pod_lines("find /work/aupai/data/raw -name '*.part' 2>/dev/null"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
+        rows.append((ln, sz[0] if sz else "?", "fetch_corpus.py interrupted",
+                      "partial shard, never renamed to final -- fetch deletes stale .part on startup"))
+
+    # 4. /tmp logs on the pod.
+    for ln in pod_lines("find /tmp -maxdepth 2 -name '*.log' -size +1M 2>/dev/null"):
+        ln = ln.strip()
+        if not ln:
+            continue
+        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
+        rows.append((ln, sz[0] if sz else "?", "pod /tmp log", "superseded: /tmp is wiped on restart"))
+
+    # 5. Unregistered .py files on the pod: throwaway probes and bare-podput arrivals
+    # that no manifest entry names. The ones nothing names (UNNAMED) are deletion
+    # candidates; the rest are kept until their run is done.
+    import shlex
+    scan = (
+        "import os,json,time\n"
+        "m=set()\n"
+        "for l in open('data/pod_head_manifest.txt'):\n"
+        " p=l.strip().split('  ',1)\n"
+        " if len(p)==2:m.add(p[1])\n"
+        "pr={}\n"
+        "try:\n"
+        " for l in open('runs/experiments.jsonl'):\n"
+        "  r=json.loads(l)\n"
+        "  for w in r.get('cmd','').split():\n"
+        "   if w.endswith('.py'):pr.setdefault(os.path.basename(w),[]).append(r.get('name','?'))\n"
+        "except:pass\n"
+        "EX=('datagen','filters','mathbank','workflows','.git','__pycache__')\n"
+        "for dp,dn,fns in os.walk('.'):\n"
+        " dn[:]=[d for d in dn if d not in EX and not d.startswith('.')]\n"
+        " rel=os.path.relpath(dp,'.')\n"
+        " if rel.split(os.sep)[0] in('data','runs'):continue\n"
+        " for fn in fns:\n"
+        "  if fn.endswith('.py'):\n"
+        "   p=os.path.normpath(os.path.join(rel,fn))\n"
+        "   if p not in m:\n"
+        "    st=os.stat(p)\n"
+        "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
+        "    print(f'{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.localtime(st.st_mtime))}\\t{prd}')\n"
+    )
+    for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
+        parts = ln.split("\t")
+        if len(parts) >= 4:
+            path, sz, mtime, prod = parts[0], parts[1], parts[2], parts[3]
+            why = "deletion candidate: no run names it" if prod == "UNNAMED" else f"in use by: {prod}"
+            rows.append((path, sz, f"unregistered .py (mtime {mtime})", why))
+
+    if not rows:
+        print("no superseded artifacts found")
+        return 0
+    print(f"{'PATH':<60} {'BYTES':>12}  PRODUCER / WHY SUPERSEDED")
+    for path, sz, producer, why in rows:
+        print(f"{path:<60} {sz:>12}  {producer}: {why}")
+    print(f"\n{len(rows)} candidate(s). Deletion is a separate step, by exact path.")
+    return 0
+
+
 def main():
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
@@ -3785,6 +4033,10 @@ def main():
         return run_dispatch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "task":
         return cmd_task(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "sync":
+        return cmd_sync(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "clean":
+        return cmd_clean(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

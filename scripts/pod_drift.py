@@ -79,7 +79,9 @@ def write_manifest(root=ROOT):
     return len(lines)
 
 
-def read_manifest(path=MANIFEST):
+def read_manifest(path=None):
+    if path is None:
+        path = MANIFEST
     m = {}
     with open(path, encoding="utf-8") as f:
         for line in f:

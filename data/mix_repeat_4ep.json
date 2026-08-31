@@ -1,0 +1,41 @@
+{
+  "total_tokens": 12980000000.0,
+  "domains": {
+    "web_hq": {
+      "weight": 0.32383,
+      "epochs": 4,
+      "anneal": 0.32383
+    },
+    "textbook": {
+      "weight": 0.496222,
+      "epochs": 4,
+      "anneal": 0.496222
+    },
+    "wiki": {
+      "weight": 0.075723,
+      "epochs": 4,
+      "anneal": 0.075723
+    },
+    "en": {
+      "weight": 0.049544,
+      "epochs": 4,
+      "anneal": 0.049544
+    },
+    "math": {
+      "weight": 0.025172,
+      "epochs": 4,
+      "anneal": 0.025172
+    },
+    "code": {
+      "weight": 0.017741,
+      "epochs": 4,
+      "anneal": 0.017741
+    },
+    "chat": {
+      "weight": 0.011768,
+      "epochs": 4,
+      "anneal": 0.011768
+    }
+  },
+  "_comment": "repeat probe: identical weights and corpus to mix_scale_3.24b, epoch cap 4 instead of 1, so the run sees 12.98B tokens drawn from the same 3.24B. Read against the fresh-data fit's prediction at 13B (2.360, from L=2.157+0.842/D^0.555 on six points up to 3.24B). That prediction is an EXTRAPOLATION past the largest measured point, and adding the 3.24B point moved E by 0.097 -- 2.6x its own stated error -- so the comparison inherits that looseness. It answers 'is repeating 4x close to fresh data', not 'by exactly how much'."
+}

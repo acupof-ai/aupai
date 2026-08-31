@@ -13,6 +13,16 @@ dependencies = [
     "torchao; sys_platform == 'linux'",
     "huggingface_hub",
     "triton; sys_platform == 'linux'",
+    # Present in the pod image, so nothing noticed they were undeclared until a restart
+    # made the installed set the only record of what this repo needs.
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "transformers",
+    "datasets",
+    "opencc",
+    "trackio",
+    "flash-attn; sys_platform == 'linux'",
 ]
 
 [project.optional-dependencies]

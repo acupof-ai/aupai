@@ -30,6 +30,17 @@ for f in "$@"; do
   fi
 done
 
+# The manifest must describe HEAD. A scoped change without a regenerated manifest
+# makes the post-push drift line report the pusher's own file as drifted -- a false
+# alarm that trains people to ignore it. Regenerate and refuse; the pusher commits
+# the manifest and re-runs, so the commit discipline stays and the pod gate can
+# never be satisfied by an unregenerated manifest.
+if ! python3 scripts/pod_drift.py --check-head >/dev/null 2>&1; then
+  echo "pod_push: manifest was stale, regenerated -- commit it and push again" >&2
+  python3 scripts/pod_drift.py --write >/dev/null
+  exit 1
+fi
+
 # Find the host path of the container's /work emptyDir (cached for this run).
 # podput's argv limit (~100KB gzip+base64) cannot carry large files; tn push to the
 # emptyDir host path bypasses the container's argv entirely.
