@@ -53,6 +53,12 @@ def staged(diff_filter):
 
 
 def main():
+    # Stage timings in the output: a hook people wait minutes for is a hook they
+    # bypass (4a7dd56 --no-verify precedent, 2026-08-31).
+    import time
+
+    t_start = time.time()
+    t0 = time.time()
     fail = False
     for f in staged("AM"):
         if os.path.isfile(f):
@@ -73,8 +79,10 @@ def main():
             fail = True
     if fail:
         sys.exit(1)
+    print(f"hook: blob+allowlist {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Ruff E9/F on staged .py files -- the same gate CI runs, caught at commit time.
+    t0 = time.time()
     py_files = [f for f in staged("AM") if f.endswith(".py")]
     if py_files:
         try:
@@ -87,9 +95,11 @@ def main():
                 sys.exit(1)
         except FileNotFoundError:
             pass  # ruff not installed; CI catches it
+    print(f"hook: ruff {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP
     # on dev machines. CI is the second line; the commit is the first.
+    t0 = time.time()
     repo = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     ).stdout.strip()
@@ -101,6 +111,7 @@ def main():
         if r.returncode != 0:
             print(f"REFUSING: harness check failed:\n{r.stdout}", file=sys.stderr)
             sys.exit(1)
+    print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Regenerate pod manifest from staged content so it matches HEAD after commit.
     # Run the STAGED pod_drift.py (git show :path), never the working-tree copy:
@@ -108,6 +119,7 @@ def main():
     # (2026-08-31: an uncommitted 3-column format wrote a manifest the pod's parser
     # could not read, 147 false "missing", held a launch).
     # The staged copy is written inside the repo so its ROOT (__file__-relative) resolves.
+    t0 = time.time()
     repo = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
     ).stdout.strip()
@@ -155,6 +167,8 @@ def main():
                     os.unlink(tmp_py)
         # If neither staged nor HEAD has pod_drift.py (fresh temp repo), skip
         # manifest regeneration -- the hook must not fail a commit it cannot serve.
+    print(f"hook: manifest regen {time.time() - t0:.2f}s", file=sys.stderr)
+    print(f"hook: total {time.time() - t_start:.2f}s", file=sys.stderr)
 
 
 if __name__ == "__main__":

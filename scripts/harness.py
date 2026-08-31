@@ -3913,6 +3913,35 @@ def _demo():
     r = subprocess.run([hook_dst], cwd=d, capture_output=True)
     assert r.returncode != 0, f"unallowed data file must refuse: {r.stdout}"
 
+    # pre-merge-commit: a non-ff merge bringing an unlisted data/ path must be
+    # refused. git runs no pre-commit hook on a clean merge, so this is the only
+    # commit-time gate on the merge path (2026-08-31: a bad fact landed in main
+    # through a merge). The branch commit uses --no-verify: the point is the merge.
+    dm = tempfile.mkdtemp()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=dm, capture_output=True)
+    for hk in ("pre-commit", "pre-merge-commit"):
+        dst = os.path.join(dm, ".git", "hooks", hk)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        os.symlink(os.path.join(ROOT, "scripts", "hooks", "pre-commit"), dst)
+    open(os.path.join(dm, "README"), "w").write("base\n")
+    subprocess.run(["git", "add", "README"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "checkout", "-qb", "side"], cwd=dm, capture_output=True)
+    os.makedirs(os.path.join(dm, "data"), exist_ok=True)
+    open(os.path.join(dm, "data", "evil.bin"), "w").write("x")
+    subprocess.run(["git", "add", "data/evil.bin"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "evil", "--no-verify"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=dm, capture_output=True)
+    open(os.path.join(dm, "other"), "w").write("y")  # diverge so the merge is non-ff
+    subprocess.run(["git", "add", "other"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "other"], cwd=dm, capture_output=True)
+    r = subprocess.run(["git", "merge", "side", "--no-edit"], cwd=dm, capture_output=True, text=True)
+    assert r.returncode != 0, f"merge with an unlisted data/ path must be refused: {r.stdout} {r.stderr}"
+    head = subprocess.run(["git", "log", "--oneline", "-1"], cwd=dm, capture_output=True, text=True).stdout
+    assert "other" in head, f"refused merge left a merge commit: {head}"
+
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
     d2 = tempfile.mkdtemp()
@@ -4971,18 +5000,23 @@ def cmd_kill(argv):
 
 
 def cmd_install_hooks(rest):
-    """`harness install-hooks` -- symlink .git/hooks/pre-commit to scripts/hooks/pre-commit.
+    """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit}
+    to scripts/hooks/pre-commit. pre-commit covers direct commits; pre-merge-commit
+    (git >= 2.24) covers non-fast-forward merges, which otherwise run no hook at all
+    (2026-08-31: a bad fact entered main through a clean merge). Fast-forward merges
+    carry already-hooked commits, so they are covered by construction.
     The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
     hook_src = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    hook_dst = os.path.join(ROOT, ".git", "hooks", "pre-commit")
     if not os.path.exists(hook_src):
         print(f"hook source missing: {hook_src}")
         return 1
-    os.makedirs(os.path.dirname(hook_dst), exist_ok=True)
-    if os.path.lexists(hook_dst):
-        os.remove(hook_dst)
-    os.symlink(os.path.relpath(hook_src, os.path.dirname(hook_dst)), hook_dst)
-    print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, ROOT)}")
+    for name in ("pre-commit", "pre-merge-commit"):
+        hook_dst = os.path.join(ROOT, ".git", "hooks", name)
+        os.makedirs(os.path.dirname(hook_dst), exist_ok=True)
+        if os.path.lexists(hook_dst):
+            os.remove(hook_dst)
+        os.symlink(os.path.relpath(hook_src, os.path.dirname(hook_dst)), hook_dst)
+        print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, ROOT)}")
     return 0
 
 
