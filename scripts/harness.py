@@ -84,6 +84,18 @@ def _is_mount(path):
         return False
 
 
+#: The seven sessions in this round and each one's reviewer. A delivery gets a second
+#: reader who is not its author: the controller review with 44 caught four evidenced
+#: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
+REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl",
+                "3b": "e1", "e1": "3b", "fb": "44"}
+#: A review that has not arrived within this many minutes of the done row FAILs.
+#: Inside it, WARN: a missing review must not block a close, and must not stay invisible.
+REVIEW_GRACE_MIN = 30
+#: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
+#: failing them would be a permanent red nobody can act on, which is the same as no signal.
+REVIEW_RULE_FROM = "2026-08-31 22:00"
+
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
 _RULE_CHECKS = {
@@ -137,6 +149,7 @@ _MANUAL_RULES = {
         "no static analysis sees a runtime glob; reachability.py is a citation graph and its "
         "header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators "
         "a name scan reads as unreferenced (near-miss, 2026-08-31)",
+    "Every delivery has a second reader": "review_present checks the row exists; whether the reviewer actually read the artifact cannot be checked, only that they named one",
     "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
     "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
@@ -145,7 +158,7 @@ _MANUAL_RULES = {
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
 #: Raising it needs a message saying which rule became unenforceable and why.
-_MANUAL_BASELINE = 21
+_MANUAL_BASELINE = 22
 
 
 def _norm_rule(text):
@@ -1593,6 +1606,151 @@ def _is_gitignored(path, root):
     return False
 
 
+#: Ledgers that merge by union. Every one must be one JSON object per physical line.
+_UNION_LEDGERS = ("runs/retro.jsonl", "runs/tasks.jsonl", "runs/experiments.jsonl",
+                  "runs/score_matrix.jsonl", "runs/milestones.jsonl")
+
+
+def check_review_present(root):
+    """Every done task has a review row from the reviewer it named.
+
+    A delivery with one reader is a delivery nobody checked: the controller review
+    caught four evidenced errors in a day while every other session's work shipped
+    unread (user order, 2026-08-31 22:00). The row closes on --reviewer alone, so a
+    sleeping reviewer never blocks the register; the review itself is due within
+    REVIEW_GRACE_MIN of the close. Inside the window a missing review WARNs, after it
+    FAILs -- the same logic as the 15-minute challenge rule, where a challenge that
+    does not arrive does not block the ruling but its absence is not invisible."""
+    tasks = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    done = [t for t in tasks if t.get("state") == "done"]
+    in_scope = [t for t in done if (t.get("closed") or "") >= REVIEW_RULE_FROM]
+    if not in_scope:
+        return SKIP, f"no task closed since the rule took effect ({REVIEW_RULE_FROM})"
+    reviews = {}
+    p = os.path.join(root, "runs", "review.jsonl")
+    if os.path.exists(p):
+        for line in open(p, encoding="utf-8"):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # ledgers_one_line_per_row owns malformed rows
+            if r.get("task"):
+                reviews.setdefault(r["task"], []).append(r)
+    now = time.time()
+    overdue, pending, no_reviewer = [], [], []
+    for t in done:
+        tid = t.get("id")
+        if (t.get("closed") or "") < REVIEW_RULE_FROM:
+            continue  # closed before the rule; see REVIEW_RULE_FROM
+        named = t.get("reviewer")
+        if not named:
+            no_reviewer.append(tid)
+            continue
+        if any(r.get("reviewer") == named for r in reviews.get(tid, [])):
+            continue
+        closed = t.get("closed", "")
+        try:
+            age_min = (now - time.mktime(time.strptime(closed, "%Y-%m-%d %H:%M"))) / 60
+        except ValueError:
+            age_min = REVIEW_GRACE_MIN + 1  # unparseable timestamp: treat as due
+        (overdue if age_min > REVIEW_GRACE_MIN else pending).append(f"{tid}->{named}")
+    if no_reviewer:
+        return FAIL, f"{len(no_reviewer)} done task(s) name no reviewer: {no_reviewer[:4]}"
+    if overdue:
+        return FAIL, f"{len(overdue)} review(s) over {REVIEW_GRACE_MIN}min overdue: {overdue[:4]}"
+    if pending:
+        return WARN, f"{len(pending)} review(s) pending inside the {REVIEW_GRACE_MIN}min window: {pending[:4]}"
+    return PASS, f"{len(in_scope)} task(s) closed since {REVIEW_RULE_FROM}, every one reviewed by the peer it named"
+
+
+def _broken_review_present():
+    """The REAL register and review ledger with one review row removed."""
+    d = _tmp_repo()
+    tp = os.path.join(ROOT, "runs", "tasks.jsonl")
+    rp = os.path.join(ROOT, "runs", "review.jsonl")
+    if not (os.path.exists(tp) and os.path.exists(rp)):
+        return None
+    reviews = []
+    for line in open(rp, encoding="utf-8"):
+        if line.strip():
+            try:
+                reviews.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    reviewed = [r for r in reviews if r.get("task")]
+    if not reviewed:
+        raise SelftestSkip("no task-linked review rows yet; the check SKIPs the same way")
+    import shutil as _sh
+
+    drop = reviewed[0]["task"]
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    _sh.copy(tp, os.path.join(d, "runs", "tasks.jsonl"))
+    with open(os.path.join(d, "runs", "review.jsonl"), "w", encoding="utf-8") as f:
+        for r in reviews:
+            if r.get("task") != drop:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return d
+
+
+def check_ledgers_one_line_per_row(root):
+    """Every union-merged ledger holds one JSON object per physical line.
+
+    .gitattributes merges these by union, which concatenates lines. A pretty-printed
+    row spans many lines, so union interleaves two branches' rows into syntactically
+    broken JSON and row identity silently becomes position. 3b's retro row was
+    pretty-printed across lines 3-12 (2026-08-31): 9 of 18 lines unparseable, and any
+    merge touching it would have corrupted the neighbouring rows too."""
+    bad = []
+    checked = 0
+    for rel in _UNION_LEDGERS:
+        p = os.path.join(root, rel)
+        if not os.path.exists(p):
+            continue
+        checked += 1
+        for n, line in enumerate(open(p, encoding="utf-8"), 1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                bad.append(f"{rel}:{n}")
+                continue
+            if not isinstance(obj, dict):
+                bad.append(f"{rel}:{n} is {type(obj).__name__}, not an object")
+    if not checked:
+        return SKIP, "no union ledgers present"
+    if bad:
+        return FAIL, f"{len(bad)} line(s) not one JSON object: {bad[:4]}"
+    return PASS, f"{checked} union ledger(s), one JSON object per line"
+
+
+def _broken_ledgers_one_line_per_row():
+    """The REAL retro ledger with one row pretty-printed -- 3b's actual failure."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "retro.jsonl")
+    if not os.path.exists(src):
+        return None
+    # Raw lines, not json.loads: the real ledger may already hold a malformed row
+    # (3b's, today), and a broken world that cannot be built while the bug is live
+    # is a broken world that only works after the fix.
+    lines = [x for x in open(src, encoding="utf-8") if x.strip()]
+    good = None
+    for x in lines:
+        try:
+            good = json.loads(x)
+            break
+        except json.JSONDecodeError:
+            continue
+    if good is None:
+        return None
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    with open(os.path.join(d, "runs", "retro.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(good, ensure_ascii=False, indent=1) + "\n")  # the pretty-printed row
+    return d
+
+
 def check_facts_well_formed(root):
     """Every fact carries its measurement config, and its source path must exist.
 
@@ -2950,6 +3108,8 @@ def cmd_task(argv):
     a.add_argument("--blocked-on", dest="blocked_on", default=None)
     d = sub.add_parser("done")
     d.add_argument("id")
+    d.add_argument("--reviewer", required=True,
+                   help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
     r = sub.add_parser("reopen")
     r.add_argument("id")
@@ -2984,8 +3144,16 @@ def cmd_task(argv):
         if not hit:
             print(f"no task {args.id}; `harness task list` shows what is open")
             return 1
+        owner = hit[0].get("owner")
+        if args.reviewer == owner:
+            print(f"refusing: {args.reviewer} owns {args.id}; a delivery needs a second reader", file=sys.stderr)
+            return 1
+        if args.reviewer not in REVIEW_PAIRS:
+            print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+            return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
-        ev = dict(hit[0], state="done", evidence=args.evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+        ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
+                  closed=time.strftime("%Y-%m-%d %H:%M"))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -3644,6 +3812,20 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "review_present",
+        "every done task carries a review row from the peer it named",
+        "the controller review caught four evidenced errors in one day while every other session's deliveries shipped with one reader",
+        check_review_present,
+        _broken_review_present,
+    ),
+    (
+        "ledgers_one_line_per_row",
+        "every union-merged ledger holds one JSON object per physical line",
+        "3b's retro row was pretty-printed across lines 3-12: union merge concatenates lines, so a multi-line row interleaves with another branch's rows and identity becomes position",
+        check_ledgers_one_line_per_row,
+        _broken_ledgers_one_line_per_row,
     ),
     (
         "facts_well_formed",
