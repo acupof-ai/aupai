@@ -483,10 +483,10 @@ print(f"doc_cu_seqlens: packed unchanged, {_ndoc} docs for 8 padded rows (was 32
 # ShortConv: the K shifted multiply-adds must equal nn.Conv1d bit-for-bit (shared weights).
 # The arithmetic form ships for speed (3.44x compiled; conv_depthwise2d_generic is ~6%
 # bandwidth), so it must be numerically the conv it replaces -- not merely close. The spy
-# captures the patched forward's own short_conv output (its first silu), so the check
-# tracks the real branch rather than a copy that could drift from it.
-_dr = _train.DeltaRecurrence(Cfg)
-_xd = torch.randn(2, 16, Cfg.d)
+# captures the patched forward's own short_conv output (its first silu) and then aborts the
+# forward, so the check tracks the real branch without running chunk_kda (Triton, GPU-only).
+_dr = _train.DeltaRecurrence(Cfg).to(DEV)
+_xd = torch.randn(2, 16, Cfg.d, device=DEV)
 _Kc = _dr.short_conv.kernel_size[0]
 import torch.nn.functional as _F  # noqa: E402
 with torch.no_grad():
@@ -494,14 +494,16 @@ with torch.no_grad():
     _ref_h = _F.silu(_dr.short_conv(_hc).transpose(1, 2))  # the plain nn.Conv1d path
 _cap = {}
 _orig_silu = _F.silu
+class _Stop(Exception): pass
 def _spy(t, *a, **k):
-    out = _orig_silu(t, *a, **k)
-    _cap.setdefault("h", out)  # first silu in DeltaRecurrence.forward is the short_conv out
-    return out
+    _cap["h"] = _orig_silu(t, *a, **k)  # first silu in forward is the short_conv out
+    raise _Stop  # abort before chunk_kda
 _F.silu = _spy
 try:
     with torch.no_grad():
         _dr(_xd)
+except _Stop:
+    pass
 finally:
     _F.silu = _orig_silu
 _diff = (_cap["h"] - _ref_h).abs().max()

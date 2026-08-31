@@ -140,7 +140,8 @@ def sha_disk(path):
 
 
 def write_manifest(root=ROOT):
-    lines = [f"{sha_head(root, p)}  {p}" for p in scoped_paths(root)]
+    classes = _classify_files()
+    lines = [f"{sha_head(root, p)}  {p}  {classes.get(p, 'docs')}" for p in scoped_paths(root)]
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
@@ -149,11 +150,12 @@ def write_manifest(root=ROOT):
 def write_manifest_index(root=ROOT):
     """Manifest from the index (staged blobs), not HEAD. Used by the pre-commit
     hook so the committed manifest matches HEAD after the commit lands."""
+    classes = _classify_files()
     lines = []
     for p in scoped_paths(root):
         sha = sha_index(root, p)
         if sha:
-            lines.append(f"{sha}  {p}")
+            lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}")
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
