@@ -179,6 +179,19 @@ def _manifest_ms_om2():
     return [(n, base + n, 0) for n in names]
 
 
+
+def _manifest_hf_finemath_4plus():
+    names = open(os.path.join(ROOT, "data", "raw", "hf_finemath_4plus_manifest.txt")).read().split()
+    base = "https://hf-mirror.com/datasets/HuggingFaceTB/finemath/resolve/refs%2Fconvert%2Fparquet/"
+    return [(n, base + n, 0) for n in names]
+
+
+def _manifest_hf_om2():
+    names = open(os.path.join(ROOT, "data", "raw", "ms_om2_manifest.txt")).read().split()
+    base = "https://hf-mirror.com/datasets/open-math/OpenMathInstruct-2/resolve/main/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
@@ -189,6 +202,8 @@ SOURCES = {
     "rp1t_stackexchange": _manifest_rp1t_stackexchange,
     "ms_finemath_4plus": _manifest_ms_finemath_4plus,
     "ms_om2": _manifest_ms_om2,
+    "hf_finemath_4plus": _manifest_hf_finemath_4plus,
+    "hf_om2": _manifest_hf_om2,
 }
 
 
