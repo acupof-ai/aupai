@@ -2728,6 +2728,26 @@ def _broken_doc_commands():
     return d
 
 
+def _is_probe_mix(root, mix_path):
+    """True when a mix is a smoke/probe fixture rather than a real corpus draw.
+
+    Read from the mix itself: a `_comment` disclaiming its content, or a token budget
+    far below the smallest ladder point. Not a filename match -- a name test would
+    pass the day someone copies the fixture, and would miss a probe that used a
+    differently-named one."""
+    p = mix_path if os.path.isabs(mix_path) else os.path.join(root, mix_path)
+    try:
+        obj = json.load(open(p, encoding="utf-8"))
+    except Exception:
+        return False
+    comment = " ".join(obj.get("_comment", [])) if isinstance(obj.get("_comment"), list) \
+        else str(obj.get("_comment") or "")
+    if "smoke" in comment.lower() or "content is irrelevant" in comment.lower():
+        return True
+    # 0.2b is the smallest ladder point; anything an order below it is not a real run
+    return float(obj.get("total_tokens") or 0) < 2e8
+
+
 def check_score_matrix(root):
     """Every status=ok training run has a score-matrix record for the checkpoint it
     produced. 'Trained but not scored' must be impossible: an ok row with no matrix
@@ -2765,6 +2785,17 @@ def check_score_matrix(root):
         cmd = str(r.get("cmd", ""))
         if not any(t in cmd for t in ("train.py", "sft_math", "rlvr", "run_ddp.sh", "run_sft.sh")):
             continue
+        # A probe is not a scoreable training run. The test is the MIX it read, not the
+        # run's name: a mix whose own _comment says the content is irrelevant produces a
+        # checkpoint whose scores mean nothing, and scoring it would waste a lane slot on
+        # a number nobody can interpret. t56_profile, t57_recompile and t57_steady are
+        # optimiser probes on mix_smoke_warmup.json; they blocked the ledger sync for two
+        # sessions (fb, 2026-09-01).
+        m_mix = re.search(r"--mix\s+(\S+)", cmd)
+        if m_mix and _is_probe_mix(root, m_mix.group(1)):
+            continue
+        if "--profile" in cmd or "--profile_steps" in cmd:
+            continue  # a torch profiler run stops after a handful of steps
         cand = produced_checkpoint(cmd, str(r.get("name", "?")))
         if cand and f"{cand}.pt" not in scored:
             missing.append(cand)
