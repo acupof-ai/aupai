@@ -282,6 +282,8 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - `scripts/pod_push.sh` pushes only content reachable from `main`; a branch-only file is refused. CI reads `main`.
 - The shared corpus, checkpoints, and GPUs on the pod are unchanged by this; `harness launch` and the allocation file still own them.
 
+**The controller is reviewed too (user order, 2026-08-31).** Every controller ruling that changes data composition, launches or kills a job, sets a recipe value or threshold, or reports a number to the user is sent to the reviewer session (44) as it is issued; a challenge within 15 minutes must name a failing case or an artifact, otherwise the ruling stands; urgent kills execute first and are reviewed after. Challenges and outcomes: `runs/controller_review.jsonl`; accepted corrections go into the gates doc under the controller's name. The controller made four evidenced errors that day that no one was positioned to catch first.
+
 Three rules from the day one session's `git checkout` erased another session's uncommitted device gate in `scripts/test_arch_compat.py` (recovered only because a copy had been `podput` to the pod minutes earlier):
 
 - Never run `git checkout` / `git restore` on a file you did not write. Undo your own edits by hand.
