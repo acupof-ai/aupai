@@ -76,7 +76,13 @@ def main():
         # makes the two sides differ as strings while naming one directory, and the
         # check then silently never fires -- which is how it first tested green.
         common_abs = os.path.realpath(common)
-        main_tree = os.path.dirname(common_abs) == os.path.realpath(top)
+        # THE integration tree, not any repo that happens to be on main: the rule is
+        # about the one shared checkout other sessions merge into. Without this every
+        # temp repo in the selftest counts as an integration tree, and the tests that
+        # commit to main there start refusing (four of them did).
+        integration = os.environ.get("AUPAI_INTEGRATION_TREE") or "/Users/bytedance/code/aupai"
+        main_tree = (os.path.dirname(common_abs) == os.path.realpath(top)
+                     and os.path.realpath(top) == os.path.realpath(integration))
         branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
                                 capture_output=True, text=True).stdout.strip()
         merging = os.path.exists(os.path.join(common_abs, "MERGE_HEAD"))
