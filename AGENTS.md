@@ -34,7 +34,6 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | `eval/` | benchmarks |
 | `algorithms/` | RL |
 | `mathbank/` | synthetic math generators |
-| `workflows/` | corpus JS |
 | `data/corpus/*` | corpus bytes (gitignored except `sample/`) |
 | `data/mix_scale_*.json` | the 0830v1 mixes |
 | `data/tokenizer.json` | the frozen vocabulary |
