@@ -1000,6 +1000,24 @@
    },
    "uncertainty": "single 50-step attempt per arm; pair2 killed before completion, verdict is qualitative (never converged)",
    "status": "measured"
+  },
+  {
+   "id": "eff.cache_load_gates_startup",
+   "value": "15B stage-1 (2026-08-31): 6m26s from launch to the first step line -- build_mix (train.py:1807) torch.loads every domain's FULL cached supply on every rank (train.py:1396) BEFORE the fa/doc_mask gate lines print (train.py:1886). Seven stage-1 caches = 149 GiB, so 7 ranks read ~1.0 TiB; zh_web alone is 79.3 GiB cached to draw 1.65B tokens (0.08 epochs). Measured read rates on the pod: 1.4 GB/s raw sequential (dd), 1.5-1.6 GiB/s through torch.load warm, but 0.07 GiB/s while two 8-worker tokenizers competed -- a 20x collapse. The 120s default startup gate kills a healthy run here; launch_30b.sh stage 1 sets 1800 (2x measured, per fb's rule).",
+   "measured": "2026-08-31",
+   "source": "runs/pretrain_15b_s1.log, scripts/launch_30b.sh",
+   "config": {
+    "mix": "mix_15b_stage1",
+    "domains": 7,
+    "cache_bytes_gib": 149,
+    "ranks": 7,
+    "gate_seconds": 1800,
+    "measured_gate_wall": "6m26s (12:45:03 launch -> 12:51:29 first step)",
+    "load_rate_warm_gib_s": 1.55,
+    "load_rate_contended_gib_s": 0.07
+   },
+   "uncertainty": "one launch; the 6m26s benefited from pages left warm by the tokenizers that had just written the caches, so a genuinely cold start is slower -- which is why the gate is 2x, not 1.2x",
+   "status": "measured"
   }
  ]
 }
