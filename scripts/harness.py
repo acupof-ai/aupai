@@ -5006,10 +5006,6 @@ def cmd_install_hooks(rest):
     (2026-08-31: a bad fact entered main through a clean merge). Fast-forward merges
     carry already-hooked commits, so they are covered by construction.
     The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
-    hook_src = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    if not os.path.exists(hook_src):
-        print(f"hook source missing: {hook_src}")
-        return 1
     # The common dir: in a linked worktree .git is a FILE, and the common dir's
     # hooks/ is what git consults -- installing there covers every worktree once.
     common = subprocess.run(
@@ -5019,14 +5015,22 @@ def cmd_install_hooks(rest):
     if not common:
         print("cannot resolve git common dir (run inside the repo)")
         return 1
-    hooks_dir = os.path.join(ROOT, common, "hooks") if not os.path.isabs(common) else os.path.join(common, "hooks")
+    common_abs = common if os.path.isabs(common) else os.path.join(ROOT, common)
+    main_root = os.path.dirname(common_abs)  # .../aupai from .../aupai/.git (worktree-safe)
+    # The hook source is the MAIN tree's copy, never this worktree's: a symlink into
+    # a worktree breaks when the worktree is removed and tracks a branch, not main.
+    hook_src = os.path.join(main_root, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook_src):
+        print(f"hook source missing: {hook_src}")
+        return 1
+    hooks_dir = os.path.join(common_abs, "hooks")
     for name in ("pre-commit", "pre-merge-commit"):
         hook_dst = os.path.join(hooks_dir, name)
         os.makedirs(hooks_dir, exist_ok=True)
         if os.path.lexists(hook_dst):
             os.remove(hook_dst)
         os.symlink(os.path.relpath(hook_src, hooks_dir), hook_dst)
-        print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, ROOT)}")
+        print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, main_root)}")
     return 0
 
 
