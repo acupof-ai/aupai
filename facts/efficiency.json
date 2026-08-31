@@ -1194,6 +1194,36 @@
    },
    "uncertainty": "The 112 ms is an IDEAL 2x on the measured GEMM time and will not be realised in full: fp8 needs per-tensor or per-row scaling work, the accumulation stays higher precision, and FLCE's chunking adds fixed overhead the GEMM speedup does not touch. No implementation exists to measure, and Liger 0.8.2 would need patching. The roofline is arithmetic from shapes and H20's published peaks, not a measured kernel efficiency, so it establishes that the head CAN use faster tensor cores rather than that it will get 2x. The parity risk is the real gate: the head feeds the loss directly, so an fp8 error lands on every gradient. Ship path is a minimal parity check plus a 50-step A/B under the same >=3% tok/s and |delta val| <= 0.04 nat rule, on an idle card.",
    "status": "measured"
+  },
+  {
+   "id": "eff.stage2_reused_corpora_verified",
+   "value": "The five stage-2 domains that reuse their stage-1 corpus are byte-identical to what stage 1 trained on, VERIFIED against the running checkpoint rather than assumed. This closes the last unverified assumption in data/mix_30b_stage2.json and it is what prereg 7.2's scope claim rests on (44): if the bytes match, a cross-stage delta for these domains is not corpus-confounded. Two checks, and the second is the one that decides it. (1) Live corpus fingerprint vs the .srcfp beside each shared token cache: cot 388496b76ed9bf88, code_rp1t d8b9b18ba080f487, zh_web a0d44fc44a289d60, textbook_30b 3f237c5191cb8571, wiki_chat b864d32f9452a7c8 -- all five MATCH. But this only proves the cache is current with the corpus AS IT IS NOW; both could have changed together since stage 1 started. (2) ckpt_pretrain_15b_s1.pt.step5500's corpus_fp dict, which save_checkpoint wrote from the live run, carries the fingerprints stage 1 IS training on, and all five equal the live values. That is the evidence 7.2 needs: the corpus stage 2 will read is the corpus stage 1 read. A weaker source that does not settle it, for the record: the stage-1 MIX file carries a fingerprint in its prose for code_rp1t only, so four of the five have no fingerprint recorded there at all. Reading the mix would have produced 'no fp in mix' for cot, zh_web, textbook_30b and wiki_chat and left the question open.",
+   "measured": "2026-08-31",
+   "source": "train.py, data/mix_15b_stage1.json, data/mix_30b_stage2.json",
+   "config": {
+    "domains": [
+     "cot",
+     "code_rp1t",
+     "zh_web",
+     "textbook_30b",
+     "wiki_chat"
+    ],
+    "check1": "live _corpus_fp vs /data00/tokens_<d>.pt.srcfp -- 5/5 match",
+    "check2": "live _corpus_fp vs ckpt_pretrain_15b_s1.pt.step5500 corpus_fp -- 5/5 match",
+    "checkpoint": "ckpt_pretrain_15b_s1.pt.step5500",
+    "fingerprints": {
+     "cot": "388496b76ed9bf88",
+     "code_rp1t": "d8b9b18ba080f487",
+     "zh_web": "a0d44fc44a289d60",
+     "textbook_30b": "3f237c5191cb8571",
+     "wiki_chat": "b864d32f9452a7c8"
+    },
+    "mix_file_records_fp_for": [
+     "code_rp1t"
+    ]
+   },
+   "uncertainty": "The checkpoint check is as of step 5500, so it proves the corpora were identical up to that point and not for the remainder of stage 1. A domain rewritten later would pass this check and still diverge; the pod_drift gate and the corpus writer being finished are what cover the rest, not this measurement. _corpus_fp hashes each shard's name, size and the sha256 of its first and last 64KB, so a change confined to the middle of a large shard would not be caught -- that is the function's documented design, shared with save_checkpoint, and not a gap I introduced. Only the five reused domains are covered: en_c4 and math_owm are new builds and carry prereg 7.2 on purpose.",
+   "status": "measured"
   }
  ]
 }

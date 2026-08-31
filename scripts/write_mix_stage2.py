@@ -36,6 +36,9 @@ LANDED = {
     "zh_web": (21_293_403_945, "a0d44fc44a289d60"),
     "textbook_30b": (1_610_210_330, "3f237c5191cb8571"),
     "wiki_chat": (283_903_257, "b864d32f9452a7c8"),
+    # fb's message quoted fp a67cde07d3b3 (12 chars); the stamp itself reads a67cde07d3b3f63d and
+    # _corpus_fp returns 16, so the message was truncated. Stamp value used.
+    "math_owm": (6_513_329_302, "a67cde07d3b3f63d"),
 }
 # Domains that keep their STAGE-1 name in the stage-2 mix, so the mix binds to the stage-1
 # corpus directory rather than a *_stage2 copy. fb ruling 2026-08-31 for cot: the name binds a
@@ -108,6 +111,12 @@ def build():
         s2_pool = STAGE2_POOLS.get(name)
         cap_pool = s2_pool if s2_pool else pool
         epochs = math.ceil(runtime / cap_pool)
+        # A provisional cap on a *_stage2 domain is measured against the STAGE-1 corpus, which is a
+        # different body of text. math_owm_stage2 is the live case: its stamp is 6.513B against
+        # stage 1's 4.035B, so its real pool is ~62% larger and its cap is probably 1, not the 2 the
+        # stage-1 pool implies. A too-high cap never truncates -- int(pool*epochs) only grows -- but
+        # it does misstate the recipe, since epochs 2 reads as "this domain repeats" when it may not.
+        provisional_new_corpus = s2_pool is None and name not in SAME_CORPUS_AS_STAGE1
         total += runtime
         entry = {
             "weight": w,
@@ -123,7 +132,7 @@ def build():
             "cumulative_rows": s1 + runtime,
             "cumulative_epochs_on_stage1_pool": round((s1 + runtime) / pool, 4),
             "pool_rows": cap_pool,  # alias b0's readout draws_equal() reads
-            "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (provisional)",
+            "epochs_pool_source": "stage-2 cache (measured)" if s2_pool else "stage-1 pool (PROVISIONAL, different corpus)",
             "stage2_pool_rows": s2_pool,
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil({runtime}/{cap_pool}) on the "
@@ -145,6 +154,18 @@ def build():
             )
             entry["supply_tokens"] = supply
             entry["fingerprint"] = fp
+            if provisional_new_corpus:
+                est_rows = supply // (SEQ + 1)
+                est_pool = est_rows - min(max(1, int(est_rows * 0.05)), 5000)
+                entry["cap_provisional_warning"] = (
+                    f"epochs {epochs} is derived from the STAGE-1 pool ({cap_pool} rows) because this "
+                    f"corpus has no token cache yet, but it is a DIFFERENT corpus: the stamp's "
+                    f"{supply} tokens imply ~{est_pool} pool rows and a cap of "
+                    f"{math.ceil(runtime / est_pool)}. Safe (a high cap cannot truncate) but it "
+                    f"overstates repetition -- re-derive from the cache before launch."
+                )
+                entry["cap_from_stamp_estimate"] = math.ceil(runtime / est_pool)
+                entry["pool_rows_from_stamp_estimate"] = est_pool
             entry["supply_epochs"] = epochs
             entry["supply_x_epochs_tokens"] = supply * epochs
             entry["supply_margin_pct"] = round((supply * epochs / want_tok - 1) * 100, 2)

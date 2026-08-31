@@ -80,6 +80,33 @@
    "supply_margin_pct": 72.05,
    "status": "LANDED: data/corpus/code_rp1t stamped, fp d8b9b18ba080f487, supply 7569415401 tokens covers the want of 4399472640 at 1 epoch(s) by 72.05%. epochs 1 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
   },
+  "math_owm_stage2": {
+   "weight": 0.320579,
+   "epochs": 2,
+   "anneal": 0.320579,
+   "role": "math/reasoning raw (OpenWebMath + finemath)",
+   "weight_fb_5dp": 0.32058,
+   "weight_decimals": 6,
+   "rows_from_weight_at_runtime": 1173995,
+   "rows_table": 1173995,
+   "stage1_rows": 671374,
+   "stage1_pool_rows": 979824,
+   "cumulative_rows": 1845369,
+   "cumulative_epochs_on_stage1_pool": 1.8834,
+   "pool_rows": 979824,
+   "epochs_pool_source": "stage-1 pool (PROVISIONAL, different corpus)",
+   "stage2_pool_rows": null,
+   "epoch_cap_note": "epochs 2 = ceil(1173995/979824) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 1.1982: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom -16.54%.",
+   "supply_tokens": 6513329302,
+   "fingerprint": "a67cde07d3b3f63d",
+   "cap_provisional_warning": "epochs 2 is derived from the STAGE-1 pool (979824 rows) because this corpus has no token cache yet, but it is a DIFFERENT corpus: the stamp's 6513329302 tokens imply ~1584780 pool rows and a cap of 1. Safe (a high cap cannot truncate) but it overstates repetition -- re-derive from the cache before launch.",
+   "cap_from_stamp_estimate": 1,
+   "pool_rows_from_stamp_estimate": 1584780,
+   "supply_epochs": 2,
+   "supply_x_epochs_tokens": 13026658604,
+   "supply_margin_pct": 170.9,
+   "status": "LANDED: data/corpus/math_owm_stage2 stamped, fp a67cde07d3b3f63d, supply 6513329302 tokens covers the want of 4808683520 at 2 epoch(s) by 170.9%. epochs 2 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
+  },
   "cot": {
    "weight": 0.0806945,
    "epochs": 3,
@@ -201,25 +228,5 @@
    "status": "LANDED: data/corpus/wiki_chat stamped, fp b864d32f9452a7c8, supply 283903257 tokens covers the want of 99540992 at 1 epoch(s) by 185.21%. epochs 1 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
   }
  },
- "_blocked": {
-  "math_owm_stage2": {
-   "weight": 0.320579,
-   "epochs": 2,
-   "anneal": 0.320579,
-   "role": "math/reasoning raw (OpenWebMath + finemath)",
-   "weight_fb_5dp": 0.32058,
-   "weight_decimals": 6,
-   "rows_from_weight_at_runtime": 1173995,
-   "rows_table": 1173995,
-   "stage1_rows": 671374,
-   "stage1_pool_rows": 979824,
-   "cumulative_rows": 1845369,
-   "cumulative_epochs_on_stage1_pool": 1.8834,
-   "pool_rows": 979824,
-   "epochs_pool_source": "stage-1 pool (provisional)",
-   "stage2_pool_rows": null,
-   "epoch_cap_note": "epochs 2 = ceil(1173995/979824) on the STAGE-1 pool, PROVISIONAL until its cache exists. build_mix caps at int(pool*epochs) in ROWS, so the cap is the integer ceiling and never the ratio 1.1982: a fractional cap re-creates stage 1's 61,593,088-token under-draw. Headroom -16.54%.",
-   "status": "BLOCKED: data/corpus/math_owm_stage2 is not stamped (no build_corpus_stats.json). Move to domains only when it is stamped AND its supply covers its want."
-  }
- }
+ "_blocked": {}
 }
