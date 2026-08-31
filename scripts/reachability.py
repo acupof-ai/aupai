@@ -11,7 +11,6 @@ Usage: python scripts/reachability.py > runs/reachability.txt
 import os
 import re
 import subprocess
-import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -235,7 +234,7 @@ def main():
     print(f"Total: {len(ALL_FILES)} files, {len(eps)} entry points, "
           f"{len(reachable)} reachable, {len(unreachable)} unreachable")
     if unreachable:
-        print(f"\nUnreachable (deletion candidates):")
+        print("\nUnreachable (deletion candidates):")
         for f in unreachable:
             print(f"  {f}")
 
