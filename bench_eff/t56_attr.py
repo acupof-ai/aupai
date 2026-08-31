@@ -27,8 +27,11 @@ RULES = [
     ("flash attention",              r"flash|fmha|attn_fwd|attn_bwd|cute"),
     # KDA/gated-delta kernels. `kernel_kernel` is a Triton kernel with a generic name;
     # its launcher is ChunkKDAFunctionBackward (correlation -> cpu_op, verified in this trace).
-    ("KDA / gated-delta (triton)",   r"chunk_kda|chunk_delta|chunk_gated_delta|chunk_gla|chunk_local_cumsum|l2norm_|fused_beta_sigmoid|kda|fused_recurrent|triton_.*chunk|^kernel_kernel$|^element_mul_kernel$"),
-    ("liger FLCE",                   r"liger|fused_linear_cross|_flce"),
+    ("KDA / gated-delta (triton)",   r"chunk_kda|chunk_delta|chunk_gated_delta|chunk_gla|chunk_local_cumsum|l2norm_|fused_beta_sigmoid|kda|fused_recurrent|triton_.*chunk|^kernel_kernel$"),
+    # element_mul_kernel is LIGER's, not KDA's: it lives in liger_kernel/ops/cross_entropy.py
+    # and nowhere in fla, and its launcher is LigerFusedLinearCrossEntropyFunctionBackward
+    # (correlation id -> cpu_op). Codex caught this rule pointing it at KDA; 1.19 ms/step.
+    ("liger FLCE",                   r"liger|fused_linear_cross|_flce|^element_mul_kernel$"),
     ("fp8 quant / scale",            r"to_float8|abs_max|amax|_quant|scaled_cast|convert_fp8"),
     ("optimizer (Muon/AdamW)",       r"muon|adam|newton|zeropower|orthogonal|_foreach|multi_tensor"),
     ("NCCL allreduce",               r"nccl|allreduce|all_reduce|reduce_scatter|all_gather"),
