@@ -18,6 +18,7 @@ import argparse
 import ast
 import functools
 import glob
+import inspect
 import json
 import os
 import re
@@ -4596,6 +4597,47 @@ def _refresh_board():
 # ------------------------------------------------------------------------ selftest
 
 
+def _selftest_monitor_suppression():
+    """The monitor writes no row once a run has a terminal one.
+
+    Runs the real embedded monitor source against a temp ledger, because the bug
+    was in that source and a reimplementation would test the wrong code: t56_profile
+    closed ok 13:34, the monitor appended fail 'log silent' 13:47, and the log stops
+    growing exactly when a run succeeds."""
+    import shutil
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="monsup_")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    exp_log = os.path.join(d, "runs", "experiments.jsonl")
+    with open(exp_log, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-08-31 13:25", "status": "running"}) + "\n")
+
+    # Extract settled() from the real monitor source rather than retyping it.
+    src = _arm_monitor.__doc__ and None  # keep the reference explicit for readers
+    code = inspect.getsource(_arm_monitor)
+    body = code[code.index("def settled():"):code.index("while True:")]
+    ns = {"os": os, "json": json, "exp_log": exp_log, "name": "r1"}
+    exec(compile(body, "<monitor>", "exec"), ns)  # noqa: S102 -- the real source, by design
+    settled = ns["settled"]
+    assert settled() is False, "a running row is not settled"
+
+    with open(exp_log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-08-31 13:25", "status": "ok",
+                            "result": "profile complete"}) + "\n")
+    assert settled() is True, "an ok row must settle the run and silence the monitor"
+
+    with open(exp_log, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "x", "status": "running"}) + "\n")
+        f.write(json.dumps({"name": "r1", "started": "x", "status": "fail",
+                            "result": "killed by harness kill"}) + "\n")
+    assert settled() is True, "a kill record must silence the monitor too"
+    shutil.rmtree(d, ignore_errors=True)
+    del src, sp
+    print("  monitor: no row after a run reaches ok or fail")
+
+
 def _selftest_gate_timeout():
     """Known answer: the gate is cache bytes / _CACHE_READ_GIBPS x2, floored at 600 s.
 
@@ -5139,6 +5181,7 @@ def _demo():
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
+    _selftest_monitor_suppression()
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
@@ -5838,16 +5881,40 @@ def _wait_for_startup(log_path, timeout):
 
 def _arm_monitor(name, pid, log_path, output_path=None):
     """Start a background monitor that marks the exp row when the process dies
-    or the log (and declared output) goes silent for 10 minutes."""
+    or the log (and declared output) goes silent for 10 minutes.
+
+    The monitor never writes a row for a run that already reached a terminal state:
+    t56_profile closed ok at 13:34 and the monitor appended 'log silent' fail at
+    13:47, because the log stops growing precisely when a run finishes. A fail row
+    after a real result is worse than no row -- it inverts the verdict, and
+    score_matrix_present read that stale fail's predecessor as an unscored ok."""
     output_repr = repr(output_path) if output_path else "None"
     monitor_code = f'''
-import os, subprocess, sys, time
+import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
 output = {output_repr}
+exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
 silent_limit = 600
 last_size, last_grow = 0, time.time()
+
+def settled():
+    """True once this run has a terminal row: someone closed it, or harness kill did."""
+    try:
+        with open(exp_log, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                r = json.loads(line)
+                if r.get("name") == name and r.get("status") in ("ok", "fail"):
+                    return True
+    except (OSError, ValueError):
+        pass
+    return False
+
 while True:
     time.sleep(60)
+    if settled():
+        break  # a result exists; anything the monitor adds now can only contradict it
     try:
         os.kill(pid, 0)
     except OSError:
