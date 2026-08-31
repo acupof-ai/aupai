@@ -161,6 +161,15 @@ def _manifest_rp1t_stackexchange():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_ms_finemath_4plus():
+    """math cell (real source, ModelScope up while hf-mirror down 2026-08-31):
+    AI-ModelScope/finemath finemath-4plus, 64 parquet (HuggingFaceTB/finemath's
+    filtered math-web set). Resolve via modelscope.cn/datasets/<org>/<name>/resolve/master/."""
+    names = open(os.path.join(ROOT, "data", "raw", "ms_finemath_4plus_manifest.txt")).read().split()
+    base = "https://www.modelscope.cn/datasets/AI-ModelScope/finemath/resolve/master/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
@@ -169,6 +178,7 @@ SOURCES = {
     "rp1t_c4": _manifest_rp1t_c4,
     "rp1t_arxiv": _manifest_rp1t_arxiv,
     "rp1t_stackexchange": _manifest_rp1t_stackexchange,
+    "ms_finemath_4plus": _manifest_ms_finemath_4plus,
 }
 
 
