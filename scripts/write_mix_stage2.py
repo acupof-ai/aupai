@@ -38,7 +38,9 @@ LANDED = {
     "wiki_chat": (283_903_257, "b864d32f9452a7c8"),
     # fb's message quoted fp a67cde07d3b3 (12 chars); the stamp itself reads a67cde07d3b3f63d and
     # _corpus_fp returns 16, so the message was truncated. Stamp value used.
-    "math_owm": (6_513_329_302, "a67cde07d3b3f63d"),
+    # re-stamped after the U+2028 strip settled: the first stamp was taken mid-rewrite,
+    # with shards newer than the cache beside it (3b, fb).
+    "math_owm": (6_513_304_690, "1e687e4b5ce37598"),
 }
 # Domains that keep their STAGE-1 name in the stage-2 mix, so the mix binds to the stage-1
 # corpus directory rather than a *_stage2 copy. fb ruling 2026-08-31 for cot: the name binds a
@@ -73,7 +75,7 @@ STAGE2_POOLS = {
     # 4097, minus 5,000 val. want/pool 0.7391, so it draws 0.74 epochs and repeats NOTHING --
     # the A-prime table's "math_owm repeats at 1.88 cumulative" was an artifact of measuring
     # against the stage-1 pool. Cumulative on its own pool is 1.16, not 1.88.
-    "math_owm": 1_588_514,
+    "math_owm": 1_588_494,  # 1,593,494 rows of 4097 - 5,000 val; was 1,588,514 pre-restrip (-20)
 }
 
 SPEC = {
