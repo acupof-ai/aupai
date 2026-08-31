@@ -192,6 +192,15 @@ def _manifest_hf_om2():
     return [(n, base + n, 0) for n in names]
 
 
+
+def _manifest_hf_numma():
+    """cot (2026-08-31): AI-MO/NuminaMath-CoT via hf-mirror, 5 data parquet.
+    Flat names (base points at data/) so the .part path is writable."""
+    names = open(os.path.join(ROOT, "data", "raw", "hf_numma_manifest.txt")).read().split()
+    base = "https://hf-mirror.com/datasets/AI-MO/NuminaMath-CoT/resolve/main/data/"
+    return [(n, base + n, 0) for n in names]
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
@@ -204,6 +213,7 @@ SOURCES = {
     "ms_om2": _manifest_ms_om2,
     "hf_finemath_4plus": _manifest_hf_finemath_4plus,
     "hf_om2": _manifest_hf_om2,
+    "hf_numma": _manifest_hf_numma,
 }
 
 
