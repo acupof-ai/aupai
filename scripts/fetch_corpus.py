@@ -175,14 +175,15 @@ def fetch(source, target_bytes):
     os.makedirs(outdir, exist_ok=True)
     fp = source_fp(manifest)
 
-    # stale .part files are a third state (neither complete nor from this source
-    # state): delete on startup rather than trust or rename them.
-    for part in sorted(os.path.join(outdir, x) for x in os.listdir(outdir) if x.endswith(".part")):
-        os.remove(part)
-        print(f"  removed stale .part {os.path.basename(part)}", file=sys.stderr)
-
     stale = _refuse_prev_fp(source, fp)
     if stale:
+        # the prior fetch was a DIFFERENT source state: its .part files are a
+        # third state (neither complete nor from this source) -- delete them
+        # rather than trust. On a same-source resume (no stale), .part files are
+        # RESUMABLE partials and must be kept for `-C -`.
+        for part in sorted(os.path.join(outdir, x) for x in os.listdir(outdir) if x.endswith(".part")):
+            os.remove(part)
+            print(f"  removed stale .part {os.path.basename(part)}", file=sys.stderr)
         print(
             f"REFUSING: upstream changed since the prior fetch (recorded source_fp {stale} != "
             f"current {fp}). Shards from two source states would share one fingerprint. "
