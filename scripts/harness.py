@@ -4354,12 +4354,12 @@ def cmd_launch(rest):
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
     ap.add_argument("--gate-timeout", type=int, default=120, help="startup gate timeout in seconds")
-    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="-- <command> [args...]")
-    args = ap.parse_args(rest)
-
-    cmd = args.cmd
-    if cmd and cmd[0] == "--":
-        cmd = cmd[1:]
+    # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
+    if "--" not in rest:
+        ap.error("no command given after --")
+    idx = rest.index("--")
+    args = ap.parse_args(rest[:idx])
+    cmd = rest[idx + 1:]
     if not cmd:
         ap.error("no command given after --")
 
@@ -4383,10 +4383,11 @@ def cmd_launch(rest):
 
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
-            ["setsid", "nohup"] + cmd,
+            cmd,
             stdout=log_f, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=env, cwd=ROOT,
+            start_new_session=True,  # setsid: detach from the controlling terminal
         )
     with open(pid_path, "w") as f:
         f.write(str(proc.pid))
