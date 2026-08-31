@@ -40,6 +40,9 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 # Per-check deadline. A check that hangs blocks the pre-commit hook and trains
 # people to --no-verify; a timed-out check SKIPs and names itself in the output.
 _CHECK_TIMEOUT = 5
+# Checks that legitimately scan more data than the 5s default allows. The
+# template scan reads ~850k text fields on a full-data checkout (27s measured).
+_CHECK_TIMEOUTS = {"eval_sft_template_contamination": 90}
 
 
 class SelftestSkip(Exception):
@@ -1134,6 +1137,11 @@ def check_eval_sft_template_contamination(root):
             pass
 
     remaining = {name: set(range(len(v))) for name, v in file_probes.items()}
+    # One alternation regex over all needles: a single C-level scan per field
+    # instead of len(needles) Python-level `in` checks (31 live needles over
+    # hundreds of thousands of source lines otherwise blows the check timeout).
+    all_needles = [n for needles in file_probes.values() for n in needles]
+    pattern = re.compile("|".join(re.escape(n) for n in all_needles))
     for rel in sources:
         if not any(remaining.values()):
             break
@@ -1150,6 +1158,11 @@ def check_eval_sft_template_contamination(root):
                     if not isinstance(t, str) or len(t) < 32:
                         continue
                     tn = _template_norm(t)
+                    if not pattern.search(tn):
+                        continue
+                    # A field matched: attribute exactly, needle by needle.
+                    # Alternation alone reports one needle per start position,
+                    # so a short needle that prefixes a long one would be lost.
                     for name, needles in file_probes.items():
                         for i in [i for i in remaining[name] if needles[i] in tn]:
                             remaining[name].discard(i)
@@ -3411,10 +3424,10 @@ def run_checks(root=ROOT, quiet=False):
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
         try:
-            signal.alarm(_CHECK_TIMEOUT)
+            signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUT}s"
+            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)}s"
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
