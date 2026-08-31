@@ -46,13 +46,14 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 # gets ceval only as a z-score tripwire.
 APPLIES = {
     "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like", "l1_fewshot"],
-    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "pass_at_k"],
-    "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "pass_at_k"],
+    "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
+    "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
     "math_500": "generative; a base checkpoint reads zero",
     "code_500": "generative; a base checkpoint reads zero",
+    "code_500_v2": "generative; a base checkpoint reads zero",
     "pass_at_k": "needs a policy (SFT or RL); a base checkpoint has none",
     "mc_full": "hellaswag/piqa unreachable from this machine (pod HF egress broken); not a signal judgement -- run --benchmarks hellaswag piqa on a box with egress. English MC also at chance on every 200M measured, ceval stays as tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
@@ -280,6 +281,16 @@ def metric_code_500(ckpt_path, tok_path, ngpu=1):
         ["bash", "eval/eval_code.sh", ckpt_path, str(ngpu)],
         {"code_500": r"=\s*([\d.]+)\s*%"},
         env={"TOKENIZER": tok_path},
+    )
+
+
+def metric_code_500_v2(ckpt_path, tok_path, ngpu=1):
+    # t51: clean holdout (gen_code_v2 families, absent from all SFT/pretraining
+    # sources). code_500 is carved from an SFT source and measures template recall.
+    return _run(
+        ["bash", "eval/eval_code.sh", ckpt_path, str(ngpu)],
+        {"code_500_v2": r"=\s*([\d.]+)\s*%"},
+        env={"TOKENIZER": tok_path, "HOLDOUT": "data/eval/code_holdout_v2_500.jsonl", "TAG": "v2"},
     )
 
 
@@ -552,6 +563,10 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None):
         _metric("code_500", metric_code_500, record, ckpt_path, tok_path, ngpu)
         _add_degeneration(record, "code_500_degeneration",
                           os.path.join(ROOT, f"data/eval/preds_code_{ckpt_name}.jsonl"), 0)
+    if "code_500_v2" in wanted:
+        _metric("code_500_v2", metric_code_500_v2, record, ckpt_path, tok_path, ngpu)
+        _add_degeneration(record, "code_500_v2_degeneration",
+                          os.path.join(ROOT, f"data/eval/preds_code_v2_{ckpt_name}.jsonl"), 0)
     if "pass_at_k" in wanted:
         _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, tok_path, ngpu)
         # The sampled arm (t=0.8): pass_at_k's eval_hard.sh writes greedy + sampled rows

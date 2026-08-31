@@ -5,11 +5,13 @@
 set -euo pipefail
 CKPT=$1; N=${2:-6}
 TOK=${TOKENIZER:-data/tokenizer.json}
+HOLDOUT=${HOLDOUT:-data/eval/code_holdout_500.jsonl}
+TAG=${TAG:-}
 cd "$(dirname "$0")/.."
 bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)
 trap 'rm -rf "$LOGDIR"' EXIT
-EXPECTED=$(wc -l < data/eval/code_holdout_500.jsonl)
+EXPECTED=$(wc -l < "$HOLDOUT")
 
 pids=()
 # Shard i maps to the i-th device the CALLER exposed; an unset caller means the
@@ -19,6 +21,7 @@ pids=()
 IFS=',' read -ra _DEVS <<< "${CUDA_VISIBLE_DEVICES:-}"
 for i in $(seq 0 $((N-1))); do
   CUDA_VISIBLE_DEVICES=${_DEVS[$i]:-$i} python3 eval/code_zh.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
+    ${HOLDOUT:+--data "$HOLDOUT"} ${TAG:+--tag "$TAG"} \
     > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
 done
@@ -31,10 +34,10 @@ done
 [ $rc -eq 0 ] || { echo "eval aborted: $rc shard(s) failed" >&2; exit 1; }
 
 grep -h "code-500" "$LOGDIR"/shard_*.log
-python3 - "$CKPT" "$N" "$EXPECTED" <<'PY'
+python3 - "$CKPT" "$N" "$EXPECTED" "$TAG" <<'PY'
 import json, os, sys
-ck, n, expected = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-base = f"data/eval/preds_code_{os.path.basename(ck)}"
+ck, n, expected, tag = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
+base = f"data/eval/preds_code_{tag + '_' if tag else ''}{os.path.basename(ck)}"
 suffix = lambda i: f".{i}" if n > 1 else ""
 rows = [json.loads(l) for i in range(n) for l in open(f"{base}{suffix(i)}.jsonl", encoding="utf-8")]
 assert len(rows) == expected, f"merged {len(rows)} preds, expected {expected} — a shard is short"
