@@ -97,13 +97,35 @@ Chinese tripwire is being read in the format that is dead below 400B tokens, and
 switching to cloze costs nothing but a rescore. This is the single cheapest thing
 in this document.
 
-### Bits-per-byte is the method we were missing
+### Gold-answer bits-per-byte is the method we were missing
 
 AI2's `olmes` repo ships a suite commented "for evaluating small-scale
 experiments" (`oe_eval/configs/task_suites.py:931-1005`). Its composition is the
 answer to our code problem: all QA is cloze (`:rc`, never `:mc`), and code and
 math are **bits-per-byte** — `codex_humaneval:3shot:bpb::none`,
 `mbpp:3shot:bpb::none`, `minerva_math_*:bpb`.
+
+OLMo 3 (arXiv 2512.13961 §3.3.2) states the construction exactly, and the
+definition is the load-bearing part:
+
+> Base Easy task suite which measures **bits-per-byte (BPB)** over tasks from the
+> Base Main suite **that have gold labels or human-written answers**, calculated
+> as the **negative log-likelihood of the answer divided by the number of UTF-8
+> bytes in the answer string**.
+
+Its stated motivation is our exact problem: small-compute models "exhibit
+random-chance performance on math, code, and multiple-choice question answering
+(MCQA) tasks". The gold strings are `canonical_solution` for HumanEval
+(`codex_humaneval.py:149`), the `code` field for MBPP (`codex_mbpp.py:213`), and
+the human-written `solution` for Minerva MATH (`minerva_math.py:198`).
+
+**The distinction that decides the whole recommendation: gold-answer BPB is not
+corpus BPB.** Conditional NLL over a gold answer string works. Held-out corpus
+perplexity as a downstream proxy does not — Sun et al. (arXiv 2504.12491, Table 1)
+measure pairwise accuracy .332/.380/.354 across 50 1B variants, *below* the 0.500
+random baseline, and Gadre names code the worst extrapolation domain. Our
+`domain_loss` is corpus-level and stays what it is: a data-pricing instrument, not
+a capability proxy.
 
 DataDecide reports the same conclusion from the other direction:
 
@@ -112,9 +134,26 @@ DataDecide reports the same conclusion from the other direction:
 > when using Correct Prob… **allows small models to get above the noise floor**.
 > Notably, two math benchmarks [MATH, GSM8K] **do not see such a benefit**. — §3.4
 
-Read that last sentence carefully, because it is the one finding here that goes
-against what we would like to be true: **the metric change rescues code and does
-not rescue math.**
+### Two corrections to what I first wrote
+
+**pass@k is not physically dead at 300M.** I had argued from SmolLM2-135M's
+HumanEval 0.0 that exact-match must floor at our scale. The Codex paper (arXiv
+2107.03374, Table 1) refutes it: 12M reads 2.00%, 85M reads 8.22%, **300M reads
+13.17%**. §3.4 says the models scoring near 0% are the ones *not trained on code*,
+not the small ones. So the reason to keep pass@k out of the profile is variance,
+not impossibility — at our Chinese-majority mix with a modest code share the signal
+would drown, but **raising the code share could bring pass@1 back**. That makes it
+a design variable, not a wall, and it is worth knowing before anyone concludes code
+capability is unmeasurable here.
+
+**GSM8K-style gold is the risk, and our data does not have it.** The literature
+routes math BPB through Minerva's human-written solutions and skips GSM8K; the
+likely cause is that GSM8K's gold CoT carries calculator annotations (`<<48/2=24>>`)
+that are out-of-distribution for a base model. I checked ours: `math_test_500` has
+**0 of 500** golds with such annotations — it is human-written prose ending in
+`\boxed{}`, Minerva-shaped. `math_hard_v2` golds are constructed-from-answer and
+equally clean. **The objection that excludes GSM8K does not apply to our math
+data**, which moves math BPB from "the literature says no" to "worth measuring".
 
 ## Where our panel actually stands
 
@@ -122,23 +161,43 @@ Math already has its likelihood twin (`eval/math_v2_like.py`, gold-win 94.92% vs
 wrong-win 5.08%, 3012 pairs, swap-stable). Code has nothing — every code metric we
 own is generative and reads zero.
 
-That asymmetry is the gap, and it is the opposite of what the literature says is
-achievable: code is the one that responds to a proxy metric, math is the one that
-does not.
+That asymmetry is the gap, and the literature says code is the side that responds
+to a proxy metric.
+
+## An admission threshold, measured at our configuration
+
+Gadre et al. give the only quantitative rule in this literature for whether a task
+is worth measuring at all (§3.4): a task qualifies if
+
+> at least one **0.154B** scale model — trained with as many as **99B tokens** —
+> gets **10 percentage points above chance** accuracy
+
+That is 154M params, which is our scale. Of 46 tasks, 17 qualified; MMLU,
+ARC-Challenge, MathQA and OpenBookQA were excluded, MMLU named as "close to random
+chance". Adopt it directly: **a task that cannot clear chance+10pp at our scale
+does not enter the decision loop.** Note this also retires the temptation to read
+ARC-Challenge's SNR 4.27 as a reason to add it — high discriminating power on data
+recipes is not the same as a readable capability signal.
 
 ## Ranked additions
 
 Reading rule from fb: an eval enters the profile only with a cited non-chance
 signal at ≤300M and a contamination-clean copy we hold.
 
-### 1. code_bpb — bits-per-byte on `reference_code`
+All three below are **gold-answer BPB or cloze**, never corpus BPB and never
+exact-match. Normalisation is per **UTF-8 byte**, not per character: byte
+normalisation is tokenizer-invariant, which matters more for us than for anyone in
+the cited work because our 32K vocab is Chinese-optimised and character counts do
+not translate across tokenizers.
+
+### 1. code_bpb — gold-answer BPB on `reference_code`
 
 - **Cited signal at ≤300M**: DataDecide §3.4 (code becomes predictable under a
-  likelihood proxy at 150M); AI2 `base_easy` uses bpb for HumanEval and MBPP at
-  small scale.
+  likelihood proxy at 150M); OLMo 3 §3.3.2 ships exactly this construction for
+  HumanEval and MBPP in its small-scale suite.
 - **Clean copy**: yes, `data/eval/code_holdout_v2_500.jsonl`, carved before ingest
   and scanned (`cont.code_holdout_carved`, `cont.code_crawl_scan`). 500 problems,
-  30 families, 48,446 bytes of reference code.
+  30 families, 48,446 bytes of reference code, mean 96 bytes.
 - **n and resolution**: n = 500 problems / 48,446 bytes. BPB is continuous with no
   floor and no chance level, so it has no binomial MDE — **its resolution must be
   measured as seed variance, not derived**. That measurement does not exist yet and
@@ -148,34 +207,62 @@ signal at ≤300M and a contamination-clean copy we hold.
 - **Why first**: it converts our only permanently-zero metric into a continuous one,
   on data we already hold clean, using the construction AI2 uses at this scale.
 
-### 2. ceval scored as cloze rather than MCF
+### 2. math_bpb — gold-answer BPB on the math solutions
+
+- **Cited signal at ≤300M**: OLMo 3 §3.3.2 routes math BPB through Minerva's
+  human-written solutions. The Signal-and-Noise separation is stark — Minerva BPB
+  SNR 88.6 against GSM8K BPB 7.0 — and the likely cause is GSM8K's calculator
+  annotations being out-of-distribution for a base model.
+- **Clean copy**: yes, and this is the finding that promoted it. `math_test_500`
+  golds are human-written prose ending in `\boxed{}` with **0 of 500** carrying
+  `<<...>>` annotations; `math_hard_v2` golds are constructed-from-answer. Both are
+  Minerva-shaped, so the objection that excludes GSM8K does not apply to us.
+  `math_test_500` is 381,669 gold bytes; `math_hard_v2` is 1,080 problems / 86,886
+  bytes and already carries a contamination verdict (`cont.math_hard_v2`).
+- **n and resolution**: same as (1) — continuous, resolution must be measured.
+- **Why second and not excluded**: DataDecide says a proxy metric does not rescue
+  MATH/GSM8K *accuracy*. That is a claim about their gold and their tasks. Ours is
+  the shape the literature says works, so this is a measurement worth making rather
+  than a conclusion to inherit. If it shows no seed-separable movement, it drops.
+
+### 3. ceval scored as cloze rather than MCF
 
 - **Cited signal at ≤300M**: OLMES §3.4 and Tables 6–7 — cloze is above chance
-  where MCF is at chance, at 1B; the MCF format itself is learned at ~400B tokens.
+  where MCF is at chance at 1B, and MCF format acquisition sits at ~400B tokens.
 - **Clean copy**: already in the profile.
-- **n and resolution**: ceval as configured; MDE unchanged since n does not change.
-  This is a scoring change, not a new eval.
-- **Why second**: near-zero cost, and if `mc_full` is currently MCF it may explain
-  part of our MC floor. It is second only because the win is contingent on how
-  `mc_full` is implemented, which I have not yet read.
-
-### 3. code_holdout_v2 as a likelihood twin (in-family distractors)
-
-- **Cited signal at ≤300M**: same DataDecide result as (1); the construction is our
-  own `math_v2_like`, which is swap-validated and works.
-- **Clean copy**: yes, same file as (1).
-- **n and resolution**: 30 families, all with ≥2 members, giving 7,848 in-family
-  distractor pairs. At the panel's frozen formula MDE = 1.4/√n: n=500 → 6.26pt,
-  n=1500 (3 distractors per problem) → 3.61pt, n=2000 → 3.13pt.
-- **Why third**: it duplicates (1)'s signal at higher cost and needs a distractor
-  design review — an in-family distractor is another problem's correct code, which
-  is plausible but not a controlled edit the way `math_v2_like`'s digit
-  perturbation is.
+- **Status: built and verified.** `eval/ceval.py:38` was scoring the bare letters
+  A/B/C/D, which is MCF. `load_items(cloze=True)` now scores the four option texts
+  as continuations with per-character normalisation; selftest passes on the pod,
+  1,050 items both ways (commit 89de381, selftest fix edc5c70).
+- **n and resolution**: n unchanged at 1,050, so MDE is unchanged. This is a
+  scoring change, not a new eval.
+- **Why third**: it is done and it costs nothing, but it is a tripwire on the
+  Chinese MC axis rather than a capability instrument, and the MC floor is partly a
+  size effect that cloze does not remove.
 
 **Not recommended:** scoring `expected_output` given instruction + reference code.
-It is the closest analogue to `math_v2_like` and it is easy to build, but it
-measures execution tracing rather than code generation. A model that cannot write
-the code may still predict its printed output.
+It is the closest analogue to `math_v2_like` and easy to build, but it measures
+execution tracing rather than code generation — a model that cannot write the code
+may still predict its printed output.
+
+**Dropped from my first draft:** a code likelihood twin with in-family distractors.
+It duplicates (1)'s signal at higher cost, and an in-family distractor is another
+problem's *correct* code, not a controlled edit the way `math_v2_like`'s digit
+perturbation is. Gold-answer BPB gets the same information without the distractor
+design question.
+
+**Explicitly not dropped, but reframed:** pass@k stays out of the profile on
+variance grounds, not impossibility. Codex-300M reads 13.17% pass@1 (arXiv
+2107.03374 Table 1), so if the code share of the mix rises, this decision should be
+revisited rather than treated as settled.
+
+## Free variance reduction
+
+Averaging the last k checkpoints cuts scaling-fit error substantially (Signal-and-
+Noise intervention 2: GSM8K scaling error 7.46 → 3.85). We keep the newest three
+checkpoints by default, so this costs nothing but a change in how the milestone
+readout aggregates. Worth doing before adding any new metric, because it improves
+every metric already in the profile.
 
 ## Ceilings
 
@@ -187,6 +274,16 @@ the code may still predict its printed output.
   a score prediction.
 - BPB's resolution at our scale is unmeasured. Until a 2-seed run exists, no BPB
   movement should be called readable.
+- OLMo 3's appendix claim of "signal even at 190M" could not be independently
+  verified — the HTML full text truncates before the appendix. Only §3.3.2's
+  definition and the three gold-string sources are confirmed. Treat the 190M figure
+  as unverified.
+- No peer-reviewed source publishes concrete small-model code/math numbers of the
+  "Pythia-410M GSM8K = 0.0%" kind. The literature asserts random-chance
+  qualitatively and consistently omits the zeros. That is a real gap in the
+  evidence, not a gap in the search.
+- DataDecide does not say how MBPP/HumanEval candidate sets are built for Correct
+  Prob, and its 300M decision accuracy is not reported.
 
 ## Sources
 
@@ -194,5 +291,13 @@ the code may still predict its printed output.
   Figure 1 caption, Tables 6–7
 - DataDecide, arXiv 2504.11393v2 (ICML 2025) — Table 2, §2.4, §3.1, §3.3, §3.4;
   `allenai/DataDecide-eval-results`
-- AI2 `olmes` — `oe_eval/configs/task_suites.py:931-1005`
+- OLMo 3, arXiv 2512.13961 — §3.3, §3.3.2
+- Gadre et al., scaling laws over-trained / downstream — §3.4 (the chance+10pp
+  admission rule at 0.154B / 99B tokens), Table 2
+- Codex, arXiv 2107.03374 — Table 1 (pass@1 by model size), §3.4
+- Sun et al., arXiv 2504.12491 — Table 1 (corpus perplexity below random as a
+  downstream proxy)
+- Schaeffer et al., arXiv 2304.15004 — discontinuous metrics manufacture emergence
+- AI2 `olmes` — `oe_eval/configs/task_suites.py:931-1005`;
+  `codex_humaneval.py:149`, `codex_mbpp.py:213`, `minerva_math.py:198`
 - Our prior: `docs/lessons/base_eval_at_200m.md`, `facts/base_eval.json`
