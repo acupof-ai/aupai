@@ -58,6 +58,41 @@ def main():
     import time
 
     t_start = time.time()
+
+    # A commit in the INTEGRATION tree, on main, from a session that is not the
+    # controller. Three sessions did this tonight (e1 x5, tilerl staged, one merge
+    # left unfinished), and the worktree rule was prose until something refused it.
+    # Identity is the tree, not the session: a linked worktree's toplevel differs
+    # from the common dir's parent, and no session id exists in the environment.
+    # AUPAI_CONTROLLER=1 marks the controller's shell; a merge commit is exempt
+    # because integrating branches into main is exactly the controller's job.
+    t0 = time.time()
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                         capture_output=True, text=True).stdout.strip()
+    common = subprocess.run(["git", "rev-parse", "--git-common-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    if top and common:
+        # realpath, not abspath: a symlinked path (/tmp -> /private/tmp on macOS)
+        # makes the two sides differ as strings while naming one directory, and the
+        # check then silently never fires -- which is how it first tested green.
+        common_abs = os.path.realpath(common)
+        main_tree = os.path.dirname(common_abs) == os.path.realpath(top)
+        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        merging = os.path.exists(os.path.join(common_abs, "MERGE_HEAD"))
+        if main_tree and branch == "main" and not merging and os.environ.get("AUPAI_CONTROLLER") != "1":
+            print(
+                "REFUSING: this is the integration tree on main. Commit in your own "
+                "worktree and merge:\n"
+                "  git -C <your worktree> commit <paths>\n"
+                f"  git -C {top} merge --no-edit <your branch>\n"
+                "A file left dirty here blocks every other session's move of it and gets "
+                "swept into their commits. Controller: AUPAI_CONTROLLER=1 git commit ...",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
+
     t0 = time.time()
     fail = False
     for f in staged("AM"):

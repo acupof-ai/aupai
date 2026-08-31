@@ -1619,8 +1619,25 @@ def _is_gitignored(path, root):
 
 
 #: Ledgers that merge by union. Every one must be one JSON object per physical line.
-_UNION_LEDGERS = ("runs/retro.jsonl", "runs/tasks.jsonl", "runs/experiments.jsonl",
-                  "runs/score_matrix.jsonl", "runs/milestones.jsonl")
+def _union_ledgers(root):
+    """Ledgers .gitattributes merges by union, read from .gitattributes itself.
+
+    A hand-kept copy of this list drifts from the file that decides the behaviour:
+    runs/review.jsonl was union-merged from the moment it existed but sat outside the
+    hardcoded tuple, so a pretty-printed review row -- exactly the class this check
+    exists for -- would not have been caught (44's review, 2026-08-31)."""
+    p = os.path.join(root, ".gitattributes")
+    if not os.path.exists(p):
+        return ()
+    out = []
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if line.startswith("#") or "merge=union" not in line:
+            continue
+        path = line.split()[0]
+        if path.endswith(".jsonl"):
+            out.append(path)
+    return tuple(out)
 
 
 def check_review_present(root):
@@ -1716,7 +1733,7 @@ def check_ledgers_one_line_per_row(root):
     merge touching it would have corrupted the neighbouring rows too."""
     bad = []
     checked = 0
-    for rel in _UNION_LEDGERS:
+    for rel in _union_ledgers(root):
         p = os.path.join(root, rel)
         if not os.path.exists(p):
             continue
@@ -1758,6 +1775,14 @@ def _broken_ledgers_one_line_per_row():
     if good is None:
         return None
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    # .gitattributes too: the ledger list is derived from it, so a world without it
+    # has no ledgers and the check SKIPs instead of failing.
+    ga = os.path.join(ROOT, ".gitattributes")
+    if not os.path.exists(ga):
+        return None
+    import shutil as _sh
+
+    _sh.copy(ga, os.path.join(d, ".gitattributes"))
     with open(os.path.join(d, "runs", "retro.jsonl"), "w", encoding="utf-8") as f:
         f.write(json.dumps(good, ensure_ascii=False, indent=1) + "\n")  # the pretty-printed row
     return d
