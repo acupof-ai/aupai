@@ -154,6 +154,11 @@ def main():
                 lv[1] += sum(oks[1:]) / k if k > 1 else 0.0
                 lv[2] += int(any(oks[1:]))  # SAMPLED only: greedy is not one of the k draws
                 lv[3] += 1
+            # restartable + progress: a 3-hour pass@k eval silent until the summary line
+            # both stalls the harness log-silent monitor and hides where it is.
+            _done = sum(v[3] for v in by.values())
+            if _done % 64 == 0 or _done == len(rows):
+                print(f"  {_done}/{len(rows)} pass@1={sum(v[0] for v in by.values()) / _done:.1%}", flush=True)
     if dump:
         dump.close()
     n = sum(v[3] for v in by.values())
