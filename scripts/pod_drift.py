@@ -230,7 +230,14 @@ def check_pod(root=ROOT, scope=None):
     for p, (want, _cls) in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
-            bad.append(f"missing {p}")
+            # A runs/ ledger absent from the pod is not drift: pod_push skips runs/ in
+            # both directions, so a ledger that only ever exists in the repo can never
+            # be there. The gate treated diverged runs/ files as expected but missing
+            # ones as fatal -- so adding runs/retro.jsonl turned the gate red on a file
+            # nothing is allowed to push (fb, 2026-08-31).
+            (runs_div if p.startswith("runs/") else bad).append(
+                p if p.startswith("runs/") else f"missing {p}"
+            )
         elif sha_disk(fp) != want:
             if p.startswith("runs/"):
                 runs_div.append(p)
@@ -444,6 +451,26 @@ def selftest():
         f.write(f"{'a' * 64}  a.py\n{'0' * 64}  b.py\n")
     plan = plan_sync(os.path.join(j, "new"), os.path.join(j, "old"), os.path.join(j, "pod"))
     assert plan == [("push", "b.py"), ("del", "d.py")], plan
+    # A runs/ ledger the pod has never seen is not drift: pod_push skips runs/, so
+    # a repo-only ledger can never exist there. Regression for the red the new
+    # runs/retro.jsonl produced (2026-08-31).
+    k = tempfile.mkdtemp()
+    os.makedirs(os.path.join(k, "data"), exist_ok=True)
+    os.makedirs(os.path.join(k, "runs"), exist_ok=True)
+    real = os.path.join(k, "kept.py")
+    with open(real, "w") as f:
+        f.write("x = 1\n")
+    with open(os.path.join(k, "data", "pod_head_manifest.txt"), "w") as f:
+        f.write(f"{sha_disk(real)}  kept.py  training\n{'e' * 64}  runs/retro.jsonl  docs\n")
+    ok, ev = check_pod(k)
+    assert ok, f"a runs/ ledger missing on the pod must not fail the gate: {ev}"
+    assert "retro" in ev, f"the absent ledger must still be reported: {ev}"
+    # ...while a missing CODE file still fails.
+    with open(os.path.join(k, "data", "pod_head_manifest.txt"), "a") as f:
+        f.write(f"{'f' * 64}  gone.py  training\n")
+    ok, ev = check_pod(k)
+    assert not ok and "gone.py" in ev, f"a missing code file must still fail: {ok} {ev}"
+
     print("pod_drift selftest OK:", evidence)
 
 

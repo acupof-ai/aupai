@@ -4,3 +4,4 @@
 runs/experiments.jsonl merge=union
 runs/score_matrix.jsonl merge=union
 runs/tasks.jsonl merge=union
+runs/retro.jsonl merge=union

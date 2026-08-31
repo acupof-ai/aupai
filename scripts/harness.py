@@ -81,6 +81,233 @@ def _is_mount(path):
         return False
 
 
+#: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
+#: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
+_RULE_CHECKS = {
+    # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
+    # a dropped byte). Neither can see the unfreeze decision itself.
+    "Tokenizer frozen 2026-08-29": "pinned_ids",
+    "Long jobs detach": "no_foreground_pod_training",
+    "CI gates": "CI",
+    "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
+    "setsid, not nohup": "no_foreground_pod_training",
+    "CUDA_VISIBLE_DEVICES, not cuda:N": "gemm_dims_aligned",
+    "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
+    "Outbound network: curl -4, always": "curl_ipv4",
+    "runs/.jsonl ledgers merge by union": "no_ghost_running",
+    "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
+    "A commit that touches a file in data/pod_head_manifest.txt": "pod_drift",
+    "Corpus directories named by any ladder mix": "ladder_config_frozen",
+    "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
+    "8×H20, all usable": "pod_drift",
+    "pod is at ~/bin/pod": "pod_drift",
+    "uv sync after dependency changes": "env_importable",
+}
+
+#: Rule bullets in AGENTS.md that no check can enforce, and why. The count is
+#: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
+#: A rule enters this list only when enforcement is impossible, not merely awkward.
+_MANUAL_RULES = {
+    "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
+    "Shared files": "announcing an edit happens in conversation, outside the repo",
+    "GPUs": "card ownership is a controller decision, not a file state",
+    "Lanes: a 7-card training block, and one lane card for everything else":
+        "the lane/block split is allocation policy; lane_respected checks the instant, not the policy",
+    "Small jobs queue on the lane card":
+        "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
+    "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
+    "What is reachable, measured 2026-08-30 with -4": "a record of a measurement, not a rule to enforce",
+    "Reachability changes without notice, so a fetcher carries a mirror chain":
+        "fetchers do carry chains; asserting 'a chain is present' would match a comment",
+    "File transfer into the container: podput <local> <remote-abs-path>":
+        "the 100KB cap is enforced by podput itself, which refuses",
+    "tn exec and ~/bin/pod are two different filesystem views":
+        "a fact about the environment; the mistakes it prevents are interactive",
+    "cd inside a backgrounded chain stays in it": "a shell fact; no artifact records the mistake",
+    "Stage by path, never `git add -A`": "git history cannot show which command staged a commit",
+    "Never run `git checkout` / `git restore` on a file you did not write":
+        "no record of who wrote an uncommitted change",
+    "Run `ruff format` over a whole file only if you created it": "reformat scope is a review judgement",
+    "Commit as soon as a change works": "dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement",
+    "Each session works in its own worktree on its own branch": "worktree topology is per-machine, not in the repo",
+    "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
+    "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
+    "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
+    "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
+}
+#: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
+#: check could never fire -- the ratchet has to be a number a commit has to change.
+#: Raising it needs a message saying which rule became unenforceable and why.
+_MANUAL_BASELINE = 20
+
+
+def _norm_rule(text):
+    """Rule keys and AGENTS.md bullets compared on one normal form: markdown stripped,
+    whitespace collapsed, trailing punctuation dropped. Without this the map needs a
+    key per punctuation variant, and a bullet that gains a backtick silently unmaps."""
+    return re.sub(r"\s+", " ", re.sub(r"[`*_]", "", text)).strip().rstrip(":. ").lower()
+
+
+def _agents_rule_bullets(root):
+    """Every bold-lead rule bullet under Hard constraints / Pod / the coordination block."""
+    p = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(p):
+        return None, "AGENTS.md missing"
+    text = open(p, encoding="utf-8").read()
+    lines = text.split("\n")
+    spans, cur = [], None
+    for i, line in enumerate(lines):
+        if re.match(r"^## ", line):
+            if cur:
+                spans.append((cur, i))
+                cur = None
+            if re.match(r"^## (Hard constraints|Pod|Coordination)", line):
+                cur = i
+            # the coordination rules live under "Rules kept from before the reset"
+            elif "Rules kept from before" in line:
+                cur = i
+    if cur:
+        spans.append((cur, len(lines)))
+    out = []
+    for a, b in spans:
+        for i in range(a, b):
+            m = re.match(r"^\s*-\s+\*\*(.+?)\*\*", lines[i])
+            if m:
+                out.append(m.group(1).rstrip(":. "))
+            elif re.match(r"^- [A-Z`]", lines[i]) and len(lines[i]) > 40:
+                out.append(re.sub(r"[`*]", "", lines[i][2:])[:60].rstrip(":. "))
+    return out, None
+
+
+def check_agents_rules_covered(root):
+    """Every AGENTS.md rule maps to a check name or an explicit manual reason.
+
+    A rule that is only prose is one people break for cause: tonight the register
+    refusal in a worktree pushed a session into the shared tree, and 'run it in the
+    main checkout' was a documented instruction pointing at the one place sessions
+    overwrite each other. Coverage cannot prove a mapping is honest -- it proves one
+    was made, and the manual count is ratcheted so 'manual' cannot quietly win."""
+    bullets, err = _agents_rule_bullets(root)
+    if err:
+        return FAIL, err
+    if not bullets:
+        return FAIL, "no rule bullets found -- the sections were renamed or emptied"
+    known = {c[0] for c in CHECKS} | {"CI", "pre-commit hook", "podput", "pod_push.sh"}
+    covered = _RULE_CHECKS
+    unmapped = []
+    for b in bullets:
+        nb = _norm_rule(b)
+        key = next((k for k in covered if nb.startswith(_norm_rule(k)[:38])), None)
+        manual = next((k for k in _MANUAL_RULES if nb.startswith(_norm_rule(k)[:38])), None)
+        if key is None and manual is None:
+            unmapped.append(b[:55])
+    if unmapped:
+        return FAIL, f"{len(unmapped)} rule(s) map to neither a check nor a manual reason: {unmapped[:3]}"
+    n_manual = len(_MANUAL_RULES)
+    if n_manual > _MANUAL_BASELINE:
+        return FAIL, f"manual rules rose to {n_manual} (baseline {_MANUAL_BASELINE}) -- say which became unenforceable"
+    bad_ref = [v for v in covered.values() if v not in known]
+    if bad_ref:
+        return FAIL, f"rule maps to a check that does not exist: {bad_ref[:3]}"
+    return PASS, f"{len(bullets)} rules: {len(bullets) - n_manual} checked, {n_manual} manual (baseline {_MANUAL_BASELINE})"
+
+
+def _broken_agents_rules_covered():
+    """The REAL AGENTS.md with a new unmapped rule bullet appended to Hard constraints."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    marker = "- **CI gates.**"
+    if marker not in text:
+        return None
+    text = text.replace(marker, "- **Invented rule nobody mapped.** Added by the broken world.\n" + marker, 1)
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def check_no_foreground_pod_training(root):
+    """No training process on the pod outside a setsid session.
+
+    'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
+    whole card at 100% after the tn tunnel dies, which once contaminated a
+    seven-card profile silently. A detached job's session id differs from its pid's
+    parent shell; a foreground one shares the crictl exec session."""
+    pod = os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod) or pod_drift.is_pod(root):
+        return SKIP, "host-side check; needs ~/bin/pod"
+    try:
+        r = subprocess.run(
+            [pod, "ps -eo pid,sid,pgid,args --no-headers | grep -E 'train[.]py|run_ddp' | grep -v grep"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return SKIP, f"pod unreachable: {type(e).__name__}"
+    rows = [ln.split(None, 3) for ln in r.stdout.strip().split("\n") if ln.strip()]
+    if not rows:
+        return PASS, "no training process on the pod"
+    attached = [x for x in rows if len(x) >= 3 and x[0] != x[1]]  # pid != sid -> not a session leader
+    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
+    leaders = {x[1] for x in rows if len(x) >= 2 and x[0] == x[1]}
+    orphans = [x for x in attached if len(x) >= 2 and x[1] not in leaders]
+    if orphans:
+        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
+    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+
+
+def _broken_no_foreground_pod_training():
+    # A broken world here would need a real foreground training process on the pod --
+    # i.e. committing the exact incident the check exists to prevent, on the box
+    # running the 15B job. The check reads live process state, not a repo artifact,
+    # so there is nothing in a temp tree to break. Skipped out loud rather than
+    # given a hand-written world that would share the check's own assumptions.
+    raise SelftestSkip("reads live pod process state; no repo artifact to break")
+
+
+def check_curl_ipv4(root):
+    """Every curl invocation in tracked code passes -4.
+
+    The pod's IPv6 egress is broken and curl tries IPv6 first; the failure surfaces
+    as 'Errno 99 / Cannot assign requested address', which reads as 'host is
+    unreachable' and is actually 'the local address family is unusable'. On
+    2026-08-30 that produced a whole reachability matrix of false negatives."""
+    bad = []
+    # An invocation, not the word: `curl` inside a quoted argv element or a shell
+    # command string. Matching the bare word finds docstrings -- including this
+    # check's own, which is how the first version failed on itself.
+    inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
+    for ext in ("*.py", "*.sh"):
+        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
+            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
+                text = open(p, encoding="utf-8", errors="replace").read()
+                # Drop docstrings and comments before looking for invocations.
+                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+                for n, line in enumerate(text.split("\n"), 1):
+                    s = line.split("#", 1)[0]
+                    if inv.search(s) and not re.search(r"-4\b", s):
+                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    if bad:
+        return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
+    return PASS, "every curl call passes -4"
+
+
+def _broken_curl_ipv4():
+    """A REAL fetcher with the -4 removed from its curl invocation."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "datagen", "fetch_corpus.py")
+    if not os.path.exists(src):
+        return None
+    os.makedirs(os.path.join(d, "datagen"), exist_ok=True)
+    text = open(src, encoding="utf-8").read()
+    if '"-4"' not in text:
+        return None
+    open(os.path.join(d, "datagen", "fetch_corpus.py"), "w", encoding="utf-8").write(
+        text.replace('"-4",', "", 1)
+    )
+    return d
+
+
 def check_root_durable(root):
     """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys
     everything on /work; the durable NVMe drives are not visible inside the
@@ -3169,6 +3396,27 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "agents_rules_covered",
+        "every AGENTS.md rule maps to a check name or an explicit manual reason",
+        "the register refusal in a worktree pushed a session into the shared tree tonight: a rule that is only prose is one people break for cause",
+        check_agents_rules_covered,
+        _broken_agents_rules_covered,
+    ),
+    (
+        "curl_ipv4",
+        "every curl call in tracked code passes -4",
+        "the pod's IPv6 egress is broken; without -4 the failure reads as 'host unreachable' and produced a whole reachability matrix of false negatives (2026-08-30)",
+        check_curl_ipv4,
+        _broken_curl_ipv4,
+    ),
+    (
+        "no_foreground_pod_training",
+        "no training process on the pod outside a setsid session",
+        "a foreground pod job becomes an orphan holding a whole card at 100% when the tn tunnel dies; one silently contaminated a seven-card profile",
+        check_no_foreground_pod_training,
+        _broken_no_foreground_pod_training,
+    ),
+    (
         "root_durable",
         "AUPAI_ROOT is on a durable mount (/data00-/data03), not a Kubernetes emptyDir",
         "the 94 GB corpus, every checkpoint, and the repo lived in a 365 GB emptyDir for weeks; a pod deletion would erase all of it",
@@ -3761,7 +4009,7 @@ def _refresh_board():
 
 
 def _selftest_gate_timeout():
-    """Known answer: the gate is cache bytes / 1.5 GiB/s x2, floored at 600 s.
+    """Known answer: the gate is cache bytes / _CACHE_READ_GIBPS x2, floored at 600 s.
 
     Tonight's real numbers are the case that matters -- 149 GiB must exceed the
     6m26s the run actually took, and the old 120 s default must not."""
@@ -4996,7 +5244,7 @@ def _derive_gate_timeout(cmd, cache_dir=None):
     first step. On 2026-08-31 that was 149 GiB and the first step line came 6m26s
     after launch -- the 120 s default would have killed a healthy run. The gate is
     a property of the mix, not something an operator should have to measure again:
-    total cache bytes / 1.5 GiB/s, doubled for contention, floor 600 s.
+    total cache bytes / _CACHE_READ_GIBPS, doubled for contention, floor 600 s.
     """
     mix = None
     for i, c in enumerate(cmd):

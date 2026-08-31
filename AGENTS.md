@@ -15,14 +15,9 @@ change and what it supersedes: `docs/standards/0830v1_gates.md`.
 
 Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA, full causal over the 4096-token sequence (document-masked). The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training. Attention Residuals are on by default.
 
-## Writing rules (all docs, commit messages, and replies)
+## Writing rules (all docs, commit messages, register rows, and replies)
 
-- No metaphors. They distort.
-- No big words, no verdict-first tone, no invented compressed terms, no filler explanation, no spoken/speech register.
-- Delete anything a competent reader already knows.
-- Every rewrite must raise information density. Rephrasing without new information is a no-op.
-- 3+ consecutive prose paragraphs: check whether a table, list, or grouping works instead.
-- Target: simple, clear, coherent, specific, accurate, complete. Short units and strict logical order matter more than completeness of phrasing.
+The standard is `docs/standards/writing.md` (user, 2026-08-31): no metaphors, no filler, no verdict-first tone, few quotes and parentheses, formulas set as formulas, bold for the key part only, three consecutive paragraphs become a table, every rewrite raises density, four review passes before hand-over.
 
 ## 0830v1 reset (2026-08-30)
 
@@ -39,7 +34,6 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | `eval/` | benchmarks |
 | `algorithms/` | RL |
 | `mathbank/` | synthetic math generators |
-| `workflows/` | corpus JS |
 | `data/corpus/*` | corpus bytes (gitignored except `sample/`) |
 | `data/mix_scale_*.json` | the 0830v1 mixes |
 | `data/tokenizer.json` | the frozen vocabulary |
@@ -245,6 +239,55 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **What is reachable, measured 2026-08-30 with `-4`:** hf-mirror `resolve/main/<file>` paths 200 but its metadata API 403s (anti-scrape) — so a dataset with a *published URL manifest* is easier to fetch here than one needing the Hub API, the opposite of the usual ranking. `huggingface.co` itself times out on both families.
 - **Reachability changes without notice, so a fetcher carries a mirror chain.** 2026-08-31 from ~14:30: `hf-mirror.com` rc=28 (timeout) for the rest of the day; `www.modelscope.cn` 200 in 0.08 s and `/datasets/AI-ModelScope/<name>/resolve/master/<file>` serves HF datasets; `data.together.xyz` 200 all day. The math and CoT fetches stalled for hours on the one dead host. Rule: every HF-hosted source lists `[hf-mirror, modelscope, huggingface.co]` with a verified name map; a 10 s `curl -4` probe per host before fetching and on any timeout/403; failover continues from the same `.part`; `fetch_stats.json` records which host served each file (`t37`).
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
+
+## Rule coverage
+
+Every rule below maps to a check that enforces it or an explicit reason none can.
+`agents_rules_covered` FAILs on a bullet that maps to neither, and the manual count is
+ratcheted against a literal — raising it takes a commit saying which rule became
+unenforceable. Coverage proves a mapping was made, not that it is honest, so the manual
+column states what each check cannot see. A rule that is only prose is one people break
+for cause: tonight `harness task` refused to run in a worktree, so "run it in the main
+checkout" sent a session into the one tree where sessions overwrite each other.
+
+| Rule | Enforced by |
+|---|---|
+| Tokenizer frozen 2026-08-29 | `pinned_ids` |
+| Vocabulary identity | manual: enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check |
+| GPUs | manual: card ownership is a controller decision, not a file state |
+| Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
+| Small jobs queue on the lane card. They never spill into the block, not even o | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
+| The lane holds one job at a time | manual: same: lane_respected sees now, not the queue discipline |
+| Long jobs detach | `no_foreground_pod_training` |
+| Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
+| Shared files | manual: announcing an edit happens in conversation, outside the repo |
+| CI gates | CI |
+| Derived artifacts carry the fingerprint of what produced them | `corpus_fp_matches` |
+| pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
+| `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
+| `setsid`, not `nohup` | `no_foreground_pod_training` |
+| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `gemm_dims_aligned` |
+| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
+| Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
+| Outbound network: `curl -4`, always | `curl_ipv4` |
+| What is reachable, measured 2026-08-30 with `-4` | manual: a record of a measurement, not a rule to enforce |
+| Reachability changes without notice, so a fetcher carries a mirror chain | manual: fetchers do carry chains; asserting 'a chain is present' would match a comment |
+| `cd` inside a backgrounded chain stays in it | manual: a shell fact; no artifact records the mistake |
+| cfg_default raises rather than returning None: an annotation | manual: a note on how checks are written, not a rule to enforce |
+| The ledger takes names from the scores: --name X attributes | manual: a note on how the ledger reads, not a rule to enforce |
+| Each session works in its own worktree on its own branch: gi | manual: worktree topology is per-machine, not in the repo |
+| Commit in your worktree as soon as a change works, at most 3 | manual: same deadline as above, enforced by dirty_aged |
+| runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
+| scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
+| The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
+| Never run git checkout / git restore on a file you did not w | manual: no record of who wrote an uncommitted change |
+| Run ruff format over a whole file only if you created it. On | manual: reformat scope is a review judgement |
+| Commit as soon as a change works, and never later than 30 mi | manual: dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement |
+| Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
+| A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
+| Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
+
+34 rules: 14 checked, 20 manual.
 
 ## Rules kept from before the reset
 

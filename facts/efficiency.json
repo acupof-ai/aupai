@@ -1003,7 +1003,7 @@
   },
   {
    "id": "eff.cache_load_gates_startup",
-   "value": "15B stage-1 (2026-08-31): 6m26s from launch to the first step line -- build_mix (train.py:1807) torch.loads every domain's FULL cached supply on every rank (train.py:1396) BEFORE the fa/doc_mask gate lines print (train.py:1886). Seven stage-1 caches = 149 GiB, so 7 ranks read ~1.0 TiB; zh_web alone is 79.3 GiB cached to draw 1.65B tokens (0.08 epochs). Measured read rates on the pod: 1.4 GB/s raw sequential (dd), 1.5-1.6 GiB/s through torch.load warm, but 0.07 GiB/s while two 8-worker tokenizers competed -- a 20x collapse. The 120s default startup gate kills a healthy run here; launch_30b.sh stage 1 sets 1800 (2x measured, per fb's rule).",
+   "value": "15B stage-1 (2026-08-31): 6m26s (386s) from launch to the first step line -- build_mix (train.py:1807) torch.loads every domain's FULL cached supply on every rank (train.py:1396) BEFORE the fa/doc_mask gate lines print (train.py:1886). Seven stage-1 caches = 149 GiB, so 7 ranks move ~1.02 TiB. THREE different read rates, only one of which predicts the gate: (a) per-rank effective as the 7-rank startup sees it = 149 GiB / 386 s = 0.39 GiB/s -- USE THIS; (b) single-stream warm through torch.load = 1.55 GiB/s, 4.0x optimistic because it does not share the page cache, and deriving a gate from it gives 192s, under the 600s floor, i.e. a gate that looks right and does nothing (de caught this); (c) raw sequential dd = 1.30 GiB/s. Contended against two 8-worker tokenizers it collapses to 0.07 GiB/s, a 20x drop -- that is what turns a healthy run into a gate kill. harness launch now derives the training gate as cache bytes / 0.39 GiB/s x 2, floor 600s (de), so no one passes --gate-timeout by hand.",
    "measured": "2026-08-31",
    "source": "runs/pretrain_15b_s1.log, scripts/launch_30b.sh",
    "config": {
@@ -1012,11 +1012,16 @@
     "cache_bytes_gib": 149,
     "ranks": 7,
     "gate_seconds": 1800,
-    "measured_gate_wall": "6m26s (12:45:03 launch -> 12:51:29 first step)",
-    "load_rate_warm_gib_s": 1.55,
-    "load_rate_contended_gib_s": 0.07
+    "measured_gate_wall_s": 386,
+    "bytes_moved_tib": 1.02,
+    "rate_per_rank_startup_gib_s": 0.39,
+    "rate_single_stream_warm_gib_s": 1.55,
+    "rate_raw_dd_gib_s": 1.3,
+    "rate_contended_gib_s": 0.07,
+    "gate_seconds_used": 1800,
+    "gate_seconds_derived": 772
    },
-   "uncertainty": "one launch; the 6m26s benefited from pages left warm by the tokenizers that had just written the caches, so a genuinely cold start is slower -- which is why the gate is 2x, not 1.2x",
+   "uncertainty": "one launch. The 386s benefited from pages left warm by the tokenizers that had just written the caches, so a genuinely cold start is slower -- which is why the derivation is 2x. The 1800s I launched with was 2x a per-rank estimate from the single-stream rate and happened to be safe by accident; the correct derivation (2x 386s = 772s) is what harness launch now computes.",
    "status": "measured"
   }
  ]

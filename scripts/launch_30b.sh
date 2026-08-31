@@ -18,8 +18,8 @@
 #   scripts/launch_30b.sh --stage 1 [--dry]              stage 1 (15B)
 #   scripts/launch_30b.sh --stage 2 --resume <ckpt> [--dry]   stage 2 (resume into 30B)
 #   --dry prints the resolved torchrun line + the STAGE's own readiness, exit non-zero while blocked.
-#   --gate-timeout N overrides the startup gate; raise it when the first tick is behind a
-#     slow load (68GB of warm token caches off /data00 has taken >120s).
+#   --gate-timeout N overrides the startup gate, which `harness launch` otherwise derives
+#     from the mix's own cache bytes; pass it only for a case that derivation cannot see.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -51,8 +51,13 @@ else
   EXTRA="--warmdown $WARMDOWN --resume $RESUME"
 fi
 
+# --seed 42, not 0. train.py:1733 applies flags with `if hasattr(Cfg,k) and v` and 0 is
+# falsy, so the --seed 0 this script used to pass was dropped and Cfg.seed kept its default
+# 42. Stage 1 ran under 42 (b0 audit 2026-08-31); stage 2 states it so the two stages share
+# one documented seed and the value in the command is the value in effect. de fixes the
+# apply after stage 1 ends; until then no flag whose valid value is 0 or "" can be trusted.
 FLAGS="--mix $MIX --seq 4096 --warmup 300 --save_every 500 --attn_res_blocks 0 --attn_every 4 \
---batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 0 $EXTRA --name $NAME"
+--batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 42 $EXTRA --name $NAME"
 
 # Readiness: the mix contract + nothing still _blocked, read from THIS stage's own mix so
 # the line a person reads at launch names the mix being launched (not always mix_30b.json).
@@ -69,19 +74,14 @@ else
   READY=1
 fi
 
-# Startup gate: build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
-# (train.py:1886), and train.py:1396 torch.loads every domain's FULL cache on every rank.
-# Stage 1's seven caches are 149 GiB (zh_web alone is 79 GiB: its 21.29B-token supply, not
-# the 1.65B drawn), so 7 ranks read ~1.0 TiB. Measured on the pod: 1.4 GB/s raw sequential
-# (dd), 1.5-1.6 GiB/s through torch.load once warm -> ~13 min if every rank misses page
-# cache. 1800 = 2x that, per the "gate = 2x measured load, floor 600" rule. The 10-minute
-# silence monitor still catches a genuine hang after the gate.
-if [ -z "$GATE" ]; then
-  GATE=120; [ -n "$RESUME" ] && GATE=300   # a 959MB+ ckpt load exceeds the default gate (t38)
-  [ "$STAGE" = 1 ] && GATE=1800
-fi
+# Startup gate: derived by `harness launch` from the mix's own cache bytes (de), so this
+# script names no number. build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
+# (train.py:1886) and train.py:1396 torch.loads every domain's FULL cache on every rank --
+# 149 GiB x 7 ranks for stage 1, which took 386 s on 2026-08-31 and would have been killed
+# by the 120 s default. --gate-timeout still overrides for a case the derivation cannot see.
+if [ -n "$GATE" ]; then GATE_ARG="--gate-timeout $GATE"; else GATE_ARG=""; fi
 echo "== resolved command =="
-echo "python3 scripts/harness.py launch $NAME --training --gate-timeout $GATE --auto-resume 2 \\"
+echo "python3 scripts/harness.py launch $NAME --training $GATE_ARG --auto-resume 2 \\"
 echo "  --hypothesis 'staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')' \\"
 echo "  -- bash run_ddp.sh $FLAGS"
 
@@ -94,6 +94,6 @@ if [ "$READY" != 1 ]; then
 fi
 # --auto-resume makes harness launch a BLOCKING supervisor that must outlive the child, so
 # this whole script has to be detached (setsid nohup), not just the torchrun inside it.
-exec python3 scripts/harness.py launch "$NAME" --training --gate-timeout "$GATE" --auto-resume 2 \
+exec python3 scripts/harness.py launch "$NAME" --training $GATE_ARG --auto-resume 2 \
   --hypothesis "staged 30B (t22) stage $STAGE: $(echo $FLAGS | tr -s ' ')" \
   -- bash run_ddp.sh $FLAGS
