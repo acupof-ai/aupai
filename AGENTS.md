@@ -76,9 +76,13 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Pod drift | `scripts/pod_sync_check.sh` — sha256 of tracked code vs /work/aupai; exit 1 on DIFF/MISSING |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
-| Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram |
+| Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*` |
 | AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python scripts/nan_probe.py` (pod) |
+| Reachability | `python scripts/reachability.py` — which .py/.sh files are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
+| Count cleaned code | `python scripts/count_cleaned_code.py` — token counts over cleaned corpus domains |
+| Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
+| Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
 
 ## Run pretraining
 
