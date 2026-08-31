@@ -1263,6 +1263,35 @@
    },
    "uncertainty": "One card, one trace, 20 active steps at steps 56-76. Single-process, so no DDP allreduce or cross-rank skew: the 7-card step has traffic this cannot show, and 76 ms of idle on one card does not bound idle on seven. The occupancy figures are the profiler's estimate and 'achieved occupancy' is not a memory-vs-compute classification -- I could not compute bytes moved per fusion, because inductor names the ops absorbed but not the shapes, so LEAVE/TARGET is a latency-limited proxy and not a roofline. A kernel at 100% occupancy can still be bandwidth-starved. The persistence finding is the solid part: it is 8 gaps with named CPU events inside them at step 260, not an inference. What is NOT established is why frames keep recompiling that late, or whether cu bucketing specifically would stop it -- the frame carrying 2.2 ms/step of GPU work is still not the model body, so the recompile tax and the bucketing fix may not be the same lever.",
    "status": "measured"
+  },
+  {
+   "id": "eff.recompile_reason_named",
+   "value": "The recurring recompilation is AttnRes's per-source-count graph, not a cache-size problem and not cu_seqlens. TORCH_LOGS=recompiles on the lane names the guards verbatim: 'Recompiling function forward in /work/aupai/train.py:521' 24 times, each triggered by 'len(srcs) == N' for successive N, and 'Recompiling function muon_update in /work/aupai/train.py:746' 7 times, triggered by \"tensor 'grads' size mismatch at index 0\" between 3, 9 and 12. train.py:521 is AttnRes.forward(srcs), and train.py:1914's own comment already states this: the AttnRes loop builds one compiled graph per distinct source count, 1 + 2*layers = 25 in Full mode. So the 25 variants are BY DESIGN and the recompiles are the design being paid for, once per source count per process. muon_update's three grad-list sizes are the optimizer's parameter buckets, also fixed by the architecture. TWO HYPOTHESES KILLED. fb's: torch's default cache_size_limit of 8 forcing permanent eviction. train.py:1912 already sets cache_size_limit = 64 and :1913 accumulated_cache_size_limit = 256, and the live run's warning reads 'hit config.recompile_limit (64)' on frame 17 with frames tagged [17/64] -- so it blew the limit AT 64, and the proposed fix of raising it to >= 32 would have LOWERED it and made eviction strictly worse. Mine: a cu_seqlens-length or batch-shape guard from mark_dynamic at train.py:855. No cu guard appears anywhere in the log. I predicted it explicitly before reading and it is absent. WHAT THIS DOES NOT EXPLAIN, and it is the open part: the 54.9 ms/step of >1 ms gaps at the rms_norm -> flash seam were measured at step 260, and 25 source-count variants plus 3 grad sizes are exhausted long before that. A fixed set of variants compiled once cannot produce recompiles at step 260. Either the gaps at step 260 are the tail of compilation that started earlier and the profiler window caught it mid-flight, or something evicts and recompiles a graph that was already built. This probe names what recompiles and why; it does not establish why it recurs late.",
+   "measured": "2026-09-01",
+   "source": "runs/t57_recompile.log, train.py",
+   "config": {
+    "task": "t57",
+    "cards": 1,
+    "card_id": 7,
+    "env": "TORCH_LOGS=recompiles",
+    "mix": "mix_smoke_warmup",
+    "batch": 16,
+    "accum": 2,
+    "seq": 4096,
+    "fp8": true,
+    "attn_every": 4,
+    "attnres_forward_recompiles": 24,
+    "attnres_guard": "len(srcs) == N, successive N",
+    "muon_update_recompiles": 7,
+    "muon_guard": "tensor 'grads' size mismatch at index 0: 3, 9, 12",
+    "cu_seqlens_guard_found": false,
+    "cache_size_limit_actual": 64,
+    "accumulated_cache_size_limit_actual": 256,
+    "recompile_limit_hit_at": 64,
+    "attnres_variants_by_design": 25
+   },
+   "uncertainty": "The probe ran without --profile, so it names guards but does not time them; the 54.9 ms/step figure comes from the separate steady-state trace (eff.steady_state_composition) and the two runs are not the same process. Guard counts are for the probe's ~60 steps on one card, so 24 and 7 are that window's totals and not a rate. Crucially the LATE-recurrence question is unresolved: this explains what recompiles, not why gaps containing compile_attempt_1 appear at step 260 when the variant set is finite and small. Frame numbering also differs between runs ([4/N] here, [17/64] in the live run), so the frame that blew the 64 limit in stage 1 is not shown to be AttnRes.forward -- that identification is still open.",
+   "status": "measured"
   }
  ]
 }

@@ -1,0 +1,50 @@
+params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+dynamo cache_size_limit=64 (need 25)
+step 10/1525 1% [main] | loss 7.652 | lr 1.00e-02 | gnorm 8.62 | 0.00B tok | 27K tok/s/gpu | MFU 11% | ETA 2.1h
+step 20/1525 1% [main] | loss 7.403 | lr 1.00e-02 | gnorm 6.81 | 0.00B tok | 73K tok/s/gpu | MFU 31% | ETA 0.7h
+step 30/1525 2% [main] | loss 6.750 | lr 1.00e-02 | gnorm 0.95 | 0.00B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
+step 40/1525 3% [main] | loss 6.949 | lr 1.00e-02 | gnorm 3.45 | 0.01B tok | 79K tok/s/gpu | MFU 33% | ETA 0.7h
+step 50/1525 3% [main] | loss 6.604 | lr 1.00e-02 | gnorm 3.58 | 0.01B tok | 78K tok/s/gpu | MFU 33% | ETA 0.7h
+killed by tilerl at 16:20 pod time: TORCH_LOGS=recompiles captured the guard reasons (len(srcs) on AttnRes forward, grads size on muon_update); nothing further to learn from a longer run. Deliberate kill of 935269 to free lane GPU7 before the 8B milestone. NOT a crash.
+--- guard failures (TORCH_LOGS=recompiles) ---
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function <lambda> in /work/aupai/train.py:657
+    triggered by the following guard failure(s):
+    - 5/0: CodeGuardAccessor: Not a function on f.__code__
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/1: len(srcs) == 2                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/2: len(srcs) == 3                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/1: len(srcs) == 2                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/3: len(srcs) == 4                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/2: len(srcs) == 3                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/1: len(srcs) == 2                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/4: len(srcs) == 5                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/3: len(srcs) == 4                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/2: len(srcs) == 3                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/1: len(srcs) == 2                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function forward in /work/aupai/train.py:521
+    triggered by the following guard failure(s):
+    - 4/5: len(srcs) == 6                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/4: len(srcs) == 5                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/3: len(srcs) == 4                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/2: len(srcs) == 3                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/1: len(srcs) == 2                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+    - 4/0: len(srcs) == 1                                           # logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])  # ork/aupai/train.py:525 in forward
+Recompiling function <lambda> in /work/aupai/train.py:550
+    triggered by the following guard failure(s):
+    - 6/0: ___check_type_id(self._modules['mixer'], 229347920), type=<class '__main__.DeltaRecurrence'>  # return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))  # ork/aupai/train.py:550 in <lambda> (HINT: type DeltaRecurrence)
+Recompiling function to_cute_tensor in /usr/local/lib/python3.12/dist-packages/flash_attn/cute/cute_dsl_utils.py:62
