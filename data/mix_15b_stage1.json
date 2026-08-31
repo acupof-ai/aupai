@@ -1,27 +1,16 @@
 {
   "total_tokens": 15000000000.0,
   "anneal_frac": 0,
-  "domains": {},
-  "_blocked": {
-    "code_rp1t": {
-      "weight": 0.47094,
+  "domains": {
+    "en_c4": {
+      "weight": 0.20987,
       "epochs": 1,
-      "anneal": 0.47094,
-      "role": "code raw (RedPajama-1T github)",
-      "tokens": 7064000000,
-      "source": "RedPajama-1T github, 73.6B reachable, exact count",
-      "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b)",
-      "status": "blocked: raw fetched, corpus build+stamp pending. Stage-1 weight is 7.064B vs the 4.000B scaled-15B target (+3.064B) -- it absorbs 8/13.5 of the math/cot shortfall AND code_tests' 1.0B (mining not landed, dropped for stage 1 per fb 2026-08-31; returns in stage 2)"
-    },
-    "math_seed": {
-      "weight": 0.01633,
-      "epochs": 3,
-      "anneal": 0.01633,
-      "role": "verifiable math SEED -- stage-1 stand-in for math_owm (finemath not landed); pod-existing math corpora only",
-      "tokens": 245000000,
-      "source": "data/corpus/math_seed: 74.27M English en_math_text (91%) + 7.41M Chinese math_short (9%) = 81.68M tokens MEASURED (44, t49: 5 shards, 320M bytes, train.encode exact). mathinstruct_zh/blossom/gsm8k do not exist as corpus dirs",
-      "supply": "81.68M measured x 3 epochs = 245M = demand (binding: epochs=3 is FORCED by supply=demand, not a choice -- check_mix_supply FAILs at epochs<=2). The 422M byte estimate was 5.2x the token count (byte-vs-token error, t49 44)",
-      "status": "blocked: stamped (44 measured 81.68M). Stage-1 weight is 0.245B vs the 2.750B scaled-15B math_owm target (-2.505B) -- the math shortfall is fb's call (see _comment)"
+      "anneal": 0.20987,
+      "role": "English general (RedPajama-1T c4, reachable stand-in)",
+      "tokens": 3148000000,
+      "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
+      "supply": "4,809,069,283 tokens MEASURED (44, 2026-08-31: 166/254 shards, 7,767,463 docs, 64 procs, 155.9s, train.encode exact; subset_of stamp, near_dedup false). 4.81B supply vs 3.148B demand = +52.7%, epochs 1",
+      "status": "landed: subset stamp (166/254 shards), measured 4.81B tokens >= 3.148B demand"
     },
     "cot": {
       "weight": 0.08480,
@@ -31,17 +20,29 @@
       "tokens": 1272000000,
       "source": "NuminaMath-CoT, 1.2G raw, cleaned (de global pass: holdout + exact dedup), 851,965 docs",
       "supply": "424,056,227 tokens MEASURED (44, 2026-08-31: 13 shards, 64 procs, 44.4s, train.encode exact; written to data/corpus/cot/build_corpus_stats.json tokens/tokens_status=measured). 424M x 3 epochs = 1.272B = demand (binding: epochs=3 FORCED by supply=demand -- check_mix_supply FAILs at epochs<=2). de's kept_tokens self-estimate was 805.9M (chars/1.5), 1.89x the exact count -- estimate not used",
-      "status": "blocked: stamped (44 measured 424M). Stage-1 weight is 1.272B vs the 2.250B scaled-15B cot target (-0.978B); the shortfall goes to code/en per the 8:5.5 rule (fb ruling 2026-08-31). cot_seed (fable5) DROPPED: 4,665 snippets all under 100 chars, 0 kept under light filters -- not trainable (fb ruling 2026-08-31)"
+      "status": "landed: measured 424M tokens, epochs 3 = 1.272B = demand. cot_seed (fable5) DROPPED: 4,665 snippets all under 100 chars, 0 kept under light filters -- not trainable (fb ruling 2026-08-31)"
     },
-    "en_c4": {
-      "weight": 0.27793,
+    "math_owm": {
+      "weight": 0.18333,
       "epochs": 1,
-      "anneal": 0.27793,
-      "role": "English general (RedPajama-1T c4, reachable stand-in)",
-      "tokens": 4169000000,
-      "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
-      "supply": "open",
-      "status": "blocked: not fetched. fineweb-edu sample/10BT remains the PREFERRED source: if the hf-mirror returns before en is half landed, switch back at the same weight (fb ruling 2026-08-31). Stage-1 weight is 4.169B vs the 2.750B scaled-15B target (+1.419B) -- it absorbs 5.5/13.5 of the math/cot shortfall"
+      "anneal": 0.18333,
+      "role": "verifiable math (finemath)",
+      "tokens": 2750000000,
+      "source": "finemath, cleaned (de global pass: holdout + exact dedup), subset_of stamp",
+      "supply": "4,034,824,812 tokens MEASURED (44, 2026-08-31: 127/345 shards, 64-proc train.encode exact; de's pod counter was 0.35% low, fb knows). 4.03B supply vs 2.750B demand = +46.7%, epochs 1. math_seed (81.68M) DROPPED -- finemath supply exceeds the 2.75B target, no top-up needed",
+      "status": "landed: subset stamp (128 shards), measured 4.02B tokens >= 2.750B demand"
+    }
+  },
+  "_blocked": {
+    "code_rp1t": {
+      "weight": 0.37200,
+      "epochs": 1,
+      "anneal": 0.37200,
+      "role": "code raw (RedPajama-1T github)",
+      "tokens": 5580000000,
+      "source": "RedPajama-1T github, 73.6B reachable, exact count",
+      "supply": "6,367,199,708 tokens MEASURED (44, 2026-08-31: 197 shards, 64-proc train.encode exact; de extending with 39 rest shards to 236, 44 recounts on landing -- 236-shard extrapolation ~7.6B). 6.367B supply >= 5.580B demand even at 197 shards; the extension is supply headroom, not a weight change",
+      "status": "blocked: subset stamp landed (198 shards, 6.367B), extension to >=7.77B running. Stage-1 weight is 5.580B = 4.000B scaled + 1.000B code_tests (dropped, mining not landed) + 0.580B cot shortfall (8/13.5). The math shortfall (2.505B) came OUT when math_owm landed at 2.75B (fb ruling 2026-08-31)"
     },
     "zh_web": {
       "weight": 0.11000,
@@ -74,5 +75,5 @@
       "status": "blocked: needs a fresh stamped build. Unchanged from scaled-15B target (0.100B); weight kept so ChatML and the two-turn tool rendering are not learned from nothing (same rationale as mix_30b.json)"
     }
   },
-  "_comment": "15B stage-1 WSD mix (t46, fb 2026-08-31). The 30B table (mix_30b.json) scaled to 15e9, with math_owm/cot BOUND TO LANDED/POD-EXISTING DATA because OpenWebMath/proof-pile/OpenThoughts/Skywork are not fetched -- stage 1 buys an early read on the math/cot bet at half the tokens, without waiting on those fetches. SCALED-15B TARGET -> STAGE-1 ACTUAL (deviation per role, in tokens): code_rp1t 4.000B -> 7.064B (+3.064B); code_tests 1.000B -> 0 (DROPPED -- mining not landed, returns in stage 2); math_owm -> math_seed 2.750B -> 0.245B (-2.505B); cot 2.250B -> 1.272B (-0.978B); en_c4 2.750B -> 4.169B (+1.419B); zh_web 1.650B -> 1.650B (0); textbook_30b 0.500B -> 0.500B (0); wiki_chat 0.100B -> 0.100B (0). math+cot: 5.000B -> 1.517B (-3.483B); the shortfall is reassigned to code_rp1t + en_c4 in their existing 8:5.5 ratio (8/13.5 = +2.064B to code_rp1t, 5.5/13.5 = +1.419B to en_c4). code_tests' 1.0B also goes to code_rp1t (same source -- the tests are a subset of code_rp1t; 3b's mining pipeline has not run and will not tonight; code_tests returns in stage 2 when the mining lands). MEASURED SUPPLIES (44, t49, train.encode exact -- byte estimates were 1.9-5.2x off and are NOT used): math_seed = 81,681,834 tokens (5 shards, 320M bytes; 74.27M English 91% + 7.41M Chinese 9%); cot (numina) = 424,056,227 tokens (13 shards, 851,965 docs). Both at epochs=3, the cap (fb: epoch cap <=3) -- epochs=3 is FORCED, not chosen: 81.68M x 3 = 245M = math_seed demand and 424M x 3 = 1.272B = cot demand, so check_mix_supply FAILs at epochs<=2. COT_SEED DROPPED (fb ruling 2026-08-31): fable5_traces + fable5_sft = 4,665 snippets all under 100 characters, 0 kept under light filters -- not trainable corpus. cot = numina alone (fb ruling). CODE_TESTS DROPPED (fb ruling 2026-08-31): the mined impl+test pairs come FROM code_rp1t, but 3b's mining pipeline has not run and will not tonight -- with code_tests in _blocked the file could never read READY. Its 1.0B goes to code_rp1t (same source; tests are a subset). code_tests returns in stage 2 when the mining lands. MATH SHORTFALL RULE (fb ruling 2026-08-31): de starts the finemath clean in parallel (~5 min workers); it stamps no later than code_rp1t, which gates the launch anyway. At code_rp1t stamp: if math_owm is stamped too, re-cut with the measured finemath tokens (target 2.75B, epochs 1); if it is not, launch as-cut with the shortfall in code/en and math_owm noted as the first stage-2 addition. No third option. math_owm is the only open number. When finemath lands, math_owm = finemath (primary, epochs 1) + math_seed (top-up <=3 epochs). math_seed/cot are NEW stamped dirs, not ladder names (web_hq/textbook/en/math/code/wiki/chat stay banned). ANNEAL: anneal_frac = 0 (WSD stage 1 -- no anneal phase). Launch flags: --warmdown 0 --anneal_frac 0 (stage 1 keeps lr at stable, ends at lr_mult 1.0); stage 2 resumes at lr_mult 1.0 and decays with --warmdown 0.10. train.py already handles the falsy-0.0 case (warmdown/anneal_frac are floats whose valid value 0.0 is falsy; the CLI loop would skip them and silently keep the 0.65/0.10 defaults -- train.py:1690 applies them explicitly). NOTE: harness cfg_default('anneal_frac') reads the run config (data/mix_scale_run_config.json), not this mix file -- the anneal_frac field here is the CONTRACT; launch must set it in the run config + CLI. STAGE 2: the remaining 15B runs under mix_30b.json (its weights applied to 15e9 = the scaled-15B target column above) once finemath lands -- real math_owm replaces math_seed, code_rp1t/en_c4 return to their scaled targets. Stage 2 is a RESUME from the stage-1 15B checkpoint, not a fresh run, IF t47 (tlerl's resume rehearsal) confirms the mechanics; otherwise fresh. The stage-1 deviations are front-loaded: stage 1 over-weights code/en and under-weights math/cot relative to the 30B table, and stage 2 does not pay that back (it runs the standard scaled table) -- the two-stage path is a different composition than a straight 30B run, bought for the earlier read. CONTRACT: same three invariants as mix_30b.json -- weights(domains)+weights(_blocked) sum to 1.0 (here 1.00000), no frozen ladder directory name, every landed domain stamped. The harness check check_mix_30b_contract is hardcoded to data/mix_30b.json and does not read this file; the invariants are satisfied here and verified by hand (de to parameterize the check onto mix_*.json when harness.py is free). domains is EMPTY today: no domain is stamped into domains/ (math_seed/cot are measured but still in _blocked until 3b moves them). t46-stage-1 MUST NOT launch until _blocked is empty and weights(domains) sum to 1.0."
+  "_comment": "15B stage-1 WSD mix (t46, fb 2026-08-31) -- FINAL CUT, all numbers measured. The 30B table (mix_30b.json) scaled to 15e9. SCALED-15B TARGET -> STAGE-1 ACTUAL (deviation per role, in tokens): code_rp1t 4.000B -> 5.580B (+1.580B = 1.000B code_tests + 0.580B cot shortfall); code_tests 1.000B -> 0 (DROPPED -- mining not landed, 1.0B folded into code_rp1t, returns in stage 2); math_owm 2.750B -> 2.750B (0, finemath landed); cot 2.250B -> 1.272B (-0.978B, numina supply at epochs 3); en_c4 2.750B -> 3.148B (+0.398B cot shortfall); zh_web 1.650B -> 1.650B (0); textbook_30b 0.500B -> 0.500B (0); wiki_chat 0.100B -> 0.100B (0). math+cot: 5.000B -> 4.022B (-0.978B, cot only); the cot shortfall is reassigned to code_rp1t + en_c4 in their existing 8:5.5 ratio (8/13.5 = +0.580B to code_rp1t, 5.5/13.5 = +0.398B to en_c4). The MATH shortfall (2.505B) that was provisionally in code/en CAME OUT when math_owm (finemath) landed at 4.02B supply >= 2.75B target (fb ruling 2026-08-31). MEASURED SUPPLIES (44/pod, train.encode exact -- byte estimates were 1.9-5.2x off and are NOT used): en_c4 = 4,809,069,283 tok (166/254 shards, subset_of, near_dedup false); cot (numina) = 424,056,227 tok (13 shards); math_owm (finemath) = 4,034,824,812 tok (127/345 shards, 44 exact; de pod counter 0.35% low); code_rp1t = 6,367,199,708 tok (197 shards, 44 exact; 236-shard extension pending, extrapolation ~7.6B). cot at epochs=3 (the cap, FORCED by supply=demand: 424M x 3 = 1.272B = demand; check_mix_supply FAILs at epochs<=2). All other domains epochs=1 (supply >= demand). DROPS: cot_seed (fable5: 4,665 snippets all <100 chars, 0 kept under light filters -- not trainable, fb 2026-08-31); code_tests (mining pipeline not run, won't land tonight -- 1.0B folded into code_rp1t same source, returns in stage 2, fb 2026-08-31); math_seed (81.68M measured -- finemath supply 4.02B exceeds the 2.75B target, no top-up needed). ANNEAL: anneal_frac = 0 (WSD stage 1 -- no anneal phase). Launch flags: --warmdown 0 --anneal_frac 0 (stage 1 keeps lr at stable, ends at lr_mult 1.0); stage 2 resumes at lr_mult 1.0 and decays with --warmdown 0.10. train.py already handles the falsy-0.0 case (train.py:1690 applies them explicitly). NOTE: harness cfg_default('anneal_frac') reads the run config (data/mix_scale_run_config.json), not this mix file -- the anneal_frac field here is the CONTRACT; launch must set it in the run config + CLI. STAGE 2: the remaining 15B runs under mix_30b.json (its weights applied to 15e9 = the scaled-15B target column) -- code_tests returns when mining lands, math_owm/cot stay at their 30B weights. Stage 2 is a RESUME from the stage-1 15B checkpoint, not a fresh run, IF t47 (tlerl's resume rehearsal) confirms the mechanics; otherwise fresh. CONTRACT: same three invariants as mix_30b.json -- weights(domains)+weights(_blocked) sum to 1.0 (here 1.00000), no frozen ladder directory name, every landed domain stamped. The harness check check_mix_30b_contract is hardcoded to data/mix_30b.json and does not read this file; the invariants are satisfied here and verified by hand (de to parameterize the check onto mix_*.json when harness.py is free). domains has 3 landed (en_c4, cot, math_owm); _blocked has 4 (code_rp1t extension running, zh_web/textbook_30b/wiki_chat need fresh stamped builds). t46-stage-1 MUST NOT launch until _blocked is empty and weights(domains) sum to 1.0."
 }
