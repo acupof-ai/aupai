@@ -2817,7 +2817,7 @@ def check_untracked_aged(root):
     After 24h it is either forgotten or blocked; either way the owner should give
     it a fate (commit, gitignore, delete). WARN, not FAIL: the file is not wrong,
     it is just unowned."""
-    if not os.path.isdir(os.path.join(root, ".git")):
+    if not os.path.exists(os.path.join(root, ".git")):  # worktree .git is a file
         return SKIP, "no .git (pod or partial checkout)"
     r = subprocess.run(
         ["git", "ls-files", "--others", "--exclude-standard"],
@@ -2862,7 +2862,7 @@ def check_dirty_aged(root):
     (d535674 swept 26 files; 2026-08-31 ruled that nothing stays uncommitted).
     WARN, not FAIL: the file is not wrong, its owner just has to commit or revert.
     The owner is unknown; the path is named so the standup can assign it."""
-    if not os.path.isdir(os.path.join(root, ".git")):
+    if not os.path.exists(os.path.join(root, ".git")):  # worktree .git is a file
         return SKIP, "no .git (pod or partial checkout)"
     r = subprocess.run(
         ["git", "status", "--porcelain"],

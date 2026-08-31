@@ -524,7 +524,7 @@ def main():
     # web chain rejects ~100% as not_zh after processing millions of docs (2026-
     # 08-31, twice, ~1h each) -- the final 0-kept guard is too late. Keyed on
     # the explicit domain names; a rename creates a new domain and must rejoin.
-    CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "cot"}
+    CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
     if a.domain in CODE_DOMAINS and a.filters != "light":
         raise SystemExit(
             f"REFUSE: domain '{a.domain}' is code-family / English-leaning; --filters must be "
