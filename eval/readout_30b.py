@@ -167,10 +167,11 @@ def print_metric(name, spec, m_val, p_val, state, direction, delta, note, m_dege
         print(f"  degenerate_rate beside: {m_degen.get('rate', '?')} (n={m_degen.get('n', '?')}, t={t}) -- never a substitute for the accuracy above")
 
 
-def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens, selftest=False):
+def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_tokens,
+            milestone_profile="milestone", paired_profile="full", selftest=False):
     is_3p24b = milestone_tokens is not None and abs(milestone_tokens - WARMUP_CONFOUND_MILESTONE_TOKENS) / WARMUP_CONFOUND_MILESTONE_TOKENS < 0.05
-    m_rec = load_score_record(score_matrix, milestone)
-    p_rec = load_score_record(score_matrix, paired)
+    m_rec = load_score_record(score_matrix, milestone, milestone_profile)
+    p_rec = load_score_record(score_matrix, paired, paired_profile)
     m_dl = load_domain_loss(milestone_dl, milestone) if milestone_dl else None
     p_dl = load_domain_loss(paired_dl, paired) if paired_dl else None
     # domain loss may also live in the score_matrix record (same heads); prefer the explicit files
@@ -250,11 +251,13 @@ def selftest():
         return 0
     # 1. p324 against itself -> never moved (domain-loss path)
     print("--- selftest 1: p324 vs itself (must be floor/flat everywhere, never moved) ---")
-    moved1 = readout("ckpt_p324.pt", "ckpt_p324.pt", sm, None, None, None, selftest=True)
+    moved1 = readout("ckpt_p324.pt", "ckpt_p324.pt", sm, None, None, None,
+                     milestone_profile="full", paired_profile="full", selftest=True)
     assert not moved1, "p324 vs itself read as MOVED -- the engine is broken"
     # 1b. sft_v2 against itself -> never moved (generative-metric path: code_500/pass_at_k/mc_full)
     print("\n--- selftest 1b: sft_v2 vs itself (generative metrics must be floor/flat, never moved) ---")
-    moved1b = readout("ckpt_sft_p324_v2.pt", "ckpt_sft_p324_v2.pt", sm, None, None, None, selftest=True)
+    moved1b = readout("ckpt_sft_p324_v2.pt", "ckpt_sft_p324_v2.pt", sm, None, None, None,
+                      milestone_profile="full", paired_profile="full", selftest=True)
     assert not moved1b, "sft_v2 vs itself read as MOVED -- the engine is broken"
     # 2. p324 vs 0.2b -> domain losses moved in the known direction (lower at 3.24b)
     print("\n--- selftest 2: p324 vs 0.2b (domain losses must be moved, lower) ---")
@@ -274,7 +277,7 @@ def selftest():
     # 3. a record missing a metric prints ABSENT, never floor (t39 acceptance:
     # a milestone whose score_matrix record lacks a metric is unmeasured, not floor)
     print("\n--- selftest 3: missing metric -> ABSENT, never floor ---")
-    rec_full = load_score_record(sm, "ckpt_sft_p324_v2.pt")
+    rec_full = load_score_record(sm, "ckpt_sft_p324_v2.pt", "full")
     if rec_full is None:
         print("selftest SKIP: sft_v2 record not in runs/score_matrix.jsonl", file=sys.stderr)
         return 0
@@ -312,13 +315,16 @@ def main():
     ap.add_argument("--milestone-domain-loss", help="domain_loss.py --json for the milestone (30B heads)")
     ap.add_argument("--paired-domain-loss", help="domain_loss.py --json for the paired checkpoint (same heads)")
     ap.add_argument("--milestone-tokens", type=float, help="milestone token budget (3.24e9/8e9/16e9/30e9); activates the warmup-confound rule at 3.24B")
+    ap.add_argument("--milestone-profile", default="milestone", help="score_matrix profile of the milestone record")
+    ap.add_argument("--paired-profile", default="full", help="score_matrix profile of the paired record")
     ap.add_argument("--selftest", action="store_true", help="known-answer dry runs")
     a = ap.parse_args()
     if a.selftest:
         sys.exit(selftest())
     if not a.milestone or not a.paired:
         ap.error("--milestone and --paired are required (or --selftest)")
-    readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss, a.milestone_tokens)
+    readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
+            a.milestone_tokens, a.milestone_profile, a.paired_profile)
 
 
 if __name__ == "__main__":
