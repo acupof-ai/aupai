@@ -4802,10 +4802,20 @@ def _selftest_pool_not_raw_supply():
     pool_rows = cache_rows - n_val
     assert n_val == 1000 and pool_rows == 99_000, (n_val, pool_rows)
     raw_cap, pool_cap = cache_rows * epochs, pool_rows * epochs
-    want = 297_500  # fits 300,000 raw, exceeds 297,000 pool -- the accepted-then-short case
+    # Fits 300,000 raw, and exceeds 297,000 pool by more than the check's own 0.5%
+    # rounding tolerance (298,485). The previous 297,500 cleared pool but NOT the
+    # tolerance, so the check would have accepted it -- the dead assert 44 found was
+    # hiding a case that did not test what it claimed.
+    want = 299_000
     assert want <= raw_cap, "sanity: the case must fit RAW supply"
     assert want > pool_cap, "sanity: the case must exceed POOL supply"
-    assert want > pool_cap * 1.005 or want > pool_cap, "the pool model must reject it"
+    # The check's own tolerance, not a restatement of the line above: 44 caught the
+    # previous version as `want > pool_cap * 1.005 or want > pool_cap`, whose second
+    # clause is the preceding assert, so it could not fail. The live question is
+    # whether the case clears the 0.5% rounding tolerance the check actually applies.
+    assert want > pool_cap * 1.005, (
+        f"the case must exceed pool by more than the check's 0.5% tolerance: "
+        f"{want} vs {pool_cap * 1.005:.0f}")
     shortfall = 1 - pool_cap / want
     print(f"  mix_supply: pool model rejects a raw-supply-sized draw ({shortfall:.2%} short)")
 
