@@ -735,9 +735,11 @@
     "note": "presence is measured on the PACK, not on the source files; the source-file scans that read 0 hit were correct about the sources"
    },
    "uncertainty": "20 of 500 code questions sampled; 19/20 present. The rate on the full 500 is not measured, but the reading is disqualifying at any rate above zero.",
-   "status": "superseded",
+   "status": "retracted",
    "boundary": "Says nothing about the base checkpoint's numbers, which were never trained on SFT data, and nothing about the math SFT numbers, which this same probe found clean.",
-   "refuted_by": "be.sft_v3_code500 (2026-08-31): the CURRENT sft_all.pt (46,938 rows, rebuilt 13:30 after holdout_hashes.txt regeneration at 13:18:44) probes 0/500 code-500 questions verbatim (first-24-token exact subsequence, all 500). This fact measured the OLD 53,104-row pack (11:46, stale derived hash file); no v2/v3 checkpoint trained on it. Its VOID reading covers only the old pack 16.6% run, not v2 (2.2%) or v3 (40.0%)."
+   "refuted_by": "be.sft_v3_code500",
+   "claim": "data/sft/sft_all.pt contained 19/20 sampled code-500 questions verbatim, so the SFT zero-shot code-500 reading of 16.6% was declared VOID.",
+   "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild."
   }
  ]
 }
