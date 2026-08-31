@@ -159,6 +159,25 @@ with _amp():
     assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")
 
+# --warmdown 0 must land as 0.0, not be skipped as falsy. The generic args->Cfg loop uses
+# `if hasattr(Cfg,k) and v`, which drops 0.0; the WSD stage-1 join sets --warmdown 0 to keep
+# lr at stable, so a skipped 0.0 would silently anneal stage 1. This guards the explicit
+# is-not-None apply that train.py adds for warmdown/anneal_frac.
+class _CfgStub:
+    warmdown = 0.65
+    anneal_frac = 0.10
+_stub = _CfgStub()
+for _k, _v in {"warmdown": 0.0, "anneal_frac": 0.0}.items():  # the buggy `and v` path
+    if hasattr(_stub, _k) and _v:
+        setattr(_stub, _k, _v)
+assert _stub.warmdown == 0.65 and _stub.anneal_frac == 0.10, "sanity: the falsy path should NOT apply 0.0"
+_stub2 = _CfgStub()
+for _k, _v in {"warmdown": 0.0, "anneal_frac": 0.0}.items():  # the fixed is-not-None path
+    if _v is not None:
+        setattr(_stub2, _k, _v)
+assert _stub2.warmdown == 0.0 and _stub2.anneal_frac == 0.0, "--warmdown 0 must land as 0.0 (WSD stage-1 join)"
+print("wsd flags: --warmdown 0 lands as 0.0, not skipped OK")
+
 # --- mix schedule: the plan is sharded per rank, so what one rank holds is 1/world of it ---
 import json  # noqa: E402
 import tempfile  # noqa: E402

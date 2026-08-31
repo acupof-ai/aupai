@@ -1568,6 +1568,11 @@ def main():
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
+        "warmdown": "fraction of total steps for the cosine warmdown tail (WSD; 0 keeps lr at stable for a stage-1 join)",
+        "anneal_frac": "fraction of tokens using each domain's anneal weight (0 = no anneal, for a WSD stage-1)",
+    }.items():
+        parser.add_argument(f"--{name}", type=float, default=None, help=f"{help_} (default: Cfg.{name})")
+    for name, help_ in {
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
@@ -1629,6 +1634,13 @@ def main():
     args = parser.parse_args()
     for k, v in vars(args).items():
         if hasattr(Cfg, k) and v:
+            setattr(Cfg, k, v)
+    # warmdown/anneal_frac are floats whose valid value 0.0 is falsy: the loop above skips
+    # them (the --warmdown 0 stage-1 join would silently keep Cfg.warmdown 0.65). Apply
+    # them explicitly by is-not-None so 0.0 lands.
+    for k in ("warmdown", "anneal_frac"):
+        v = getattr(args, k, None)
+        if v is not None:
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
@@ -1831,6 +1843,15 @@ def main():
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
     step = resume_step
+    if args.resume and is_main:
+        # WSD stage join: the resumed lr must continue from where stage 1 stopped. Print it
+        # loudly so a two-stage launch can be verified at a glance rather than inferred.
+        _jm = lr_mult(step, total_steps, Cfg)
+        runlog(
+            f"WSD JOIN: resumed at step {step}/{total_steps} under mix {Cfg.mix or 'flat'} | "
+            f"lr_mult {_jm:.4f} | warmdown {Cfg.warmdown} anneal_frac {Cfg.anneal_frac} | "
+            f"warmdown starts at step {total_steps - max(1, int(Cfg.warmdown * total_steps))}"
+        )
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
     _prof = None
     if getattr(args, "profile", False):
