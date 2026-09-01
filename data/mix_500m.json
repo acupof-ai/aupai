@@ -27,6 +27,12 @@
  "_budget_rationale": "docs/lessons/mix_500m_rationale.md",
  "_code_supply_tokens_at_generation": 8850000000.0,
  "_warnings": [],
+ "_untrusted_supply": {
+  "chatml": "taken from wiki_chat's stamp, but wiki_chat is a MERGED wiki+chat domain and the QA-format rows are only data/corpus/chat/ (160,414 rows, 0.038B, measured by 3b) -- overstates supply ~7x, and at the true figure this domain draws 15.79 epochs while the 4-epoch ceiling stays silent. Awaiting fb's ruling on the render source and 3b's measured count."
+ },
+ "_launch_blocked": [
+  "chatml"
+ ],
  "domains": {
   "math_owm_stage2": {
    "weight": 0.26,

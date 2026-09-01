@@ -122,7 +122,33 @@ SUPPLY = {
     "cot":               424_056_227,   # stamped, fp 388496b76ed9bf88
     "textbook_30b":    1_610_210_330,   # stamped, fp 3f237c5191cb8571
     "zh_web":         21_293_403_945,   # stamped, fp a0d44fc44a289d60
-    "chatml":            283_903_257,   # bounded by wiki_chat's stamp (b864d32f9452a7c8)
+    # UNTRUSTED, and the guard cannot see it. This was taken from wiki_chat's stamp
+    # (b864d32f9452a7c8), but wiki_chat is a MERGED wiki+chat domain (12 shards) and the
+    # QA-format chat rows are only data/corpus/chat/ -- 160,414 rows, 0.038B tokens measured
+    # by 3b. Using a merged domain's stamp for one of its subsets overstates supply ~7x.
+    #
+    # Why this is worse than a wrong number: at 0.284B the 4-epoch warning stays SILENT
+    # (2.11 epochs). If the true supply is 0.038B the real draw is 15.79 epochs at this
+    # weight -- a 0.038B corpus read sixteen times, far past Muennighoff's line, with the
+    # ceiling reporting nothing. The guard is not broken; it was fed a supply figure that
+    # was never measured for the domain it names. A check is only as true as its input.
+    #
+    # Awaiting fb's ruling on the render SOURCE (chat-only vs merged wiki_chat) and 3b's
+    # measured token count. Do not launch on this number. If the ruling is chat-only, the
+    # weight has to fall to <=1.52% (the 4-epoch ceiling at 0.076B) rather than hold 3%.
+    "chatml":            283_903_257,   # SEE ABOVE -- wrong domain, replace before launch
+}
+
+# Supply figures that are NOT measurements of the domain they name. A comment saying so is
+# not a gate -- the mix would still launch. This set makes the writer stamp the JSON with a
+# refusal flag and print a loud line, so the number cannot be used by someone who did not read
+# the comment above it. Empty is the normal state; a name here blocks launch until measured.
+UNTRUSTED_SUPPLY = {
+    "chatml": ("taken from wiki_chat's stamp, but wiki_chat is a MERGED wiki+chat domain and the "
+               "QA-format rows are only data/corpus/chat/ (160,414 rows, 0.038B, measured by 3b) "
+               "-- overstates supply ~7x, and at the true figure this domain draws 15.79 epochs "
+               "while the 4-epoch ceiling stays silent. Awaiting fb's ruling on the render source "
+               "and 3b's measured count."),
 }
 
 # Directories named by any data/mix_scale_*.json. Writing new corpus into one of these
@@ -307,6 +333,8 @@ def build(code_tokens):
         "_budget_rationale": "docs/lessons/mix_500m_rationale.md",
         "_code_supply_tokens_at_generation": code_tokens,
         "_warnings": warnings,
+        "_untrusted_supply": {n: why for n, why in UNTRUSTED_SUPPLY.items() if n in domains},
+        "_launch_blocked": sorted(n for n in UNTRUSTED_SUPPLY if n in domains),
         "domains": domains,
     }
 
@@ -407,7 +435,26 @@ def selftest():
     print("  6 shipped config is under the 4-epoch line, and the ceiling still fires on the "
           "9% cot config that produced the cut")
 
-    print("selftest: 6/6")
+    # 7. the untrusted-supply gate fires, and an empty set does not block. Written because a
+    #    COMMENT saying "this number is wrong" is not a gate: the mix still builds and still
+    #    launches, and the reader who needed the warning is the one who did not read it. The
+    #    live case is chatml -- its supply came from wiki_chat's merged stamp, so the domain
+    #    draws 15.79 epochs while the 4-epoch ceiling reports nothing. The ceiling is fine; it
+    #    was fed a supply figure never measured for the domain it names.
+    m = build(8.85e9)
+    assert "chatml" in m["_launch_blocked"], (
+        f"chatml's untrusted supply is not blocking launch: {m['_launch_blocked']}"
+    )
+    assert m["_untrusted_supply"]["chatml"], "blocked without a reason is not a usable refusal"
+    saved = dict(UNTRUSTED_SUPPLY)
+    UNTRUSTED_SUPPLY.clear()
+    try:
+        assert not build(8.85e9)["_launch_blocked"], "an empty untrusted set must not block"
+    finally:
+        UNTRUSTED_SUPPLY.update(saved)
+    print(f"  7 untrusted-supply gate blocks launch on {sorted(saved)}, and clears when empty")
+
+    print("selftest: 7/7")
     return 0
 
 
@@ -437,6 +484,10 @@ def main():
     print(f"wrote {OUT}: {len(m['domains'])} domains, {m['total_tokens'] / 1e9:.1f}B tokens")
     for w in m["_warnings"]:
         print(f"  WARNING {w}")
+    for n in m["_launch_blocked"]:
+        print(f"  LAUNCH BLOCKED {n}: {m['_untrusted_supply'][n]}")
+    if m["_launch_blocked"]:
+        print("  -> this mix must not start a run until every blocked supply is measured")
     return 0
 
 
