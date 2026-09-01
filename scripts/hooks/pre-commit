@@ -235,6 +235,7 @@ def main():
         "scripts/test_pod_sync_stamp.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
+        "scripts/test_spawned_fast.py",
         # Nine files the gate could not see until its predicate widened from
         # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
         # sys.argv instead of argparse. Five run clean at commit time and are gated
@@ -382,7 +383,18 @@ def main():
                 ["git", "show", "HEAD:scripts/pod_drift.py"], capture_output=True
             )
         if staged_py.returncode == 0:
-            tmp_py = os.path.join(repo, "scripts", ".pod_drift_staged.py")
+            # NOT in scripts/: restartability_audit.py scans that directory, so a
+            # concurrent commit sees this temp file, finds a .py absent from its
+            # baseline, and FAILs with "[NEW] scripts/.pod_drift_staged.py" -- a file
+            # that is gone by the time anyone looks. Cleanup here was never the
+            # problem; the location was. Same lesson as the holdout slice sitting in
+            # the corpus dir: correct artifact, wrong directory, and the reader
+            # downstream cannot tell it from real content.
+            tmp_py = os.path.join(
+                subprocess.run(["git", "-C", repo, "rev-parse", "--git-path",
+                                "pod_drift_staged.py"],
+                               capture_output=True, text=True).stdout.strip()
+                or os.path.join(repo, ".git", "pod_drift_staged.py"))
             try:
                 with open(tmp_py, "wb") as f:
                     f.write(staged_py.stdout)

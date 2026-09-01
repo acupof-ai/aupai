@@ -18,6 +18,8 @@ import argparse
 import ast
 import functools
 import glob
+import importlib.machinery
+import importlib.util
 import inspect
 import json
 import os
@@ -137,6 +139,11 @@ REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: From when a close must name a commit that reaches main and touches its evidence.
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
 TASK_COMMIT_FROM = "2026-09-01 13:30"
+PAIR_PRIOR_FROM = "2026-09-02 00:00"
+_TASK_STOPWORDS = {"which", "there", "these", "those", "their", "would", "could", "should",
+                   "every", "after", "before", "because", "instead", "rather", "without",
+                   "against", "already", "still", "cannot", "names", "naming", "state",
+                   "write", "writes", "written", "read", "reads", "check", "checks"}
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1762,25 +1769,79 @@ def check_spawned_scripts_exist(root):
     # warming caches for the launch gate. Presence and importability are different properties
     # and the same commit broke both.
     #
-    # -c "import ..." rather than --help: --help exits before some scripts finish importing,
-    # and a check that passes because it stopped early is the shape this file keeps finding.
-    broken = []
-    for rel, why in _SPAWNED_SCRIPTS:
-        if not rel.endswith(".py"):
-            continue
+    # RESOLVED, NOT EXECUTED. Executing the module body cost 9s and timed out eight runs in
+    # a row, blocking every commit in the repo while reporting "has not actually run since"
+    # -- a red carrying no information that no fix could clear. Threading it did not help:
+    # the cost is not interpreter startup but one import, fla.ops.kda, at 6.07s of 7.6s
+    # (torch itself is 0.92s), and three of those contend rather than overlap.
+    #
+    # So each top-level import is resolved with find_spec under the sys.path the script
+    # itself builds -- honouring its own inserts, or `import harness` from datagen/ reads as
+    # broken when it is not. 0.008s for all three, and verified to still FAIL on a
+    # reconstructed c3a47e8 tree (harness.py in scripts/, the file in datagen/, only ROOT
+    # inserted). KNOWN CEILING, stated rather than hidden: this catches an import that
+    # cannot be FOUND, not one that raises while executing. A module that imports fine and
+    # then throws in its body passes here -- covering that needs the 9s, and a check nobody
+    # can afford to run is worth less than a fast one that says what it covers.
+    def _import_check(item):
+        rel, why = item
         full = os.path.join(root, rel)
-        r = subprocess.run(
-            [sys.executable, "-c",
-             "import importlib.util,sys;"
-             f"spec=importlib.util.spec_from_file_location('m',{full!r});"
-             "m=importlib.util.module_from_spec(spec);"
-             "sys.argv=['m','--help'];"
-             "spec.loader.exec_module(m)"],
-            capture_output=True, text=True, cwd=root, timeout=120,
-        )
-        err = (r.stderr or "")
-        if "ModuleNotFoundError" in err or "ImportError" in err:
-            broken.append(f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})")
+        try:
+            tree = ast.parse(open(full, encoding="utf-8").read())
+        except (OSError, SyntaxError) as e:
+            return f"{rel}: {type(e).__name__} {e} ({why})"
+        HERE, ROOT_ = os.path.dirname(os.path.abspath(full)), root
+        extra = []
+        mods = []
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "insert" and len(n.args) > 1
+                    and getattr(getattr(n.func.value, "value", None), "id", "") == "sys"):
+                try:
+                    extra.append(eval(compile(ast.Expression(n.args[1]), "<p>", "eval"),
+                                      {"os": os, "ROOT": ROOT_, "HERE": HERE}))
+                except Exception:
+                    pass  # a computed path we cannot evaluate: skip, do not guess
+            elif isinstance(n, ast.Import):
+                mods += [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+                mods.append(n.module)
+        # PathFinder against explicit paths, NOT find_spec. find_spec consults
+        # sys.modules first, and harness.py has already imported the very modules it is
+        # testing -- so it returned "resolvable" on a reconstructed c3a47e8 tree with
+        # sys.path emptied. Replacing sys.path did not help for the same reason. The
+        # finder takes the search path as an argument and ignores both sys.path and the
+        # import cache, which is the only way to ask "could THAT script find this".
+        #
+        # Third-party and stdlib names are skipped rather than resolved: PathFinder over
+        # the script's own dirs says False for `json` too, and reporting the stdlib as
+        # missing would be a check that fails on every correct file.
+        search = [HERE] + [e for e in extra if isinstance(e, str)]
+        # Names the REPO owns, found anywhere in it -- not names the script can already
+        # reach. Scanning only the search path inverts the test: harness.py lives in
+        # scripts/, which the broken c3a47e8 script never adds, so it looked like a
+        # third-party module and was skipped. The check then passed on the one tree it
+        # exists for. What makes a name ours is that the file is in the repo; whether
+        # this script can reach it is the question, not the filter.
+        repo_names = set()
+        for d in ("", "scripts", "datagen", "eval", "probes", "algorithms"):
+            dd = os.path.join(root, d)
+            if os.path.isdir(dd):
+                repo_names |= {os.path.splitext(f)[0] for f in os.listdir(dd)
+                               if f.endswith(".py")}
+        bad = []
+        for m in sorted(set(mods)):
+            top = m.split(".")[0]
+            # Only names this repo could own. A missing third-party dep is a different
+            # problem and not what this check is for.
+            if top not in repo_names:
+                continue
+            if importlib.machinery.PathFinder.find_spec(top, search) is None:
+                bad.append(top)
+        return f"{rel}: cannot resolve {', '.join(bad)} ({why})" if bad else None
+
+    py = [(rel, why) for rel, why in _SPAWNED_SCRIPTS if rel.endswith(".py")]
+    broken = [b for b in (_import_check(i) for i in py) if b]
     if broken:
         return FAIL, (
             f"{len(broken)} spawned script(s) present but not importable: "
@@ -2373,24 +2434,33 @@ def check_no_ghost_running(root):
         return SKIP, "runs/experiments.jsonl not present"
     import subprocess
 
-    ghosts = []
+    # FOLD FIRST. experiments.jsonl is append-only: one run emits many rows and the
+    # readers fold by (name, started), last wins. Reading raw lines asked pgrep 54
+    # times where 13 were needed (measured on the pod, 0.083s each = the whole 4.1s),
+    # and reported the same run as several ghosts because its history has several
+    # rows. So the count was wrong as well as slow, and raising the deadline would
+    # have preserved both.
+    folded = {}
     with open(p, encoding="utf-8") as f:
         for line in f:
             try:
                 r = json.loads(line)
             except Exception:
                 continue
-            if r.get("status") != "running":
-                continue
-            try:
-                t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
-            except Exception:
-                return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
-            if (time.time() - t) / 3600 < 2:
-                continue  # grace: a launched run takes time to appear in ps
-            name = r.get("name", "")
-            if name and not subprocess.run(["pgrep", "-f", name], capture_output=True, text=True).stdout.strip():
-                ghosts.append(f"{name} (started {r.get('started')})")
+            folded[(r.get("name"), r.get("started"))] = r
+    ghosts = []
+    for r in folded.values():
+        if r.get("status") != "running":
+            continue
+        try:
+            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+        except Exception:
+            return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
+        if (time.time() - t) / 3600 < 2:
+            continue  # grace: a launched run takes time to appear in ps
+        name = r.get("name", "")
+        if name and not subprocess.run(["pgrep", "-f", name], capture_output=True, text=True).stdout.strip():
+            ghosts.append(f"{name} (started {r.get('started')})")
     if ghosts:
         return FAIL, f"running rows with no live process: {', '.join(ghosts[:6])}; close with exp.py done"
     return PASS, "every running row has a live process"
@@ -3169,6 +3239,52 @@ def _union_ledgers(root):
         if path.endswith(".jsonl"):
             out.append(path)
     return tuple(out)
+
+
+def check_tasks_paired_and_prior(root):
+    """Every task opened since the rule names a second session who agreed it and what
+    was already known before it started.
+
+    Three sessions took AUTHORITY at once and two of them duplicated a merge; separately
+    a throughput number had no reference point in the literature at all, so "is this
+    good" could not be answered. Both are the same absence: nobody stated, before
+    starting, who agreed and what was already known (user order 2026-09-01)."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    # Two scopes unioned, because a timestamp alone cannot separate them today: rows
+    # written before the UTC fix carry CST, and 21:27 CST sorts after a 14:40 UTC
+    # threshold. Every row the new `add` writes carries the prior key, so those are in
+    # scope whatever their clock; the date takes over once every row is UTC.
+    scope = [t for t in rows
+             if "prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM]
+    if not scope:
+        return SKIP, f"no task opened since the rule took effect ({PAIR_PRIOR_FROM})"
+    bad = []
+    for t in scope:
+        pair, prior = t.get("pair"), (t.get("prior") or "")
+        if not pair:
+            bad.append(f"{t['id']}: no second session agreed it")
+        elif pair == t.get("owner"):
+            bad.append(f"{t['id']}: paired with its own owner")
+        if not prior:
+            bad.append(f"{t['id']}: does not say what was already known")
+        elif prior != "defect-fix" and not re.search(r"\d{4}\.\d{4,5}|facts/\S+#\S+|https?://", prior):
+            bad.append(f"{t['id']}: prior '{prior[:40]}' is neither a citation nor defect-fix")
+    if bad:
+        return FAIL, f"{len(bad)} of {len(scope)} task(s): {'; '.join(bad[:3])}"
+    return PASS, f"{len(scope)} task(s), each agreed by a second session with its prior art named"
+
+
+def _broken_tasks_paired_and_prior():
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "tasks.jsonl")
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    _sh.copy(src, dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"id": "x-1", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+    return d
 
 
 def check_tasks_closed_by_commit(root):
@@ -4948,6 +5064,13 @@ def cmd_task(argv):
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--pair", required=True,
+                   help="the second session who agreed this task before it started; not the owner")
+    a.add_argument("--prior", required=True,
+                   help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
+                        "'defect-fix' when the task repairs our own code and no prior art applies")
+    a.add_argument("--dup-ok", dest="dup_ok", action="store_true",
+                   help="proceed past the overlap refusal; say in --why how this differs")
     a.add_argument("--blocked-on", dest="blocked_on", default=None)
     d = sub.add_parser("done")
     d.add_argument("id")
@@ -4972,10 +5095,34 @@ def cmd_task(argv):
         # <owner>-<n> is collision-free across branches; existing t-ids stay.
         n = max([int(r["id"].split("-", 1)[1]) for r in rows
                  if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))] or [0]) + 1
+        if args.pair == args.owner:
+            print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
+            return 1
+        if args.pair not in REVIEW_PAIRS:
+            print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+            return 1
+        # The same cache task went to two people nine minutes apart and both stayed open
+        # all night; --pair cannot see it, because each row had one. Nothing compared the
+        # rows to each other. Distinctive words, so two rows about different subjects that
+        # share "the token cache" do not collide but two about the same one do.
+        def _words(s):
+            return {w for w in re.findall(r"[a-z_]{5,}", (s or "").lower())} - _TASK_STOPWORDS
+        new = _words(args.task)
+        for t in rows:
+            if t.get("state") != "open" or not new:
+                continue
+            old = _words(t.get("task"))
+            if old and len(new & old) / min(len(new), len(old)) >= 0.5 and not args.dup_ok:
+                print(f"refusing: {t['id']} ({t.get('owner')}) overlaps this task -- "
+                      f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
+                      "they are different", file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
             "socket": args.socket,
+            "pair": args.pair,
+            "prior": args.prior,
             "state": "open",
             "task": args.task,
             "why": args.why,
@@ -5721,6 +5868,13 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "tasks_paired_and_prior",
+        "every task opened since the rule names a second session and its prior art",
+        "three sessions took the same work at once and a throughput number had no reference point in the literature; both are the same absence, stated before starting (user order 2026-09-01)",
+        check_tasks_paired_and_prior,
+        _broken_tasks_paired_and_prior,
     ),
     (
         "tasks_closed_by_commit",
