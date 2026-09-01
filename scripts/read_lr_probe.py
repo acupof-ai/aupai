@@ -14,9 +14,17 @@ THE RULE (runs/tasks.jsonl#fb-1, frozen 2026-09-01 15:31, before arm 2 existed):
   step 450. The rule STANDS -- both arms run the identical schedule on the identical
   mix, so the phase boundary cancels in the difference.
 
-WHY THIS PRINTS A SEM. train.py:2518 syncs the loss only on `step % 10 == 9`, and
-logs the SINGLE-STEP value, not a mean over the ten. So "mean over the last 100
-steps" is a mean of TEN samples. On arm 0.85 that is sd 0.135 -> SEM 0.043, and the
+WHY THIS PRINTS A SEM. Two layers, and the name is wrong before the number is.
+
+train.py:2518 syncs the loss only on `step % 10 == 9` and logs that SINGLE step, so
+"mean over the last 100 steps" is a mean of TEN samples. And each of those ten is
+rank 0's micro-batch alone: 2513-2516 all-reduces only the FINITENESS flag, never the
+loss, so at world 7 batch 32 a sample covers 32 of 224 sequences (b0's second read).
+
+So the quantity is "the mean of ten single-rank micro-batch losses sampled from the
+last 100 steps", not "the mean training loss over the last 100 steps". The number is
+unaffected -- the empirical sd already contains the 1/7 sampling variance -- but the
+NAME is what the next person quotes. On arm 0.85 that is sd 0.135 -> SEM 0.043, and the
 difference of two arms carries sqrt(2) x that = 0.060. The 0.05 threshold is 0.83
 sigma: two arms with no true difference clear it about 41% of the time.
 
@@ -67,6 +75,7 @@ def read_arm(rows):
     return {
         "refuted": "; ".join(bad) or None,
         "n": len(L),
+        # Named for what it is: see the module docstring. Ten samples, each one rank.
         "mean_loss": trailing,
         "sd": st.stdev(L) if len(L) > 1 else float("nan"),
         "sem": st.stdev(L) / len(L) ** 0.5 if len(L) > 1 else float("nan"),
@@ -105,7 +114,9 @@ def report(a, b):
     v, why = verdict(a, b)
     gap = abs(a["mean_loss"] - b["mean_loss"])
     sem_d = (a["sem"] ** 2 + b["sem"] ** 2) ** 0.5
-    out.append(f"\n  gap {gap:.4f}, SEM of the difference {sem_d:.4f} "
+    out.append(f"\n  quantity: mean of {a['n']} single-rank micro-batch losses "
+               f"sampled from the last 100 steps (not a 100-step mean)")
+    out.append(f"  gap {gap:.4f}, SEM of the difference {sem_d:.4f} "
                f"= {gap / sem_d:.2f} sigma"
                + ("  -- the 0.05 threshold is 0.83 sigma here, so a gap near it is "
                   "not a signal" if sem_d > 0.03 else ""))
