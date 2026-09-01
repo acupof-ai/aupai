@@ -98,7 +98,11 @@ def git_commit():
         if parts:
             # dirty>0 means the push carried uncommitted files: the sha is where the
             # tree was, not what it held. Say so rather than implying a clean match.
-            return parts[0] if len(parts) < 2 or parts[1] == "0" else f"{parts[0]}+dirty{parts[1]}"
+            # Short-form to match the git branch: rev-parse --short gives 7 chars and
+            # pod_synced_head stores 40, so the same ledger column carried two widths
+            # and neither reader could sort or compare them.
+            sha = parts[0][:7]
+            return sha if len(parts) < 2 or parts[1] == "0" else f"{sha}+dirty{parts[1]}"
     except (OSError, ValueError):
         pass
     return "unknown"
