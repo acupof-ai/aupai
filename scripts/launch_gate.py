@@ -378,7 +378,9 @@ def gate_checks_and_drift(root, mix_path, world):
                       + (f": {out.stderr.strip().splitlines()[-1][:70]}" if out.stderr.strip() else ""))
     fails = [ln.strip() for ln in ran if "[FAIL]" in ln]
     if fails:
-        return NOGO, f"{len(fails)} FAIL of {len(ran)} checks: {fails[0][:80]}"
+        state, why = _partition_fails(fails, _here(), len(ran))
+        if state is not None:
+            return state, why
     return GO, f"harness check: {len(ran)} checks ran, 0 FAIL"
 
 
@@ -406,6 +408,46 @@ AUTHORITY = {
     "corpora": "pod", "epochs_measured": "pod",
     "checks_and_drift": "both",
 }
+
+# Env-state checks: their evidence lives only on the pod (GPU, corpus, caches,
+# checkpoints, running processes). Objectively derived -- this is exactly the set
+# that does not run on a CLEAN CHECKOUT (their evidence is gitignored data, not
+# code). A machine that happens to hold some of it (this Mac has tokenizer.json)
+# runs a few of them, which is fine: the set is defined by where the evidence
+# lives, not by what this dev box cached. Everything else is repo-scan: it
+# answers on main, where the pod's 168 one-off files do not exist. A repo-scan
+# check can never be clean on the pod by construction, so its pod FAILs do not
+# gate the launch -- they read as UNKNOWN, authority=main (fb, 2026-09-01).
+ENV_STATE_CHECKS = frozenset({
+    "env_importable", "mix_shards_present", "tokenizer_roundtrip", "pinned_ids",
+    "no_ghost_running", "corpus_filters_fp", "score_input_fresh", "sft_pack_holdout",
+    "sft_pack_uncontaminated", "eval_sft_template_contamination", "corpus_fp_matches",
+    "pod_drift", "ladder_config_frozen", "ladder_cfg_consistent", "mix_supply",
+    "milestone_ckpt_pinned", "env_fp_present", "opt_state_present", "lane_respected",
+})
+
+
+def _fail_name(line):
+    m = re.search(r"\[\s*FAIL\s*\]\s+(\S+)", line)
+    return m.group(1) if m else None
+
+
+def _partition_fails(fails, here, n_ran):
+    """Env-state FAILs gate on every machine; repo-scan FAILs gate only on main,
+    their authority. On the pod they are UNKNOWN -- not GO (the evidence is not
+    here) and not NO-GO (the tree they scanned is not main's)."""
+    env = [f for f in fails if _fail_name(f) in ENV_STATE_CHECKS]
+    scan = [f for f in fails if _fail_name(f) not in ENV_STATE_CHECKS]
+    if env:
+        return NOGO, (f"{len(env)} env-state FAIL of {n_ran} checks "
+                      f"(authority=pod): {env[0][:80]}")
+    if scan and here == "pod":
+        return UNKNOWN, (f"env-state clean; {len(scan)} repo-scan FAIL on pod-only files "
+                         f"is not attributable here -- authority=main, run gate 9 there: "
+                         f"{scan[0][:60]}")
+    if scan:
+        return NOGO, f"{len(scan)} FAIL of {n_ran} checks: {scan[0][:80]}"
+    return None, ""
 
 
 def _here():
@@ -454,22 +496,23 @@ def run(root, mix_path, world, here=None):
 
 
 def pod_attribution(root):
-    """A pod verdict is attributable to main only when the pod's tree IS main's
-    tree: every manifested file matches AND no unregistered .py hides where
-    tree-grepping checks can see it. pod_drift=0 alone is insufficient -- it
-    compares only manifested files, and 233 unregistered .py sat outside its
-    scope while repo-scan checks FAILed on them (tilerl, 2026-09-01). A verdict
-    from an unattributable tree is noise, so the gate refuses to print one."""
-    from pod_drift import check_pod, unregistered_py
+    """A pod verdict is attributable to main only when the pod's manifested tree
+    IS main's tree: check_pod clean (drift=0). Drift alone is the right quantity
+    -- it compares exactly the files the launch is cut from.
+
+    Unregistered .py are deliberately NOT a refusal condition (fb, 2026-09-01,
+    correcting this function's first version). The 229 files the manifest does
+    not name split into 51 main holds unpushed, 178 pod-only (10 ever in git),
+    and 168 that never entered git at all -- one-off scripts written directly on
+    the pod over months. A one-off in the pod root says nothing about whether the
+    training code is main's code, and refusing on their count would hang the
+    launch on the pod's housekeeping. The deeper fix is the AUTHORITY cut in
+    _partition_fails: repo-scan checks answer on main, where those files do not
+    exist. A verdict from a DRIFTED tree is still noise, so drift != 0 refuses."""
+    from pod_drift import check_pod
     ok, msg = check_pod(root)
     if not ok:
         return False, f"pod drifted ({msg})"
-    extra = unregistered_py(root)
-    if extra:
-        shown = ", ".join(extra[:3]) + ("..." if len(extra) > 3 else "")
-        return False, (f"{len(extra)} unregistered .py not in manifest ({shown}); "
-                       f"repo-scan results are not attributable to main -- "
-                       f"register or remove them, then re-run")
     return True, msg
 
 
@@ -494,6 +537,8 @@ def main():
     elsewhere = sorted(n for n, _ in GATES if AUTHORITY.get(n, "main") not in (here, "both"))
     print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}  here={here}")
     print(f"             {note}")
+    if here == "main":
+        print("             repo-scan-only: env-state gates answer on the pod, not here")
     if elsewhere:
         print(f"             {len(elsewhere)} gate(s) answerable only elsewhere: "
               f"{', '.join(elsewhere)}")
@@ -796,9 +841,11 @@ def selftest():
             bad.append(f"{name} declined to answer on pod too -- it is not location-aware, "
                        f"it is just always UNKNOWN")
 
-    # POD ATTRIBUTION (44-8): a verdict from an unattributable tree is refused.
-    # pod_drift=0 is insufficient -- unregistered files sit outside its scope, and
-    # 233 of them made pod-scan FAILs unattributable while the drift check read clean.
+    # POD ATTRIBUTION (44-8): a verdict from a DRIFTED tree is refused. Drift is
+    # the only refusal quantity (fb, 2026-09-01): it compares exactly the files
+    # the launch is cut from. Unregistered files are NOT refused -- 168 of them
+    # are one-off scripts that only ever existed on the pod, and a one-off says
+    # nothing about whether the training code is main's code.
     from pod_drift import sha_disk
 
     def attributable_world(mutate):
@@ -825,13 +872,49 @@ def selftest():
     d = attributable_world(lambda d: open(
         os.path.join(d, "scripts", "probe_throwaway.py"), "w", encoding="utf-8").write("# not in any manifest\n"))
     ok, msg = pod_attribution(d)
-    if ok or "unregistered" not in msg:
-        bad.append(f"pod_attribution did not refuse an unregistered file ({msg[:60]})")
+    if not ok:
+        bad.append(f"pod_attribution refused an unregistered one-off (fb 2026-09-01: drift "
+                   f"is the quantity, not the file count): {msg[:60]}")
     d = attributable_world(lambda d: open(
         os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8").write("\n# drifted after manifest\n"))
     ok, msg = pod_attribution(d)
     if ok or "drifted" not in msg:
         bad.append(f"pod_attribution did not refuse a drifted file ({msg[:60]})")
+
+    # FAIL PARTITION (fb, 2026-09-01): env-state FAILs gate on every machine;
+    # repo-scan FAILs gate only on main -- on the pod they are UNKNOWN, not NO-GO.
+    def fl(name):
+        return f"  [FAIL] {name:<22} synthetic (0.0s)"
+    s, _ = _partition_fails([fl("mix_supply")], "pod", 40)
+    if s != NOGO:
+        bad.append(f"env-state FAIL did not NO-GO on the pod ({s})")
+    s, _ = _partition_fails([fl("entrypoint_help")], "main", 40)
+    if s != NOGO:
+        bad.append(f"repo-scan FAIL did not NO-GO on main ({s})")
+    s, why = _partition_fails([fl("entrypoint_help")], "pod", 40)
+    if s != UNKNOWN or "authority=main" not in why:
+        bad.append(f"repo-scan FAIL on pod was {s}, not UNKNOWN-with-authority ({why[:50]})")
+    s, _ = _partition_fails([fl("mix_supply"), fl("entrypoint_help")], "pod", 40)
+    if s != NOGO:
+        bad.append(f"mixed FAILs on pod did not NO-GO on the env-state one ({s})")
+    # The env-state set must not rot. A check that SKIPs live has its evidence
+    # elsewhere, so an unclassified one is a pod FAIL that would not gate -- the
+    # false-GO direction. A classified name that no longer exists is a stale
+    # entry. SUBSET, not equality: a machine holding some gitignored evidence
+    # (this Mac has tokenizer.json) runs a few env-state checks live, and the
+    # guard must not call that drift (tilerl's merge catch, 2026-09-01).
+    if _here() == "main":
+        out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "harness.py"),
+                              "check"], capture_output=True, text=True, timeout=600, cwd=ROOT)
+        lines = out.stdout.splitlines()
+        skipped = {ln.split("]")[1].split()[0] for ln in lines if "[SKIP]" in ln}
+        ran = {ln.split("]")[1].split()[0] for ln in lines
+               if re.search(r"\[\s*(PASS|FAIL|WARN)\s*\]", ln)}
+        unclassified = skipped - ENV_STATE_CHECKS
+        stale = ENV_STATE_CHECKS - (ran | skipped)
+        if unclassified or stale:
+            bad.append(f"ENV_STATE_CHECKS drifted: unclassified {sorted(unclassified)}, "
+                       f"stale {sorted(stale)}")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
