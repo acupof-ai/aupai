@@ -124,6 +124,49 @@ following branch does not read. I swept the harness's other sites and found none
 instance, not a pattern -- and it is listed anyway because looking costs nothing and the
 other three rules all cost something.
 
+## A second class, found later the same day: the guard is on the wrong side of the case
+
+Three instances, three owners, none of them the class above. Each guard is correct, does
+exactly what it was written to do, and is the reason a measurement could not be taken.
+
+| site | guard | what it was written against | what it stood in front of |
+|---|---|---|---|
+| `eval_math.sh`, `eval_code.sh` | `open_artifact` overwrite refusal | a rerun silently replacing 477 cited preds rows (e1, 2026-08-31) | any rescore at all: the wrappers never passed `force`/`run`, so a second score of any checkpoint was structurally impossible and presented as three metric errors |
+| `train.generate_batch` | `rep_stop`, halt on an 8-gram repeated 3x | wasting compute on a generation already lost to a loop | the degeneration metric itself, whose predicate the stop IS -- so every recorded rate is over a truncated prefix (03: 39.6% measured against 72.9% actual) |
+| `device_set_honoured` | a shell script must source `eval/_devs.sh` | a launcher writing a physical index and escaping its lane (2026-08-31) | a test fixture that legitimately writes its own `_devs.sh`; the check cannot tell a fixture from an escaping launcher, and correctly refused mine |
+
+03's sentence is the general form, and it arrived from reading a signature rather than
+running anything: **a guard that is correct for its original purpose becomes a confound
+the moment the thing it guards against is the thing under test.**
+
+The mechanism underneath is worth stating separately, because it says where to look.
+A guard encodes an assumption about which side of it the interesting case lives on --
+overwriting is always bad, a looping generation is never worth finishing, a script
+writing `_DEVS` is always a launcher. That assumption is never itself checked, and it is
+false exactly when the guarded phenomenon becomes the object of study. So the sites to
+audit are not arbitrary: they are the guards whose subject matter has since become
+something the project measures.
+
+Two properties distinguish this class from the first one, and they change the fix:
+
+**The guard is not wrong and must not be removed.** All three defaults stay. The fix is
+an explicit way through -- `FORCE`/`RUN`, `--no_rep_stop`, an exemption -- plus a test
+that the way through is real. A wired flag that no-ops is this class collapsing into the
+first one: the arm reports "guard off" over guarded data, and nothing looks wrong.
+`scripts/test_rep_stop_flag.py` exists for exactly that, and asserts a length difference
+rather than a flag value.
+
+**It is silent in the direction that matters.** The overwrite refusal produced three
+loud metric errors that read as eval failures, not as "you cannot rescore" -- the error
+named the artifact, not the capability that was missing. `rep_stop` produced no error at
+all: a number, plausible, low by roughly 1.8x. The louder the guard, the further its
+message is from the actual problem.
+
+No rule proposed. Three instances in one day is enough to name a class and not enough to
+know its shape, and the first class's fourth rule -- look, because looking is free --
+applies here too: when a metric's subject matter is something the codebase elsewhere
+defends against, check whether the defence is running during the measurement.
+
 ## Findings
 
 ### D1 -- `save_checkpoint` has never written a row cursor (P3, principle) -- FIXED in the next window
