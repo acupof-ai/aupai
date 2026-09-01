@@ -40,11 +40,15 @@ def _count_shard(args):
             continue
         try:
             ast.parse(t)
-        except SyntaxError:
-            continue
+        except (SyntaxError, MemoryError, RecursionError, ValueError):
+            continue  # does not parse cleanly as py3; a parser-stack-overflow giant is not a survivor
         rows_ok += 1
         chars_ok += len(t)
-        tokens_ok += len(tk.encode(t).ids)
+        try:
+            tokens_ok += len(tk.encode(t).ids)
+        except (MemoryError, RecursionError, ValueError):
+            chars_ok -= len(t)  # untokenizable giant: count as dropped too
+            rows_ok -= 1
     return rows, rows_ok, tokens_ok, chars_ok
 
 
