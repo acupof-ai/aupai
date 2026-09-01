@@ -2021,6 +2021,46 @@ def merge_took_one_side(root, merge_sha="HEAD"):
     return out
 
 
+def _content_restored(root, base, losing, path, staged_blob):
+    """Is the losing side's own new content back in the staged blob?
+
+    The escape hatch used to ask whether the staged blob DIFFERS from the parent that
+    was taken whole. Differing is not restoring: staging the offending content plus one
+    comment changes the blob and restores nothing, and the hatch called that a fix.
+    Measured on the check's own broken world, 2026-09-01 -- a comment line above the
+    resolution turned FAIL into "1 contested file(s) re-resolved", a false GO reached by
+    a legal edit. Same shape as the day's other holes: an honest record plus a criterion
+    that does not read it.
+
+    So the question becomes the one fb named: is the content still there. Scope is one
+    already-contested path, not the whole merge, which is why line granularity is safe
+    here and wrong for merge_reverted_content -- the lost marker in the real incident
+    was a line inside a surviving function, and a def-level test cannot see it.
+
+    Non-empty lines that are not comments, compared as a set: reindentation and
+    reordering during a hand resolution are not losses, and a moved line is still
+    present. A line the losing side introduced and the fix rewrote rather than copied
+    reads as missing, which errs toward FAIL and asks for a human -- the direction this
+    check is supposed to fail in."""
+    def show(rev):
+        r = subprocess.run(["git", "-C", root, "show", f"{rev}:{path}"],
+                           capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    def code(src):
+        return {ln.strip() for ln in src.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")}
+
+    r = subprocess.run(["git", "-C", root, "cat-file", "-p", staged_blob],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    added = code(show(losing)) - code(show(base))
+    if not added:
+        return True  # the losing side added nothing here; there is nothing to restore
+    return not (added - code(r.stdout))
+
+
 def check_merge_complete(root):
     """A merge must not resolve a contested file by discarding one side.
 
@@ -2047,23 +2087,24 @@ def check_merge_complete(root):
     # resolution discarded anything. Seven of the nine hits over one day's 93 merges
     # were this shape.
     took = [t for t in took if t[2] > 0]
-    # A path whose STAGED blob differs from the parent the merge took whole is being
-    # fixed right now. Judge what is about to be committed, not what was.
+    # A path whose STAGED blob RESTORES the losing side's content is being fixed right
+    # now. Judge what is about to be committed, not what was.
     parents = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
                              capture_output=True, text=True).stdout.split()
     ours, theirs = (parents[1], parents[2]) if len(parents) >= 3 else (None, None)
+    base = subprocess.run(["git", "-C", root, "merge-base", ours, theirs],
+                          capture_output=True, text=True).stdout.strip() if ours else ""
     fixed = []
     for path, side, n in list(took):
         staged = subprocess.run(["git", "-C", root, "rev-parse", f":{path}"],
                                 capture_output=True, text=True).stdout.strip()
         if not staged:
             continue  # nothing staged for it; the merge's own blob stands
-        offending = ours if side == "ours" else theirs
-        blob = subprocess.run(["git", "-C", root, "rev-parse", f"{offending}:{path}"],
-                              capture_output=True, text=True).stdout.strip()
-        if blob and staged != blob:
-            took.remove((path, side, n))
-            fixed.append(path)
+        losing = theirs if side == "ours" else ours
+        if not base or not _content_restored(root, base, losing, path, staged):
+            continue
+        took.remove((path, side, n))
+        fixed.append(path)
     if took:
         return FAIL, (
             f"{len(took)} contested file(s) resolved by taking one side whole: "
@@ -6914,9 +6955,22 @@ def _selftest_merge_fix_not_deadlocked():
         subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
         state, _ = check_merge_complete(d)
         assert state == FAIL, "restaging the offending content must not pass as a fix"
+        # And the hole that made the hatch escapable: the criterion was "the staged blob
+        # DIFFERS from the parent taken whole", so one comment above the unfixed
+        # resolution changed the blob, restored nothing, and read as a fix. Measured
+        # 2026-09-01: FAIL became "1 contested file(s) re-resolved". A legal edit that
+        # buys a GO is the same shape as the day's other holes.
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("# a comment that restores nothing\n"
+                    "def f():\n    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, ("a staged blob that merely DIFFERS from the offending "
+                               "parent is not a fix; the lost content is still lost")
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
+    print("  merge fix: bad merge refused, real fix accepted, restaged offender and "
+          "cosmetic-only edit still refused")
 
 
 def _selftest_merge_cherry_pick_not_a_drop():
