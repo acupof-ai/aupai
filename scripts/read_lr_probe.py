@@ -139,13 +139,19 @@ def report(a, b):
     if v == "not-decidable" and not (a["refuted"] or b["refuted"]):
         line = (f"VERDICT: not-decidable (gap {gap:.4f} < 0.05, and that threshold is "
                 f"{0.05 / sem_d:.2f} sigma on this instrument -- the limit is "
-                f"RESOLUTION, not run length)")
+                f"RESOLUTION, not run length: another 500 steps buys 5 more samples "
+                f"and 1.02 sigma, while fixing the logging buys ~6.9)")
     elif v == "not-decidable":
         line = f"VERDICT: not-decidable  ({why})"
     elif p_null >= 0.05:
-        line = (f"VERDICT: {v} (gap {gap:.4f}) -- but two arms with no true difference "
-                f"produce a gap this large or larger about {p_null * 100:.0f}% of the "
-                f"time. Not enough on its own to change the recipe.")
+        # b0: "when the two arms truly do not differ" is the clause that makes the
+        # percentage mean anything. Without it the number reads as "this conclusion is
+        # 41% likely to be wrong", and the reader then infers 59% confidence -- a
+        # different quantity and an invalid inference. It is a false-positive rate.
+        line = (f"VERDICT: {v} (gap {gap:.4f}) -- but WHEN THE TWO ARMS TRULY DO NOT "
+                f"DIFFER, about {p_null * 100:.0f}% of repeats still produce a gap this "
+                f"large or larger (false-positive rate, not an error rate). Not enough "
+                f"on its own to change the recipe.")
     else:
         line = f"VERDICT: {v} (gap {gap:.4f}, {sig:.2f} sigma)  ({why})"
     out.append("\n  " + line)
