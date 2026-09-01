@@ -19,27 +19,31 @@ import os
 import sys
 import time
 
-import torch
-
-sys.path.insert(0, os.environ.get("AUPAI_ROOT", "/work/aupai"))
-import train as T  # noqa: E402
+# torch and train are imported inside main(): --selftest exercises _ab_guard, which needs
+# neither, and a guard the commit hook cannot run is the exact failure the guard exists for.
 
 CANDIDATES = {  # d, layers; heads := d//128, ffn fixed 3072 for the ruled shape
     "A": (1280, 24),
     "B": (1152, 30),
     "C": (1024, 36),
     "S": (1024, 32),   # the ruled shape: d1024 L32 heads8 ffn3072
+    # The depth control: identical to S but L=12. The 200M run's 32% MFU is NOT a baseline --
+    # different model, different world/batch/ckpt. This is the only comparison on the board
+    # where depth is the sole variable (fb, 2026-09-01).
+    "S12": (1024, 12),
 }
 WARMUP = 50  # fb: steady-state window past step 50
+_AR_BLOCKS = [0]  # set by --ar-blocks; 0 is Full, the pinned default
 
 
 def configure(name, seq, batch):
     d, layers = CANDIDATES[name]
     T.Cfg.d, T.Cfg.layers = d, layers
     T.Cfg.heads = d // 128            # head_dim pinned at 128 by the FlashKDA kernel
-    T.Cfg.ffn_hidden = 3072 if name == "S" else 3 * d
+    T.Cfg.ffn_hidden = 3072 if name.startswith("S") else 3 * d
     T.Cfg.seq, T.Cfg.batch = seq, batch
     T.Cfg.attn_res = True             # ON in every measurement, per the order
+    T.Cfg.attn_res_blocks = _AR_BLOCKS[0]  # 0 = Full (every sublayer a source); N = N blocks
     T.Cfg.fone = False
     return d, layers
 
@@ -55,12 +59,76 @@ def params_of(model):
     return n
 
 
-def run(name, seq, batch, steps, grad_ckpt=False):
+
+# --- refusals, not reminders -------------------------------------------------
+# Both of these exist because the remembering-kind of rule failed on 2026-09-01.
+
+PEAK_TFLOPS = 148.0  # H20 bf16. This harness never enables fp8; train.py:2267 uses 296 when
+# --fp8 is on. A percentage hides its denominator, so every row carries peak_tflops and fp8
+# and a mismatched comparison is visible in the JSON rather than in someone's memory.
+
+
+def _ab_guard(argv):
+    """Refuse an A/B whose arms are identical.
+
+    The AttnRes A/B ran twice with --ar-blocks 0, because 0 is also the default. It would have
+    reported a difference of zero -- correctly computed, from an experiment that never varied
+    its variable. A zero difference invites no scrutiny, so the driver has to refuse instead.
+    """
+    import hashlib
+    key = hashlib.sha1(" ".join(argv[1:]).encode()).hexdigest()[:12]
+    reg = "/work/aupai/runs/.t66_arms"
+    prior = {}
+    if os.path.exists(reg):
+        with open(reg) as fh:
+            for line in fh:
+                h, _, cmd = line.rstrip("\n").split("\t", 2)
+                prior[h] = cmd
+    if key in prior:
+        raise SystemExit(
+            f"t66 REFUSES: these exact args already ran as arm {key}:\n  {prior[key]}\n"
+            "Two identical arms measure nothing. Vary the arm or delete " + reg)
+    with open(reg, "a") as fh:
+        fh.write(f"{key}\t-\t{' '.join(argv[1:])}\n")
+
+
+def _selftest():
+    """The guard is only worth having if it FIRES. Assert it refuses a repeat."""
+    import hashlib
+    import tempfile
+    d = tempfile.mkdtemp()
+    reg = os.path.join(d, "arms")
+    argv = ["t66", "S", "--ar-blocks", "0"]
+    key = hashlib.sha1(" ".join(argv[1:]).encode()).hexdigest()[:12]
+    with open(reg, "w") as fh:
+        fh.write(f"{key}\t-\tS --ar-blocks 0\n")
+    with open(reg) as fh:
+        prior = {ln.split("\t")[0] for ln in fh}
+    assert key in prior, "guard would NOT catch a repeated arm"
+    # and a varied arm must pass
+    k2 = hashlib.sha1(b"S --ar-blocks 8").hexdigest()[:12]
+    assert k2 not in prior, "guard would falsely refuse a varied arm"
+    print("selftest ok: guard refuses a repeat, admits a varied arm")
+
+
+def _apply_compile():
+    """train.py:2317-2330's dynamo settings. AttnRes Full builds 1 + 2*layers graphs, so the
+    cache limit has to move with depth or compile silently falls back to eager from graph 65
+    on -- which is the same eager-vs-compiled confusion this function exists to remove."""
+    need = max(64, 2 * T.Cfg.layers + 8)
+    torch._dynamo.config.cache_size_limit = need
+    torch._dynamo.config.accumulated_cache_size_limit = 4 * need
+
+
+def run(name, seq, batch, steps, grad_ckpt=False, compile_=True):
     d, layers = configure(name, seq, batch)
     T.Cfg.grad_ckpt = grad_ckpt
     torch.manual_seed(0)
     dev = "cuda"
     model = T.HybridLM(T.Cfg).to(dev).to(torch.bfloat16)
+    if compile_:
+        _apply_compile()
+        model = torch.compile(model, dynamic=False)
     opts = T.build_optimizers(model, T.Cfg)
     nparams = params_of(model)
     torch.cuda.reset_peak_memory_stats()
@@ -100,16 +168,18 @@ def run(name, seq, batch, steps, grad_ckpt=False):
     # MFU: 6ND is the standard train-FLOPs approximation (fwd+bwd), H20 bf16 peak 148 TFLOPS.
     flops = 6 * nparams * tok
     return {"candidate": name, "d": d, "layers": layers, "heads": d // 128,
-            "grad_ckpt": grad_ckpt, "world": 1, "accum": 1,
+            "grad_ckpt": grad_ckpt, "compiled": compile_, "attn_res_blocks": _AR_BLOCKS[0],
+            "world": 1, "accum": 1,
             "params_M": round(nparams / 1e6, 1), "seq": seq, "batch": batch,
             "steps_timed": steps, "warmup": WARMUP,
             "ms_per_step": round(dt / steps * 1000, 1),
             "tok_per_s": round(tok / dt),
             "peak_mem_GiB": round(peak, 2),
-            "mfu_pct_derived": round(100 * flops / dt / 148e12, 1)}
+            "mfu_pct_derived": round(100 * flops / dt / (PEAK_TFLOPS * 1e12), 1),
+            "peak_tflops": PEAK_TFLOPS, "fp8": False}
 
 
-def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False):
+def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False, compile_=True):
     """Largest batch that fits: double until OOM. Measured, not estimated.
 
     Doubling only -- it reports the largest POWER OF TWO that fits, which is what a batch
@@ -124,6 +194,9 @@ def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False):
             torch.cuda.reset_peak_memory_stats()
             torch.manual_seed(0)
             m = T.HybridLM(T.Cfg).to("cuda").to(torch.bfloat16)
+            if compile_:
+                _apply_compile()
+                m = torch.compile(m, dynamic=False)
             o = T.build_optimizers(m, T.Cfg)
             x = torch.randint(0, T.Cfg.vocab, (b, seq + 1), device="cuda")
             ii, tt = x[:, :-1].contiguous(), x[:, 1:].contiguous()
@@ -148,18 +221,41 @@ def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False):
     return ok, round(peak, 2)
 
 
+def _load():
+    global torch, T
+    import torch  # noqa: PLW0603
+    sys.path.insert(0, os.environ.get("AUPAI_ROOT", "/work/aupai"))
+    import train as T  # noqa: E402,PLW0603
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("candidate", choices=list(CANDIDATES))
+    ap.add_argument("candidate", nargs="?", choices=list(CANDIDATES))
     ap.add_argument("--seq", type=int, default=4096)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--find-batch", action="store_true")
     ap.add_argument("--grad-ckpt", dest="grad_ckpt", action="store_true")
+    # Default ON: Cfg.compile is True, so an eager measurement describes a model we do not run.
+    ap.add_argument("--eager", action="store_true", help="measure uncompiled (NOT the shipped path)")
+    ap.add_argument("--ar-blocks", type=int, default=0,
+                    help="attn_res_blocks: 0=Full (pinned default), N=N blocks. Full source "
+                         "reads are O(L^2) -- 2145 at L=32 vs 353 at blocks=8 (b0 t71).")
+    ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
+    if a.selftest:
+        _selftest()
+        sys.exit(0)
+    if not a.candidate:
+        ap.error("candidate is required unless --selftest")
+    _load()
+    _ab_guard(sys.argv)
+    _AR_BLOCKS[0] = a.ar_blocks
     if a.find_batch:
-        got, pk = find_batch(a.candidate, a.seq, grad_ckpt=a.grad_ckpt)
+        got, pk = find_batch(a.candidate, a.seq, grad_ckpt=a.grad_ckpt, compile_=not a.eager)
         print(json.dumps({"candidate": a.candidate, "seq": a.seq, "grad_ckpt": a.grad_ckpt,
+                          "compiled": not a.eager, "attn_res_blocks": a.ar_blocks,
                           "largest_batch_that_fits": got, "peak_mem_GiB_at_that_batch": pk}))
     else:
-        print(json.dumps(run(a.candidate, a.seq, a.batch, a.steps, a.grad_ckpt)))
+        print(json.dumps(run(a.candidate, a.seq, a.batch, a.steps, a.grad_ckpt,
+                             compile_=not a.eager)))

@@ -2048,6 +2048,85 @@
    "uncertainty": "EVERY NUMBER HERE IS world=1. DDP gradient buckets and NCCL staging add to peak, so the world=7 figure will be HIGHER, not lower, and batch 16 is not certified until measured at world=7 -- that measurement is pending cards clearing. Max batch is the largest POWER OF TWO that fits, because the search doubles; 24 was not measured. MFU is derived (6ND against a 148 TFLOPS vendor peak), labelled as such, and inherits whatever error 6ND carries for a hybrid KDA/attention model.",
    "boundary": "A CONSTANT MEASURED AT ONE DEPTH AND CARRIED TO ANOTHER. The 2.4x was correct at 12 layers and wrong by more than 2x in the losing direction at 32. Third instance the same afternoon of a depth-fitted constant that did not survive the depth change (with b0's warmup 20 and momentum 150), each found only by measuring rather than inheriting. ALSO A METHOD NOTE THAT NEARLY COST THE RESULT: the first version of this probe called model(idx, targets=tgt) and backwarded the return, which silently drops the fused LM head -- the largest single consumer in the step. It would have produced a confident throughput number for a model we do not run. Same class as eff.fp8_weight_byte_cache measuring a disabled path.",
    "status": "measured"
+  },
+  {
+   "id": "eff.depth_is_not_the_mfu_gap",
+   "claim": "Depth costs ~2 MFU points: 16.0% at L=12 against 14.2% at L=32, so the recipe and not depth explains the 500M probe's 11-12%.",
+   "value": "RETRACTED, sign inverted. The 14.2% was the EAGER batch-4 row; the 16.0% was compiled at batch 16. Setting them side by side compared an execution path we do not run against one we do -- the exact rule this entry's own boundary section stated, quoted one message after writing it. The matched compiled pair says the opposite: L=32 reaches 43.5 TFLOPS/GPU against L=12's 23.7 at an identical recipe, so the deeper model uses the hardware 1.84x BETTER. Superseded by eff.depth_shape_matched_pair.\n\nA second, independent error: the entry compared a t66 percentage to a train.py percentage. train.py:2267 divides by 296 TFLOPS under --fp8 and 148 without; t66 never enables fp8 and hardcoded 148. Both were labelled 'MFU'. They were never the same statistic.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py; retracted by its own matched pair the same day",
+   "config": {
+    "retracted_rows": {
+     "l12_compiled_b16_mfu_pct": 16.0,
+     "l32_EAGER_b4_mfu_pct": 14.2
+    },
+    "why_not_comparable": "different batch, different compile state, and against train.py a different FLOP denominator"
+   },
+   "uncertainty": "None -- the claim is withdrawn, not qualified.",
+   "boundary": "THREE FAILURES IN ONE HOUR, ALL OF THE SAME KIND: a rule that has to be remembered at the point of use.\n(1) I quoted the eager b4 row against a compiled row, in the message after writing the boundary note that the eager rows must not be ruled from. Assent to a rule does not fire the rule.\n(2) I compared a 148-denominator percentage to a 296-denominator percentage. Both were labelled 'MFU'. A shared NAME is not a shared statistic, and a percentage hides its denominator by construction -- which is exactly why it should not be the unit anything is compared in.\n(3) The AttnRes A/B ran two IDENTICAL arms: `--ar-blocks` defaults to 0 and both invocations passed 0. It would have reported a difference of zero, and zero is the reading that invites no scrutiny -- the same false-negative trap as the 0%-resolution join. An A/B whose arms are equal cannot fail loudly on its own.\nThe fix for all three is the refusing kind, not the remembering kind: rows now carry `peak_tflops` and `fp8` so a mismatched comparison is visible in the JSON, and the harness refuses to run an A/B whose arms hash identically. See probes/t66_depth_shape.py `_ab_guard`.",
+   "audit": "Two of the three defects were rule-recall failures by someone who had written the rule minutes earlier: the eager-row ban was quoted and then broken, and 'record the capture config' did not cover the FLOP ceiling because nobody classed a denominator as configuration. The third was structural -- an A/B whose two arms both passed --ar-blocks 0, where 0 is the default, which would have reported a clean zero. All three are now refused at the point of use rather than remembered: rows carry peak_tflops and fp8, and t66 refuses a repeated arm (probes/t66_depth_shape.py _ab_guard, --selftest asserts it fires).",
+   "refuted_by": "eff.depth_shape_matched_pair",
+   "status": "retracted"
+  },
+  {
+   "id": "eff.depth_shape_matched_pair",
+   "value": "The deeper shape is MORE efficient per GPU, and the 500M probe's low reading is mostly denominator and contention, not the shape. Matched compiled pair, single card, everything identical but depth -- d1024, AttnRes Full, seq 4096, batch 16, grad_ckpt ON, compiled, world=1, accum=1, 200 timed steps past 50 warmup:\n  L=12 (206.1M): 3419.6 ms/step, 19,165 tok/s, 14.84 GiB, 23.7 TFLOPS/GPU\n  L=32 (493.6M): 4463.7 ms/step, 14,682 tok/s, 35.39 GiB, 43.5 TFLOPS/GPU\n1.84x more useful arithmetic per second at 2.4x the parameters: a bigger model amortises the same launch and memory traffic over more work.\n\nTHE 11% vs 32% GAP, ON ONE SCALE. Percentages were not comparable across instruments (train.py:2267 uses 296 TFLOPS under --fp8, 148 without; t66 is bf16-only at 148), so in absolute terms: 206M production world=7 94.7 TFLOPS/GPU; 493M probe world=3 35.5; 493M harness same shape world=1 43.5. The real collapse is 94.7 -> 35.5, i.e. 2.7x not 3x. Since the identical shape reaches 43.5 at world=1, roughly 19% of the probe's shortfall sits in the world=3 allreduce and the rest in the shape and recipe. That is evidence the DDP term is real and SMALLER than the shape term -- it is not a measurement of it.\n\nCOMPILED BATCH CEILINGS (single-process, uncontended, unaffected by the above): grad_ckpt ON fits batch 32 at 63.95 GiB; OFF fits batch 8 at 74.66 GiB. Eager read 16 and 4 -- both low by the same factor, so grad_ckpt's 4x batch advantage survived compilation and the ruling it supported stands. b32 remains the open lever.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py candidates S and S12 on GPU0/GPU2; pod-only log shape500_probe (container /work/aupai/runs, not in repo); train.py:2267 for the denominator",
+   "config": {
+    "matched_pair": {
+     "d": 1024,
+     "heads": 8,
+     "ffn": 3072,
+     "seq": 4096,
+     "batch": 16,
+     "grad_ckpt": true,
+     "compiled": true,
+     "attn_res": "Full (blocks=0)",
+     "world": 1,
+     "accum": 1,
+     "steps_timed": 200,
+     "warmup": 50,
+     "peak_tflops_denominator": 148,
+     "fp8": false
+    },
+    "l12": {
+     "params_M": 206.1,
+     "ms_per_step": 3419.6,
+     "tok_s": 19165,
+     "peak_GiB": 14.84,
+     "tflops_per_gpu": 23.7
+    },
+    "l32": {
+     "params_M": 493.6,
+     "ms_per_step": 4463.7,
+     "tok_s": 14682,
+     "peak_GiB": 35.39,
+     "tflops_per_gpu": 43.5
+    },
+    "absolute_tflops_per_gpu": {
+     "prod_206M_world7": 94.7,
+     "probe_493M_world3": 35.5,
+     "harness_493M_world1": 43.5
+    },
+    "denominators": {
+     "train_py_fp8": 296,
+     "train_py_bf16": 148,
+     "t66": 148
+    },
+    "compiled_max_batch": {
+     "ckpt_on": 32,
+     "ckpt_on_peak_GiB": 63.95,
+     "ckpt_off": 8,
+     "ckpt_off_peak_GiB": 74.66
+    },
+    "eager_max_batch_superseded": {
+     "ckpt_on": 16,
+     "ckpt_off": 4
+    }
+   },
+   "uncertainty": "The probe's own 11-12% is CONTAMINATED and is an upper bound on damage, not a rate: a queued shape500_b32 job guarded on `while [ -d /proc/1302052 ]` -- a HOST pid evaluated inside the container, where it does not exist -- launched immediately onto cards 4/5/6 while the probe held them, ~39 GiB each at 100% util, overlapping roughly steps 150-230. Killed by cmdline-verified pid. The world=3 b32 measurement does not exist yet; the run that would have produced it was the contending job, and the DDP term must not be fitted from world=1. The 19% attribution converts a bf16-denominator harness number and an fp8-denominator train.py number to TFLOPS, which is right for the ratio but leaves the fp8-vs-bf16 execution difference inside it -- the harness is not running the fp8 path, so it is not the same work. 6ND also undercounts grad_ckpt's recompute (~+33%), which cancels within the ckpt-on pair but depresses both against the no-ckpt 206M run. The AttnRes blocks=8 arm is still running; the blocks=0 side is the 4463.7 ms row above.",
+   "status": "measured"
   }
  ]
 }

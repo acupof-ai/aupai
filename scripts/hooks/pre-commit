@@ -163,6 +163,7 @@ def main():
         "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
         "probes/t67_self_repeat.py", "probes/t68_free_running.py",
         "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
+        "probes/t66_depth_shape.py",
     }
     NEEDS_DATA = {
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
