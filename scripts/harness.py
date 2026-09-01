@@ -1885,6 +1885,12 @@ def _broken_spawned_scripts_importable():
             shutil.copy(src, full)
         else:
             open(full, "w").write("# stub\n")
+    # The module the mutation makes unreachable must EXIST in the world, or the resolver
+    # reads `harness` as third-party and skips it -- the world passed for that reason, not
+    # because the defect was absent.
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"),
+                os.path.join(d, "scripts", "harness.py"))
     pre = os.path.join(d, "datagen", "pretokenize.py")
     body = open(pre).read().replace(
         'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
@@ -2437,7 +2443,14 @@ def check_guard_on_path(root):
     called = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
     if "_assert_mix_domains" not in called:
         return FAIL, "main() does not call _assert_mix_domains; run_ddp.sh is unguarded"
-    return PASS, "main() calls _assert_mix_domains"
+    # The retirement marker's teeth. mix_supply stops gating a mix that carries _retired,
+    # which is only honest while train.py refuses to start on one; without this assert the
+    # marker would be a label that silences a check and permits the run it describes.
+    asserts = [n for n in ast.walk(fn) if isinstance(n, ast.Assert)]
+    if not any('"_retired"' in ast.dump(a) or "'_retired'" in ast.dump(a) for a in asserts):
+        return FAIL, ("main() does not refuse a mix carrying _retired, so the marker "
+                      "silences mix_supply without stopping the run it describes")
+    return PASS, "main() calls _assert_mix_domains and refuses a retired mix"
 
 
 def check_gemm_dims(root):
@@ -4573,6 +4586,16 @@ def check_mix_supply(root, mix_glob=None):
         # a mix with all domains under _blocked is a deliberate pre-corpus state, and a
         # SKIP that calls it "no matching files" gets filed as a gap (fb, 2026-08-31).
         return SKIP, f"no mix files match {os.path.basename(pattern)}"
+    # A retired mix is not gated, and the marker has teeth: train.py refuses to start on
+    # one, so "retired" is a property of the artifact rather than a label this check
+    # agreed to ignore. The ladder's anneal demand exceeds its cache supply and cannot be
+    # corrected -- ladder_config_frozen forbids editing it -- so the only honest exits
+    # were retirement or a permanent red, and a permanent red is the same as no signal.
+    retired = [os.path.basename(m) for m in mixes
+               if json.load(open(m, encoding="utf-8")).get("_retired")]
+    mixes = [m for m in mixes if os.path.basename(m) not in retired]
+    if not mixes:
+        return SKIP, f"every matching mix is retired: {', '.join(retired)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
     largest = max(
@@ -4629,10 +4652,13 @@ def _broken_mix_supply():
     import zipfile
 
     d = _tmp_repo()
-    shutil.copy(
-        os.path.join(ROOT, "data", "mix_scale_0.2b.json"),
-        os.path.join(d, "data", "mix_scale_0.2b.json"),
-    )
+    dst = os.path.join(d, "data", "mix_scale_0.2b.json")
+    shutil.copy(os.path.join(ROOT, "data", "mix_scale_0.2b.json"), dst)
+    # Live, because a retired mix is not gated and the world would report SKIP -- which
+    # is what it did the moment the ladder was retired, leaving this check unable to fail.
+    obj = json.load(open(dst, encoding="utf-8"))
+    obj.pop("_retired", None)
+    json.dump(obj, open(dst, "w", encoding="utf-8"), ensure_ascii=False)
     cache_dir = os.path.join(d, "fake_caches")
     os.makedirs(cache_dir)
     seq = cfg_default("seq")

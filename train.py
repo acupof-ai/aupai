@@ -2149,8 +2149,14 @@ def main():
         f"corpus to train on instead."
     )
     assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
+    _mix_obj = json.load(open(mix_path, encoding="utf-8"))
+    assert not _mix_obj.get("_retired"), (
+        f"{Cfg.mix} is retired: {_mix_obj['_retired']}. A retired mix is frozen "
+        f"(ladder_config_frozen) and its supply can no longer be made to match its demand, "
+        f"so it cannot be corrected either -- pick a live mix."
+    )
     fps = _assert_mix_domains(
-        list(json.load(open(mix_path, encoding="utf-8"))["domains"]),
+        list(_mix_obj["domains"]),
         os.path.join(DATA, "corpus"),
         allow_drift=Cfg.allow_corpus_drift,
     )
