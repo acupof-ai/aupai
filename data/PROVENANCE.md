@@ -419,3 +419,89 @@ was recorded — the gap this section exists to close.
   (corpus-level) and 1.33-1.43x on controlled minimal pairs. Overall this is about
   +2.5% tokens for the same text — recorded, not corrected. lessons-44 owns the
   full-corpus value.
+
+# Corpus domain provenance (mix_500m)
+
+Every block below carries filters_fp `33462c13868a2194` -- the POD filter, 5 CCI3-HQ Chinese rules short of main 88ee503b; fb measured ~0.25% residue, ruling no rebuild. See facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters.
+
+
+## math_owm_stage2
+
+- fingerprint: 1e687e4b5ce37598
+- **rows**: 4,135,793  **tokens**: 6,513,304,690
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: OpenWebMath + finemath-4plus (role math/reasoning raw); finemath via ModelScope AI-ModelScope/finemath, fetch 2026-08-31
+- **build**: staged math_owm -> math_owm_stage2 + exact+holdout global pass (build_corpus --global-only), stamp 2026-08-31
+
+
+## en_c4_stage2
+
+- fingerprint: 05e0fc6f14704056
+- **rows**: 3,887,759  **tokens**: 2,403,698,865
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: C4 / fineweb-2 en cell (role English general), parquet fetched pre-0830v1
+- **build**: staged en_c4 -> en_c4_stage2 + exact+holdout global pass, stamp 2026-08-31
+
+
+## cot
+
+- fingerprint: 388496b76ed9bf88
+- **rows**: 851,965  **tokens**: 424,056,227
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: NuminaMath-CoT (AI-MO/NuminaMath-CoT), fetched via hf-mirror 2026-08-31
+- **build**: de's global pass over cot (exact+short+holdout), stamp 2026-08-31
+
+
+## textbook_30b
+
+- fingerprint: 3f237c5191cb8571
+- **rows**: unrecorded in stamp  **tokens**: 1,610,210,330
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: textbook/instructional (pre-0830v1 role); exact list in 0830v1 gates + pre-reset ledger; 查不清 beyond that
+- **build**: pre-0830v1 build + 30b restamp
+
+
+## chatml
+
+- fingerprint: 52a6b427818c90ff
+- **rows**: 160,414  **tokens**: 38,995,846
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: data/corpus/chat (问：/答：: COIG/alpaca_gpt4_zh) rendered to ChatML. Built 2026-09-01
+- **build**: build_chatml.py (loader.format_example) + --phase chatml slice
+
+
+## chat_qa
+
+- fingerprint: 42a4bedde020ae66
+- **rows**: 160,414  **tokens**: 38,187,650
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: data/corpus/chat (问：/答： original) as a separate domain (fb two-domain ruling). Built 2026-09-01
+- **build**: build_chat_qa.py + --phase chat_qa slice
+
+
+## zh_web
+
+- fingerprint: a0d44fc44a289d60
+- **rows**: unrecorded in stamp  **tokens**: 21,293,403,945
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: CCI3 (web_cci3_p*)/wanjuan Chinese web (role Chinese web), clean pass1/2/3 + holdout carve
+- **build**: pre-0830v1/stage clean + 30b restamp 2026-08-31
+
+
+## code_py_starcoder
+
+- fingerprint: e1a14839e11f3e6f
+- **rows**: 6,180,174  **tokens**: 8,744,830,156
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: AI-ModelScope/starcoderdata python split, 59 parquet, fetched 2026-09-01 via ModelScope
+- **build**: build_starcoder_py.py ast.parse filter (labelled ~48% row survivor) + --phase slice, 16-worker parallel, stamp 2026-09-01
+
+
+## code_py_rp1t
+
+- fingerprint: 63c2b3ce0e7dd989
+- **rows**: 209,668  **tokens**: 421,239,303
+- **filters_fp**: `33462c13868a2194` (pod filter; weaker-filter fact)
+- **source**: code_rp1t (RedPajama-1T github) ast.parse survivors, second code domain
+- **build**: build_code_py_rp1t.py ast.parse filter + --phase slice, built by e1 2026-09-01
+
