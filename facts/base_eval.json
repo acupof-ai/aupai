@@ -738,6 +738,45 @@
    "uncertainty": "single greedy run; the step is an external attribution from mtime, not read from the checkpoint",
    "status": "measured",
    "artifact_sha256": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205"
+  },
+  {
+   "id": "be.milestone_16b",
+   "value": "16B milestone (ckpt_pretrain_30b_s2.pt.step17500, 16.056B actual) vs the 8B stage-1 baseline (ckpt_pretrain_15b_s1.pt.step8500, 7.799B): 3 of 9 per-role domain losses moved past the 0.1176 nat floor, all improving -- zh_web 3.7544->3.6040 (+0.1504), wiki_chat 3.3679->3.2108 (+0.1571), textbook_30b 2.0585->1.9203 (+0.1382). cot +0.0821 floor. code_rp1t +0.0483 floor and separately REFUSED by the 7.1 weight gate (0.37200->0.29330 = 0.79x, outside the 5% tolerance). en_c4/en_c4_stage2 and math_owm/math_owm_stage2 refused by name: stage 2 renamed 2 of 7 roles, so those two sides were scored on different text. ceval 22.3->21.6 (-0.70pt, floor at threshold 5.9pt); code_500 0.0->0.0 (floor, degenerate_rate 0.414); math_hard_pass_at_1 and rl_gap ABSENT from one or both records. This is the first live firing of the 7.1 weight gate and the first cross-stage per-role read on byte-identical heads. Read it as SCALE progress, not as a mix read -- the three roles that moved are the ones whose weights barely changed, and the one role that was reweighted is refused.",
+   "measured": "2026-09-01",
+   "source": "runs/readout_ckpt_pretrain_30b_s2.pt.step17500.txt (pod); runs/milestones.jsonl last row for step17500",
+   "config": {
+    "milestone": "ckpt_pretrain_30b_s2.pt.step17500",
+    "paired": "ckpt_pretrain_15b_s1.pt.step8500",
+    "profile": "milestone (both sides)",
+    "milestone_mix": "data/mix_30b_stage2.json",
+    "paired_mix": "data/mix_15b_stage1.json",
+    "heads": "stage-1 7 roles; stage 2 renamed 2 (en_c4->en_c4_stage2, math_owm->math_owm_stage2), 5 byte-identical",
+    "per_role_threshold_nat": 0.1176,
+    "threshold_derivation": "2.28x sigma-hat 0.0516, the 0.2b seed variance",
+    "ceval": {
+     "n": 1300,
+     "threshold_pt": 5.9
+    },
+    "code_500": {
+     "n": 500,
+     "threshold_pt": 12.6
+    },
+    "weight_change_limit": 0.05,
+    "guard_version": "eval/readout_30b.py b0 3087e18, md5 16b4a691f200fcd421894e2bc95323df on the pod, selftest 13/13",
+    "pins": [
+     "ckpt_pretrain_30b_s2.milestone_16b_step17500.pt",
+     "ckpt_pretrain_15b_s1.milestone_8b_step8500.pt"
+    ],
+    "actual_tokens": {
+     "milestone": 16056320000,
+     "paired": 7798784000
+    },
+    "budget_gate": "not applied -- --actual-tokens/--paired-tokens omitted; passing them refuses (51.4% > 5%). See `boundary`.",
+    "cmd": "eval/readout_30b.py --milestone ckpt_pretrain_30b_s2.pt.step17500 --paired ckpt_pretrain_15b_s1.pt.step8500 --milestone-tokens 16e9 --milestone-profile milestone --paired-profile milestone --milestone-mix data/mix_30b_stage2.json --paired-mix data/mix_15b_stage1.json"
+   },
+   "uncertainty": "Cross-stage noise unquantified. 0.1176 nat is a within-run floor; the three moves sit at 1.17-1.34x it, and 8B-stage-1-vs-16B-stage-2 noise was never separately measured -- the adjacent-checkpoint audit (be.adjacent_checkpoint_jitter, 0.005-0.027 nat per role) is within-run and does not cover a stage boundary. Single scoring pass per side, n=1.",
+   "boundary": "Two things this fact does not say. (1) The budget gate did not run: passing --actual-tokens 16056320000 --paired-tokens 7798784000 refuses the pair (gap 51.4% > BUDGET_MISMATCH_LIMIT 0.05, exit 1), and this read omitted both flags -- as the harness milestone path did. On a progress track the budget gap is the treatment, so the gate as written tests the wrong property here; filed as a defect. The consequence stands regardless: part of each move is the extra 8.3B tokens, which is what a progress read is FOR, and none of it is separable from stage-2's composition change. (2) The 24B/30B within-stage reads are the clean ones. Until then these three verdicts are 'moved per the pre-registered floor', not 'improved by a measured amount'.",
+   "status": "measured"
   }
  ]
 }
