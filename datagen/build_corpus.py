@@ -382,6 +382,11 @@ def _global_pass(a):
     w*_*.jsonl shards (a killed serial pass leaves them on disk)."""
     import glob as _g
 
+    # Hold the build flock for the whole write; stamp time re-probes it and the
+    # settle guard refuses if any other process writes under us (tilerl T7-2).
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)
+
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     reasons = Counter()
     if a.global_only:
@@ -468,12 +473,126 @@ def _global_pass(a):
     return 0
 
 
+def _build_lock(out):
+    """Acquire an exclusive flock on {out}/.build.lock and record this PID. The
+    returned fd must be HELD for the write (callers bind it to _LOCK_FD) or CPython
+    close()s it on return and the flock is gone -- that was the defect tilerl-0a
+    caught (T7-2 revote): production dropped the return and the lock never survived.
+    flock gives mutual exclusion between two builds; the settle probe reads the PID
+    rather than re-flocking, because flock is per-open-file-description and a second
+    open() by the SAME process conflicts with its own lock (Defect B). Returns the fd."""
+    import fcntl
+
+    os.makedirs(out, exist_ok=True)
+    f = open(os.path.join(out, ".build.lock"), "a+", encoding="utf-8")  # noqa: SIM115 -- fd is returned to hold the flock
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        raise SystemExit(f"REFUSE: another build holds {out}/.build.lock -- two writers on one domain") from None
+    f.seek(0)
+    f.truncate()
+    f.write(str(os.getpid()))
+    f.flush()
+    return f
+
+
+_LOCK_FD = None  # the held build-lock fd for the whole write; set by the pass entry points
+
+
+def _other_writer_pid(out):
+    """The PID of a live writer on {out}, or None if ours/free/stale. Reads the
+    lock's PID and refuses to call it 'another writer' if it is THIS process or a
+    dead PID (a crashed build leaves a stale PID; flock already released). This is
+    the probe the settle guard and preflight share -- PID-based, not pgrep-name,
+    and it does not re-flock (a re-flock by the same process would conflict with
+    its own OFD)."""
+    lock = os.path.join(out, ".build.lock")
+    if not os.path.exists(lock):
+        return None
+    try:
+        with open(lock, encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+    if pid == os.getpid():
+        return None  # our own build: it wrote this PID, it is about to stamp its own output
+    try:
+        os.kill(pid, 0)  # liveness probe: raises if no such process
+        return pid
+    except OSError:
+        return None  # stale: the builder died, its flock is gone, the dir is free
+
+
+def _settle_dir(out, domain, settle_s):
+    """Stamp-time settle guard (tilerl T7-2): refuse the stamp unless the dir is
+    not being written. Two mechanisms. First, PID-based (not pgrep-name):
+    `_other_writer_pid` refuses if a LIVE, OTHER process holds the build lock.
+    Second, the file set is read twice a beat apart: if any shard appears/disappears
+    or its mtime CHANGES between the two reads, a writer is touching it and the
+    stamp is refused. When the lock is ours (a real build holds it and is stamping
+    the bytes it just finished), fresh mtimes are expected, so the settle-window
+    mtime check applies only when NO other writer could be mid-write -- i.e.
+    every shard must be older than `settle_s` ONLY when we do not hold our own lock
+    (an ad-hoc re-stamp, or a non-locking foreign appender like the U+2028 repair
+    that never took the lock)."""
+    import time as _time
+
+    who = _other_writer_pid(out)
+    if who is not None:
+        raise SystemExit(
+            f"REFUSE: {out} is locked by live pid {who} (not ours) -- stamp over unsettled bytes"
+        )
+    lock = os.path.join(out, ".build.lock")
+    self_hold = os.path.exists(lock)
+    if self_hold:
+        try:
+            with open(lock, encoding="utf-8") as fh:
+                self_hold = int(fh.read().strip()) == os.getpid()
+        except (OSError, ValueError):
+            self_hold = False
+
+    def _mtime_below(path):
+        try:
+            return settle_s > 0 and (_time.time() - os.path.getmtime(path)) < settle_s
+        except OSError:
+            return True  # vanished mid-check: treat as unsettled
+
+    def snap():
+        return {p: os.path.getmtime(p) for p in sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))}
+
+    s1 = snap()
+    _time.sleep(0.5)
+    s2 = snap()
+    if not s1:
+        raise SystemExit(f"REFUSE: {domain} has no {domain}_*.jsonl shards to stamp")
+    changed = [k for k in set(s1) | set(s2) if s1.get(k) != s2.get(k)]
+    if changed:
+        raise SystemExit(f"REFUSE: {domain} shard set changed between two reads (mid-write): {os.path.basename(changed[0])}")
+    if not self_hold and settle_s > 0 and any(_mtime_below(p) for p in s2):
+        raise SystemExit(
+            f"REFUSE: some {domain} shard was modified within the settle window "
+            f"({settle_s}s) and no build holds the lock -- a writer may still be touching it"
+        )
+
+
+SETTLE_S = 60
+
+
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
     import sys as _sys
 
     _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
     from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
     from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    # Settle guard (tilerl T7-2, 2026-09-01): refuse a stamp over a dir a writer
+    # is still touching. Tonight's mid-write stamp (the U+2028 repair wrote tail
+    # shards 19 min after the stamp/its fingerprint) is exactly this class. The
+    # stamp's fingerprint must cover the SETTLED bytes, so compute it only after
+    # the dir passes: no live writer (flock, PID-based not pgrep-name), every
+    # shard's mtime older than the settle window, file set stable across two reads.
+    _settle_dir(out, domain, SETTLE_S)
 
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
@@ -564,6 +683,8 @@ def _parallel_exact_pass(a):
     import glob as _g
     import multiprocessing as mp
 
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)  # hold the build flock through the write; stamp refuses interference
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     if not paths:
         raise SystemExit(f"REFUSE: no w*_*.jsonl shards in {a.out}")
@@ -633,6 +754,304 @@ def _parallel_exact_pass(a):
     return 0
 
 
+def _word_shingle_hashes(normalised_text, shingle=3):
+    """Word-n-gram hashes of a normalised doc, distinct and order-stable. blake2b is
+    fixed-reproducible (independent of PYTHONHASHSEED), so serial and parallel workers
+    emit identical shingle sets and the rewrite is byte-identical. The near-dup
+    DECISION is exact Jaccard over THIS set (normalized word-3-gram, near_dedup_gate.md);
+    MinHash only generates candidates. () for docs under `shingle` words: nothing to dedup."""
+    words = normalised_text.split()
+    if len(words) < shingle:
+        return ()
+    seen, out = set(), []
+    for i in range(len(words) - shingle + 1):
+        h = int.from_bytes(
+            hashlib.blake2b(" ".join(words[i : i + shingle]).encode("utf-8"), digest_size=8).digest(), "little"
+        )
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return tuple(out)
+
+
+def _near_coeffs(perms, seed):
+    """(ab, mask): `perms` deterministic permutation coefficients (seed), the same
+    construction MinHashLSH uses. Fixed seed => identical signatures serial vs parallel."""
+    import random as _r  # noqa
+
+    rng = _r.Random(seed)
+    mask = (1 << 61) - 1
+    return [(rng.randrange(1, mask), rng.randrange(0, mask)) for _ in range(perms)], mask
+
+
+def _minhash(shingle_hashes, ab, mask):
+    """MinHash signature (MIN over each permutation of the shingle-hash set). Candidate
+    generator only; a signature asserts nothing about near-ness by itself."""
+    return tuple(min(((a * h + b) & mask) for h in shingle_hashes) for a, b in ab)
+
+
+def _norm_skeleton(t):
+    """Default post-pass normaliser: lowercase + collapse whitespace. The real
+    per-domain code/en_c4/math_owm normalisers (with 44's calibrated keyword stoplist
+    and LaTeX mapping) are injected per domain at run time; this keeps the core
+    engine testable and normaliser-agnostic while the domain constants are
+    calibration artifacts (bake the gate's margins)."""
+    return " ".join(t.lower().split())
+
+
+def _lsh_candidates(sigs, bands, rows):
+    """Candidate ordinal pairs from MinHash LSH: two docs sharing any band's full
+    row-tuple are candidates. False candidates cost compute only -- the exact-J
+    decision below filters them and never errs upward."""
+    rivals = set()
+    for b in range(bands):
+        table = {}
+        for o, sig in sigs.items():
+            table.setdefault(sig[b * rows : (b + 1) * rows], []).append(o)
+        for members in table.values():
+            if len(members) > 1:
+                members.sort()
+                for i in range(len(members)):
+                    for j in range(i + 1, len(members)):
+                        rivals.add((members[i], members[j]))
+    return rivals
+
+
+def _lsh_recall_bound(bands, rows, jac):
+    """MinHash LSH collision probability at Jaccard `jac`: 1-(1-jac**rows)**bands. The
+    THEORETICAL recall -- the acceptance basis at 8M-doc scale, where the 50-doc
+    hand-read (1225 pairs) cannot empirically cover recall (44 condition 1). epsilon =
+    1 - bound at the gate threshold is a second error term of the removed-fraction fact,
+    beside the Wilson CI (44 condition 1; a missed pair here survives as a near-dup)."""
+    return 1.0 - (1.0 - jac**rows) ** bands
+
+
+def _union_find(n):
+    """Disjoint-set over 0..n-1 with path-halving + rank union. Deterministic: cluster
+    assignment depends only on the unordered set of union() calls, so serial and
+    parallel runs compute identical survivors (kept = min ordinal per cluster)."""
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+
+    return find, union
+
+
+def _near_emit_slice(args):
+    """Phase A worker: (path, base, ab, mask, normaliser) -> list[(ordinal, sig)].
+    Ordinal = position among non-empty content lines in global shard order (identical
+    walk in the rewrite); sig = MinHash or None for docs too short to shingle (always
+    survive). The stamped input is already holdout- and exact-deduped, so near-dup is
+    the only axis. Module-level for mp.Pool pickling."""
+    path, base, ab, mask, norm = args
+    emit, ords = [], 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+            if not t:
+                continue
+            sh = _word_shingle_hashes(norm(t))
+            emit.append((base + ords, _minhash(sh, ab, mask) if sh else None))
+            ords += 1
+    return emit
+
+
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg):
+    """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
+    carry the near-dedup configuration and result: they are part of the artifact's
+    meaning, and the removed-fraction fact reads them off the stamp."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+    from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    _settle_dir(out, domain, SETTLE_S)
+    stats = {
+        "domain": domain, "reasons": dict(reasons), "kept": kept,
+        "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
+        "filters": "near-dedup-postpass", "n_shards": nshards,
+        "filters_fp": _fp_filters(),
+        "fingerprint": _fp_dir(out),
+        "near_dedup": True,
+        "removed_fraction": (removed_n / total_docs) if total_docs else 0.0,
+        "recall_bound": recall,
+        "recall_epsilon": 1.0 - recall,
+        "config": cfg,
+    }
+    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    if os.path.exists(tok_path):
+        try:
+            from tokenizers import Tokenizer  # noqa: I001 -- same nested-import shape as _write_stats:622
+
+            from count_tokens import CONVENTION, count_shards
+
+            shards = sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))
+            if shards:
+                n_sample = min(3, len(shards))
+                tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
+                stats["tokens"] = tokens
+                stats["tokens_status"] = "measured"
+                stats["tokens_config"] = f"{n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
+        except Exception as e:
+            stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+    else:
+        stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+    with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=1)
+
+
+def _near_dedup_postpass(a, normaliser=None, perms=128, bands=8, rows=16, jaccard=0.5, seed=17):
+    """Calibrated near-dedup post-pass (fb ruling 2026-08-31; 44 conditions 2026-09-01).
+    Runs AFTER the stage-2 run finished (never launch-parallel); rewrites the stamped
+    {domain}_*.jsonl in place (new corpus_fp, forces retokenize). Byte-identical to a
+    single-worker run of the same pipeline.
+
+    Fork C (memory-bounded): Phase A keeps only each doc's MinHash signature in memory
+    (1GB at 8M docs -- NOT the ~40GB of shingle sets), LSH yields candidate pairs, and
+    the exact normalized word-3-gram Jaccard DECISION is made by re-reading only the
+    candidate docs' source lines. Exact-J >= jaccard keeps the removed-fraction fact on
+    44's calibrated measure: MinHash/LSH is a candidate generator, never a decider."""
+    import multiprocessing as mp
+
+    if bands * rows != perms:
+        raise ValueError(f"bands*rows ({bands}x{rows}) != perms ({perms})")
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)
+    normaliser = normaliser or _norm_skeleton
+    ab, mask = _near_coeffs(perms, seed)
+
+    paths = sorted(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    if not paths:
+        raise SystemExit(f"REFUSE: no {a.domain}_*.jsonl shards to near-dedup in {a.out}")
+
+    doc_counts = []
+    for p in paths:
+        n = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+        doc_counts.append(n)
+    bases, acc = [], 0
+    for n in doc_counts:
+        bases.append(acc)
+        acc += n
+    total_docs = acc
+
+    with mp.Pool(a.workers) as pool:
+        phase_a = pool.map(_near_emit_slice, [(p, bases[i], ab, mask, normaliser) for i, p in enumerate(paths)])
+    sigs = {}
+    for emit in phase_a:
+        for o, sig in emit:
+            if sig is not None:
+                sigs[o] = sig
+
+    removed = set()
+    rivals = _lsh_candidates(sigs, bands, rows)
+    if rivals:
+        wanted = set()
+        for lo, hi in rivals:
+            wanted.add(lo)
+            wanted.add(hi)
+        import bisect
+
+        by_shard = {}
+        for o in wanted:
+            by_shard.setdefault(bisect.bisect_right(bases, o) - 1, set()).add(o)
+        shingle = {}
+        for i, p in enumerate(paths):
+            cur = by_shard.get(i)
+            if not cur:
+                continue
+            off = 0
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                    if bases[i] + off in cur and t:
+                        shingle[bases[i] + off] = _word_shingle_hashes(normaliser(t))
+                    if t:
+                        off += 1
+        find, union = _union_find(total_docs)
+        for lo, hi in rivals:
+            A = shingle.get(lo)
+            B = shingle.get(hi)
+            if not A or not B:
+                continue
+            sa, sb = set(A), set(B)
+            j = len(sa & sb) / len(sa | sb) if (sa | sb) else 0.0
+            if j >= jaccard:
+                union(lo, hi)
+        roots = {}
+        for o in sigs:
+            roots.setdefault(find(o), []).append(o)
+        for members in roots.values():
+            if len(members) > 1:
+                removed |= set(members) - {min(members)}
+
+    kept_flags = bytearray(b"\x01") * total_docs  # 8M flags ~8MB, not a set
+    for o in removed:
+        kept_flags[o] = 0
+
+    # rewrite survivors in global order into a staging dir, then move over originals.
+    nd = os.path.join(a.out, f".near_{a.domain}")
+    os.makedirs(nd, exist_ok=True)
+    w = ShardWriter(nd, a.domain)
+    kept = kept_chars = 0
+    for i, p in enumerate(paths):
+        ords = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                if not t:
+                    continue
+                if kept_flags[bases[i] + ords]:
+                    kept += 1
+                    kept_chars += len(t)
+                    w.write(json.loads(line))
+                ords += 1
+    w.close()
+    for p in paths:
+        os.remove(p)
+    for sp in sorted(glob.glob(f"{nd}/{a.domain}_*.jsonl")):
+        os.replace(sp, os.path.join(a.out, os.path.basename(sp)))
+    os.rmdir(nd)
+
+    removed_n = total_docs - kept
+    recall = _lsh_recall_bound(bands, rows, jaccard)
+    nshards = len(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    reasons = Counter({"kept": kept, "near_dup": removed_n})
+    _near_write_stats(
+        a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
+        {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
+    )
+    return 0
+
+
 def _ladder_frozen_domains():
     """Domain names any mix_scale_*.json freezes. Writing into one is a silent
     fingerprint break (2026-08-31: ten shards into data/corpus/code/); new corpus
@@ -664,29 +1083,16 @@ def _preflight(a):
         )
     if not a.dry and not os.path.isdir(out):
         raise SystemExit(f"REFUSE: output dir {out} does not exist; mkdir is the operator's step")
-    # (a) unique writer: another live session's build_corpus already holds this
-    # domain or output. Excluded by process group: the harness launches a job as
-    # its own session, so every process in MY job shares my pgid and is skipped;
-    # another job writing the same domain has a different pgid and is refused.
-    import subprocess as _sp
-
-    my_pgid = str(os.getpgrp())
-    try:
-        lines = _sp.check_output(["ps", "-eo", "pid=,pgid=,args="], text=True).splitlines()
-    except (OSError, _sp.CalledProcessError):
-        lines = []
-    for ln in lines:
-        parts = ln.split(None, 2)
-        if len(parts) != 3:
-            continue
-        pid, pgid, args = parts
-        if pgid == my_pgid:
-            continue  # this job's own processes
-        if "build_corpus.py" in args and (a.domain in args or out in args):
-            raise SystemExit(
-                f"REFUSE: another build_corpus is already writing {a.domain} "
-                f"(pid {pid}, pgid {pgid}):\n  {args[:120]}"
-            )
+    # (a) unique writer, PID-based (not pgrep-name): a live build records its PID in
+    # {out}/.build.lock. `_other_writer_pid` refuses only if a LIVE, OTHER process
+    # wrote it; our own (or a stale/crashed) lock is free. flock stays the write-time
+    # mutual exclusion; this probe deliberately does not re-flock (a same-process
+    # re-flock would conflict with the build's own held lock, Defect B).
+    who = _other_writer_pid(out)
+    if who is not None:
+        raise SystemExit(
+            f"REFUSE: another build is writing {a.domain} (live pid {who} holds {out}/.build.lock)"
+        )
     # (c) filter family matches the domain family
     CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
     if a.domain in CODE_DOMAINS and a.filters != "light":
@@ -780,32 +1186,70 @@ def _selftest_preflight():
         raise AssertionError("(c) code-family with web filters did not REFUSE")
     except SystemExit:
         ok += 1
-    # (a) a live other-session build_corpus naming a held domain -> REFUSE.
-    # Patch the `ps pid pgid args` probe to return a foreign pgid line (99999).
+    # (a) + T7-2: a FOREIGN live pid in the build lock -> REFUSE; our OWN lock -> PASS.
+    # tilerl-0a's rejection: the old case held the lock through THIS process, which
+    # the new PID probe must (correctly) NOT refuse -- the bug was testing a shape
+    # production does not take. A foreign live pid is the real duplicate-writer.
     import subprocess as _sp
 
-    real_ck = _sp.check_output
     src = tempfile.mkdtemp()
     marker = os.path.join(src, "held_domain")
     os.makedirs(marker)
-    with open(os.path.join(marker, "x.jsonl"), "w") as fh:
+    with open(os.path.join(marker, "x_000.jsonl"), "w") as fh:
         fh.write(json.dumps({"content": "x" * 500, "url": "u"}) + "\n")
-    try:
-        held = "held_domain"
-
-        def fake_ck(*a, **k):
-            s = f"12345 99999 python3 datagen/build_corpus.py --domain {held} --out x\n"
-            return s if k.get("text") else s.encode()
-
-        _sp.check_output = fake_ck
+    # A live process (+ a second we kill) for the writer states. tilerl-0a's
+    # call-shape-fidelity catch (2026-09-01): the previous selftest passed
+    # `settle_s=0`, which short-circuits the mtime-window branch (`settle_s > 0`)
+    # that this guard exists for. Production stamps with SETTLE_S=60, so every
+    # settle case here uses SETTLE_S; cases 3 and 4 (stale lock + fresh shard,
+    # no lock + fresh shard) are the two real shapes nothing covered before.
+    def _refuses(marker, tag):
         try:
-            _preflight(A(domain="held_domain", out=None, filters="light", dry=True,
+            _settle_dir(marker, "x", SETTLE_S)
+            raise AssertionError(f"{tag}: did not REFUSE")
+        except SystemExit:
+            return 1
+
+    sleeper = _sp.Popen(["sleep", "300"])  # a live process with a foreign pid
+    dead = _sp.Popen(["sleep", "300"])  # killed below: a stale pid, not foreign-live
+    dead_pid = str(dead.pid)
+    dead.kill()
+    dead.wait()
+    try:
+        # (a) foreign live pid in the lock -> preflight refuses (duplicate writer)
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleeper.pid))
+        try:
+            _preflight(A(domain="held_domain", out=marker, filters="light", dry=True,
                          source=[f"jsonl:{os.path.join(marker, 'x.jsonl')}"], global_only=False))
             raise AssertionError("(a) duplicate writer did not REFUSE")
         except SystemExit:
             ok += 1
+        # (1) our OWN held build lock -> settle must PASS: production stamps its own
+        #     fresh bytes, and the mtime window is skipped when the lock is ours.
+        os.remove(os.path.join(marker, ".build.lock"))
+        own = _build_lock(marker)  # we are the writer
+        _settle_dir(marker, "x", SETTLE_S)  # self lock must NOT refuse (PASS, case 1)
+        own.close()
+        # (2) foreign live pid in the lock -> settle refuses via the PID probe
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleeper.pid))
+        ok += _refuses(marker, "(2) foreign live writer")
+        # (3) stale lock (dead pid) + fresh shard -> settle REFUSES: the PID probe
+        #     sees no live writer, but the shard is fresh and no live build holds
+        #     the lock, so the mtime window must catch it (a crashed build).
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(dead_pid)
+        ok += _refuses(marker, "(3) stale lock over fresh shard")
+        # (4) NO lock + fresh shard -> settle REFUSES: the U+2028 repair's exact
+        #     shape -- a non-locking appender wrote shards 19 min after the stamp.
+        #     Settle must catch it via the mtime window; this is the guard's reason
+        #     to exist and needs settle_s > 0 to fire.
+        os.remove(os.path.join(marker, ".build.lock"))
+        ok += _refuses(marker, "(4) lockless writer over fresh shard")
     finally:
-        _sp.check_output = real_ck
+        sleeper.kill()
+        sleeper.wait()
         import shutil
         shutil.rmtree(src, ignore_errors=True)
     # (d) a source whose 1000-doc sample keeps 0 (all <100 chars under light) -> REFUSE
@@ -821,7 +1265,8 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
-    print(f"build_corpus preflight selftest OK: {ok}/4 gates refuse on their failing world")
+    # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
+    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle 2/3/4 + self-hold PASS)")
     return 0
 
 

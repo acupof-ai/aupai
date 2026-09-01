@@ -1,0 +1,25 @@
+{
+ "probe": "t58_quant_tax",
+ "shape": {
+  "M": 2048,
+  "K": 1024,
+  "N": 32784,
+  "chunks": 64
+ },
+ "statistic": "median of 3 interleaved blocks, cuda events, pre-declared",
+ "ms_per_step": {
+  "quant": 264.88934326171875,
+  "pre": 129.8176040649414,
+  "bf16": 205.32735443115234
+ },
+ "ms_per_chunk": {
+  "quant": 4.1388959884643555,
+  "pre": 2.0284000635147095,
+  "bf16": 3.2082399129867554
+ },
+ "quant_tax_ms": 135.07173919677734,
+ "fp8_gemm_ceiling_ms": 75.50975036621094,
+ "net_as_shipped_ms": -59.561988830566406,
+ "ab_regression_ms": 66.4,
+ "residual_ms": -68.67173919677734
+}

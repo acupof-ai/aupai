@@ -164,6 +164,119 @@ The no-cursor arm re-runs the same seed over rows the weights already read, so
 +0.0927 ± 0.1332 (df ≈ 14) is a same-seed non-determinism reading, not only a pass
 condition. It belongs in the σ_nondet fact with that df.
 
+## RUNBOOK: the save is dead code, so every checkpoint today has no cursor
+
+**Standing until the fix lands (de, verified 2026-09-01 11:20; fb confirmed by reading
+the same lines).** `save_checkpoint` writes no `row_cursor`. Not "stage 1 predated the
+field" -- the field has never been written by any run, including the one on the cards
+now.
+
+```
+train.py:1289   cfg = cfg if isinstance(cfg, dict) else vars(cfg)
+train.py:1315   cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
+train.py:1316   fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
+```
+
+1289 rebinds `cfg` to a dict on every path, so both ternaries take the `else None`
+branch and the whole `if cur:` block below them -- `row_cursor`,
+`row_cursor_as_of_step`, `row_cursor_srcfp`, `row_cursor_seed` -- never executes. Two
+things hide it: `getattr` on a dict never finds a data key even if the branch were
+reached, and `:1301` strips `_`-prefixed keys from `ck["cfg"]`, so the cursor is absent
+from the nested config too. Nothing raises.
+
+Evidence, from the pod rather than from reading:
+
+| checkpoint | top-level keys | `row_cursor` |
+|---|---|---|
+| `ckpt_pretrain_30b_s2.pt.step21500` (written by the live run) | cfg, vocab_id, corpus_fp, env_fp, step | **absent** |
+| `ckpt_pretrain_15b_s1.pt.step16000` | ..., row_cursor, row_cursor_srcfp, `row_cursor_reconstructed` | present |
+
+The stage-1 one has a cursor because `replay_cursor.py` injected it; the
+`row_cursor_reconstructed` marker is written by that tool, never by
+`save_checkpoint`.
+
+**If the container restarts before the fix lands (~15:55), do this before letting
+`--auto-resume` proceed** (fb's ruling; auto-resume stays armed, because repeating rows
+is recoverable and a dead supervisor is not):
+
+**Amended 2026-09-01, after the replay_cursor defect below: until BOTH fixes land, let
+auto-resume proceed WITHOUT a cursor and do not inject one.** A cursorless resume repeats
+rows, which is recoverable and is the status quo; injecting the cursor the tool produced
+today would skip ~2.2M rows of unread data, the de-7 failure mirrored. Printing without
+`--write` is safe. The numbered procedure below applies once the tool is fixed.
+
+1. Find the newest step checkpoint: `ls -t /work/aupai/ckpt_pretrain_30b_s2.pt.step*`
+2. Print the reconstruction first, without writing:
+   `python3 scripts/replay_cursor.py --ckpt <that file> --resumed-from-step 16000`
+   The mix comes from the checkpoint's own `cfg["mix"]` -- there is no `--mix` flag and
+   there should not be one: the run's mix is recorded in the artifact, so the tool
+   cannot be pointed at the wrong one. `--world 7` is the default and matches this run.
+   `--resumed-from-step` is REQUIRED whenever the checkpoint's step exceeds the plan's
+   span; the tool refuses rather than assuming an origin.
+3. Sanity-check the ratio. At or above 100% of the plan the step origin is wrong -- the
+   tool refuses there and prints both interpretations.
+4. Inject it: rerun with `--write`. The tool refuses a checkpoint that already carries a
+   cursor and refuses one with no `step`, both fail-closed.
+5. Confirm the checkpoint now carries `row_cursor` and `row_cursor_srcfp`, and record
+   the corpus `.srcfp` at reconstruction time in the exp row -- a corpus that changed
+   since the run started invalidates the reconstruction.
+6. Only then let the resume run.
+
+Skipping this repeats rows the weights have already seen while the tail goes unread:
+b0's measured shape is 26% of code_rp1t, 34% of en_c4, 92% of zh_web.
+
+**Stage 3 planning:** assume the stage-2 final checkpoint has no cursor and budget the
+reconstruction. A post-fix checkpoint written before stage 3 starts supersedes this;
+absent one, reconstruct.
+
+**Why the rehearsal did not catch it (P6).** The de-7 rehearsal exercised the
+reconstruction path -- `replay_cursor` writes the dict, the resume reads it -- which
+touches neither :1289 nor :1315. The test and the code agreed with each other and
+neither ran the production write. The fix ships with a test that calls
+`save_checkpoint` with each of the three `cfg` shapes (Cfg class, instance,
+SimpleNamespace) and asserts `row_cursor` is in the written file; it must be shown to
+fail on the current code before it counts.
+
+## replay_cursor read an absolute step against a relative plan
+
+**Found 2026-09-01 by running the runbook above against the live
+`ckpt_pretrain_30b_s2.pt.step22500` before publishing it.** The tool printed:
+
+```
+plan 3,662,109 rows, consumed 5,040,000 rows (137.6% of the plan)
+```
+
+A run cannot consume more of a plan than the plan holds, and the cursor it printed summed
+to exactly 3,662,109 -- the plan-complete counts, the figure the as-of-step rule exists to
+replace.
+
+`consumed_rows = steps_done * batch * accum * world` took `ck["step"]`, which is
+**absolute**, while the stage-2 plan covers only the **post-resume** steps:
+
+| quantity | rows | of the plan |
+|---|---|---|
+| stage-2 plan | 3,662,109 | 100% |
+| absolute step 22500 x 16x2x7 | 5,040,000 | 137.6% (what the tool used) |
+| (22500 - 16000) x 16x2x7 | 1,456,000 | 39.8% (the truth) |
+| (32348 - 16000) x 16x2x7 | 3,661,952 | 1.0000 -- confirms the plan is post-resume only |
+
+Because `consumed >= planned`, the `if consumed_rows < planned_rows` guard was false, the
+phase-walk that computes as-of-step counts never ran, and the function returned the
+plan-complete dict from its first loop. Silent, and it erred toward over-consumption:
+injecting it would have marked ~2.2M unread rows as already read.
+
+Invisible until now because **stage 1 started at step 0**, where absolute and relative are
+the same number and the guard takes its true branch. The reconstruction everyone validated
+exercised the one case in which the distinction does not exist -- the same shape as the
+dead cursor save.
+
+The resume origin is not in the checkpoint (`cfg` carries no plan/trim/resume/total key),
+so it is supplied by `--resumed-from-step`, required rather than defaulted: a tool that
+silently assumes an origin is how this happened. The durable half is the refusal --
+`consumed > planned` raises and prints both interpretations, because any future arithmetic
+error in this tool arrives as the same impossible ratio, and today that ratio printed and
+the tool carried on.
+
 ## Rehearsal before stage 2
 
 Two assertions, the second easy to forget:

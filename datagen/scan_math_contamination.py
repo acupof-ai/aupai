@@ -370,7 +370,7 @@ def report(name, n, empty, exact_hits, max_cont, num_flags, hit_rows, bytes_,
     print(f"exact-normalized hits: {len(exact_hits)}")
     for row, t in exact_hits[:5]:
         print(f"  row {row}: {t}")
-    print(f"hit rows (containment >= {threshold}, long holdouts): {hit_rows} "
+    print(f"hit rows (containment >= {threshold}, of {len(long_i)} long holdouts scored): {hit_rows} "
           f"= {per_gb:.1f}/GB = {per_mdoc:.1f}/M-docs")
     print(f"  (union holdouts hit at 0.7/0.8/0.9: "
           f"{sum(v >= 0.7 for v in long_vals)}/{sum(v >= 0.8 for v in long_vals)}/{sum(v >= 0.9 for v in long_vals)}"
@@ -502,10 +502,18 @@ def main():
         ap.error("--fpr-baseline is required: pass the same-scale in-training corpus "
                  "(e.g. the web_hq shards or data/corpus/math/gsm8k_zh_000.jsonl for math batches)")
     holdouts = load_holdouts(args.holdout)
-    if not holdouts:
-        sys.exit("no holdout files found; run datagen/holdout.py first or run from repo root")
+    # b0's burn (2026-09-01): an empty/short holdout set makes "0 hits" mean either
+    # "clean" or "nothing scored" -- the script reported the former honestly and the
+    # latter is what let 19/20 SFT questions leak. Assert it AND print the scored-set
+    # size beside every hit count, so a low number is never read as clean with no config.
+    assert len(holdouts) > 0, "holdout set is empty -- refusing a scan that would report 0 hits for no reason"
     idx = HoldoutIndex(holdouts)
     hhash = holdout_hash(holdouts)
+    print(f"HOLDOUT SET: {len(holdouts)} questions, hash {hhash}; "
+          f"{len(idx.long_cols)} long (>= {MIN_BIGRAMS} bigrams) scored in the main bucket, "
+          f"{len(idx.short)} short scored separately")
+    if not idx.long_cols:
+        sys.exit("REFUSE: no long holdouts (all < MIN_BIGRAMS); a main-bucket 0-hit verdict would be vacuous")
     paths = sorted(glob.glob(args.path)) if "*" in args.path else [args.path]
     base_paths = sorted(glob.glob(args.fpr_baseline)) if "*" in args.fpr_baseline else [args.fpr_baseline]
     baseline_id = ":".join(f"{p}:{os.stat(p).st_size}:{int(os.stat(p).st_mtime)}" for p in base_paths)
