@@ -997,6 +997,32 @@
    "boundary": "PROVENANCE. A ruling reached me citing a positional profile of 0.343 in the first eight tokens decaying to 0.078, attributed to me, alongside commits c3d1b3f and 72d70bd. I did not produce it; neither commit exists on any branch and no artifact backs it. fb verified independently and retracted. The bands above were fixed WITHOUT reference to those numbers so this is an independent measurement rather than a replication of an unbacked one -- and the shape agrees while the values do not, which is the outcome that makes the independence worth having.",
    "status": "measured",
    "refuted_by": "a bin-1 agreement above 0.55 on a larger sample, or a TF-to-bin1 drop smaller than the bin1-to-last decay on either set"
+  },
+  {
+   "id": "be.the_anchored_subsample_was_flattering_and_the_anchor_was_blind",
+   "claim": "whether anchored agreement on 19/100 generalises, and how much of the unanchored remainder was regex-invisible rather than code-free",
+   "value": "TWO ANSWERS, AND THE FIRST IS A DEFECT IN MY OWN INSTRUMENT. (1) THE 19% COVERAGE WAS A REGEX ARTIFACT, NOT A PROPERTY OF THE MODEL. My original anchor matched only a ```python fence or a line opening def/class/assignment. Widening it (indented continuations, import/from/return/print(, for/while/if, bare `=` lines, any fence) takes coverage from 19/100 to 69/100 -- FIFTY generations were producing code-shaped output my anchor could not see. Every statement I made about 'the 81% that did not reach code' was wrong about 50 of them. (2) THE SUBSAMPLE WAS FLATTERING, AS PRE-REGISTERED. Scoring the newly-anchored 50 SEPARATELY, never pooled: shift-aligned 0.2029 and LCS 0.2175, against the original 19's 0.2609 and 0.4524. Both land in the pre-registered 0.20-0.40 'roughly representative, drift stands' band on the shift statistic, but the LCS gap is large -- 0.4524 vs 0.2175, a factor of 2.1 -- so the original 19 were materially better-behaved and the 0.4524 I reported earlier does NOT generalise. Drift stands and is if anything understated. (3) THE REMAINING 31 ARE GENUINELY CODE-FREE, established by READING them rather than inferring: they are degenerate Chinese loops -- '求列表 [15, 3, 4, 23, 16] 中所有偶数的和为15, 所以,' repeated to the token limit, or '示例 1: 输入:a=50,b=11...' cycling. No code, not invisible code.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/coverage_anchor_prereg.md (f764839) before runs/coverage_anchor.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "old_coverage": 19,
+    "widened_coverage": 69,
+    "newly_caught": 50,
+    "still_missed": 31,
+    "orig19_shift": 0.2609,
+    "orig19_lcs": 0.4524,
+    "new50_shift": 0.2029,
+    "new50_lcs": 0.2175,
+    "prereg_weakens_band": ">=0.40",
+    "prereg_understated_band": "<=0.20",
+    "prereg_representative_band": "0.20-0.40"
+   },
+   "uncertainty": "The widened anchor is still a regex and could still be blind, though the 31 misses were read and are degenerate loops rather than unmatched code. LCS is capped at 120 tokens. The newly-anchored 50 and original 19 are reported separately and must not be averaged -- pooling would let the better-behaved fifth carry the mean, which is the defect this measurement exists to test.",
+   "boundary": "I PRE-REGISTERED THE WRONG EXPECTATION AND SAID SO IN ADVANCE, WHICH IS THE ONLY REASON IT IS LEGIBLE NOW. I wrote that I EXPECTED coverage to stay below 30% even widened, and that this would mean 'the model mostly does not emit code and the whole anchored line of work was a side quest'. Coverage went to 69%. So the expectation was wrong in the direction that would have demoted my own work -- and the real finding is the opposite: the model emits code-shaped output far more often than my instrument could see, and my instrument was the limit. A prediction recorded and then falsified is worth more than one never written down.",
+   "status": "measured",
+   "refuted_by": "an anchor wider still that lifts coverage materially above 69% and scores the newly caught above 0.40, which would mean the remainder is also regex-invisible rather than degenerate"
   }
  ]
 }
