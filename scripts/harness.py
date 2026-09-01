@@ -9675,8 +9675,10 @@ def main():
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
         timed = [n for n, s, *_ in res if s == TIMEOUT]
+        skipped = [n for n, s, *_ in res if s == SKIP]
     else:
         bad, warns, timed = [], [], []
+        skipped = []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -9698,6 +9700,12 @@ def main():
         # is not a check that passed, and the next consecutive timeout exits 1.
         print(f"\n{len(timed)} check(s) TIMED OUT and did not run: {', '.join(timed)} "
               f"-- a second consecutive timeout FAILs")
+    if skipped:
+        # 0 FAIL means nothing without the denominator. Same sha 2dfe207a: Mac printed
+        # 0 FAIL over 38 checks while the pod FAILed 9 -- the ones that skip here are
+        # where they live, and the last line a reader acts on never said so.
+        print(f"\n{len(bad)} FAIL of {len(res) - len(skipped)} run; {len(skipped)} did "
+              f"NOT run here: {', '.join(skipped)} -- green here is not green on the pod")
     if warns:
         print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
     return 0
