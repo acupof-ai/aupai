@@ -20,6 +20,7 @@ jobs:
       - run: python scripts/test_fewshot_demos.py
       - run: python scripts/test_fewshot_stop.py
       - run: python scripts/test_pod_ps_judge.py
+      - run: python scripts/test_attest_cases.py
       - run: python algorithms/test_rlvr_reward_suite.py
       - run: python scripts/eqcheck.py
       - run: python datagen/holdout.py

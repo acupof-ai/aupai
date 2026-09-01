@@ -675,7 +675,7 @@
   },
   {
    "id": "be.l1_3shot_rerun",
-   "value": "L1 3-shot on ckpt_p324, math-500, rerun 2026-08-31 after the original artifact was overwritten: exact-match 1/497 = 0.2%, answer-present 317/497 = 63.8%, degeneration 39/497 = 7.8% (whitespace 8-gram x3 on the last 300 chars). Binomial delta 6.3%, instrument-exists threshold 2*delta = 12.6%, so the reading is unchanged: INSTRUMENT DOES NOT EXIST on this axis. Replaces be.l1_3shot_retracted, and reproduces it: 0.2% vs 0.2%, 63.8% vs 63.6%. The 0.2pt gap on answer-present is one problem out of 497 and is within run-to-run variation of greedy decode; the accuracy is the same single correct answer. Degeneration is 7.8% against the retracted 8.9%, and the difference is the artifact rather than the model: the old file stored gen[-300:] and this one stores the full generation (max 1174 chars, all 497 rows over 300), so 7.8% is the same tail measurement on a file that also permits the full-text one. For the record, full-text degeneration on the same rows is 164/497 = 33.0% -- 4.2x the tail figure, which is the size of the window effect this metric has been carrying unmeasured.",
+   "value": "L1 3-shot on ckpt_p324, math-500, rerun 2026-08-31 after the original artifact was overwritten: exact-match 1/497 = 0.2%, answer-present 317/497 = 63.8%, degeneration 39/497 = 7.8% (whitespace 8-gram x3 on the last 300 chars). Binomial delta 6.3%, instrument-exists threshold 2*delta = 12.6%, so the reading is unchanged: INSTRUMENT DOES NOT EXIST on this axis. Replaces be.l1_3shot_retracted, and reproduces it: 0.2% vs 0.2%, 63.8% vs 63.6%. The 0.2pt gap on answer-present is one problem out of 497 and is within run-to-run variation of greedy decode; the accuracy is the same single correct answer. Degeneration is 7.8% against the retracted 8.9%, and the difference is the artifact rather than the model: the old file stored gen[-300:] and this one stores the full generation (max 1174 chars, all 497 rows over 300), so 7.8% is the same tail measurement on a file that also permits the full-text one. For the record, full-text degeneration on the same rows is 164/497 = 33.0% -- 4.2x the tail figure, which is the size of the window effect this metric has been carrying unmeasured. SUPERSEDED FOR EXTRACTION 2026-09-01 (be.l1_3shot_restated): scored with the last box of the whole generation, which in a continuation can be the model's answer to a problem it invented after finishing. Restated value is there; the verdict is unchanged.",
    "measured": "2026-08-31",
    "source": "eval/l1_fewshot.py --ckpt ckpt_p324.pt --demos 3 --run l1_rerun_0831, GPU 7 via harness launch; artifact data/eval/preds_l1_d3.l1_rerun_0831.jsonl (497 rows, full gen text). The launcher log lives only on the pod and is untracked, so it is not cited as a source path.",
    "config": {
@@ -722,7 +722,7 @@
   },
   {
    "id": "be.l1_3shot_15b",
-   "value": "L1 3-shot on the 15B stage-1 final, math-500, greedy: exact-match 13/497 = 2.6%, answer-present 370/497 = 74.4%. Binomial delta 6.3%, pre-registered instrument-exists threshold 2*delta = 12.6%. VERDICT UNCHANGED: the instrument does not exist on this axis. Both numbers moved against p324 (be.l1_3shot_rerun: 1/497 = 0.2%, present 63.8%) -- accuracy 13x and answer-present +10.6pt -- so the model is emitting answer-shaped output far more often and getting a few more right. That is a real movement in the right direction and it is not a capability reading: 2.6% is less than a quarter of the threshold, and the threshold is what the pre-registration says separates a usable instrument from noise. Degeneration 10/497 = 2.0% on the tail-300 window, 122/497 = 24.5% on the full text -- the same 4-12x window effect recorded in be.l1_3shot_rerun, measured here on a second checkpoint. STEP ATTRIBUTION, external: the file is a weights-only save whose `step` field is None, so it cannot self-report. It is believed to be step 16281 on the basis of its mtime (09-01 04:42 CST) against ckpt_pretrain_15b_s1.pt.step16000 (04:33) and the reported 15B readout carrying the same identity. The checkpoint does not assert this; step16000 is the last save that carries a step field, and it is the one stage 2 resumes from, so this number describes a model no later stage continues from.",
+   "value": "L1 3-shot on the 15B stage-1 final, math-500, greedy: exact-match 13/497 = 2.6%, answer-present 370/497 = 74.4%. Binomial delta 6.3%, pre-registered instrument-exists threshold 2*delta = 12.6%. VERDICT UNCHANGED: the instrument does not exist on this axis. Both numbers moved against p324 (be.l1_3shot_rerun: 1/497 = 0.2%, present 63.8%) -- accuracy 13x and answer-present +10.6pt -- so the model is emitting answer-shaped output far more often and getting a few more right. That is a real movement in the right direction and it is not a capability reading: 2.6% is less than a quarter of the threshold, and the threshold is what the pre-registration says separates a usable instrument from noise. Degeneration 10/497 = 2.0% on the tail-300 window, 122/497 = 24.5% on the full text -- the same 4-12x window effect recorded in be.l1_3shot_rerun, measured here on a second checkpoint. STEP ATTRIBUTION, external: the file is a weights-only save whose `step` field is None, so it cannot self-report. It is believed to be step 16281 on the basis of its mtime (09-01 04:42 CST) against ckpt_pretrain_15b_s1.pt.step16000 (04:33) and the reported 15B readout carrying the same identity. The checkpoint does not assert this; step16000 is the last save that carries a step field, and it is the one stage 2 resumes from, so this number describes a model no later stage continues from. SUPERSEDED FOR EXTRACTION 2026-09-01 (be.l1_3shot_restated): scored with the last box of the whole generation, which in a continuation can be the model's answer to a problem it invented after finishing. Restated value is there; the verdict is unchanged.",
    "measured": "2026-09-01",
    "source": "eval/l1_fewshot.py --ckpt ckpt_pretrain_15b_s1.pt --demos 3 --run l1_15b_final, GPU 7 via harness launch; artifact data/eval/preds_l1_d3.l1_15b_final.jsonl (497 rows, full gen text, max 1172 chars)",
    "config": {
@@ -739,6 +739,80 @@
    "uncertainty": "single greedy run; the step is an external attribution from mtime, not read from the checkpoint",
    "status": "measured",
    "artifact_sha256": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205"
+  },
+  {
+   "id": "be.l1_3shot_24k",
+   "value": "L1 3-shot on the 24k stage-2 checkpoint, math-500, greedy: exact-match 40/497 = 8.05%, answer-present 395/497 = 79.5%, both under the corrected extraction rule (a7f2f74: last \\boxed within the model's own turn, turn ends at the first 题目：). Under the old whole-generation rule the same artifact reads 25/497 = 5.03%, present 79.9%.\nThis is the highest L1 value measured and the first one that clears a shuffled control by a wide margin: on the 492 problems shared with the 8-demo arm, 200 label permutations give 2.40% (sd 0.68), so the arm sits +5.73pt out at z=8.42. A permutation control rather than a single shuffle because three seeds of one shuffle gave 2.8/2.4/3.6% and any one alone is a number that cannot be priced.\nVERDICT UNCHANGED: 2*delta = 12.6pt is the pre-registered instrument-exists threshold and 8.05% is below it, so the instrument still does not exist on this axis. Being clear of a random control and being a usable instrument are different claims and only the first one holds.\nDemo count has no measurable effect: the 8-demo arm reads 28/492 = 5.69% against this arm's 40/492 on the shared set, paired sign test over 38 discordant pairs p = 0.073. Direction favours 3 demos, significance does not arrive, no direction reported. The manipulation check is why: format rate 80.5% at 3 demos against 33.5% at 8, so more demos made the model LESS likely to emit the answer format at all and the two arms are not measuring the same thing (be.l1_8demo_format_collapse).",
+   "measured": "2026-09-01",
+   "source": "eval/l1_fewshot.py --demos 3 --run fewshot_24k on the pod; artifact data/eval/preds_l1_d3.fewshot_24k.jsonl (497 rows, full gen text); rescored and controlled with eval/compare_fewshot_arms.py",
+   "config": {
+    "demos": 3,
+    "n": 497,
+    "n_shared_with_8demo": 492,
+    "temperature": 0,
+    "max_new": 512,
+    "extraction": "last \\boxed within the model's turn; turn ends at the first 题目：",
+    "present_rule": "boxed or 答案是, within the turn",
+    "control": "200 label permutations, computed per arm on the shared problem set",
+    "threshold_2delta_pct": 12.6
+   },
+   "uncertainty": "single greedy run; the control's sd is 0.68pt, and the accuracy's own binomial delta is 6.3pt -- the control bounds chance, not run-to-run variation of the arm",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_l1_d3.fewshot_24k.jsonl": "2b876e603ea64dcf8ca56a883e6724499fad1e5edfc2ed4e08fcc1882905f580"
+   }
+  },
+  {
+   "id": "be.l1_8demo_format_collapse",
+   "value": "More demos suppress the answer format. L1 on the same 24k checkpoint, same 492 problems, greedy: format rate (a boxed answer or 答案是 inside the model's own turn) 80.5% at 3 demos, 33.5% at 8. Accuracy 8.13% and 5.69% on that shared set.\nReported as a finding rather than a defect of the 8-demo arm. The manipulation check belongs before the outcome measure, and here it fails at 8 demos: an accuracy comparison across the two arms carries the format collapse inside it, so the arms are not measuring the same quantity and the accuracy difference cannot be read as a demo-count effect on capability.\nDirection is opposite to the p324 dose-response recorded in be.l1_fewshot_p324 (math present rate 25.4/53.5/63.6% across 0/1/3 demos, monotone increasing). That curve was measured on a different checkpoint and stopped at 3 demos, so this is not a contradiction of it -- it is the first measurement past 3, and it goes the other way. The mechanism prediction in that entry (higher present-rate baseline, smaller demo gain) is consistent with a gain that becomes negative once the baseline is already near 80%, but that reading is a hypothesis and not what was tested here.",
+   "measured": "2026-09-01",
+   "source": "eval/compare_fewshot_arms.py over data/eval/preds_l1_d3.fewshot_24k.jsonl and data/eval/preds_l1_d8.fewshot8b_24k.jsonl on the pod",
+   "config": {
+    "demos_compared": [
+     3,
+     8
+    ],
+    "n_shared": 492,
+    "temperature": 0,
+    "max_new": 512,
+    "format_rule": "boxed or 答案是 inside the model's turn",
+    "paired_test": "sign test on discordant pairs, 38 pairs, p = 0.073",
+    "control": "200 label permutations per arm"
+   },
+   "uncertainty": "one run per arm; the 8-demo arm is the post-fix rerun -- the first 8-demo run is void because --demos sized nothing (the pool was hardcoded at 3), which beb3e74 fixed",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_l1_d3.fewshot_24k.jsonl": "2b876e603ea64dcf8ca56a883e6724499fad1e5edfc2ed4e08fcc1882905f580",
+    "preds_l1_d8.fewshot8b_24k.jsonl": "939d13d533d391666c56fa3a1f5f0b6e954238d620fee8e9a6470dccc2572658"
+   }
+  },
+  {
+   "id": "be.l1_3shot_restated",
+   "value": "L1 3-shot restated under the corrected extraction rule (a7f2f74). Every earlier L1 3-shot entry scored the LAST \\boxed of the whole generation. A few-shot continuation has no turn terminator, so 43.5% of generations open a new 题目 and solve it, and the last box is then the model's answer to a problem it invented. The rule is now: truncate at build_prompt's own example opener, then take the last box inside that turn. Rescored from the SAME artifacts, no model was run:\n  p324 (be.l1_3shot_rerun)  1/497 = 0.20% -> 0/497 = 0.00%, present 63.0% -> 61.8%\n  15B  (be.l1_3shot_15b)   13/497 = 2.62% -> 20/497 = 4.02%, present 73.6% -> 67.8%\n  24k  (be.l1_3shot_24k)   25/497 = 5.03% -> 40/497 = 8.05%, present 79.9% -> 79.5%\nThe correction is NOT uniformly upward, and that is the substance of it. p324's one correct answer was a fabricated problem's answer that happened to match the gold, so restated p324 is a true zero. The old rule was not a constant offset; its error depends on how far past its own answer each checkpoint keeps writing, which is a property of the checkpoint. Present rate falls at every point for the same reason: a box written after the model finished no longer counts as the model having answered.\nVERDICTS UNCHANGED. 2*delta = 12.6pt is the pre-registered threshold and 8.05% is the highest restated value, so the instrument does not exist on this axis at any measured point, and nothing decided on these numbers is revisited. What changes is that a future reader comparing a new L1 number against these compares like with like.\nThe superseded entries are kept and annotated, not edited (fb ruling 2026-09-01): the overturned judgement and the evidence that overturned it are the record together.\nARTIFACT NOTE: the p324 leg's file, preds_l1_d3.l1_rerun_0831.jsonl, has no attestation row -- it was written before eval_artifacts.attest existed. Its sha256 on the pod today is 517f8b893a69, recorded here as a live read and not as an attestation: nothing proves those are the bytes the original reading used. The p324 restated value (0/497) therefore rests on a file whose provenance is weaker than the other two legs'.",
+   "measured": "2026-09-01",
+   "source": "rescored from data/eval/preds_l1_d3.l1_rerun_0831.jsonl, preds_l1_d3.l1_15b_final.jsonl and preds_l1_d3.fewshot_24k.jsonl on the pod with eval/l1_fewshot.py's model_turn + score at a7f2f74",
+   "config": {
+    "demos": 3,
+    "n": 497,
+    "temperature": 0,
+    "max_new": 512,
+    "extraction": "last \\boxed within the model's turn; turn ends at the first 题目：",
+    "prior_extraction": "last \\boxed of the whole generation",
+    "present_rule": "boxed or 答案是, within the turn",
+    "threshold_2delta_pct": 12.6,
+    "restates": [
+     "be.l1_3shot_rerun",
+     "be.l1_3shot_15b",
+     "be.l1_3shot_24k"
+    ],
+    "unattested_leg": "preds_l1_d3.l1_rerun_0831.jsonl (predates attest)"
+   },
+   "uncertainty": "single greedy run per checkpoint, unchanged from the entries this restates; rescoring stored generations adds no run-to-run variance",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_l1_d3.fewshot_24k.jsonl": "2b876e603ea64dcf8ca56a883e6724499fad1e5edfc2ed4e08fcc1882905f580",
+    "preds_l1_d3.l1_15b_final.jsonl": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205"
+   }
   },
   {
    "id": "be.milestone_16b",

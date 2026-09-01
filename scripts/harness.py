@@ -385,7 +385,7 @@ def check_cited_artifacts_attested(root):
     # several no longer exist. Failing them is a red nobody can act on, which is the
     # same as no signal. New and re-measured facts carry the hash.
     contract_from = "2026-09-01"
-    cited, bad, legacy = 0, [], 0
+    cited, bad, legacy, unattestable = 0, [], 0, []
     for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
         try:
             obj = json.load(open(fp, encoding="utf-8"))
@@ -399,8 +399,23 @@ def check_cited_artifacts_attested(root):
                     legacy += 1
                     continue
                 cited += 1
-                sha = e.get("artifact_sha256") or ""
                 base = os.path.basename(path)
+                # artifact_sha256 is a string for a one-artifact fact and a
+                # {basename: sha} object for a fact that cites several. A single string
+                # could not express a restatement that rescores three artifacts at once,
+                # and the alternative -- splitting one measurement across three facts so
+                # the field fits -- would shape the record around the guard (de,
+                # 2026-09-01).
+                decl = e.get("artifact_sha256") or ""
+                sha = decl.get(base, "") if isinstance(decl, dict) else decl
+                # A fact measured after the contract may still cite an artifact written
+                # BEFORE it -- a restatement rescores old files. Those have no ledger row
+                # and never can. Declaring the leg in config.unattested_leg exempts it
+                # and COUNTS it, so the evidence says how much of the citation is
+                # unbacked; a date-inferred exemption would hide it (de, 2026-09-01).
+                if base in str(e.get("config", {}).get("unattested_leg", "")):
+                    unattestable.append(f"{e.get('id')}:{base}")
+                    continue
                 if not sha:
                     bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
                 elif (base, sha) not in attested:
@@ -418,8 +433,10 @@ def check_cited_artifacts_attested(root):
                       f"({legacy} predate the contract)")
     if bad:
         return FAIL, f"{len(bad)} of {cited} citation(s) unattested: {'; '.join(bad[:3])}"
+    ua = (f"; {len(unattestable)} leg(s) declared unattestable: {', '.join(sorted(unattestable)[:3])}"
+          if unattestable else "")
     return PASS, (f"{cited} artifact citation(s) since {contract_from}, every hash attested "
-                  f"by its writer ({legacy} legacy citations exempt)")
+                  f"by its writer ({legacy} legacy citations exempt){ua}")
 
 
 def _broken_cited_artifacts_attested():
