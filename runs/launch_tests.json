@@ -15,7 +15,7 @@
  "scripts/test_e2e.py": {
   "host": "iv-yeozpb5g5cbw80bls64e",
   "real_kernel": true,
-  "recorded": "2026-09-01 14:50",
+  "recorded": "2026-09-01 20:22",
   "result": "pass",
   "shape": {
    "d": 1024,
@@ -23,6 +23,6 @@
    "heads": 8,
    "layers": 32
   },
-  "test_sha256": "50d064eb7645f5d3c0e7b92f8103946e8e3b0fa7ccdcfb991fd1acf19a9104a5"
+  "test_sha256": "1d25095e2ec9f70506936d4c1aa75550f8941624cf2e655a0cb390be6dcad97a"
  }
 }
