@@ -896,6 +896,46 @@
    "boundary": "ONE OF MY OWN PRE-REGISTERED ROWS WAS VACUOUS AND I AM RECORDING IT RATHER THAN DROPPING IT. I committed 'gold sequence probability >= greedy's on >=30% of problems -> decoding failure by definition'. It measured 0.0 on both sets, and it can only ever measure 0.0: greedy_logprob is the sum of per-position MAXIMA and gold_logprob the sum of per-position gold values, so max >= gold holds at every position by construction and the row can fire only when top-1 == 1.0 exactly. It is an identity, not a measurement, and its 0.0 is not evidence of anything. Same class as the four vacuous tests in the 08-31 retro, committed inside a pre-registration written to prevent exactly that. What would have made it a real test: compare gold against the model's SAMPLED sequences, not against its argmax.",
    "status": "measured",
    "refuted_by": "a free-running measurement showing per-token top-1 agreement far below 0.727, which would mean teacher forcing carried the result; or a best-of-n / beam decode that still cannot reach gold, which would move the deficit back toward knowledge"
+  },
+  {
+   "id": "be.free_running_agreement_collapses_below_teacher_forced",
+   "claim": "how far per-token gold agreement falls when the model conditions on its own prefix",
+   "value": "IT COLLAPSES: teacher-forced 72.7% (code) / 68.8% (math) against free-running ~0.23 alignment-free. That lands in the pre-registered <=0.30 band, whose reading is that 'DECODING AND SEARCH' UNDERSTATES THE PROBLEM -- the model's own prefixes destroy the distribution, so compounding is self-reinforcing rather than merely multiplicative. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, rep_stop=False. THE HEADLINE NUMBER NEEDS ITS METHOD ATTACHED, because the first version of it was an artifact of my own alignment window: prefix-aligned agreement reads 0.0000 median (code greedy) and 0.0208 (math greedy), and a +-4 shift search barely moves it to 0.05. Widening the search shows why -- max_shift 4: 0.048, 16: 0.103, 64: 0.188, 150: 0.206, and alignment-free longest-common-subsequence ratio 0.2317 median / 0.2626 mean. So the true free-running agreement is ~0.23, not ~0.0, and the +-4 window I pre-registered was measuring desynchronisation for most of its range. THE CONCLUSION IS UNCHANGED because 0.23 is still deep inside the <=0.30 collapse band, but the 0.0 would have overstated it by an order of magnitude. FR/TF ratio is 0.23/0.727 = 0.32, i.e. free-running retains about a third of the teacher-forced per-token agreement. GOLD VS SAMPLED, the corrected form of the vacuous row: length-normalised gold log-prob beats 45.0% of sampled sequences on code and 52.8% on math, over 320 comparisons each. Against the pre-registered >=25% line that IS a real search failure -- the model assigns higher per-token probability to the gold than to roughly half of what it actually samples, yet does not produce it.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/free_running_prereg.md (caa10c7) before runs/free_running.json existed; probes/t68_free_running.py on GPU6; the shift-window sweep and LCS check run separately on GPU7 after the collapse looked too clean",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "prompts_per_set": 100,
+    "k": 8,
+    "max_new": 192,
+    "rep_stop": false,
+    "code_tf_top1": 0.7273,
+    "code_fr_naive_median": 0.0,
+    "code_fr_shift4_median": 0.05,
+    "math_tf_top1": 0.6875,
+    "math_fr_naive_median": 0.0208,
+    "math_fr_shift4_median": 0.0507,
+    "shift_sweep_code_greedy": {
+     "0": 0.0,
+     "4": 0.0483,
+     "16": 0.1026,
+     "64": 0.1883,
+     "150": 0.2059
+    },
+    "lcs_ratio_median": 0.2317,
+    "lcs_ratio_mean": 0.2626,
+    "fr_over_tf_using_lcs": 0.32,
+    "gold_beats_sampled_code": 0.45,
+    "gold_beats_sampled_math": 0.5281,
+    "gold_vs_sampled_n": 320,
+    "prereg_collapse_band": "<=0.30",
+    "prereg_holds_band": ">=0.60",
+    "prereg_search_failure_line": 0.25
+   },
+   "uncertainty": "The LCS ratio is capped at 120 tokens per side for cost and is a different statistic from per-token top-1, so 0.23-vs-0.727 is not a strict like-for-like ratio -- it is the closest alignment-free comparison available and it brackets the answer rather than pinning it. The shift sweep is on 40 code prompts, greedy only. The gold-vs-sampled fractions are length-normalised; without normalisation the comparison degenerates to 'shorter sequences win'.",
+   "boundary": "MY OWN PRE-REGISTERED SHIFT WINDOW WAS THE DEFECT, and I am recording it because the pre-registration named this exact confound and then under-provisioned for it. I wrote that a low naive number is ambiguous between wrong tokens and shifted tokens, and committed to reporting a shift-tolerant variant -- at +-4 tokens. The generations open with a preamble far longer than 4 tokens, so the shift-tolerant variant was almost as desynchronised as the naive one. Naming a confound in advance is not the same as sizing the instrument for it. The fix was to sweep the window and add an alignment-free statistic, which is what produced 0.23.",
+   "status": "measured",
+   "refuted_by": "a free-running measurement on aligned continuations -- prompts whose gold begins immediately with no preamble -- showing agreement near 0.6, which would mean the collapse is preamble structure rather than distribution drift"
   }
  ]
 }
