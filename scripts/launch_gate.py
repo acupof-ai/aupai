@@ -746,6 +746,30 @@ def selftest():
             bad.append(f"{name} still {st} after the defect was UNDONE ({why[:70]}) -- "
                        f"the world was failing on something other than its planted defect")
 
+    # WHERE a gate refuses, not only whether. All nine worlds above were green on a
+    # tree that had lost AUTHORITY: a gate answering from the wrong filesystem still
+    # refuses. It is a false-GO path -- main() suppresses GO only for gates AUTHORITY
+    # excludes here, so an empty mapping prints a full GO computed from main alone,
+    # where no corpus exists. This world is deliberately undamaged, so the assertion
+    # cannot be met by the absence the other worlds rely on (e1's case).
+    pod_gates = sorted(n for n, a in AUTHORITY.items() if a == "pod")
+    assert pod_gates, "no gate claims pod authority -- AUTHORITY is gone or empty"
+    d_ok, m_ok = broken["mix_file"]  # any shaped world; the mix is whole in it
+    for name, state, why in run(d_ok, m_ok, 7, here="main"):
+        if name in pod_gates:
+            if state != UNKNOWN:
+                bad.append(f"{name} answered {state} on main, where its evidence cannot "
+                           f"exist ({why[:60]}) -- a believable answer from the wrong "
+                           f"filesystem is worse than no answer")
+            elif "run it there" not in why:
+                bad.append(f"{name} returned UNKNOWN without naming where to run it: "
+                           f"{why[:70]}")
+    # and the converse, or the check above passes on a gate that says UNKNOWN always
+    for name, state, why in run(d_ok, m_ok, 7, here="pod"):
+        if name in pod_gates and state == UNKNOWN and "run it there" in why:
+            bad.append(f"{name} declined to answer on pod too -- it is not location-aware, "
+                       f"it is just always UNKNOWN")
+
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
     print(f"launch_gate selftest OK: {len(GATES)} gates, each FAILs on a damaged real artifact")
