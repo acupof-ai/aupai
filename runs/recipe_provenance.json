@@ -1,0 +1,13 @@
+{
+ "_schema": "recipe_provenance: one key per RECIPE_FLAG in scripts/launch_gate.py. The VALUE is where the number came from -- an experiments.jsonl run name, a committed probe artifact path, or a facts id. A flag whose value is UNSOURCED keeps launch-gate red. Written by e1 as an empty schema; the contents belong to fb and tilerl, because a provenance file asserting sources its author did not verify is the defect this gate exists to catch.",
+ "_filled_by": "fb + tilerl",
+ "_created": "2026-09-01 by e1 (schema only)",
+ "dim": "UNSOURCED",
+ "layers": "UNSOURCED",
+ "heads": "UNSOURCED",
+ "ffn_hidden": "UNSOURCED",
+ "batch": "UNSOURCED",
+ "accum": "UNSOURCED",
+ "lr_scale": "UNSOURCED",
+ "grad_ckpt": "UNSOURCED"
+}

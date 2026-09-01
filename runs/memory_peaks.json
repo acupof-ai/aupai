@@ -1,0 +1,5 @@
+{
+ "_schema": "memory_peaks: key is the WORLD SIZE as a string, value the measured peak. A world size absent here is not extrapolated -- launch-gate refuses. Two points and a straight line was nearly drawn four times on 2026-09-01.",
+ "_filled_by": "tilerl (world=7 measurement)",
+ "_created": "2026-09-01 by e1 (schema only)"
+}

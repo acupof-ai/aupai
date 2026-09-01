@@ -1,0 +1,7 @@
+{
+ "_schema": "card_assignment: launch_block_granted must be true AND note must say who granted it and when. This is the one gate that cannot be derived from a measurement -- card ownership is a decision, so it is recorded as one rather than inferred from nvidia-smi being idle.",
+ "_filled_by": "the controller",
+ "_created": "2026-09-01 by e1 (schema only)",
+ "launch_block_granted": false,
+ "note": "UNSOURCED -- no grant recorded"
+}
