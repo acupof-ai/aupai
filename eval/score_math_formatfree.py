@@ -72,6 +72,23 @@ def final_number(gen):
     return ns[-1] if ns else None
 
 
+def _constant_baseline(golds):
+    """(rate, value, n) for the best always-answer-X strategy over these golds.
+
+    Same rule as eval/compare_fewshot_arms.constant_baseline. Duplicated rather than
+    imported: that module is a two-arm comparison driver whose import would pull its
+    argparse and file layout into every scorer run. The rule is three lines and the
+    selftest pins it; the import would be the larger coupling.
+    """
+    from collections import Counter
+
+    c = Counter(g for g in golds if g is not None)
+    if not c:
+        return None, None, 0
+    val, k = c.most_common(1)[0]
+    return k / len(golds), val, len(golds)
+
+
 def _eq(a, b):
     if a is None or b is None:
         return False
@@ -126,6 +143,26 @@ def score_file(path, seed=0):
     ctrl_rate, _ = _rate(ctrl)
     out["all"] = {"rate": round(all_rate, 4), "n": all_n}
     out["shuffled_control"] = {"rate": round(ctrl_rate, 4), "n": all_n}
+    # THE SECOND CONTROL, and on this set it is the binding one (44's ruling,
+    # 2026-09-01). The shuffle rules out an extractor matching at random. It does not
+    # rule out what actually happens: math answers are small integers, the model emits
+    # small integers, and a model that learned only the ANSWER DISTRIBUTION beats a
+    # shuffle without solving anything. On math_test_500 always answering "2" scores
+    # 9.78%, while the three L1 arms scored 8.13% / 5.69% / 0.2% -- all below it, and
+    # the 8.13% was reported as a first real signal on the strength of z=8.42 against
+    # the shuffle alone. Above shuffle was true; above chance was not.
+    #
+    # The decision line is max(shuffle, constant), never the friendlier of the two, and
+    # both are printed: they answer different questions and the weaker one is not wrong,
+    # only not binding.
+    const_rate, const_val, _ = _constant_baseline(golds)
+    if const_rate is not None:
+        out["constant_baseline"] = {"rate": round(const_rate, 4), "answer": const_val,
+                                    "n": all_n}
+        out["decision_line"] = {"rate": round(max(const_rate, ctrl_rate), 4),
+                                "from": "constant" if const_rate >= ctrl_rate else "shuffle"}
+        if all_rate <= max(const_rate, ctrl_rate):
+            out["at_or_below_decision_line"] = True
     if has_flag:
         g = _rate(hit, lambda r: r.get("greedy") is True)
         s = _rate(hit, lambda r: r.get("greedy") is False)
@@ -210,8 +247,37 @@ def selftest():
             f"range, which is exactly the coincidence this control exists to expose: {_pk}")
         assert _pk["delta_pt"] == 0.0, f"a 100%% pass@k over chance is not a reading: {_pk}"
 
+    # The constant baseline, and the case that matters is the one where it BINDS while
+    # the shuffle does not. Golds skewed to one value, generations that always answer
+    # that value: the shuffle is also high here, so the discriminating construction is
+    # a rate that clears the shuffle and not the constant guess -- which is exactly the
+    # 8.13%-vs-9.78% shape that was reported as a signal (44's ruling, 2026-09-01).
+    r, v, n = _constant_baseline(["2", "2", "2", "3", "5"])
+    assert (round(r, 3), v, n) == (0.6, "2", 5), (r, v, n)
+    assert _constant_baseline([])[0] is None, "no golds is not a 0% baseline"
+    assert _constant_baseline([None, None])[0] is None, "all-None is not a 0% baseline"
+
+    with _tf.TemporaryDirectory() as _d:
+        _p = os.path.join(_d, "skew.jsonl")
+        with open(_p, "w", encoding="utf-8") as f:
+            # 10 rows: gold is 2 on eight of them. The model answers 2 every time, so it
+            # is right on those eight -- 80%, far above a shuffle, and EXACTLY the
+            # constant guess. Nothing was solved.
+            for g in ["2"] * 8 + ["7", "9"]:
+                f.write(json.dumps({"q": f"q{g}{f.tell()}", "gold": g,
+                                    "gen": "the answer is 2"}) + "\n")
+        _rec, _err = score_file(_p)
+        assert _err is None, _err
+        cb = _rec["constant_baseline"]
+        assert cb["answer"] == "2" and round(cb["rate"], 2) == 0.8, cb
+        assert _rec["decision_line"]["from"] == "constant", (
+            f"the constant guess is the binding control here, not the shuffle: {_rec}")
+        assert _rec.get("at_or_below_decision_line") is True, (
+            f"answering the modal gold every time must not read as a signal: {_rec}")
+
     print("selftest OK: parses, prefers the last number, scores unformatted answers, "
-          "rejects number soup, and controls pass@k at its own aggregation")
+          "rejects number soup, controls pass@k at its own aggregation, and takes the "
+          "decision line as max(shuffle, constant guess)")
     return 0
 
 
