@@ -7781,12 +7781,28 @@ def _run_alive(run):
         return True  # unknown: prefer waiting over mislabelling
 
 
-MILESTONE_TOKENS = {"3.24b": 3.24e9, "8b": 8e9, "15b": 15e9, "16b": 16e9, "30b": 30e9}
+MILESTONE_TOKENS = {"3.24b": 3.24e9, "8b": 8e9, "15b": 15e9, "16b": 16e9,
+                    "22b": 22e9, "30b": 30e9}
+#: Longest-first so "3.24b" wins over a shorter token that prefixes it; built FROM the
+#: dict rather than hand-written beside it, because the hand-written copy is the defect:
+#: adding 22b to the dict alone leaves the parser blind to it.
+#:
+#: Anchored on `.milestone_<tok>_`, the ONE name _pin_milestone writes. The previous
+#: pattern was `_(tok)(?:_|[.\-])` anywhere in the name, which matches the RUN name:
+#: ckpt_pretrain_30b_s2.pt.step21000 parsed as "30b" and would have recorded a 19.3B
+#: checkpoint under the 30B milestone's budget. Same class as the step-3000-labelled-3.24b
+#: incident, one level up -- the milestone is a property of the pin, not of the run's name.
+_MILESTONE_RE = re.compile(
+    r"\.milestone_(" + "|".join(re.escape(t) for t in sorted(MILESTONE_TOKENS, key=len, reverse=True))
+    + r")(?:_|\.)")
 
 
 def _milestone_token(name):
-    """The milestone token budget encoded in a checkpoint name, or None."""
-    m = re.search(r"_(3\.24b|8b|15b|16b|30b)(?:_|[.\-])", name)
+    """The milestone this checkpoint IS, read from its pin name, or None.
+
+    None is the fail-closed answer: the caller then requires --tokens rather than
+    inferring a budget from a substring of the run name."""
+    m = _MILESTONE_RE.search(name)
     return m.group(1) if m else None
 
 
