@@ -1023,6 +1023,51 @@
    "boundary": "I PRE-REGISTERED THE WRONG EXPECTATION AND SAID SO IN ADVANCE, WHICH IS THE ONLY REASON IT IS LEGIBLE NOW. I wrote that I EXPECTED coverage to stay below 30% even widened, and that this would mean 'the model mostly does not emit code and the whole anchored line of work was a side quest'. Coverage went to 69%. So the expectation was wrong in the direction that would have demoted my own work -- and the real finding is the opposite: the model emits code-shaped output far more often than my instrument could see, and my instrument was the limit. A prediction recorded and then falsified is worth more than one never written down.",
    "status": "measured",
    "refuted_by": "an anchor wider still that lifts coverage materially above 69% and scores the newly caught above 0.40, which would mean the remainder is also regex-invisible rather than degenerate"
+  },
+  {
+   "id": "be.bin1_cannot_separate_loops_from_attempts",
+   "claim": "whether the immediate-loss finding survives restricting to generations that actually reach code",
+   "value": "THE CONCLUSION SURVIVES AND MY STATED PREMISE FOR IT WAS WRONG. Bin-1 agreement, shift-aligned, three populations scored separately and never pooled: anchored 69 -> 0.25, newly caught 50 -> 0.25, UNANCHORED 31 (the degenerate loops) -> 0.25, original 19 -> 0.125. I pre-registered the arithmetic that 0.250 over all 100 with 31 near-zero loop contributors implies ~0.36 over the remaining 69. Measured: 0.25, not 0.36 -- because THE LOOPS DO NOT SCORE NEAR ZERO AT BIN 1. They score 0.25, identically. MECHANISM FOR THAT, which is the finding: a degenerate loop repeats phrasing lifted from the prompt, and the gold's opening tokens overlap that phrasing, so a loop matches gold early BY COINCIDENCE and then diverges. Bin 1 therefore cannot distinguish 'model tracking gold' from 'model echoing the prompt', and no bin-1 comparison between these populations carries information. THE IMMEDIATE-LOSS CLAIM ITSELF STILL HOLDS on real attempts: on the anchored 69, TF 0.727 -> bin1 0.25 is a drop of 0.477 against a bin1-to-last decay of 0.250, satisfying the pre-registered clause that the initial drop exceed the subsequent decay. The original 19 show a non-monotone 0.125 -> 0.4375 -> 0.101 that on n=19 is not read as structure.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_anchored_prereg.md (a083205) before runs/positional_anchored.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "shift_aligned_to": 150,
+    "anchored69_bins": {
+     "1-8": 0.25,
+     "9-16": 0.25,
+     "17-32": 0.0625,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "new50_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "unanchored31_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "orig19_bins": {
+     "1-8": 0.125,
+     "9-16": 0.4375,
+     "17-32": 0.101,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "tf_top1": 0.7273,
+    "anchored69_tf_to_bin1": 0.477,
+    "anchored69_bin1_to_last": 0.25,
+    "prereg_predicted_bin1_if_loops_were_zero": 0.36
+   },
+   "uncertainty": "Populations are 69/50/31/19, so the smaller ones carry wide intervals and the original 19's non-monotone shape is not interpreted. Bins remain non-independent: after divergence every later bin is scored on an already-off trajectory, so only bin 1 is comparable to the teacher-forced figure. The coincidental-overlap mechanism is inferred from the loop text read earlier plus the identical bin-1 values; it is not separately measured.",
+   "boundary": "A PRE-REGISTERED PREDICTION FAILED AND THE FAILURE IS THE RESULT. I wrote the ~0.36 arithmetic in advance specifically so no measured value could be presented as unsurprising. It came back 0.25, which falsified the assumption inside the prediction -- that degenerate loops score near zero -- rather than the conclusion the prediction was defending. Without the arithmetic written down, 0.25 would have read as bland confirmation and the loop-echo mechanism would not have been noticed at all. This is the third instrument of mine to be the limit today, after the +-4 shift window and the anchor regex.",
+   "status": "measured",
+   "refuted_by": "a bin-1 measurement on prompts whose gold shares no opening tokens with the prompt text, where loops and attempts should separate if the coincidental-overlap mechanism is right"
   }
  ]
 }
