@@ -384,6 +384,36 @@ def gate_checks_and_drift(root, mix_path, world):
 
 # The nine, in the order they are reported. A gate added here is automatically
 # covered by --selftest's broken-world requirement (see selftest below).
+# WHERE EACH GATE'S TRUTH LIVES.
+#
+# A gate's conclusion depends on which filesystem it ran on, and until now that
+# fact was absent from the conclusion. Same class as everything else today, with
+# the location standing in for the configuration: on main, `corpora` always reports
+# missing dirs (a dev tree holds no corpus) while on the pod it reported the real
+# defect; `checks_and_drift` read 0 FAIL on main and 11 FAIL on the pod at the same
+# instant. Both were true of where they ran and neither was the answer.
+#
+# My own 4c1e002 caused half of this: "read only from main, refuse GO elsewhere" is
+# right for code and wrong for data, because it excludes the ONE place the data
+# questions can be answered.
+#
+#   MAIN  code/config: the launch is cut from main, so main's state is the launch's
+#   POD   data/machine: corpora and token caches exist nowhere else
+#   BOTH  the same gate means DIFFERENT things in each place and needs both readings
+AUTHORITY = {
+    "mix_file": "main", "recipe_provenance": "main", "vocab_id": "main",
+    "arch_tests": "main", "cards": "main",
+    "corpora": "pod", "epochs_measured": "pod",
+    "checks_and_drift": "both",
+}
+
+
+def _here():
+    """pod or main-side. The pod is the box that holds the corpus; a dev worktree
+    is not, and neither is the integration tree."""
+    return "pod" if os.path.isdir("/work/aupai") and os.path.abspath(ROOT).startswith("/work/") else "main"
+
+
 GATES = [
     ("mix_file", gate_mix_file),
     ("epochs_measured", gate_epochs_measured),
@@ -397,13 +427,28 @@ GATES = [
 ]
 
 
-def run(root, mix_path, world):
+def run(root, mix_path, world, here=None):
+    """Each gate runs only where its answer means something.
+
+    A gate asked in the wrong place returns UNKNOWN naming the right place --
+    NOT a NO-GO and not a GO. Both of those get believed, and a believable answer
+    from a filesystem that cannot hold the evidence is worse than no answer.
+    """
+    here = here or _here()
     rows = []
     for name, fn in GATES:
+        auth = AUTHORITY.get(name, "main")
+        if auth not in (here, "both"):
+            rows.append((name, UNKNOWN,
+                         f"not readable here ({here}); this gate's evidence lives on "
+                         f"{auth} -- run it there"))
+            continue
         try:
             state, why = fn(root, mix_path, world)
         except Exception as e:  # a gate that crashes is NOT a pass
             state, why = NOGO, f"the gate itself raised: {type(e).__name__}: {e}"
+        if auth == "both":
+            why = f"[{here}] {why}"
         rows.append((name, state, why))
     return rows
 
@@ -417,10 +462,16 @@ def main():
     if a.selftest:
         sys.exit(selftest())
 
-    root, note = _launch_root(ROOT)
-    rows = run(root, a.mix, a.world)
-    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}")
-    print(f"             {note}\n")
+    here = _here()
+    root, note = (ROOT, f"running on the pod ({ROOT})") if here == "pod" else _launch_root(ROOT)
+    rows = run(root, a.mix, a.world, here)
+    elsewhere = sorted(n for n, _ in GATES if AUTHORITY.get(n, "main") not in (here, "both"))
+    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}  here={here}")
+    print(f"             {note}")
+    if elsewhere:
+        print(f"             {len(elsewhere)} gate(s) answerable only elsewhere: "
+              f"{', '.join(elsewhere)}")
+    print()
     for name, state, why in rows:
         print(f"  [{state:^7}] {name:<20} {why}")
     blocking = [r for r in rows if r[1] != GO]
@@ -432,6 +483,12 @@ def main():
         return 1
     if note.startswith("WARNING"):
         print("REFUSING to print GO: " + note)
+        return 1
+    if elsewhere:
+        # A GO computed where half the gates could not run is the exact failure fb
+        # caught: two locations each reporting a believable half of the world.
+        print(f"REFUSING to print GO: {len(elsewhere)} gate(s) could not be read here "
+              f"({', '.join(elsewhere)}). A full GO requires a main run AND a pod run.")
         return 1
     print(f"GO: all {len(rows)} gates computed GO from artifacts.")
     print("     This is not a proof the run is safe -- it is a proof that these nine")
@@ -688,6 +745,30 @@ def selftest():
         if st != GO:
             bad.append(f"{name} still {st} after the defect was UNDONE ({why[:70]}) -- "
                        f"the world was failing on something other than its planted defect")
+
+    # WHERE a gate refuses, not only whether. All nine worlds above were green on a
+    # tree that had lost AUTHORITY: a gate answering from the wrong filesystem still
+    # refuses. It is a false-GO path -- main() suppresses GO only for gates AUTHORITY
+    # excludes here, so an empty mapping prints a full GO computed from main alone,
+    # where no corpus exists. This world is deliberately undamaged, so the assertion
+    # cannot be met by the absence the other worlds rely on (e1's case).
+    pod_gates = sorted(n for n, a in AUTHORITY.items() if a == "pod")
+    assert pod_gates, "no gate claims pod authority -- AUTHORITY is gone or empty"
+    d_ok, m_ok = broken["mix_file"]  # any shaped world; the mix is whole in it
+    for name, state, why in run(d_ok, m_ok, 7, here="main"):
+        if name in pod_gates:
+            if state != UNKNOWN:
+                bad.append(f"{name} answered {state} on main, where its evidence cannot "
+                           f"exist ({why[:60]}) -- a believable answer from the wrong "
+                           f"filesystem is worse than no answer")
+            elif "run it there" not in why:
+                bad.append(f"{name} returned UNKNOWN without naming where to run it: "
+                           f"{why[:70]}")
+    # and the converse, or the check above passes on a gate that says UNKNOWN always
+    for name, state, why in run(d_ok, m_ok, 7, here="pod"):
+        if name in pod_gates and state == UNKNOWN and "run it there" in why:
+            bad.append(f"{name} declined to answer on pod too -- it is not location-aware, "
+                       f"it is just always UNKNOWN")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
