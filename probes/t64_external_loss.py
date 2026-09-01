@@ -58,19 +58,36 @@ def unseen_texts(root, limit_chars=400_000):
     return keep
 
 
-def corpus_texts(root, n_docs=400):
+def corpus_texts(root, mix_path, n_docs=400):
     """Text the model has certainly SEEN -- the control that separates
-    unseenness from domain shift."""
+    unseenness from domain shift.
+
+    Reads the TRAINING MIX's domains, not data/corpus/*.jsonl. The first version
+    of this probe globbed loose jsonl at the top of data/corpus/, which is
+    scratch and staging -- none of it is a domain in mix_30b_stage2.json, so the
+    "seen" control was not seen and the arm measured unseen-vs-unseen. The gap it
+    produced was real arithmetic on the wrong contrast; see t58 for the same
+    shape. Every domain here is named in the mix the checkpoint trained on.
+    """
+    mix = json.load(open(mix_path, encoding="utf-8"))
+    per = max(1, n_docs // max(1, len(mix["domains"])))
     out = []
-    for p in sorted(glob.glob(os.path.join(root, "data", "corpus", "*.jsonl")))[:6]:
-        for line in open(p, encoding="utf-8"):
+    for name in mix["domains"]:
+        d = os.path.join(root, "data", "corpus", name)
+        files = sorted(glob.glob(os.path.join(d, "*.jsonl")))
+        if not files:
+            print(f"  seen-control: {name} has no shards under {d} -- SKIPPED", flush=True)
+            continue
+        got = 0
+        for line in open(files[0], encoding="utf-8"):
             if not line.strip():
                 continue
             t = (json.loads(line).get("content") or "").strip()
             if len(t) > 400:
                 out.append(t)
-            if len(out) >= n_docs:
-                return out
+                got += 1
+            if got >= per:
+                break
     return out
 
 
@@ -78,6 +95,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--out", default=os.path.join(ROOT, "runs", "external_loss.json"))
+    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_30b_stage2.json"))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     a = ap.parse_args()
@@ -94,7 +112,7 @@ def main():
     tok = load_tokenizer(a.tokenizer, cfg)
 
     unseen = unseen_texts(ROOT)
-    seen = corpus_texts(ROOT)
+    seen = corpus_texts(ROOT, a.mix)
 
     # Pre-registered gate: a candidate matching the corpus is DISCARDED, not
     # explained away. Exact-key match against the seen sample.
@@ -115,6 +133,7 @@ def main():
         "unseen_docs": len(kept),
         "unseen_docs_dropped_by_dedup": dropped,
         "seen_docs": len(seen),
+        "seen_source": f"training-mix domains from {os.path.basename(a.mix)}",
     }
 
     with torch.no_grad():
