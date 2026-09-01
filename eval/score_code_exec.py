@@ -169,6 +169,10 @@ def score_file(path, oracles, demo_codes=(), seed=0, timeout=10, limit=None):
         "n_rows": n,
         "extraction_rate": round(extracted / n, 4),
         "oracle_matched": matched,
+        # Stated, because a pass rate over a subset reads like a pass rate over the set.
+        # If matched < n_rows the headline denominator is the matched count, and the
+        # gap is a key-matching failure that no accuracy number can express.
+        "unscorable_rows": n - matched,
     }
     if not extracted or not matched:
         rec["note"] = ("nothing to execute: extraction_rate "
@@ -186,22 +190,42 @@ def score_file(path, oracles, demo_codes=(), seed=0, timeout=10, limit=None):
     except RuntimeError as e:
         return None, f"sandbox unavailable ({e}); run this on the pod, do not score 0"
 
+    # Rows whose question is not in the oracle map cannot be scored, and they are NOT
+    # zeros -- scoring them would measure the key match, not the model. They were worse
+    # than zeros: `oracles.get(q)` returns None, `_norm(None) == _norm("")`, so any span
+    # that ran cleanly and printed nothing MATCHED its absent oracle and counted as a
+    # PASS. Measured end to end on the pod: 4 rows, 2 with oracles and 1 genuinely
+    # correct, and score_file returned 0.75 where the truth is 0.25 (Codex found the
+    # mechanism, de confirmed it by running it, 2026-09-01).
+    #
+    # The denominator has to move with the numerator. Reporting hits over n_rows while
+    # scoring only matched rows would understate by the unmatched fraction, which is the
+    # same defect facing the other way.
+    keep = [i for i, e in enumerate(exps) if e is not None]
+    spans = [spans[i] for i in keep]
+    exps = [exps[i] for i in keep]
+    n_scored = len(keep)
+
     hits = [runs_to(s, e, timeout) for s, e in zip(spans, exps, strict=True)]
-    rec["pass_rate"] = {"rate": round(sum(hits) / n, 4), "n": n}
+    rec["pass_rate"] = {"rate": round(sum(hits) / n_scored, 4), "n": n_scored,
+                        "of_rows": n}
 
     # control 1: each span against another problem's oracle, same aggregation
     sh = [e for e in exps]
     random.Random(seed).shuffle(sh)
     ctrl = sum(runs_to(s, e, timeout) for s, e in zip(spans, sh, strict=True))
-    rec["shuffled_control"] = {"rate": round(ctrl / n, 4), "n": n}
+    rec["shuffled_control"] = {"rate": round(ctrl / n_scored, 4), "n": n_scored}
 
     # control 2: what pure demo-copying scores. Not covered by control 1 -- a copied
     # span is a real span, and shuffling oracles does not ask where a span came from.
     if demo_codes:
         best = 0
         for dc in demo_codes:
-            best = max(best, sum(runs_to(dc, e, timeout) for e in exps if e is not None))
-        rec["copyist_control"] = {"rate": round(best / n, 4), "n": n,
+            best = max(best, sum(runs_to(dc, e, timeout) for e in exps))
+        # n_scored, not n: a control divided by a larger denominator than the rate it
+        # floors is a control biased downward, which is the direction that makes a
+        # result look better than it is.
+        rec["copyist_control"] = {"rate": round(best / n_scored, 4), "n": n_scored,
                                   "n_demo_solutions": len(demo_codes)}
 
     floor = max(rec["shuffled_control"]["rate"], rec.get("copyist_control", {}).get("rate", 0.0))
@@ -225,6 +249,53 @@ def selftest():
     # syntax error anywhere in a span shortens it rather than dropping to ''
     g2 = "def bad(:\n    pass\nprint(3)"
     assert longest_parseable(g2) == "print(3)", repr(longest_parseable(g2))
+
+    # An ABSENT oracle must never be satisfiable. `oracles.get(q)` returns None for a
+    # question the map does not hold, and `_norm(None) == _norm("")`, so any span that
+    # ran cleanly and printed nothing MATCHED its missing oracle and scored as a pass.
+    # Measured end to end on the pod before the fix: 4 rows, 2 with oracles and 1
+    # genuinely correct, score_file returned pass_rate 0.75 against a truth of 0.25.
+    # A 500-row file whose keys mostly miss would have read as high capability.
+    # (Codex found the mechanism, de confirmed it by running it, 2026-09-01.)
+    #
+    # This runs WITHOUT the sandbox, deliberately: it is a comparison-logic defect, and
+    # putting it behind the root check would have left it untested on every dev box.
+    assert _norm(None) == [], _norm(None)
+    assert _norm(None) == _norm(""), "the equality that made an absent oracle matchable"
+
+    # ...and the same case through score_file itself, which is what actually had to
+    # change. A stub executor stands in for the sandbox HERE and only here: the defect
+    # is in which rows enter the denominator, not in how code runs, and the stub keeps
+    # the case out of the root-gated half where it would go untested on every dev box.
+    import tempfile
+
+    _real = sys.modules.get("datagen.sandbox_exec")
+    stub = type(sys)("datagen.sandbox_exec")
+    stub.run_sandboxed = lambda code, timeout=10: (
+        (0, "1\n", "") if code == "print(1)" else          # score_file's own probe
+        (0, "7\n", "") if "print(7)" in code else
+        (0, "999\n", "") if "print(999)" in code else (0, "", ""))
+    sys.modules["datagen.sandbox_exec"] = stub
+    try:
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "preds.jsonl")
+        with open(p, "w", encoding="utf-8") as fh:
+            for q, gen in (("k1", "print(7)"), ("k2", "print(999)"),
+                           ("MISS-a", "x = 1"), ("MISS-b", "y = 2")):
+                fh.write(json.dumps({"q": q, "gen": gen}) + "\n")
+        rec, err = score_file(p, {"k1": "7", "k2": "7"}, timeout=1)
+        assert err is None, err
+        assert rec["oracle_matched"] == 2 and rec["unscorable_rows"] == 2, rec
+        assert rec["pass_rate"] == {"rate": 0.5, "n": 2, "of_rows": 4}, (
+            f"1 of the 2 scorable rows is correct, so 0.5 over n=2. Got {rec['pass_rate']} "
+            f"-- 0.75 over n=4 is the pre-fix answer, counting two silent unmatched rows "
+            f"as passes")
+        assert rec["shuffled_control"]["n"] == 2, "the control shares the rate's denominator"
+    finally:
+        if _real is not None:
+            sys.modules["datagen.sandbox_exec"] = _real
+        else:
+            sys.modules.pop("datagen.sandbox_exec", None)
 
     # the judge: right code passes, wrong code and a syntax error do not. Same three
     # cases code_zh.selfcheck uses, because a scorer without a known-answer pair is
