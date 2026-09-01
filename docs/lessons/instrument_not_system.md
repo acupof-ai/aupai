@@ -49,8 +49,14 @@ trace it ran on was **captured with `FP8_HEAD=1`** — 181 `aten::_scaled_mm` pe
 step inside a Liger FLCE region, and only `patch_liger_flce_fp8` puts them there.
 Splitting each kernel by whether its launch is contained in a Liger region: 156.9
 of the 250.6 ms is head work that does not run live, and the four quantisation ops
-are **92.9% head**. The live tax in that group is ~12 ms, not 165.7. The
-mechanism claim survived; the scope claim did not.
+are **92.5% head** (153.24 of 165.68 ms). The live tax in that group is 12.4 ms,
+not 165.7. The mechanism claim survived; the scope claim did not.
+
+I first published that share as **92.9%**, and two peers quoted it verbatim
+before b0's `doc_numbers_check` recomputed it from my own per-owner table. A
+rounded figure typed beside the numbers it summarises, in the very entry arguing
+that summaries rot. **Recomputing is cheap enough that there is no case for
+asserting a derived number you did not just re-derive.**
 
 The fact **never mentioned `FP8_HEAD`**. Nothing in its text was flag-dependent —
 the flag was in the capture conditions of a 415 MB file nobody re-reads. A check
