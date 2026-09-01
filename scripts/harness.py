@@ -7401,10 +7401,31 @@ while True:
                 grew = True
                 break
     if not grew and time.time() - last_grow > silent_limit:
-        subprocess.run([sys.executable, exp_py, "done", "--name", name,
-            "--result", "log silent", "--finding", f"monitor: no growth in {{silent_limit}}s",
-            "--decision", "check the process", "--status", "fail"], capture_output=True)
-        break
+        # The process is ALIVE -- the liveness probe above would have broken out of the
+        # loop otherwise. So silence is not death: score_matrix --profile milestone is
+        # silent for long stretches inside a generative eval, and this branch used to
+        # write status=fail on two runs that then produced complete score records and
+        # readouts 22 and 54 minutes LATER (ms_..._15b_s1.pt.step16000,
+        # ms_..._30b_s2.pt.step17500; de-8 D6). The fail row outlived the incident and
+        # the ledger has disagreed with its own artifacts since.
+        #
+        # A monitor that cannot see the process must not overwrite the verdict the
+        # process will produce itself. Warn into the run's own log -- the file the
+        # operator is already tailing -- and say the observation is a PROXY: log bytes,
+        # not process state. Appending to the log rather than the ledger is deliberate:
+        # exp.py has no note verb, and inventing a row state for "suspicious" would put a
+        # third value in a field every reader folds on.
+        try:
+            with open(log, "a", encoding="utf-8") as lf:
+                lf.write(
+                    f"\\n[monitor {{time.strftime('%H:%M:%S')}}] no log growth in {{silent_limit}}s, "
+                    f"but pid {{pid}} is ALIVE -- stalled_suspected, NOT failed. Liveness here is "
+                    f"inferred from LOG BYTES, not from the process; a generative eval is silent "
+                    f"by construction. Leaving the row open: the run decides its own verdict.\\n"
+                )
+        except OSError:
+            pass
+        last_grow = time.time()  # re-arm: one note per silent window, not one per minute
 '''
     monitor_proc = subprocess.Popen(
         [sys.executable, "-c", monitor_code],
