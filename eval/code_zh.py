@@ -108,6 +108,14 @@ def main():
              "vs 24.7%% for base 0-shot) is produced by greedy decoding rather than by the model.")
     parser.add_argument("--selfcheck", action="store_true",
                         help="known-answer round-trip, no model")
+    parser.add_argument("--no_rep_stop", action="store_true",
+        help="disable the repetition stop. It halts a generation when a whitespace 8-gram "
+             "repeats 3x -- which IS the degenerate case -- so under greedy it fires on most "
+             "generations and the recorded text is a TRUNCATED PREFIX. Every degeneration rate "
+             "on record was measured over that truncation (e1, 2026-09-01). Required for the "
+             "sampled arm: left on, it fires at different rates in the greedy and sampled arms "
+             "and confounds the treatment with a decode-time intervention "
+             "(docs/lessons/sampled_arm_prereg.md).")
     parser.add_argument("--force", action="store_true",
         help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
     parser.add_argument("--run", default=None,
@@ -162,12 +170,13 @@ def main():
                 # k=1 keeps the single-sample semantics (--temperature samples); k>1
                 # makes pass@1 the greedy answer and temperature only the k draws.
                 greedy = generate_batch(model, prompts, args.max_new, args.device,
-                                        0.0 if k > 1 else temp, None, tokenizer=tok)
+                                        0.0 if k > 1 else temp, None, tokenizer=tok,
+                                        rep_stop=not args.no_rep_stop)
                 sampled = []
                 if k > 1:
                     rep = [p for p in prompts for _ in range(k)]
                     sampled = generate_batch(model, rep, args.max_new, args.device, temp, None,
-                                             tokenizer=tok)
+                                             tokenizer=tok, rep_stop=not args.no_rep_stop)
             for i, r in enumerate(batch):
                 gens = [tok.decode(greedy[i])]
                 if k > 1:

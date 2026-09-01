@@ -59,6 +59,14 @@ def main():
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="sampling temperature; 0 = greedy")
+    parser.add_argument("--no_rep_stop", action="store_true",
+        help="disable the repetition stop. It halts a generation when a whitespace 8-gram "
+             "repeats 3x -- which IS the degenerate case -- so under greedy it fires on most "
+             "generations and the recorded text is a TRUNCATED PREFIX. Every degeneration rate "
+             "on record was measured over that truncation (e1, 2026-09-01). Required for the "
+             "sampled arm: left on, it fires at different rates in the greedy and sampled arms "
+             "and confounds the treatment with a decode-time intervention "
+             "(docs/lessons/sampled_arm_prereg.md).")
     parser.add_argument("--force", action="store_true",
         help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
     parser.add_argument("--run", default=None,
@@ -97,7 +105,7 @@ def main():
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
                 out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals,
-                                     tokenizer=tok)
+                                     tokenizer=tok, rep_stop=not args.no_rep_stop)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
