@@ -104,13 +104,13 @@ def cmd_post(a):
     known = {r["topic"] for r in rows()}
     if a.topic not in known and a.kind != "open":
         sys.exit(f"no topic '{a.topic}'. open it first, or: {', '.join(sorted(known)) or '(none)'}")
-    append({"ts": time.strftime("%Y-%m-%d %H:%M"), "who": a.who or whoami(),
+    append({"ts": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "who": a.who or whoami(),
             "topic": a.topic, "kind": a.kind, "text": a.text, "artifact": a.artifact or ""})
     print(f"{a.topic} <- {a.kind} by {a.who or whoami()}")
 
 
 def cmd_open(a):
-    append({"ts": time.strftime("%Y-%m-%d %H:%M"), "who": a.who or whoami(),
+    append({"ts": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "who": a.who or whoami(),
             "topic": a.topic, "kind": "open", "text": a.question,
             "artifact": "", "owner": a.owner})
     print(f"opened {a.topic} (owner {a.owner})")

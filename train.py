@@ -2202,7 +2202,7 @@ def main():
             # The file's own mtime, for the message below: whether a missing cursor is
             # an old format or a live write bug turns on when the file was written, and
             # nothing inside the checkpoint records that.
-            _pre_written = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(args.resume)))
+            _pre_written = time.strftime("%Y-%m-%d", time.gmtime(os.path.getmtime(args.resume)))
         except (OSError, RuntimeError, TypeError) as e:
             if is_main:
                 print(f"resume: could not pre-read the row cursor ({e}); every domain "

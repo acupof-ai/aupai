@@ -62,7 +62,7 @@ def write(rs):
 
 
 def now():
-    return time.strftime("%Y-%m-%d %H:%M")
+    return time.strftime("%Y-%m-%d %H:%M", time.gmtime())
 
 
 def git_commit():
