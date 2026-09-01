@@ -868,6 +868,34 @@
    "boundary": "Measures probability assigned to a FIXED gold string. A model could assign rising probability to one correct phrasing while remaining unable to produce any correct answer, and this metric cannot tell the difference. It is evidence about the model's distribution, not about its output. Also: the golds are fixed files identical across checkpoints, so the standard BPB failure -- shorter golds falling for the wrong reason -- cannot occur here, and was checked rather than assumed.",
    "status": "measured",
    "refuted_by": "a re-run at another seed or another gold set showing the code curve non-monotone by more than the total fall, or a same-tokenizer ladder where BPB is flat within 0.02 bits/byte"
+  },
+  {
+   "id": "be.gold_is_ranked_high_but_not_reachable_by_greedy",
+   "claim": "whether the rising gold probability is reachable, i.e. decoding deficit or knowledge deficit",
+   "value": "THE GOLD IS RANKED HIGH AND GREEDY STILL DOES NOT PRODUCE IT, which lands in the pre-registered DECODING-AND-SEARCH band -- but read the two boundaries below before acting on it, because one of my own falsification rows turned out to be vacuous. Measured on ckpt_pretrain_30b_s2.pt.step24000, 200 pairs per set, teacher-forced, rep_stop irrelevant (no generation). CODE-500: gold token in the model's top-1 at a median 72.7% of positions (p10 0.592, p90 0.796), top-10 90.7%, top-100 95.9%, median gold length 36 tokens. MATH-500: top-1 69.3% (p10 0.614, p90 0.758), top-10 90.6%, top-100 97.8%, median gold length 184.5 tokens. Ties barely matter -- the pessimistic rank (ties counted against the gold) is 0.7209 and 0.6889, within 0.005 of the optimistic one -- so the distribution is genuinely peaked and not flat. AGAINST THE PRE-REGISTERED TABLE: top-1 >= 0.50 puts both sets in the decoding band and well clear of the <= 0.15 knowledge band. The model ranks roughly 7 of every 10 gold tokens first, and 9 of 10 in its top 10, while generative code_500 scores 0.0. WHAT THIS MEANS PRACTICALLY: the per-token distribution is close to correct and the SEQUENCE is not, which is the signature of error compounding -- at 72.7% per-token top-1 accuracy, a 36-token gold has probability 0.727^36 ~ 1e-5 of being produced greedily even if every position were independent. That arithmetic, not a knowledge gap, is sufficient to explain a 0.0 generative score. It also explains why math (184.5-token golds) is worse off than code despite nearly identical per-token ranks: length is the multiplier.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/gold_reachability_prereg.md (38dcde7) before runs/gold_reachability.json existed; probes/t66_gold_reachability.py on GPU6",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "pairs_per_set": 200,
+    "teacher_forced": true,
+    "code_top1_median": 0.7273,
+    "code_top1_pess_median": 0.7209,
+    "code_top10_median": 0.907,
+    "code_top100_median": 0.9592,
+    "code_median_gold_tokens": 36,
+    "math_top1_median": 0.6932,
+    "math_top1_pess_median": 0.6889,
+    "math_top10_median": 0.9059,
+    "math_top100_median": 0.9784,
+    "math_median_gold_tokens": 184.5,
+    "prereg_decoding_band": ">=0.50",
+    "prereg_knowledge_band": "<=0.15"
+   },
+   "uncertainty": "TEACHER FORCING IS THE LIMIT AND IT BIASES TOWARD THIS CONCLUSION. Every gold position is scored given a CORRECT prefix the model would not have produced, so this measures 'can it continue a correct answer', which is strictly easier than 'can it produce one'. The 72.7% is therefore an UPPER bound on free-running per-token accuracy, and the decoding-deficit reading is the one the method favours. Pre-registered as a confound before the run, not discovered after. A free-running comparison is the missing measurement and I did not run it.",
+   "boundary": "ONE OF MY OWN PRE-REGISTERED ROWS WAS VACUOUS AND I AM RECORDING IT RATHER THAN DROPPING IT. I committed 'gold sequence probability >= greedy's on >=30% of problems -> decoding failure by definition'. It measured 0.0 on both sets, and it can only ever measure 0.0: greedy_logprob is the sum of per-position MAXIMA and gold_logprob the sum of per-position gold values, so max >= gold holds at every position by construction and the row can fire only when top-1 == 1.0 exactly. It is an identity, not a measurement, and its 0.0 is not evidence of anything. Same class as the four vacuous tests in the 08-31 retro, committed inside a pre-registration written to prevent exactly that. What would have made it a real test: compare gold against the model's SAMPLED sequences, not against its argmax.",
+   "status": "measured",
+   "refuted_by": "a free-running measurement showing per-token top-1 agreement far below 0.727, which would mean teacher forcing carried the result; or a best-of-n / beam decode that still cannot reach gold, which would move the deficit back toward knowledge"
   }
  ]
 }
