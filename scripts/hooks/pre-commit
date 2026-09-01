@@ -170,6 +170,7 @@ def main():
         "probes/t62_corpus_dup_rate.py", "probes/t63_cross_domain_dup.py",
         "probes/t64_val_head_overlap.py",
         "scripts/eval_artifacts.py", "scripts/pod_drift.py",
+        "eval/compare_fewshot_arms.py",
     }
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
