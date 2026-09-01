@@ -18,7 +18,8 @@ import argparse
 import ast
 import functools
 import glob
-import hashlib
+import importlib.machinery
+import importlib.util
 import inspect
 import json
 import os
@@ -1768,50 +1769,79 @@ def check_spawned_scripts_exist(root):
     # warming caches for the launch gate. Presence and importability are different properties
     # and the same commit broke both.
     #
-    # -c "import ..." rather than --help: --help exits before some scripts finish importing,
-    # and a check that passes because it stopped early is the shape this file keeps finding.
-    # Concurrently: each import costs ~2.5s of interpreter startup plus torch, and six
-    # of them serially is 15s against this check's 5s budget. It timed out seven runs in
-    # a row and blocked every commit in the repo, reporting "has not actually run since"
-    # -- a red that carried no information and could not be cleared by fixing anything.
+    # RESOLVED, NOT EXECUTED. Executing the module body cost 9s and timed out eight runs in
+    # a row, blocking every commit in the repo while reporting "has not actually run since"
+    # -- a red carrying no information that no fix could clear. Threading it did not help:
+    # the cost is not interpreter startup but one import, fla.ops.kda, at 6.07s of 7.6s
+    # (torch itself is 0.92s), and three of those contend rather than overlap.
+    #
+    # So each top-level import is resolved with find_spec under the sys.path the script
+    # itself builds -- honouring its own inserts, or `import harness` from datagen/ reads as
+    # broken when it is not. 0.008s for all three, and verified to still FAIL on a
+    # reconstructed c3a47e8 tree (harness.py in scripts/, the file in datagen/, only ROOT
+    # inserted). KNOWN CEILING, stated rather than hidden: this catches an import that
+    # cannot be FOUND, not one that raises while executing. A module that imports fine and
+    # then throws in its body passes here -- covering that needs the 9s, and a check nobody
+    # can afford to run is worth less than a fast one that says what it covers.
     def _import_check(item):
         rel, why = item
         full = os.path.join(root, rel)
-        r = subprocess.run(
-            [sys.executable, "-c",
-             "import importlib.util,sys;"
-             f"spec=importlib.util.spec_from_file_location('m',{full!r});"
-             "m=importlib.util.module_from_spec(spec);"
-             "sys.argv=['m','--help'];"
-             "spec.loader.exec_module(m)"],
-            capture_output=True, text=True, cwd=root, timeout=120,
-        )
-        err = r.stderr or ""
-        if "ModuleNotFoundError" in err or "ImportError" in err:
-            return f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})"
-        return None
+        try:
+            tree = ast.parse(open(full, encoding="utf-8").read())
+        except (OSError, SyntaxError) as e:
+            return f"{rel}: {type(e).__name__} {e} ({why})"
+        HERE, ROOT_ = os.path.dirname(os.path.abspath(full)), root
+        extra = []
+        mods = []
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "insert" and len(n.args) > 1
+                    and getattr(getattr(n.func.value, "value", None), "id", "") == "sys"):
+                try:
+                    extra.append(eval(compile(ast.Expression(n.args[1]), "<p>", "eval"),
+                                      {"os": os, "ROOT": ROOT_, "HERE": HERE}))
+                except Exception:
+                    pass  # a computed path we cannot evaluate: skip, do not guess
+            elif isinstance(n, ast.Import):
+                mods += [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+                mods.append(n.module)
+        # PathFinder against explicit paths, NOT find_spec. find_spec consults
+        # sys.modules first, and harness.py has already imported the very modules it is
+        # testing -- so it returned "resolvable" on a reconstructed c3a47e8 tree with
+        # sys.path emptied. Replacing sys.path did not help for the same reason. The
+        # finder takes the search path as an argument and ignores both sys.path and the
+        # import cache, which is the only way to ask "could THAT script find this".
+        #
+        # Third-party and stdlib names are skipped rather than resolved: PathFinder over
+        # the script's own dirs says False for `json` too, and reporting the stdlib as
+        # missing would be a check that fails on every correct file.
+        search = [HERE] + [e for e in extra if isinstance(e, str)]
+        # Names the REPO owns, found anywhere in it -- not names the script can already
+        # reach. Scanning only the search path inverts the test: harness.py lives in
+        # scripts/, which the broken c3a47e8 script never adds, so it looked like a
+        # third-party module and was skipped. The check then passed on the one tree it
+        # exists for. What makes a name ours is that the file is in the repo; whether
+        # this script can reach it is the question, not the filter.
+        repo_names = set()
+        for d in ("", "scripts", "datagen", "eval", "probes", "algorithms"):
+            dd = os.path.join(root, d)
+            if os.path.isdir(dd):
+                repo_names |= {os.path.splitext(f)[0] for f in os.listdir(dd)
+                               if f.endswith(".py")}
+        bad = []
+        for m in sorted(set(mods)):
+            top = m.split(".")[0]
+            # Only names this repo could own. A missing third-party dep is a different
+            # problem and not what this check is for.
+            if top not in repo_names:
+                continue
+            if importlib.machinery.PathFinder.find_spec(top, search) is None:
+                bad.append(top)
+        return f"{rel}: cannot resolve {', '.join(bad)} ({why})" if bad else None
 
-    import concurrent.futures as _cf
     py = [(rel, why) for rel, why in _SPAWNED_SCRIPTS if rel.endswith(".py")]
-    # Cached on the six files' bytes. Importing torch six times is real work, not waste,
-    # so making it faster only moves the timeout; making it not repeat removes it. Stated
-    # ceiling: a break caused by editing something these six IMPORT is not seen until one
-    # of the six changes -- the incident this guards (c3a47e8 moved the files) does change
-    # them, and `harness check --fresh` forces the pass.
-    key = hashlib.sha256()
-    for rel, _ in py:
-        p = os.path.join(root, rel)
-        key.update(rel.encode())
-        key.update(open(p, "rb").read() if os.path.exists(p) else b"")
-    stamp = os.path.join(root, "runs", ".spawned_import_ok")
-    if not os.environ.get("HARNESS_FRESH") and os.path.exists(stamp) \
-            and open(stamp, encoding="utf-8").read().strip() == key.hexdigest():
-        return PASS, f"all {len(_SPAWNED_SCRIPTS)} present; imports unchanged since the last pass"
-    with _cf.ThreadPoolExecutor(max_workers=max(1, len(py))) as ex:
-        broken = [b for b in ex.map(_import_check, py) if b]
-    if not broken:
-        os.makedirs(os.path.dirname(stamp), exist_ok=True)
-        open(stamp, "w", encoding="utf-8").write(key.hexdigest())
+    broken = [b for b in (_import_check(i) for i in py) if b]
     if broken:
         return FAIL, (
             f"{len(broken)} spawned script(s) present but not importable: "
