@@ -5729,6 +5729,65 @@ def _selftest_attest_written_path():
     print("  attest: records the written path, not the requested one")
 
 
+def _selftest_check_timeout_skips():
+    """A slow check must SKIP naming its deadline, not kill the harness.
+
+    signal.alarm() with no handler runs SIG_DFL, which terminates: the
+    `except TimeoutError -> SKIP` in run_checks was dead code and a slow check exited
+    -14/142 with empty stdout and stderr. The hook then refused the commit with no
+    check named and told the reader to rerun by hand, where it passes -- the
+    --no-verify training P8 exists to prevent. It refused the commit carrying the
+    e1-4 review of itself (2026-09-01).
+
+    Tests the PROPERTY -- run_checks turns an overrun into a named SKIP -- not the
+    mechanism. My first version asserted a handler was installed at import time,
+    which was true only of my own fix; de's is scoped to run_checks and restores the
+    previous handler, which is better, and the test failed on the better code. A test
+    that encodes one implementation rejects its replacement."""
+    slow_name = "__selftest_slow__"
+
+    def slow(_root):
+        time.sleep(3)
+        return PASS, "should never be reached"
+
+    saved_checks = list(CHECKS)
+    saved_to = _CHECK_TIMEOUTS.get(slow_name)
+    CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
+                   slow, lambda: _tmp_repo()))
+    _CHECK_TIMEOUTS[slow_name] = 1
+    try:
+        # Time the SLOW CHECK, not the whole run: run_checks executes all 51, so a
+        # wall-clock assertion over the run measures the suite and fails on a healthy
+        # machine. The check under test sleeps 3s and must be cut off at 1s.
+        marks = []
+        real_sleep = time.sleep
+
+        def timed_slow(_root):
+            t = time.time()
+            try:
+                real_sleep(3)
+            finally:
+                marks.append(time.time() - t)
+            return PASS, "should never be reached"
+
+        CHECKS[-1] = (slow_name, "a check that overruns", "the harness dying with no name",
+                      timed_slow, lambda: _tmp_repo())
+        results = run_checks(ROOT, quiet=True)
+        row = [r for r in results if r[0] == slow_name]
+        assert row, f"{slow_name} produced no result -- the run died"
+        _, state, evidence, _, _ = row[0]
+        assert state == SKIP, f"an overrunning check must SKIP, got {state}: {evidence}"
+        assert "timed out" in evidence, f"the SKIP must name the deadline: {evidence}"
+        assert marks and marks[0] < 2.5, f"the alarm did not interrupt the check ({marks}s)"
+    finally:
+        CHECKS[:] = saved_checks
+        if saved_to is None:
+            _CHECK_TIMEOUTS.pop(slow_name, None)
+        else:
+            _CHECK_TIMEOUTS[slow_name] = saved_to
+    print("  check timeout: an overrunning check SKIPs and names its deadline; the run survives")
+
+
 def _selftest_exp_fold():
     """The ledger is an event log: a close clears its start, and a stray later start
     does not reopen a closed run.
@@ -6350,6 +6409,7 @@ def _demo():
     _selftest_devs_map()
     _selftest_gpu_descendants()
     _selftest_exp_fold()
+    _selftest_check_timeout_skips()
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_reverted_content()
