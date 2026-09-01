@@ -1286,6 +1286,18 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     is rebuilt in place. `cfg` may be a Cfg class, a namespace or a dict; the private keys are
     stripped here rather than at each call site."""
     assert vocab_id, f"refusing to write {path} with no vocab_id: it could never be scored safely"
+    # Read the cursor attributes BEFORE cfg is rebound. The rebind below turns cfg into a
+    # dict on every path, so a `not isinstance(cfg, dict)` guard after it is always false
+    # and getattr never finds a data key on a dict anyway -- the whole cursor block below
+    # was unreachable, and no checkpoint any run ever wrote carried a cursor (de-8 D1).
+    _cur = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor", None)
+    _fps = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor_srcfp", None)
+    _dom_idx = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains", None)
+    _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
+    _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
+    _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
+    _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
+    _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
     # Corpus fingerprint alongside vocab_id: which corpus this checkpoint trained on.
     # _corpus_fp is the same hash the startup guard compares to the build-time stamp.
@@ -1312,18 +1324,16 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     # its own mix, so without this every domain restarts at row 0 and the tail is never
     # read. Top-level, not inside cfg -- the cfg dict strips _-prefixed keys, and a
     # cursor is state, not configuration (de-7).
-    cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
-    fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
+    cur, fps = _cur, _fps
     if cur:
         # AS OF THIS STEP, not the plan's end. The plan-complete counts describe a run
         # that finished; a checkpoint at step k describes one that has read k*batch*accum
         # rows per rank. Seeding stage 2 from the plan-complete figure would skip
         # everything between k and the end -- and --auto-resume makes a mid-plan
         # checkpoint the expected case, not the rare one (fb, 2026-09-01).
-        dom_idx = getattr(cfg, "_plan_domains", None)
-        names = getattr(cfg, "_plan_names", None)
+        dom_idx, names = _dom_idx, _names
         if step is not None and dom_idx is not None and names:
-            rows_done = step * cfg.batch * cfg.accum  # this rank's share, plan order
+            rows_done = step * _batch * _accum  # this rank's share, plan order
             head = dom_idx[:rows_done]
             counts = torch.bincount(head.to(torch.int64), minlength=len(names))
             world = int(os.environ.get("WORLD_SIZE", 1))
@@ -1334,7 +1344,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         else:
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
-        ck["row_cursor_seed"] = _sample_seed()
+        ck["row_cursor_seed"] = _seed if _seed is not None else _sample_seed()
     torch.save(ck, path)
 
 
@@ -2059,21 +2069,35 @@ def main():
     # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
-    _cursor = _cursor_fp = _cursor_seed = None
+    _cursor = _cursor_fp = _cursor_seed = _pre_written = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
             _cursor_seed = _pre.get("row_cursor_seed")
             del _pre
+            # The file's own mtime, for the message below: whether a missing cursor is
+            # an old format or a live write bug turns on when the file was written, and
+            # nothing inside the checkpoint records that.
+            _pre_written = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(args.resume)))
         except (OSError, RuntimeError, TypeError) as e:
             if is_main:
                 print(f"resume: could not pre-read the row cursor ({e}); every domain "
                       f"starts at row 0 -- the tail of each pool stays unread", flush=True)
     if args.resume and is_main and not _cursor:
-        # A stage-1 checkpoint predates the field. Say so rather than resuming silently
-        # from row 0, which is the bug this exists to fix wearing a resume's clothes.
-        print("resume: checkpoint carries no row_cursor (predates the field). Every "
+        # Two reasons a checkpoint carries no cursor, and until 2026-09-01 this message
+        # asserted the innocent one. save_checkpoint dropped the cursor on EVERY save
+        # (the :1289 rebind made the write block unreachable), so "predates the field"
+        # was printed for checkpoints written minutes earlier by the current code --
+        # a message that explains away its own symptom, addressed to precisely the
+        # person who would otherwise investigate. Only the write date can tell the two
+        # apart, so say which one this is instead of assuming.
+        _fixed = "2026-09-01"
+        _written = _pre_written or "unknown"
+        _why = ("predates the field" if _written < _fixed else
+                f"written {_written}, AFTER the {_fixed} cursor-save fix -- this is a "
+                f"live defect, not an old format; do not reconstruct over it, report it")
+        print(f"resume: checkpoint carries no row_cursor ({_why}). Every "
               "domain restarts at row 0, leaving each pool's tail unread (92% of "
               "zh_web at stage-1 weights). Reconstruct it with "
               "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "

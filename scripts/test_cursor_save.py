@@ -37,8 +37,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 
-def shapes():
-    """The three ways `cfg` reaches save_checkpoint, each carrying a cursor."""
+def shapes(mid_run=False):
+    """The three ways `cfg` reaches save_checkpoint, each carrying a cursor.
+
+    mid_run selects the branch. Without a step the plan-complete branch runs and
+    `cfg.batch` is never read -- so the plan-complete case alone would pass with the
+    SECOND defect still in place. See main() for why that matters.
+    """
 
     class Cfg:
         mix = None  # no mix file: skips the corpus_fp walk, which is not under test
@@ -52,6 +57,18 @@ def shapes():
         _plan_names = None
         seed = 42
         sample_seed = None
+
+    if mid_run:
+        # 8000 plan rows, first half domain 0 and second half domain 1. At step 100 with
+        # batch 16 accum 2 the run has read 3200 rows, all inside domain 0's half -- a
+        # count the plan-complete branch could not produce, so the assertion distinguishes
+        # the two branches rather than merely observing that some cursor was written.
+        import torch
+
+        idx = torch.zeros(8000, dtype=torch.int8)
+        idx[4000:] = 1
+        Cfg._plan_domains = idx
+        Cfg._plan_names = ["code_rp1t", "zh_web"]
 
     inst = Cfg()
     ns = types.SimpleNamespace(**{k: v for k, v in vars(Cfg).items() if not k.startswith("__")})
@@ -80,6 +97,38 @@ def main():
                 bad.append(f"{label}: row_cursor written without its srcfp -- a count "
                            f"against an unknown corpus is not interpretable")
 
+    # The MID-RUN branch, which the plan-complete cases above never enter. It is the
+    # only path that reads cfg.batch and cfg.accum, and those were read off the same
+    # rebound mapping -- so the two defects cancelled: the write block was unreachable,
+    # and had it been reachable it would have raised AttributeError at the first
+    # checkpoint of every run. Fixing one without the other trades a silent wrong
+    # answer for a crash, so the test has to cover both. --auto-resume makes a mid-plan
+    # checkpoint the expected case, not the rare one.
+    for label, cfg in shapes(mid_run=True):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "ck.pt")
+            try:
+                save_checkpoint(p, {"w": torch.zeros(1)}, cfg, "deadbeefdeadbeef", step=100)
+            except Exception as e:
+                bad.append(f"{label} (mid-run): {type(e).__name__}: {e}")
+                continue
+            ck = torch.load(p, map_location="cpu", weights_only=False)
+            got = ck.get("row_cursor")
+            if not got:
+                bad.append(f"{label} (mid-run): no row_cursor")
+                continue
+            if ck.get("row_cursor_as_of_step") != 100:
+                bad.append(f"{label} (mid-run): as_of_step {ck.get('row_cursor_as_of_step')}, "
+                           f"expected 100 -- a plan-complete count would seed stage 2 past "
+                           f"everything between the checkpoint and the plan's end")
+            if got.get("code_rp1t") != 3200:
+                bad.append(f"{label} (mid-run): code_rp1t {got.get('code_rp1t')}, expected "
+                           f"3200 = 100 steps * batch 16 * accum 2, all within domain 0")
+            if ck.get("row_cursor_seed") != 42:
+                bad.append(f"{label} (mid-run): seed {ck.get('row_cursor_seed')}, expected "
+                           f"cfg's 42 -- a cursor replayed under a different shuffle seed "
+                           f"names different rows")
+
     if bad:
         print("FAIL: save_checkpoint dropped the cursor")
         for b in bad:
@@ -87,7 +136,8 @@ def main():
         print("\nD1 is open: train.py:1289 rebinds cfg to a dict, so the guard at :1315 "
               "always takes its else-None branch.")
         return 1
-    print(f"OK: row_cursor and row_cursor_srcfp survive all {len(shapes())} cfg shapes")
+    print(f"OK: row_cursor and row_cursor_srcfp survive all {len(shapes())} cfg shapes, "
+          f"plan-complete and mid-run")
     return 0
 
 

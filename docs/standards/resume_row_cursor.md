@@ -205,6 +205,30 @@ rows, which is recoverable and is the status quo; injecting the cursor the tool 
 today would skip ~2.2M rows of unread data, the de-7 failure mirrored. Printing without
 `--write` is safe. The numbered procedure below applies once the tool is fixed.
 
+**Closed 2026-09-01. Both fixes have landed and the amendment above is history, not
+current practice.** `save_checkpoint` writes the cursor on every save
+(`scripts/test_cursor_save.py`, three cfg shapes, plan-complete and mid-run);
+`replay_cursor.py` refuses a consumed count that exceeds its plan and requires
+`--resumed-from-step` when the step exceeds the plan span. A checkpoint written after
+this date and carrying no `row_cursor` is a live defect, not an old format — the resume
+message says which of the two it is, from the file's mtime, rather than asserting the
+innocent one.
+
+What the two defects cost the 24.51B run: **nothing.** `pretrain_30b_s2` resumed exactly
+once, the intentional `step16000` resume with the hand-injected cursor, and
+`pretrain_15b_s1` never resumed at all, though `--auto-resume 2` was armed throughout
+(fb, grep of both logs). The duplication question therefore has to be answered by the
+corpus itself; resume re-reads cannot account for any of it. Recorded here because the
+mechanism is exactly the kind that gets nominated as an explanation after the fact.
+
+The message defect is the more transferable half. `train.py` printed *"checkpoint carries
+no row_cursor (predates the field)"* for checkpoints written minutes earlier by the
+current code, because the write was broken and the reader assumed the only innocent
+cause. **A message that explains away its own symptom is worse than no message: it is
+addressed to precisely the person who would otherwise investigate, and it tells them not
+to.** Where a symptom has two causes and only one is benign, the diagnostic must
+establish which — here the checkpoint's mtime against the fix date — or say it cannot.
+
 1. Find the newest step checkpoint: `ls -t /work/aupai/ckpt_pretrain_30b_s2.pt.step*`
 2. Print the reconstruction first, without writing:
    `python3 scripts/replay_cursor.py --ckpt <that file> --resumed-from-step 16000`
