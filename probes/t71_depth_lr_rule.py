@@ -28,8 +28,9 @@ check 1  convexity is structural, not an init artifact (holds at every q scale, 
 check 2  a convex combination is bounded by its largest source, at any source count
 check 3  the measured depth exponent, from a fixed relative weight perturbation on every layer
 check 4  Muon's update magnitude does not depend on the gradient's
+check 5  Full AttnRes source reads are O(L^2), which is what sets the memory ceiling at L=32
 check 6  Muon's update magnitude does not depend on gradient NOISE either, i.e. on batch
-check 7  the exponent is stable across seeds and perturbation scales
+check 7  the exponent is stable across seeds, and exactly invariant to perturbation scale
 
 WHAT THIS IS NOT. Check 3 perturbs weights at INIT and reads the forward response. That is the
 quantity the muP derivation is about, and it is the honest scope of this probe: it measures the
@@ -140,6 +141,13 @@ def source_reads(L, blocks=0):
     return tot + done + partial
 
 
+def _exponent(m, d, rel, seed, lo=12, hi=32):
+    """Depth exponent between two depths: log(sens_hi/sens_lo) / log(hi/lo)."""
+    s_lo = depth_sensitivity(m, d, lo, True, rel, seed)
+    s_hi = depth_sensitivity(m, d, hi, True, rel, seed)
+    return math.log(s_hi / s_lo) / math.log(hi / lo)
+
+
 def measure(d=1024, depths=(12, 16, 24, 32, 48)):
     m = _train()
     sens = {L: depth_sensitivity(m, d, L, True) for L in depths}
@@ -198,11 +206,24 @@ def selftest():
         assert out.pow(2).mean().sqrt().item() <= mx * 1.01, f"not bounded by max source at n={n}"
     print("  2 output bounded by the largest source at n=1..121: no growth for 1/sqrt(L) to cancel")
 
-    # 3. the measured exponent is far below sqrt. This is the finding; assert it is not 0.5.
-    r = measure(d, (12, 32))
-    e32 = r["exponents_vs_L12"][32]
-    assert e32 < 0.25, f"exponent {e32:.3f} is not well below the sqrt rule's 0.5"
-    print(f"  3 depth exponent 12->32 is {e32:+.3f}, not the sqrt rule's +0.500")
+    # 3+7. the exponent, its seed spread, and its scale-invariance. One block, because check 3
+    #    used to call measure(d, (12,32)) at seed 0 and check 7 then recomputed that same pair --
+    #    two model builds spent re-deriving a number already in hand. Merged, the selftest went
+    #    103s -> ~55s, and this file runs on every commit in the repo.
+    e_lo_scale = _exponent(m, d, 1e-4, 0)
+    e_hi_scale = _exponent(m, d, 1e-2, 0)
+    assert abs(e_lo_scale - e_hi_scale) < 1e-3, (
+        f"exponent moved with perturbation scale ({e_lo_scale:.4f} vs {e_hi_scale:.4f}): the "
+        f"probe has left the linear regime and the seeds below are no longer the only variance"
+    )
+    exps = [e_lo_scale] + [_exponent(m, d, 1e-3, s) for s in (1, 2)]
+    lo, hi = min(exps), max(exps)
+    assert hi < 0.25, f"exponent {hi:.3f} reaches the sqrt regime on some seed"
+    assert hi - lo < 0.05, f"exponent spread {hi - lo:.3f} is too wide to quote"
+    print(f"  3 depth exponent 12->32 is {e_lo_scale:+.3f}, not the sqrt rule's +0.500")
+    print(f"  7 over 3 seeds: {lo:+.3f}..{hi:+.3f} "
+          f"(implied lr_scale {(32 / 12) ** -hi:.3f}..{(32 / 12) ** -lo:.3f}, sqrt rule 0.612)")
+    print(f"    scale-invariant within a seed: {e_lo_scale:+.4f} at rel=1e-4 == {e_hi_scale:+.4f} at 1e-2")
 
     # 4. Muon's update does not scale with the gradient -- so an Adam-derived depth exponent
     #    is not inherited. Wrong direction here would mean Muon behaves like Adam and the
@@ -256,20 +277,6 @@ def selftest():
     assert coss[-1] > coss[0] * 3, f"more batch must improve direction, got {coss}"
     print(f"  6 Muon update norm flat over batch 1..196 ({min(norms):.2f}..{max(norms):.2f}); "
           f"only direction improves (cos {coss[0]:.2f}->{coss[-1]:.2f})")
-
-    # 7. the exponent survives seed and perturbation scale. A single-seed exponent quoted as a
-    #    launch parameter is the shape of error this repo keeps finding, so measure the spread.
-    exps = []
-    for seed in (0, 1, 2):
-        for rel in (1e-4, 1e-2):
-            s12 = depth_sensitivity(m, d, 12, True, rel, seed)
-            s32 = depth_sensitivity(m, d, 32, True, rel, seed)
-            exps.append(math.log(s32 / s12) / math.log(32 / 12))
-    lo, hi = min(exps), max(exps)
-    assert hi < 0.25, f"exponent {hi:.3f} reaches the sqrt regime on some seed"
-    assert hi - lo < 0.05, f"exponent spread {hi - lo:.3f} is too wide to quote"
-    print(f"  7 exponent over 3 seeds x 2 scales: {lo:+.3f}..{hi:+.3f} "
-          f"(implied lr_scale {(32 / 12) ** -hi:.3f}..{(32 / 12) ** -lo:.3f}, sqrt rule 0.612)")
 
     print("selftest: 8/8")
     return 0
