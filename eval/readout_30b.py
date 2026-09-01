@@ -437,19 +437,27 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             # zh_web) against the ladder's (chat/code/en/math/textbook/web_hq/wiki),
             # zero overlap, reported as "6 of 7 domains degraded". A partial overlap is
             # the more dangerous version -- it yields a verdict that looks whole.
+            # A role whose two sides were scored on DIFFERENT text is unjudgeable, and the
+            # refusal is per role rather than per metric (44/fb, 2026-09-01). Refusing the
+            # whole metric threw away the clean roles' signal: at the stage-1 -> stage-2
+            # boundary only en_c4 and math_owm were rebuilt (en_c4 225e0de8caced5f4 vs
+            # en_c4_stage2 05e0fc6f14704056; math_owm 580e04daf8376488 vs math_owm_stage2
+            # 1e687e4b5ce37598), so five of seven roles share their heads and are readable.
+            # Zero overlap still refuses the metric -- that is the 3.24B case, where the
+            # ladder heads shared nothing with stage 1.
             m_heads, p_heads = set(m_dl["domains"]), set(p_dl["domains"])
-            if m_heads != p_heads:
-                only_m, only_p = sorted(m_heads - p_heads), sorted(p_heads - m_heads)
-                print(f"\n{name}: REFUSING -- the pair was scored on DIFFERENT heads. "
-                      f"milestone-only {only_m or 'none'}, paired-only {only_p or 'none'}. "
-                      f"Domain loss across different corpora measures the corpora, not the "
-                      f"models. Rescore both on one mix.")
-                continue
-            common = sorted(set(m_dl["domains"]) & set(p_dl["domains"]))
+            common = sorted(m_heads & p_heads)
+            unmatched = sorted((m_heads - p_heads) | (p_heads - m_heads))
             if not common:
-                print(f"\n{name}: ABSENT (no shared domains -- score both checkpoints on the same mix heads)")
+                print(f"\n{name}: REFUSING -- the pair shares NO head. milestone "
+                      f"{sorted(m_heads)}, paired {sorted(p_heads)}. Domain loss across "
+                      f"different corpora measures the corpora, not the models.")
                 continue
             print(f"\n{name}  (threshold={spec['threshold']}{spec['unit']}, states={'/'.join(spec['states'])}, flat unreachable)")
+            for d in unmatched:
+                side = "milestone" if d in m_heads else "paired"
+                print(f"  {d:15s} REFUSED -- different head ({side}-only; the two sides were "
+                      f"scored on different text, so a delta measures the corpora)")
             for d in common:
                 mv = m_dl["domains"][d]["loss"]
                 pv = p_dl["domains"][d]["loss"]
@@ -698,7 +706,7 @@ def selftest():
         out4 = buf.getvalue()
     finally:
         os.unlink(tmp4)
-    assert "REFUSING" in out4 and "DIFFERENT heads" in out4, out4[-400:]
+    assert "REFUSING" in out4 and "shares NO head" in out4, out4[-400:]
     assert "moved (degraded)" not in out4, "disjoint heads must never produce a verdict"
     print("  disjoint heads refuse; no per-domain verdict is printed")
     # 5. A reweighted role refuses; roles whose weight held still print a verdict. The
@@ -818,6 +826,38 @@ def selftest():
     assert "REFUSING" in _r7.stdout, f"budget mismatch did not refuse: {_r7.stdout[-300:]}"
     assert _r7.returncode != 0, "a refused readout exited 0; run_one would record it as produced"
     print(f"  budget mismatch refuses and exits {_r7.returncode}")
+
+    # 4b. PARTIAL head overlap: refuse the mismatched roles BY NAME and judge the rest.
+    # The whole-metric refusal threw away five clean roles at the stage-1 -> stage-2
+    # boundary, where only en_c4 and math_owm were rebuilt (44/fb, 2026-09-01).
+    ran.append("4b")
+    print("\n--- selftest 4b: partial head overlap refuses per role, judges the rest ---")
+    _shared = ("code_rp1t", "cot", "textbook_30b", "wiki_chat", "zh_web")
+    m4b = {"ckpt": "m.pt", "profile": "milestone", "metrics": {"domain_loss": dict(
+        {k: {"loss": 1.5} for k in _shared}, **{"en_c4_stage2": {"loss": 1.5},
+                                                "math_owm_stage2": {"loss": 1.5}})}}
+    p4b = {"ckpt": "p.pt", "profile": "milestone", "metrics": {"domain_loss": dict(
+        {k: {"loss": 2.5} for k in _shared}, **{"en_c4": {"loss": 2.5},
+                                                "math_owm": {"loss": 2.5}})}}
+    with _t.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
+        tf.write(json.dumps(m4b) + "\n" + json.dumps(p4b) + "\n")
+        tmp4b = tf.name
+    try:
+        buf = _io.StringIO()
+        with _c.redirect_stdout(buf):
+            readout("m.pt", "p.pt", tmp4b, None, None, 16.06e9, paired_profile="milestone")
+        out4b = buf.getvalue()
+    finally:
+        os.unlink(tmp4b)
+    for _d in ("en_c4_stage2", "math_owm_stage2", "en_c4", "math_owm"):
+        _ln = " ".join(l for l in out4b.splitlines() if l.strip().startswith(_d))
+        assert "different head" in _ln, f"{_d} was not refused by name: {_ln!r}"
+    for _d in _shared:
+        _ln = " ".join(l for l in out4b.splitlines() if l.strip().startswith(_d))
+        assert "moved" in _ln and "different head" not in _ln, (
+            f"{_d} shares its head and was not judged: {_ln!r}. Refusing the whole metric "
+            "discards the clean roles, which is what this case exists to prevent.")
+    print("  4 mismatched roles refused by name; 5 shared roles judged")
 
     return _done()
 
