@@ -214,3 +214,23 @@ fail-open 方向让失败是沉默的而不是响亮的:只读 `domains` 使未�
 **pool 算术**:pool = cache_rows − n_val,n_val = min(int(cache_rows × 0.05), 5000),**从 cache 行数起算,不从 pool 起算**。wiki_chat 是第一个 5% 侧绑定的域:69,295 cache 行 → n_val 3,464,pool 65,831;cot 是 5,000 cap 侧绑定(103,504 → 5,175 > 5,000 → 5,000,pool 98,504)。用 "5% of pool" 反推是循环论证,只在 5,000 cap 绑定时碰巧抵消;sub-100K 行的域 cap 不绑定,循环算法会出错。d633dee 的 pool-model 检查从 cache_rows 起算,是对的。
 
 **2026-08-31 验证(tilerl,caf4b4b)**:五个复用域与 stage-1 训练字节一致,§7.2 的范围声明成立。决定性证据是 `ckpt_pretrain_15b_s1.pt.step5500` 的 corpus_fp(save_checkpoint 从活 run 写入),五域全部等于 live;live `_corpus_fp` 对 cache 旁 `.srcfp` 5/5 匹配——但后者只证 cache 现行,不证 stage-1 身份(两者可一起移动),故两者都跑。**复验走 checkpoint 的 corpus_fp,不走 mix 文件**(后者只在散文里记了 code_rp1t 一个域)。两个已知边界:checkpoint 截至 step 5500,其后由 pod_drift + 语料写入方已完工覆盖(且现在跑的 live-vs-.srcfp 能抓到 5500 之后的改写);`_corpus_fp` 只哈希 shard 名/大小/首尾 64KB,shard 中部改动两侧都看不见——文档化设计,接受。
+
+### 7.5 语料更名后跨阶段 per-role 的可读域划分;进度/保留/组成三轨分立(2026-09-01,b0 提问 / 44 裁决;同日更正:更名域为 **2/7** 非 5/7——fb 据 stage2_composition.md 与 §7.4 修正,b0 初稿的"five of seven"与其自身指纹表矛盾)
+
+**触发**:16B(step17500)对 8B 自有 mix 基线(step8500)的 per-role 被 head guard 整指标拒绝。pod 指纹实证四套语料(en_c4/en_c4_stage2、math_owm/math_owm_stage2 各异)。**拒绝正确**:更名的 2 个角色会跨不同 held-out 文本比较,正是 3.24B 失败类。guard 先于 §7.1 触发也是正确顺序——head 不配比权重变更更根本。
+
+**结构事实(更正后)**:stage 2 更名了七个域中的**两个**(en_c4、math_owm → `*_stage2`);其余五个(cot、zh_web、textbook_30b、wiki_chat、code_rp1t)按 §7.4 复用 stage-1 目录与 cache、训练字节一致。故:**5 个复用域跨阶段仍可读**(同头、同字节,逐角色过 §7.1 权重闸);**2 个更名域跨阶段熄灯**(16B、22B、30B 皆然,永久,非临时)。16B 读数可直接打印 5 个可读域对 8B 基线,无需重打分(fb 2026-09-01 裁决,取代此前"16B 无 per-role"的说法)。
+
+**裁决——三轨分立,现在写明,不在 30B 时才发现**:
+
+1. **进度轨(per-role)**:两条可读边界——(a) 阶段内:16B→24B→30B,同头、同语料字节、同 mix,7 个角色全可读,不触发 §7.1/§7.2,就是同一分布上的规模进度,显著性用 σ̂ 阈值;(b) 跨阶段:5 个复用域(cot、zh_web、textbook_30b、wiki_chat、code_rp1t)在字节同一的 stage-1 头上对 8B 基线可读,**逐角色过 §7.1 权重闸**(stage-2 配比权重与 stage-1 差超容忍 = 该角色拒判,闸的首个真实用例);2 个更名域(en_c4、math_owm)跨阶段**熄灯**——16B、22B、30B 皆然,永久,非临时。30B 产出里没有更名域的跨阶段 per-role 进度读数——如此而已,不是缺口。
+2. **保留轨(标注 OOD)**:仅为 2 个更名域而设——stage-2 里程碑(30B final 一次重打分)在 **stage-1 头**上打分,列名 `retention (OOD)`,回答的问题是"stage-2 模型是否灾难性遗忘旧分布",不是"stage-2 配比是否更好"。它**不进阈值机械,不叫进度,不进 per-role 判决表**。前置条件:按 §7.2 第 2 条,stage-1 holdout 哈希对 stage-2 语料重探,命中 = 污染 = 拒绝该角色的保留读数(stage-2 重建可能与 stage-1 语料有重叠文本,不验就打是裸奔)。5 个复用域的跨阶段读数直接在进度轨(b)出,不走保留轨。
+3. **组成轨**:"stage-2 语料重建值不值"不由 per-role 回答——不可归因的比较不如缺席(3.24B floor 的同一逻辑,b0 的 lean 正确)。它由:聚合指标对 8B/15B 趋势(§7 line 152,direction-only)+ 保留轨 + 语料级事实(near-dedup 移除率、污染扫描)共同回答。
+
+**§7.1 的状态:阶段内休眠,跨阶段首次真实开火**。阶段内同 mix 无可闸,读数须写 `dormant: no mix change between these checkpoints`,**永不写 "passed"**。跨阶段 5 个复用域是 §7.1 的首个真实用例(此前从未在真实数据上跑过)——故首个真实用例前仍须先有合成开火测试(一个没跑过的闸等于没测过的闸,P6);若 stage 3 改权重,阶段内也会开火。
+
+**守卫改逐角色,不整指标拒绝**:现 guard 在 head 集不一致时拒绝整个 metric,把 5 个干净角色(未更名域)的信号一起扔了。改为逐角色判定:头匹配的角色判,不匹配的拒绝,拒绝消息逐角色列出。干净角色的阶段内/跨阶段/保留读数照出。
+
+**预注册规则(持久,逐边界重新应用)**:*per-role 比较仅当两模型在字节同一的 held-out 头上打分时有效。训练语料跨阶段变更时,更名域的跨阶段 per-role 进度熄灯,复用域在字节同一的头上逐角色过权重闸后可读;阶段内 per-role 是进度指标;更名域的跨阶段保留是单独标注的 OOD 指标,且 holdout 哈希须对新语料重探。*
+
+**另注**:16B 读数表 math_hard/rl_gap 列 ABSENT——读数须写明缺席原因(未跑/未打分),空列与"跑了是零"不可区分。
