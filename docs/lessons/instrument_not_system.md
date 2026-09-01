@@ -95,7 +95,7 @@ negative closes a line of work permanently and silently.
 None of these were caught by the statistic itself — only by looking at the
 instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
-quantisation band, firing on rounding. #4 nearly retired a live 4.44% lever.
+quantisation band, firing on rounding. #4 nearly retired a live 3.59% lever.
 
 ## The generalisation: a threshold set from the wrong quantity
 

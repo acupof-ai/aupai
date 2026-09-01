@@ -97,8 +97,22 @@ signature op for op (`train.py:454`), and the counts corroborate independently:
 head alone.
 
 **So the group is the fp8 quantisation tax and merges into the fp8-head rung
-rather than standing as its own.** One rung, one ceiling — t58's 75.5 ms, which
-b0's doc restates as **4.50% of t57's own span**.
+rather than standing as its own.** One rung, one ceiling — **60.2 ms, which b0's
+doc restates as 3.59% of t57's own span**.
+
+That ceiling was 75.5 ms / 4.50% until tilerl's self-audit corrected it, and the
+correction is worth the sentence: t58's bf16 baseline paid a bf16 write plus an
+fp32 cast that both fp8 arms avoid via `out_dtype`, so the baseline carried
+~10.4 ms of work the candidate does not do. **A baseline cannot be charged for
+work the candidate never does** — a well-run measurement of the wrong contrast
+is still wrong, and no rigour marker on the measurement detects it.
+
+One rung above the byte cache is now **refuted, not open**: an EVT is a GEMM
+epilogue, and none of the three tensors carrying the tax comes from a GEMM — G
+from Liger's Triton CE kernel, A from RMSNorm, W from the optimizer. There is
+nothing to attach an epilogue to. The 39.4 ms byte cache is **conditional, not
+banked**: it exists only under `FP8_HEAD=1`, which is no-ship, so it saves
+nothing today and cites at −20.2 ms net.
 
 The two group totals are different measurements of overlapping things and are
 **not reconciled and never added**: 107.0 ms is the lane trace's group,
