@@ -60,6 +60,48 @@ least 150" is an instrument. Where the magnitude is unknown, sweep the parameter
 and report the curve rather than picking a value — the sweep above is what
 produced the real number, and it cost one extra run.
 
+## Four instruments of mine were the limit, and how each was caught
+
+The empirical case for this page, made by one author against himself in one
+afternoon. Not four measurement errors — four occasions where **the tool
+reported a property of itself and I read it as a property of the model.**
+
+| # | the instrument | it reported | the truth | caught by |
+|---|---|---|---|---|
+| 1 | ±4 shift window | agreement 0.0000 | 0.2317 | a number too clean for a model at 72.7% TF |
+| 2 | anchor regex | 19/100 reached code | 69/100 | pre-registered expectation falsified |
+| 3 | gold-vs-greedy row | 0.0 "never prefers gold" | an identity; can only read 0.0 | deriving what the row could return |
+| 4 | bin-1 population split | "loops score ~0, so 69 ≈ 0.36" | loops score 0.25 too | pre-registered arithmetic falsified |
+
+**None was caught by reading the code.** Every one was caught by a number that
+did not fit something already known — and in three of the four the thing it did
+not fit was written down in advance.
+
+**The ratio is the argument.** Two of four were caught *only* because a
+pre-registration made the expectation explicit enough to be falsified. #2 said
+"I expect coverage under 30%, which would mean my anchored line of work was a
+side quest"; coverage came back 69% and the prediction failed in the direction
+that would have demoted my own work. #4 wrote the arithmetic "0.250 over 100
+with 31 near-zero loops implies ~0.36 over the remaining 69"; it came back 0.25,
+which falsified **the assumption inside the prediction** rather than the
+conclusion the prediction was defending — the loops do not score near zero,
+because a loop echoing the prompt matches the gold's opening tokens by
+coincidence.
+
+Without those two sentences on paper, both results read as bland confirmation.
+0.25 is exactly what you would expect if nothing interesting happened; it took a
+written prediction of 0.36 to make it a finding.
+
+**That is the case for pre-registration that does not rest on principle.** Not
+"it keeps you honest" — it converts an unremarkable number into a detectable
+anomaly. A prediction you did not write down cannot fail, and a result that
+cannot fail teaches nothing.
+
+The corollary for #3: it was caught by asking what values the test could
+*return*, not what value it did return. A test whose output space contains only
+one value is an identity wearing a test's costume, and that is checkable before
+any data exists.
+
 ## Before anything else: is this code path reached in the live configuration?
 
 One line, and it precedes every other check on this page. It is last here only
