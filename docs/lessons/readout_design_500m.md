@@ -8,7 +8,7 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 ## 0. 问题精确化
 
-"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(16B)、step24000(22B)、step25500/26000/26500(尾部 500 步密档,~22–24.3B);0–16B 无存活 checkpoint,跑程止于 step26500(~24.3B)。**matched-token 能力轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
+"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(=16.056B,里程碑名"16b")、step24000(=22.020B,"22b")、step25500/26000/26500(=23.396/23.855/24.314B,尾部 500 步密档);0–16B 无存活 checkpoint,跑程止于 step26500(24.314B)。token 换算:200M 跑 batch 16 × accum 2 × 4096 × world 7 = **917,504 tok/step**(里程碑名 16b/22b 反推唯一吻合 world=7)。**matched-token 能力轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
 
 **0–16B 的替代轴(fb 线索,已核实+已修正):训练日志的 val 损失存活,但跨跑不干净。** `runs/pretrain_15b_s1.log` 有 32 个 val 点(0.46–14.7B,2.917→2.116),`pretrain_30b_s2.log` 21 个(15.1–24.3B,2.120→2.085)。train.py 的 val 是**每域 pool 的前缀切分**(:1817,跑内 held-out,不是跨跑固定集)。跨跑只在 **pool 文件相同的域**上干净:500m 与 30b_stage2 共享 5 域(cot、en_c4_stage2、math_owm_stage2、textbook_30b、zh_web),4 域新增(chat_qa、chatml、code_py_rp1t、code_py_starcoder)、2 域丢弃(code_rp1t、wiki_chat)。**日志聚合值被新增/丢弃域污染——是趋势参考,不是干净对比**(同 step17500 readout 的 "different text" REFUSED 类;我上一版说"对比干净"是错的,在此修正)。干净仪器 = 在 5 个存活 200M checkpoint 上对共享 5 域重跑 per-domain val,与 500M checkpoint 对比,覆盖 16B+(与能力轴相同)。**0–16B 干净 val 不存在:没有 checkpoint,日志聚合值不干净。启动要求:500m 共享域的 token cache 必须复用 200M 的同一 pool 文件(或至少前缀同内容),否则连 16B+ 的干净 val 对比也没有。**
 
@@ -39,7 +39,7 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 ## 3. 节奏与预算(三天机时)
 
-- **存档要求(fb 2026-09-01 终裁,tilerl 执行):** **每 1B 一个里程碑 + 精确钉 16B 一个**(200M 存活档里唯一落在 20B 量程内的匹配点);**前 5B 每 0.4B 加密**(无 200M 对照段,只要分辨率);**1.25B 网格退役**(只买到一个匹配点,不值得让分辨率让路)。步数算术:`save_every = 1e9 ÷ (world × batch × accum × 4096)`,world/batch 钉死后唯一解(b32 world=7 → 1090 步)。**里程碑一个不删,只有滚动档参与回收。**单档 1.84 GB(Muon 单动量 + bf16,tilerl 实测),~20 里程碑 ≈ 37 GB(可用 401 GB)。
+- **存档要求(fb 2026-09-01 终裁,tilerl 执行):** **每 1B 一个里程碑 + 精确钉 16B 一个**(200M 存活档里唯一落在 20B 量程内的匹配点);**前 5B 每 0.4B 加密**(无 200M 对照段,只要分辨率);**1.25B 网格退役**(只买到一个匹配点,不值得让分辨率让路)。步数算术(tilerl 2026-09-01 落地):`save_every = 1e9 ÷ 917,504 = 1089.91 → 1090 步**(网格点间隔 1.00008B;第 16 个网格点 step 17440 = 16.0013B,±1.3M token,0.008%——"1B 网格"在执行层是这个精度,不存在整数步精确落在 16B)。**精确钉点 = step 17500**:500M 与 200M 同为 917,504 tok/step(b32 world=7 或 b16+accum2 都是这个数),步对齐即 token 精确对齐,200M 的 16b 里程碑就是 step17500——钉同一个步,不是钉"16.000B"。**里程碑一个不删,只有滚动档参与回收。**单档 1.84 GB(Muon 单动量 + bf16,tilerl 实测),~20 里程碑 ≈ 37 GB(可用 401 GB)。
 - **滚动档不带 opt/step(tilerl 2026-09-01 实测 ckpt_shape500_probe.pt:keys 无 opt,step=None)——matched-token 比较轴只能用里程碑档。**
 - **每档成本:** 生成 sweep ~1h(0/1/3/8 × 数学+代码,492 题,`--eval-from 8`,rep_stop=False,model_turn 抽取)+ math_v2_like ~15min + domain loss ~10min ≈ 1.5h。
 - **分配:** 快护栏每档都跑;生成 sweep 每 3 档跑一次(~每 3B token)。30B 跑程 ≈ 10 次生成 + 30 次快读 ≈ 17.5h,三天预算内留足 L0' 与复测。
