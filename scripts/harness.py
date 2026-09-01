@@ -1475,6 +1475,84 @@ def check_pinned_ids(root):
 MAX_TRACKED_MB = 5
 
 
+# Scripts harness.py shells out to, as (path relative to ROOT, what invokes it). A subprocess
+# path is a reference the interpreter never resolves until the moment it runs, so a moved file
+# leaves it looking correct and failing only when someone actually needs that command.
+_SPAWNED_SCRIPTS = [
+    ("scripts/exp.py", "the experiment ledger, several call sites"),
+    ("scripts/pod_drift.py", "manifest regeneration"),
+    ("datagen/pretokenize.py", "harness run pretokenize"),
+    ("eval/eval_all.sh", "harness eval"),
+    ("eval/eval_hard.sh", "harness eval --hard"),
+    ("run_ddp.sh", "harness launch"),
+]
+
+
+def check_spawned_scripts_exist(root):
+    """Every script harness.py spawns is where harness.py says it is.
+
+    c3a47e8 moved the corpus-build scripts from scripts/ to datagen/ and three
+    os.path.join(HERE, ...) call sites kept pointing at scripts/. Nothing noticed, because a
+    subprocess path is only resolved when the command runs, and none of the three had run
+    since: `harness run pretokenize` is the step that warms token caches -- the launch gate's
+    own epochs prerequisite -- and it would have died on FileNotFoundError at the moment
+    someone tried to clear that gate (b0, 2026-09-01).
+
+    Checking the list rather than parsing the source: a regex over os.path.join(HERE, "x.py")
+    would miss an f-string or a variable, and the failure mode here is a path that reads fine.
+    The list is asserted complete by the selftest against a grep of the source."""
+    missing = [(p, why) for p, why in _SPAWNED_SCRIPTS
+               if not os.path.exists(os.path.join(root, p))]
+    if missing:
+        return FAIL, (
+            f"{len(missing)} spawned script(s) absent: "
+            + "; ".join(f"{p} ({why})" for p, why in missing[:3])
+            + " -- a subprocess path resolves only when it runs, so this fails at use, not here"
+        )
+    # The list must also be COMPLETE, or the check reports green over a call site nobody
+    # listed. Scan this file's own source for the literal-path shape and require every hit to
+    # be covered. Known ceiling, stated rather than hidden: this finds os.path.join(<dir>,
+    # "name.py"/"name.sh") literals, not f-strings or variables. Those exist and are not
+    # covered -- a wider net would need a real call-graph, and a check that overstates its
+    # coverage is the defect this whole file spent the day on.
+    src = open(os.path.join(root, "scripts", "harness.py"), encoding="utf-8").read() \
+        if os.path.exists(os.path.join(root, "scripts", "harness.py")) else ""
+    # Only paths built INSIDE a command list. The first version matched any
+    # os.path.join(DIR, "x.py") and reported six extras -- a shutil.copy, three file reads,
+    # a substring test, and a filename quoted in this docstring. It conflated "a path is
+    # constructed" with "a script is spawned", which would have trained the next reader to
+    # add unrelated files to the list until the check meant nothing.
+    named = set(re.findall(
+        r'(?:subprocess\.(?:run|Popen|check_output)\(|cmd\s*=\s*)\[[^]]*?'
+        r'os\.path\.join\([A-Z]+,\s*(?:"[a-z_]+",\s*)?"([a-z_]+\.(?:py|sh))"', src, re.S))
+    listed = {os.path.basename(p) for p, _ in _SPAWNED_SCRIPTS}
+    unlisted = sorted(named - listed - {"harness.py"})
+    if unlisted:
+        return FAIL, (
+            f"{len(unlisted)} spawned script(s) in the source but not in _SPAWNED_SCRIPTS: "
+            f"{', '.join(unlisted)} -- add them, or this check is green over an unchecked path"
+        )
+    return PASS, f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present, and the list covers "\
+                 f"every literal path in harness.py"
+
+
+def _broken_spawned_scripts_exist():
+    """A tree where pretokenize.py sits at the path the refactor left behind.
+
+    The real defect, minimised: the file exists in the repo, just not where the caller looks.
+    That is why it read as fine -- `ls datagen/` and `grep pretokenize` both succeed."""
+    d = _tmp_repo()
+    for p, _ in _SPAWNED_SCRIPTS:
+        full = os.path.join(d, p)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        open(full, "w").write("# stub\n")
+    # move the one the refactor moved, to where it used to live
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    os.rename(os.path.join(d, "datagen", "pretokenize.py"),
+              os.path.join(d, "scripts", "pretokenize.py"))
+    return d
+
+
 def check_no_oversized_blob(root):
     """gitignore does not cover already-tracked paths, so the pattern list was never the
     guard. This fires on the next one."""
@@ -5083,6 +5161,15 @@ CHECKS = [
         _broken_blob,
     ),
     (
+        "spawned_scripts_exist",
+        "every script harness.py shells out to is at the path harness.py uses",
+        "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
+        "a subprocess path resolves only when it runs, so `harness run pretokenize` -- the step "
+        "that warms the token caches the launch gate requires -- was broken and silent",
+        check_spawned_scripts_exist,
+        _broken_spawned_scripts_exist,
+    ),
+    (
         "tokenizer_roundtrip",
         "data/tokenizer.json decodes back to the exact input bytes",
         "the k5 vocabulary silently dropped NUL and tab",
@@ -5640,9 +5727,9 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
         # reads, and the only thing that closes a gaps entry. The MC suite is ~30% of the
         # matrix's runtime and eval_all.sh's own comment says it sits at the chance line.
         if full:
-            cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
+            cmd = ["bash", os.path.join(ROOT, "eval", "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
         else:
-            cmd = ["bash", os.path.join(HERE, "eval_hard.sh"), ck, str(ngpu or 6)]
+            cmd = ["bash", os.path.join(ROOT, "eval", "eval_hard.sh"), ck, str(ngpu or 6)]
         print(f"\n  === {ck} ===", flush=True)
         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         # eval_all.sh writes runs/evalall_<ckpt>.log unconditionally, so a crash after the
@@ -7296,7 +7383,7 @@ def _exp(action, **kw):
 
 
 def _run_pretokenize(step_args, forced):
-    cmd = [sys.executable, os.path.join(HERE, "pretokenize.py"), *step_args]
+    cmd = [sys.executable, os.path.join(ROOT, "datagen", "pretokenize.py"), *step_args]
     _exp("start", name="pretokenize", cmd=" ".join(cmd),
          hypothesis=f"tokenize every mix domain into its cache before training{forced}")
     r = subprocess.run(cmd, cwd=ROOT)
