@@ -890,19 +890,31 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    for ext in ("*.py", "*.sh"):
-        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
-            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
-                text = open(p, encoding="utf-8", errors="replace").read()
-                # Drop docstrings and comments before looking for invocations.
-                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-                for n, line in enumerate(text.split("\n"), 1):
-                    s = line.split("#", 1)[0]
-                    if inv.search(s) and not re.search(r"-4\b", s):
-                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    # The POPULATION, not just the predicate. A hand-listed set of directories was
+    # missing probes/ and the repo root, and the evidence still said "every curl call
+    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
+    # tree and exclude what cannot hold a tracked invocation, so a new directory is
+    # covered by default rather than by someone remembering to add it (fb's sweep,
+    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not (fn.endswith(".py") or fn.endswith(".sh")):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Drop docstrings and comments before looking for invocations.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+            for n, line in enumerate(text.split("\n"), 1):
+                s = line.split("#", 1)[0]
+                if inv.search(s) and not re.search(r"-4\b", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
-    return PASS, "every curl call passes -4"
+    return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
 def _broken_curl_ipv4():
@@ -2899,7 +2911,16 @@ def check_facts_well_formed(root):
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
     note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
+    # State the population, not just the count. "every entry carries its config" over
+    # 7 files reads identically whether 7 is all of them or 7 of 9 -- and it IS 7 of 9
+    # here, the two baselines being deliberately excluded. A universal quantifier over
+    # a self-constructed population is only as true as the construction, and the
+    # reader cannot audit the construction from a bare N (fb's sweep, 2026-09-01,
+    # after selftests_are_gated reported "27 files, all gated" over a real 36).
+    _all = len(glob.glob(os.path.join(facts_dir, "*.json")))
+    _pop = f"{len(files)} of {_all} facts/*.json" if _all != len(files) else f"all {_all} facts/*.json"
+    return PASS, (f"{len(entries)} facts in {_pop} (baselines excluded), every entry "
+                  f"carries its config{note}")
 
 
 def _broken_facts():
