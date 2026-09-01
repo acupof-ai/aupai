@@ -419,3 +419,99 @@ was recorded — the gap this section exists to close.
   (corpus-level) and 1.33-1.43x on controlled minimal pairs. Overall this is about
   +2.5% tokens for the same text — recorded, not corrected. lessons-44 owns the
   full-corpus value.
+
+## Domain blocks — mix_500m domains (pod, stamped 2026-09-01)
+
+The nine domains `data/mix_500m.json` names. Written because `harness check`
+corpus_fp_matches read 0/9: every domain's build-time fingerprint matched its live
+directory, and none of them had a block here. A matching stamp says the bytes did not
+change since the build; only this file says where the bytes came from.
+
+Every domain below carries `filters_fp 33462c13868a2194`
+(facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters — the stage-2 corpora
+were built with the weaker filter set, and that fact is chained here rather than restated).
+
+**Five of the nine were inherited and their build commands are NOT recorded.** Where a
+Build line says "not recorded", it means: not in `datagen/`, not in the stats stamp, and
+not in any block above. Searched: `data/corpus/<dom>/build_corpus_stats.json`,
+`datagen/*.py`, this file's earlier sections, and `git log --all -- datagen/`. Written as
+unknown rather than reconstructed, because a plausible command that was never run is worse
+here than a gap -- this file exists to answer "where did these bytes come from", and a
+guess answers it wrongly with no marker.
+
+### math_owm_stage2
+
+- Result: fingerprint 1e687e4b5ce37598, 4,135,793 docs, 21,553,841,930 bytes, 6,513,304,690 tokens
+- Source: OpenWebMath (stage-2 rebuild; stats stamp records domain "math_owm")
+- Build: not recorded. filters `light`, workers 32, near_dedup False, 206 shards
+- Fetched: not recorded
+
+### en_c4_stage2
+
+- Result: fingerprint 05e0fc6f14704056, 3,887,759 docs, 8,694,064,951 bytes, 2,403,694,865 tokens
+- Source: C4 English (stage-2 rebuild; stats stamp records domain "en_c4")
+- Build: not recorded. filters `light`, workers 32, near_dedup False, 83 shards
+- Fetched: not recorded
+
+### cot
+
+- Result: fingerprint 388496b76ed9bf88, 851,965 docs, 1,325,493,967 bytes, 424,056,227 tokens
+- Source: not recorded
+- Build: not recorded. filters `light`, workers 32, near_dedup False, 13 shards
+- Fetched: not recorded
+
+### textbook_30b
+
+- Result: fingerprint 3f237c5191cb8571, 8,119,279,531 bytes, 1,610,210,330 tokens
+- Source: same bytes as the `textbook` block above -- identical fingerprint
+  (3f237c5191cb8571), a second mix name for one corpus, not a second build
+- Build: not recorded (see the `textbook` block: "unrecorded, pre-0830v1"). 79 shards
+- Fetched: not recorded
+
+### zh_web
+
+- Result: fingerprint a0d44fc44a289d60, 89,846,923,588 bytes, 21,293,403,945 tokens
+- Source: not recorded
+- Build: not recorded. filters `light`, 909 shards
+- Fetched: not recorded
+
+### chatml — built 2026-09-01 (3b, fb ruling)
+
+- Result: fingerprint 52a6b427818c90ff, 160,414 docs, 171,135,138 bytes, 38,995,846 tokens
+- Source: `data/corpus/chat/` re-rendered, NOT a fetch. Same conversations as chat_qa
+- Build: `python3 datagen/build_chatml.py` (SRC /work/aupai/data/corpus/chat), filters
+  `chatml-render`, 2 shards, near_dedup False
+- Note: chatml and chat_qa are two renders of ONE set of 160,414 conversations, ~4 epochs
+  each, so the content is seen 8-10 times. fb ruled keep: the purchase is two formats
+  in-distribution, and formats are cheap. See the role strings in scripts/write_mix_500m.py
+
+### chat_qa — built 2026-09-01 (3b, fb ruling)
+
+- Result: fingerprint 42a4bedde020ae66, 160,414 docs, 163,274,854 bytes, 38,187,650 tokens
+- Source: `data/corpus/chat/` re-rendered into its own directory. chat/ was left untouched --
+  six data/mix_scale_*.json name it and depend on its fingerprint
+- Build: `python3 datagen/build_chat_qa.py` (SRC /work/aupai/data/corpus/chat), filters
+  `chat-original`, 2 shards, near_dedup False
+- Note: named chat_qa rather than chat because the LADDER_DIRS guard in
+  scripts/write_mix_500m.py refuses a domain named after a frozen ladder directory
+
+### code_py_starcoder — built 2026-09-01 (3b)
+
+- Result: fingerprint e1a14839e11f3e6f, 6,180,174 docs, 29,576,274,579 bytes,
+  8,786,916,332 tokens MEASURED from the token cache
+- Source: starcoderdata python parquet, fetched to `/work/aupai/data/raw/ms_starcoder_py`
+- Build: `python3 datagen/build_starcoder_py.py`, filters `starcoder-python-ast`,
+  283 shards, near_dedup False
+- Note: the stats stamp's `tokens` is 8,744,830,156, a 3/283-shard extrapolation and 0.48%
+  low against the cache. The cache figure is the one the mix uses
+
+### code_py_rp1t — built 2026-09-01 (e1)
+
+- Result: fingerprint 63c2b3ce0e7dd989, 209,668 docs, 1,514,852,051 bytes,
+  420,855,850 tokens MEASURED from the token cache
+- Source: `data/corpus/code_rp1t/` filtered by ast.parse -- 209,668 of 3,747,157 rows are
+  parseable Python. NOT a fetch
+- Build: `python3 datagen/build_code_py_rp1t.py` (SRC /work/aupai/data/corpus/code_rp1t),
+  filters `rp1t-python-ast`, 15 shards, near_dedup False
+- Note: /data00/tokens_code_rp1t.pt is the FULL multi-language corpus (7.57B), not this
+  subset; the two must not be confused when reading epochs
