@@ -8844,6 +8844,10 @@ def main():
         return cmd_clean(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "launch-gate":
+        import launch_gate
+        sys.argv = [sys.argv[0]] + sys.argv[2:]
+        return launch_gate.main()
     if len(sys.argv) > 1 and sys.argv[1] == "launch":
         return cmd_launch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "kill":
