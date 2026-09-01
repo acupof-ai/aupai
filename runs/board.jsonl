@@ -29,3 +29,5 @@
 {"ts": "2026-09-01 17:56", "who": "de", "topic": "instruments", "kind": "find", "text": "四个 broken world 是空树导致的假绿:mutation 撤掉后照样 FAIL,selftest 证明不了任何事", "artifact": "92ff315"}
 {"ts": "2026-09-01 17:56", "who": "de", "topic": "instruments", "kind": "rule", "text": "验证守卫必须让缺陷在真文件里复现一次看它变红;写在修复之后、从没见过它失败的测试是断言不是测试", "artifact": "scripts/test_pod_ps_judge.py"}
 {"ts": "2026-09-01 18:13", "who": "de", "topic": "instruments", "kind": "find", "text": "四个 eval runner 报告的 preds 路径不是它们写的那个:--run 会给路径加版本,attest 用对了 out_path,print 和 --out JSON 用的是旧变量", "artifact": "47cb01c"}
+{"ts": "2026-09-01 19:25", "who": "de", "topic": "instruments", "kind": "find", "text": "8.13% 低于常数猜测基线:gold 只有 169 个不同值,永远答'2'得 9.78%。打乱对照 2.52% 排除不了模型只学会输出小整数;今天那个'第一个真信号'不成立", "artifact": "85b567a"}
+{"ts": "2026-09-01 19:34", "who": "de", "topic": "instruments", "kind": "find", "text": "16B math 也是格式零:0/4499 含 boxed,但 79.4% 含数字,greedy 退化 99.8%(code 侧 99.4%)。两个域同一个病是解码不是能力", "artifact": "data/eval/preds_ckpt_pretrain_30b_s2.milestone_16b_step17500.pt.t0.8.s16b_rerun.jsonl"}
