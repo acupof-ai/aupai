@@ -1,8 +1,14 @@
 ---
 question: "can a second workload share a training card productively, on our hardware and at our occupancy"
-status: recorded
-source: "e1-5 2026-09-01; arithmetic over eff.steady_state_composition (t57) and eff.kda_occupancy_bound; literature per row; tilerl's on-box interference measurement cited where it lands"
+status: open
+source: "e1-5 2026-09-01; arithmetic over eff.steady_state_composition (t57) and eff.kda_occupancy_bound; literature per row"
 ---
+
+> **Status: open.** The verdict below is written to closure on the evidence
+> available, so it can be acted on without waiting. It is `open` rather than
+> `recorded` because one measurement could overturn it and has not been taken —
+> tilerl-9's on-box interference run. What that measurement must show to overturn
+> it is stated explicitly at the end, before it is run rather than after.
 
 # GPU co-location
 
@@ -51,7 +57,8 @@ fillable capacity a temporal accounting misses entirely:
 | **ceiling, before bandwidth contention** | | **10.3–11.0** |
 
 **That ceiling is arithmetic, and the one directly-relevant measurement says it is
-unreachable.** Elvinger et al., SoCC '25 ([arXiv:2501.16909](https://arxiv.org/abs/2501.16909),
+unreachable.** (Recorded as `eff.low_occupancy_is_not_free_capacity`; our own
+occupancy is `eff.kda_occupancy_bound`.) Elvinger et al., SoCC '25 ([arXiv:2501.16909](https://arxiv.org/abs/2501.16909),
 H100, Nsight Compute instrumented) ran **two kernels at 6.25% achieved occupancy
 each**, in separate streams, with every SM available — the regime our KDA sits in,
 on Hopper-class silicon. Result: **1.73× latency increase each.** Naive occupancy
@@ -355,6 +362,36 @@ capacity co-location would have used. So retune first and re-ask afterwards
 against whatever slack remains — doing it the other way builds a dependency on the
 inefficiency we are trying to remove, and a co-location plan that pays off is one
 that quietly needs KDA to stay slow.
+
+## What would overturn this, stated before the measurement
+
+The verdict rests on two facts and one piece of arithmetic. Each has a specific
+result that would break it, and they are written here so the reading rule exists
+before tilerl-9's numbers do.
+
+| the claim | what overturns it |
+|---|---|
+| **SoCC '25**: two kernels at 6.25% occupancy each slow one another **1.73×** | on our card, a co-tenant sized to consume ~9% of step time costs the primary **less than ~2%** of its tok/s. That would mean the published interference does not transfer to H20's roofline, and the spatial term is real after all. |
+| **`eff.kda_occupancy_bound`**: KDA runs at **6–13% occupancy**, 15–29% of HBM peak, while kernels above 80% occupancy reach 85–93% | the retune returns **well under 1%** of step time. Then the 174 ms window is not recoverable by tuning, and renting it stops competing with fixing it. |
+| **arithmetic**: retune and co-location consume the same 174 ms | a co-tenant that measurably does **not** slow the primary — which would mean it is running in genuinely dead time the trace cannot see, and the two are not competing. |
+
+**The single measurement that decides it**: the primary's tok/s with and without a
+co-tenant, same seed, same step window, on the current tree. Not the co-tenant's
+throughput — that always looks like a free lunch, because whatever it achieves it
+mostly took from the primary.
+
+Two conditions on that run, both of which change the answer if ignored:
+
+1. **Take it on the current tree.** The seam fix (`torch._dynamo.disable` on
+   `flash_attn_varlen_func`) is live in the running job. A pre-fix measurement
+   overstates the temporal room by roughly 3.5×.
+2. **Measure the primary, and measure per unit of co-tenant work.** A co-tenant
+   throttled to near-nothing will show near-nothing; the quantity that matters is
+   the exchange rate.
+
+If the measurement comes back and the verdict stands, this document becomes
+`recorded` with the number in it. If it overturns any row above, the row says so
+and the verdict changes — which is the point of writing the condition down first.
 
 ## Ceilings
 
