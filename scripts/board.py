@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Shared board: topics anyone can post to and everyone can read.
 
+    board.py who                          the roster: name, socket, what they own
     board.py topics                       one line per topic, newest state first
     board.py show <topic>                 that topic's rows, oldest first
     board.py post <topic> <kind> <text> [--artifact P] [--who W]
@@ -82,6 +83,25 @@ def cmd_open(a):
     print(f"opened {a.topic} (owner {a.owner})")
 
 
+def cmd_who(a):
+    p = os.path.join(ROOT, "runs", "roster.json")
+    if not os.path.exists(p):
+        sys.exit("no runs/roster.json")
+    r = json.load(open(p, encoding="utf-8"))
+    owner = {}
+    for m in r["members"]:
+        for t in m["topics"]:
+            owner.setdefault(t, m["name"])
+    print(f"{'name':<8}{'role':<13}{'socket':<34}{'topics':<26}note")
+    for m in r["members"]:
+        print(f"{m['name']:<8}{m['role']:<13}{m['socket']:<34}"
+              f"{','.join(m['topics']) or '-':<26}{m['note']}")
+    print("\nnot on this team:")
+    for m in r["not_on_this_team"]:
+        print(f"  {m['name']:<22}{m['why']}")
+    print("\naddress by socket, never by name -- names collide.")
+
+
 def cmd_topics(a):
     by = {}
     for r in rows():
@@ -134,6 +154,9 @@ def main():
     q.add_argument("--question", required=True)
     q.add_argument("--who", default="")
     q.set_defaults(fn=cmd_open)
+
+    q = sub.add_parser("who")
+    q.set_defaults(fn=cmd_who)
 
     q = sub.add_parser("topics")
     q.set_defaults(fn=cmd_topics)
