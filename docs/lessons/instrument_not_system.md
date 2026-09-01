@@ -172,6 +172,36 @@ reading a clean result, ask which guards were even reachable on that input — a
 if the answer is unknown, the clean result is not yet evidence of soundness
 (b0, on how to read the 22B milestone table).
 
+### A fourth tell: a baseline that pays work the candidate does not pay
+
+Different enough from the printf and join tells to name separately, and it is the
+one that survives careful measurement — because the measurement itself is fine.
+
+`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms**.
+Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16 write plus an fp32 cast — while
+**both** fp8 arms passed `out_dtype=torch.float32` and never paid it. About
+12.9 GB/step, ≈10.4 ms at the probe's own fitted bandwidth. The baseline was
+penalised by work the candidate does not do, so the gap between them was not the
+thing under test. Corrected ceiling: **60.2 ms**.
+
+The gap was visible before the conclusion was drawn. The bf16 arm read 205.3 ms
+against a **traced** production head of 190.0 ms (`eff.lm_head_is_compute_bound`,
+62.5+63.0+64.5 by correlation id) — 8.1% rich, in a direction that flattered the
+candidate. Two checks would have caught it:
+
+1. **Do both arms do the same work outside the thing under test?** Every
+   difference other than the treatment is a confound, including an output dtype.
+2. **Does the baseline reproduce a traced production number?** If the control
+   does not match the system it claims to represent, the contrast is against a
+   fiction. This is the same discipline as t59's bf16 arm reproducing the known
+   137.0 TFLOPS to 0.2% — that agreement is what made t59's fp8 number
+   believable, and its absence is what should have stopped t58's.
+
+Note what did *not* go wrong: the timing was tight (spread 0.003–0.006 ms/chunk),
+the statistic was pre-declared, the arms were interleaved. **A well-run
+measurement of the wrong contrast is still the wrong answer**, and none of the
+usual rigour markers detect it.
+
 ## When a qualifier has to be a restriction
 
 A number can be correct and still be misused, and the qualifier you attach
