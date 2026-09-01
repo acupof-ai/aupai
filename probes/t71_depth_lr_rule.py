@@ -28,6 +28,8 @@ check 1  convexity is structural, not an init artifact (holds at every q scale, 
 check 2  a convex combination is bounded by its largest source, at any source count
 check 3  the measured depth exponent, from a fixed relative weight perturbation on every layer
 check 4  Muon's update magnitude does not depend on the gradient's
+check 6  Muon's update magnitude does not depend on gradient NOISE either, i.e. on batch
+check 7  the exponent is stable across seeds and perturbation scales
 
 WHAT THIS IS NOT. Check 3 perturbs weights at INIT and reads the forward response. That is the
 quantity the muP derivation is about, and it is the honest scope of this probe: it measures the
@@ -35,6 +37,13 @@ architecture's depth sensitivity, NOT the optimal learning rate. An lr is set by
 dynamics over thousands of steps; a forward-sensitivity exponent bounds what the rule should be,
 it does not replace a sweep. Read it as "sqrt is the wrong exponent for this architecture", never
 as "the optimal lr_scale is exactly X".
+
+Checks 4 and 6 are two different questions that look like one. Check 4 varies gradient SCALE;
+check 6 varies gradient NOISE at fixed scale, which is what changing the batch actually does.
+Scale-invariance does not imply noise-invariance, so answering "does the depth rule interact with
+the batch decision" required measuring the second rather than citing the first. It does not, FOR
+MUON. The AdamW groups (embed_lr, scalar_lr) are batch-scaled per nanochat at a batch this probe
+never varies, so nothing here speaks to them -- that is a hole, not a clean bill.
 
 The KDA mixer needs the fla CUTLASS kernel, absent on a dev box, so it is replaced by its own
 output projection. That changes the RMS magnitudes and does NOT change the control flow, the
@@ -224,7 +233,45 @@ def selftest():
     print(f"  5 Full AttnRes source reads {r12} (L=12) -> {r32} (L=32) = {r32 / r12:.1f}x, quadratic")
     print(f"    blocks=8 at L=32 reads {source_reads(32, 8)}, ~parity with Full at L=12 ({r12})")
 
-    print("selftest: 6/6")
+    # 6. Muon is invariant to gradient NOISE, not merely to gradient SCALE. Batch changes the
+    #    former; check 4 only ruled out the latter. Without this, "the depth rule does not
+    #    interact with the batch decision" would be a scale result answering a noise question.
+    torch.manual_seed(0)
+    n = 256
+    signal = torch.randn(n, n) * 0.1
+    norms, coss = [], []
+    clean = torch.zeros(n, n)
+    oc = m.Muon([clean], lr=1.0, momentum=0.0, ns_steps=5, weight_decay=0.0)
+    clean.grad = signal.clone()
+    oc.step()
+    for k in (1, 4, 28, 196):  # 4 = tilerl's max per card; 28 = world 7 at accum 1
+        g = torch.Generator().manual_seed(k)
+        w = torch.zeros(n, n)
+        opt = m.Muon([w], lr=1.0, momentum=0.0, ns_steps=5, weight_decay=0.0)
+        w.grad = signal + torch.randn(n, n, generator=g) / (k**0.5)
+        opt.step()
+        norms.append(w.norm().item())
+        coss.append(((w.flatten() @ clean.flatten()) / (w.norm() * clean.norm())).item())
+    assert max(norms) / min(norms) < 1.05, f"Muon update magnitude tracks batch noise: {norms}"
+    assert coss[-1] > coss[0] * 3, f"more batch must improve direction, got {coss}"
+    print(f"  6 Muon update norm flat over batch 1..196 ({min(norms):.2f}..{max(norms):.2f}); "
+          f"only direction improves (cos {coss[0]:.2f}->{coss[-1]:.2f})")
+
+    # 7. the exponent survives seed and perturbation scale. A single-seed exponent quoted as a
+    #    launch parameter is the shape of error this repo keeps finding, so measure the spread.
+    exps = []
+    for seed in (0, 1, 2):
+        for rel in (1e-4, 1e-2):
+            s12 = depth_sensitivity(m, d, 12, True, rel, seed)
+            s32 = depth_sensitivity(m, d, 32, True, rel, seed)
+            exps.append(math.log(s32 / s12) / math.log(32 / 12))
+    lo, hi = min(exps), max(exps)
+    assert hi < 0.25, f"exponent {hi:.3f} reaches the sqrt regime on some seed"
+    assert hi - lo < 0.05, f"exponent spread {hi - lo:.3f} is too wide to quote"
+    print(f"  7 exponent over 3 seeds x 2 scales: {lo:+.3f}..{hi:+.3f} "
+          f"(implied lr_scale {(32 / 12) ** -hi:.3f}..{(32 / 12) ** -lo:.3f}, sqrt rule 0.612)")
+
+    print("selftest: 8/8")
     return 0
 
 
