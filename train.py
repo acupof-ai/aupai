@@ -118,6 +118,12 @@ NON_SHARD_JSONL = {
 # the 4 slices plus 2 sample/ label files.
 SHARD_RE = re.compile(r"_\d{3,}\.jsonl$")
 
+# Known non-shard artifacts written INTO a corpus dir, by pattern rather than by name:
+# holdout_slice_<domain>.jsonl is emitted per domain, so enumerating them would need a
+# new entry for every domain ever added. These are skipped silently; anything matching
+# neither this nor SHARD_RE stops the run (see _domain_seqs).
+NON_SHARD_RE = re.compile(r"^holdout_slice_")
+
 try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
     from fla.ops.kda import chunk_kda
     from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
@@ -1614,12 +1620,30 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     # sidecar, not a name: unlike --fone the stream is identical, so two seeds must not
     # coexist as two caches, they must force one rebuild (de-7 prerequisite).
     seedfp = cache + ".seed"
-    shards = sorted(
-        p
-        for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
-        if SHARD_RE.search(os.path.basename(p))
-        and os.path.basename(p) not in NON_SHARD_JSONL
-    )
+    # Three branches, not two. A file is a shard, a KNOWN non-shard, or unknown -- and
+    # the third refuses. Silently ignoring the unknown would keep new artifacts out of
+    # the training data (the point of the whitelist) while throwing away the property
+    # the original blacklist was chosen for: "a sniffer silently skips a shard whose
+    # first line broke; this list fails loud on the next such file" (train.py:96). The
+    # blacklist picked the wrong DEFAULT, not the wrong volume, so the fix keeps the
+    # volume. A real shard that someone names oddly must stop the run, not vanish from
+    # it -- silently training on 8 of 9 domains is the expensive failure; this one costs
+    # two minutes at step 0.
+    seen = sorted(glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl")))
+    shards, unknown = [], []
+    for p in seen:
+        b = os.path.basename(p)
+        if b in NON_SHARD_JSONL or NON_SHARD_RE.search(b):
+            continue
+        (shards if SHARD_RE.search(b) else unknown).append(p)
+    if unknown:
+        raise SystemExit(
+            f"REFUSING: data/corpus/{domain} holds {len(unknown)} .jsonl file(s) that are "
+            f"neither shards (<prefix>_NNN.jsonl) nor known non-shards: "
+            f"{', '.join(os.path.basename(u) for u in unknown[:4])}. "
+            f"A shard misnamed here would be dropped from training in silence. Rename it "
+            f"to the shard pattern, or add it to NON_SHARD_JSONL / NON_SHARD_RE in train.py."
+        )
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp

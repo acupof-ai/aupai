@@ -17,8 +17,11 @@ would pass while the next new artifact repeated the incident.
 
     python3 scripts/test_shard_glob.py --selftest
 """
+import glob
 import os
 import re
+import shutil
+import textwrap
 import subprocess
 import sys
 
@@ -38,17 +41,54 @@ def _selection(train_py, names):
     ns = {"re": re}
     m = re.search(r"^NON_SHARD_JSONL = \{.*?\n\}", src, re.S | re.M)
     exec(m.group(0), ns) if m else ns.setdefault("NON_SHARD_JSONL", set())
-    m = re.search(r"^SHARD_RE = re\.compile\(.*?\)$", src, re.M)
-    if m:
-        exec(m.group(0), ns)
-    keep = []
+    for pat in (r"^SHARD_RE = re\.compile\(.*?\)$", r"^NON_SHARD_RE = re\.compile\(.*?\)$"):
+        m = re.search(pat, src, re.M)
+        if m:
+            exec(m.group(0), ns)
+    keep, unknown = [], []
     for n in names:
-        if ns.get("SHARD_RE") and not ns["SHARD_RE"].search(n):
+        if n in ns["NON_SHARD_JSONL"] or (ns.get("NON_SHARD_RE") and ns["NON_SHARD_RE"].search(n)):
             continue
-        if n in ns["NON_SHARD_JSONL"]:
-            continue
-        keep.append(n)
-    return keep
+        if ns.get("SHARD_RE") is None or ns["SHARD_RE"].search(n):
+            keep.append(n)
+        else:
+            unknown.append(n)
+    return keep, unknown
+
+
+def _run_block(train_py, filenames):
+    """Execute _domain_seqs' shard-selection block over a temp dir holding `filenames`.
+
+    The block is lifted from train.py source and run with the module-level names it
+    needs. Importing train.py is not an option here (torch, CUDA); re-implementing the
+    branching is what let two mutations through. This runs the shipped lines.
+    """
+    import tempfile
+    src = open(train_py, encoding="utf-8").read()
+    blk = re.search(r"\n(    seen = sorted\(glob\.glob.*?)\n    same_vocab", src, re.S)
+    assert blk, "the shard-selection block is gone or was rewritten; re-read train.py"
+    body = textwrap.dedent(blk.group(1))
+    ns = {"re": re, "os": os, "glob": glob}
+    for pat in (r"^NON_SHARD_JSONL = \{.*?\n\}", r"^SHARD_RE = re\.compile\(.*?\)$",
+                r"^NON_SHARD_RE = re\.compile\(.*?\)$"):
+        m = re.search(pat, src, re.S | re.M)
+        if m:
+            exec(m.group(0), ns)
+    ns.setdefault("NON_SHARD_RE", re.compile(r"^__absent__"))
+    d = tempfile.mkdtemp(prefix="shardglob")
+    os.makedirs(os.path.join(d, "corpus", "probe"))
+    for n in filenames:
+        open(os.path.join(d, "corpus", "probe", n), "w").close()
+    ns.update(DATA=d, domain="probe")
+    out = {"shards": [], "raised": None}
+    try:
+        exec(body, ns)
+        out["shards"] = sorted(os.path.basename(x) for x in ns["shards"])
+    except SystemExit as e:
+        out["raised"] = str(e)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return out
 
 
 def main():
@@ -62,7 +102,7 @@ def main():
                   "build_corpus_stats.json.jsonl",
                   "manifest.jsonl", "labels.jsonl", "README.jsonl",
                   "some_future_sidecar.jsonl"]        # the file nobody has written yet
-    got = _selection(train_py, shards + not_shards)
+    got, unknown = _selection(train_py, shards + not_shards)
 
     missing = [s for s in shards if s not in got]
     assert not missing, f"real shards were REJECTED: {missing}"
@@ -75,10 +115,44 @@ def main():
 
     # The blacklist must survive: two sample/ files ARE named like shards and must still
     # be excluded, so the whitelist cannot simply replace it.
-    assert "cci3_audit_400.jsonl" not in _selection(train_py, ["cci3_audit_400.jsonl"]), \
+    assert "cci3_audit_400.jsonl" not in _selection(train_py, ["cci3_audit_400.jsonl"])[0], \
         "NON_SHARD_JSONL stopped being applied; a name-shaped non-shard is back in"
 
-    print(f"selftest OK ({len(shards)} shards kept, {len(not_shards)} non-shards refused)")
+    # THIRD BRANCH, and it is the one that keeps the original author's property: a file
+    # that is neither a shard nor a KNOWN non-shard must be reported, never silently
+    # dropped. Silence here means a misnamed real shard disappears from training and
+    # nothing says so -- the expensive failure. The known slices must NOT be reported.
+    assert "some_future_sidecar.jsonl" in unknown, (
+        "an unrecognised .jsonl was skipped silently; a misnamed shard would vanish "
+        "from the training data with no message (train.py:96's reason for the blacklist)")
+    assert "holdout_slice_chat_qa.jsonl" not in unknown, \
+        "a known non-shard would stop the run; NON_SHARD_RE is not being applied"
+
+    # sample/ is real and its shards are batch_NNN -- a <domain>_* prefix rule would
+    # take mix_sample.json (what test_e2e.py reads) to zero shards. Measured on the pod:
+    # 299 of its 301 files match the suffix, the 2 that do not are the label files.
+    assert _selection(train_py, ["batch_001.jsonl"])[0] == ["batch_001.jsonl"], \
+        "sample/'s batch_NNN shards were rejected; e2e would read an empty corpus"
+
+    # THE REFUSAL ITSELF -- by EXECUTING the shipped block against a real directory,
+    # not by reading it. Two earlier versions of this test grepped for `if unknown:` and
+    # for the word REFUSING, and BOTH passed a mutation that removed the line filling
+    # `unknown` while leaving the raise in place. Text inspection cannot see whether a
+    # branch is reachable; running it can.
+    run = _run_block(train_py, ["chat_qa_000.jsonl", "holdout_slice_chat_qa.jsonl"])
+    assert run["shards"] == ["chat_qa_000.jsonl"], f"shard selection wrong: {run}"
+    assert run["raised"] is None, f"a known non-shard stopped the run: {run['raised']}"
+
+    run = _run_block(train_py, ["chat_qa_000.jsonl", "some_future_sidecar.jsonl"])
+    assert run["raised"] is not None, (
+        "an unrecognised .jsonl did NOT stop the run. It is being skipped silently, so a "
+        "misnamed real shard vanishes from training with no message -- train.py:96's "
+        "reason for the blacklist, discarded.")
+    assert "some_future_sidecar.jsonl" in run["raised"], \
+        f"the refusal does not name the offending file: {run['raised']}"
+
+    print(f"selftest OK ({len(shards)} shards kept, {len(not_shards)} non-shards refused, "
+          f"unknown files refused by _domain_seqs)")
     return 0
 
 
