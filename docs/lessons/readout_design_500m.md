@@ -8,7 +8,9 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 ## 0. 问题精确化
 
-"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(16B)、step24000(22B)、step25500/26000/26500(尾部 500 步密档,~22–24.3B);0–16B 无存活 checkpoint,跑程止于 step26500(~24.3B)。**matched-token 轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
+"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(16B)、step24000(22B)、step25500/26000/26500(尾部 500 步密档,~22–24.3B);0–16B 无存活 checkpoint,跑程止于 step26500(~24.3B)。**matched-token 能力轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
+
+**0–16B 的替代轴(fb 线索,已核实):训练日志的 val 损失存活。** `runs/pretrain_15b_s1.log` 有 32 个 val 点(step 500–16000,0.46–14.7B,2.917→2.116);`pretrain_30b_s2.log` 有 21 个(step 16500–26500,15.1–24.3B,2.120→2.085)。train.py 的 val 是 fixed-subset(:1965 帮助文本),两跑同一 held-out 文本——**matched-token val 损失对比在 0–24B 全程可做**,接缝在 15B(stage1/stage2 两个跑、不同 mix、不同 LR 相位,接缝处 2.116→2.120 连续)。500M 跑 val_every=500 默认开,自动产同节奏曲线。**这不是能力读数,答的是"500M 在同样 token 数上是不是学得更快"——前段没有能力 checkpoint 时最该问的问题。** 开跑前验证一次:val subset 确实 held-out(tilerl 的 val-slice 缺陷杀的是 domain_loss.py 的 scored 集,不是这个;但要核实,不能假设)。
 
 "最早第几个 token" = 主读数仪器首次越过阈值、且**连续两个 checkpoint 成立**的第一个 checkpoint;报分辨率区间 [T_prev, T*],不报单点。
 
@@ -36,7 +38,7 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 ## 3. 节奏与预算(三天机时)
 
-- **存档要求(给 tilerl):** save_every ≤ 2B token,且在与 200M 存档匹配的 token 点(1.25B 的倍数)必须有存档。粗于 2B,"最早 token"的答案分辨率不值三天机时。
+- **存档要求(fb 2026-09-01 裁定,tilerl 执行):** 全程每 1.25B 一个里程碑(16 个,对齐比较轴)+ 前 5B 每 0.4B 加密(约 12 个,"最早 token"的答案住在前段)+ **里程碑一个不删,只有滚动档参与回收**。单档 1.84 GB(Muon 单动量 + bf16,tilerl 实测),合计 ~28 点 ≈ 51 GB(可用 401 GB 的 13%)。存档间隔由 1.25B ÷ 每步 token 直算(b32 落地后),不拍脑袋。
 - **每档成本:** 生成 sweep ~1h(0/1/3/8 × 数学+代码,492 题,`--eval-from 8`,rep_stop=False,model_turn 抽取)+ math_v2_like ~15min + domain loss ~10min ≈ 1.5h。
 - **分配:** 快护栏每档都跑;生成 sweep 每 3 档跑一次(~每 3B token)。30B 跑程 ≈ 10 次生成 + 30 次快读 ≈ 17.5h,三天预算内留足 L0' 与复测。
 - **若 L0' 分支成立:** 快主读数每档跑,生成降为每 5 档确认——分辨率从 3B  sharpen 到 1B。
