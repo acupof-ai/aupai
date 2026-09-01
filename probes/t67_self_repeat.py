@@ -13,7 +13,7 @@ They have different causes and different fixes, so the distinction is the
 finding. This probe also dumps raw generations, because every number here is a
 summary of text nobody has actually looked at yet.
 
-Usage: python probes/t63_self_repeat.py --ckpt ckpt_... --out runs/self_repeat.json
+Usage: python probes/t67_self_repeat.py --ckpt ckpt_... --out runs/self_repeat.json
 """
 import argparse
 import json
@@ -107,7 +107,7 @@ def main():
     ctxs = [tok.encode(t).ids[: a.prompt_tokens] for t in texts]
     ctxs = [c for c in ctxs if len(c) >= N]
 
-    out = {"probe": "t63_self_repeat", "ckpt": os.path.basename(a.ckpt),
+    out = {"probe": "t67_self_repeat", "ckpt": os.path.basename(a.ckpt),
            "ngram_tokens": N, "n_prompts": len(ctxs), "max_new": a.max_new,
            "rep_stop": False, "arms": {}}
     dump = []
