@@ -288,8 +288,14 @@ def check_pod(root=ROOT, scope=None):
     stale = unmanaged_extras(root, manifest)
     if stale:
         shown = ", ".join(stale[:5]) + ("..." if len(stale) > 5 else "")
-        parts.append(f"{len(stale)} EXTRA file(s) in managed dirs, deleted on main but "
-                     f"still here (pod_push never deletes): {shown}")
+        # "not on main" is what this can prove. It does NOT distinguish a deletion that
+        # never crossed (pod_push only adds) from a file authored here and never
+        # committed -- the first three it found were the latter. Saying "deleted on
+        # main" would put a cause on the evidence and send someone hunting a commit
+        # that does not exist.
+        parts.append(f"{len(stale)} file(s) in managed dirs are NOT on main -- either a "
+                     f"deletion that never crossed (pod_push only adds) or authored "
+                     f"here and never committed: {shown}")
     return True, "; ".join(parts)
 
 
@@ -434,7 +440,7 @@ def selftest():
     open(os.path.join(d, "filters", "clean_school_math.py"), "w").write("# deleted on main\n")
     ok_x, ev_x = check_pod(d)
     assert ok_x, ev_x
-    assert "EXTRA" in ev_x and "clean_school_math.py" in ev_x, (
+    assert "NOT on main" in ev_x and "clean_school_math.py" in ev_x, (
         f"a leftover in a managed dir was not reported: {ev_x}")
     # And a non-.py leftover, which unregistered_py cannot see at all.
     open(os.path.join(d, "filters", "stale_rules.txt"), "w").write("x\n")
