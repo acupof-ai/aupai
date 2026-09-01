@@ -1714,6 +1714,45 @@
    },
    "uncertainty": "One fp8 arm against two baselines, so the fp8 side has no twin and its own run-to-run spread is unmeasured -- but a 300x-twin-spread gap does not need one to be read as real. The regression's CAUSE is not diagnosed: I show the fp8 head is slower, not which of the three candidate mechanisms accounts for it, and a scale-caching fix might change the verdict. That is the open question the note b0 left points at. The measurement is also 600 steps on one mix at one batch size; the head's chunk count scales with BT, so the balance between GEMM time saved and quantisation traffic added will shift with batch.",
    "status": "measured"
+  },
+  {
+   "id": "eff.colocation_second_process_cannot_backfill",
+   "value": "a second PROCESS cannot use a training card's idle SMs, and this is architectural rather than a tuning question. NVIDIA's MPS documentation (docs.nvidia.com/deploy/mps/architecture.html, Background, read directly 2026-09-01): 'Work launched to the compute engine from work queues belonging to different CUDA contexts cannot execute concurrently.' Without MPS each process gets 'a serially scheduled time-slice on the whole GPU'. So both the temporal and spatial idle in our step are unreachable by a plain second process; reaching them requires one CUDA context (streams) or MPS. MPS costs, from the same page: fault isolation is partial -- in shared-server mode 'a fatal fault from one client may bring down a different user's client that shares any GPU with the faulting client' -- and it documents NO memory partitioning, only per-client address spaces and 'limited execution resource provisioning for Quality of Service'. Measured primary degradation from a co-tenant: TGS NSDI'23 43% (ResNet-50 + ShuffleNet, A100), AntMan OSDI'20 5.2x (V100, Alibaba production), Zico ATC'21 8x (MPS under memory pressure), MIG 23% even with hardware partitioning, Gandiva OSDI'18 -13% as the best case and only for an already 94%-utilized job.",
+   "measured": "2026-09-01",
+   "source": "docs.nvidia.com/deploy/mps/architecture.html (verified directly); TGS NSDI'23, AntMan OSDI'20, Zico ATC'21, Gandiva OSDI'18 as cited in the e1-5 survey",
+   "config": {
+    "question": "can a second workload share a training card",
+    "our_case": "H20, 7 training cards, 200M model"
+   },
+   "uncertainty": "the third-party slowdown figures are from their own hardware and workloads, not ours; tilerl's on-box probe is the local measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.low_occupancy_is_not_free_capacity",
+   "value": "empty SM slots are not fillable capacity, measured in our own occupancy regime. Elvinger et al. SoCC '25 (arXiv 2501.16909, H100, Nsight Compute instrumented) ran two kernels at 6.25% ACHIEVED OCCUPANCY each, separate CUDA streams, every SM available, and measured a 1.73x latency increase EACH. Naive occupancy math predicts no interference. Our KDA gated-delta backward sits at 6-13% occupancy, the same regime on Hopper-class silicon. Their diagnosis: occupancy is the wrong predictor; the binding constraints are IPC and warp-scheduler saturation, register and shared-memory capacity at the block scheduler, and L2/HBM bandwidth. Three specifics that transfer: a compute-bound kernel paired with a memory-bound one -- the textbook complementary case -- DOUBLED the copy kernel's time; head-of-line blocking occurred despite streams when a kernel needing 64512 registers/block found 63288 free per SM and the block scheduler serialised it (our worst KDA kernel runs 254 registers/thread against a 255 ceiling); and Green Contexts with strict SM isolation still showed 1.3x slowdown from L2/HBM contention alone. Ablation-isolated overlap gains across the literature are 1.05-1.31x, not the 1.9-2.2x of end-to-end headlines: NanoFlow's overlap term is 1.07-1.17x after a 13.2% nano-batching tax, Kernelet 1.05-1.31x with gains explicitly small when both kernels are compute-heavy or both memory-heavy, Domino ~1.2x. Flux goes NEGATIVE at small shapes on new hardware, -165% overlap efficiency at m=64-512 on H800.",
+   "measured": "2026-09-01",
+   "source": "arXiv 2501.16909 (SoCC '25); arXiv 2408.12757 NanoFlow; arXiv 1303.5164 Kernelet; arXiv 2409.15241 Domino; arXiv 2406.06858 Flux",
+   "config": {
+    "our_occupancy": "6-13%",
+    "our_registers_per_thread": 254,
+    "register_ceiling": 255,
+    "measured_pair": "2 kernels at 6.25% occupancy each, separate streams, H100"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "eff.busy_is_residency_not_sm_work",
+   "value": "our '95.44% busy' is a RESIDENCY measure and must not be read as SM utilisation. It is GPU kernel wall time over step span, the PROF_GR_ENGINE_ACTIVE family, which NVIDIA's DCGM documentation defines as 'the fraction of time any portion of the graphics or compute engines were active'. It says a kernel was resident, not that the machine was working. The gap is measured and large: Acme (arXiv 2403.07648, 4704 A100, six-month production trace) reports on the SAME clusters median nvidia-smi GPU utilization 97-99% against median DCGM PROF_SM_ACTIVE ~40%, and flags its own coarse metric -- \"'GPU utilization' may sometimes be a weak utilization indicator\" -- citing nvidia-smi as the reference. Consequence for any capacity question: derive headroom from ACHIEVED OCCUPANCY, not from the busy figure. Deriving our co-location spatial term from '95.44% busy so 4.56% free' would have been exactly the error this trace exists to expose.",
+   "measured": "2026-09-01",
+   "source": "arXiv 2403.07648 (Acme); docs.nvidia.com/datacenter/dcgm feature-overview; our eff.steady_state_composition",
+   "config": {
+    "our_busy_pct": 95.44,
+    "metric_family": "PROF_GR_ENGINE_ACTIVE (residency)",
+    "not": "PROF_SM_ACTIVE"
+   },
+   "uncertainty": "we have not measured our own SM_ACTIVE; the Acme gap is their clusters, and only says our busy figure cannot be read as SM work",
+   "status": "recorded"
   }
  ]
 }
