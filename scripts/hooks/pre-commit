@@ -137,8 +137,14 @@ def main():
     # SHARED .git, where MERGE_HEAD never appears -- a worktree's lives in
     # .git/worktrees/<name>/. So the merging exemption was always false here, and this
     # gate refused the merge commit that resolves being behind, which is the one commit
-    # it must never block. Found by it blocking me (de, 2026-09-01); the tree check
-    # twenty lines above reads MERGE_HEAD the same wrong way and is next.
+    # it must never block (de, 2026-09-01).
+    #
+    # The tree check twenty lines above reads MERGE_HEAD the old way and is CORRECT
+    # there, which an earlier version of this comment got wrong: its read only runs
+    # under `if main_tree`, and in the integration tree the common dir IS .git, so
+    # MERGE_HEAD is exactly where it looks. The bug was never the expression -- it was
+    # the expression in a context nobody had evaluated it in (e1 caught the
+    # overcorrection).
     merge_head = subprocess.run(["git", "rev-parse", "--git-path", "MERGE_HEAD"],
                                 capture_output=True, text=True).stdout.strip()
     merging = bool(merge_head) and os.path.exists(merge_head)
