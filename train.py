@@ -1296,6 +1296,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
     _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
+    _origin = 0 if isinstance(cfg, dict) else (getattr(cfg, "_plan_step_origin", 0) or 0)
     _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
     _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
@@ -1333,14 +1334,33 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         # checkpoint the expected case, not the rare one (fb, 2026-09-01).
         dom_idx, names = _dom_idx, _names
         if step is not None and dom_idx is not None and names:
-            rows_done = step * _batch * _accum  # this rank's share, plan order
-            head = dom_idx[:rows_done]
-            counts = torch.bincount(head.to(torch.int64), minlength=len(names))
-            world = int(os.environ.get("WORLD_SIZE", 1))
-            # x world: every rank walks its own stripe of the same plan at the same rate,
-            # so the whole-run consumption of a domain is this rank's count x world.
-            ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
-            ck["row_cursor_as_of_step"] = step
+            # RELATIVE to this plan, not the absolute step. _plan_domains holds only the
+            # current plan's rows, so after a resume an absolute step indexes past its end
+            # -- and a Python slice CLAMPS rather than raising, so the cursor written is
+            # the plan-complete count wearing an as-of-step label. At step 24000 that is
+            # 768,000 rows into a 523,158-row plan, silently (tilerl, 2026-09-01). Correct
+            # below the plan length, wrong above it, which is the shape that survives
+            # testing: stage 1 starts at 0, where absolute and relative are equal.
+            rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
+            if rows_done < 0 or rows_done > len(dom_idx):
+                # Refuse rather than clamp, and record WHY in the checkpoint. A wrong
+                # cursor is not recoverable by a later reader -- it looks exactly like a
+                # right one -- while a missing cursor costs a resume that repeats rows,
+                # which is. No early return: one save at the end of the function, so a
+                # future field added below cannot be skipped by this path.
+                ck["row_cursor_refused"] = (
+                    f"step {step} - origin {_origin} = {step - _origin} steps x "
+                    f"{_batch}x{_accum} = {rows_done} rows against a {len(dom_idx)}-row plan; "
+                    f"the origin is wrong or the plan is not this run's. No cursor written."
+                )
+            else:
+                head = dom_idx[:rows_done]
+                counts = torch.bincount(head.to(torch.int64), minlength=len(names))
+                world = int(os.environ.get("WORLD_SIZE", 1))
+                # x world: every rank walks its own stripe of the same plan at the same
+                # rate, so the whole-run consumption of a domain is this rank's count x world.
+                ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
+                ck["row_cursor_as_of_step"] = step
         else:
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
@@ -2154,6 +2174,14 @@ def main():
         if m:
             resume_step = int(m.group(1))
         resume_step = ck.get("step", resume_step)
+        # The cursor's step origin. save_checkpoint indexes _plan_domains, which holds
+        # only THIS plan's rows, with an absolute step -- so after a resume the index
+        # runs past the array and Python's slice clamps to its end, writing the
+        # plan-complete count under a `row_cursor_as_of_step` label. Verified at step
+        # 24000: 768,000 rows indexed into a 523,158-row plan (tilerl, 2026-09-01).
+        # replay_cursor.py:44 states the same rule for its caller; this is the writer's
+        # half of it.
+        Cfg._plan_step_origin = resume_step
         if is_main:
             print(f"Resumed from {args.resume} (step {resume_step})", flush=True)
     fp8 = args.fp8 and amp
