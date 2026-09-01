@@ -466,7 +466,10 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
                 pfp = p_dl["domains"][d].get("head_fp")
                 if mfp is None or pfp is None:
                     which = "both" if mfp is None and pfp is None else ("milestone" if mfp is None else "paired")
-                    fp_refused[d] = f"no head_fp on the {which} record (predates the field); absent refuses"
+                    fp_refused[d] = (
+                        f"no head_fp on the {which} record (written before the field "
+                        f"existed), so it cannot be shown the two sides were scored on "
+                        f"the same text -- rescore both sides with domain_loss >= cb44aa7")
                     common.remove(d)
                 elif mfp != pfp:
                     fp_refused[d] = f"head_fp {mfp} vs {pfp} -- same name, different text"
@@ -474,6 +477,13 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             if not common and fp_refused:
                 print(f"\n{name}: REFUSING -- every shared-name head failed the fingerprint "
                       f"check. " + "; ".join(f"{d}: {w}" for d, w in sorted(fp_refused.items())))
+                print("  A refusal that leaves the operator guessing is how people reach "
+                      "for --force, so: this is not a defect in the checkpoints. It is that "
+                      "the record predates head_fp and cannot show both sides were scored "
+                      "on the same bytes. Fix: rescore both with eval/domain_loss.py at "
+                      ">= cb44aa7, which writes head_fp beside each loss. There is no "
+                      "override, because grandfathering would certify exactly the rows we "
+                      "know least about.")
                 continue
             if not common:
                 print(f"\n{name}: REFUSING -- the pair shares NO head. milestone "
