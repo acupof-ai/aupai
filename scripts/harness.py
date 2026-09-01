@@ -4753,6 +4753,9 @@ def cmd_task(argv):
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
+    p = sub.add_parser("drop")
+    p.add_argument("id")
+    p.add_argument("--why", required=True, help="why this will not be done; names what superseded it")
     sub.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
     args = ap.parse_args(argv)
     rows = _read_tasks()
@@ -4820,6 +4823,19 @@ def cmd_task(argv):
         ev.pop("closed", None)
         _append_task(ev)
         print(f"{args.id} reopened: {args.why[:80]}")
+        return 0
+
+    if args.op == "drop":
+        hit = [r for r in rows if r.get("id") == args.id]
+        if not hit:
+            print(f"no task {args.id}; `harness task list` shows what is open")
+            return 1
+        if hit[0].get("state") != "open":
+            print(f"{args.id} is {hit[0].get('state')}, not open")
+            return 1
+        _append_task(dict(hit[0], state="dropped", drop_reason=args.why,
+                          closed=time.strftime("%Y-%m-%d %H:%M")))
+        print(f"{args.id} dropped: {args.why[:80]}")
         return 0
 
     show = rows if args.all else [r for r in rows if r.get("state") == "open"]
