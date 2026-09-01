@@ -1480,6 +1480,57 @@ def _gpu_present():
     return bool(glob.glob("/dev/nvidia[0-9]*"))
 
 
+def check_non_shard_jsonl_excluded(root):
+    """train.py's shard glob must skip every non-shard .jsonl a domain dir can hold.
+
+    NON_SHARD_JSONL is a list of exact filenames. holdout_slice_<phase>.jsonl is a FAMILY --
+    build_corpus's holdout gate writes one per phase into the domain dir -- so it could never
+    be on an exact-name list that nobody edits when a phase is added. It was not, and the miss
+    surfaced only at tokenize time as `KeyError: 'content'` from inside _jsonl_content, on all
+    three of chatml/chat_qa/code_py_rp1t at once, blocking the launch gate's epochs item
+    (b0, 2026-09-01). build_corpus.py already excluded the same family by prefix at :982; the
+    two files disagreed about what a shard is.
+
+    Checks the RULE, not the current corpus: a dev box has no domain dirs, and a check that
+    silently passes on an empty directory is the shape this file exists to retire."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return SKIP, "no train.py"
+    body = open(src, encoding="utf-8").read()
+    if "NON_SHARD_PREFIXES" not in body:
+        return FAIL, ("train.py has no NON_SHARD_PREFIXES: holdout_slice_*.jsonl and any "
+                      "future per-phase family will be tokenized as corpus rows")
+    m = re.search(r"NON_SHARD_PREFIXES\s*=\s*\(([^)]*)\)", body)
+    prefixes = re.findall(r'"([^"]+)"', m.group(1)) if m else []
+    if "holdout_slice_" not in prefixes:
+        return FAIL, f"NON_SHARD_PREFIXES is {prefixes}, missing holdout_slice_"
+    # and the glob must actually apply it, not merely define it
+    if "startswith(NON_SHARD_PREFIXES)" not in body:
+        return FAIL, ("NON_SHARD_PREFIXES is defined but the shard glob does not use it -- "
+                      "a constant nothing reads is a comment")
+    # any real domain dir that holds a slice must have it excluded by the same rule
+    leaked = []
+    for d in glob.glob(os.path.join(root, "data", "corpus", "*")):
+        for f in glob.glob(os.path.join(d, "holdout_slice_*.jsonl")):
+            if os.path.basename(f) in prefixes:
+                leaked.append(f)
+    if leaked:
+        return FAIL, f"{len(leaked)} holdout slice(s) not covered: {leaked[:2]}"
+    return PASS, f"train.py excludes {prefixes} by prefix and applies it in the shard glob"
+
+
+def _broken_non_shard_jsonl_excluded():
+    """train.py as it stood before tonight: the exact-name list, no prefix rule."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "train.py")
+    body = open(src, encoding="utf-8").read()
+    body = body.replace('NON_SHARD_PREFIXES = ("holdout_slice_",)', "")
+    body = body.replace("        and not os.path.basename(p).startswith(NON_SHARD_PREFIXES)\n", "")
+    with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as f:
+        f.write(body)
+    return d
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -5356,6 +5407,15 @@ CHECKS = [
         "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
         check_no_oversized_blob,
         _broken_blob,
+    ),
+    (
+        "non_shard_jsonl_excluded",
+        "train.py's shard glob skips holdout_slice_*.jsonl and any other non-shard family",
+        "the holdout slice is one file per PHASE, so an exact-name list could never cover it; "
+        "three domains failed to tokenize with KeyError: 'content' and the launch gate's epochs "
+        "item was blocked until it was found",
+        check_non_shard_jsonl_excluded,
+        _broken_non_shard_jsonl_excluded,
     ),
     (
         "spawned_scripts_exist",

@@ -102,6 +102,13 @@ NON_SHARD_JSONL = {
     "cci3_iaa_50.jsonl",
     "web_labels.jsonl",
 }
+# A FAMILY, not a filename: holdout_slice_<phase>.jsonl is written into the domain dir by
+# build_corpus's holdout gate, one per phase, so enumerating them would mean editing this list
+# every time a phase is added -- and the list is only consulted at tokenize time, so the miss
+# surfaces as KeyError: 'content' deep in _jsonl_content. It did tonight, on all three of
+# chatml/chat_qa/code_py_rp1t at once, blocking the launch gate's epochs item. build_corpus.py
+# already excludes the same family by prefix (:982); train.py was never taught the rule.
+NON_SHARD_PREFIXES = ("holdout_slice_",)
 
 try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
     from fla.ops.kda import chunk_kda
@@ -1603,6 +1610,7 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         p
         for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
         if os.path.basename(p) not in NON_SHARD_JSONL
+        and not os.path.basename(p).startswith(NON_SHARD_PREFIXES)
     )
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
