@@ -449,6 +449,12 @@ guess answers it wrongly with no marker.
   (`build_corpus --global-only`). filters `light`, workers 32, near_dedup False,
   206 shards. [RECONSTRUCTED, 3b]
 - Fetched: not recorded
+- Searched: `data/corpus/math_owm_stage2/build_corpus_stats.json` (records domain
+  "math_owm", no source field); `datagen/*.py` (0 files name this domain);
+  `git log --all -S math_owm_stage2 -- datagen/ scripts/` (5 commits, none a build
+  command); this file's earlier sections. The finemath half of the source IS recoverable:
+  `_manifest_ms_finemath_4plus` in `datagen/fetch_corpus.py` (AI-ModelScope/finemath
+  finemath-4plus, 64 parquet, manifest `data/raw/ms_finemath_4plus_manifest.txt`)
 
 ### en_c4_stage2
 
@@ -456,13 +462,26 @@ guess answers it wrongly with no marker.
 - Source: C4 English (stage-2 rebuild; stats stamp records domain "en_c4")
 - Build: not recorded. filters `light`, workers 32, near_dedup False, 83 shards
 - Fetched: not recorded
+- Searched: `data/corpus/en_c4_stage2/build_corpus_stats.json` (records domain "en_c4");
+  `datagen/*.py` (1 hit, `build_corpus.py:1136`, a comment on the `_stage2` suffix
+  convention -- not a build command); `git log --all -S en_c4_stage2 -- datagen/ scripts/`
+  (5 commits); this file's earlier sections. Nothing found: this gap is real
 
 ### cot
 
 - Result: fingerprint 388496b76ed9bf88, 851,965 docs, 1,325,493,967 bytes, 424,056,227 tokens
-- Source: not recorded
+- Source: not recorded in the stamp, but RECOVERABLE from the
+  fetchers: `datagen/fetch_corpus.py` holds three cot-role sources --
+  `_manifest_hf_numma` (AI-MO/NuminaMath-CoT via hf-mirror, 5 parquet, 2026-08-31),
+  `_manifest_ms_openmathinstruct2` (OpenMathInstruct-2, 55 parquet, ModelScope,
+  2026-08-31), and a RedPajama-1T stackexchange slice -- plus `datagen/numma_to_jsonl.py`,
+  which composes problem+solution because the parquet has no text column. WHICH of the
+  three produced these 851,965 docs is not determined
 - Build: not recorded. filters `light`, workers 32, near_dedup False, 13 shards
 - Fetched: not recorded
+- Searched: `datagen/fetch_corpus.py` (3 cot-role fetchers); `datagen/numma_to_jsonl.py`;
+  `data/corpus/cot/build_corpus_stats.json`;
+  `git log --all -S cot -- datagen/ scripts/` (22 commits)
 
 ### textbook_30b
 
@@ -471,6 +490,10 @@ guess answers it wrongly with no marker.
   (3f237c5191cb8571), a second mix name for one corpus, not a second build
 - Build: not recorded (see the `textbook` block: "unrecorded, pre-0830v1"). 79 shards
 - Fetched: not recorded
+- Searched: `data/corpus/textbook_30b/build_corpus_stats.json` (no `kept`, no source);
+  `datagen/*.py` (0 files name it); `datagen/fetch_corpus.py` (no textbook fetcher);
+  `git log --all -S textbook_30b -- datagen/ scripts/` (6 commits); the `textbook` block
+  above, itself marked unrecorded. The gap is inherited, not new
 
 ### zh_web
 
@@ -479,6 +502,11 @@ guess answers it wrongly with no marker.
 - Build: clean pass1/2/3 + holdout carve; pre-0830v1 stage clean, restamped at 30b.
   filters `light`, 909 shards. [FIRSTHAND, 3b]
 - Fetched: not recorded
+- Searched: `data/corpus/zh_web/build_corpus_stats.json` (no `kept`, no source);
+  `datagen/*.py` (0 files name the domain); `git log --all -S zh_web -- datagen/ scripts/`
+  (12 commits). The CCI3 half of the fetch IS recoverable: `_manifest_cci3_hq` in
+  `datagen/fetch_corpus.py` (BAAI/CCI3-HQ via the ModelScope repo-tree API). The wanjuan
+  half: not recorded
 
 ### chatml — built 2026-09-01 (3b, fb ruling)
 
