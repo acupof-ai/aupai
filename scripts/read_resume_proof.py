@@ -166,10 +166,11 @@ def read_sum(cursor, step, batch, accum, world, origin=0):
 def read_opt(opts):
     """Condition 5, b0's version: the buffers were LOADED, not merely present.
 
-    `opts` is ck["opt"], a LIST in build_optimizers order (train.py:1114) -- [0] Muon,
-    [1] AdamW(embed), [2] AdamW(scalar). Index 0 is not cosmetic: fb's condition names
-    Muon's momentum, and reading [1] instead would find AdamW's exp_avg, which is also
-    nonzero, so the condition would go green having measured the wrong optimizer (b0).
+    `opts` is ck["opt"], a LIST in build_optimizers order (train.py:1114): [0] Muon, then
+    AdamW for embed, scalar and (when fp32_master is on) the master copy -- four in the
+    launch recipe, measured. Index 0 is not cosmetic: fb's condition names Muon's
+    momentum, and an AdamW's exp_avg is nonzero too, so reading the wrong index goes
+    green having measured the wrong optimizer (b0).
 
     Empty state and all-zero buffers are both failures, for different reasons: empty
     means Muon never stepped or the load was skipped entirely, all-zero is what a
@@ -185,12 +186,15 @@ def read_opt(opts):
         return [(FAIL, "5. Muon momentum loaded and nonzero",
                  "opt[0] state is empty -- Muon never stepped, or the load was skipped"),
                 (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
-    bufs = [v["momentum_buffer"] for v in state.values()
-            if isinstance(v, dict) and "momentum_buffer" in v]
+    # "mb", not torch's "momentum_buffer": Muon is this repo's own optimizer and names
+    # its buffer at train.py:960. Reading the torch name found nothing and reported the
+    # 168-param Muon state as "is [0] really Muon?" -- a red on correct code, measured
+    # 2026-09-02. The convention comes from the implementation, not from torch.
+    bufs = [v["mb"] for v in state.values() if isinstance(v, dict) and "mb" in v]
     if not bufs:
         return [(FAIL, "5. Muon momentum loaded and nonzero",
-                 f"opt[0] has {len(state)} param(s) but no momentum_buffer -- is [0] really "
-                 f"Muon? AdamW would carry exp_avg instead"),
+                 f"opt[0] has {len(state)} param(s) but no 'mb' buffer -- is [0] really "
+                 f"Muon? An AdamW carries exp_avg/exp_avg_sq instead"),
                 (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
     peak = max(float(b.norm()) for b in bufs)
     return [(PASS if peak > 0 else FAIL, "5. Muon momentum loaded and nonzero",
@@ -297,10 +301,14 @@ def _selftest():
 
     assert read_opt([])[0][0] == FAIL                                   # no opt key
     assert read_opt([{"state": {}}])[0][0] == FAIL                      # Muon never stepped
-    assert read_opt([{"state": {0: {"exp_avg": T(0.3)}}}])[0][0] == FAIL  # [0] is not Muon
-    assert read_opt([{"state": {0: {"momentum_buffer": T(0.0)}}}])[0][0] == FAIL  # all zero
-    assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
-    assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == OUT_OF_SCOPE
+    # An AdamW at index 0: exp_avg present, no "mb". The wrong-optimizer case.
+    assert read_opt([{"state": {0: {"exp_avg": T(0.3)}}}])[0][0] == FAIL
+    # torch's spelling is NOT this Muon's: a checkpoint carrying momentum_buffer at [0]
+    # is not the optimizer this condition is about, and must not pass by looking familiar.
+    assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == FAIL
+    assert read_opt([{"state": {0: {"mb": T(0.0)}}}])[0][0] == FAIL   # present, all zero
+    assert read_opt([{"state": {0: {"mb": T(0.3)}}}])[0][0] == PASS
+    assert read_opt([{"state": {0: {"mb": T(0.3)}}}])[1][0] == OUT_OF_SCOPE
     print("read_resume_proof selftest OK: 20 cases "
           "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor equal/disagree/absent/none, "
           "sum ok/world-dropped/empty/denominator, unmatched-log, no-opt/never-stepped/wrong-index/all-zero/loaded)")
