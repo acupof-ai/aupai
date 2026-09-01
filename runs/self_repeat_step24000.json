@@ -1,5 +1,5 @@
 {
- "probe": "t63_self_repeat",
+ "probe": "t67_self_repeat",
  "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
  "ngram_tokens": 8,
  "n_prompts": 62,
@@ -28,5 +28,6 @@
    "max_run_p90": 101,
    "mean_gen_tokens": 235.6
   }
- }
+ },
+ "renamed_from": "t63_self_repeat -- t63 collided with db's corpus-dup probe; db's was already cited in a merged fact so mine moved"
 }
