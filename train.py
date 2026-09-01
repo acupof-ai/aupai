@@ -171,7 +171,16 @@ class Cfg:
     vocab_real = 32773  # the frozen tokenizer's size (2026-08-29): 32768 BPE merges + 4 chat
     # specials + [NUM], with <unk>/<eos> inside the merges; vocab - vocab_real is padding
     fone = False
-    num_id = 32772  # [NUM] is the last id, always in the vocab, so --fone resizes nothing
+    # DERIVED, not asserted. [NUM] is the last id in today's tokenizer, so this default is
+    # correct -- and it stays correct only while the vocabulary is frozen. resolve_num_id()
+    # below reads it from the tokenizer and raises if absent; nothing should read this
+    # constant directly. WHY IT IS A HARD FAILURE RATHER THAN A WARNING: num_id is read at
+    # three sites (fone masking :808, digit CE :999, value write-back :1229) and every one
+    # of them fails SILENTLY into plausible training -- a stale id masks an ordinary BPE
+    # token as numeric, computes digit cross-entropy on the wrong positions, and writes
+    # values into the wrong slots, with no shape error and no crash. The danger is that
+    # property, not the probability of a rebuild.
+    num_id = 32772
     fone_loss_w = 1.0
     seq = 4096  # the recurrent arch handles arbitrary length at inference
     batch = (
@@ -1380,6 +1389,33 @@ def vocab_fingerprint(tok):
     return h.hexdigest()[:16]
 
 
+NUM_TOKEN = "[NUM]"
+
+
+def resolve_num_id(tok):
+    """[NUM]'s id, read from the tokenizer rather than trusted from a constant.
+
+    Cfg.num_id was a hardcoded 32772 with a comment saying [NUM] is "always in the
+    vocab". True of the frozen tokenizer and false the moment one is rebuilt: if a
+    rebuild yields a smaller vocabulary, [NUM] moves down and 32772 addresses an
+    ordinary BPE token instead. Nothing raises -- FoNE then masks that token as
+    numeric, computes digit cross-entropy at the wrong positions, and writes values
+    into the wrong slots, all with correct shapes. Three read sites, three silent
+    failures into training that looks fine.
+
+    So this raises rather than warns, and it raises on the ONE input a rebuild
+    actually produces: a tokenizer with no [NUM] at all, or with it somewhere new.
+    """
+    nid = tok.token_to_id(NUM_TOKEN)
+    if nid is None:
+        raise SystemExit(
+            f"REFUSE: {NUM_TOKEN} is absent from the tokenizer (vocab {tok.get_vocab_size()}). "
+            "build_tokenizer.py registers it as a chat special; a vocabulary built without it "
+            "cannot run --fone, and a stale Cfg.num_id would silently address a BPE token."
+        )
+    return nid
+
+
 def build_tokenizer(texts):
     """Load data/tokenizer.json; never build one here. The old inline BPE fallback registered only
     <unk>/<eos>, dropping the chat specials and [NUM] while still matching Cfg.vocab, so every id
@@ -1394,6 +1430,7 @@ def build_tokenizer(texts):
     assert tok.get_vocab_size() == Cfg.vocab_real, (
         f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab_real {Cfg.vocab_real}"
     )
+    Cfg.num_id = resolve_num_id(tok)
     assert Cfg.vocab % 8 == 0 and Cfg.vocab >= Cfg.vocab_real, (
         f"Cfg.vocab={Cfg.vocab} must be a multiple of 8 >= vocab_real={Cfg.vocab_real}: "
         "an unaligned head width falls back to the SM75 align-1 cuBLAS kernel on Hopper (-55% step time)"
@@ -1930,6 +1967,13 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
+        # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
+        # argparse prefix matching makes "--d" ambiguous against --duplicate-*-filters
+        # and torchrun exits before train.py is ever reached.
+        "dim": "model width (must be 128*heads: FlashKDA CUTLASS pins head_dim at 128)",
+        "heads": "attention/KDA heads (head_dim = d/heads must be 128)",
+        "layers": "number of blocks",
+        "ffn_hidden": "FFN inner width",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -2008,6 +2052,8 @@ def main():
     # and Cfg.attn_res defaults to TRUE, so a blanket sweep would silently disable
     # Attention Residuals everywhere. Absence of a switch is not a request to turn it off.
     _switches = {a.dest for a in parser._actions if isinstance(a, argparse._StoreTrueAction)}
+    if args.dim is not None:
+        Cfg.d = args.dim  # --dim -> Cfg.d; the loop below matches on name and "d" has no flag
     for k, v in vars(args).items():
         if not hasattr(Cfg, k):
             continue
@@ -2023,6 +2069,11 @@ def main():
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
+    # --d/--heads off the default pair is a shape experiment; head_dim is not free.
+    # The FlashKDA CUTLASS kernel is compiled for head_dim 128 and a mismatch is an
+    # illegal memory access deep in the kernel, not a shape error at the boundary.
+    if Cfg.d // Cfg.heads != 128 or Cfg.d % Cfg.heads:
+        raise SystemExit(f"head_dim must be 128: d={Cfg.d} heads={Cfg.heads} -> {Cfg.d / Cfg.heads}")
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")

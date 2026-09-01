@@ -109,8 +109,12 @@ def main():
     tok = Tokenizer(BPE(unk_token="<unk>"))
     tok.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tok.decoder = ByteLevelDecoder()
-    # Cfg.vocab is the final total; the trainer targets vocab - len(specials) to land there.
-    base_vocab = train.Cfg.vocab - len(CHAT_SPECIALS)
+    # vocab_real is the TOKENIZER's size; Cfg.vocab (32784) is that padded up to a
+    # multiple of 16 for the aligned cuBLAS head kernel. Padding is embedding width, not
+    # tokens -- targeting Cfg.vocab would train 11 extra merges and produce a 32784-token
+    # vocabulary that load_tokenizer's `vocab == vocab_real` assert then rejects on every
+    # existing checkpoint. The trainer targets vocab_real - len(specials).
+    base_vocab = train.Cfg.vocab_real - len(CHAT_SPECIALS)
     # initial_alphabet seeds all 256 bytes. Without it, bytes absent from the corpus vanish
     # silently (NUL drops with no raise, not even an <unk>).
     trainer = BpeTrainer(
@@ -122,12 +126,21 @@ def main():
     tok.add_special_tokens(CHAT_SPECIALS)
 
     vsize = tok.get_vocab_size()
-    expected = train.Cfg.vocab
+    expected = train.Cfg.vocab_real
     if vsize != expected:
-        print(
-            f"WARNING vocab {vsize} != {expected} (corpus too small to fill {base_vocab} merges?)",
-            file=sys.stderr,
+        # HARD FAILURE, not a warning. A short vocabulary moves [NUM] down from its
+        # expected id, and train.py reads num_id at three sites -- fone masking, digit
+        # cross-entropy, value write-back -- each of which then addresses an ordinary BPE
+        # token with correct shapes and no error. Training proceeds and looks fine. A
+        # warning printed to stderr during a build nobody watches is not a control for
+        # that; the danger is the silence, not the likelihood.
+        raise SystemExit(
+            f"REFUSE: built vocab {vsize} != Cfg.vocab_real {expected} "
+            f"(corpus too small to fill {base_vocab} merges?). Saving it would move [NUM] "
+            f"off id {train.Cfg.num_id} and silently mis-address every --fone read site."
         )
+    if tok.token_to_id("[NUM]") is None:
+        raise SystemExit("REFUSE: [NUM] missing from the built vocabulary -- --fone cannot run")
     tok.save(out_path)
     print(f"saved {out_path} (vocab {vsize})")
 
