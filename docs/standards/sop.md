@@ -90,8 +90,9 @@ the same content five ways in git; only the last two are the file:
 
 ```
 git cat-file -p <sha>            # the COMMIT OBJECT: tree/parent/author/message.
-                                 # 10-56 lines, sized by the message, squarely in the
-                                 # range a source file occupies.
+                                 # 6-57 lines over this repo's last 400 commits,
+                                 # sized by the message -- squarely in the range a
+                                 # source file occupies.
 git show <sha> -- path           # that commit's DIFF for the path -- and EMPTY with
                                  # rc=0 when the commit never touched it.
 git show <sha>:path              # the file. One character from the line above.
