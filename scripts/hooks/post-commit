@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Post-commit: put the manifest the pre-commit hook rewrote into the SHARED index.
+
+`git commit -- <paths>` runs the pre-commit hook against a TEMPORARY index (git sets
+GIT_INDEX_FILE to .git/next-index-NNN.lock). The manifest regeneration's `git add`
+lands there, so the commit is correct -- HEAD gets the new manifest -- but the shared
+index still holds the OLD blob while --write-index has already rewritten the working
+file. git then reports `MM data/pod_head_manifest.txt` forever, on a file nobody
+touched, and every subsequent merge refuses with "local changes would be overwritten".
+
+That is mechanical, not human: on 2026-09-01 two merges stalled on it, and at least two
+"somebody left a dirty file blocking me" incidents traced here rather than to a person.
+
+It must be post-commit and not pre-commit. During pre-commit git holds .git/index.lock,
+so writing the shared index from there fails with "Unable to create index.lock" and
+ABORTS the commit -- tried, and it is strictly worse than the bug. By post-commit the
+lock is released.
+
+`git update-index --add`, not `git add`: it touches exactly this path and cannot pick
+up anything else another session has in flight in the shared tree.
+"""
+import subprocess
+import sys
+
+MANIFEST = "data/pod_head_manifest.txt"
+
+
+def main():
+    # --refresh-only semantics: only when HEAD and the working file already agree does
+    # a stale index entry mean "the hook wrote it". If they differ, someone is
+    # legitimately mid-edit and the entry is theirs to stage.
+    head = subprocess.run(["git", "rev-parse", f"HEAD:{MANIFEST}"],
+                          capture_output=True, text=True)
+    work = subprocess.run(["git", "hash-object", MANIFEST], capture_output=True, text=True)
+    if head.returncode or work.returncode:
+        return 0
+    if head.stdout.strip() != work.stdout.strip():
+        return 0
+    idx = subprocess.run(["git", "ls-files", "-s", "--", MANIFEST],
+                         capture_output=True, text=True).stdout.split()
+    if len(idx) >= 2 and idx[1] == head.stdout.strip():
+        return 0  # already consistent, nothing to do
+    subprocess.run(["git", "update-index", "--add", "--", MANIFEST], capture_output=True)
+    return 0
+
+
+def _selftest():
+    """The defect must be present and visible before the fix is applied.
+
+    A real repo, a real path-scoped commit, a pre-commit hook that rewrites the manifest
+    the way the real one does. Without post-commit the index goes stale and a merge
+    refuses; with it, the tree is clean.
+    """
+    import os
+    import tempfile
+
+    def run(cwd, *args, **kw):
+        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, **kw)
+
+    for with_fix in (False, True):
+        d = tempfile.mkdtemp(prefix="idxfix")
+        run(d, "git", "init", "-q", ".")
+        run(d, "git", "config", "user.email", "t@t")
+        run(d, "git", "config", "user.name", "t")
+        os.makedirs(os.path.join(d, "data"), exist_ok=True)
+        open(os.path.join(d, "a.txt"), "w").write("a\n")
+        open(os.path.join(d, "data", "pod_head_manifest.txt"), "w").write("seed\n")
+        run(d, "git", "add", "-A")
+        run(d, "git", "commit", "-qm", "init")
+        hooks = os.path.join(d, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        pre = os.path.join(hooks, "pre-commit")
+        open(pre, "w").write(
+            "#!/bin/bash\necho regen >> data/pod_head_manifest.txt\n"
+            "git add data/pod_head_manifest.txt\n")
+        os.chmod(pre, 0o755)
+        if with_fix:
+            post = os.path.join(hooks, "post-commit")
+            open(post, "w").write(
+                f"#!/bin/bash\n{sys.executable} {os.path.abspath(__file__)}\n")
+            os.chmod(post, 0o755)
+        open(os.path.join(d, "a.txt"), "a").write("b\n")
+        run(d, "git", "commit", "-qm", "path commit", "--", "a.txt")
+        dirty = run(d, "git", "status", "--porcelain", "--",
+                    "data/pod_head_manifest.txt").stdout.strip()
+        if with_fix:
+            assert dirty == "", f"fix applied but index still stale: {dirty!r}"
+            # the consequence that actually hurt: a merge must not refuse
+            run(d, "git", "checkout", "-qb", "other")
+            open(os.path.join(d, "b.txt"), "w").write("x\n")
+            run(d, "git", "add", "b.txt")
+            run(d, "git", "commit", "-qm", "other")
+            run(d, "git", "checkout", "-q", "master")
+            m = run(d, "git", "merge", "--no-edit", "other")
+            assert m.returncode == 0, f"merge refused after fix:\n{m.stdout}{m.stderr}"
+        else:
+            assert dirty != "", "defect did not reproduce -- this test proves nothing"
+    print("selftest OK")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_selftest() if "--selftest" in sys.argv else main())

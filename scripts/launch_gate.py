@@ -147,13 +147,25 @@ def gate_corpora(root, mix_path, world):
         except (OSError, ValueError) as e:
             bad.append(f"{name}: stats unreadable ({e})")
             continue
-        if want and got != want:
+        # A COMPARISON THAT DID NOT RUN IS NOT A COMPARISON THAT PASSED. My first
+        # version read `if want and got != want`, so a domain with no fingerprint in
+        # the mix skipped the check and the gate printed GO having compared nothing.
+        # b0 measured the blast radius: 12 of 13 mixes have at least one such domain
+        # and mix_500m -- the launch mix -- has NINE OF NINE. The gate would have
+        # certified "fingerprints match" for a mix where no fingerprint exists.
+        # Same sentence as "0 files, all compliant": a universal claim over an empty set.
+        if not want:
+            bad.append(f"{name}: mix carries no fingerprint, so nothing was compared")
+        elif not got:
+            bad.append(f"{name}: build_corpus_stats.json carries no fingerprint")
+        elif got != want:
             bad.append(f"{name}: fingerprint {got} != mix's {want}")
         if re.search(r"mix_scale_[\d.]+b", str(spec.get("role", "")) + name):
             bad.append(f"{name}: points at a frozen mix_scale_* pool")
     if bad:
         return NOGO, f"{len(bad)} domain(s) failed: {'; '.join(bad[:3])}"
-    return GO, f"all {len(m['domains'])} corpora present, sharded, fingerprints match"
+    n = len(m["domains"])
+    return GO, f"all {n} corpora present, sharded, {n} fingerprints compared and match"
 
 
 ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
@@ -201,10 +213,14 @@ def gate_arch_tests(root, mix_path, world):
         r = json.load(open(results, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"runs/launch_tests.json unreadable: {e}"
+    # Absence and failure are distinct outcomes (main, taken in the merge): absent
+    # means nobody ran it, a failing row means it ran and failed. The first is UNKNOWN,
+    # the second NO-GO, and collapsing them loses the only fact that says what to do.
     unrecorded = [n for n in ARCH_TESTS if n not in r]
     if unrecorded:
-        return UNKNOWN, (f"no record of {', '.join(unrecorded)} -- the file records "
-                         f"{sorted(r)[:4]}, which is not the same claim")
+        return UNKNOWN, (f"launch_tests.json records no result for {', '.join(unrecorded)} "
+                         f"(it has: {', '.join(sorted(r)[:4]) or 'nothing'}) -- a record "
+                         f"that does not name the required test is not evidence it ran")
     problems = []
     for name in ARCH_TESTS:
         row = r[name]
@@ -291,16 +307,27 @@ def gate_memory_measured(root, mix_path, world):
 
 def gate_cards(root, mix_path, world):
     """7. The block is free, or a controller assignment says otherwise."""
+    # "the file is absent" and "the controller said no" are DIFFERENT STATES and were
+    # covered by one sentence. The second is a decision someone made on purpose; the
+    # first sends a reader to create a file that already exists. fb caught this with
+    # the file sitting on the pod at 1279 bytes, granted=false, being reported as
+    # "no runs/card_assignment.json".
     p = os.path.join(root, "runs", "card_assignment.json")
-    if os.path.exists(p):
-        try:
-            a = json.load(open(p, encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            return NOGO, f"card_assignment.json unreadable: {e}"
-        if a.get("launch_block_granted"):
-            return GO, f"controller granted the block: {a.get('note', '')[:60]}"
-    return UNKNOWN, ("no runs/card_assignment.json with launch_block_granted -- card "
-                     "ownership cannot be read from an artifact and needs the controller")
+    if not os.path.exists(p):
+        return UNKNOWN, ("runs/card_assignment.json does not exist -- card ownership is a "
+                         "decision, so it has to be recorded by the controller, not inferred")
+    try:
+        a = json.load(open(p, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return NOGO, f"card_assignment.json unreadable: {e}"
+    granted = a.get("launch_block_granted")
+    if granted:
+        return GO, f"controller granted the block: {str(a.get('note') or '')[:60]}"
+    note = str(a.get("note") or "").strip()
+    if note.upper().startswith("UNSOURCED") or not note:
+        return UNKNOWN, ("card_assignment.json exists but records no grant either way "
+                         "(launch_block_granted=false, no note) -- the file is a stub")
+    return NOGO, f"the controller has NOT granted the block: {note[:70]}"
 
 
 def gate_vocab_id(root, mix_path, world):
@@ -350,6 +377,36 @@ def gate_checks_and_drift(root, mix_path, world):
 
 # The nine, in the order they are reported. A gate added here is automatically
 # covered by --selftest's broken-world requirement (see selftest below).
+# WHERE EACH GATE'S TRUTH LIVES.
+#
+# A gate's conclusion depends on which filesystem it ran on, and until now that
+# fact was absent from the conclusion. Same class as everything else today, with
+# the location standing in for the configuration: on main, `corpora` always reports
+# missing dirs (a dev tree holds no corpus) while on the pod it reported the real
+# defect; `checks_and_drift` read 0 FAIL on main and 11 FAIL on the pod at the same
+# instant. Both were true of where they ran and neither was the answer.
+#
+# My own 4c1e002 caused half of this: "read only from main, refuse GO elsewhere" is
+# right for code and wrong for data, because it excludes the ONE place the data
+# questions can be answered.
+#
+#   MAIN  code/config: the launch is cut from main, so main's state is the launch's
+#   POD   data/machine: corpora and token caches exist nowhere else
+#   BOTH  the same gate means DIFFERENT things in each place and needs both readings
+AUTHORITY = {
+    "mix_file": "main", "recipe_provenance": "main", "vocab_id": "main",
+    "arch_tests": "main", "cards": "main",
+    "corpora": "pod", "epochs_measured": "pod",
+    "checks_and_drift": "both",
+}
+
+
+def _here():
+    """pod or main-side. The pod is the box that holds the corpus; a dev worktree
+    is not, and neither is the integration tree."""
+    return "pod" if os.path.isdir("/work/aupai") and os.path.abspath(ROOT).startswith("/work/") else "main"
+
+
 GATES = [
     ("mix_file", gate_mix_file),
     ("epochs_measured", gate_epochs_measured),
@@ -363,13 +420,28 @@ GATES = [
 ]
 
 
-def run(root, mix_path, world):
+def run(root, mix_path, world, here=None):
+    """Each gate runs only where its answer means something.
+
+    A gate asked in the wrong place returns UNKNOWN naming the right place --
+    NOT a NO-GO and not a GO. Both of those get believed, and a believable answer
+    from a filesystem that cannot hold the evidence is worse than no answer.
+    """
+    here = here or _here()
     rows = []
     for name, fn in GATES:
+        auth = AUTHORITY.get(name, "main")
+        if auth not in (here, "both"):
+            rows.append((name, UNKNOWN,
+                         f"not readable here ({here}); this gate's evidence lives on "
+                         f"{auth} -- run it there"))
+            continue
         try:
             state, why = fn(root, mix_path, world)
         except Exception as e:  # a gate that crashes is NOT a pass
             state, why = NOGO, f"the gate itself raised: {type(e).__name__}: {e}"
+        if auth == "both":
+            why = f"[{here}] {why}"
         rows.append((name, state, why))
     return rows
 
@@ -383,10 +455,16 @@ def main():
     if a.selftest:
         sys.exit(selftest())
 
-    root, note = _launch_root(ROOT)
-    rows = run(root, a.mix, a.world)
-    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}")
-    print(f"             {note}\n")
+    here = _here()
+    root, note = (ROOT, f"running on the pod ({ROOT})") if here == "pod" else _launch_root(ROOT)
+    rows = run(root, a.mix, a.world, here)
+    elsewhere = sorted(n for n, _ in GATES if AUTHORITY.get(n, "main") not in (here, "both"))
+    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}  here={here}")
+    print(f"             {note}")
+    if elsewhere:
+        print(f"             {len(elsewhere)} gate(s) answerable only elsewhere: "
+              f"{', '.join(elsewhere)}")
+    print()
     for name, state, why in rows:
         print(f"  [{state:^7}] {name:<20} {why}")
     blocking = [r for r in rows if r[1] != GO]
@@ -398,6 +476,12 @@ def main():
         return 1
     if note.startswith("WARNING"):
         print("REFUSING to print GO: " + note)
+        return 1
+    if elsewhere:
+        # A GO computed where half the gates could not run is the exact failure fb
+        # caught: two locations each reporting a believable half of the world.
+        print(f"REFUSING to print GO: {len(elsewhere)} gate(s) could not be read here "
+              f"({', '.join(elsewhere)}). A full GO requires a main run AND a pod run.")
         return 1
     print(f"GO: all {len(rows)} gates computed GO from artifacts.")
     print("     This is not a proof the run is safe -- it is a proof that these nine")
@@ -488,7 +572,17 @@ def selftest():
         broken[gate] = (d, os.path.join(d, mix_rel))
     # 8: two vocab_ids in the ledger
     def _two(d):
+        # The tokenizer must be PRESENT or this world fails on its absence and proves
+        # nothing about the two-vocab_id defect it exists to plant (de's rule): undo
+        # the extra ledger row and it would still FAIL, so the world could not detect
+        # a regression in the id comparison.
         write_mix(d, lambda m: None)
+        real_tok = os.path.join(ROOT, "data", "tokenizer.json")
+        dst = os.path.join(d, "data", "tokenizer.json")
+        if os.path.exists(real_tok):
+            shutil.copy(real_tok, dst)
+        else:
+            open(dst, "w", encoding="utf-8").write('{"model":{"vocab":{}}}')
         p = os.path.join(d, "runs", "score_matrix.jsonl")
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ckpt": "x.pt", "vocab_id": "0" * 16}) + "\n")
@@ -502,6 +596,51 @@ def selftest():
             os.remove(p)
     d = world(_noharness)
     broken["checks_and_drift"] = (d, os.path.join(d, mix_rel))
+
+    # corpora gets a SECOND world: dirs and shards all present, but the mix carries no
+    # fingerprint. This is b0's find and my first version passed it -- `if want and ...`
+    # skipped the comparison and reported "fingerprints match" having compared nothing.
+    # The missing-dirs world cannot catch it, because it fails earlier for another
+    # reason: a gate can be right about one input and blind on another.
+    def _nofp(d):
+        m = json.load(open(real_mix, encoding="utf-8"))
+        for spec in m["domains"].values():
+            spec.pop("fingerprint", None)
+        os.makedirs(os.path.join(d, "data"), exist_ok=True)
+        json.dump(m, open(os.path.join(d, mix_rel), "w", encoding="utf-8"),
+                  ensure_ascii=False)
+        # give every domain a real-looking dir + shard + stats, so the ONLY defect
+        # left is the absent fingerprint
+        for name in m["domains"]:
+            cd = os.path.join(d, "data", "corpus", name)
+            os.makedirs(cd, exist_ok=True)
+            open(os.path.join(cd, "x_000.jsonl"), "w").write('{"content":"x"}\n')
+            json.dump({"fingerprint": "deadbeefdeadbeef"},
+                      open(os.path.join(cd, "build_corpus_stats.json"), "w"))
+    dnf = world(_nofp)
+    st, why = gate_corpora(dnf, os.path.join(dnf, mix_rel), 7)
+    assert st != GO, f"a mix with no fingerprints must not report a match: {why}"
+    assert "compared" in why or "no fingerprint" in why, f"the reason must name it: {why}"
+
+    # arch_tests gets a SECOND world: the record is present, well-formed and honest,
+    # and simply does not name the required tests -- de's {"ok": "pass"} case. The
+    # file-removed world cannot catch it, because that world fails on absence. Same
+    # lesson as the corpora pair: one broken world per gate is not enough when a gate
+    # can be right about one input and blind on another.
+    def _wrongkeys(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        for f in ("scripts/test_arch_L32.py", "scripts/test_e2e.py"):
+            fp = os.path.join(d, f)
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            if not os.path.exists(fp):
+                open(fp, "w").write("#\n")
+        json.dump({"ok": "pass"},
+                  open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8"))
+    dwk = world(_wrongkeys)
+    st, why = gate_arch_tests(dwk, os.path.join(dwk, mix_rel), 7)
+    assert st != GO, f"a record naming no required test must not pass: {why}"
+    assert "no result for" in why, f"the reason must say what is unrecorded: {why}"
 
     ungated = [n for n, _ in GATES if n not in broken]
     assert not ungated, (
@@ -563,6 +702,25 @@ def selftest():
     st, why = gate_arch_tests(ds, os.path.join(ds, mix_rel), 7)
     assert st != GO, f"a row recorded against a different test version passed: {why}"
 
+
+    # WHY THE REASON IS CHECKED AND NOT ONLY THE STATE (de's rule, 2026-09-01):
+    # four broken worlds elsewhere were empty trees, so the gate failed for the
+    # ABSENCE of everything rather than for the planted defect -- undo the mutation
+    # and they still FAIL, which means the selftest proved nothing. A world that
+    # fails for the wrong reason is a world that cannot detect a regression in the
+    # thing it claims to test. So each world declares the phrase its intended defect
+    # must produce.
+    expect = {
+        "mix_file": "_blocked",
+        "epochs_measured": "ESTIMATED",
+        "corpora": "data/corpus",          # dirs excluded from the copy on purpose
+        "arch_tests": "launch_tests.json",
+        "recipe_provenance": "recipe_provenance.json",
+        "memory_measured": "world=7",
+        "cards": "card_assignment.json",
+        "vocab_id": "distinct vocab_id",
+        "checks_and_drift": "no check lines",
+    }
     bad = []
     for name, fn in GATES:
         d, mixp = broken[name]
@@ -572,6 +730,46 @@ def selftest():
             state, why = NOGO, f"raised {type(e).__name__}"
         if state == GO:
             bad.append(f"{name} reported GO on its broken world ({why[:60]})")
+            continue
+        want = expect.get(name)
+        if want and want.lower() not in why.lower():
+            bad.append(f"{name} failed for the WRONG REASON: expected a message naming "
+                       f"{want!r}, got {why[:70]!r} -- the world may be failing on "
+                       f"absence rather than on the planted defect")
+    # DE'S TEST, and it is stronger than the reason check above: undo the mutation
+    # and the world must go GREEN. A world that still fails with the defect removed
+    # was failing on something else all along, and no wording assertion catches that.
+    # Only the gates whose defect is reversible in-place are checked here; the ones
+    # whose world is "the artifact is absent" are reversed by writing it back.
+    def _undo_check(name, fn, d, mixp, restore):
+        restore(d)
+        st, why = fn(d, mixp, 7)
+        return st, why
+
+    reversible = {}
+    # recipe_provenance: write a real source back
+    dr, mr = broken["recipe_provenance"]
+    reversible["recipe_provenance"] = (dr, mr, lambda d: json.dump(
+        {f: "experiments.jsonl:pretrain_30b_s2" for f in RECIPE_FLAGS},
+        open(os.path.join(d, "runs", "recipe_provenance.json"), "w", encoding="utf-8")))
+    # memory_measured: write a peak at world 7
+    dm, mm = broken["memory_measured"]
+    reversible["memory_measured"] = (dm, mm, lambda d: json.dump(
+        {"7": {"peak_GiB": 1.0}},
+        open(os.path.join(d, "runs", "memory_peaks.json"), "w", encoding="utf-8")))
+    # cards: grant the block
+    dc, mc = broken["cards"]
+    reversible["cards"] = (dc, mc, lambda d: json.dump(
+        {"launch_block_granted": True, "note": "granted for the selftest"},
+        open(os.path.join(d, "runs", "card_assignment.json"), "w", encoding="utf-8")))
+
+    for name, (d, mixp, restore) in reversible.items():
+        fn = dict(GATES)[name]
+        st, why = _undo_check(name, fn, d, mixp, restore)
+        if st != GO:
+            bad.append(f"{name} still {st} after the defect was UNDONE ({why[:70]}) -- "
+                       f"the world was failing on something other than its planted defect")
+
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
     print(f"launch_gate selftest OK: {len(GATES)} gates, each FAILs on a damaged real artifact")

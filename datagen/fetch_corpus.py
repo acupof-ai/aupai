@@ -161,6 +161,18 @@ def _manifest_rp1t_stackexchange():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_ms_starcoder_py():
+    """code role, labelled Python (fb P0 ruling 2026-09-01: fetch a source that carries
+    language labels so ast.parse filters syntax only, ~a few % loss, not language ID at
+    94%). AI-ModelScope/starcoderdata python split, 59 parquet. ModelScope is the ONLY
+    reachable host today (2026-09-01: hf-mirror + huggingface.co both 10s-timeout; MS
+    served 206/0.75s on the probe). Flatten the local name to the basename so the .part
+    path is writable (same fix as _manifest_ms_om2)."""
+    names = open(os.path.join(ROOT, "data", "raw", "ms_starcoder_py_manifest.txt")).read().split()
+    base = "https://www.modelscope.cn/datasets/AI-ModelScope/starcoderdata/resolve/master/"
+    return [(n.split("/")[-1], base + n, 0) for n in names]
+
+
 def _manifest_ms_finemath_4plus():
     """math cell (real source, ModelScope up while hf-mirror down 2026-08-31):
     AI-ModelScope/finemath finemath-4plus, 64 parquet (HuggingFaceTB/finemath's
@@ -218,6 +230,7 @@ SOURCES = {
     "hf_finemath_4plus": _manifest_hf_finemath_4plus,
     "hf_om2": _manifest_hf_om2,
     "hf_numma": _manifest_hf_numma,
+    "ms_starcoder_py": _manifest_ms_starcoder_py,
 }
 
 
