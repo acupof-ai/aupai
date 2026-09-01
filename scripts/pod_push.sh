@@ -78,6 +78,30 @@ push_one() {
     echo "refusing: $f differs from main -- merge your branch first (the pod runs main, not your branch)"
     exit 1
   fi
+  # A .sh THAT IS RUNNING RIGHT NOW must not be overwritten. podput writes with `>`,
+  # which truncates the SAME inode, and bash reads a script incrementally by byte
+  # offset -- so a running shell resumes at its old offset inside the new bytes and
+  # executes whatever now sits there. Demonstrated, not assumed: replacing a sleeping
+  # script mid-run made it print the REPLACEMENT's lines. Nearly overwrote run_ddp.sh
+  # while it was driving the lr probe's second arm, 40 minutes into a 7-card run
+  # (2026-09-02). Refuses rather than skips: a silent skip means the pod keeps old
+  # code while the push reports success, which is the drift this script exists to stop.
+  case "$f" in
+    *.sh)
+      # ps, not pgrep: a ZOMBIE keeps its argv, and run_ddp.sh had three of them beside
+      # the one live process. pgrep -f matches the dead ones forever, which would turn
+      # this guard into a permanent refusal -- the same trap _drop_zombies exists for.
+      if [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] && ~/bin/pod \
+           "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -q '$(basename "$f")'" \
+           >/dev/null 2>&1; then
+        echo "REFUSING: $f is executing on the pod right now. podput truncates in place and" >&2
+        echo "  bash reads scripts by byte offset, so overwriting it can make the running" >&2
+        echo "  shell execute a corrupted position. Wait for it to finish, or override with" >&2
+        echo "  POD_PUSH_ALLOW_RUNNING_SH=1 if you know nothing is mid-script." >&2
+        exit 1
+      fi
+      ;;
+  esac
   local b64_size
   b64_size=$(gzip -9c "$f" | base64 | tr -d '\n' | wc -c | tr -d ' ')
   if [ "$b64_size" -le 100000 ]; then
