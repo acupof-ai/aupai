@@ -6907,7 +6907,7 @@ _FROZEN_KEYS = (
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
-    "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M)
+    "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -6920,7 +6920,7 @@ _CODE_FROZEN_KEYS = ("chunk_size",)  # the shape moved to _FROZEN_KEYS when it g
 # CLI flags whose name differs from their Cfg field (--no_attn_res sets Cfg.attn_res).
 # --no_doc_mask is gone: it existed because the attention fallback could not honour
 # doc_mask, and now it can, so the flag was only a way to turn a frozen recipe key off.
-_FLAG_TO_CFG = {"no_attn_res": "attn_res"}
+_FLAG_TO_CFG = {"no_attn_res": "attn_res", "dim": "d"}
 
 # Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
 # architecture or the recipe is frozen; these are run-management, measurement, or
@@ -7059,8 +7059,14 @@ def _run_point(step_args, forced):
                   f"forges a regression rather than measuring one.")
             return 2
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(world))
+        # _CFG_TO_FLAG, not f"--{k}": Cfg.d's flag is --dim, because "--d" is ambiguous
+        # inside torchrun's own parser and run_ddp.sh's args pass through it.
+        # Only the renames, not the negations: reversing no_attn_res->attn_res would emit
+        # "--no_attn_res 1", the opposite of what it says. Bools never reach here today,
+        # which is why an inverted map would have been silent.
+        _cfg_to_flag = {"d": "dim"}
         frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
-                       for v in (f"--{k}", str(frozen[k]))]
+                       for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
         print(
             f"run point: frozen config -> cards={frozen['cards']} "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)

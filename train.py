@@ -1930,7 +1930,10 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
-        "d": "model width (must be 128*heads: FlashKDA CUTLASS pins head_dim at 128)",
+        # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
+        # argparse prefix matching makes "--d" ambiguous against --duplicate-*-filters
+        # and torchrun exits before train.py is ever reached.
+        "dim": "model width (must be 128*heads: FlashKDA CUTLASS pins head_dim at 128)",
         "heads": "attention/KDA heads (head_dim = d/heads must be 128)",
         "layers": "number of blocks",
         "ffn_hidden": "FFN inner width",
@@ -2012,6 +2015,8 @@ def main():
     # and Cfg.attn_res defaults to TRUE, so a blanket sweep would silently disable
     # Attention Residuals everywhere. Absence of a switch is not a request to turn it off.
     _switches = {a.dest for a in parser._actions if isinstance(a, argparse._StoreTrueAction)}
+    if args.dim is not None:
+        Cfg.d = args.dim  # --dim -> Cfg.d; the loop below matches on name and "d" has no flag
     for k, v in vars(args).items():
         if not hasattr(Cfg, k):
             continue
