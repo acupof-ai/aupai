@@ -6554,26 +6554,44 @@ def _demo():
     # alongside evidence), not a smarter regex -- that is an arms race with string formats. Not
     # done; the next person should know this green does not cover a no-digit PASS.
     #
+    # The leading boundary is load-bearing, not tidiness: without it the regex reads a count out
+    # of a PATH. In a worktree named aupai-b0, root_durable's "root /.../aupai-b0 is not on a
+    # known-ephemeral mount" yields the match "0 is", the only "count" in the string, so a
+    # correct PASS was reported as vacuous and the selftest was red in that worktree and green
+    # in the main one (b0, 2026-09-01). A count is preceded by whitespace or start-of-string;
+    # a digit glued to a word is part of a name.
+    #
     # The meta-check carries its own failing case: a fake check whose PASS is vacuous. Without
     # it nothing proves the meta-check fires -- the exact defect it guards against.
     def _vacuous_pass(_root):
         return PASS, "0 domain(s) match filters abc"
 
+    # ...and its own false-positive case, the one above: a path-embedded digit is not a count.
+    def _pass_with_digit_in_a_path(_root):
+        return PASS, "root /Users/x/code/aupai-b0 is not on a known-ephemeral mount"
+
     vacuous = []
-    for name, _a, _i, fn, _b in list(CHECKS) + [("fake_vacuous_pass", "", "", _vacuous_pass, None)]:
+    for name, _a, _i, fn, _b in list(CHECKS) + [
+        ("fake_vacuous_pass", "", "", _vacuous_pass, None),
+        ("fake_digit_in_a_path", "", "", _pass_with_digit_in_a_path, None),
+    ]:
         try:
             state, evidence = fn(ROOT)
         except Exception:
             continue  # a crash against the real repo is the broken-world loop's territory
         if state != PASS:
             continue
-        counts = [int(m.group(1)) for m in re.finditer(r"(\d+)\s+[a-zA-Z]", str(evidence))]
+        counts = [int(m.group(1)) for m in re.finditer(r"(?:^|\s)(\d+)\s+[a-zA-Z]", str(evidence))]
         if counts and all(c == 0 for c in counts):
             vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
     assert any(v.startswith("fake_vacuous_pass") for v in vacuous), (
         "meta-check did not catch its own deliberately-vacuous PASS -- the regex or loop regressed"
     )
-    real = [v for v in vacuous if not v.startswith("fake_vacuous_pass")]
+    assert not any(v.startswith("fake_digit_in_a_path") for v in vacuous), (
+        "meta-check read a count out of a path -- the leading boundary regressed"
+    )
+    real = [v for v in vacuous
+            if not v.startswith("fake_vacuous_pass") and not v.startswith("fake_digit_in_a_path")]
     assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
 
     # sync selftest: a merge that loses a row must FAIL. The incident: a hand-merge
