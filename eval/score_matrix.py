@@ -631,6 +631,42 @@ def _metric(name, fn, record, *args, **kwargs):
         print(f"  {name:15s} {v} ({elapsed}s)", flush=True)
 
 
+def _pick_card():
+    """A free card from the ones this process was given, not cuda:0 by default.
+
+    2026-09-01: scoring lrprobe_0.85 died with OutOfMemoryError on GPU 0 -- a card the
+    run never used (training held 1-7) and a third party held at 95.16 of 95.22 GiB. The
+    checkpoint was already saved and fine, but the traceback named an OOM on a 95 GiB
+    card, and that read as the training run exhausting memory. It cost the team twenty
+    minutes and a launch-blocker that was not there.
+
+    CUDA_VISIBLE_DEVICES already remaps indices, so cuda:0 IS the first allowed card when
+    it is set -- the failure only happens when it is not, which is exactly how the scorer
+    is invoked after a run. Pick the emptiest visible card instead of the first one.
+    """
+    if not torch.cuda.is_available():
+        return "cpu"
+    # CUDA_VISIBLE_DEVICES, when the caller sets it, IS the "cards this run was given" --
+    # torch then only sees those, so the loop below is already restricted to them. When it
+    # is unset (how the post-run scorer is actually invoked) every card is visible and the
+    # emptiest is the right pick, NOT the first: measured on the pod 2026-09-02 while arm
+    # 1.2 trains, cards 1-7 hold 23.2 GiB free each and card 0 holds 94.9. Preferring the
+    # training set would have put scoring on the busiest cards in the box.
+    best, best_free = 0, -1
+    for i in range(torch.cuda.device_count()):
+        try:
+            free, _ = torch.cuda.mem_get_info(i)
+        except Exception:
+            continue  # a card we cannot query is a card we should not choose
+        if free > best_free:
+            best, best_free = i, free
+    # Say which card and why, at the top. The contention line already existed but only
+    # printed inside the OOM handler, under a truncated traceback where nobody read it.
+    print(f"scoring on cuda:{best} ({best_free / 2**30:.1f} GiB free of "
+          f"{torch.cuda.device_count()} visible card(s))", flush=True)
+    return f"cuda:{best}"
+
+
 def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
@@ -736,7 +772,7 @@ def main():
 
     metrics = PROFILES[a.profile] if a.profile else a.metrics
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = _pick_card()
     records = []
     failed = []
     for ck in a.ckpt:
