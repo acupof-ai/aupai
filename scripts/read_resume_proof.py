@@ -105,6 +105,31 @@ def read_cursors(lines, before, after):
              f"{len(before)} domains, smallest advance {grew} rows")]
 
 
+def read_sum(cursor, step, batch, accum, world):
+    """Condition 6 (de): the nine cursors must sum to the GLOBAL rows consumed.
+
+    Every other condition compares domains one at a time, so a scale error in the write
+    path -- :1404 multiplies this rank's bincount by world -- passes all of them while
+    the resume position is off by a factor of world. The sum is the only reading that
+    carries a dimension, and it costs nothing: the cursor is already loaded.
+
+    Bound, not equality: each domain's count is an int() truncation, so the sum can fall
+    up to (domains x world) below step*batch*accum*world and still be right.
+    """
+    if not cursor:
+        return [(FAIL, "6. cursors sum to the global rows consumed", "no row_cursor to sum")]
+    got = sum(cursor.values())
+    top = step * batch * accum * world
+    floor = top - len(cursor) * world
+    if floor <= got <= top:
+        return [(PASS, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
+                 f"sum {got} over {len(cursor)} domains")]
+    factor = f" -- that is {got / top:.3g}x the expected total" if top else ""
+    return [(FAIL, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
+             f"sum {got}{factor}; a world-factor error reads exactly like this while every "
+             f"per-domain comparison stays green")]
+
+
 def read_opt(opts):
     """Condition 5, b0's version: the buffers were LOADED, not merely present.
 
@@ -177,6 +202,12 @@ def _selftest():
     assert read_cursors(good, b4, {"cot": 900, "zh_web": 6600})[0][0] == FAIL   # stalled
     assert read_cursors(good, b4, {"cot": 1350})[0][0] == FAIL                  # domain vanished
 
+    # Condition 6: 1280 rows/rank x 7 = 8960, int() truncation can cost 9x7=63.
+    nine = {f"d{i}": 995 for i in range(9)}          # sums to 8955, inside [8897, 8960]
+    assert read_sum(nine, 40, 32, 1, 7)[0][0] == PASS
+    assert read_sum({f"d{i}": 142 for i in range(9)}, 40, 32, 1, 7)[0][0] == FAIL  # /7: per-rank, world dropped
+    assert read_sum({}, 40, 32, 1, 7)[0][0] == FAIL
+
     # A discarded cursor is the failure the negative condition exists for.
     bad = good + ["mix: zh_web cursor discarded -- written at sample_seed 42, this run uses 7"]
     assert read_log(bad, 40, 20)[0][0][0] == FAIL
@@ -215,9 +246,9 @@ def _selftest():
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.0)}}}])[0][0] == FAIL  # all zero
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == UNCOVERED
-    print("read_resume_proof selftest OK: 13 cases "
+    print("read_resume_proof selftest OK: 16 cases "
           "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor re-read/stall/vanish, "
-          "no-opt/never-stepped/wrong-index/all-zero/loaded)")
+          "sum ok/world-dropped/empty, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
 
 
@@ -228,6 +259,9 @@ def main(argv):
         print(__doc__)
         return 0
     log, ckpt = argv[1], argv[2]
+    # world is the rank count the run used; the cursor is stored global (:1404 multiplies
+    # this rank's count by it), so condition 6 cannot be checked without it.
+    world = int(argv[3]) if len(argv) > 3 else 8
     import glob
 
     import torch
@@ -245,6 +279,9 @@ def main(argv):
 
     rows, _ = read_log(lines, 40, 20)
     rows += read_cursors(lines, ck.get("row_cursor") or {}, d.get("row_cursor") or {})
+    cfg = ck.get("cfg") or {}
+    rows += read_sum(ck.get("row_cursor") or {}, ck.get("step") or 40,
+                     cfg.get("batch") or 32, cfg.get("accum") or 1, world)
     if tail is None:
         rows += [(UNCOVERED, "5. Muon momentum loaded and nonzero",
                   "run 2 wrote no later checkpoint to read the buffers from"),
