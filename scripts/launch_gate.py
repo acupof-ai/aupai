@@ -155,16 +155,31 @@ def gate_corpora(root, mix_path, world):
     return GO, f"all {len(m['domains'])} corpora present, sharded, fingerprints match"
 
 
+ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
+LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+
+
 def gate_arch_tests(root, mix_path, world):
     """4. The shape-specific arch test and the e2e test have PASSED on this shape.
 
     Passing is read from a recorded result, not from the file existing: a test
     that exists and was never run is the coverage-shaped nothing this gate is for.
+
+    Three things the first version could not see, each of which produces a GO that
+    means nothing (de, 2026-09-01):
+
+    1. It accepted ANY key valued "pass". `{"ok": "pass"}` cleared it without either
+       named test having run. The record must carry a row per test in ARCH_TESTS.
+    2. It said "on this shape" and read no shape. Both tests run at whatever their
+       config says, and test_e2e ran at Cfg.layers=12 until today -- a genuine pass of
+       a different model. Each row states the shape it ran, and it must be the shape
+       being launched.
+    3. It could not tell a real kernel from a stand-in. test_arch_L32 prints 10/10 on a
+       machine without fla, having replaced chunk_kda with a lambda; that green is the
+       most misleading artifact in this directory, because it is all-clear on exactly
+       the question the gate is asking. A row must say a real kernel ran.
     """
-    missing = []
-    for name in ("scripts/test_arch_L32.py", "scripts/test_e2e.py"):
-        if not os.path.exists(os.path.join(root, name)):
-            missing.append(name)
+    missing = [n for n in ARCH_TESTS if not os.path.exists(os.path.join(root, n))]
     if missing:
         return NOGO, f"absent: {', '.join(missing)}"
     results = os.path.join(root, "runs", "launch_tests.json")
@@ -175,10 +190,31 @@ def gate_arch_tests(root, mix_path, world):
         r = json.load(open(results, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"runs/launch_tests.json unreadable: {e}"
-    failed = [k for k, v in r.items() if v != "pass"]
-    if failed:
-        return NOGO, f"recorded non-pass: {', '.join(failed[:4])}"
-    return GO, f"{len(r)} shape test(s) recorded pass"
+    unrecorded = [n for n in ARCH_TESTS if n not in r]
+    if unrecorded:
+        return UNKNOWN, (f"no record of {', '.join(unrecorded)} -- the file records "
+                         f"{sorted(r)[:4]}, which is not the same claim")
+    problems = []
+    for name in ARCH_TESTS:
+        row = r[name]
+        if not isinstance(row, dict):
+            problems.append(f"{name}: bare {row!r}, which names no shape and no kernel")
+            continue
+        if row.get("result") != "pass":
+            problems.append(f"{name}: {row.get('result')!r}")
+            continue
+        shape = row.get("shape") or {}
+        differs = {k: (v, shape.get(k)) for k, v in LAUNCH_SHAPE.items() if shape.get(k) != v}
+        if differs:
+            problems.append(f"{name}: ran at {shape or 'an unstated shape'}, "
+                            f"launch is {LAUNCH_SHAPE} (differs: {sorted(differs)})")
+        elif not row.get("real_kernel"):
+            problems.append(f"{name}: real_kernel is not true -- a stand-in chunk_kda "
+                            f"passes every case without touching a KDA kernel")
+    if problems:
+        return NOGO, "; ".join(problems[:3])
+    return GO, (f"{len(ARCH_TESTS)} shape test(s) passed at "
+                f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel")
 
 
 def gate_recipe_provenance(root, mix_path, world):
@@ -447,6 +483,48 @@ def selftest():
     assert not ungated, (
         "gate(s) with no broken world: " + ", ".join(ungated) +
         " -- a gate nobody can make fail is the shape this file exists to retire")
+
+    # arch_tests: three worlds the missing-file world cannot reach. Each one CLEARED the
+    # gate before 2026-09-01, and each is a GO that means nothing rather than a crash --
+    # which is why the file-absent world was not enough to find them. Written as records
+    # because a record is the artifact the gate reads; there is nothing else to damage.
+    for label, record in (
+        ("a key that is neither named test",
+         {"ok": "pass", "shape": LAUNCH_SHAPE}),
+        ("both tests passing at the WRONG shape",
+         {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE, layers=12), "real_kernel": True}
+          for n in ARCH_TESTS}),
+        ("both tests passing against a STAND-IN kernel",
+         {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE), "real_kernel": False}
+          for n in ARCH_TESTS}),
+        # The record the old gate actually accepted. The two dict worlds above fail the
+        # old gate too, but for the wrong reason -- it could not parse a dict row at all,
+        # so its NO-GO said nothing about shape or kernel. This one is the honest
+        # discriminator: {name: "pass"} cleared the old gate (GO, "2 shape test(s)
+        # recorded pass") while naming neither the shape nor whether a kernel ran.
+        ("a flat record naming no shape and no kernel",
+         {n: "pass" for n in ARCH_TESTS}),
+    ):
+        def _rec(d, record=record):
+            write_mix(d, lambda m: None)
+            os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+            with open(os.path.join(d, "runs", "launch_tests.json"), "w",
+                      encoding="utf-8") as f:
+                json.dump(record, f)
+        dw = world(_rec)
+        st, why = gate_arch_tests(dw, os.path.join(dw, mix_rel), 7)
+        assert st != GO, f"arch_tests passed on {label}: {why}"
+    # and the record it is meant to accept must actually pass, or the gate is just
+    # a refusal wearing three reasons
+    def _good(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        with open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8") as f:
+            json.dump({n: {"result": "pass", "shape": dict(LAUNCH_SHAPE),
+                           "real_kernel": True} for n in ARCH_TESTS}, f)
+    dg = world(_good)
+    st, why = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
+    assert st == GO, f"arch_tests refuses the record it is written to accept: {why}"
 
     bad = []
     for name, fn in GATES:
