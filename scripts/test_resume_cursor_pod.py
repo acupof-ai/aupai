@@ -69,9 +69,8 @@ def fingerprints(rows):
 
 
 def main():
-    from tokenizers import Tokenizer
-
-    from train import Cfg
+    import train
+    from train import Cfg, build_tokenizer
 
     tok_path = os.path.join(ROOT, "data", "tokenizer.json")
     dom = os.environ.get("DOMAIN", "cot")
@@ -81,7 +80,15 @@ def main():
     if not os.path.isdir(os.path.join(ROOT, "data", "corpus", dom)):
         print(f"SKIP: no data/corpus/{dom}")
         return 0
-    tok = Tokenizer.from_file(tok_path)
+    # build_tokenizer, not Tokenizer.from_file: it is the only thing that sets the
+    # module-global VOCAB_ID (:1471). Loading the tokenizer directly leaves it None, and
+    # :1685 writes `VOCAB_ID or ""` -- a 0-byte vocab stamp beside any cache this run
+    # rebuilds. :1646 then reads that empty stamp as a mismatch, so the NEXT run
+    # retokenizes from scratch: 851,965 docs and five minutes of eight idle cards, which
+    # is what this test cost tilerl's gate run at 18:05. /data00 is shared; a CPU-only
+    # test is not a side-effect-free test.
+    tok = build_tokenizer([])
+    assert train.VOCAB_ID, "VOCAB_ID unset after build_tokenizer: a rebuild here would stamp an empty vocab"
 
     Cfg.seq, Cfg.batch, Cfg.accum = 512, 2, 1
     mix = {"total_tokens": 4e6, "domains": {dom: {"weight": 1.0, "epochs": 1}}}
