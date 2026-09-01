@@ -1,7 +1,7 @@
 ---
 question: step24000(200M/30B token)的诚实能力测量——在 500M 跑完前让它有东西可比;以及 200M 尺度上什么仪器读得出推理信号
 status: open
-source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewshot_arm_prereg.md, free_running_prereg.md, eval/score_math_formatfree.py。预登记:新臂的任何数出来之前写死;在飞的 3/8 数学臂见 §0
+source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewshot_arm_prereg.md, free_running_prereg.md, eval/score_math_formatfree.py。预登记:新臂的任何数出来之前写死(26172fa);已落地的 3/8 数学臂见 §0
 ---
 
 # step24000 诚实能力测量(预登记)
@@ -10,7 +10,7 @@ source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewsho
 
 - **ChatML 生成分数:格式门不开。** 数学 1439 条生成 0 条含 \boxed(gold 494/500 有);代码 288 条里 3 条带 fence。历史上每个 base checkpoint 的生成分数都是 OOD 提示产物(fb/de 2026-09-01 全量确认)。
 - **free_running(e1,`runs/free_running.json`,已测):** teacher-forced top-1 中位 0.727(代码)/0.6875(数学)→ free-running 中位 0.0/0.021(naive),ratio 0.00/0.03;gold 对数概率只赢 45%/52.8% 的采样序列。**崩塌级,不是温和级;且模型不偏好金答案。**
-- **few-shot arm(e1/de,在飞):** 数学 3-shot + 8-shot,GPU2/GPU3,读数 A/B/C 在 `fewshot_arm_prereg.md`。
+- **few-shot arm(e1/de,已落地,a7f2f74):** 纯续写 3-demo 8.13% vs 同聚合 shuffle 2.40%(z=8.42,正确抽取规则下);8-demo 5.69%,示例数无效应(配对符号检验 p=0.073,不报方向)。**OOE-a 命中 → R3"会一点"在 3-demo 臂上成立**(提取率 ≥20%,+5.73pt ∈ (2pt, 12.6pt))。两个仪器教训:(a) 续写无终止符,43.5% 的 3-demo 生成(216/497)会另起一道 `题目：` 自编自解——全缓冲 last-box 取到自编题答案(25/497),first-box 误杀本轮中间结果(45/497),正确规则 = 截断在首个新 `题目：`、取本轮内最后一个 box(40/497);(b) 8-demo 格式率 33.5%(3-demo 80.5%,旧口径含答后 box)——示例给多了反而压制答案格式,两臂测的不是同一件事,8-demo 准确率不与 3-demo 并排读。
 - **format-free 打分在 ChatML 生成上:** 17.9% vs shuffle 对照 20.1%——低于随机,但生成本身 OOD,不构成能力读数。
 - **p324 L1(`reasoning_panel.md`):** 数学 3-shot 0.2%,代码全剂量 0/497;成形剂量-反应:数学 25.4%/53.5%/63.6%(0/1/3-shot,单调、边际递减),代码 97.8–100%(天花板无量程)。
 
@@ -29,7 +29,7 @@ source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewsho
 - **checkpoint:** `ckpt_pretrain_30b_s2.pt.step24000`(200M,d=1024,L=12,30B token)。
 - **数学:** `eval/l1_fewshot.py`;`build_prompt` 纯续写 `题目：{q}\n解答：{a}`;demos = math_test_500 行 0..n−1 的完整 gold 解;**`--eval-from 8` 对全部四档** → 同一 492 题集,只有 demo 数在动。greedy(t=0),max_new 512,**rep_stop=False**(成形率需要;通过率不受影响——正确答案不触发重复停止)。
 - **代码:** `eval/code_fewshot.py` 打补丁后;提示格式钉死 `题目：{q}\n```python\n{code}\n```\n运行输出：\n{out}`,目标以 `题目：{q}\n```python\n` 结尾;提取到首个闭合 fence,无 fence 取整段续写;sandbox 执行、stdout 行匹配。
-- **数学打分三器:** (a) 严格:`\boxed` 或 `答案是:`(l1 内置);(b) format-free:末位数字(`score_math_formatfree` 逻辑)+ 同聚合层 shuffle 对照;(c) 成形:boxed/答案是 出现 + 含任意数字。
+- **数学打分三器:** (a) 严格:`model_turn` 截断(首个新 `题目：` 之前)+ 本轮内最后一个 `\boxed` 或 `答案是:`(a7f2f74 钉死——续写无终止符,43.5% 生成自编下一题,全缓冲 last-box 给自编题打分);(b) format-free:末位数字(`score_math_formatfree` 逻辑)+ 同聚合层 shuffle 对照;(c) 成形:本轮内 boxed/答案是 出现 + 含任意数字。
 - **代码打分三器:** (a) 执行通过;(b) 成形:非空续写 + 含 `def `;(c) 空续写率。
 - **de 的 L2 尺子(代码,最长可解析片段):** 落地后用它重打代码通过率。本预登记钉的是尺子契约(提取率优先、同聚合层 shuffle 对照、自带已知答案),不是实现。**按 fb 指示:跑等尺子。**
 
@@ -45,6 +45,7 @@ source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewsho
 2. **拒报线:提取率 <20% 的档,不报通过率**——报"提取地板,通过率不可读"。
 3. 通过率与对照同行:严格、format-free、shuffle 对照、鹦鹉下限,四个数一行。
 4. 仪器存在阈值:**2δ = 12.6pt @ 492**(δ=1.4/√492)。通过率 <12.6pt = 地板,不是读数(`reasoning_panel` 常设规则)。
+5. **每个通过率携带抽取规则同行**(fb 裁定 2026-09-01:三种抽取规则两种给出"示例数有显著效应"的假结论,正确的那种 p=0.073)。
 
 ## 5. 预期(测前写死)
 
@@ -82,7 +83,7 @@ source: fb tasking 2026-09-01; builds on docs/lessons/reasoning_panel.md, fewsho
 ## 8. 执行
 
 - pod,一张卡,~1 小时;**等 de 的 L2 代码尺子落地再跑**(fb 指示)。
-- 数学 0/1/3/8 全档重跑(`--eval-from 8`,同一 492 题)。在飞的 3/8 臂用默认 rep_stop=True 且 3-shot 默认评 497 题——通过率仍可作独立确认,但剂量-反应比较用本预登记的同题集 sweep(避免总体变化混淆,de 在 `split_rows` 修的正是这个)。
+- 数学 0/1/3/8 全档重跑(`--eval-from 8`,同一 492 题)。已落地的 3/8 臂用了默认 rep_stop=True 且 3-shot 评 497 题——通过率仍可作独立确认,但剂量-反应比较用本预登记的同题集 sweep(避免总体变化混淆,de 在 `split_rows` 修的正是这个)。
 - 代码臂前补丁:`code_fewshot.py` DEMO_POOL 3→8、`choices=[0,1,3,8]`、加 `--eval-from`(默认 8);补丁后重跑 `--selfcheck`。
 - 产物:preds 落 `data/eval/`(gitignored,pod 侧),`attest` 哈希;读数写 §9。
 
