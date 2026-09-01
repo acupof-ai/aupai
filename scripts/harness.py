@@ -809,55 +809,152 @@ def _pod_ps_rows(timeout=20):
     return rows, None
 
 
+def foreground_training_orphans(allrows):
+    """The training rows on the pod that are NOT under a setsid session.
+
+    Split out of the check so it can be TESTED. The predicate lived inside the
+    check, entangled with a live remote read, so _broken_no_foreground_pod_training
+    had to skip -- "reads live pod process state; no repo artifact to break". The
+    cost of that came due on 2026-09-01: three false positives in one day, each
+    found by a person reading ps by hand after a commit was refused, and each
+    patched by adding one more special case to an untested predicate. A guard
+    nothing can exercise accumulates exactly this.
+
+    What "detached" actually means here. setsid makes the job its own session
+    leader; the launching shell then exits and init adopts the tree. So the
+    evidence of a correct detach is the SESSION, not any one row:
+
+      - the session leader is often a zombie ([bash] <defunct>, sid alive but
+        holding no argv) -- a leader-presence test reads a correct detach as an
+        orphan;
+      - the ranks torchrun spawns are session leaders of their OWN sessions,
+        so the parent's sid appears in no leader set built from the training rows;
+      - a <defunct> row is a corpse, not a process holding a card.
+
+    The rule that survives all three: walk each row's ppid chain. If it reaches
+    init (ppid 1) without leaving the pod's process table, the launching shell is
+    gone and the job is detached -- which is what setsid buys. If the chain ends
+    at a live non-init ancestor that is NOT part of this training tree, the job is
+    still attached to a shell and dies with the tunnel. That is the failure this
+    check exists for.
+    """
+    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
+    # The launcher's own wrapper: `pod "... setsid nohup python3 ..."` leaves a
+    # bash -lc whose argv contains the whole command, so a text match catches it.
+    # It is not a training process.
+    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
+    # A corpse holds no GPU. <defunct> rows are what is left of a session leader
+    # after the tree was adopted -- the signature of a correct detach, not an orphan.
+    rows = [x for x in rows if "<defunct>" not in x[4]]
+    ppid = {x[0]: x[3] for x in allrows}
+    orphans = []
+    for x in rows:
+        pid, seen = x[0], set()
+        while pid and pid not in seen and pid != "1":
+            seen.add(pid)
+            pid = ppid.get(pid)
+        # Reached init => adopted => detached. Anything else -- a live non-init
+        # ancestor, or a chain that falls off the table -- is NOT proof of a detach,
+        # and an unprovable detach must read as attached. Defaulting the unknown case
+        # to "fine" is how a guard goes quiet: this predicate's whole job is to fail
+        # when it cannot show the launching shell is gone.
+        if pid != "1":
+            orphans.append(x)
+    return orphans
+
+
 def check_no_foreground_pod_training(root):
     """No training process on the pod outside a setsid session.
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. A detached job's session id differs from its pid's
-    parent shell; a foreground one shares the crictl exec session."""
+    seven-card profile silently. The predicate is foreground_training_orphans, kept
+    separate so it can be tested against captured ps output."""
     pod = os.path.expanduser("~/bin/pod")
-    if not os.path.exists(pod) or pod_drift.is_pod(root):
-        return SKIP, "host-side check; needs ~/bin/pod"
-    allrows, err = _pod_ps_rows()
-    if err:
-        return SKIP, err
-    # The training rows, selected from the one read rather than by a second remote grep.
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
-    ppid = {x[0]: x[3] for x in allrows}
-    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
-    # leaves a bash -lc whose argv contains the whole launch command, so a match on
-    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
-    # training process and is correctly not a session leader. It names setsid in its
-    # own command line; the job it spawned is the thing to judge (2026-09-01, this
-    # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    if not rows:
+    fake = os.environ.get("HARNESS_POD_PS")
+    if fake:
+        # Selftest injection point. The check's own broken world needs a process table,
+        # not a repo tree, and the pod is a shared box -- staging the real violation on
+        # it would mean committing the incident this check prevents.
+        allrows = [tuple(ln.split(None, 4)) for ln in open(fake, encoding="utf-8")
+                   if len(ln.split(None, 4)) == 5]
+    else:
+        if not os.path.exists(pod) or pod_drift.is_pod(root):
+            return SKIP, "host-side check; needs ~/bin/pod"
+        allrows, err = _pod_ps_rows()
+        if err:
+            return SKIP, err
+    orphans = foreground_training_orphans(allrows)
+    live = [x for x in allrows
+            if re.search(r"train\.py|run_ddp", x[4]) and "<defunct>" not in x[4]
+            and not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
+    if not live:
         return PASS, "no training process on the pod"
-    # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. Its session leader may be a zombie ([bash]
-    # <defunct>, sid alive but absent from ps output), so a leader-presence test reads
-    # a correctly detached trainer as unsupervised -- this refused a commit while
-    # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
-    # this check).
-    detached = {x[0] for x in rows if x[4].startswith(("/usr/bin/python3", "python3"))
-                and ppid.get(x[0]) == "1"}
-    attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
-    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if x[0] == x[1]}
-    orphans = [x for x in attached if x[1] not in leaders]
     if orphans:
-        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
-    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+        return FAIL, (
+            f"{len(orphans)} training process(es) not under a setsid session: "
+            f"pid {orphans[0][0]} ({orphans[0][4][:60]})"
+        )
+    return PASS, f"{len(live)} training process(es), all detached"
 
 
 def _broken_no_foreground_pod_training():
-    # A broken world here would need a real foreground training process on the pod --
-    # i.e. committing the exact incident the check exists to prevent, on the box
-    # running the 15B job. The check reads live process state, not a repo artifact,
-    # so there is nothing in a temp tree to break. Skipped out loud rather than
-    # given a hand-written world that would share the check's own assumptions.
-    raise SelftestSkip("reads live pod process state; no repo artifact to break")
+    # The predicate is now separable from the remote read, so it can be exercised
+    # against captured ps output instead of skipped. Every fixture below is REAL:
+    # DETACHED is tilerl's shape500_b32 job as ps reported it on 2026-09-01, the
+    # exact table that produced this check's third false positive in one day. An
+    # invented table would have shared the check's own assumptions -- which is how
+    # three special cases were added to an untested predicate and it still failed.
+    #
+    # (pid, sid, pgid, ppid, args)
+    DETACHED = [
+        ("1367423", "1367423", "1367423", "1", "[bash] <defunct>"),
+        ("1367615", "1367423", "1367423", "1", "[run_ddp.sh] <defunct>"),
+        ("1370843", "1370843", "1370843", "1", "[bash] <defunct>"),
+        ("1382838", "1370843", "1370843", "1", "/bin/bash ./run_ddp.sh --mix data/mix_30b_stage2.json --name shape500_b32"),
+        ("1382840", "1370843", "1370843", "1382838", "/usr/bin/python3 /usr/local/bin/torchrun --nproc_per_node=3 train.py --fp8"),
+        ("1382917", "1382917", "1382917", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
+        ("1382918", "1382918", "1382918", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
+        ("1382919", "1382919", "1382919", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
+    ]
+    orphans = foreground_training_orphans(DETACHED)
+    assert not orphans, (
+        f"a correctly setsid'd job read as {len(orphans)} orphan(s): "
+        f"{[x[0] for x in orphans]} -- this is the false positive, fourth time"
+    )
+    # Each false positive this check actually produced, as its own case, so a future
+    # rewrite cannot reintroduce one of them silently.
+    assert not foreground_training_orphans([
+        ("900", "800", "800", "800", "bash -lc pod \"setsid nohup python3 train.py --mix x\""),
+    ]), "the launcher's own bash -lc wrapper is not a training process (FP #1)"
+    assert not foreground_training_orphans([
+        ("901", "901", "901", "1", "[bash] <defunct>"),
+        ("902", "901", "901", "1", "/usr/bin/python3 -u train.py --name a"),
+    ]), "a zombie session leader means adopted, not unsupervised (FP #2)"
+    assert not foreground_training_orphans([
+        ("903", "903", "903", "1", "[run_ddp.sh] <defunct>"),
+    ]), "a corpse holds no GPU (FP #3)"
+    # And the failure it exists for MUST still be caught: a trainer whose launching
+    # shell is alive dies with the tunnel. Without this the whole check is a no-op.
+    ATTACHED = [
+        ("500", "500", "500", "499", "bash"),
+        ("501", "500", "500", "500", "/usr/bin/python3 -u train.py --fp8 --name foreground"),
+    ]
+    caught = foreground_training_orphans(ATTACHED)
+    assert [x[0] for x in caught] == ["501"], (
+        f"a foreground trainer under a live shell must be caught, got {caught}"
+    )
+    # And the CHECK, not just the predicate, must report FAIL on that table. A pod is a
+    # shared box, so the world is injected as a captured ps rather than staged there --
+    # staging it would mean committing the incident this check exists to prevent.
+    d = _tmp_repo()
+    ps = os.path.join(d, "data", "pod_ps.txt")
+    os.makedirs(os.path.dirname(ps), exist_ok=True)
+    with open(ps, "w", encoding="utf-8") as f:
+        for row in ATTACHED:
+            f.write(" ".join(row) + "\n")
+    os.environ["HARNESS_POD_PS"] = ps
+    return d
 
 
 def check_curl_ipv4(root):
@@ -6529,8 +6626,13 @@ def _demo():
     # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
     # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
     # env_importable joins it for the same reason: its artifact is process import state,
-    # not a tree, so no world it builds can hold a repo file.
-    synthetic_world = {"no_oversized_blob", "env_importable"}
+    # not a tree, so no world it builds can hold a repo file. no_foreground_pod_training
+    # joins on 2026-09-01 for the same reason again -- its artifact is a process TABLE.
+    # Its world is not hand-written despite sitting here: the rows are a verbatim capture
+    # of the pod's ps during tilerl's shape500_b32 run, which is what the reality rule is
+    # actually asking for. Staging the real violation on the pod would mean starting a
+    # foreground trainer on a shared box -- committing the incident the check prevents.
+    synthetic_world = {"no_oversized_blob", "env_importable", "no_foreground_pod_training"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
@@ -6563,6 +6665,7 @@ def _demo():
         finally:
             shutil.rmtree(root, ignore_errors=True)
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
+            os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
