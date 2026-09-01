@@ -6907,6 +6907,7 @@ _FROZEN_KEYS = (
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
+    "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M)
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -6914,7 +6915,7 @@ _FROZEN_KEYS = (
 # edit, and ladder_config_frozen compares them against the JSON as documented
 # intent -- closing the gap where all six points agree with each other but not
 # with what was intended (fb regenerated the manifest mid-ladder, blinding pod_drift).
-_CODE_FROZEN_KEYS = ("chunk_size", "layers", "d", "heads", "ffn_hidden")
+_CODE_FROZEN_KEYS = ("chunk_size",)  # the shape moved to _FROZEN_KEYS when it got flags
 
 # CLI flags whose name differs from their Cfg field (--no_attn_res sets Cfg.attn_res).
 # --no_doc_mask is gone: it existed because the attention fallback could not honour

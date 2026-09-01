@@ -1930,6 +1930,10 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
+        "d": "model width (must be 128*heads: FlashKDA CUTLASS pins head_dim at 128)",
+        "heads": "attention/KDA heads (head_dim = d/heads must be 128)",
+        "layers": "number of blocks",
+        "ffn_hidden": "FFN inner width",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -2023,6 +2027,11 @@ def main():
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
+    # --d/--heads off the default pair is a shape experiment; head_dim is not free.
+    # The FlashKDA CUTLASS kernel is compiled for head_dim 128 and a mismatch is an
+    # illegal memory access deep in the kernel, not a shape error at the boundary.
+    if Cfg.d // Cfg.heads != 128 or Cfg.d % Cfg.heads:
+        raise SystemExit(f"head_dim must be 128: d={Cfg.d} heads={Cfg.heads} -> {Cfg.d / Cfg.heads}")
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
