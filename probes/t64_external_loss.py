@@ -71,23 +71,23 @@ def corpus_texts(root, mix_path, n_docs=400):
     """
     mix = json.load(open(mix_path, encoding="utf-8"))
     per = max(1, n_docs // max(1, len(mix["domains"])))
-    out = []
+    out = {}
     for name in mix["domains"]:
         d = os.path.join(root, "data", "corpus", name)
         files = sorted(glob.glob(os.path.join(d, "*.jsonl")))
         if not files:
             print(f"  seen-control: {name} has no shards under {d} -- SKIPPED", flush=True)
             continue
-        got = 0
+        got = []
         for line in open(files[0], encoding="utf-8"):
             if not line.strip():
                 continue
             t = (json.loads(line).get("content") or "").strip()
             if len(t) > 400:
-                out.append(t)
-                got += 1
-            if got >= per:
+                got.append(t)
+            if len(got) >= per:
                 break
+        out[name] = got
     return out
 
 
@@ -118,7 +118,7 @@ def main():
     # explained away. Exact-key match against the seen sample.
     import build_corpus as B
 
-    seen_keys = {B.exact_key(t) for t in seen}
+    seen_keys = {B.exact_key(t) for ts in seen.values() for t in ts}
     kept = [(n, t) for n, t in unseen if B.exact_key(t) not in seen_keys]
     dropped = len(unseen) - len(kept)
 
@@ -132,20 +132,39 @@ def main():
                               "exist when the crawls were taken'"),
         "unseen_docs": len(kept),
         "unseen_docs_dropped_by_dedup": dropped,
-        "seen_docs": len(seen),
+        "seen_docs": sum(len(v) for v in seen.values()),
         "seen_source": f"training-mix domains from {os.path.basename(a.mix)}",
     }
 
+    # PER-DOMAIN, not one pooled call. domain_loss caps at SEQ_CAP=64 sequences,
+    # so pooling seven domains into one list scores only the first ~65K tokens --
+    # i.e. domain #1 alone, silently. The first run of this probe reported
+    # seen_loss 0.7185, which is exactly code_rp1t's own loss: a truncation
+    # wearing the costume of an average. Scoring each domain separately and
+    # reporting the spread also makes the domain-shift confound visible instead
+    # of hiding it inside a single pooled number.
     with torch.no_grad():
         u_loss, u_tok = domain_loss(model, tok, [t for _n, t in kept], SEQ, a.device)
-        s_loss, s_tok = domain_loss(model, tok, seen, SEQ, a.device)
+        per_domain = {}
+        for name, texts in seen.items():
+            if not texts:
+                continue
+            dl, dt = domain_loss(model, tok, texts, SEQ, a.device)
+            if dl is not None:
+                per_domain[name] = {"loss": round(dl, 4), "tokens": dt}
 
     res["unseen_loss"] = round(u_loss, 4) if u_loss else None
     res["unseen_tokens"] = u_tok
-    res["seen_loss"] = round(s_loss, 4) if s_loss else None
-    res["seen_tokens"] = s_tok
-    if u_loss and s_loss:
-        res["gap_unseen_minus_seen"] = round(u_loss - s_loss, 4)
+    res["seen_per_domain"] = per_domain
+    if per_domain:
+        losses = [v["loss"] for v in per_domain.values()]
+        res["seen_loss_mean"] = round(sum(losses) / len(losses), 4)
+        res["seen_loss_min"] = min(losses)
+        res["seen_loss_max"] = max(losses)
+        res["seen_domain_spread"] = round(max(losses) - min(losses), 4)
+        if u_loss:
+            res["gap_unseen_minus_seen_mean"] = round(u_loss - res["seen_loss_mean"], 4)
+            res["gap_vs_worst_seen_domain"] = round(u_loss - max(losses), 4)
     res["confound"] = ("the gap mixes UNSEENNESS with DOMAIN SHIFT -- docs/ prose is a "
                        "register the corpus barely contains. A large gap is not "
                        "sufficient evidence of memorisation by itself.")
