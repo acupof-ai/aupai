@@ -384,7 +384,8 @@ def _global_pass(a):
 
     # Hold the build flock for the whole write; stamp time re-probes it and the
     # settle guard refuses if any other process writes under us (tilerl T7-2).
-    _build_lock(a.out)
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)
 
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     reasons = Counter()
@@ -473,15 +474,17 @@ def _global_pass(a):
 
 
 def _build_lock(out):
-    """Acquire an exclusive flock on {out}/.build.lock; the fd is held for the build
-    so stamp time can detect a live writer by re-acquiring non-blocking (PID-based;
-    flock is kernel-assigned per open-file-description, not a name pattern). Returns
-    the fd. Refuses if another build already holds it (two writers on one domain -- the
-    duplicate-writer class, fb retro 2026-08-31)."""
+    """Acquire an exclusive flock on {out}/.build.lock and record this PID. The
+    returned fd must be HELD for the write (callers bind it to _LOCK_FD) or CPython
+    close()s it on return and the flock is gone -- that was the defect tilerl-0a
+    caught (T7-2 revote): production dropped the return and the lock never survived.
+    flock gives mutual exclusion between two builds; the settle probe reads the PID
+    rather than re-flocking, because flock is per-open-file-description and a second
+    open() by the SAME process conflicts with its own lock (Defect B). Returns the fd."""
     import fcntl
 
     os.makedirs(out, exist_ok=True)
-    f = open(os.path.join(out, ".build.lock"), "a+", encoding="utf-8")  # noqa: SIM115 -- fd must outlive the function to hold the flock
+    f = open(os.path.join(out, ".build.lock"), "a+", encoding="utf-8")  # noqa: SIM115 -- fd is returned to hold the flock
     try:
         fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -494,27 +497,66 @@ def _build_lock(out):
     return f
 
 
+_LOCK_FD = None  # the held build-lock fd for the whole write; set by the pass entry points
+
+
+def _other_writer_pid(out):
+    """The PID of a live writer on {out}, or None if ours/free/stale. Reads the
+    lock's PID and refuses to call it 'another writer' if it is THIS process or a
+    dead PID (a crashed build leaves a stale PID; flock already released). This is
+    the probe the settle guard and preflight share -- PID-based, not pgrep-name,
+    and it does not re-flock (a re-flock by the same process would conflict with
+    its own OFD)."""
+    lock = os.path.join(out, ".build.lock")
+    if not os.path.exists(lock):
+        return None
+    try:
+        with open(lock, encoding="utf-8") as fh:
+            pid = int(fh.read().strip())
+    except (OSError, ValueError):
+        return None
+    if pid == os.getpid():
+        return None  # our own build: it wrote this PID, it is about to stamp its own output
+    try:
+        os.kill(pid, 0)  # liveness probe: raises if no such process
+        return pid
+    except OSError:
+        return None  # stale: the builder died, its flock is gone, the dir is free
+
+
 def _settle_dir(out, domain, settle_s):
     """Stamp-time settle guard (tilerl T7-2): refuse the stamp unless the dir is
-    not being written. Two mechanisms. First, PID-based (not pgrep-name): the
-    build holds an exclusive flock on {out}/.build.lock for the whole write; a
-    NON-locking re-acquire here proves no other process holds it -- a second
-    writer (another build, mid-write) is refused. Second, the file set is read
-    twice a beat apart: if any shard appears/disappears or its mtime ADVANCES
-    between the two reads, a writer is touching it now, so the stamp is refused.
-    A completed build's own output is stable (ShardWriter closed before the
-    stamp), so its fresh mtimes do not refuse it; only an active change does."""
-    import fcntl
+    not being written. Two mechanisms. First, PID-based (not pgrep-name):
+    `_other_writer_pid` refuses if a LIVE, OTHER process holds the build lock.
+    Second, the file set is read twice a beat apart: if any shard appears/disappears
+    or its mtime CHANGES between the two reads, a writer is touching it and the
+    stamp is refused. When the lock is ours (a real build holds it and is stamping
+    the bytes it just finished), fresh mtimes are expected, so the settle-window
+    mtime check applies only when NO other writer could be mid-write -- i.e.
+    every shard must be older than `settle_s` ONLY when we do not hold our own lock
+    (an ad-hoc re-stamp, or a non-locking foreign appender like the U+2028 repair
+    that never took the lock)."""
     import time as _time
 
+    who = _other_writer_pid(out)
+    if who is not None:
+        raise SystemExit(
+            f"REFUSE: {out} is locked by live pid {who} (not ours) -- stamp over unsettled bytes"
+        )
     lock = os.path.join(out, ".build.lock")
-    if os.path.exists(lock):
-        with open(lock, "a+", encoding="utf-8") as h:
-            try:
-                fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                fcntl.flock(h, fcntl.LOCK_UN)  # free; we only probe for a contender
-            except OSError:
-                raise SystemExit(f"REFUSE: {out} is locked by a live writer -- stamp over unsettled bytes") from None
+    self_hold = os.path.exists(lock)
+    if self_hold:
+        try:
+            with open(lock, encoding="utf-8") as fh:
+                self_hold = int(fh.read().strip()) == os.getpid()
+        except (OSError, ValueError):
+            self_hold = False
+
+    def _mtime_below(path):
+        try:
+            return settle_s > 0 and (_time.time() - os.path.getmtime(path)) < settle_s
+        except OSError:
+            return True  # vanished mid-check: treat as unsettled
 
     def snap():
         return {p: os.path.getmtime(p) for p in sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))}
@@ -527,6 +569,11 @@ def _settle_dir(out, domain, settle_s):
     changed = [k for k in set(s1) | set(s2) if s1.get(k) != s2.get(k)]
     if changed:
         raise SystemExit(f"REFUSE: {domain} shard set changed between two reads (mid-write): {os.path.basename(changed[0])}")
+    if not self_hold and settle_s > 0 and any(_mtime_below(p) for p in s2):
+        raise SystemExit(
+            f"REFUSE: some {domain} shard was modified within the settle window "
+            f"({settle_s}s) and no build holds the lock -- a writer may still be touching it"
+        )
 
 
 SETTLE_S = 60
@@ -636,7 +683,8 @@ def _parallel_exact_pass(a):
     import glob as _g
     import multiprocessing as mp
 
-    _build_lock(a.out)  # hold the build flock through the write; stamp refuses interference
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)  # hold the build flock through the write; stamp refuses interference
     paths = sorted(_g.glob(f"{a.out}/w*_*.jsonl"))
     if not paths:
         raise SystemExit(f"REFUSE: no w*_*.jsonl shards in {a.out}")
@@ -737,19 +785,16 @@ def _preflight(a):
         )
     if not a.dry and not os.path.isdir(out):
         raise SystemExit(f"REFUSE: output dir {out} does not exist; mkdir is the operator's step")
-    # (a) unique writer, PID-based (flock, not pgrep-name): a live build holds an
-    # exclusive flock on {out}/.build.lock for the whole write. Probe it now -- if
-    # it is held, another build is writing this domain; refuse. The build acquires
-    # (and holds) the same lock when it starts writing.
-    import fcntl
-
-    os.makedirs(out, exist_ok=True)
-    with open(os.path.join(out, ".build.lock"), "a+", encoding="utf-8") as h:
-        try:
-            fcntl.flock(h, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(h, fcntl.LOCK_UN)
-        except OSError:
-            raise SystemExit(f"REFUSE: another build writes {a.domain} (holds {out}/.build.lock); two writers on one domain") from None
+    # (a) unique writer, PID-based (not pgrep-name): a live build records its PID in
+    # {out}/.build.lock. `_other_writer_pid` refuses only if a LIVE, OTHER process
+    # wrote it; our own (or a stale/crashed) lock is free. flock stays the write-time
+    # mutual exclusion; this probe deliberately does not re-flock (a same-process
+    # re-flock would conflict with the build's own held lock, Defect B).
+    who = _other_writer_pid(out)
+    if who is not None:
+        raise SystemExit(
+            f"REFUSE: another build is writing {a.domain} (live pid {who} holds {out}/.build.lock)"
+        )
     # (c) filter family matches the domain family
     CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
     if a.domain in CODE_DOMAINS and a.filters != "light":
@@ -843,26 +888,44 @@ def _selftest_preflight():
         raise AssertionError("(c) code-family with web filters did not REFUSE")
     except SystemExit:
         ok += 1
-    # (a) a live other-session build holding the domain's build lock -> REFUSE.
-    # Hold `_build_lock` on the output dir, then _preflight's unique-writer probe
-    # (flock, PID-based) must refuse it.
+    # (a) + T7-2: a FOREIGN live pid in the build lock -> REFUSE; our OWN lock -> PASS.
+    # tilerl-0a's rejection: the old case held the lock through THIS process, which
+    # the new PID probe must (correctly) NOT refuse -- the bug was testing a shape
+    # production does not take. A foreign live pid is the real duplicate-writer.
+    import subprocess as _sp
+
     src = tempfile.mkdtemp()
     marker = os.path.join(src, "held_domain")
     os.makedirs(marker)
-    with open(os.path.join(marker, "x.jsonl"), "w") as fh:
+    with open(os.path.join(marker, "x_000.jsonl"), "w") as fh:
         fh.write(json.dumps({"content": "x" * 500, "url": "u"}) + "\n")
-    held_fd = None
+    sleeper = _sp.Popen(["sleep", "300"])  # a live process with a foreign pid
     try:
-        held_fd = _build_lock(marker)  # we are the live writer on held_domain
+        # foreign live pid in the lock -> preflight refuses (duplicate writer)
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleeper.pid))
         try:
             _preflight(A(domain="held_domain", out=marker, filters="light", dry=True,
                          source=[f"jsonl:{os.path.join(marker, 'x.jsonl')}"], global_only=False))
             raise AssertionError("(a) duplicate writer did not REFUSE")
         except SystemExit:
             ok += 1
+        # our OWN held build lock -> settle must PASS, not refuse (production stamps its own output)
+        os.remove(os.path.join(marker, ".build.lock"))
+        own = _build_lock(marker)  # we are the writer
+        _settle_dir(marker, "x", 0)  # self lock must NOT refuse: production stamps its own output
+        own.close()
+        # foreign live pid in the lock -> settle refuses
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleeper.pid))
+        try:
+            _settle_dir(marker, "x", 0)
+            raise AssertionError("T7-2: a foreign writer's lock did not REFUSE the stamp")
+        except SystemExit:
+            ok += 1
     finally:
-        if held_fd is not None:
-            held_fd.close()
+        sleeper.kill()
+        sleeper.wait()
         import shutil
         shutil.rmtree(src, ignore_errors=True)
     # (d) a source whose 1000-doc sample keeps 0 (all <100 chars under light) -> REFUSE
@@ -878,20 +941,7 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
-    # T7-2 settle guard: a dir whose build lock a live writer holds must refuse the stamp.
-    sdir = tempfile.mkdtemp()
-    try:
-        with open(os.path.join(sdir, "d_000.jsonl"), "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"content": "a real settled doc body", "url": "u"}) + "\n")
-        held = _build_lock(sdir)  # this build now "is" the live writer
-        try:
-            _settle_dir(sdir, "d", 60)
-            raise AssertionError("T7-2: a writer holding the build lock did not REFUSE the stamp")
-        except SystemExit:
-            ok += 1
-        held.close()
-    finally:
-        shutil.rmtree(sdir, ignore_errors=True)
+    # (the foreign-live-pid refuse + self-pass cases live with gate (a) above)
     print(f"build_corpus selftest OK: {ok}/5 gates refuse on their failing world (incl. T7-2 settle)")
     return 0
 
