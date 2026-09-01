@@ -2593,11 +2593,22 @@ def main():
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
                     eta = (total_steps - step) * dt / 10
+                    # Peak memory decides whether a batch fits at a given world, and it
+                    # was not readable from a training run at all -- the 500M shape work
+                    # had to read nvidia-smi, which reports the caching allocator's
+                    # reservation rather than the high-water mark of live tensors. This
+                    # is rank 0 only (the whole log line is is_main); ranks differ by
+                    # their DDP bucket, so rank 0 is a lower bound on the worst rank, not
+                    # the max. Reset each window so a late spike is not hidden by an
+                    # earlier, larger one (2026-09-01).
+                    peak_gib = torch.cuda.max_memory_allocated() / 2**30
+                    torch.cuda.reset_peak_memory_stats()
                     runlog(
                         f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "
                         f"| lr {optimizers[0].param_groups[0]['lr']:.2e} | gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
-                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% | ETA {eta / 3600:.1f}h"
+                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
+                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
                 if step >= total_steps:
                     break

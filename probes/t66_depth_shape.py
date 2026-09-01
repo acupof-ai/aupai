@@ -16,6 +16,7 @@ heads = d/128 and d is a multiple of 128.
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -68,12 +69,34 @@ PEAK_TFLOPS = 148.0  # H20 bf16. This harness never enables fp8; train.py:2267 u
 # and a mismatched comparison is visible in the JSON rather than in someone's memory.
 
 
+def _other_gpu_load():
+    """Cards busy with something that is not this process, as (index, MiB) pairs."""
+    r = subprocess.run(["nvidia-smi", "--query-gpu=index,memory.used,utilization.gpu",
+                        "--format=csv,noheader,nounits"], capture_output=True, text=True)
+    mine = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    busy = []
+    for ln in r.stdout.splitlines():
+        f = [x.strip() for x in ln.split(",")]
+        if (len(f) == 3 and f[0].isdigit() and f[0] not in mine.split(",")
+                and (int(f[1]) > 1024 or int(f[2]) > 10)):
+            busy.append((f[0], int(f[1])))
+    return busy
+
+
 def _ab_guard(argv):
-    """Refuse an A/B whose arms are identical.
+    """Refuse an A/B whose arms are identical, and record the load each arm ran under.
 
     The AttnRes A/B ran twice with --ar-blocks 0, because 0 is also the default. It would have
     reported a difference of zero -- correctly computed, from an experiment that never varied
     its variable. A zero difference invites no scrutiny, so the driver has to refuse instead.
+
+    The load half exists because the guard passing was then read as "this A/B is clean". It is
+    not: it compares argv and knows nothing about the machine. The blocks=8 arm straddled a
+    deadlocked b32, an eval, and a recompile, while blocks=0 ran in a quiet window -- so the
+    arms differed by the whole host, and the result inverted (6x fewer source reads, 2.76x
+    slower). Refusing a busy machine outright would block legitimate lane work, so the load is
+    STAMPED INTO THE ROW instead: two rows whose ab_busy_cards disagree are not an A/B, and
+    that is now visible in the JSON rather than reconstructible from timestamps (2026-09-01).
     """
     import hashlib
     key = hashlib.sha1(" ".join(argv[1:]).encode()).hexdigest()[:12]
@@ -96,6 +119,7 @@ def _selftest():
     """The guard is only worth having if it FIRES. Assert it refuses a repeat."""
     import hashlib
     import tempfile
+    import types
     d = tempfile.mkdtemp()
     reg = os.path.join(d, "arms")
     argv = ["t66", "S", "--ar-blocks", "0"]
@@ -108,7 +132,23 @@ def _selftest():
     # and a varied arm must pass
     k2 = hashlib.sha1(b"S --ar-blocks 8").hexdigest()[:12]
     assert k2 not in prior, "guard would falsely refuse a varied arm"
-    print("selftest ok: guard refuses a repeat, admits a varied arm")
+
+    # The load stamp has to distinguish a busy host from a quiet one, or two arms run
+    # hours apart look identical in the JSON -- which is exactly how the blocks=8 arm
+    # got compared against a blocks=0 arm from a quiet window.
+    import subprocess as _sp
+    real = _sp.run
+    def fake(_cmd, **_kw):
+        return types.SimpleNamespace(stdout="0, 66258, 100\n2, 12, 0\n4, 300, 0\n", returncode=0)
+    globals()["subprocess"].run = fake
+    os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    try:
+        busy = _other_gpu_load()
+    finally:
+        globals()["subprocess"].run = real
+    assert busy == [("0", 66258)], f"load stamp wrong: {busy}"
+    print("selftest ok: guard refuses a repeat, admits a varied arm; "
+          "load stamp sees a busy foreign card and ignores idle ones and my own")
 
 
 def _apply_compile():
@@ -154,6 +194,7 @@ def run(name, seq, batch, steps, grad_ckpt=False, compile_=True):
             o.step()
             o.zero_grad(set_to_none=True)
 
+    busy0 = _other_gpu_load()
     for _ in range(WARMUP):
         one()
     torch.cuda.synchronize()
@@ -176,7 +217,8 @@ def run(name, seq, batch, steps, grad_ckpt=False, compile_=True):
             "tok_per_s": round(tok / dt),
             "peak_mem_GiB": round(peak, 2),
             "mfu_pct_derived": round(100 * flops / dt / (PEAK_TFLOPS * 1e12), 1),
-            "peak_tflops": PEAK_TFLOPS, "fp8": False}
+            "peak_tflops": PEAK_TFLOPS, "fp8": False,
+            "ab_busy_cards_start": busy0, "ab_busy_cards_end": _other_gpu_load()}
 
 
 def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False, compile_=True):

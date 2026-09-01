@@ -1227,6 +1227,45 @@ def _tmp_repo(mix_obj=None):
     return d
 
 
+def _tmp_repo_shaped(mix_obj=None):
+    """A throwaway tree that SEES the real code, docs and data directories.
+
+    A world built on the bare `_tmp_repo()` resolves nothing, so any check that reads a
+    path FAILs there whether or not the mutation is present -- three worlds were green
+    for exactly that reason (entrypoints_ran on 38 absent citations, pod_drift on 238,
+    facts_well_formed on absent docs/ and data/eval). Symlinks, so the world costs
+    nothing and the mutation is the only thing wrong with it. Write into a symlinked
+    directory and you write into the repo, so a world that mutates a file under one must
+    copy it in first (de, 2026-09-01)."""
+    import shutil
+    import subprocess
+
+    d = _tmp_repo(mix_obj)
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
+    # A real `git init` plus a COPIED .gitignore. `_is_gitignored` shells out to
+    # `git check-ignore` and only falls back to reading .gitignore itself, and that
+    # fallback is weaker than git -- it missed data/corpus/math/, so every gitignored
+    # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
+    # .gitignore, so this one is copied while everything else is linked.
+    shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    for sub in os.listdir(os.path.join(ROOT, "data")):
+        src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    for f in os.listdir(os.path.join(ROOT, "runs")):
+        src, dst = os.path.join(ROOT, "runs", f), os.path.join(d, "runs", f)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    return d
+
+
 def _tiny_tokenizer_json(eos_id=1, with_num=True):
     """A minimal WordLevel tokenizer that is VALID but LOSSY, so the round-trip and
     pinned-id checks have something real to reject (an absent file only hits SKIP)."""
@@ -2989,33 +3028,58 @@ def check_facts_well_formed(root):
 
 def _broken_facts():
     """The REAL facts files and REAL AGENTS.md, with one entry's config deleted and
-    one entry's source pointing at a non-existent data/ path. A hand-written file
+    one entry's source pointing at a non-existent scripts/ path. A hand-written file
     would share the check's own assumptions.
 
-    The source mutation uses a bare data/ path with no other prefix substring:
-    the old regex (no data/ in its prefix list) found no match and silently passed
-    it; the new regex matches data/... and FAILs on the missing file. This is the
-    coverage the broken world lacked -- it only exercised the missing-config path,
-    which is why the missing left anchor and missing data/ prefix went unnoticed."""
+    The source mutation uses a path under scripts/: a data/ path would be gitignored by
+    data/*.jsonl and silently SKIPped, so it must be one the three-state check treats
+    as FAIL. That coverage is what the world lacked when the source regex had no left
+    anchor and no data/ prefix.
+
+    The code and docs directories are symlinked in because OTHER entries' sources cite
+    them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
+    exist` for facts nobody mutated -- so the selftest was green on absence, and would
+    have stayed green with both mutations removed. Verified by removing them
+    (de, 2026-09-01)."""
     import shutil
 
-    d = _tmp_repo()
+    d = _tmp_repo_shaped()
     os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod skips the path half
+    os.remove(os.path.join(d, "facts"))
     os.makedirs(os.path.join(d, "facts"))
     for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
-    # A source under scripts/ (not gitignored, not in the baseline) that does not
-    # exist. A data/ path would be gitignored by data/*.jsonl and silently SKIPped --
-    # the source-path mutation must use a path the three-state check treats as FAIL.
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
 
-ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|py)|run_ddp\.sh")
+# The POPULATION, not just the predicate. This hand-listed four directories, so the
+# entry-point table's own FIRST row -- train.py sft.py sft_math.py serve.py chat.py
+# infer.py, the repo's actual entry points -- was invisible to a check whose evidence
+# says "every tried entry-point command". Widened to any path ending .sh/.py, which is
+# what a table row citing a script looks like regardless of where it lives. Four more
+# rows come into scope and the cited-file-exists tier stays green on all of them; the
+# citations are bare basenames (exp.py, tokenizer_report.py) in prose rows, so the
+# existence tier is resolved against scripts/ as well as the root (fb's sweep for
+# universals over self-built populations, de 2026-09-01).
+ENTRY_SCRIPT_RE = re.compile(r"(?:[\w.-]+/)?[\w.-]+\.(?:sh|py)")
+# Where a bare basename in a prose row may live. A row saying `exp.py done` cites
+# scripts/exp.py; resolving only against the root would call a real script missing.
+ENTRY_SEARCH_DIRS = ("", "scripts", "eval", "datagen", "probes", "mathbank", "algorithms", "filters")
+
+
+def _entry_exists(root, s):
+    """A cited path with a directory must exist AT that path -- `scripts/foo.py` naming a
+    file that actually lives in eval/ is exactly the doc rot this tier catches. Only a
+    bare basename in a prose row (`exp.py done`) is searched, because prose does not
+    carry a directory to be wrong about."""
+    if "/" in s:
+        return os.path.exists(os.path.join(root, s))
+    return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
 
 
 def check_entrypoints_ran(root):
@@ -3039,14 +3103,16 @@ def check_entrypoints_ran(root):
         # as "never tried", never as PASS.
         return SKIP, "runs/experiments.jsonl has no rows"
     missing, stale = [], []
+    n_rows = 0
     for line in open(agents, encoding="utf-8"):
         if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
             continue
+        n_rows += 1
         # Task-cell tokens catch attempts logged under an inner command (the wrapper is
         # invisible to the log).
         task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
         for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
-            if not os.path.exists(os.path.join(root, s)):
+            if not _entry_exists(root, s):
                 missing.append(s)
                 continue
             matched = [
@@ -3069,7 +3135,7 @@ def check_entrypoints_ran(root):
         return FAIL, f"entry-point table cites script(s) not in the repo: {missing}"
     if stale:
         return WARN, "; ".join(stale[:4])
-    return PASS, "every tried entry-point command has at least one ok run"
+    return PASS, f"{n_rows} script-citing row(s) in AGENTS.md; every tried entry-point command has an ok run"
 
 
 def check_entrypoints_table_present(root):
@@ -3086,16 +3152,35 @@ def check_entrypoints_table_present(root):
 
 
 def _broken_entrypoint():
-    """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
-    FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
-    synthetic world. The log row is written by the REAL logger with --root d, so the check
-    runs instead of SKIPping on an absent log."""
+    """The REAL AGENTS.md, in a tree holding the REAL scripts it cites, with two rows
+    added citing scripts that do not exist. Two, because the population widened:
+    `scripts/ghost_command.sh` is a pathed citation and `ghost_prose_only.py` is a bare
+    basename in a prose row, which the old four-directory predicate could not see.
+
+    The empty `_tmp_repo()` was not a broken world for this check. Every one of the 38
+    real citations resolved to nothing there, so the world FAILed with or without a
+    ghost -- the selftest was green on 38 false positives and would have stayed green
+    if the ghost detection were deleted outright. Confirmed by running the check on the
+    same world with both ghosts removed: still FAIL. Symlinking the cited directories
+    makes the ghost the only thing wrong, which is what the world has to isolate
+    (de, 2026-09-01).
+
+    The WARN tier is live in the real repo (run_ablation.sh), so it needs no synthetic
+    world. The log row is written by the REAL logger with --root d, so the check runs
+    instead of SKIPping on an absent log."""
     import shutil, subprocess
 
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ENTRY_SEARCH_DIRS:
+        if name and os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
+        f.write("| Ghost prose | a rule enforced by `ghost_prose_only.py`, nowhere in the tree |\n")
     subprocess.run(
         [
             sys.executable,
@@ -3416,11 +3501,23 @@ def _read_guard_phrases(root):
 
 
 def _broken_readme_current():
-    """The REAL README with a retired phrase spliced back in -- the FAIL tier."""
+    """The REAL README with a retired phrase spliced back in -- the FAIL tier.
+
+    The world also needs the code directories: tier (c) resolves every path README's
+    command blocks cite, and without them the world FAILed on `./run_ddp.sh`,
+    `eval/score_matrix.py` and the rest whether or not the phrase was spliced. Same
+    defect as entrypoints_ran's world (de, 2026-09-01)."""
     import shutil
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     p = os.path.join(d, "README.md")
     text = open(p, encoding="utf-8").read()
     with open(p, "w", encoding="utf-8") as f:
@@ -4110,17 +4207,40 @@ def _broken_ghost_running():
 
 
 def _broken_pod_drift():
-    """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
-    mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
+    """Every file the REAL manifest names, copied in, the manifest REGENERATED over
+    those copies, then one file mutated. Two bugs made the old world green for free:
+
+    It copied the manifest plus one file, so the other 238 named files were absent and
+    the check reported "239 drifted: missing AGENTS.md; missing algorithms/..." with or
+    without the mutation. Verified by restoring the appended file and rerunning: still
+    FAIL, same 239. Selftest green on 238 absences.
+
+    Copying all 239 was not enough either -- the manifest records committed hashes and a
+    dev checkout has uncommitted edits, so the world drifted on whatever the session
+    happened to have open. Regenerating over the copies makes the world self-consistent,
+    and then the appended line is the only difference there is (de, 2026-09-01).
+
+    The CI branch cannot be exercised here -- the selftest world has no .git."""
     import shutil
 
     d = _tmp_repo()
-    os.makedirs(os.path.join(d, "scripts"))
-    shutil.copy(
-        os.path.join(ROOT, "data", "pod_head_manifest.txt"),
-        os.path.join(d, "data", "pod_head_manifest.txt"),
-    )
-    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"), os.path.join(d, "scripts", "harness.py"))
+    man_rel = os.path.join("data", "pod_head_manifest.txt")
+    rels = []
+    for line in open(os.path.join(ROOT, man_rel), encoding="utf-8"):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rel = parts[1]
+        src = os.path.join(ROOT, rel)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        rels.append((rel, parts[2] if len(parts) > 2 else "docs"))
+    with open(os.path.join(d, man_rel), "w", encoding="utf-8") as f:
+        for rel, tag in rels:
+            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  {tag}\n")
     with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
         f.write("\n# broken world drift\n")
     return d
@@ -8310,6 +8430,32 @@ def _ckpt_env_fp(path):
         return None
 
 
+def _drop_zombies(host_pids):
+    """Keep only pids that are actually running.
+
+    `pgrep -f X` matches on argv, and a zombie KEEPS its argv (`[run_ddp.sh] <defunct>`)
+    while running nothing and holding no card. So a name match is not evidence of a live
+    process -- on 2026-09-01 `pgrep -f compile_worker | wc -l` returned 1577 where 1570
+    were zombies and 38 were live, and the miscount was read as CPU saturation on an idle
+    machine. On a kill path the same substitution is worse than a miscount: it makes the
+    caller act on processes that already exited.
+
+    Filtered here rather than remembered at each call site, because knowing the trap
+    exists and recalling it at the moment of use are different things -- the miscount
+    above was made 15 minutes after merging the fix whose docstring states it.
+    """
+    if not host_pids:
+        return []
+    r = subprocess.run(["tn", "exec", f"ps -o pid=,stat= -p {','.join(host_pids)}"],
+                       capture_output=True, text=True)
+    live = set()
+    for ln in r.stdout.splitlines():
+        f = ln.split()
+        if len(f) >= 2 and not f[1].startswith("Z"):
+            live.add(f[0])
+    return [p for p in host_pids if p in live]
+
+
 def _gpu_descendants(root_host_pid):
     """Host pids holding GPU memory that descend from root_host_pid.
 
@@ -8383,7 +8529,7 @@ def cmd_kill(argv):
         return 1
     pattern = re.escape(cmdline)
     r = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    host_pids = [p for p in r.stdout.split() if p.strip()]
+    host_pids = _drop_zombies([p for p in r.stdout.split() if p.strip()])
     parent, children = None, []
     for hp in host_pids:
         s = subprocess.run(["tn", "exec", f"grep -h NSpid /proc/{hp}/status"], capture_output=True, text=True)
@@ -8395,7 +8541,7 @@ def cmd_kill(argv):
             children.append(hp)
     # The monitor's embedded code names the container pid; it is the only other match.
     r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
-    monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
+    monitor_pids = _drop_zombies([p for p in r.stdout.split() if p.strip() and p not in host_pids])
     # Differently-named children holding GPU memory (score_matrix -> math_zh.py etc).
     gpu_kids = [p for p in _gpu_descendants(parent) if p not in host_pids] if parent else []
     print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, "

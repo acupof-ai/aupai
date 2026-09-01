@@ -6,10 +6,14 @@
     board.py show <topic>                 that topic's rows, oldest first
     board.py post <topic> <kind> <text> [--artifact P] [--who W]
     board.py feed [-n N]                  everything, newest first
+    board.py brief                        what others posted since you last looked
     board.py open <topic> --owner W --question Q
 
 kind: find | rule | block | done | ask | note
 A find/rule/done without --artifact is refused: a claim nobody can check is chatter.
+
+Every command prints what others posted since this session last ran one, so
+reading the board is a side effect of writing to it. Nobody has to remember.
 
 restartable: one append per call to a union-merged JSONL; an interrupt loses
 at most the row being written.
@@ -61,6 +65,35 @@ def append(row):
     os.makedirs(os.path.dirname(BOARD), exist_ok=True)
     with open(BOARD, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+SEEN = os.path.join(ROOT, "runs", ".board_seen.json")
+
+
+def broadcast(me):
+    rs = rows()
+    seen = {}
+    if os.path.exists(SEEN):
+        try:
+            seen = json.load(open(SEEN, encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    mark = seen.get(me, 0)
+    fresh = [r for i, r in enumerate(rs) if i >= mark and r["who"] != me]
+    if fresh:
+        print(f"--- {len(fresh)} new since you last looked ---")
+        for r in fresh[-12:]:
+            art = f"  [{r['artifact']}]" if r.get("artifact") else ""
+            print(f"{r['ts']}  {r['topic']:<16}{r['who']:<10}{r['kind']:<6}{r['text'][:96]}{art}")
+        blocked = [r for r in fresh if r["kind"] == "block"]
+        if blocked:
+            print(f"--- {len(blocked)} of them are BLOCK ---")
+        print("---")
+    seen[me] = len(rs)
+    try:
+        json.dump(seen, open(SEEN, "w", encoding="utf-8"))
+    except OSError:
+        pass
 
 
 def cmd_post(a):
@@ -169,7 +202,11 @@ def main():
     q.add_argument("-n", type=int, default=40)
     q.set_defaults(fn=cmd_feed)
 
+    q = sub.add_parser("brief")
+    q.set_defaults(fn=lambda a: None)
+
     a = p.parse_args()
+    broadcast(getattr(a, "who", "") or whoami())
     a.fn(a)
 
 
