@@ -161,11 +161,13 @@ token 数矛盾——是实测的,后来查明是 `len(ids)` vs `ids+EOS` 的口
 
 强制现状(de 实测 2026-09-02,44 复核):三条里两条有代码托底——dirty=0 由 `run_ddp.sh:23` 拒绝、无漂移由 `run_ddp.sh:34` 拒绝;**sha 相等无任何代码检查**(`run_ddp.sh:41` 只打印它,`grep synced_head scripts/launch_gate.py scripts/pod_drift.py` 零命中)。打印不是检查:它把判断交给读日志的人,而 2' 冻结的前提是裁定者不可用时任何人照着核。结构性原因:pod 没有 git,无法自己知道 main 的 HEAD,sha 相等在 pod 侧不可自检,只能由推送侧钉住——参照物必须来自检查侧之外,这里「外面」就是 main。不写出来,2' 会在报告里显示为「已核」而实际只核了三分之二。
 
+本次发车的人核程序(2'-步骤,fb 冻结):执行 --all 后在集成树取 `git rev-parse main`,与 pod 的 data/pod_synced_head 首字段逐字符比对;两个 sha 都贴进交接记录并注明取自哪棵树、哪个 ref(写 HEAD 不够,必须写 main);执行前先确认集成树 `git rev-parse HEAD == git rev-parse main`。人核例外仅限本次发车,data/pod_expected_head 落地后自动失效。
+
 ## 18. 结论对不保证论证对,后来人继承的是论证(fb 2026-09-02 裁定,原文)
 
 > 一个正确的结论不保证它的论证是对的,而后来人继承的是论证,不是结论。
 
-实例(fb 自己,b0 抓的):「保存前已搬 CPU 所以不占峰值」只对周期保存(train.py:2585→2588)成立;收尾保存(2699)直接传 GPU 上的 state_dict,`save_checkpoint` 函数体里没有 `.cpu()`。读了 2587 一行,把它当成了所有保存路径的性质。两条路径都安全,但安全的原因不同:周期保存靠预先搬 CPU,收尾保存靠 torch.save 逐张量序列化 + 模型本身只有 0.92 GiB。memory_measured 保持 GO,25.59 GiB 余量的结论不变。
+实例(fb 自己,b0 抓的):「保存前已搬 CPU 所以不占峰值」只对周期保存(train.py:2585→2588)成立;收尾保存(2699)直接传 GPU 上的 state_dict,`save_checkpoint` 函数体里没有 `.cpu()`。读了 2587 一行,把它当成了所有保存路径的性质。两条路径都不占 GPU 峰值,但依据不在 train.py:周期保存靠预先搬 CPU(`good_state`),收尾保存直接传 GPU 上的 state_dict(b0 的字面成立)——两者都不蕴含「占峰值」。GO 真正依赖的命题是 `torch.serialization._save` 逐个 storage 落盘前搬 CPU(pinned buffer)、GPU 侧只有读,由 torch.save 实现保证(98 核过 torch 源码:pin_memory 和 `.cpu()` 模式都在)。memory_measured 保持 GO,25.59 GiB 余量的结论不变。
 
 fb 自述今晚第三次同形状,但与前两次不同:前两次(§14 的 `_ce` 背书、正则漏 docs/)是「查得不够」,这次是「查得够,但推得太远」——读了一个实例,把它当成了整类的性质。一个正确的结论 + 一个只覆盖一半的论证 = 下一个人会依赖那个论证去改代码。
 
