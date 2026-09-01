@@ -821,6 +821,53 @@
    "uncertainty": "Measured on cot at seed 0. The mechanism is seed-independent (any shuffle scatters the first shard uniformly), but the exact fraction per domain is not separately measured. eval/ppl.py reproduces the real val slice correctly and has zero callers.",
    "boundary": "THE DEEPER POINT, which survives even if the head/val bug is fixed: a val set drawn from the training DISTRIBUTION cannot separate 'learned the distribution' from 'memorised its documents'. Row-disjointness is not the property the question needs. This explains loss falling while MC sits at chance without requiring any duplication -- and it is why the duplication hypothesis was reachable at all: the instrument that would have refuted it earlier was measuring the wrong rows.",
    "status": "measured"
+  },
+  {
+   "id": "dq.near_dup_rate_at_the_real_normaliser",
+   "value": 4.77,
+   "unit": "percent of rows removable, code_rp1t, J>=0.5",
+   "measured": "2026-09-01",
+   "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
+   "config": {
+    "task": "P0 duplication -- the one leg exact-dedup could not answer",
+    "sample": "20,000 documents per domain, first shards in sorted order",
+    "engine": "128 perms, 64 bands x 2 rows, word 3-gram shingles, exact Jaccard on LSH candidates -- build_corpus's parameters, not reimplemented",
+    "normaliser": "_norm_skeleton (lowercase + collapse whitespace)",
+    "sweep_rows_removable_pct": {
+     "code_rp1t": {
+      "0.3": 8.84,
+      "0.4": 6.7,
+      "0.5": 4.77,
+      "0.6": 3.01,
+      "0.7": 1.76,
+      "0.8": 1.2,
+      "0.9": 0.4
+     },
+     "cot": {
+      "0.3": 0.76,
+      "0.4": 0.38,
+      "0.5": 0.14,
+      "0.6": 0.08,
+      "0.7": 0.04,
+      "0.8": 0.01,
+      "0.9": 0.0
+     },
+     "textbook_30b": {
+      "0.3": 0.0,
+      "0.5": 0.0,
+      "0.9": 0.0
+     }
+    },
+    "candidate_pairs": {
+     "code_rp1t": 156138,
+     "cot": 91645,
+     "textbook_30b": 148
+    },
+    "reconciles_with_handread": "dq.code_rp1t_handread_50 measured 12% by hand (n=50, Wilson 5-24%). 8.84% at the loosest threshold sits inside that interval; a human calls things near-duplicate that word-3-gram Jaccard does not, so hand-read above machine is the expected direction."
+   },
+   "uncertainty": "A SWEEP, NOT A POINT, and deliberately so. near_dedup_gate.md calibrates J>=0.5 against per-domain normalisers (norm_code, norm_en_c4, norm_math with a 70-word keyword stoplist and LaTeX mapping) that DO NOT EXIST in the repo -- grep returns nothing. The only normaliser present is _norm_skeleton, under which the gate doc's own example cluster scores 0.181 against its 0.5 threshold. Reporting a single number at 0.5 would be a fact about a measuring stick the code does not have. 20K-row prefix samples, not full domains; en_c4_stage2, math_owm_stage2 and zh_web unmeasured.",
+   "boundary": "A GATE THAT CERTIFIES ITS OWN NO-OP. Wiring _near_dedup_postpass up at its documented defaults today would remove approximately nothing AND stamp near_dedup: True while doing it (build_corpus.py:918-919), because the threshold is calibrated for a normaliser that was never written. The gate encodes 'the interesting case is above 0.5 under the calibrated normaliser' and neither half of that assumption holds. Same class as eff.fp8_weight_byte_cache measuring a disabled path: a check's assumption about where the interesting case lives is the one thing the check never tests. SEPARATELY: this measures near-duplication and refutes nothing about the P0 symptom -- code_rp1t is the only domain carrying meaningful near-dup, it falls off a cliff with threshold, and there is no setting at which near-dedup removes a large share of this corpus.",
+   "status": "measured"
   }
  ]
 }
