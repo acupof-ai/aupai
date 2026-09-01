@@ -593,6 +593,25 @@ def check_selftests_are_gated(root):
         return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
                       f"SELFTEST_FILES, so nothing runs them at commit time: "
                       f"{', '.join(missing[:4])}")
+    # A NEEDS_DATA entry is a CLAIM about why a selftest cannot run at commit time, and
+    # nothing recomputed it. scripts/harness.py's read "the hook already runs `harness
+    # check`, which is its selftest" -- false: `check` runs run_checks(), `--selftest`
+    # verifies every check FAILs on its broken world, and they share no code path. The
+    # harness's core proof had never run at commit time and the exemption said it had
+    # (Codex found it, de confirmed by reading both entry points, 2026-09-01).
+    #
+    # A reason cannot be verified in general, but the specific false form can: an
+    # exemption that claims some OTHER command already covers it is the one shape that
+    # asserts coverage rather than impossibility. Cost, missing data, and needing root
+    # are claims about this machine; "X already runs it" is a claim about X.
+    if nd:
+        covered = [k for k, v in re.findall(r'"([^"]+)":\s*"([^"]*)"', nd.group(1))
+                   if re.search(r"\bis its selftest\b|\balready runs\b|\bcovered by\b", v)]
+        if covered:
+            return FAIL, (f"{len(covered)} NEEDS_DATA reason(s) claim another command "
+                          f"already runs the selftest, which is a coverage claim nothing "
+                          f"recomputes: {', '.join(covered)} -- state why it cannot run "
+                          f"here (cost, data, root), not what supposedly covers it")
     return PASS, f"{len(have)} selftest-carrying file(s), all gated by the hook"
 
 
