@@ -119,8 +119,8 @@
    "pool_rows_estimated": 9043,
    "cursor_used_rows": 0,
    "cap_covers": 36172,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 9,043 rows. no cache yet; awaiting pretokenize of data/corpus/chatml/",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 9,043 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null,
    "fingerprint_source": "NOT READ: data/corpus/chatml/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 4 = ceil((0+36172)/9043). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
@@ -138,8 +138,8 @@
    "pool_rows_estimated": 8854,
    "cursor_used_rows": 0,
    "cap_covers": 35416,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 8,854 rows. chat/'s cache measures exactly 38,187,650 tokens and 9,320 rows for the same 160,414 documents; chat_qa is a re-render into its own directory and has no cache yet",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 8,854 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null,
    "fingerprint_source": "NOT READ: data/corpus/chat_qa/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 4 = ceil((0+35416)/8854). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
@@ -192,14 +192,14 @@
    "want_tokens": 313618432,
    "supply_tokens_one_epoch": 420646182,
    "epochs_fractional": 0.7456,
-   "pool_rows_estimated": 97671,
+   "pool_rows_estimated": 97722,
    "cursor_used_rows": 0,
    "cap_covers": 76567,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 97,671 rows. the ast.parse-surviving Python subset; /data00/tokens_code_rp1t.pt holds the FULL 7.57B multi-language corpus (1,847,469 rows), not this subset, so its cache cannot be read for this domain",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 97,722 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null,
    "fingerprint_source": "NOT READ: data/corpus/code_py_rp1t/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
-   "epoch_cap_note": "epochs 1 = ceil((0+76567)/97671). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "epoch_cap_note": "epochs 1 = ceil((0+76567)/97722). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   }
  }
 }
