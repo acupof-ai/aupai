@@ -47,10 +47,21 @@ def _launch_shape():
     run at -- a test that picked its shape from the gate's expectation would make the
     gate's comparison a tautology, and launch_gate.py:727's deliberately-wrong world
     could not be constructed at all (de).
+
+    Returns None when launch_gate cannot be imported, and never raises. This runs AFTER
+    the row is on disk, so an exception here would leave the record written and the test
+    reporting failure -- the record saying pass while its runner says it did not. Not
+    hypothetical: both files are in pod_head_manifest.txt and a named single-file push
+    happened four times tonight, so a tree holding one and not the other is one push away
+    (de). A warning that can break the thing it annotates is worse than the inconsistency
+    it reports.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    from launch_gate import LAUNCH_SHAPE
-    return LAUNCH_SHAPE
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from launch_gate import LAUNCH_SHAPE
+        return LAUNCH_SHAPE
+    except Exception:
+        return None
 
 
 def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=ROOT):
@@ -93,10 +104,14 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
     # which (de). Measured 2026-09-02: an e2e pass at layers 12 was carried toward the
     # gate as though it cleared arch_tests, and nothing between the run and the gate said
     # otherwise.
-    off = {k: (v, shape.get(k)) for k, v in _launch_shape().items() if shape.get(k) != v}
-    warn = ("  [NOT THE LAUNCH SHAPE: " +
-            ", ".join(f"{k} is {got}, launch is {want}" for k, (want, got) in sorted(off.items()))
-            + "]") if off else ""
+    want_shape = _launch_shape()
+    if want_shape is None:
+        warn = "  [launch shape unknown: launch_gate did not import, mismatch not checked]"
+    else:
+        off = {k: (v, shape.get(k)) for k, v in want_shape.items() if shape.get(k) != v}
+        warn = ("  [NOT THE LAUNCH SHAPE: " +
+                ", ".join(f"{k} is {got}, launch is {want}"
+                          for k, (want, got) in sorted(off.items())) + "]") if off else ""
     print(f"  recorded {key}: {result} at "
           f"d{shape['d']} L{shape['layers']} "
           f"{'real kernel' if real_kernel else 'STAND-IN kernel'} -> "
@@ -176,8 +191,22 @@ def _selftest():
             "the launch shape itself was flagged; a warning that fires on the good case "
             "gets ignored on the bad one")
 
+        # A tree with this file and not launch_gate.py: the import runs after the row is
+        # written, so it must degrade to a warning. de built exactly this tree and got a
+        # ModuleNotFoundError raised past a pass already on disk -- test says failed,
+        # record says pass. One named single-file push produces that tree.
+        import unittest.mock
+        with unittest.mock.patch.dict("sys.modules", {"launch_gate": None}):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass",
+                                   dict(LAUNCH_SHAPE, layers=12), real_kernel=True,
+                                   path=p2, root=d)
+            assert "launch shape unknown" in buf.getvalue(), (
+                f"a missing launch_gate must warn, not raise: {buf.getvalue()!r}")
+
     print("launch_tests selftest OK: what the writer writes is what the gate accepts, "
-          "and a wrong-shape pass says so")
+          "a wrong-shape pass says so, and a missing launch_gate warns instead of raising")
     return 0
 
 
