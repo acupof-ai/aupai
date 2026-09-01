@@ -85,17 +85,32 @@ that never ran is more dangerous than a message, **because it will be cited**.
 anyway: 12 of 13 mixes, including the launch mix, were certified by a comparison that
 never happened.
 
-**Read a blob by its id, not by `<sha>:path`.** `git show <sha>:path` and
-`git cat-file -p <sha>:path` will silently return a diff instead of the file. The
-same 780-line file read as 29, 23, 25 and 594 lines across four attempts — **every
-number plausible**, which is the danger: a 0 or an error would have stopped the
-reader at the first attempt. Two people were nearly reported as having dropped
-work they had not touched. Resolve first, then read:
+**A shell loop can corrupt a command and the failure looks like the tool's.** I
+recorded that `git show <sha>:path` silently returns a diff, having read the same
+780-line file as 29, 23, 25 and 594 lines. **That diagnosis was wrong** — 44 could not
+reproduce it and re-testing proved him right. The colon form is exact; the corruption
+was mine:
 
 ```
-git rev-parse <sha>:path        # -> blob id
-git cat-file -p <blob-id>       # -> the file
+f="git show <sha>:path"
+$f | wc -l        #   0 lines   <- word-split, git sees a mangled argv
+eval "$f" | wc -l # 780 lines
+git show <sha> -- path   # a DIFF, not the file -- the space form, easy to typo
 ```
+
+Every wrong number was plausible, which is the danger: a 0 or an error stops you at
+the first attempt. I nearly reported two people as having dropped work they never
+touched.
+
+**Two rules, and the second is the general one.** Read a blob by resolving it first —
+`git rev-parse <sha>:path` then `git cat-file -p <blob-id>` — because a blob id cannot
+be word-split into something else. And **never build a git command in a shell variable
+and run it unquoted**; the same trap applies to every tool, not just git.
+
+**When a tool appears to misbehave, reproduce it outside your harness before writing
+it down.** I wrote a tool defect into the SOP that was a defect in my loop. A wrong
+mechanism in a standards document trains the wrong reflex in everyone who reads it,
+and it is harder to remove than a wrong number.
 
 **Every number carries its configuration, and that includes its resolution and its
 extraction rule.** Six numbers were misused that day and every caveat was known at the
