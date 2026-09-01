@@ -260,6 +260,16 @@ def main():
         print(f"    vocab_id {sk['vocab_id']} survived SFT")
 
         print(f"\ne2e OK: mix -> tokenize -> pretrain -> ckpt -> pack -> sft -> generate, {STEPS} steps")
+        # The gate's record, and the shape comes from the checkpoint this run produced
+        # -- ck["cfg"], not the flag that was requested. The flag says what was asked
+        # for; the checkpoint says what was built, and only the second is evidence. This
+        # test requires a GPU, so a run that reaches here ran real kernels.
+        from launch_tests import record_launch_test
+
+        cf = ck["cfg"]
+        record_launch_test(__file__, "pass",
+                           {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
+                           real_kernel=True)
         return 0
     finally:
         # Always clean up the temp checkpoints; the .ep1 carries optimizer state and is the

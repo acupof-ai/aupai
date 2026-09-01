@@ -212,6 +212,7 @@ def main():
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
+        "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",

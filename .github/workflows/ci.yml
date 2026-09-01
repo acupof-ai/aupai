@@ -23,6 +23,7 @@ jobs:
       - run: python scripts/test_attest_cases.py
       - run: python scripts/test_score_matrix_failpath.py
       - run: python scripts/test_free_card.py
+      - run: python scripts/launch_tests.py --selftest
       - run: python algorithms/test_rlvr_reward_suite.py
       - run: python scripts/eqcheck.py
       - run: python datagen/holdout.py
