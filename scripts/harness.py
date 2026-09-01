@@ -18,6 +18,7 @@ import argparse
 import ast
 import functools
 import glob
+import hashlib
 import inspect
 import json
 import os
@@ -1788,8 +1789,25 @@ def check_spawned_scripts_exist(root):
 
     import concurrent.futures as _cf
     py = [(rel, why) for rel, why in _SPAWNED_SCRIPTS if rel.endswith(".py")]
+    # Cached on the six files' bytes. Importing torch six times is real work, not waste,
+    # so making it faster only moves the timeout; making it not repeat removes it. Stated
+    # ceiling: a break caused by editing something these six IMPORT is not seen until one
+    # of the six changes -- the incident this guards (c3a47e8 moved the files) does change
+    # them, and `harness check --fresh` forces the pass.
+    key = hashlib.sha256()
+    for rel, _ in py:
+        p = os.path.join(root, rel)
+        key.update(rel.encode())
+        key.update(open(p, "rb").read() if os.path.exists(p) else b"")
+    stamp = os.path.join(root, "runs", ".spawned_import_ok")
+    if not os.environ.get("HARNESS_FRESH") and os.path.exists(stamp) \
+            and open(stamp, encoding="utf-8").read().strip() == key.hexdigest():
+        return PASS, f"all {len(_SPAWNED_SCRIPTS)} present; imports unchanged since the last pass"
     with _cf.ThreadPoolExecutor(max_workers=max(1, len(py))) as ex:
         broken = [b for b in ex.map(_import_check, py) if b]
+    if not broken:
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        open(stamp, "w", encoding="utf-8").write(key.hexdigest())
     if broken:
         return FAIL, (
             f"{len(broken)} spawned script(s) present but not importable: "
