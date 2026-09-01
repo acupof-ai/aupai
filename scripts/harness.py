@@ -798,7 +798,7 @@ def _ppid_of(pid):
 
 
 def _pod_ps_rows(timeout=20):
-    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
 
     The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
     fields from the same table. Reading them as one `ps -eo` is one round trip
@@ -806,12 +806,18 @@ def _pod_ps_rows(timeout=20):
     `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
     training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
 
+    stat is here for the zombie case: a reaped-but-not-waited process keeps its argv
+    in ps as `[run_ddp.sh] <defunct>`, matches any regex over the command line, and
+    has no session of its own -- so a check that judges detachment by session reads
+    it as a foreground trainer. It runs no code and holds no card. Only stat tells
+    them apart (2026-09-01).
+
     Returns (rows, error). A non-empty error means the read failed and the caller
     must SKIP -- never treat an unreadable pod as a clean one.
     """
     pod = os.path.expanduser("~/bin/pod")
     try:
-        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,args --no-headers"],
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,stat,args --no-headers"],
                            capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"pod unreachable: {type(e).__name__}"
@@ -819,12 +825,51 @@ def _pod_ps_rows(timeout=20):
         return None, f"pod ps exit {r.returncode}"
     rows = []
     for ln in r.stdout.splitlines():
-        parts = ln.split(None, 4)
-        if len(parts) == 5 and parts[0].isdigit():
+        parts = ln.split(None, 5)
+        if len(parts) == 6 and parts[0].isdigit():
             rows.append(tuple(parts))
     if not rows:
         return None, "pod ps returned nothing"
     return rows, None
+
+
+def judge_pod_ps(allrows):
+    """(state, evidence) from a `ps -eo pid,sid,pgid,ppid,stat,args` table.
+
+    A foreground training job is one whose SESSION LEADER is the crictl exec shell,
+    because that shell dies with the tn tunnel and leaves the trainer holding a card.
+    `pod "<cmd>"` runs the command as `bash -lc <cmd>`, so the leader's own argv says
+    which it was: a detached launch names setsid there and the job it spawns lands in
+    a new session; a foreground launch does not, and the job stays in the shell's.
+    That is the whole rule -- read the leader, not the child.
+
+    Four false positives in one day came from inferring detachment from the child
+    instead: a launcher shell matched on its quoted argv, a trainer whose leader had
+    become a zombie read as sessionless, a zombie trainer read as a live one, and a
+    trainer adopted by init read as an orphan. Each refused a commit while the pod was
+    behaving exactly as intended. The evidence those versions wanted -- an intact
+    parent chain -- is reaped in the normal case, so they were reading absence and
+    calling it a violation (de, 2026-09-01).
+
+    Tested by scripts/test_pod_ps_judge.py against captured tables, which the check
+    itself cannot be: it reads the live pod and its broken() raises SelftestSkip.
+    """
+    # Zombies keep their argv (`[run_ddp.sh] <defunct>`) so they match any command
+    # regex, but they run no code and hold no card.
+    live = [x for x in allrows if "Z" not in x[4]]
+    leader = {x[0]: x[5] for x in live if x[0] == x[1]}
+    rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # A leader that IS a training row is a detached launcher, never the exec shell.
+    fg = [x for x in rows
+          if x[0] != x[1]
+          and leader.get(x[1], "").startswith("bash -lc")
+          and "setsid" not in leader.get(x[1], "")]
+    if fg:
+        return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
+                      f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
+    if not rows:
+        return PASS, "no training process on the pod"
+    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -832,41 +877,14 @@ def check_no_foreground_pod_training(root):
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. A detached job's session id differs from its pid's
-    parent shell; a foreground one shares the crictl exec session."""
+    seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod) or pod_drift.is_pod(root):
         return SKIP, "host-side check; needs ~/bin/pod"
     allrows, err = _pod_ps_rows()
     if err:
         return SKIP, err
-    # The training rows, selected from the one read rather than by a second remote grep.
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
-    ppid = {x[0]: x[3] for x in allrows}
-    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
-    # leaves a bash -lc whose argv contains the whole launch command, so a match on
-    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
-    # training process and is correctly not a session leader. It names setsid in its
-    # own command line; the job it spawned is the thing to judge (2026-09-01, this
-    # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    if not rows:
-        return PASS, "no training process on the pod"
-    # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. Its session leader may be a zombie ([bash]
-    # <defunct>, sid alive but absent from ps output), so a leader-presence test reads
-    # a correctly detached trainer as unsupervised -- this refused a commit while
-    # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
-    # this check).
-    detached = {x[0] for x in rows if x[4].startswith(("/usr/bin/python3", "python3"))
-                and ppid.get(x[0]) == "1"}
-    attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
-    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if x[0] == x[1]}
-    orphans = [x for x in attached if x[1] not in leaders]
-    if orphans:
-        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
-    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+    return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
