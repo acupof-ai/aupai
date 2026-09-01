@@ -160,7 +160,14 @@ def gate_recipe_provenance(root, mix_path, world):
         prov = json.load(open(p, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"recipe_provenance.json unreadable: {e}"
-    unsourced = [f for f in RECIPE_FLAGS if not str(prov.get(f, "")).strip()]
+    # A PLACEHOLDER IS NOT A SOURCE. My first version tested only that the string was
+    # non-empty, and it returned GO on a schema file whose eight values were all the
+    # literal "UNSOURCED" -- a file I had just written to keep this gate RED. The gate
+    # written to refuse unjustified values accepted the word "unjustified" as a value.
+    # Emptiness and placeholder-ness are the same fact and both must fail.
+    placeholders = {"", "unsourced", "tbd", "todo", "unknown", "n/a", "none", "-"}
+    unsourced = [f for f in RECIPE_FLAGS
+                 if str(prov.get(f, "")).strip().lower() in placeholders]
     if unsourced:
         return NOGO, (f"{len(unsourced)} recipe value(s) with no source: "
                       f"{', '.join(unsourced)}")
@@ -180,7 +187,9 @@ def gate_memory_measured(root, mix_path, world):
         return NOGO, f"memory_peaks.json unreadable: {e}"
     key = str(world)
     if key not in peaks:
-        have = ", ".join(sorted(peaks)) or "none"
+        # skip _schema/_filled_by metadata when reporting what IS measured, or the
+        # message tells a reader we have peaks at world "_schema"
+        have = ", ".join(sorted(k for k in peaks if not k.startswith("_"))) or "none"
         return NOGO, (f"no measured peak at world={world} (have: {have}). "
                       "Extrapolating from another world size is what this gate refuses")
     return GO, f"measured peak at world={world}: {peaks[key]}"
@@ -352,6 +361,21 @@ def selftest():
     d = world(lambda d: write_mix(d, lambda m: None))
     broken["corpora"] = (d, os.path.join(d, mix_rel))
     # 4/5/6/7: the recording artifacts removed from a real copy
+    # recipe_provenance gets TWO worlds: the file missing, and the file present with
+    # placeholder values. The second is the one my first version passed -- it returned
+    # GO on eight literal "UNSOURCED" strings, because it tested non-emptiness rather
+    # than sourced-ness. A gate that accepts the word "unjustified" as a justification
+    # needs the world where that is the input, not only the world where the file is gone.
+    def _placeholders(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        json.dump({f: "UNSOURCED" for f in RECIPE_FLAGS},
+                  open(os.path.join(d, "runs", "recipe_provenance.json"), "w",
+                       encoding="utf-8"))
+    dph = world(_placeholders)
+    st, why = gate_recipe_provenance(dph, os.path.join(dph, mix_rel), 7)
+    assert st != GO, f"placeholder provenance must not pass: {why}"
+
     for gate, fname in (("arch_tests", "launch_tests.json"),
                         ("recipe_provenance", "recipe_provenance.json"),
                         ("memory_measured", "memory_peaks.json"),
