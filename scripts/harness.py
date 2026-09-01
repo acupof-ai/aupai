@@ -18,6 +18,7 @@ import argparse
 import ast
 import functools
 import glob
+import hashlib
 import inspect
 import json
 import os
@@ -138,6 +139,10 @@ REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
 TASK_COMMIT_FROM = "2026-09-01 13:30"
 PAIR_PRIOR_FROM = "2026-09-02 00:00"
+_TASK_STOPWORDS = {"which", "there", "these", "those", "their", "would", "could", "should",
+                   "every", "after", "before", "because", "instead", "rather", "without",
+                   "against", "already", "still", "cannot", "names", "naming", "state",
+                   "write", "writes", "written", "read", "reads", "check", "checks"}
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1765,10 +1770,12 @@ def check_spawned_scripts_exist(root):
     #
     # -c "import ..." rather than --help: --help exits before some scripts finish importing,
     # and a check that passes because it stopped early is the shape this file keeps finding.
-    broken = []
-    for rel, why in _SPAWNED_SCRIPTS:
-        if not rel.endswith(".py"):
-            continue
+    # Concurrently: each import costs ~2.5s of interpreter startup plus torch, and six
+    # of them serially is 15s against this check's 5s budget. It timed out seven runs in
+    # a row and blocked every commit in the repo, reporting "has not actually run since"
+    # -- a red that carried no information and could not be cleared by fixing anything.
+    def _import_check(item):
+        rel, why = item
         full = os.path.join(root, rel)
         r = subprocess.run(
             [sys.executable, "-c",
@@ -1779,9 +1786,32 @@ def check_spawned_scripts_exist(root):
              "spec.loader.exec_module(m)"],
             capture_output=True, text=True, cwd=root, timeout=120,
         )
-        err = (r.stderr or "")
+        err = r.stderr or ""
         if "ModuleNotFoundError" in err or "ImportError" in err:
-            broken.append(f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})")
+            return f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})"
+        return None
+
+    import concurrent.futures as _cf
+    py = [(rel, why) for rel, why in _SPAWNED_SCRIPTS if rel.endswith(".py")]
+    # Cached on the six files' bytes. Importing torch six times is real work, not waste,
+    # so making it faster only moves the timeout; making it not repeat removes it. Stated
+    # ceiling: a break caused by editing something these six IMPORT is not seen until one
+    # of the six changes -- the incident this guards (c3a47e8 moved the files) does change
+    # them, and `harness check --fresh` forces the pass.
+    key = hashlib.sha256()
+    for rel, _ in py:
+        p = os.path.join(root, rel)
+        key.update(rel.encode())
+        key.update(open(p, "rb").read() if os.path.exists(p) else b"")
+    stamp = os.path.join(root, "runs", ".spawned_import_ok")
+    if not os.environ.get("HARNESS_FRESH") and os.path.exists(stamp) \
+            and open(stamp, encoding="utf-8").read().strip() == key.hexdigest():
+        return PASS, f"all {len(_SPAWNED_SCRIPTS)} present; imports unchanged since the last pass"
+    with _cf.ThreadPoolExecutor(max_workers=max(1, len(py))) as ex:
+        broken = [b for b in ex.map(_import_check, py) if b]
+    if not broken:
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        open(stamp, "w", encoding="utf-8").write(key.hexdigest())
     if broken:
         return FAIL, (
             f"{len(broken)} spawned script(s) present but not importable: "
@@ -4959,6 +4989,8 @@ def cmd_task(argv):
     a.add_argument("--prior", required=True,
                    help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
                         "'defect-fix' when the task repairs our own code and no prior art applies")
+    a.add_argument("--dup-ok", dest="dup_ok", action="store_true",
+                   help="proceed past the overlap refusal; say in --why how this differs")
     a.add_argument("--blocked-on", dest="blocked_on", default=None)
     d = sub.add_parser("done")
     d.add_argument("id")
@@ -4989,6 +5021,22 @@ def cmd_task(argv):
         if args.pair not in REVIEW_PAIRS:
             print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
+        # The same cache task went to two people nine minutes apart and both stayed open
+        # all night; --pair cannot see it, because each row had one. Nothing compared the
+        # rows to each other. Distinctive words, so two rows about different subjects that
+        # share "the token cache" do not collide but two about the same one do.
+        def _words(s):
+            return {w for w in re.findall(r"[a-z_]{5,}", (s or "").lower())} - _TASK_STOPWORDS
+        new = _words(args.task)
+        for t in rows:
+            if t.get("state") != "open" or not new:
+                continue
+            old = _words(t.get("task"))
+            if old and len(new & old) / min(len(new), len(old)) >= 0.5 and not args.dup_ok:
+                print(f"refusing: {t['id']} ({t.get('owner')}) overlaps this task -- "
+                      f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
+                      "they are different", file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
