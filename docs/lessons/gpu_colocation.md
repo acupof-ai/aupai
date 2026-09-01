@@ -375,6 +375,25 @@ before tilerl-9's numbers do.
 | **`eff.kda_occupancy_bound`**: KDA runs at **6–13% occupancy**, 15–29% of HBM peak, while kernels above 80% occupancy reach 85–93% | the retune returns **well under 1%** of step time. Then the 174 ms window is not recoverable by tuning, and renting it stops competing with fixing it. |
 | **arithmetic**: retune and co-location consume the same 174 ms | a co-tenant that measurably does **not** slow the primary — which would mean it is running in genuinely dead time the trace cannot see, and the two are not competing. |
 
+**Clearing 1.4× does not flip the verdict, it only softens row 1.** Rows 1 and 3
+fall to different kinds of evidence and a reader stopping at the first will
+overread it (tilerl-0a, before the run). Row 3 is arithmetic: the retune and a
+co-tenant consume the same 174 ms window, so *whatever* the interference factor
+turns out to be — 1.73×, 1.4×, even 1.2× — fixing KDA still destroys the capacity
+co-location would rent. A measurement cannot refute that; only a different window
+could. So the most a sub-1.4× result buys is "measure, then decide", never
+"co-locate".
+
+**The two constraints are not the same knob.** 3b's threshold sizes the co-tenant
+by *occupancy* (~6%, matching SoCC's design so transferability is the question
+being asked). My execution clause sizes it by *step-time share* (~9%, which is the
+"is it worth renting" question). One guest cannot satisfy both: how much step time
+a 6%-occupancy guest consumes is set by its own arithmetic intensity, not by a dial
+tilerl-9 can turn. Resolution, theirs and correct: size by occupancy, and record
+the step-time share it actually takes. One run then yields both the falsifiable
+1.4× criterion and the exchange rate, and if the two land far apart both numbers go
+in the doc rather than one being chosen.
+
 **The single measurement that decides it**: the primary's tok/s with and without a
 co-tenant, same seed, same step window, on the current tree. Not the co-tenant's
 throughput — that always looks like a free lunch, because whatever it achieves it
