@@ -95,7 +95,7 @@ that trace's version is `aten::div + copy_ + abs + clamp`, which is `_fp8_mm`'s
 signature op for op (`train.py:454`).
 
 **The group is the fp8 quantisation tax — that part is measured and stands. But
-93% of it does not run in the live configuration** (`eff.fusion_and_elementwise_
+92.5% of it does not run in the live configuration** (`eff.fusion_and_elementwise_
 are_disjoint_but_the_trace_is_off_config`, tilerl-10). The ddp trace was captured
 with `FP8_HEAD=1`: 181 `aten::_scaled_mm`/step sit inside a Liger FLCE region,
 and the only code that puts them there is `patch_liger_flce_fp8` (`train.py:488`),
@@ -108,9 +108,9 @@ live environment. Splitting by whether a launch is contained in a Liger region:
 | `aten::copy_` | 60.35 | 6.82 |
 | `aten::abs` | 13.08 | 0.76 |
 | `aten::clamp` | 0.61 | 0.04 |
-| **the four quant ops** | **92.9%** | 7.1% |
+| **the four quant ops** | **153.24 (92.5%)** | **12.44 (7.5%)** |
 
-**So the live tax in this group is ~12 ms, not 165.7.** What survives is
+**So the live tax in this group is 12.44 ms, not 165.68.** What survives is
 `aten::add_` at 78.52 ms body — the one owner that was never quantisation and was
 already flagged unexplained. The merged fp8-head rung keeps its mechanism and
 loses its production scope; its ceiling is `FP8_HEAD`-conditional like the byte
