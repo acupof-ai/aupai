@@ -104,3 +104,8 @@ Fix:三行改挂真实 check;给 `agents_rules_covered` 加一条 selftest——
 ## 结论
 
 骨架(A 级)和超时路径(F 级)的反差是本框架的现状:坏世界构造、棘轮、fold 规则都是同类最佳,但每个 check 头上的闹钟会把整个房子炸掉且不留字条,而规则覆盖表把三条规则挂在了不执行它们的 check 上。修 Headline 1 的三层 + Headline 2 的三行重映射之前,这个框架的"全绿"不具备它声称的含义。
+
+## Follow-ups(2026-09-01,tilerl-0a 提案 + 修正)
+
+1. **Call-shape-fidelity meta-check**(P6 扩展):现有 vacuous-PASS meta-check 只验"check 在它的 broken world 里会 fail",验不出失败世界的**调用形状**在生产里不存在。活标本:3b 1ef8cc1 的 flock 修复——selftest 写 `held_fd = _build_lock(...)` 绑定返回值(5/5 全绿),生产两个调用点(build_corpus.py:387、:639)全部丢弃,fd 被 CPython 立刻 close,flock 当场释放。tilerl 已拒。判据(tilerl 修正,取代本审的单侧 grep 提案):**∃ fn:(selftest 调用点全部绑定返回值)∧(生产调用点全部丢弃)**——信号在差集不在任一侧的绝对形状。AST 层面可算(`ast.Expr` 包 `ast.Call` = 丢弃,`ast.Assign` = 绑定),假阳性率低于单侧扫描;启发式标记人工裁决,不自动判死(绑定/丢弃的合法性依赖语义)。
+2. **病因层(不立项,review 判断)**:返回值承载生命周期的函数应当是 context manager——`with build_lock(out):` 让"丢弃返回值"在语法层不可能犯。meta-check 抓的是症状,这条是病因。写进 lessons,不进 harness。
