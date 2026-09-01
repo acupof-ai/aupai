@@ -6,6 +6,8 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 # 500M 读数设计(预登记)
 
+**⛔ PARKED(2026-09-01 fb 裁定 19:52,98 送达):门禁九项全绿前,本线一切工作停,记录在案不做。** freeze-hard 已停(pod pid 1674559,未产出,卡 7 已释放);退化率基线、honest sweep 同停。恢复条件:门禁九项全绿。
+
 ## 0. 问题精确化
 
 "起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(=16.056B,里程碑名"16b")、step24000(=22.020B,"22b")、step25500/26000/26500(=23.396/23.855/24.314B,尾部 500 步密档);0–16B 无存活 checkpoint,跑程止于 step26500(24.314B)。token 换算:200M 跑 batch 16 × accum 2 × 4096 × world 7 = **917,504 tok/step**(里程碑名 16b/22b 反推唯一吻合 world=7)。**matched-token 能力轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
