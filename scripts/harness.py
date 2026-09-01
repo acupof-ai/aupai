@@ -9266,13 +9266,21 @@ def cmd_install_hooks(rest):
         print(f"hook source missing: {hook_src}")
         return 1
     hooks_dir = os.path.join(common_abs, "hooks")
-    for name in ("pre-commit", "pre-merge-commit"):
+    # post-commit has its OWN source: it is not the same script under another name.
+    # It repairs the shared index that pre-commit's manifest `git add` leaves stale
+    # under `git commit -- <paths>` -- see scripts/hooks/post-commit.
+    for name in ("pre-commit", "pre-merge-commit", "post-commit"):
+        src = (os.path.join(main_root, "scripts", "hooks", "post-commit")
+               if name == "post-commit" else hook_src)
+        if not os.path.exists(src):
+            print(f"hook source missing: {src}")
+            return 1
         hook_dst = os.path.join(hooks_dir, name)
         os.makedirs(hooks_dir, exist_ok=True)
         if os.path.lexists(hook_dst):
             os.remove(hook_dst)
-        os.symlink(os.path.relpath(hook_src, hooks_dir), hook_dst)
-        print(f"installed: {hook_dst} -> {os.path.relpath(hook_src, main_root)}")
+        os.symlink(os.path.relpath(src, hooks_dir), hook_dst)
+        print(f"installed: {hook_dst} -> {os.path.relpath(src, main_root)}")
     return 0
 
 

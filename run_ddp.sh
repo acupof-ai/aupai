@@ -26,7 +26,19 @@ if [ ! -d .git ] && [ "${ALLOW_UNSYNCED:-}" != "1" ]; then
     echo "  Commit them, then: scripts/pod_push.sh --all" >&2
     exit 1
   fi
-  echo "pod code: $_sha (clean, synced $_when)"
+  # The stamp dates the PUSH, and files change after a push: build_starcoder_py.py was
+  # edited on the pod 99 seconds after the stamp below was written, and the stamp still
+  # read clean. So the stamp answers "which sha" and the manifest answers "is the tree
+  # still that sha" -- neither alone is the question. runs/ divergence is expected
+  # (the pod writes those rows) and --check already reports rather than fails it.
+  if ! python3 scripts/pod_drift.py --check >/dev/null 2>&1; then
+    echo "REFUSING: pod files drifted from the manifest since the $_when push:" >&2
+    python3 scripts/pod_drift.py --check 2>&1 | grep -oE "[0-9]+ drifted: [^;]*" | head -3 >&2
+    echo "  Someone edited the pod directly. Commit that change and re-run" >&2
+    echo "  scripts/pod_push.sh --all, or ALLOW_UNSYNCED=1 to train on it knowingly." >&2
+    exit 1
+  fi
+  echo "pod code: $_sha (clean, synced $_when, manifest verified)"
 fi
 
 torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py --fp8 "$@"
