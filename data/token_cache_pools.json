@@ -1,0 +1,41 @@
+{
+ "_comment": [
+  "Measured pool sizes, read from the token caches on the pod (/data00/tokens_<domain>.pt).",
+  "This is the launch gate's epochs prerequisite: gate_epochs_measured refuses any domain",
+  "whose epochs came from a stamp estimate rather than a real cache.",
+  "",
+  "HOW: rows = cache.numel() // (SEQ+1), pool_rows = rows - min(int(rows*0.05), 5000).",
+  "Both lines are train.py's, not a reimplementation -- _domain_seqs does the first",
+  "(n = len(data) // (Cfg.seq+1); data[:n*(seq+1)].view(-1, seq+1)) and the val split",
+  "takes seqs[:n_val]. A pool is what remains after the holdout.",
+  "",
+  "WHY IT MATTERS THAT THESE ARE ROWS. A stamp gives tokens; a pool is packed rows, and",
+  "they are not proportional -- each document loses a partial row to packing. cot: 424.1M",
+  "tokens is 3.83 'epochs' by tokens and 4.03 by rows, i.e. opposite sides of the 4-epoch",
+  "line. build_mix draws rows, so rows is the number that decides.",
+  "",
+  "chat_qa and chatml have no cache of their own yet. chat's cache is the same 160,414",
+  "documents in plain form and measures 38,187,650 tokens -- exactly the stamp, which",
+  "independently confirms the stamp counts ids+<eos> and 3b's bare-ids figure did not.",
+  "Their pool_rows below are DERIVED from their stamps by the same formula, and labelled",
+  "as such: the number is honest about being one step short of measured."
+ ],
+ "measured_at": "2026-09-01",
+ "seq": 4096,
+ "source": "pod /data00/tokens_<domain>.pt via torch.load(mmap=True).numel()",
+ "domains": {
+  "math_owm_stage2": {"tokens": 6528546115, "rows": 1593494, "pool_rows": 1588494, "source": "cache"},
+  "en_c4_stage2":    {"tokens": 2401144188, "rows": 586073,  "pool_rows": 581073,  "source": "cache"},
+  "cot":             {"tokens": 424056227,  "rows": 103504,  "pool_rows": 98504,   "source": "cache"},
+  "textbook_30b":    {"tokens": 1610210330, "rows": 393021,  "pool_rows": 388021,  "source": "cache"},
+  "zh_web":          {"tokens": 21293403945, "rows": 5197316, "pool_rows": 5192316, "source": "cache"},
+  "code_py_rp1t":    {"tokens": 420646182,  "rows": 102671,  "pool_rows": 97671,   "source": "stamp",
+                      "note": "the ast.parse-surviving Python subset; /data00/tokens_code_rp1t.pt holds the FULL 7.57B multi-language corpus (1,847,469 rows), not this subset, so its cache cannot be read for this domain"},
+  "chat_qa":         {"tokens": 38187650,   "rows": 9320,    "pool_rows": 8854,    "source": "stamp",
+                      "note": "chat/'s cache measures exactly 38,187,650 tokens and 9,320 rows for the same 160,414 documents; chat_qa is a re-render into its own directory and has no cache yet"},
+  "chatml":          {"tokens": 38995846,   "rows": 9518,    "pool_rows": 9043,    "source": "stamp",
+                      "note": "no cache yet; awaiting pretokenize of data/corpus/chatml/"},
+  "code_py_starcoder": {"tokens": null, "rows": null, "pool_rows": null, "source": "absent",
+                      "note": "BLOCKED on 3b's starcoder rebuild (fb held it 2026-09-01: the resume path deletes existing output). The mix uses a labelled 8.85e9 projection from a 2/59-shard sample until then"}
+ }
+}

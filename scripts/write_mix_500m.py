@@ -76,7 +76,8 @@ OBJECTIVE = {
     "en_c4_stage2":      (0.16, "English general. Carries the natural-language competence code "
                                 "docstrings and problem statements are written in; below ~15% the "
                                 "prose side of a code model degrades before the code side does."),
-    "cot":               (0.08, "chain-of-thought. 8% is a CEILING, not a target: cot's supply is "
+    "cot":               (None, "chain-of-thought. THE WEIGHT IS A CEILING, NOT A TARGET, so it is\n"
+                                "derived (None) rather than typed: cot's supply is "
                                 "0.424B, the smallest of the eight, so at 9% of 20B it draws 4.24 "
                                 "epochs and crosses Muennighoff's 4-epoch line while 8% draws 3.77. "
                                 "Held at the largest value that stays under. WHAT THIS WEIGHT IS "
@@ -101,7 +102,16 @@ OBJECTIVE = {
                                   "(<0.075% per domain) and the 200M round showed SFT installs "
                                   "only the canon it is fed -- relying on SFT to teach a prefix "
                                   "the base has never seen is a bet this project already lost "
-                                  "once. WEIGHT IS None BECAUSE IT IS NOT A JUDGEMENT: this "
+                                  "once. THE SAME 160,414 CONVERSATIONS ALSO SIT IN chat_qa, "
+                                  "and each domain draws ~4 epochs, so this content is seen "
+                                  "8-10 times in total (e1 found the overlap; fb ruled KEEP, "
+                                  "2026-09-01). The ruling is not that the repetition is "
+                                  "harmless in general -- it is that what is being bought here "
+                                  "is a FORMAT entering the distribution, formats are cheap to "
+                                  "learn, and 1.5% combined is what that costs. What would "
+                                  "change it: evidence that the model is reciting these "
+                                  "conversations rather than absorbing the markup. Nobody has "
+                                  "measured that. WEIGHT IS None BECAUSE IT IS NOT A JUDGEMENT: this "
                                   "domain is SUPPLY_CAPPED, so _ceiling_weight derives it from "
                                   "the measured supply and the 4-epoch line. A literal here "
                                   "would be a second copy of that arithmetic, free to drift from "
@@ -117,7 +127,11 @@ OBJECTIVE = {
     "chat_qa":           (None, "The same QA rows in plain 问：/答： form, rendered into its own "
                                   "directory. Two renders of one source, so each domain holds "
                                   "~0.038B and each is capped independently -- the pair is ~1.5% "
-                                  "combined, not each. Weight is None for the same reason as "
+                                  "combined, not each. THAT MEANS THE SAME 160,414 CONVERSATIONS "
+                                  "ARE SEEN 8-10 TIMES across the two domains, which fb ruled "
+                                  "acceptable on 2026-09-01 for the reason spelled out in "
+                                  "chatml's entry: the purchase is two formats in-distribution, "
+                                  "not two passes of content. Weight is None for the same reason as "
                                   "chatml: derived, not chosen. It lands 0.01pt below chatml "
                                   "purely because the plain render is slightly smaller than the "
                                   "marked-up one. NAMED chat_qa, not chat: data/corpus/chat/ is "
@@ -145,7 +159,13 @@ OBJECTIVE = {
 # asserts nothing new. Without this the freed points vanish into the allocator's rounding: the
 # chat cap released 1.48pt and the weights simply summed to 0.9852, which the largest-remainder
 # allocator absorbed silently. Freed weight is a composition decision, not a rounding one.
-SUPPLY_CAPPED = {"chat_qa", "chatml"}
+# cot joins on 2026-09-01, when the ceiling moved from tokens to rows and cot's typed 8% came
+# out at 4.03 epochs against the real cache. It should have been here from the start: section
+# 2.1 of the rationale already said "8% is a CEILING, not a target", and a weight that IS a
+# ceiling has no business being a literal -- the literal was correct for a token-denominated
+# ceiling and silently wrong the moment the denomination was fixed. Same defect as the
+# hand-typed 0.0076, one dict entry away.
+SUPPLY_CAPPED = {"chat_qa", "chatml", "cot"}
 assert all(OBJECTIVE[n][0] is None for n in SUPPLY_CAPPED), (
     "a supply-capped domain must carry weight None -- _ceiling_weight derives it, and a literal "
     "beside the derivation is a second source of truth that will drift from it"
@@ -391,6 +411,60 @@ def _allocation():
     return dict({n: w * scale for n, w in free.items()}, **capped)
 
 
+MEASURED = os.path.join(ROOT, "data", "token_cache_pools.json")
+
+
+def _measured_pools():
+    """Pool rows read from the real token caches, by domain. {} if the file is absent.
+
+    The launch gate's epochs prerequisite: gate_epochs_measured refuses a domain whose epochs
+    came from a stamp. This is the artifact that clears it -- and it is per-domain, because
+    "measured" is not a property of the mix, it is a property of each domain. The blanket
+    ESTIMATED string this replaces said the same thing about all nine, which was true when
+    nothing had a cache and became a lie the moment five of them did.
+    """
+    if not os.path.exists(MEASURED):
+        return {}
+    return {k: v for k, v in json.load(open(MEASURED, encoding="utf-8"))["domains"].items()
+            if v.get("pool_rows")}
+
+
+def _corpus_fingerprint(name):
+    """This domain's corpus fingerprint, READ from its build_corpus_stats.json.
+
+    launch_gate.gate_corpora pins each domain dir to the bytes the mix was written against by
+    comparing this to the live stamp. Derived, never typed: a hand-copied fingerprint is a
+    string nothing recomputes, so it cannot go stale and cannot go false -- the exact shape of
+    every defect this file has hit today (fb ruling, 2026-09-01). Read it here and the mix
+    goes red via --check the moment the corpus changes.
+
+    None when the corpus is not on this host, which is the honest answer on a dev box and is
+    what gate_corpora refuses.
+    """
+    stats = os.path.join(ROOT, "data", "corpus", name, "build_corpus_stats.json")
+    if not os.path.exists(stats):
+        return None
+    try:
+        return json.load(open(stats, encoding="utf-8")).get("fingerprint")
+    except (OSError, ValueError):
+        return None
+
+
+def _pool_rows(pool_tok):
+    """Drawable rows in a pool of pool_tok tokens: packed rows, minus the val holdout.
+
+    train.py: n = len(flat) // (seq+1); seqs[:n_val] is the val split. VERIFIED against the
+    real caches on the pod, which is the launch gate's epochs prerequisite -- cot's cache holds
+    424,056,227 tokens and 103,504 rows, and 103,504 == 424,056,227 // 4097 exactly. Every
+    domain with a cache matched to the row.
+
+    One function because the ceiling and the epochs field must agree; they did not while the
+    ceiling worked in tokens.
+    """
+    rows = int(pool_tok) // (SEQ + 1)
+    return rows - min(int(rows * 0.05), 5000)
+
+
 def _ceiling_weight(name):
     """The largest weight for a supply-capped domain whose WHOLE error band clears the ceiling.
 
@@ -406,7 +480,11 @@ def _ceiling_weight(name):
     this returns to the sharp ceiling with no other edit.
     """
     rel = SUPPLY_RELATIVE_ERROR.get(name, 0.0)
-    max_rows = int(EPOCH_SOFT_CEILING * SUPPLY[name] * (1 - rel)) // SEQ
+    # ROWS, not tokens. The ceiling asks how many times the model re-reads the pool, and the
+    # pool is packed rows -- tokens overstate it, because packing drops a partial row per
+    # document and n_val rows are held out on top. Deriving in tokens put all three capped
+    # domains over the real line while reporting them under it.
+    max_rows = EPOCH_SOFT_CEILING * _pool_rows(SUPPLY[name] * (1 - rel))
     # _weight_for_rows, not a floor at some chosen precision: build_mix draws int(ROWS*weight),
     # so the weight has to hit max_rows EXACTLY. Flooring to 4dp instead cost 488 rows -- a
     # rounding loss dressed as a safety margin, and indistinguishable from one by anyone reading
@@ -513,20 +591,35 @@ def build(code_tokens):
         # ESTIMATED from the stamp and every epochs value here is provisional by construction.
         # Recorded as such: a provisional cap that reads as measured is the defect this repo
         # keeps finding, and the re-derivation is a launch precondition, not a nicety.
-        pool_rows_est = pool_tok // (SEQ + 1)
-        n_val = min(int(pool_rows_est * 0.05), 5000)
-        pool_rows_est -= n_val
+        meas = _measured_pools().get(name)
+        # A measured pool WINS over the stamp-derived one. Not "if they disagree, warn": the
+        # cache is the thing build_mix actually draws from, so where it exists there is
+        # nothing to reconcile.
+        pool_rows_est = meas["pool_rows"] if meas else _pool_rows(pool_tok)
         used = 0  # fresh run, new names; asserted rather than assumed
         epochs = math.ceil((used + runtime) / pool_rows_est)
         assert pool_rows_est * epochs >= used + runtime, (
             f"{name}: pool {pool_rows_est} x epochs {epochs} < used {used} + want {runtime}; "
             "build_mix would clamp the draw and silently under-train this domain"
         )
-        if runtime * SEQ / pool_tok > EPOCH_SOFT_CEILING:
+        # THE CEILING COUNTS ROWS, NOT TOKENS. An epoch is a pass over the POOL, and the pool
+        # is packed rows -- which is also the only quantity build_mix works in (cap =
+        # int(pool*epochs) - used, draw = arange(used, used+want)). Tokens are not rows: each
+        # document loses a partial row to packing, and n_val rows are held out on top. For cot
+        # the two disagree across the line -- 3.83 epochs by tokens, 4.03 by rows against the
+        # real cache -- because 20.5M of its 424M tokens (4.8%) never become drawable rows.
+        #
+        # The token version was the guard for a day and read UNDER the ceiling the whole time.
+        # It was not measuring re-reads; it was measuring a quantity that correlates with them
+        # (b0, 2026-09-01, found by reading the real caches for the launch gate's epochs item).
+        drawn_epochs = runtime / pool_rows_est
+        if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
-                f"{name}: {runtime * SEQ / pool_tok:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
-                f"line (ds.muennighoff_four_epoch). Past 4 epochs repeated tokens stop paying and "
-                f"this weight is buying re-reads, not information."
+                f"{name}: {drawn_epochs:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
+                f"line (ds.muennighoff_four_epoch). Past 4 epochs repeated tokens stop paying "
+                f"and this weight is buying re-reads, not information. NOTE this is "
+                f"{runtime:,} rows over a {pool_rows_est:,}-row pool; the token ratio is "
+                f"{runtime * SEQ / pool_tok:.2f} and is NOT what build_mix draws against."
             )
         # A PASS the supply is not precise enough to support is not a pass -- see
         # _band_warning. Called, not inlined, so the selftest exercises this code and not a
@@ -546,7 +639,19 @@ def build(code_tokens):
             "pool_rows_estimated": pool_rows_est,
             "cursor_used_rows": used,
             "cap_covers": used + runtime,
-            "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+            # A BOOLEAN the gate can read, beside the prose a person reads. The gate used to
+            # grep the prose for "ESTIMATED", so rewording the sentence turned it green --
+            # which I did by accident, writing "DERIVED from the stamp" for four domains that
+            # have no cache, and watched a NO-GO become GO with nothing measured. A gate that
+            # tests a word tests the author's vocabulary (b0, 2026-09-01).
+            "epochs_pool_measured": bool(meas and meas["source"] == "cache"),
+            "epochs_pool_source": (
+                f"MEASURED from the token cache: {pool_rows_est:,} drawable rows "
+                f"(rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01"
+                if meas and meas["source"] == "cache" else
+                f"NOT MEASURED -- estimated from the stamp at {pool_rows_est:,} rows. "
+                f"{meas['note'] if meas else 'no cache exists for this domain yet'}"
+            ),
             # No fingerprint, and that is a STATEMENT, not an omission. launch_gate's corpora
             # gate pins each domain dir to the bytes the mix was written against by comparing
             # this to the corpus stamp -- and its old code skipped the comparison when the
@@ -558,11 +663,13 @@ def build(code_tokens):
             # here can read their stamps. Writing a placeholder would be worse than leaving
             # it out; saying WHY it is out is the only version that survives being read by
             # someone who is about to launch.
-            "fingerprint": None,
+            "fingerprint": _corpus_fingerprint(name),
             "fingerprint_source": (
-                "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. "
-                "Fill from each domain's build_corpus_stats.json fingerprint before launch -- "
-                "launch_gate.gate_corpora refuses a null, which is the intended behaviour"
+                f"read from data/corpus/{name}/build_corpus_stats.json"
+                if _corpus_fingerprint(name) else
+                f"NOT READ: data/corpus/{name}/build_corpus_stats.json is absent on this host. "
+                f"Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a "
+                f"null, which is the intended behaviour"
             ),
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil(({used}+{runtime})/{pool_rows_est}). PROVISIONAL: the pool "
@@ -692,17 +799,29 @@ def selftest():
     assert not build(3.8e9)["_warnings"], (
         f"shipped config crosses the 4-epoch line: {build(3.8e9)['_warnings']}"
     )
-    saved = OBJECTIVE["cot"]
-    OBJECTIVE["cot"] = (0.09, saved[1])
-    OBJECTIVE["textbook_30b"] = (0.09, OBJECTIVE["textbook_30b"][1])
+    # The over-the-line case is forced on a domain whose weight is a LITERAL, because cot's
+    # is no longer one -- it became SUPPLY_CAPPED when the ceiling moved to rows, so setting
+    # OBJECTIVE["cot"] = 0.09 changes nothing and this assertion silently tested an
+    # unreachable path. textbook_30b carries a real literal, and 40% of 20B over its 388,021
+    # measured rows is far past the line.
+    saved_tb = OBJECTIVE["textbook_30b"]
+    OBJECTIVE["textbook_30b"] = (0.60, saved_tb[1])
     try:
         warns = build(3.8e9)["_warnings"]
-        assert any("cot" in w for w in warns), f"cot at 9% must warn, got {warns}"
+        assert any("textbook_30b" in w for w in warns), f"textbook at 60% must warn, got {warns}"
+        assert any("epochs exceeds" in w for w in warns), warns
     finally:
-        OBJECTIVE["cot"] = saved
-        OBJECTIVE["textbook_30b"] = (0.10, OBJECTIVE["textbook_30b"][1])
-    print("  6 shipped config is under the 4-epoch line, and the ceiling still fires on the "
-          "9% cot config that produced the cut")
+        OBJECTIVE["textbook_30b"] = saved_tb
+    # And a capped domain cannot be pushed over by its literal at all -- that is what capped
+    # MEANS, and it is worth asserting so nobody re-adds one thinking they are tuning it.
+    saved_cot = OBJECTIVE["cot"]
+    OBJECTIVE["cot"] = (0.30, saved_cot[1])
+    try:
+        assert not build(3.8e9)["_warnings"], "a SUPPLY_CAPPED literal changed the draw"
+    finally:
+        OBJECTIVE["cot"] = saved_cot
+    print("  6 shipped config is under the 4-epoch line; the ceiling still fires on an "
+          "over-weighted literal, and a capped domain ignores its literal entirely")
 
     # 7. the untrusted-supply gate fires, and an empty set does not block. Written because a
     #    COMMENT saying "this number is wrong" is not a gate: the mix still builds and still
@@ -798,12 +917,19 @@ def selftest():
         "SUPPLY_RELATIVE_ERROR should be empty now that 3b measured exact counts; a stale entry "
         "silently costs weight"
     )
+    # In ROWS, matching the ceiling. This block asserted tightness in tokens, which passed
+    # only while the ceiling was also token-denominated; after the fix it demanded a row count
+    # the ceiling would never produce. A test written in the wrong unit fails for the right
+    # reason and points at the wrong place.
     for name in SUPPLY_CAPPED:
+        pool = _pool_rows(SUPPLY[name])
         rows = int(ROWS * _ceiling_weight(name))
-        draw = rows * SEQ / SUPPLY[name]
-        assert draw <= EPOCH_SOFT_CEILING, f"{name}: {draw:.6f} epochs overshoots the ceiling"
-        assert (rows + 1) * SEQ / SUPPLY[name] > EPOCH_SOFT_CEILING, (
-            f"{name}: one more row still fits, so the sharp ceiling is leaving rows unused"
+        assert rows / pool <= EPOCH_SOFT_CEILING, (
+            f"{name}: {rows / pool:.6f} epochs overshoots the ceiling"
+        )
+        assert (rows + 1) / pool > EPOCH_SOFT_CEILING, (
+            f"{name}: one more row still fits ({(rows + 1) / pool:.6f}), so the sharp ceiling "
+            f"is leaving rows unused"
         )
     print("  9 the hand-typed 0.0076 fails the error-band ceiling it passed on the point "
           "estimate; with exact counts the derivation uses the sharp ceiling to the last row")
