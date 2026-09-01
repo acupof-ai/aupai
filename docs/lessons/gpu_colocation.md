@@ -2,6 +2,7 @@
 question: "can a second workload share a training card productively, on our hardware and at our occupancy"
 status: open
 source: "e1-5 2026-09-01; arithmetic over eff.steady_state_composition (t57) and eff.kda_occupancy_bound; literature per row"
+span_ms: 1676.63  # denominator for every percentage here, t57's own span; scripts/doc_numbers_check.py reads it
 ---
 
 > **Status: open.** The verdict below is written to closure on the evidence
@@ -137,7 +138,7 @@ bandwidth-bound and not grid-bound.
 
 | response | ceiling | who benefits |
 |---|---|---|
-| raise KDA to the 85% of HBM peak its healthy neighbours achieve | 174 ms → 59 ms, **saving 115 ms = 6.8% of the step** | the primary |
+| raise KDA to the 85% of HBM peak its healthy neighbours achieve | 174 ms → 59 ms, **saving 115 ms = 6.86% of the step** | the primary |
 | fill the same window with a second workload | up to **9.0–9.8% of the step** of slot-time, minus whatever bandwidth contention removes | the co-tenant |
 
 **The two options compete for the same 174 ms.** That is the sharp version of the
@@ -394,6 +395,20 @@ the step-time share it actually takes. One run then yields both the falsifiable
 1.4× criterion and the exchange rate, and if the two land far apart both numbers go
 in the doc rather than one being chosen.
 
+**What the step-time share will mean, predicted before the run** (tilerl-0a).
+The gap between the occupancy the guest is sized to and the step time it turns
+out to consume is a finding in itself, and the two directions point opposite ways:
+
+| the guest at ~6% occupancy eats | it is | and row 3 is |
+|---|---|---|
+| **~3% of step time** | FLOP-light, bandwidth-hungry | **strengthened** — KDA is itself bandwidth-bound at 15–29% of HBM peak, so guest and host contend for the same resource |
+| **15%+ of step time** | FLOP-heavy | **challenged for the first time** — it wants something other than what KDA is starved of, so "the same 174 ms window" stops being obviously true |
+
+Recording this now matters more than it looks. Without it, either outcome could
+be narrated afterwards as consistent with the verdict, and the table would be
+decoration. This is the one branch where a result genuinely threatens row 3, and
+it is named before the number exists.
+
 **The single measurement that decides it**: the primary's tok/s with and without a
 co-tenant, same seed, same step window, on the current tree. Not the co-tenant's
 throughput — that always looks like a free lunch, because whatever it achieves it
@@ -415,6 +430,13 @@ measured on H100*, which is a question about transferability. It does not ask
 whether co-location is cheap, and a result of 1.4× would not by itself justify
 doing it. For reference: 1.0× is no interference, 1.2× keeps 83.3%, 1.73× keeps
 57.8%.
+
+**Who decides what, agreed before the run.** tilerl-0a runs the measurement and
+reports the row, the numbers and the conditions — not a conclusion, and not a
+recommendation about which row to move. e1 decides what the doc says and names
+the row that moved rather than editing the conclusion quietly. The split exists
+because whoever holds both "what to measure" and "what the number means" makes
+the pre-registered table above worthless.
 
 If the measurement comes back and the verdict stands, this document becomes
 `recorded` with the number in it. If it overturns any row above, the row says so

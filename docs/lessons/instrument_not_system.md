@@ -2,6 +2,7 @@
 question: "how do you notice that a measurement describes the measuring tool rather than the system"
 status: recorded
 source: "tilerl-10 2026-09-01; six instances found in one day: runs/t56_elementwise_owner.json (the broken join, and its fix breaking the same way on cuda_driver), the pretrain_30b_s2 log's tok/s and ETA format strings, eff.kda_occupancy_bound (config drift), eff.quant_tax_is_the_elementwise_group (off-config trace). Check proposal reviewed by fb, tightened by 62; de-8 carries the seven-sighting class ticket."
+span_ms: 1676.63  # t57's own span; the percentages quoted here are against it
 ---
 
 # The instrument, not the system
@@ -184,15 +185,17 @@ negative closes a line of work permanently and silently.
 None of these were caught by the statistic itself — only by looking at the
 instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
-quantisation band, firing on rounding. #4 nearly retired a 4.44% lever — and
-here is the twist worth keeping, because this sentence was wrong for six hours:
-that lever turned out to be **93% head work on a path the live run does not
-reach**, so #4's correction rescued a rung that #5's class then took away again.
-Both steps were right. A number can be rescued from one defect and still be
-carrying another. #6 would have published "the fusion group is disjoint from the
-quantisation tax" as a *null* — the right answer, reached by a broken join, which
-is the one way to be correct that teaches you nothing and cannot be trusted next
-time.
+quantisation band, firing on rounding. #4 nearly retired a lever quoted first at
+4.44%, then at 3.59% — **both superseded, and neither is its live size**; both
+were measured on the off-config trace. And here is the twist worth keeping,
+because this sentence was wrong for six hours: that lever turned out to be
+**92.5% head work on a path the live run does not reach**, so #4's correction
+rescued a rung that #5's class then took away again. The live figure is
+**12.4 ms**. Both steps were right. A number can be
+rescued from one defect and still be carrying another. #6 would have published
+"the fusion group is disjoint from the quantisation tax" as a *null* — the right
+answer, reached by a broken join, which is the one way to be correct that teaches
+you nothing and cannot be trusted next time.
 
 ## The generalisation: a threshold set from the wrong quantity
 
@@ -282,8 +285,9 @@ if the answer is unknown, the clean result is not yet evidence of soundness
 Different enough from the printf and join tells to name separately, and it is the
 one that survives careful measurement — because the measurement itself is fine.
 
-`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms**.
-Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16 write plus an fp32 cast — while
+`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms,
+the pre-correction figure**. Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16
+write plus an fp32 cast — while
 **both** fp8 arms passed `out_dtype=torch.float32` and never paid it. About
 12.9 GB/step, ≈10.4 ms at the probe's own fitted bandwidth. The baseline was
 penalised by work the candidate does not do, so the gap between them was not the
@@ -306,6 +310,143 @@ Note what did *not* go wrong: the timing was tight (spread 0.003–0.006 ms/chun
 the statistic was pre-declared, the arms were interleaved. **A well-run
 measurement of the wrong contrast is still the wrong answer**, and none of the
 usual rigour markers detect it.
+
+### A fifth tell: assert presence before asserting properties
+
+The one that hides inside a check written to catch exactly this class.
+
+db's 22B pre-registration returned **zero refused roles and zero ABSENT
+metrics** — a clean sheet. The readout had printed nothing at all. Every
+assertion was of the form "no row violates the gate", and a file with no rows
+satisfies all of them vacuously. The monitor read the absence of bad lines as
+good news.
+
+**A property asserted over an empty set is true.** So a probe must first assert
+that the artifact *has* the section it is judging, and only then judge it. The
+order is not stylistic: presence is a precondition of every property claim after
+it, and a probe that skips it reports the cleanest possible result on the most
+broken possible input.
+
+The same shape, elsewhere on this page and in the repo, which is why it is a tell
+and not an anecdote:
+
+- The `holdout_hashes` empty-set incident — an empty holdout set let 19 of 20
+  questions into SFT, because "no question is in the holdout set" is trivially
+  true of an empty set.
+- de's monitor closing a row `fail` on log silence — the inverse reading of the
+  same ambiguity. **Silence is not evidence.** It is equally consistent with
+  nothing-bad-happened and with nothing-happened, and only a presence assertion
+  separates them.
+
+The enforceable version: **a check reports `SKIP`, never `PASS`, when the thing
+it examines is absent.** A pass claims evidence; the absence of input is not
+evidence.
+
+### A sixth tell: the measurement is clean and the configuration is wrong
+
+Recorded in full at **"the flag can be in the evidence rather than the claim"**
+above, by the author who found it. Kept here only for the ordering, and for the
+one framing this section adds: the code-path check at the top of this page asks
+whether the *lever* runs in production; this tell asks the same question of the
+*trace*, and it is harder to see because nothing in the analysis is wrong.
+
+> **Correctness and relevance fail independently, and no amount of the first
+> detects a failure of the second.**
+
+That sentence now applies twice on this page — to the byte cache's dead code path
+and to the off-config trace — and the two differ in *where the flag lives*: t60's
+was in the claim, t61's was in the evidence, and that fact's text never mentions
+`FP8_HEAD` at all. **A check on claims catches one of the two.** That asymmetry
+is the whole argument for a provenance field on the measurement rather than a
+flag field on the claim.
+
+**And the instance is not that a lesson fired — it is that an outside question
+made it fire.** The join that exposed the off-config capture was only run because
+a reader asked an unrelated question about double counting. Its author had read
+that trace four times and the capture config was invisible every time, because
+the question being asked was about attribution, not provenance.
+
+**But state the mechanism carefully, because the obvious statement of it is
+wrong.** "An outside reader supplies the question you are not asking" implies the
+reader supplies the *right* question. That is not what happened: the question
+asked was about double counting, it closed cleanly as a null, and the config
+finding fell out sideways. Neither party had provenance in mind.
+
+So the mechanism is **perturbation, and the yield is stochastic** — and the
+practical consequences differ:
+
+| "get a reviewer" | "perturb the frame" |
+|---|---|
+| pick a good one, brief them well | *any* question from outside the frame has expected value |
+| the failure mode is a bad reviewer | the failure mode is **no perturbation** — which is what a review from inside the same frame produces, however skilled |
+| the valuable question is the important one | the question the author would have rated *lower* value is the one that paid |
+
+The author of the trace and their usual reviewer had been checking each other's
+arithmetic all day and neither questioned a capture config, because both were
+inside the attribution frame. The value is in the **outsideness**, not in the
+reviewer's skill — which is a weaker claim than "route work past a good
+reviewer", and a much cheaper one to act on.
+
+### Seven tells, and who caught them
+
+The section headings number the last three "fourth", "fifth" and "sixth" because
+they were found in that order; counted as distinct questions to ask a
+measurement, there are seven:
+
+1. Is this code path reached in the live configuration?
+2. Read the format string — what is the resolution of the input?
+3. Is a 0% or 100% result a finding, or a broken join?
+4. Does the cited number still describe what currently ships?
+5. Does the baseline pay work the candidate does not pay?
+6. Does the artifact contain the section being judged at all?
+7. What configuration was the capture taken under?
+
+Five of the seven were caught by the author of the measurement, before anyone
+else challenged it — the byte cache's dead code path, t58's asymmetric baseline,
+the broken join, the config drift, and the off-config trace. That is worth
+stating plainly, because it is the behaviour this page is trying to produce.
+**The purpose is not to review each other harder; it is to make the author's own
+second look find the thing first.** A reviewer who catches a wrong number saves
+one decision. An author who catches their own saves the decision and the review
+cycle, and does it while the context needed to see the defect is still loaded.
+
+One of the seven was found while answering an unrelated question. #7 surfaced on
+the way to settling whether the fusion and elementwise groups double-counted, and
+the answer to the question actually asked was "no, they are disjoint — zero
+shared kernels." **A question that closes cleanly is not a wasted question**: it
+is often how the adjacent defect gets found, and the ranking it was aimed at is
+firmer for having survived it.
+
+### The base rate is higher than these narratives imply
+
+Every entry above reads as a notable event, and that framing is itself
+misleading. `scripts/doc_numbers_check.py` re-derives a document's stated numbers
+from its own declared base and runs in under a second. Its author ran it on the
+entry they had just written and found a rounded share sitting beside the table it
+summarised — the eighth instance. Within the hour, a **sweep of four unrelated
+docs** turned up a ninth: `gpu_colocation.md` rounding a 115 ms saving to one decimal
+place where its own span gives 6.86%, in a document that had been read and
+re-read.
+
+Two things follow, and they are more useful than any single instance:
+
+1. **This defect is closer to background than to event.** Two found in one hour
+   by a one-second tool, in documents written by people actively writing about
+   this defect class. Anything narrated as "the time we caught X" is sampling on
+   the catch, not on the occurrence.
+2. **Sweep every document, not the one you are editing.** The targeted run found
+   the eighth only because its author happened to have just touched that file.
+   That is luck wearing the clothes of a habit. The sweep is the habit.
+
+A caveat on the sweep, from running it across all 51 docs in `docs/`: three of
+the five hits were **false positives** — the checker dropped a leading minus
+sign, matched the tail of an inclusion-exclusion expression, and read a design
+label (`MDE at 4+4`) as arithmetic. That does not weaken the case for sweeping.
+A one-second check with a 40% false-positive rate is still worth running over 51
+documents; it means the output is a **list of lines to look at**, not a list of
+errors, and it should be described that way so nobody treats a clean sweep as
+proof or a hit as a verdict.
+
 
 ## When a qualifier has to be a restriction
 
