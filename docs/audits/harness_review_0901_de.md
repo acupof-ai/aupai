@@ -6,6 +6,19 @@ source: de-8; live artifacts on the pod (ckpt_pretrain_30b_s2.pt.step21500/22500
 
 # de-8: the guards, and the class behind the day
 
+**The neutered-guard step is not a formality. It is the only thing that distinguishes a
+test from a comment.** It caught two of my own tests today, both of which passed while
+measuring nothing, and neither would have survived review -- they look correct and they go
+green:
+
+| my test | why it passed on the broken code |
+|---|---|
+| `replay_cursor --selftest` case 3 (the refusal) | the guard it asserts did not exist in the copy under test; the assertion never ran against a fall-through |
+| the D6 monitor probe (`no fail row while alive`) | no `exp.py` stub was present, so the OLD monitor's `exp.py done --status fail` no-opped under `capture_output` and "no fail row" was vacuously true in BOTH worlds |
+
+Each was found by deliberately reverting the fix and re-running the test. Nothing else in
+this document is as strong an argument for keeping `broken()` mandatory.
+
 **Verdict: two principle-level defects found and fixed, both in the row-cursor path, both
 of them fixes we believed had already shipped.** The first is dead code: `save_checkpoint`
 has never written a `row_cursor`, so every checkpoint the live run produces has none. The
