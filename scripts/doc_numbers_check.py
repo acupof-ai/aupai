@@ -21,8 +21,14 @@ two-bases error it exists to catch.
 FALSE POSITIVE, do not chase: a correction that quotes the phrase it retires
 is not a violation. `--retired` hits are reported separately from arithmetic
 for that reason, and a line whose quote is inside a sentence naming it as
-retired is the expected shape, not a finding. Arithmetic hits are never
-false positives.
+retired is the expected shape, not a finding.
+
+An earlier version of this docstring claimed arithmetic hits are never false
+positives. That was wrong, and a 34-doc sweep proved it: two of three hits were
+correct arithmetic the SUM regex mis-parsed by taking the tail of a longer
+chain. Fixed, at the cost of skipping chained sums entirely. The honest claim
+is narrower -- an arithmetic hit on a TWO-TERM sum is not a false positive, and
+sums of three or more terms are not checked at all.
 
 Exit 1 on any arithmetic mismatch. Retired-phrase hits print and do not fail,
 since only a reader can tell a quote from a relapse.
@@ -41,7 +47,13 @@ import sys
 
 MS_PCT = re.compile(r"(\d+(?:\.\d+)?)\s*ms\s*=\s*(\d+\.\d+)%")
 SPEEDUP = re.compile(r"(\d+(?:\.\d+)?)\s*ms\s*=\s*\d+\.\d+%\s*=\s*(\d\.\d+)[x×]")
-SUM = re.compile(r"(?<![\d.])(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)(?![\d.])")
+# The lookbehind must block an OPERATOR as well as a digit: without it the
+# regex grabs the last two terms of a longer chain and checks them as the whole
+# expression, so "-0.05+0.103=0.053" loses its minus and "8+8+8-4-4-2+2=16"
+# becomes "2+2=16". Both are correct arithmetic reported as errors (tilerl's
+# 34-doc sweep). The cost of the fix is that a sum inside a longer chain is now
+# SKIPPED rather than mis-parsed -- silence, not a verdict.
+SUM = re.compile(r"(?<![\d.\-−+/*])(\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*=\s*(\d+(?:\.\d+)?)(?![\d.])")
 NEG_SUM = re.compile(r"[-−](\d+(?:\.\d+)?)\s*\+\s*(\d+(?:\.\d+)?)\s*=\s*\*{0,2}[-−](\d+(?:\.\d+)?)")
 SPAN_DECL = re.compile(r"^span_ms:\s*(\d+(?:\.\d+)?)\s*(?:#.*)?$", re.M)
 
@@ -54,28 +66,38 @@ def line_of(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
-def check(path, span, retired):
+def check(path, span, retired, ignore=()):
     text = open(path, encoding="utf-8").read()
     hits, notes = [], []
+    skip = {i for i, ln in enumerate(text.split("\n"), 1)
+            if any(mark in ln for mark in ignore)}
 
     if span is not None:
       for m in MS_PCT.finditer(text):
+        if line_of(text, m.start()) in skip:
+            continue
         ms, pct = float(m.group(1)), float(m.group(2))
         want = 100 * ms / span
         if abs(want - pct) > PCT_TOL:
             hits.append((line_of(text, m.start()), m.group(0), f"{want:.2f}% against span {span}"))
       for m in SPEEDUP.finditer(text):
+        if line_of(text, m.start()) in skip:
+            continue
         ms, x = float(m.group(1)), float(m.group(2))
         want = span / (span - ms)
         if abs(want - x) > X_TOL:
             hits.append((line_of(text, m.start()), m.group(0), f"{want:.3f}x"))
 
     for m in SUM.finditer(text):
+        if line_of(text, m.start()) in skip:
+            continue
         a, b, c = (float(g) for g in m.groups())
         if abs(a + b - c) > SUM_TOL:
             hits.append((line_of(text, m.start()), m.group(0), f"{a + b:.1f}"))
 
     for m in NEG_SUM.finditer(text):
+        if line_of(text, m.start()) in skip:
+            continue
         a, b, c = (float(g) for g in m.groups())
         if abs(-a + b + c) > SUM_TOL:
             hits.append((line_of(text, m.start()), m.group(0), f"{-a + b:.1f}"))
@@ -95,6 +117,12 @@ def main():
                     help="ms/step base; default reads `span_ms:` from the doc's front matter")
     ap.add_argument("--retired", default="",
                     help="comma-separated phrases a correction has retired")
+    ap.add_argument("--ignore", default="",
+                    help="comma-separated substrings; a line containing one is not checked. "
+                         "For numbers a doc QUOTES rather than asserts (a doc about a defect "
+                         "class quotes the wrong numbers it documents) and for design labels "
+                         "that look like arithmetic (`MDE at 4+4`). Every use is a hole, so "
+                         "each marker should be specific enough to match only the line meant.")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
 
@@ -102,6 +130,7 @@ def main():
         return selftest()
 
     retired = [p for p in (x.strip() for x in a.retired.split(",")) if p]
+    ignore = [p for p in (x.strip() for x in a.ignore.split(",")) if p]
     failed = False
     for path in a.docs:
         text = open(path, encoding="utf-8").read()
@@ -117,9 +146,11 @@ def main():
             print(f"{path}: FAIL -- states `N ms = P%` but declares no `span_ms:`")
             failed = True
             continue
-        hits, notes = check(path, span, retired)
+        hits, notes = check(path, span, retired, ignore)
         base = f"span {span} ms" if span else "no span needed: states no ms-percentages"
         print(f"\n=== {path} ({base}) ===")
+        if hits:
+            print("  lines to look at (NOT a verdict -- read each against its source):")
         for ln, got, want in hits:
             print(f"  L{ln}: {got!r} -- recomputes to {want}")
             failed = True
@@ -153,9 +184,27 @@ def selftest():
     assert len(hits) == 1, hits
     print("  signed sum: correct passes, wrong caught")
 
+    # tilerl's two false positives from the 34-doc sweep: correct arithmetic
+    # the old lookbehind mis-parsed by taking the tail of a longer chain.
+    for chain in ("(-0.05+0.103=0.053 < t*SE=0.071)\n",
+                  "(|AuBuC|=8+8+8-4-4-2+2=16); 34%\n"):
+        hits, _ = check(_tmp(chain), span, [])
+        assert not hits, f"chained sum flagged: {chain.strip()} -> {hits}"
+    print("  chained sums not mis-parsed (2 real false positives, now regression cases)")
+
     hits, _ = check(_tmp("54.9 ms = 3.27% = 1.06x\n"), span, [])
     assert len(hits) == 1 and "1.034" in hits[0][2], hits
     print("  stale speedup caught: 54.9 ms is 1.034x, not 1.06x")
+
+    # --ignore: a doc about a defect class quotes the wrong numbers it documents,
+    # and a design label can look like arithmetic ("MDE at 4+4 = 1.98"). 03's
+    # third false positive from the 51-doc sweep.
+    label = "| sigma | MDE at 4+4 = 1.98 sigma | consequence |\n"
+    hits, _ = check(_tmp(label), span, [])
+    assert len(hits) == 1, f"label not seen without --ignore: {hits}"
+    hits, _ = check(_tmp(label), span, [], ["MDE at"])
+    assert not hits, f"--ignore did not suppress: {hits}"
+    print("  --ignore suppresses a quoted/labelled line, and only with the marker")
 
     _, notes = check(_tmp("the ceiling is single-digit percent\n"), span, ["single-digit percent"])
     assert len(notes) == 1, notes
@@ -168,7 +217,7 @@ def selftest():
     assert not hits and len(notes) == 1, (hits, notes)
     print("  correction quoting its own retired phrase: noted, does not fail")
 
-    print("selftest: 7/7")
+    print("selftest: 9/9")
     return 0
 
 
