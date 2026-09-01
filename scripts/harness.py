@@ -7359,10 +7359,12 @@ def _arm_monitor(name, pid, log_path, output_path=None):
     after a real result is worse than no row -- it inverts the verdict, and
     score_matrix_present read that stale fail's predecessor as an unscored ok."""
     output_repr = repr(output_path) if output_path else "None"
+    rc_repr = repr(os.path.join(ROOT, "runs", f"{name}.rc"))
     monitor_code = f'''
 import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
 output = {output_repr}
+rc_file = {rc_repr}
 exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
 silent_limit = 600
 last_size, last_grow = 0, time.time()
@@ -7399,9 +7401,35 @@ while True:
     except OSError:
         alive = False
     if not alive:
+        # The exit code, not the disappearance. A process that is gone has either
+        # finished or been killed, and the monitor cannot tell those apart by watching
+        # a pid -- it used to write status=ok for both. The 22B milestone was killed at
+        # 04:22 to yield the lane and its row reads `ok | process exited`, identical to
+        # a completed score; nothing on the board could see that the 22B reading did
+        # not exist (de, 2026-09-01). cmd_launch's wrapper writes runs/<name>.rc after
+        # the child returns, so the verdict is an artifact.
+        #
+        # No .rc means the wrapper itself died -- SIGKILL to the group, the machine
+        # went down -- which is the killed case, not the finished one. Fail closed:
+        # a run whose fate is unknown is not a success. The row says which of the two
+        # it was, because "no rc" and "rc 137" call for different responses.
+        rc, why = None, ""
+        try:
+            with open(rc_file, encoding="utf-8") as rf:
+                rc = int(rf.read().strip())
+        except (OSError, ValueError):
+            why = "no exit code recorded: the wrapper died with the job (killed group, or the box went away)"
+        if rc == 0:
+            status, result, finding = "ok", "exit 0", "monitor: process exited cleanly"
+        elif rc is None:
+            status, result, finding = "fail", "vanished", "monitor: " + why
+        else:
+            sig = " (signal %d)" % (rc - 128) if rc > 128 else ""
+            status, result = "fail", "exit %d%s" % (rc, sig)
+            finding = "monitor: process exited %d%s" % (rc, sig)
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
-            "--result", "process exited", "--finding", "monitor: process gone",
-            "--decision", "check the log", "--status", "ok"], capture_output=True)
+            "--result", result, "--finding", finding,
+            "--decision", "check the log", "--status", status], capture_output=True)
         break
     grew = False
     for p in ([log] + ([output] if output else [])):
@@ -7626,15 +7654,29 @@ def cmd_launch(rest):
     # 3. Launch with setsid nohup
     log_path = os.path.join(ROOT, "runs", f"{args.name}.log")
     pid_path = os.path.join(ROOT, "runs", f"{args.name}.pid")
+    rc_path = os.path.join(ROOT, "runs", f"{args.name}.rc")
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cards
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
 
+    # A stale .rc from a previous run of this name would be read as this run's verdict.
+    if os.path.exists(rc_path):
+        os.unlink(rc_path)
+    # The exit code must outlive the process, because the only thing that can read it
+    # otherwise is whoever reaped the child. The monitor cannot: it polls a pid, sees it
+    # vanish, and has no way to distinguish "finished" from "killed". It wrote status=ok
+    # for both -- the 22B milestone was killed at 04:22 while yielding the lane and its
+    # ledger row reads `ok | process exited`, indistinguishable from a completed score
+    # (de, 2026-09-01). Wrapping the command so the shell records $? makes the verdict an
+    # artifact rather than a guess. `exec` is deliberately absent: the wrapper must
+    # survive the child to write the file.
+    wrapped = ["bash", "-c", 'set -o pipefail; "$@"; rc=$?; printf %s "$rc" > "$0"; exit "$rc"',
+               rc_path, *cmd]
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
-            cmd,
+            wrapped,
             stdout=log_f, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=env, cwd=ROOT,
