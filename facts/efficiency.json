@@ -1797,6 +1797,33 @@
    "uncertainty": "Both peaks are now measured on this pod with the same 8192^3 / 30-iter shape, so the carried-ratio assumption is closed. What remains: a single square GEMM is not the head's 2048x1024x32784 shape, and a peak probe measures the best case rather than what an odd-N shape achieves -- if anything that makes the 98.2% an underestimate of how close the real shapes run to their own attainable peak. The 274.5 TFLOPS still comes from the older prepad trace, not from the same run as the 493.1 ms group figure.",
    "boundary": "GEMM throughput only; says nothing about work around the GEMM (quantisation, epilogue) or about any non-GEMM lever",
    "status": "measured"
+  },
+  {
+   "id": "eff.quant_tax_is_the_elementwise_group",
+   "claim": "what the 107 ms 'elementwise / copy (aten)' group actually is, and whether it can be fused",
+   "value": "IT IS THE FP8 QUANTISATION TAX, not a residue of unrelated pointwise ops, and it is the SAME lever as the fp8 LM head rather than a separate rung. Attribution by correlation id on the ddp rank0 trace resolves 99.98% of the group (250.57 of 250.61 ms/step): aten::div 84.01 (n=14643), aten::add_ 82.00 (n=30179), aten::copy_ 67.17 (n=21102), aten::abs 13.84 (n=6884), aten::clamp 0.65 (n=6864) -- five ops are 99.0% of it. div + copy_ + abs + clamp = 165.7 ms/step = 66% of the group, and that set is _fp8_mm's signature op for op: abs().amax().clamp(min=1e-12) then (x/s).to(fp8) then .contiguous() (train.py:454). THE COUNTS CORROBORATE, WHICH THE NAMES ALONE WOULD NOT: 343 clamp/step means 343 scales computed per step, 344 abs/step is one abs per scale, and probes/t58_quant_tax.py independently predicted 320 amax reductions per step for the HEAD ALONE (5 per _fp8_mm call x 64 chunks) -- so the head is ~93% of every scale the model computes. CONSEQUENCE: t56's 'copies' rung is un-refuted and MERGES into the fp8-head/epilogue rung. One rung, one ceiling. The ceiling stays the single-instrument 75.5 ms = 4.44% from t58; this trace is corroboration of MECHANISM AND SCOPE, not a larger number -- it is a different run (7 cards, allreduce, different shapes) than t58's single card, and the two must not be added. The honest statement of size is: at least 4.44% by direct measurement, with the same work present at production scale across head and body. SEPARATE OPEN ITEM, not part of the epilogue path: aten::add_ at 82.00 ms/step over 1509 calls/step is the one large owner that is not quantisation; the optimizer/accumulate hypothesis for it is UNVERIFIED.",
+   "measured": "2026-09-01",
+   "source": "bench_eff/t56_elementwise_owner.py, runs/t56_elementwise_owner.json, /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted); corroborates probes/t58_quant_tax.py + runs/t58_quant_tax.json",
+   "config": {
+    "task": "tilerl-10",
+    "trace": "ddp_trace_rank0.json, 7 cards, rank 0",
+    "n_active_steps": 20,
+    "group_ms_per_step": 250.61,
+    "resolved_ms_per_step": 250.57,
+    "resolved_pct": 99.98,
+    "quant_ops_ms_per_step": 165.7,
+    "quant_pct_of_group": 66,
+    "abs_calls_per_step": 344,
+    "clamp_calls_per_step": 343,
+    "t58_predicted_head_amax_per_step": 320,
+    "add_ms_per_step_unexplained": 82.0,
+    "ceiling_held_at_ms": 75.5,
+    "ceiling_held_at_pct_of_step": 4.44
+   },
+   "uncertainty": "The ddp trace and t58's single-card microbench are different runs and are NOT added; the ceiling remains t58's. The 250.61 ms group total here differs from t56's 107.0 ms because that was the single-card lane trace -- expected by construction, not a discrepancy. aten::add_'s 82 ms has a hypothesis and no verification. The trace itself is uncommitted pod state (415 MB), so this attribution is not reproducible from the repo alone.",
+   "boundary": "METHOD WARNING, and the reason this entry exists in the form it does: the FIRST run of this attribution reported 0% resolved and was one commit away from being published as the finding 'the trace cannot name it'. That was a broken join, not a property of the trace -- kernels carry args.correlation, cpu_ops carry args['External id'], these are DIFFERENT KEYSPACES, and the cuda_runtime launch event carrying both is the required middle hop. A broken join is indistinguishable from a true negative. This is the only defect found today whose wrong answer was a NEGATIVE result, which is the hardest kind to catch because nobody argues with a null: a confident 'nothing here' invites no scrutiny, while a confident wrong positive gets challenged. Any attribution that resolves 0% or 100% should be treated as a suspected tooling failure until the join is verified on a case whose answer is known.",
+   "status": "measured",
+   "refuted_by": "an attribution on the single-card lane trace showing the elementwise group there is NOT dominated by the same five ops"
   }
  ]
 }
