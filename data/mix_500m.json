@@ -28,22 +28,6 @@
  "_code_supply_tokens_at_generation": 3800000000.0,
  "_warnings": [],
  "domains": {
-  "code_py_starcoder": {
-   "weight": 0.34,
-   "epochs": 2,
-   "anneal": 0.34,
-   "role": "code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single weight because the objective is code.",
-   "weight_decimals": 5,
-   "rows_from_weight_at_runtime": 1660156,
-   "want_tokens": 6799998976,
-   "supply_tokens_one_epoch": 3800000000.0,
-   "epochs_fractional": 1.7895,
-   "pool_rows_estimated": 922507.0,
-   "cursor_used_rows": 0,
-   "cap_covers": 1660156,
-   "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
-   "epoch_cap_note": "epochs 2 = ceil((0+1660156)/922507.0). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
-  },
   "math_owm_stage2": {
    "weight": 0.26,
    "epochs": 1,
@@ -61,36 +45,36 @@
    "epoch_cap_note": "epochs 1 = ceil((0+1269531)/1584774). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "en_c4_stage2": {
-   "weight": 0.16,
+   "weight": 0.16000002,
    "epochs": 2,
-   "anneal": 0.16,
+   "anneal": 0.16000002,
    "role": "English general. Carries the natural-language competence code docstrings and problem statements are written in; below ~15% the prose side of a code model degrades before the code side does.",
-   "weight_decimals": 5,
-   "rows_from_weight_at_runtime": 781249,
-   "want_tokens": 3199995904,
+   "weight_decimals": 8,
+   "rows_from_weight_at_runtime": 781250,
+   "want_tokens": 3200000000,
    "supply_tokens_one_epoch": 2403694865,
    "epochs_fractional": 1.3313,
    "pool_rows_estimated": 581696,
    "cursor_used_rows": 0,
-   "cap_covers": 781249,
+   "cap_covers": 781250,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
-   "epoch_cap_note": "epochs 2 = ceil((0+781249)/581696). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "epoch_cap_note": "epochs 2 = ceil((0+781250)/581696). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "cot": {
-   "weight": 0.08,
+   "weight": 0.08000001,
    "epochs": 4,
-   "anneal": 0.08,
+   "anneal": 0.08000001,
    "role": "chain-of-thought. Supply is 0.424B, the smallest of the seven, so this weight is an epoch decision as much as a composition one: at 9% it draws 4.24 epochs and crosses the 4-epoch line, at 8% it draws 3.77 and stays under. Set to 8% for that reason -- past 4 epochs the weight buys re-reads rather than information, and the 16B readout already measured cot at 0.1180 nat/B own-token, the second-lowest of seven. Paying for re-reads of the flattest domain is the worst available use of the budget.",
-   "weight_decimals": 5,
-   "rows_from_weight_at_runtime": 390624,
-   "want_tokens": 1599995904,
+   "weight_decimals": 8,
+   "rows_from_weight_at_runtime": 390625,
+   "want_tokens": 1600000000,
    "supply_tokens_one_epoch": 424056227,
    "epochs_fractional": 3.7731,
    "pool_rows_estimated": 98504,
    "cursor_used_rows": 0,
-   "cap_covers": 390624,
+   "cap_covers": 390625,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
-   "epoch_cap_note": "epochs 4 = ceil((0+390624)/98504). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "epoch_cap_note": "epochs 4 = ceil((0+390625)/98504). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "textbook_30b": {
    "weight": 0.1,
@@ -109,20 +93,20 @@
    "epoch_cap_note": "epochs 2 = ceil((0+488281)/388021). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "chatml": {
-   "weight": 0.03,
+   "weight": 0.0300001311,
    "epochs": 3,
-   "anneal": 0.03,
+   "anneal": 0.0300001311,
    "role": "ChatML-rendered chat. The corpus contains effectively none (<0.075% per domain) and the 200M round showed SFT installs only the canon it is fed -- relying on SFT to teach a prefix the base has never seen is a bet this project already lost once.",
-   "weight_decimals": 5,
-   "rows_from_weight_at_runtime": 146484,
-   "want_tokens": 599998464,
+   "weight_decimals": 10,
+   "rows_from_weight_at_runtime": 146485,
+   "want_tokens": 600002560,
    "supply_tokens_one_epoch": 283903257,
    "epochs_fractional": 2.1134,
    "pool_rows_estimated": 65831,
    "cursor_used_rows": 0,
-   "cap_covers": 146484,
+   "cap_covers": 146485,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
-   "epoch_cap_note": "epochs 3 = ceil((0+146484)/65831). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "epoch_cap_note": "epochs 3 = ceil((0+146485)/65831). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "zh_web": {
    "weight": 0.03,
@@ -139,6 +123,38 @@
    "cap_covers": 146484,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
    "epoch_cap_note": "epochs 1 = ceil((0+146484)/5192316). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+  },
+  "code_py_starcoder": {
+   "weight": 0.3061142,
+   "epochs": 2,
+   "anneal": 0.3061142,
+   "role": "code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective because the target is code. Split across two corpora in proportion to supply, so both draw the same 1.61 epochs; the split is a supply fact, the 34% is the objective.",
+   "weight_decimals": 7,
+   "rows_from_weight_at_runtime": 1494698,
+   "want_tokens": 6122283008,
+   "supply_tokens_one_epoch": 3800000000.0,
+   "epochs_fractional": 1.6111,
+   "pool_rows_estimated": 922507.0,
+   "cursor_used_rows": 0,
+   "cap_covers": 1494698,
+   "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "epoch_cap_note": "epochs 2 = ceil((0+1494698)/922507.0). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+  },
+  "code_py_rp1t": {
+   "weight": 0.033886,
+   "epochs": 2,
+   "anneal": 0.033886,
+   "role": "code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective because the target is code. Split across two corpora in proportion to supply, so both draw the same 1.61 epochs; the split is a supply fact, the 34% is the objective.",
+   "weight_decimals": 6,
+   "rows_from_weight_at_runtime": 165458,
+   "want_tokens": 677715968,
+   "supply_tokens_one_epoch": 420646182,
+   "epochs_fractional": 1.6111,
+   "pool_rows_estimated": 97671,
+   "cursor_used_rows": 0,
+   "cap_covers": 165458,
+   "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "epoch_cap_note": "epochs 2 = ceil((0+165458)/97671). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   }
  }
 }

@@ -49,10 +49,18 @@ CODE_FLOOR = 2.5e9                   # below this the code-first objective is no
 # The objective, as weights. Each carries the reason it is that number rather than another.
 # ORDER MATTERS: code first, because the target is a code model and every other weight is set
 # against what code leaves. This is the inversion -- supply does not appear in this dict.
+#
+# CODE IS ONE OBJECTIVE SPLIT ACROSS TWO CORPORA. The target says "34% Python", not "34%
+# starcoder"; the split between the two sources is a supply fact and belongs in the split
+# function, not here. Keeping them separate domains rather than one is deliberate: their
+# provenance and filtering differ (starcoder is already deduplicated and quality-filtered,
+# rp1t_python is our own ast.parse pass over raw github), so merging them would merge two
+# fingerprints into one and lose the ability to attribute a per-role reading to either.
+CODE_TOTAL = 0.34
+CODE_WHY = ("code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one "
+            "language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective "
+            "because the target is code.")
 OBJECTIVE = {
-    "code_py_starcoder": (0.34, "code, Python only (ast.parse is both language ID and syntax "
-                                "filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 "
-                                "at 1.3B. The largest single weight because the objective is code."),
     "math_owm_stage2":   (0.26, "math/reasoning. Second-largest: the 16B readout put math and "
                                 "reasoning on the steepest part of their curves, and code and math "
                                 "share the symbolic-structure transfer this size can still absorb."),
@@ -81,6 +89,13 @@ OBJECTIVE = {
                                 "is the clearest single case of composition following the target "
                                 "rather than the warehouse."),
 }
+
+# Parse-verified Python recovered from the code_rp1t stamp: 209,668 of 3,747,157 rows survive
+# ast.parse, for 420,646,182 tokens. We already paid a full-corpus pass to establish this, and
+# it is the same kind of data as the starcoder fetch -- dropping it would forfeit 10% of the
+# code domain's one-epoch supply for nothing (fb, 2026-09-01).
+RP1T_PYTHON_TOKENS = 420_646_182
+
 
 # One-epoch supply, tokens. Measured stamps for the landed domains; code is a parameter.
 # chatml is a RE-RENDER of wiki_chat's chat rows, not new data, so its supply is bounded by
@@ -118,27 +133,85 @@ def _weight_for_rows(rows, total_rows):
     raise AssertionError(f"no weight up to 12dp yields {rows} rows")
 
 
+def _rows_for_weights(weights, total_rows):
+    """Allocate total_rows across weights by LARGEST REMAINDER, so the parts sum to the whole.
+
+    int(total_rows*w) per domain and hope is what the first version did, and the sum came to
+    4,882,809 of a 4,882,812 budget -- three rows, 12,288 tokens, quietly not trained on. That
+    is the same shape as stage 1's 61,593,088-token under-draw: an executable quantity missing
+    its stated target because every part floored independently and nothing checked the sum.
+    Largest-remainder gives the leftover rows to the domains that lost the most to flooring.
+    """
+    floors = {n: int(total_rows * w) for n, w in weights.items()}
+    short = total_rows - sum(floors.values())
+    order = sorted(weights, key=lambda n: total_rows * weights[n] - floors[n], reverse=True)
+    for n in order[:short]:
+        floors[n] += 1
+    assert sum(floors.values()) == total_rows, floors
+    return floors
+
+
+def _code_split(starcoder_tokens, code_rows):
+    """Split code_rows between the two Python corpora IN PROPORTION TO SUPPLY.
+
+    Proportional is the only split that gives both corpora the same epoch count, which is what
+    we want: neither source is known to be better per-token, so there is no reason to re-read
+    one more than the other. Any other ratio is an unmeasured quality claim.
+
+    Splitting in ROWS with the second corpus taking the remainder, rather than splitting a
+    weight and letting each half floor, for the reason in _rows_for_weights.
+    """
+    total = starcoder_tokens + RP1T_PYTHON_TOKENS
+    sc_rows = round(code_rows * starcoder_tokens / total)
+    return {
+        "code_py_starcoder": (sc_rows, starcoder_tokens),
+        "code_py_rp1t": (code_rows - sc_rows, RP1T_PYTHON_TOKENS),
+    }
+
+
 def build(code_tokens):
-    if code_tokens < CODE_FLOOR:
+    """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it."""
+    code_supply = code_tokens + RP1T_PYTHON_TOKENS
+    if code_supply < CODE_FLOOR:
         raise SystemExit(
-            f"REFUSING: code supply {code_tokens / 1e9:.2f}B is below the {CODE_FLOOR / 1e9:.1f}B "
-            f"floor. At weight {OBJECTIVE['code_py_starcoder'][0]:.0%} of {TOTAL_TOKENS / 1e9:.0f}B "
-            f"the code domain wants {OBJECTIVE['code_py_starcoder'][0] * TOTAL_TOKENS / 1e9:.2f}B, "
-            f"which is {OBJECTIVE['code_py_starcoder'][0] * TOTAL_TOKENS / code_tokens:.1f} epochs. "
-            "A code-first objective funded by re-reading the same code four times over is a "
-            "different experiment; lower TOTAL or raise supply, do not lower the code weight."
+            f"REFUSING: code supply {code_supply / 1e9:.2f}B (starcoder {code_tokens / 1e9:.2f}B "
+            f"+ rp1t python {RP1T_PYTHON_TOKENS / 1e9:.2f}B) is below the {CODE_FLOOR / 1e9:.1f}B "
+            f"floor. At {CODE_TOTAL:.0%} of {TOTAL_TOKENS / 1e9:.0f}B the code objective wants "
+            f"{CODE_TOTAL * TOTAL_TOKENS / 1e9:.2f}B, which is "
+            f"{CODE_TOTAL * TOTAL_TOKENS / code_supply:.1f} epochs. A code-first objective funded "
+            "by re-reading the same code four times over is a different experiment; lower TOTAL "
+            "or raise supply, do not lower the code weight."
         )
-    supply = dict(SUPPLY, code_py_starcoder=code_tokens)
-    assert abs(sum(w for w, _ in OBJECTIVE.values()) - 1.0) < 1e-9, "weights must sum to 1"
+    # Rows come from a single largest-remainder allocation over ALL domains, code counted as one
+    # objective, so the parts sum to the budget exactly. Then the code objective's rows are split
+    # between its two corpora. Two levels, each summing exactly, rather than seven independent
+    # floors.
+    # Derived here, not cached at module level: the ladder-dir selftest mutates OBJECTIVE,
+    # and a module-level snapshot would not follow it -- the refusal then dies on a
+    # KeyError instead of its own assertion, which is a guard failing for the wrong reason.
+    alloc = dict({n: w for n, (w, _) in OBJECTIVE.items()}, code=CODE_TOTAL)
+    rows_by_name = _rows_for_weights(alloc, ROWS)
+    code = _code_split(code_tokens, rows_by_name.pop("code"))
+    spec = {n: (rows_by_name[n], why) for n, (_, why) in OBJECTIVE.items()}
+    supply = dict(SUPPLY)
+    code_epochs = CODE_TOTAL * TOTAL_TOKENS / code_supply
+    for name, (rows, sup) in code.items():
+        spec[name] = (rows, CODE_WHY + f" Split across two corpora in proportion to supply, so "
+                                       f"both draw the same {code_epochs:.2f} epochs; the split "
+                                       f"is a supply fact, the {CODE_TOTAL:.0%} is the objective.")
+        supply[name] = sup
+    assert sum(r for r, _ in spec.values()) == ROWS, (
+        f"rows sum to {sum(r for r, _ in spec.values())}, not the {ROWS} budget"
+    )
 
     domains, warnings = {}, []
     total_rows_used = 0
-    for name, (w_target, why) in OBJECTIVE.items():
+    for name, (rows, why) in spec.items():
         assert name not in LADDER_DIRS, (
             f"{name} collides with a directory named by data/mix_scale_*.json; a new corpus there "
             "falsifies the ladder's fingerprint"
         )
-        rows = int(ROWS * w_target)
+        rows = int(rows)
         w, places = _weight_for_rows(rows, ROWS)
         runtime = int(ROWS * w)
         assert runtime == rows, f"{name}: weight {w} draws {runtime}, want {rows}"
@@ -223,14 +296,45 @@ def build(code_tokens):
 
 
 def selftest():
-    # 1. the code weight is a function of supply, not a constant
-    a = build(3.0e9)["domains"]["code_py_starcoder"]
-    b = build(6.0e9)["domains"]["code_py_starcoder"]
-    assert a["weight"] == b["weight"], "the WEIGHT is the objective and must not move with supply"
-    assert a["epochs"] > b["epochs"], (
-        f"epochs must fall as supply rises: {a['epochs']} at 3B vs {b['epochs']} at 6B"
+    # 1. the OBJECTIVE is fixed and only its internal split tracks supply. The first version of
+    #    this check asserted the per-domain code weight never moves, which was right when code
+    #    was one domain and became wrong the moment it became two -- the invariant is the SUM.
+    #    Asserted in ROWS, not weights: rows are what build_mix draws, and each weight carries
+    #    only enough decimals to hit its own row target, so the weights sum to 0.34 +- 2e-8 by
+    #    construction. Testing the encoding instead of the quantity would fail on rounding that
+    #    cannot move a single row.
+    code_rows_target = _rows_for_weights(dict({n: w for n, (w, _) in OBJECTIVE.items()}, code=CODE_TOTAL), ROWS)["code"]
+    for cs in (3.0e9, 6.0e9):
+        m = build(cs)["domains"]
+        got = (m["code_py_starcoder"]["rows_from_weight_at_runtime"]
+               + m["code_py_rp1t"]["rows_from_weight_at_runtime"])
+        assert got == code_rows_target, (
+            f"code objective drifted to {got} rows against {code_rows_target} at supply {cs}"
+        )
+    a3, b3 = build(3.0e9)["domains"], build(6.0e9)["domains"]
+    assert a3["code_py_starcoder"]["weight"] < b3["code_py_starcoder"]["weight"], (
+        "starcoder's share of the code objective must rise with its supply"
     )
-    print(f"  1 supply moves epochs ({a['epochs']} at 3B -> {b['epochs']} at 6B), never the weight")
+    assert a3["code_py_starcoder"]["epochs"] > b3["code_py_starcoder"]["epochs"], (
+        f"epochs must fall as supply rises: {a3['code_py_starcoder']['epochs']} at 3B vs "
+        f"{b3['code_py_starcoder']['epochs']} at 6B"
+    )
+    # both corpora draw the SAME epochs -- that is what proportional-to-supply buys, and it is
+    # the property that makes the split a supply fact rather than a quality claim.
+    for cs in (3.0e9, 3.8e9, 6.0e9):
+        m = build(cs)["domains"]
+        e1, e2 = m["code_py_starcoder"]["epochs_fractional"], m["code_py_rp1t"]["epochs_fractional"]
+        assert abs(e1 - e2) < 0.01, f"code corpora draw different epochs at {cs}: {e1} vs {e2}"
+    print(f"  1 code objective pinned at {code_rows_target} rows across supplies; only the split "
+          f"moves, and both corpora draw equal epochs")
+
+    # 1b. the whole mix sums to the budget. Seven independent floors lost 3 rows (12,288 tokens)
+    #     before largest-remainder allocation replaced them, and nothing was checking the sum.
+    for cs in (3.0e9, 3.8e9, 6.0e9):
+        m = build(cs)
+        got = sum(d["rows_from_weight_at_runtime"] for d in m["domains"].values())
+        assert got == ROWS, f"rows sum to {got}, not the {ROWS} budget, at supply {cs}"
+    print(f"  1b all domains sum to exactly {ROWS} rows (largest-remainder, no floor leakage)")
 
     # 2. the floor refuses rather than silently shipping a code-light code-first run
     try:
