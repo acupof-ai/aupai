@@ -31,7 +31,7 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 复用 `eval/readout_30b.py` 的三态机器(moved/floor/flat,阈值来自 prereg),不新造 harness:milestone = 500M@T,paired = 200M@T 同 token checkpoint,同 held-out head 打分。
 
-- **WORKING:** 主读数(生成通过率 Δ vs 200M@T)> 12.6pt @ 492(2δ),连续两个 checkpoint。
+- **WORKING:** 主读数(生成通过率 Δ vs 200M@T)> 12.6pt @ 492(2δ),连续两个 checkpoint;**且 500M 通过率 > max(shuffle 对照, 常数基线) + 2δ**(常数基线 = 评测集 gold 众数频率,math_test_500 = 9.78%——200M 的 8.13% 低于它,Δ 再大也不算能力,见 honest_prereg §10)。
 - **NULL:** 全跑程主读数从未 moved。报"null over full run"+ 达到的灵敏度(可检出的最小 Δ)。
 - **护栏跳闸:** math_v2_like < 80%(honest_prereg OOE-e)→ 停读生成,报"配比伤了判别仪器",数据问题不是规模问题。
 - **warmup 不可读:** warmup 结束前的 checkpoint 不判(同 readout_30b 的 WARMUP-CONFOUND 逻辑);500M 的 warmup 步数由 tilerl 配方定,落地后写死边界。
@@ -60,6 +60,7 @@ mix_500m.json(96b5fdd,9 域)实测组成:math_owm_stage2 26.4%(OpenWebMath,含 \
 ## 6. 报告纪律
 
 - 每个数字携带抽取规则 + 测量配置(fb 2026-09-01 两条裁定)。
+- **判定线 = 最强常数策略,不是随机**(fb 2026-09-01 通则):任何选择/短答案评测,地板取 max(shuffle, 常数基线);两个对照并排报,防的是不同失败。
 - 读数进展发 board `readout` 课题;WORKING/NULL 判决同时发 board + 写本文 §7。
 - 对照同行:通过率、shuffle 对照、鹦鹉下限、提取率,四个数一行(honest_prereg §4)。
 
