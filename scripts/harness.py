@@ -52,6 +52,17 @@ _CHECK_TIMEOUT = 5
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
     "eval_sft_template_contamination": 90,
+    # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
+    # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
+    # going to fit 5s, so it timed out on nine consecutive runs and FAILed with
+    # "has not actually run since" -- the contamination guard was off for a day while
+    # reading as a known-red rather than as absent. 60s is 4x the 14s measured total,
+    # which leaves room for a bigger pack without leaving room for a hang.
+    #
+    # Not indexed instead: a first-4-token sorted index over 192M positions costs 44s
+    # to build and 0.49s to search, so it is 3x SLOWER than the linear scan it would
+    # replace. Measured before choosing (de).
+    "sft_pack_uncontaminated": 60,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -265,6 +276,85 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_reported_path_is_written(root):
+    """A runner that reports a preds path reports the one it WROTE.
+
+    open_artifact(path, run=...) versions the path -- it writes preds_x.<run>.jsonl and
+    hands the real name back as fout.name. Four runners captured that into out_path,
+    attested out_path correctly, and then printed and recorded the UNVERSIONED
+    preds_path. The log's last line named a file that does not exist, and
+    l1_fewshot's --out JSON carried it in a machine-readable field.
+
+    It cost an hour on 2026-09-01: the 16B code cell finished, the log said
+    `preds saved: ...k8.jsonl`, that file was absent, and the result read as a dead run
+    until the versioned file turned up in a directory listing. The attest call was right
+    the whole time, which is why nothing caught it -- the correct value was computed and
+    then not used.
+
+    Source-level, because it is a wiring defect: in a function that binds out_path from
+    an open_artifact handle, a later `preds_path` in a print or a dict value is the
+    stale name. Only the same function is examined, so a runner that never versions is
+    not implicated."""
+    bad = []
+    files = 0
+    for fp in sorted(glob.glob(os.path.join(root, "eval", "*.py"))
+                     + glob.glob(os.path.join(root, "probes", "*.py"))):
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                src = fh.read()
+            tree = ast.parse(src)
+        except (OSError, SyntaxError):
+            continue
+        if "open_artifact" not in src:
+            continue
+        files += 1
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            body = ast.dump(fn)
+            if "open_artifact" not in body or "out_path" not in body:
+                continue
+            for node in ast.walk(fn):
+                # print(f"... {preds_path}") and {"preds_path": preds_path}
+                if isinstance(node, ast.Name) and node.id == "preds_path":
+                    if isinstance(getattr(node, "ctx", None), ast.Store):
+                        continue
+                    parent_is_call = False
+                    for anc in ast.walk(fn):
+                        if isinstance(anc, ast.Call) and anc.func.__class__ is ast.Name \
+                                and getattr(anc.func, "id", "") == "open_artifact" \
+                                and any(a is node for a in anc.args):
+                            parent_is_call = True
+                    if not parent_is_call:
+                        bad.append(f"{os.path.relpath(fp, root)}:{node.lineno} in "
+                                   f"{fn.name}() reports preds_path, not out_path")
+    if bad:
+        return FAIL, "; ".join(sorted(set(bad))[:4])
+    return PASS, f"{files} runner(s) using open_artifact report the path they wrote"
+
+
+def _broken_reported_path():
+    """The REAL eval/l1_fewshot.py with the defect put back: the print reverted from
+    out_path to preds_path. That exact edit is the historical bug, applied to the
+    historical file, not a synthetic runner -- and it was run against the fix before
+    this world existed: FAIL naming l1_fewshot.py:208, then PASS restored."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    os.remove(os.path.join(d, "eval"))
+    os.makedirs(os.path.join(d, "eval"))
+    for f in glob.glob(os.path.join(ROOT, "eval", "*.py")):
+        shutil.copy(f, os.path.join(d, "eval", os.path.basename(f)))
+    p = os.path.join(d, "eval", "l1_fewshot.py")
+    with open(p, encoding="utf-8") as f:
+        src = f.read()
+    fixed = 'print(f"preds saved: {out_path}")'
+    assert fixed in src, "the fix is gone; this world no longer reinstates anything"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(src.replace(fixed, 'print(f"preds saved: {preds_path}")'))
+    return d
+
+
 def check_cited_artifacts_attested(root):
     """A fact citing a gitignored artifact carries a sha256 some attestation matches.
 
@@ -306,7 +396,7 @@ def check_cited_artifacts_attested(root):
     # several no longer exist. Failing them is a red nobody can act on, which is the
     # same as no signal. New and re-measured facts carry the hash.
     contract_from = "2026-09-01"
-    cited, bad, legacy = 0, [], 0
+    cited, bad, legacy, unattestable = 0, [], 0, []
     for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
         try:
             obj = json.load(open(fp, encoding="utf-8"))
@@ -320,8 +410,23 @@ def check_cited_artifacts_attested(root):
                     legacy += 1
                     continue
                 cited += 1
-                sha = e.get("artifact_sha256") or ""
                 base = os.path.basename(path)
+                # artifact_sha256 is a string for a one-artifact fact and a
+                # {basename: sha} object for a fact that cites several. A single string
+                # could not express a restatement that rescores three artifacts at once,
+                # and the alternative -- splitting one measurement across three facts so
+                # the field fits -- would shape the record around the guard (de,
+                # 2026-09-01).
+                decl = e.get("artifact_sha256") or ""
+                sha = decl.get(base, "") if isinstance(decl, dict) else decl
+                # A fact measured after the contract may still cite an artifact written
+                # BEFORE it -- a restatement rescores old files. Those have no ledger row
+                # and never can. Declaring the leg in config.unattested_leg exempts it
+                # and COUNTS it, so the evidence says how much of the citation is
+                # unbacked; a date-inferred exemption would hide it (de, 2026-09-01).
+                if base in str(e.get("config", {}).get("unattested_leg", "")):
+                    unattestable.append(f"{e.get('id')}:{base}")
+                    continue
                 if not sha:
                     bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
                 elif (base, sha) not in attested:
@@ -339,8 +444,10 @@ def check_cited_artifacts_attested(root):
                       f"({legacy} predate the contract)")
     if bad:
         return FAIL, f"{len(bad)} of {cited} citation(s) unattested: {'; '.join(bad[:3])}"
+    ua = (f"; {len(unattestable)} leg(s) declared unattestable: {', '.join(sorted(unattestable)[:3])}"
+          if unattestable else "")
     return PASS, (f"{cited} artifact citation(s) since {contract_from}, every hash attested "
-                  f"by its writer ({legacy} legacy citations exempt)")
+                  f"by its writer ({legacy} legacy citations exempt){ua}")
 
 
 def _broken_cited_artifacts_attested():
@@ -486,6 +593,25 @@ def check_selftests_are_gated(root):
         return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
                       f"SELFTEST_FILES, so nothing runs them at commit time: "
                       f"{', '.join(missing[:4])}")
+    # A NEEDS_DATA entry is a CLAIM about why a selftest cannot run at commit time, and
+    # nothing recomputed it. scripts/harness.py's read "the hook already runs `harness
+    # check`, which is its selftest" -- false: `check` runs run_checks(), `--selftest`
+    # verifies every check FAILs on its broken world, and they share no code path. The
+    # harness's core proof had never run at commit time and the exemption said it had
+    # (Codex found it, de confirmed by reading both entry points, 2026-09-01).
+    #
+    # A reason cannot be verified in general, but the specific false form can: an
+    # exemption that claims some OTHER command already covers it is the one shape that
+    # asserts coverage rather than impossibility. Cost, missing data, and needing root
+    # are claims about this machine; "X already runs it" is a claim about X.
+    if nd:
+        covered = [k for k, v in re.findall(r'"([^"]+)":\s*"([^"]*)"', nd.group(1))
+                   if re.search(r"\bis its selftest\b|\balready runs\b|\bcovered by\b", v)]
+        if covered:
+            return FAIL, (f"{len(covered)} NEEDS_DATA reason(s) claim another command "
+                          f"already runs the selftest, which is a coverage claim nothing "
+                          f"recomputes: {', '.join(covered)} -- state why it cannot run "
+                          f"here (cost, data, root), not what supposedly covers it")
     return PASS, f"{len(have)} selftest-carrying file(s), all gated by the hook"
 
 
@@ -3877,6 +4003,20 @@ def check_ladder_config(root):
     if not os.path.exists(fpath):
         return SKIP, "data/mix_scale_run_config.json not present"
     frozen = json.load(open(fpath, encoding="utf-8"))
+    # A key declared frozen but absent from the config freezes nothing: `frozen[k]`
+    # raised KeyError on 'warmdown' and the whole check died, so the other twenty keys
+    # stopped being verified too. warmdown and anneal_frac were added to _FROZEN_KEYS
+    # when the WSD schedule landed and never added to the JSON. A crash is better than a
+    # silent skip and worse than a finding: report it as one, and keep checking the keys
+    # that do have a frozen value (de, 2026-09-01).
+    absent = [k for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS) if k not in frozen]
+    if absent:
+        # BEFORE the no-checkpoints SKIP: an unfrozen frozen key is a defect in the
+        # config, true on a machine holding no checkpoints at all. Behind the SKIP it
+        # would be invisible on every dev box and only visible on the pod.
+        return FAIL, (f"{len(absent)} key(s) declared frozen but absent from "
+                      f"data/mix_scale_run_config.json, so nothing freezes them: "
+                      f"{', '.join(absent)} -- add the value or drop the key")
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
@@ -3911,6 +4051,8 @@ def check_ladder_config(root):
             continue
         checked += 1
         for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS):
+            if k not in frozen:
+                continue  # reported once, as `absent`, not per checkpoint
             v = cfg.get(k)
             if v is None:
                 unknown.append(f"{os.path.basename(p)}:{k}")
@@ -5388,6 +5530,13 @@ CHECKS = [
         _broken_mix_supply,
     ),
     (
+        "reported_path_is_written",
+        "a runner that versions its output reports the path it actually wrote",
+        "the 16B code cell's log said `preds saved: ...k8.jsonl`, that file did not exist, and the result read as a dead run for an hour -- attest() had the right path all along, the print and the --out JSON used the pre-versioning one",
+        check_reported_path_is_written,
+        _broken_reported_path,
+    ),
+    (
         "cited_artifacts_attested",
         "a fact citing a gitignored eval artifact carries a sha256 its writer attested",
         "preds_*.jsonl is gitignored so fact_refs_resolve skips it; an unlogged rerun overwrote preds_l1_d3.jsonl and five facts pointed at another run's rows for hours",
@@ -5566,8 +5715,43 @@ def _write_timeout_strikes(strikes):
         pass
 
 
+def tree_provenance(root=ROOT):
+    """One line naming the tree a check result describes: branch, HEAD, how far
+    behind main, and whether it is dirty.
+
+    A check's conclusion has two inputs -- the check's code and the tree it ran on --
+    and only the first was ever reported. On 2026-09-01 no_foreground_pod_training was
+    fixed four times and 3b ran the version before the first fix; separately two
+    sessions each read the other's item as red in their own tree while both items were
+    done. "This check is broken" and "this check is broken in my tree" are different
+    claims, and the output could not tell them apart (fb, user order, 2026-09-01)."""
+    def git(*a):
+        r = subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    head = git("rev-parse", "--short", "HEAD")
+    if head is None:
+        return "tree: not a git repository"
+    branch = git("rev-parse", "--abbrev-ref", "HEAD") or "?"
+    behind = git("rev-list", "--count", "HEAD..main")
+    dirty = git("status", "--porcelain")
+    parts = [f"branch {branch}", f"HEAD {head}"]
+    if behind is None:
+        parts.append("behind main: unknown (no main ref)")
+    elif behind == "0":
+        parts.append("up to date with main")
+    else:
+        parts.append(f"BEHIND main by {behind} -- `git merge --no-edit main` before "
+                     f"trusting any red below")
+    if dirty:
+        parts.append(f"{len(dirty.splitlines())} uncommitted file(s)")
+    return "tree: " + ", ".join(parts)
+
+
 def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     results = []
+    if not quiet:
+        print(f"  {tree_provenance(root)}")
     prev_strikes = _read_timeout_strikes()
     strikes = {}
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
@@ -7993,6 +8177,41 @@ def _lane_occupant(card):
     return None
 
 
+def cmd_free_card(argv):
+    """`harness free-card [--wait N] [--settle N]` -- print a lane card measured free.
+
+    Exists for the scoring that fires without a person: run_ddp.sh scored inside the
+    training shell, so CUDA_VISIBLE_DEVICES was still the seven-card block and the
+    scorer took whatever card 0 happened to be doing. On 2026-09-01 that was another
+    process holding 14.37 GiB, and the scorer died asking for 96 MiB. Nothing read a
+    card; the card number came from the environment (fb's ruling: the free judgement
+    must come from a measurement at that moment, never from a default card number).
+
+    Prints one index and exits 0, or waits for one and exits 1 if none frees --
+    queue, never spill into the block.
+    """
+    ap = argparse.ArgumentParser(prog="harness free-card")
+    ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
+    ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
+    a = ap.parse_args(argv)
+    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    if not lane:
+        print("no lane card in the allocation", file=sys.stderr)
+        return 1
+    deadline = time.time() + a.wait
+    while True:
+        free = [c for c in lane if c not in _busy_cards(lane, settle=a.settle)]
+        if free:
+            print(free[0])
+            return 0
+        if time.time() >= deadline:
+            held = {c: _lane_occupant(c) for c in lane}
+            print(f"no free lane card: {held}. Queue, do not spill into the block.",
+                  file=sys.stderr)
+            return 1
+        time.sleep(min(30, max(5, a.wait / 20)))
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -8264,9 +8483,15 @@ def cmd_launch(rest):
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
     if not args.training and not args.no_gpu and cards:
-        lane_card = cards.split(",")[0].strip()
-        occupant = _lane_occupant(lane_card)
-        if occupant:
+        # Which lane card, measured now -- not the first one in the list. A single
+        # nvidia-smi reading misses a step gap, so this watches a window (_busy_cards);
+        # the card number must come from that measurement, never from a default.
+        lane = [c.strip() for c in cards.split(",") if c.strip()]
+        busy = _busy_cards(lane, settle=8)
+        free = [c for c in lane if c not in busy]
+        lane_card = free[0] if free else lane[0]
+        occupant = _lane_occupant(lane_card) if not free else None
+        if occupant or not free:
             # No ledger row. The refusal happens BEFORE the start row is written, so a
             # second launch under a live run's name cannot close that run's row: on
             # 2026-08-31 l1_rerun_0831 read running/running/fail while pid 550586 was
@@ -8275,6 +8500,7 @@ def cmd_launch(rest):
             print(f"REFUSED: {args.name} - lane GPU {lane_card} occupied by pid {occupant}. "
                   f"No ledger row written; the lane holds one job at a time.", file=sys.stderr)
             return 1
+        cards = lane_card
 
 
     # 2. The start row, once the job is known to be runnable.
@@ -9189,6 +9415,8 @@ def main():
         return cmd_kill(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "milestone":
         return cmd_milestone(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "free-card":
+        return cmd_free_card(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

@@ -223,7 +223,7 @@ def main():
     else:
         print(f"code-500: {n_pass1}/{total} = {n_pass1 / total:.1%}")
         print(f"no-fence rate {no_fence / total:.1%}")
-    print(f"preds saved: {preds_path}")
+    print(f"preds saved: {out_path}")
 
 
 if __name__ == "__main__":

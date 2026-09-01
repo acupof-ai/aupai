@@ -738,11 +738,41 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     records = []
+    failed = []
     for ck in a.ckpt:
         try:
             rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics, a.profile or "full")
         except Exception as e:
-            print(f"\n{os.path.basename(ck)}: SKIPPED ({type(e).__name__}: {str(e)[:90]})", flush=True)
+            # "SKIPPED (OutOfMemoryError: ...)" read as "the checkpoint OOMed when
+            # saving", which would be a large conclusion -- training fits but writing
+            # does not. The save succeeded at 987 MB; SCORING is what ran out of memory.
+            # A message whose subject is not the thing that failed is the same defect
+            # class as everything else found today (fb, 2026-09-01).
+            #
+            # It also exited 0 and wrote no record, so an automatic post-checkpoint run
+            # failed twice and was found by someone reading an unrelated log. The
+            # planned save policy is ~28 milestones over three days: this would have
+            # failed 28 times while score_matrix_present stayed red the whole time, and
+            # a red nobody can act on is the same as no signal.
+            #
+            # The message is NOT truncated. [:90] cut CUDA's OOM line at "GPU 0 has a
+            # total capacity of 95.22 GiB o" -- exactly before the allocated/free/
+            # reserved figures that say whether this process was greedy or the card was
+            # already occupied. The surviving text read as "a scorer wants 95 GB"; the
+            # full line says it failed to allocate 96 MiB, which is the opposite
+            # diagnosis. A handler that trims the part naming the cause is the defect
+            # it is reporting.
+            detail = " ".join(str(e).split())
+            failed.append((os.path.basename(ck), f"{type(e).__name__}: {detail}"))
+            print(f"\n{os.path.basename(ck)}: SCORING FAILED -- the checkpoint is fine, "
+                  f"this run produced no metrics\n  {type(e).__name__}: {detail}",
+                  flush=True)
+            if isinstance(e, torch.cuda.OutOfMemoryError):
+                free, total = torch.cuda.mem_get_info()
+                print(f"  card state now: {free / 2**30:.1f} GiB free of "
+                      f"{total / 2**30:.1f} GiB -- if free is small, another process "
+                      f"holds the card and this is contention, not a greedy scorer",
+                      flush=True)
             continue
         records.append(rec)
         print(f"\n{rec['ckpt']}  type={rec['type']}", flush=True)
@@ -760,12 +790,16 @@ def main():
         write_records(a.json, records)
         print(f"\nwrote {len(records)} record(s) to {a.json}")
 
-    n_skip = len(a.ckpt) - len(records)
-    if n_skip == len(a.ckpt) and n_skip > 0:
-        print(f"ALL {n_skip} checkpoint(s) SKIPPED", flush=True)
+    # ANY failure exits nonzero, not only an all-fail. The planned save policy is ~28
+    # milestones and this runs automatically per checkpoint: one silent failure in
+    # twenty-eight is exactly the case that goes unnoticed, and the all-or-nothing
+    # condition made a single loss indistinguishable from success to any caller
+    # checking the exit code. Attempted is not a result (de, 2026-09-01).
+    if failed:
+        for name, why in failed:
+            print(f"FAILED {name}: {why}", flush=True)
+        print(f"{len(failed)}/{len(a.ckpt)} checkpoint(s) produced NO metrics", flush=True)
         sys.exit(1)
-    if n_skip > 0:
-        print(f"{n_skip}/{len(a.ckpt)} checkpoint(s) SKIPPED", flush=True)
 
 
 if __name__ == "__main__":

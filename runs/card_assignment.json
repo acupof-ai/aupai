@@ -1,6 +1,7 @@
 {
   "_comment": [
-    "Card ownership, granted by the controller. launch_gate reads launch_block_granted.",
+    "Card ownership, granted by the controller. launch_gate reads launch_block_granted",
+    "and note; a false grant with no note reads as a stub, not as a decision.",
     "Idle is not free: a card's owner is the job still running or the one the controller",
     "has queued, never the instantaneous nvidia-smi row. Three collisions on 2026-09-01",
     "came from reading an idle card as an available one."
@@ -10,15 +11,15 @@
   "launch_block_granted": false,
   "block_cards": null,
   "lane_card": null,
-  "why_not_granted": "The 7-card block is not granted because the launch is not ready: the corpus build is unfinished, mix epochs are still ESTIMATED, and no world=7 memory peak exists. Granting the block now would idle seven cards behind a NO-GO gate.",
+  "note": "Refused on purpose, not unanswered. The block is not granted because the launch is not ready: code_py_starcoder holds 3 files against a projected 8.85B tokens, all nine domains carry epochs marked ESTIMATED rather than derived from a token cache, and no domain carries a stamp the corpora gate can compare. Granting seven cards now idles them behind a NO-GO. Lifted when corpora and epochs_measured both read GO.",
+  "verified": "2026-09-01 20:30 by nvidia-smi on the pod: cards 1-7 at 0 MiB, card 0 at 5795 MiB",
   "current_holders": [
-    {"cards": "0", "who": "44", "job": "200M degeneration/L0' baseline", "until": "self-terminating"},
-    {"cards": "4,5,6", "who": "tilerl", "job": "shape500_b32 world=3, final validate", "until": "self-terminating"}
+    {"cards": "0", "who": "de", "job": "E2E_GPU=0 E2E_LAYERS=32 scripts/.test_e2e_staged.py", "until": "self-terminating", "verified": "container pid 1701559, 12m elapsed"}
   ],
   "next_grant": {
-    "to": "tilerl",
-    "for": "world=7 peak memory, b32 and b16+accum2, 30 steps each",
-    "blocked_on": "card 0 freeing when 44's baseline finishes",
-    "note": "no 6-card substitute: the DDP bucket grows with world, so a 6-card peak cannot answer whether b32 fits at 7"
+    "to": "the 500M run",
+    "for": "the 7-card block",
+    "blocked_on": "corpora and epochs_measured reaching GO",
+    "note": "no 6-card substitute for the memory question: the DDP bucket grows with world, so a 6-card peak cannot answer whether b32 fits at 7. That question is now answered (69.63 GiB at world=7, runs/w7_b32a1.log); the block is held for the corpus, not the memory."
   }
 }
