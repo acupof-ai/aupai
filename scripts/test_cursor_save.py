@@ -129,6 +129,52 @@ def main():
                            f"cfg's 42 -- a cursor replayed under a different shuffle seed "
                            f"names different rows")
 
+    # RESUMED: absolute step against a relative plan. This is the case that survived the
+    # first fix, because stage 1 starts at step 0 where absolute and relative are equal --
+    # so every test written against stage 1 passes with the defect intact. At step 24000
+    # against a 523,158-row plan the index runs past the array, Python's slice CLAMPS
+    # instead of raising, and the cursor written is the plan-complete count wearing an
+    # as-of-step label (tilerl, 2026-09-01). Two sub-cases: the origin known, and the
+    # origin missing so the count is impossible.
+    for label, cfg in shapes(mid_run=True):
+        cfg._plan_step_origin = 16000  # resumed here; the plan below is stage 2's
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "ck.pt")
+            save_checkpoint(p, {"w": torch.zeros(1)}, cfg, "deadbeefdeadbeef", step=16100)
+            ck = torch.load(p, map_location="cpu", weights_only=False)
+            got = ck.get("row_cursor")
+            if not got:
+                bad.append(f"{label} (resumed): no row_cursor -- refused "
+                           f"({ck.get('row_cursor_refused', 'no reason given')})")
+                continue
+            # 100 RELATIVE steps * 16 * 2 = 3200 rows, all in domain 0. The absolute
+            # reading would be 16100*32 = 515,200 rows, clamped to the 8000-row plan,
+            # giving code_rp1t 4000 and zh_web 4000 -- plan-complete, not as-of-step.
+            if got.get("code_rp1t") != 3200:
+                bad.append(f"{label} (resumed): code_rp1t {got.get('code_rp1t')}, expected "
+                           f"3200 from 100 RELATIVE steps; the absolute step would clamp to "
+                           f"the plan end and report {got.get('code_rp1t')} as if measured")
+
+    # The origin is wrong or absent: the count is impossible and the writer must refuse,
+    # not clamp. A missing cursor costs a resume that repeats rows; a wrong one is
+    # indistinguishable from a right one to every later reader.
+    for label, cfg in shapes(mid_run=True):
+        cfg._plan_step_origin = 0  # forgotten after a resume
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "ck.pt")
+            save_checkpoint(p, {"w": torch.zeros(1)}, cfg, "deadbeefdeadbeef", step=16100)
+            ck = torch.load(p, map_location="cpu", weights_only=False)
+            if ck.get("row_cursor"):
+                bad.append(f"{label} (bad origin): wrote a cursor {ck['row_cursor']} for "
+                           f"515,200 rows against an 8000-row plan -- a clamp, reported as "
+                           f"a measurement")
+            elif "row_cursor_refused" not in ck:
+                bad.append(f"{label} (bad origin): refused silently; the checkpoint must "
+                           f"say why no cursor was written")
+            # the srcfp/seed writes must still happen on the refusal path
+            elif not ck.get("row_cursor_srcfp"):
+                bad.append(f"{label} (bad origin): the refusal path skipped row_cursor_srcfp")
+
     if bad:
         print("FAIL: save_checkpoint dropped the cursor")
         for b in bad:
