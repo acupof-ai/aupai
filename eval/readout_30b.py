@@ -201,26 +201,49 @@ def draws_equal(domain, milestone_mix, paired_mix, seq=4096):
 
 
 def load_score_record(path, ckpt, profile="full"):
-    """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
-    without a profile reads as 'full' (pre-profile ledger, no migration)."""
+    """The score_matrix record for a (ckpt, profile). A row without a profile reads as
+    'full' (pre-profile ledger, no migration).
+
+    LAST match, not first. write_records replaces same-key rows, so duplicates should
+    not exist -- but the file is append-only under a lock, hand-appended rows happen,
+    and a crash between read and write leaves both. When they do exist, first-match
+    returns the OLDEST: a rescore is shadowed by the record it was meant to replace,
+    and the readout prints the superseded number with no sign anything was wrong. Every
+    other reader in this codebase folds last-wins (check_score_matrix, _exp_events);
+    this one did not (de-8 finding #5).
+
+    22 of 36 keys in runs/score_matrix.jsonl are duplicated today. All of them happen to
+    be byte-identical pairs, so nothing published is currently wrong -- which is luck
+    rather than the guard working, and is exactly the state in which a defect is easiest
+    to leave in place.
+    """
     if not path or not os.path.exists(path):
         return None
+    found = None
     for line in open(path, encoding="utf-8"):
+        if not line.strip():
+            continue
         r = json.loads(line)
         if r.get("ckpt") == ckpt and r.get("profile", "full") == profile:
-            return r
-    return None
+            found = r
+    return found
 
 
 def load_domain_loss(path, ckpt):
-    """domain_loss.py --json output: {ckpt, domains: {name: {loss, tokens}}, unweighted_mean}."""
+    """domain_loss.py --json output: {ckpt, domains: {name: {loss, tokens}}, unweighted_mean}.
+
+    LAST match, for the same reason as load_score_record above: a rescore appends, and
+    first-match would hand back the record the rescore replaced."""
     if not path or not os.path.exists(path):
         return None
+    found = None
     for line in open(path, encoding="utf-8"):
+        if not line.strip():
+            continue
         r = json.loads(line)
         if r.get("ckpt") == ckpt:
-            return r
-    return None
+            found = r
+    return found
 
 
 def get_field(record, field):
@@ -977,6 +1000,39 @@ def selftest():
         f"a record with no head_fp was judged: {_o2[-400:]!r}. Fail-open on a missing "
         "correctness field retroactively certifies every row written before it.")
     print("  absent head_fp refuses (the whole metric, since no head can be verified)")
+
+    # 6. a rescore must not be shadowed by the record it replaced. Two rows for one
+    # (ckpt, profile), the second a rescore: first-match hands back the stale one and
+    # prints it with no sign anything is wrong. 22 of 36 keys in the real ledger are
+    # duplicated today, all byte-identical pairs -- so this is currently latent, which
+    # is the state in which such a defect is easiest to leave in place.
+    print("\n--- selftest 6b: a duplicated key reads LAST, not first ---")
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as _d:
+        _p = os.path.join(_d, "sm.jsonl")
+        with open(_p, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps({"ckpt": "ck.pt", "profile": "full", "measured": "2026-08-30",
+                                 "metrics": {"mc_full": {"Average": 11.1}}}) + "\n")
+            _f.write(json.dumps({"ckpt": "other.pt", "profile": "full", "metrics": {}}) + "\n")
+            _f.write(json.dumps({"ckpt": "ck.pt", "profile": "full", "measured": "2026-09-01",
+                                 "metrics": {"mc_full": {"Average": 22.2}}}) + "\n")
+        _got = load_score_record(_p, "ck.pt")
+        assert _got["measured"] == "2026-09-01", (
+            f"load_score_record returned the {_got['measured']} record; the 2026-09-01 "
+            "rescore was shadowed by the row it replaced")
+        # the profile key still discriminates -- last-wins must not collapse profiles
+        assert load_score_record(_p, "ck.pt", profile="milestone") is None, \
+            "a milestone lookup matched a full record"
+        # and the same for the domain-loss reader
+        _dl = os.path.join(_d, "dl.jsonl")
+        with open(_dl, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps({"ckpt": "ck.pt", "unweighted_mean": 1.0}) + "\n")
+            _f.write(json.dumps({"ckpt": "ck.pt", "unweighted_mean": 2.0}) + "\n")
+        assert load_domain_loss(_dl, "ck.pt")["unweighted_mean"] == 2.0, \
+            "load_domain_loss returned the shadowed record"
+    ran.append("6b")  # "6" is taken; a duplicate label makes the ran list unreadable
+    print("  duplicated key reads last; profile still discriminates; both readers fold")
 
     return _done()
 
