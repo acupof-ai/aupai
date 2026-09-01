@@ -5600,8 +5600,43 @@ def _write_timeout_strikes(strikes):
         pass
 
 
+def tree_provenance(root=ROOT):
+    """One line naming the tree a check result describes: branch, HEAD, how far
+    behind main, and whether it is dirty.
+
+    A check's conclusion has two inputs -- the check's code and the tree it ran on --
+    and only the first was ever reported. On 2026-09-01 no_foreground_pod_training was
+    fixed four times and 3b ran the version before the first fix; separately two
+    sessions each read the other's item as red in their own tree while both items were
+    done. "This check is broken" and "this check is broken in my tree" are different
+    claims, and the output could not tell them apart (fb, user order, 2026-09-01)."""
+    def git(*a):
+        r = subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+
+    head = git("rev-parse", "--short", "HEAD")
+    if head is None:
+        return "tree: not a git repository"
+    branch = git("rev-parse", "--abbrev-ref", "HEAD") or "?"
+    behind = git("rev-list", "--count", "HEAD..main")
+    dirty = git("status", "--porcelain")
+    parts = [f"branch {branch}", f"HEAD {head}"]
+    if behind is None:
+        parts.append("behind main: unknown (no main ref)")
+    elif behind == "0":
+        parts.append("up to date with main")
+    else:
+        parts.append(f"BEHIND main by {behind} -- `git merge --no-edit main` before "
+                     f"trusting any red below")
+    if dirty:
+        parts.append(f"{len(dirty.splitlines())} uncommitted file(s)")
+    return "tree: " + ", ".join(parts)
+
+
 def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     results = []
+    if not quiet:
+        print(f"  {tree_provenance(root)}")
     prev_strikes = _read_timeout_strikes()
     strikes = {}
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
@@ -8023,6 +8058,41 @@ def _lane_occupant(card):
     return None
 
 
+def cmd_free_card(argv):
+    """`harness free-card [--wait N] [--settle N]` -- print a lane card measured free.
+
+    Exists for the scoring that fires without a person: run_ddp.sh scored inside the
+    training shell, so CUDA_VISIBLE_DEVICES was still the seven-card block and the
+    scorer took whatever card 0 happened to be doing. On 2026-09-01 that was another
+    process holding 14.37 GiB, and the scorer died asking for 96 MiB. Nothing read a
+    card; the card number came from the environment (fb's ruling: the free judgement
+    must come from a measurement at that moment, never from a default card number).
+
+    Prints one index and exits 0, or waits for one and exits 1 if none frees --
+    queue, never spill into the block.
+    """
+    ap = argparse.ArgumentParser(prog="harness free-card")
+    ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
+    ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
+    a = ap.parse_args(argv)
+    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    if not lane:
+        print("no lane card in the allocation", file=sys.stderr)
+        return 1
+    deadline = time.time() + a.wait
+    while True:
+        free = [c for c in lane if c not in _busy_cards(lane, settle=a.settle)]
+        if free:
+            print(free[0])
+            return 0
+        if time.time() >= deadline:
+            held = {c: _lane_occupant(c) for c in lane}
+            print(f"no free lane card: {held}. Queue, do not spill into the block.",
+                  file=sys.stderr)
+            return 1
+        time.sleep(min(30, max(5, a.wait / 20)))
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -8294,9 +8364,15 @@ def cmd_launch(rest):
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
     if not args.training and not args.no_gpu and cards:
-        lane_card = cards.split(",")[0].strip()
-        occupant = _lane_occupant(lane_card)
-        if occupant:
+        # Which lane card, measured now -- not the first one in the list. A single
+        # nvidia-smi reading misses a step gap, so this watches a window (_busy_cards);
+        # the card number must come from that measurement, never from a default.
+        lane = [c.strip() for c in cards.split(",") if c.strip()]
+        busy = _busy_cards(lane, settle=8)
+        free = [c for c in lane if c not in busy]
+        lane_card = free[0] if free else lane[0]
+        occupant = _lane_occupant(lane_card) if not free else None
+        if occupant or not free:
             # No ledger row. The refusal happens BEFORE the start row is written, so a
             # second launch under a live run's name cannot close that run's row: on
             # 2026-08-31 l1_rerun_0831 read running/running/fail while pid 550586 was
@@ -8305,6 +8381,7 @@ def cmd_launch(rest):
             print(f"REFUSED: {args.name} - lane GPU {lane_card} occupied by pid {occupant}. "
                   f"No ledger row written; the lane holds one job at a time.", file=sys.stderr)
             return 1
+        cards = lane_card
 
 
     # 2. The start row, once the job is known to be runnable.
@@ -9193,6 +9270,8 @@ def main():
         return cmd_kill(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "milestone":
         return cmd_milestone(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "free-card":
+        return cmd_free_card(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

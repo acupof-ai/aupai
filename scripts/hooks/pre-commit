@@ -50,6 +50,20 @@ def repo_root():
                           capture_output=True, text=True).stdout.strip()
 
 
+def _behind_main():
+    """How many commits main has that this tree does not. 0 on main itself, and 0
+    when the count cannot be taken -- a tree with no main (a fresh temp repo, a
+    clone of one branch) must not be refused for a question that has no answer."""
+    r = subprocess.run(["git", "rev-list", "--count", "HEAD..main"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return 0
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
+
+
 def staged(diff_filter):
     r = subprocess.run(
         ["git", "diff", "--cached", "--name-only", f"--diff-filter={diff_filter}"],
@@ -104,6 +118,38 @@ def main():
             )
             sys.exit(1)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
+
+    # Behind main. A conclusion drawn from a check has two inputs -- the check's code
+    # and the tree it ran on -- and we have only ever reported the first. On
+    # 2026-09-01 no_foreground_pod_training was fixed four times; 3b hit the version
+    # before the first fix, and two sessions each saw the other's item red in their
+    # own tree while both were done. "This check has a bug" and "this check has a bug
+    # in my tree" are different sentences, and nothing in the output told them apart.
+    #
+    # Refuse, never merge. An automatic merge can conflict, and a hook that drops your
+    # tree into a conflict you did not ask for is worse than one that stops you; an
+    # automatic rebase would rewrite history other sessions have already merged
+    # (AGENTS.md). Refusal is the only shape that holds: every rule today that
+    # depended on remembering broke, and every rule that refused at the point of use
+    # held (fb ruling, user order, 2026-09-01).
+    t0 = time.time()
+    behind = _behind_main()
+    merging = os.path.exists(os.path.join(os.path.realpath(
+        subprocess.run(["git", "rev-parse", "--git-common-dir"], capture_output=True,
+                       text=True).stdout.strip() or "."), "MERGE_HEAD"))
+    if behind and not merging and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        print(
+            f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
+            f"  git merge --no-edit main\n"
+            f"Committing here writes on top of code main has already moved past, and "
+            f"any check you ran said nothing about which version it tested.\n"
+            f"Deliberate exception (reproducing something that only fails on the older "
+            f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
+            f"commit and every check behind it describe a tree nobody else has.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
 
     t0 = time.time()
     fail = False
