@@ -453,6 +453,26 @@ def run(root, mix_path, world, here=None):
     return rows
 
 
+def pod_attribution(root):
+    """A pod verdict is attributable to main only when the pod's tree IS main's
+    tree: every manifested file matches AND no unregistered .py hides where
+    tree-grepping checks can see it. pod_drift=0 alone is insufficient -- it
+    compares only manifested files, and 233 unregistered .py sat outside its
+    scope while repo-scan checks FAILed on them (tilerl, 2026-09-01). A verdict
+    from an unattributable tree is noise, so the gate refuses to print one."""
+    from pod_drift import check_pod, unregistered_py
+    ok, msg = check_pod(root)
+    if not ok:
+        return False, f"pod drifted ({msg})"
+    extra = unregistered_py(root)
+    if extra:
+        shown = ", ".join(extra[:3]) + ("..." if len(extra) > 3 else "")
+        return False, (f"{len(extra)} unregistered .py not in manifest ({shown}); "
+                       f"repo-scan results are not attributable to main -- "
+                       f"register or remove them, then re-run")
+    return True, msg
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_500m.json"))
@@ -464,6 +484,12 @@ def main():
 
     here = _here()
     root, note = (ROOT, f"running on the pod ({ROOT})") if here == "pod" else _launch_root(ROOT)
+    if here == "pod":
+        ok, why = pod_attribution(root)
+        if not ok:
+            print(f"REFUSING to print a verdict: {why}")
+            print("          A verdict from an unattributable tree is noise, not a gate.")
+            return 1
     rows = run(root, a.mix, a.world, here)
     elsewhere = sorted(n for n, _ in GATES if AUTHORITY.get(n, "main") not in (here, "both"))
     print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}  here={here}")
@@ -769,6 +795,43 @@ def selftest():
         if name in pod_gates and state == UNKNOWN and "run it there" in why:
             bad.append(f"{name} declined to answer on pod too -- it is not location-aware, "
                        f"it is just always UNKNOWN")
+
+    # POD ATTRIBUTION (44-8): a verdict from an unattributable tree is refused.
+    # pod_drift=0 is insufficient -- unregistered files sit outside its scope, and
+    # 233 of them made pod-scan FAILs unattributable while the drift check read clean.
+    from pod_drift import sha_disk
+
+    def attributable_world(mutate):
+        # A world whose manifest names exactly what it holds, so check_pod's
+        # missing-file branch cannot fire on the subset copy world() makes.
+        d = world(lambda d: None)
+        mp = os.path.join(d, "data", "pod_head_manifest.txt")
+        lines = []
+        for dirpath, _, filenames in os.walk(d):
+            if os.path.relpath(dirpath, d).split(os.sep)[0] == "data":
+                continue  # manifest territory is code/config; the manifest lists none of data/ here
+            for fn in filenames:
+                fp = os.path.join(dirpath, fn)
+                lines.append(f"{sha_disk(fp)}  {os.path.relpath(fp, d)}  code")
+        with open(mp, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        mutate(d)
+        return d
+
+    d = attributable_world(lambda d: None)
+    ok, msg = pod_attribution(d)
+    if not ok:
+        bad.append(f"pod_attribution refused a clean attributable world ({msg[:60]})")
+    d = attributable_world(lambda d: open(
+        os.path.join(d, "scripts", "probe_throwaway.py"), "w", encoding="utf-8").write("# not in any manifest\n"))
+    ok, msg = pod_attribution(d)
+    if ok or "unregistered" not in msg:
+        bad.append(f"pod_attribution did not refuse an unregistered file ({msg[:60]})")
+    d = attributable_world(lambda d: open(
+        os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8").write("\n# drifted after manifest\n"))
+    ok, msg = pod_attribution(d)
+    if ok or "drifted" not in msg:
+        bad.append(f"pod_attribution did not refuse a drifted file ({msg[:60]})")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
