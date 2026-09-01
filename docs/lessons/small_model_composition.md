@@ -63,6 +63,34 @@ fb 记忆核验:**SmolLM-135M @ 600B token、FineWeb-Edu + Cosmopedia——token
 - 135M–1.3B 之间(我们坐的位置)没有任何有能力的文献点。
 - Phi-1 的"50B token seen"vs 7B 数据集是 ~7 epoch;Phi-1.5 是 30B 数据集 5 epoch。epoch 重复在小预算下是未量化的变量。
 
+## 6. e1 仪器的文献参考带(BPB / 条件 NLL)
+
+fb 2026-09-01:val-slice 缺陷后(`eval/domain_loss.py:47` 的 scored 集是训练池均匀随机样本,不是 held-out——tilerl 实测 0.625% 落 val vs 0.587% 随机期望),唯一不被解码病理和 val-slice 缺陷混杂的仪器是 e1 在建的 bits-per-byte 或 gold-answer 条件 NLL。文献里 100-500M 级有没有参考带?
+
+**有,但发表的形式是 The Pile 上的 nats/token(或 ppl),不是 BPB。**
+
+| 模型 | 参数 | 训练 token | Pile nats/token | 来源 |
+|---|---|---|---|---|
+| Cerebras-GPT-111M | 111M | 2.2B(Chinchilla 最优) | 2.608 | Cerebras-GPT 论文 Table 3 |
+| Mamba-130M | 130M | 300B | 2.357(ppl 10.56) | Mamba 论文 Table 1 |
+| Pythia-160M | 160M | 300B | 3.389(ppl 29.64) | Mamba 论文 Table 1 基线 |
+| Cerebras-GPT-256M | 256M | 5.1B | 2.349 | Cerebras-GPT |
+| Mamba-370M | 370M | 300B | 2.114(ppl 8.28) | Mamba |
+| Pythia-410M | 410M | 300B | 2.298(ppl 9.95) | Mamba 基线 |
+| Cerebras-GPT-590M | 590M | 11.8B | 2.181 | Cerebras-GPT |
+| Mamba-790M | 790M | 300B | 1.992(ppl 7.33) | Mamba |
+
+带:100-150M **2.36-2.61**;250-400M **2.11-2.35**;600-800M **1.99-2.18** nats/token。
+
+**条件 NLL of gold answers:没有发表。** 这个规模的论文都报 accuracy/EM,不报 gold-answer NLL 的水平值。按 fb 指示,说到这停。
+
+**三个 caveat:**
+1. 语料不匹配:The Pile(22 源英文为主)vs 我们的 7 域(重代码/数学/中文)。NLL 是语料依赖的,这个带只能做水平 sanity check,不能做比较。
+2. BPB 转换需要 bytes/token:BPB = nats/token ÷ ln2 ÷ (bytes/token),bytes/token 要用实际 tokenizer 在实际语料上测。
+3. Pythia-160M 是离群值(3.39,远差于同 token 数的 Mamba-130M 2.36)——架构/训练差异,引用时注意。
+
+**val-slice 缺陷的精确范围(44 分析):** 杀掉的是跨实验水平比较(我们的 ppl vs 发表值)和任何"held-out 泛化"读法;给跨角色 Δ 比较加了过拟合混杂(多 epoch 域的训练文档损失更低,看起来学得更多——cot 6 epoch vs wiki_chat 0.08 epoch);**不杀**同实验同 scored 文本上的 Δ vs 同仪器 σ̂ floor(16B 判决作为"仪器相对"存活,30B prereg 同范围)。e1 的仪器是正解。
+
 ## Sources
 
 - SmolLM 博客(语料 220B/28B/4B,600B token): https://huggingface.co/blog/smollm
@@ -76,3 +104,5 @@ fb 记忆核验:**SmolLM-135M @ 600B token、FineWeb-Edu + Cosmopedia——token
 - TinyStories 论文(<10M,合成,连贯性): https://arxiv.org/abs/2305.07759
 - DCLM 论文(过滤是关键;7B @ 2.6T → MMLU 64%): https://arxiv.org/abs/2406.11794
 - Pythia 论文(300B The Pile,与同参 OPT 持平——原始基线): https://arxiv.org/abs/2304.01373
+- Cerebras-GPT 论文(Pile nats/token 表,§6 参考带): https://arxiv.org/abs/2304.03208
+- Mamba 论文(Pile ppl 表 + Pythia 基线,§6 参考带): https://arxiv.org/abs/2312.00752
