@@ -15,15 +15,24 @@ as a feasibility constraint that can REFUSE a weight, never as the thing that se
 
 THE CODE WEIGHT IS A FUNCTION, NOT A CONSTANT. code_rp1t turned out to be unlabelled
 multi-language soup: of 3,747,157 rows only 209,668 parse as Python 3, so a 7.57B stamp is 0.42B
-of Python. 3b is fetching starcoderdata's Python split and the surviving count is not known yet.
-Passing --code-tokens re-derives the mix against whatever actually lands, so nobody has to revise
-a number by hand. Below CODE_FLOOR the writer REFUSES rather than quietly shipping a code-light
-run under a code-first objective.
+of Python. Passing --code-tokens re-derives the mix against whatever actually lands, so nobody
+has to revise a number by hand. Below CODE_FLOOR the writer REFUSES rather than quietly shipping
+a code-light run under a code-first objective.
 
-BUDGET IS DECIDED HERE, NOT INHERITED. 30B was set for a 200M model. See the rationale doc; the
-short version is that the binding constraint is not compute, it is that only ~15B tokens of
-non-zh_web material exist at one epoch, and zh_web is capped at 3% by the objective so it cannot
-backfill. TOTAL is 20B and the reasoning is in docs/lessons/mix_500m_rationale.md.
+The default 8.85e9 is a PROJECTION, not a measurement: 3b measured 151.5M and 147.0M
+parse-verified tokens on shards 0 and 1 and extrapolated x59. That is a 3.4% sample. I read a
+0.08%-sampled near-dup rate as a corpus fact earlier today and it was the sampling rate, so
+this default is labelled and must be replaced with the landed total when 3b reports it.
+
+BUDGET IS DECIDED HERE, NOT INHERITED, AND ITS FIRST ARGUMENT WAS WRONG. 30B was set for a
+200M model. The original case for 20B was that only ~15B of non-zh_web material existed at one
+epoch -- that died when starcoder measured 8.85B instead of the assumed 3.80B, putting non-zh
+supply at 20.51B. 20B survived the re-derivation on weaker grounds: it is 2.03x
+compute-optimal where 30B is 3.04x, for 0.0575 nat, on a run that changed shape, optimizer
+scaling and corpus at once. Note what does NOT justify it: '20B is the largest budget where
+no domain crosses 4 epochs' is circular, because the only domain that crosses is cot and
+cot's weight was itself set by that ceiling. docs/lessons/mix_500m_rationale.md 2.2 has the
+full re-derivation and says plainly that the argument is weaker than it was.
 
 EPOCHS ARE CUMULATIVE AND COMPUTED, NEVER TYPED. cap = ceil((used + want) / pool). The used[]
 term is the trap that killed a stage-2 launch once: build_mix computes cap = int(pool*epochs) -
@@ -67,18 +76,25 @@ OBJECTIVE = {
     "en_c4_stage2":      (0.16, "English general. Carries the natural-language competence code "
                                 "docstrings and problem statements are written in; below ~15% the "
                                 "prose side of a code model degrades before the code side does."),
-    "cot":               (0.08, "chain-of-thought. Supply is 0.424B, the smallest of the seven, so "
-                                "this weight is an epoch decision as much as a composition one: at "
-                                "9% it draws 4.24 epochs and crosses the 4-epoch line, at 8% it "
-                                "draws 3.77 and stays under. Set to 8% for that reason -- past 4 "
-                                "epochs the weight buys re-reads rather than information, and the "
-                                "16B readout already measured cot at 0.1180 nat/B own-token, the "
-                                "second-lowest of seven. Paying for re-reads of the flattest domain "
-                                "is the worst available use of the budget."),
-    "textbook_30b":      (0.10, "textbook/instructional. The Phi-1 'textbook quality' arm; the "
-                                "16B readout measured it at 0.5024 nat/B own-token, second-steepest "
-                                "of the seven and 30x cot's rate. Took cot's released point for "
-                                "exactly that reason: same cost, 4.3x the measured rate."),
+    "cot":               (0.08, "chain-of-thought. 8% is a CEILING, not a target: cot's supply is "
+                                "0.424B, the smallest of the eight, so at 9% of 20B it draws 4.24 "
+                                "epochs and crosses Muennighoff's 4-epoch line while 8% draws 3.77. "
+                                "Held at the largest value that stays under. WHAT THIS WEIGHT IS "
+                                "NOT: it is not derived from cot's value to the objective, because "
+                                "nothing measures that. The 16B readout's 0.1180 nat/B is a "
+                                "within-role rate and docs/standards/training_loop.md section 6 -- "
+                                "which I wrote -- forbids using nat/B for cross-role allocation, "
+                                "since transfer inflates every such rate by an unmeasured and "
+                                "role-dependent amount. An earlier draft of this file justified "
+                                "moving a point from cot to textbook as 'same cost, 4.3x the "
+                                "measured rate'. That is exactly the forbidden comparison and it is "
+                                "withdrawn."),
+    "textbook_30b":      (0.10, "textbook/instructional. The Phi-1 'textbook quality' arm: curated "
+                                "instructional prose is the ingredient that paper credits, and this "
+                                "is the closest domain we have to it. 10% rather than 9% because "
+                                "cot's ceiling released a point and textbook is the domain the "
+                                "OBJECTIVE ranks next -- not because its measured nat/B is higher, "
+                                "which would be the cross-role comparison section 6 forbids."),
     "chatml":            (0.03, "ChatML-rendered chat. The corpus contains effectively none "
                                 "(<0.075% per domain) and the 200M round showed SFT installs only "
                                 "the canon it is fed -- relying on SFT to teach a prefix the base "
@@ -397,7 +413,7 @@ def selftest():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--code-tokens", type=float, default=3.8e9,
+    ap.add_argument("--code-tokens", type=float, default=8.85e9,
                     help="parse-verified Python tokens that actually landed; the code weight is "
                          "a function of this, so pass the measured number")
     ap.add_argument("--check", action="store_true")
