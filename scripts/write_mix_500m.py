@@ -179,7 +179,10 @@ assert all(w is not None for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_C
 # ast.parse, for 420,646,182 tokens. We already paid a full-corpus pass to establish this, and
 # it is the same kind of data as the starcoder fetch -- dropping it would forfeit 10% of the
 # code domain's one-epoch supply for nothing (fb, 2026-09-01).
-RP1T_PYTHON_TOKENS = 420_646_182
+# Fallback only: the real value is read from the corpus stamp when it is present (see
+# _rp1t_tokens). This constant is what a dev box without the corpus falls back to, and it is
+# labelled as the ast.parse pass's own count so nobody reads it as current.
+RP1T_PYTHON_TOKENS_FALLBACK = 420_646_182
 
 
 # One-epoch supply, tokens. Measured stamps for the landed domains; code is a parameter.
@@ -429,6 +432,30 @@ def _measured_pools():
             if v.get("pool_rows")}
 
 
+def _rp1t_tokens():
+    """The ast.parse-surviving Python supply: the stamp when the corpus is here, else the
+    fallback constant. Never both, and the JSON records which one was used."""
+    return _corpus_stamp("code_py_rp1t", "tokens") or RP1T_PYTHON_TOKENS_FALLBACK
+
+
+def _corpus_stamp(name, field):
+    """One field out of a domain's build_corpus_stats.json, or None when the corpus is absent.
+
+    Supplies are READ, not typed, for the same reason fingerprints are (fb, 2026-09-01). Three
+    values for code_py_rp1t were in circulation tonight -- my 420,646,182, fb's 420,841,191 and
+    the stamp's 421,239,303, a 0.14% spread -- and every one of them was somebody's honest
+    transcription of a number that had since moved. A figure copied into source is a claim
+    nothing recomputes; read it and the mix goes red via --check when the corpus changes.
+    """
+    stats = os.path.join(ROOT, "data", "corpus", name, "build_corpus_stats.json")
+    if not os.path.exists(stats):
+        return None
+    try:
+        return json.load(open(stats, encoding="utf-8")).get(field)
+    except (OSError, ValueError):
+        return None
+
+
 def _corpus_fingerprint(name):
     """This domain's corpus fingerprint, READ from its build_corpus_stats.json.
 
@@ -527,21 +554,21 @@ def _code_split(starcoder_tokens, code_rows):
     Splitting in ROWS with the second corpus taking the remainder, rather than splitting a
     weight and letting each half floor, for the reason in _rows_for_weights.
     """
-    total = starcoder_tokens + RP1T_PYTHON_TOKENS
+    total = starcoder_tokens + _rp1t_tokens()
     sc_rows = round(code_rows * starcoder_tokens / total)
     return {
         "code_py_starcoder": (sc_rows, starcoder_tokens),
-        "code_py_rp1t": (code_rows - sc_rows, RP1T_PYTHON_TOKENS),
+        "code_py_rp1t": (code_rows - sc_rows, _rp1t_tokens()),
     }
 
 
 def build(code_tokens):
     """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it."""
-    code_supply = code_tokens + RP1T_PYTHON_TOKENS
+    code_supply = code_tokens + _rp1t_tokens()
     if code_supply < CODE_FLOOR:
         raise SystemExit(
             f"REFUSING: code supply {code_supply / 1e9:.2f}B (starcoder {code_tokens / 1e9:.2f}B "
-            f"+ rp1t python {RP1T_PYTHON_TOKENS / 1e9:.2f}B) is below the {CODE_FLOOR / 1e9:.1f}B "
+            f"+ rp1t python {_rp1t_tokens() / 1e9:.2f}B) is below the {CODE_FLOOR / 1e9:.1f}B "
             f"floor. At {CODE_TOTAL:.0%} of {TOTAL_TOKENS / 1e9:.0f}B the code objective wants "
             f"{CODE_TOTAL * TOTAL_TOKENS / 1e9:.2f}B, which is "
             f"{CODE_TOTAL * TOTAL_TOKENS / code_supply:.1f} epochs. A code-first objective funded "
@@ -1087,9 +1114,14 @@ def build_probe():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--code-tokens", type=float, default=8.85e9,
-                    help="parse-verified Python tokens that actually landed; the code weight is "
-                         "a function of this, so pass the measured number")
+    # Default is the STAMP when the corpus is on this host, so the common case needs no
+    # transcription at all. 8.85e9 remains the labelled projection for a dev box. fb sent me
+    # 8,744,830,156 to check against, explicitly not to copy -- and checking is what caught
+    # that this figure is a 3/283-shard extrapolation, not the full count its message claimed.
+    ap.add_argument("--code-tokens", type=float,
+                    default=_corpus_stamp("code_py_starcoder", "tokens") or 8.85e9,
+                    help="parse-verified Python tokens that actually landed; defaults to "
+                         "data/corpus/code_py_starcoder's stamp, else the 8.85e9 projection")
     ap.add_argument("--probe", action="store_true",
                     help="write data/mix_probe_lr.json instead: the 500-step lr A/B probe, "
                          "eight domains, ratios renormalised not re-decided")

@@ -26,6 +26,13 @@ if "--workers" in sys.argv:
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+# harness.py is in scripts/, not the repo root. c3a47e8 moved THIS file from scripts/ to
+# datagen/, where the old `sys.path.insert(0, ROOT)` no longer reaches its sibling -- so the
+# import raised ModuleNotFoundError the first time anyone ran it after the move, which was
+# tonight, warming the caches for the launch gate's epochs item. Same shape as the three
+# os.path.join(HERE, ...) spawn paths the same commit broke: a reference that resolves only at
+# run time, correct-looking until something needs it (b0, 2026-09-01).
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import harness  # single source of truth for the configured mix
 
