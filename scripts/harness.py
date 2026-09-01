@@ -43,7 +43,12 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
-_CHECK_TIMEOUTS = {"eval_sft_template_contamination": 90}
+_CHECK_TIMEOUTS = {
+    "eval_sft_template_contamination": 90,
+    # measured 6.1 s on 2026-09-01 (one remote ps per training process); stopgap until the
+    # read is batched -- the 5 s default killed the whole run because no SIGALRM handler existed
+    "no_foreground_pod_training": 15,
+}
 
 
 class SelftestSkip(Exception):
@@ -4819,23 +4824,17 @@ STAGES = [
 # ------------------------------------------------------------------------- reports
 
 
-def _alarm_to_timeout(signum, frame):
-    """SIGALRM -> TimeoutError, so a slow check SKIPs instead of killing the process.
-
-    signal.alarm() without a handler runs the DEFAULT action, which terminates the
-    process: the `except TimeoutError` below could never fire, and a slow check
-    exited -14 with no stdout, no stderr and no check named. The pre-commit hook then
-    printed "REFUSING: harness check failed ... exit -14" and told the reader to rerun
-    by hand, where it usually passes -- which trains --no-verify, the one habit the
-    hook exists to prevent (e1-4 review, 2026-09-01; it refused this very commit)."""
-    raise TimeoutError()
-
-
-signal.signal(signal.SIGALRM, _alarm_to_timeout)
+def _check_deadline(signum, frame):
+    # The per-check deadline below arms signal.alarm; without this handler SIGALRM's default
+    # disposition killed the whole harness run (exit 142, no output, no check named) --
+    # found 2026-09-01 when no_foreground_pod_training first exceeded 5 s. The handler turns
+    # the alarm into the TimeoutError that run_checks already catches as a named SKIP.
+    raise TimeoutError("check deadline")
 
 
 def run_checks(root=ROOT, quiet=False):
     results = []
+    _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
         try:
@@ -4855,6 +4854,7 @@ def run_checks(root=ROOT, quiet=False):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
                 print(f"         prevents: {incident}")
+    signal.signal(signal.SIGALRM, _prev_alarm_handler)
     return results
 
 
@@ -5730,56 +5730,62 @@ def _selftest_attest_written_path():
 
 
 def _selftest_check_timeout_skips():
-    """A slow check must SKIP, not kill the process.
+    """A slow check must SKIP naming its deadline, not kill the harness.
 
-    signal.alarm() with no handler runs the default action, which terminates. The
-    `except TimeoutError -> SKIP` in run_checks could never fire, so a slow check
-    exited -14 with empty stdout and stderr and the hook refused the commit with no
-    check named. It refused the commit carrying this review (e1-4, 2026-09-01).
+    signal.alarm() with no handler runs SIG_DFL, which terminates: the
+    `except TimeoutError -> SKIP` in run_checks was dead code and a slow check exited
+    -14/142 with empty stdout and stderr. The hook then refused the commit with no
+    check named and told the reader to rerun by hand, where it passes -- the
+    --no-verify training P8 exists to prevent. It refused the commit carrying the
+    e1-4 review of itself (2026-09-01).
 
-    Asserts the handler is installed AND that it converts, because either alone can
-    regress silently: a handler that is registered but raises the wrong type, or the
-    right except clause with no handler, both look fine in isolation."""
-    import signal as _sig
+    Tests the PROPERTY -- run_checks turns an overrun into a named SKIP -- not the
+    mechanism. My first version asserted a handler was installed at import time,
+    which was true only of my own fix; de's is scoped to run_checks and restores the
+    previous handler, which is better, and the test failed on the better code. A test
+    that encodes one implementation rejects its replacement."""
+    slow_name = "__selftest_slow__"
 
-    installed = _sig.getsignal(_sig.SIGALRM)
-    assert callable(installed), f"no SIGALRM handler: alarm would kill the process ({installed})"
-
-    raised = []
-    try:
-        _sig.alarm(1)
-        time.sleep(3)
-    except TimeoutError:
-        raised.append("TimeoutError")
-    finally:
-        _sig.alarm(0)
-    assert raised == ["TimeoutError"], "alarm did not convert to TimeoutError"
-
-    # And the runner turns that into a SKIP naming the timeout, rather than a FAIL or
-    # a crash. A real check function, not a stub of one.
     def slow(_root):
         time.sleep(3)
         return PASS, "should never be reached"
 
-    saved = _CHECK_TIMEOUTS.get("__slow__")
-    _CHECK_TIMEOUTS["__slow__"] = 1
+    saved_checks = list(CHECKS)
+    saved_to = _CHECK_TIMEOUTS.get(slow_name)
+    CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
+                   slow, lambda: _tmp_repo()))
+    _CHECK_TIMEOUTS[slow_name] = 1
     try:
-        t0 = time.time()
-        try:
-            _sig.alarm(_CHECK_TIMEOUTS["__slow__"])
-            state, evidence = slow(ROOT)
-        except TimeoutError:
-            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS['__slow__']}s"
-        finally:
-            _sig.alarm(0)
-        assert state == SKIP and "timed out" in evidence, f"{state} {evidence}"
-        assert time.time() - t0 < 3, "the alarm did not interrupt the sleep"
+        # Time the SLOW CHECK, not the whole run: run_checks executes all 51, so a
+        # wall-clock assertion over the run measures the suite and fails on a healthy
+        # machine. The check under test sleeps 3s and must be cut off at 1s.
+        marks = []
+        real_sleep = time.sleep
+
+        def timed_slow(_root):
+            t = time.time()
+            try:
+                real_sleep(3)
+            finally:
+                marks.append(time.time() - t)
+            return PASS, "should never be reached"
+
+        CHECKS[-1] = (slow_name, "a check that overruns", "the harness dying with no name",
+                      timed_slow, lambda: _tmp_repo())
+        results = run_checks(ROOT, quiet=True)
+        row = [r for r in results if r[0] == slow_name]
+        assert row, f"{slow_name} produced no result -- the run died"
+        _, state, evidence, _, _ = row[0]
+        assert state == SKIP, f"an overrunning check must SKIP, got {state}: {evidence}"
+        assert "timed out" in evidence, f"the SKIP must name the deadline: {evidence}"
+        assert marks and marks[0] < 2.5, f"the alarm did not interrupt the check ({marks}s)"
     finally:
-        if saved is None:
-            _CHECK_TIMEOUTS.pop("__slow__", None)
+        CHECKS[:] = saved_checks
+        if saved_to is None:
+            _CHECK_TIMEOUTS.pop(slow_name, None)
         else:
-            _CHECK_TIMEOUTS["__slow__"] = saved
-    print("  check timeout: SIGALRM converts to TimeoutError, a slow check SKIPs and names it")
+            _CHECK_TIMEOUTS[slow_name] = saved_to
+    print("  check timeout: an overrunning check SKIPs and names its deadline; the run survives")
 
 
 def _selftest_exp_fold():

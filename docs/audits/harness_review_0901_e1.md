@@ -17,7 +17,7 @@ Every finding below was reproduced. Nothing here is read off the source alone.
 
 | id | file:line | principle | failing case | severity | proposed fix |
 |---|---|---|---|---|---|
-| E1 | `harness.py:4826` (`run_checks`) | P3 | `signal.alarm()` is armed with **no `SIGALRM` handler installed anywhere** in harness.py, so the default action kills the process. `except TimeoutError` can never fire. Reproduced: a child running the same shape exits `-14`, stdout and stderr both empty. This is fb's "exit -14 and no check named". | **principle** | **FIXED in this commit**: `_alarm_to_timeout` installed at import. It refused the commit carrying this review, which is how the fix got written. `no_foreground_pod_training` was the slow check; it now SKIPs naming the timeout, and all 51 checks report. |
+| E1 | `harness.py:4826` (`run_checks`) | P3 | `signal.alarm()` is armed with **no `SIGALRM` handler installed anywhere** in harness.py, so the default action kills the process. `except TimeoutError` can never fire. Reproduced: a child running the same shape exits `-14`, stdout and stderr both empty. This is fb's "exit -14 and no check named". | **principle** | **FIXED**, by de in `2df2689`, not by me. It refused the commit carrying this review, so I wrote a fix to deliver the audit; de had independently written a better one — scoped to `run_checks` and restoring the previous handler, where mine installed a global at import. Mine is dropped. What survives from me is `_selftest_check_timeout_skips`, which asserts an overrunning check SKIPs and names its deadline. `no_foreground_pod_training` was the slow check, measured 6.1 s against a 5 s default; de raised it to 15 s as a stopgap. |
 | E2 | `hooks/pre-commit:88` | P3 | The merge exemption is `not merging`, where `merging` is only "`MERGE_HEAD` exists". It does not constrain **what is staged**. Reproduced in `/tmp/mexempt`: `git merge --no-commit other`, then `git add smuggled.txt`, then commit — accepted. `git diff --name-only HEAD^1 HEAD` gives `g.txt smuggled.txt` while the merge itself brought only `g.txt`. | **principle** | during a merge, refuse if the staged set differs from what the merge produced: compare `git diff --cached --name-only HEAD` against `git diff --name-only HEAD MERGE_HEAD` and refuse the extras |
 | E3 | `hooks/pre-commit:83` | P3 | `AUPAI_INTEGRATION_TREE` is read from the environment with no validation, so setting it to any other path disables the tree check completely. Reproduced: `AUPAI_INTEGRATION_TREE=/somewhere/else git commit` landed a plain non-merge commit on `main` in the integration tree. It is documented nowhere — one occurrence in the whole repo, the line that reads it. | **principle** | it exists so the selftest's temp repos are not integration trees. Invert it: default to the real path, and only honour an override that points at an **existing** directory the process is actually inside; or drop it and key on `.git` layout instead |
 | E4 | `pod_drift.py:507` | P3 | On a dev checkout `--check` prints "nothing to check" and **exits 0**. Any future caller that treats `--check` as a gate passes unconditionally off-pod. Mitigated today: both call sites (`pod_push.sh:96,127`) run it through `~/bin/pod` where `is_pod()` is true. | defect | `sys.exit(0)` there is the bug even though nothing exploits it yet — return a distinct code (e.g. 3) or require `--allow-noop`, so a gate cannot silently succeed |
@@ -74,10 +74,21 @@ present and effective:
 
 ## Severity note
 
-E1 is fixed here rather than only reported, because it refused the commit that
-carried this review: the audit could not be delivered without the fix. It is not
-in my assigned files — it lives in `harness.py`'s check runner — but it reached me
-through the hook, which is.
+E1 was fixed twice in parallel: de in `2df2689` and me in `909b807`, within
+about twenty minutes, neither aware of the other. I wrote mine only because the
+bug refused the commit carrying this review — the audit could not be delivered
+without a fix. de's is better and mine is dropped: theirs is scoped to
+`run_checks` and restores the previous handler, where mine installed a global at
+import, which is a side effect on every importer of harness.py including its own
+selftests. I did not consider that.
+
+My selftest survived, but only after it failed on de's code and I had to rewrite
+it. It had asserted a handler was installed **at import** — true of my fix alone —
+so it rejected the better implementation. It now asserts the property instead: an
+overrunning check SKIPs and names its deadline. Verified to fail without a working
+handler (rc 142, the process killed). A test that encodes one implementation
+rejects its replacement, which is the same class as the four vacuous tests in last
+night's retro, arriving from the opposite direction.
 A per-check timeout that kills the process instead of skipping the check turns
 one slow check into a commit refusal with no diagnosis, and the refusal text
 tells the reader to rerun by hand, where it will likely pass. That combination
