@@ -54,19 +54,29 @@ $$\frac{1676.63}{493.1 + 76.38} = 2.94\times$$
 
 用户点名问过"有没有更快的 GEMM"，所以这两条不能合并成一句话。
 
-按理想收益排序的完整杠杆表。**每一行的"确认测量"是判它生死的那一次测量，
-不是复述已有数字**：
+按收益排序的完整杠杆表。两条列的规则：**"确认它的测量"是判这一根生死的那次
+测量，不是复述已有数字**；**每一行标注 ms 是实测还是推算**（fb 规则）——推算
+值今天有三处偏离实测到足以改变决策，最大一处低估 5.3 倍。
 
-| 杠杆 | 理想 ms | 占 span | 达成后 tok/s | 质量代价 | 确认它的测量 | 状态 |
-|---|---|---|---|---|---|---|
-| fp8 head + epilogue 融合量化 | 75.5 | 4.50% | 80.6K | 需实测；上次 fp8 head 走的是 +0.016 nat（gate 0.04） | 单卡 t58 已给上界；下一步是 epilogue 可行性，不是再测一次税 | **活，唯一一根** |
-| flash seam（`torch._dynamo.disable`） | 54.9 | 3.27% | 79.6K | step 110 差 0.157 nat = 1.7× twin floor，未判 | 7 卡 shipment A/B，acceptance 看 gap count + seam ms，**不看 tok/s** | ship candidate |
-| KDA retune（`NUM_WARPS` 解 Hopper 帽） | 0–15 | ≤0.89% | ≤77.7K | 零（不改数值） | 一次 ncu occupancy，便宜 | pending，可能为负 |
-| 单根最大可优化 fusion | 13.0 | 0.78% | 77.6K | 零 | top-12 里只有这一根在 38% occupancy | 边际 |
-| 换 GEMM 库 | 8.9 | 0.53% | 77.4K | 零 | 已做：t59 实测峰值 | **退役** |
+| 杠杆 | ms | 实测/推算 | 占 span | 达成后 tok/s | 质量代价 | 确认它的测量 | 状态 |
+|---|---|---|---|---|---|---|---|
+| fp8 权重字节缓存 | 39.4 | **实测**（t60） | 2.35% | 78.9K | 需 bit-identity 校验 | 已做：t60 三臂交错，spread 0.003–0.007 ms/chunk | **活，无依赖** |
+| flash seam（`torch._dynamo.disable`） | 54.9 | **实测**（t57 trace） | 3.27% | 79.6K | step 110 差 0.157 nat = 1.7× twin floor，未判 | 7 卡 shipment A/B，acceptance 看 gap count + seam ms，**不看 tok/s** | ship candidate |
+| epilogue 融合余下部分 | ≤36.1 | 推算（75.5 上界减已测 39.4） | ≤2.15% | — | 需实测 | 站点 2 无 GEMM 可挂，一份 fp8 副本不可约——**严格小于 36.1** | 受限 |
+| KDA retune（`NUM_WARPS` 解 Hopper 帽） | 0–15 | 推算 | ≤0.89% | ≤77.7K | 零（不改数值） | 一次 ncu occupancy，便宜 | pending，可能为负 |
+| 单根最大可优化 fusion | 13.0 | 推算（理想 2×） | 0.78% | 77.6K | 零 | top-12 里只有这一根在 38% occupancy | 边际 |
+| 换 GEMM 库 | 8.9 | **实测**（t59 峰值） | 0.53% | 77.4K | 零 | 已做 | **退役** |
 
-**四根未退役的全部理想化并同时命中，是 158.4 ms = 9.45%，即 1.10×。**
-有确认机制的两根（head、seam）是 130.4 ms = 7.78% = 1.08×。
+原先"fp8 head + epilogue 75.5 ms"一行现已拆开：**52% 是一个 dict**
+（`_FP8_WSCALE` 缓存了 head 权重的 scale 却没缓存量化后的 bytes，64 个 FLCE
+chunk 各自重算 67.1 MB），不需要 CUTLASS、不需要改 Liger。余下部分**严格
+小于** 36.1 ms：站点 2 的 grad_logits 由 Liger 的 Triton CE kernel 原地覆写，
+没有 GEMM 可以挂 epilogue；且 sm90 fp8 要求 TN 布局而站点 2、3 沿不同轴收缩，
+一份物化的 fp8 副本不可约（`eff.fp8_weight_byte_cache`）。
+
+**五根未退役的全部理想化并同时命中，是 158.4 ms = 9.45%，即 1.10×。**
+**只算两根实测的（字节缓存 39.4 + seam 54.9）是 94.3 ms = 5.62% = 1.06×**，
+这是今天能站得住的数；其余 64.1 ms 全部依赖推算。
 
 这就是"约 +30–40% 软件天花板"这句话被下修的地方。一条一条说明为什么这个和
 更早的说法不同：
