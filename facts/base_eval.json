@@ -936,6 +936,28 @@
    "boundary": "MY OWN PRE-REGISTERED SHIFT WINDOW WAS THE DEFECT, and I am recording it because the pre-registration named this exact confound and then under-provisioned for it. I wrote that a low naive number is ambiguous between wrong tokens and shifted tokens, and committed to reporting a shift-tolerant variant -- at +-4 tokens. The generations open with a preamble far longer than 4 tokens, so the shift-tolerant variant was almost as desynchronised as the naive one. Naming a confound in advance is not the same as sizing the instrument for it. The fix was to sweep the window and add an alignment-free statistic, which is what produced 0.23.",
    "status": "measured",
    "refuted_by": "a free-running measurement on aligned continuations -- prompts whose gold begins immediately with no preamble -- showing agreement near 0.6, which would mean the collapse is preamble structure rather than distribution drift"
+  },
+  {
+   "id": "be.preamble_is_not_the_cause_of_the_collapse",
+   "claim": "whether the free-running collapse is the model's preamble or genuine distribution drift",
+   "value": "DISTRIBUTION DRIFT STANDS; the preamble is not the cause. My own refutation of be.free_running_agreement_collapses_below_teacher_forced, pre-registered before it ran. Anchoring each generation at its first code-looking token (a ```python fence, or a line opening def/class/an assignment) and scoring from there: anchored naive agreement median 0.0423, best-shift-to-+-150 median 0.2609, alignment-free LCS ratio median 0.4524. Against the pre-registered bands (>=0.60 overturns, <=0.30 leaves drift standing) the shift-aligned figure 0.26 is in the DRIFT band and even the most generous statistic, LCS at 0.45, is short of overturning. FIRST, A FRAMING ERROR I FIXED BEFORE RUNNING: I had named this refutation as 'prompts whose gold begins with no preamble'. The golds ALREADY have no preamble -- code_holdout_500 references start at 'def is_prime(x):' in column one. The preamble is the MODEL's, so there was no aligned subset to select and the measurement had to be 'strip the model's own preamble', not 'pick better prompts'. AND THE LIMIT THAT ACTUALLY DECIDES THIS, written into the pre-registration before the number existed: only 19 of 100 generations contain a code anchor at all. The anchored score is computed on a fifth of the set, and that fifth is SELECTED FOR HAVING PRODUCED CODE -- the best-behaved generations. So 0.26 is an upper bound on a favourable subsample, and the collapse is unmeasured for the other 81%. The honest statement is: even among the generations that reach code, agreement stays in the drift band.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/preamble_refutation_prereg.md (bb22666) before runs/preamble_refutation.json existed; GPU7, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "coverage": 19,
+    "anchored_naive_median": 0.0423,
+    "anchored_shift150_median": 0.2609,
+    "anchored_lcs_median": 0.4524,
+    "unanchored_lcs_median": 0.2317,
+    "prereg_overturn_band": ">=0.60",
+    "prereg_drift_band": "<=0.30"
+   },
+   "uncertainty": "19% coverage is the dominant limitation and it is a SELECTED 19%. The anchor regex is a heuristic -- a generation that produces correct code without a fence and without a def/class/assignment opening is missed, so coverage is a lower bound on 'reached code'. LCS is capped at 120 tokens per side.",
+   "boundary": "The refutation improved the estimate without changing the verdict: anchoring lifts LCS from 0.2317 to 0.4524, so the preamble WAS costing roughly half the measured agreement -- it is a real effect and not the cause. A refutation that fails can still move a number, and reporting only 'refutation failed' would have hidden that the unanchored 0.23 understates within-code agreement.",
+   "status": "measured",
+   "refuted_by": "an anchoring method with materially higher coverage -- if 80% of generations can be anchored and still score in the drift band, this conclusion strengthens; if the currently-unanchored 81% would score high under a better anchor, it weakens"
   }
  ]
 }
