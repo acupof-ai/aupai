@@ -73,9 +73,17 @@ reported a property of itself and I read it as a property of the model.**
 | 3 | gold-vs-greedy row | 0.0 "never prefers gold" | an identity; can only read 0.0 | deriving what the row could return |
 | 4 | bin-1 population split | "loops score ~0, so 69 ≈ 0.36" | loops score 0.25 too | pre-registered arithmetic falsified |
 
-**None was caught by reading the code.** Every one was caught by a number that
-did not fit something already known — and in three of the four the thing it did
-not fit was written down in advance.
+**Start with #3, because it is the only one that needs no run at all.** It was
+caught by asking what the test *could* return, not what it did: `greedy_logprob`
+sums per-position maxima and `gold_logprob` sums per-position gold values, so
+max ≥ gold holds at every position by construction and the row can only ever
+read 0.0. **An output space containing one value is an identity in a test's
+costume, and that is checkable before any data exists.** Cheapest check on this
+page — derive the range of your statistic before you compute it.
+
+**The other three needed a number.** None was caught by reading the code. Every
+one was caught by a value that did not fit something already known — and in two
+of those three, the thing it did not fit had been written down in advance.
 
 **The ratio is the argument.** Two of four were caught *only* because a
 pre-registration made the expectation explicit enough to be falsified. #2 said
@@ -96,11 +104,6 @@ written prediction of 0.36 to make it a finding.
 "it keeps you honest" — it converts an unremarkable number into a detectable
 anomaly. A prediction you did not write down cannot fail, and a result that
 cannot fail teaches nothing.
-
-The corollary for #3: it was caught by asking what values the test could
-*return*, not what value it did return. A test whose output space contains only
-one value is an identity wearing a test's costume, and that is checkable before
-any data exists.
 
 ## Before anything else: is this code path reached in the live configuration?
 
