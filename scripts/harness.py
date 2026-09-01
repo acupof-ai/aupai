@@ -4819,6 +4819,21 @@ STAGES = [
 # ------------------------------------------------------------------------- reports
 
 
+def _alarm_to_timeout(signum, frame):
+    """SIGALRM -> TimeoutError, so a slow check SKIPs instead of killing the process.
+
+    signal.alarm() without a handler runs the DEFAULT action, which terminates the
+    process: the `except TimeoutError` below could never fire, and a slow check
+    exited -14 with no stdout, no stderr and no check named. The pre-commit hook then
+    printed "REFUSING: harness check failed ... exit -14" and told the reader to rerun
+    by hand, where it usually passes -- which trains --no-verify, the one habit the
+    hook exists to prevent (e1-4 review, 2026-09-01; it refused this very commit)."""
+    raise TimeoutError()
+
+
+signal.signal(signal.SIGALRM, _alarm_to_timeout)
+
+
 def run_checks(root=ROOT, quiet=False):
     results = []
     for name, asserts, incident, fn, _broken in CHECKS:
@@ -5714,6 +5729,59 @@ def _selftest_attest_written_path():
     print("  attest: records the written path, not the requested one")
 
 
+def _selftest_check_timeout_skips():
+    """A slow check must SKIP, not kill the process.
+
+    signal.alarm() with no handler runs the default action, which terminates. The
+    `except TimeoutError -> SKIP` in run_checks could never fire, so a slow check
+    exited -14 with empty stdout and stderr and the hook refused the commit with no
+    check named. It refused the commit carrying this review (e1-4, 2026-09-01).
+
+    Asserts the handler is installed AND that it converts, because either alone can
+    regress silently: a handler that is registered but raises the wrong type, or the
+    right except clause with no handler, both look fine in isolation."""
+    import signal as _sig
+
+    installed = _sig.getsignal(_sig.SIGALRM)
+    assert callable(installed), f"no SIGALRM handler: alarm would kill the process ({installed})"
+
+    raised = []
+    try:
+        _sig.alarm(1)
+        time.sleep(3)
+    except TimeoutError:
+        raised.append("TimeoutError")
+    finally:
+        _sig.alarm(0)
+    assert raised == ["TimeoutError"], "alarm did not convert to TimeoutError"
+
+    # And the runner turns that into a SKIP naming the timeout, rather than a FAIL or
+    # a crash. A real check function, not a stub of one.
+    def slow(_root):
+        time.sleep(3)
+        return PASS, "should never be reached"
+
+    saved = _CHECK_TIMEOUTS.get("__slow__")
+    _CHECK_TIMEOUTS["__slow__"] = 1
+    try:
+        t0 = time.time()
+        try:
+            _sig.alarm(_CHECK_TIMEOUTS["__slow__"])
+            state, evidence = slow(ROOT)
+        except TimeoutError:
+            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS['__slow__']}s"
+        finally:
+            _sig.alarm(0)
+        assert state == SKIP and "timed out" in evidence, f"{state} {evidence}"
+        assert time.time() - t0 < 3, "the alarm did not interrupt the sleep"
+    finally:
+        if saved is None:
+            _CHECK_TIMEOUTS.pop("__slow__", None)
+        else:
+            _CHECK_TIMEOUTS["__slow__"] = saved
+    print("  check timeout: SIGALRM converts to TimeoutError, a slow check SKIPs and names it")
+
+
 def _selftest_exp_fold():
     """The ledger is an event log: a close clears its start, and a stray later start
     does not reopen a closed run.
@@ -6335,6 +6403,7 @@ def _demo():
     _selftest_devs_map()
     _selftest_gpu_descendants()
     _selftest_exp_fold()
+    _selftest_check_timeout_skips()
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_reverted_content()
