@@ -301,7 +301,7 @@ def _selftest():
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.0)}}}])[0][0] == FAIL  # all zero
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == OUT_OF_SCOPE
-    print("read_resume_proof selftest OK: 16 cases "
+    print("read_resume_proof selftest OK: 20 cases "
           "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor equal/disagree/absent/none, "
           "sum ok/world-dropped/empty/denominator, unmatched-log, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
