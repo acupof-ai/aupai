@@ -93,7 +93,13 @@ def verdict(a, b, name_a="0.85", name_b="1.2"):
     if a["refuted"] and b["refuted"]:
         return "not-decidable", "both arms refuted"
     gap = abs(a["mean_loss"] - b["mean_loss"])
-    if gap < 0.05:
+    # A gap of EXACTLY 0.05 must count as reaching the threshold, and binary floats do
+    # not give you that: 2.3968 - 2.3468 is 0.04999999999999982, so a bare `< 0.05`
+    # reports "gap 0.0500 < 0.05" -- a printed line that contradicts itself, and a
+    # verdict decided by representation error rather than by the rule. The rule says
+    # BELOW 0.05 is not decidable, so the comparison carries a tolerance well under the
+    # 4-decimal precision the report prints.
+    if gap < 0.05 - 1e-9:
         return "not-decidable", f"gap {gap:.4f} < 0.05"
     lower, lname, other = ((a, name_a, b) if a["mean_loss"] < b["mean_loss"]
                            else (b, name_b, a))
@@ -116,10 +122,15 @@ def report(a, b):
     sem_d = (a["sem"] ** 2 + b["sem"] ** 2) ** 0.5
     out.append(f"\n  quantity: mean of {a['n']} single-rank micro-batch losses "
                f"sampled from the last 100 steps (not a 100-step mean)")
-    out.append(f"  gap {gap:.4f}, SEM of the difference {sem_d:.4f} "
-               f"= {gap / sem_d:.2f} sigma"
-               + ("  -- the 0.05 threshold is 0.83 sigma here, so a gap near it is "
-                  "not a signal" if sem_d > 0.03 else ""))
+    sig = gap / sem_d if sem_d else float("inf")
+    # de: 0.83 sigma does not translate itself into "four times in ten" for a reader
+    # who stops at the verdict line, so print the probability too. This is the chance
+    # two arms with NO true difference produce a gap this large or larger.
+    from statistics import NormalDist
+    p_null = 2 * (1 - NormalDist().cdf(sig)) if sig < 40 else 0.0
+    out.append(f"  gap {gap:.4f}, SEM of the difference {sem_d:.4f} = {sig:.2f} sigma"
+               f"  -- two arms with NO true difference land here or higher "
+               f"{p_null * 100:.0f}% of the time")
     out.append(f"\n  VERDICT: {v}  ({why})")
     return "\n".join(out)
 
@@ -145,8 +156,16 @@ def _selftest():
     b4 = read_arm(parse(list(synth(2.50, gnorm=0.5))))
     v4, _ = verdict(a4, b4)
     assert v4 == "not-decidable", f"lower arm with higher gnorm must not win: {v4}"
-    print("read_lr_probe selftest OK: 4 cases (not-decidable, clear gap, refuted, "
-          "lower-but-noisier)")
+    # THE BOUNDARY, in binary floats. An exact 0.05 gap subtracts to 0.049999...982, so
+    # a bare `< 0.05` calls it not-decidable AND prints "gap 0.0500 < 0.05", which reads
+    # as a typo and is actually the verdict turning on representation error.
+    a5 = read_arm(parse(list(synth(2.3468))))
+    b5 = read_arm(parse(list(synth(2.3968))))
+    v5, why5 = verdict(a5, b5)
+    assert v5 != "not-decidable", (
+        f"a gap of exactly 0.05 reaches the threshold and must decide, got {v5} ({why5})")
+    print("read_lr_probe selftest OK: 5 cases (not-decidable, clear gap, refuted, "
+          "lower-but-noisier, exact-0.05 boundary)")
     return 0
 
 
