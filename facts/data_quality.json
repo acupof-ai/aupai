@@ -1,873 +1,889 @@
 {
- "facts": [
-  {
-   "id": "dq.cci3.handread_150",
-   "value": 0.6,
-   "unit": "fraction trainable",
-   "measured": "2026-08-30",
-   "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
-   "config": {
-    "uncertainty": "+-0.10 (n=150, binomial)",
-    "categories": "SEO advertorial 30%, template/question-bank/essay 17%, rewrite 10%, hard farm fingerprint 11.4%"
-   },
-   "uncertainty": 0.1,
-   "status": "measured"
-  },
-  {
-   "id": "dq.cci3.filter_retention",
-   "value": 0.971,
-   "unit": "fraction kept",
-   "measured": "2026-08-30",
-   "source": "project filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + quality_clf SPAM) run on CCI3-HQ",
-   "config": {
-    "contrast": "hand-read says ~40% garbage; filter written for fineweb2 gambling/adult SEO and cosmopedia templates, misses CCI3-HQ's failure modes"
-   },
-   "uncertainty": "pass rate exact for the filter run; n not recorded. The finding is the 40pp gap to the hand-read, not the rate's precision",
-   "status": "measured"
-  },
-  {
-   "id": "dq.cci3.rewrite_fingerprint",
-   "value": 0.0207,
-   "unit": "fraction of docs",
-   "measured": "2026-08-30",
-   "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
-   "config": {
-    "fingerprint": "'\u539f\u6587\u5730\u5740:' tail marker",
-    "note": "self-admitted rewrites only; un-admitted fraction unmeasured"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.handread.small_sample_flip",
-   "value": "first 30 docs read 57% farm; later 120 docs read 62% usable",
-   "measured": "2026-08-30",
-   "source": "aupai-3b hand-read, same annotator same criteria",
-   "config": {
-    "n_first": 30,
-    "n_later": 120,
-    "implication": "n=30 binomial SE ~0.09; small-sample hand-read conclusions flip"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.domain_loss.drops_16x",
-   "value": {
-    "web_hq": -1.663,
-    "textbook": -1.76,
-    "wiki": -1.901,
-    "en": -1.858,
-    "math": -1.962,
-    "code": -1.988,
-    "chat": -1.762
-   },
-   "unit": "held-out loss drop over 16x data span",
-   "measured": "2026-08-30",
-   "source": "six checkpoints, per-domain held-out loss (aupai-fb)",
-   "config": {
-    "shares": {
-     "web_hq": 0.324,
-     "textbook": 0.496,
-     "wiki": 0.076,
-     "en": 0.05,
-     "math": 0.025,
-     "code": 0.018,
-     "chat": 0.012
+  "facts": [
+    {
+      "id": "dq.cci3.handread_150",
+      "value": 0.6,
+      "unit": "fraction trainable",
+      "measured": "2026-08-30",
+      "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
+      "config": {
+        "uncertainty": "+-0.10 (n=150, binomial)",
+        "categories": "SEO advertorial 30%, template/question-bank/essay 17%, rewrite 10%, hard farm fingerprint 11.4%"
+      },
+      "uncertainty": 0.1,
+      "status": "measured"
     },
-    "observation": "smallest-share domains (math/code) drop most; largest-share textbook below average; web_hq smallest drop"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.quality_head.auc_vs_hand",
-   "value": 0.823,
-   "unit": "AUC",
-   "measured": "2026-08-30",
-   "source": "project measurement (aupai-fb)",
-   "config": {
-    "method": "FineWeb-Edu stage 2: 27B teacher labels distilled to logistic head on 200M mean hidden state (datagen/train_quality_head.py)",
-    "domain": "web only",
-    "failure": "scores cosmopedia below raw web -- head does not transfer across registers"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.quality_head.teacher_vs_hand",
-   "value": 0.739,
-   "unit": "AUC",
-   "measured": "2026-08-30",
-   "source": "datagen/train_quality_head.py:150 (27B teacher vs hand labels)",
-   "config": {
-    "note": "teacher itself is 2.9x better than chance; head cannot exceed teacher by much"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.char_ngram.ceiling",
-   "value": 0.6,
-   "unit": "AUC",
-   "measured": "2026-08-30",
-   "source": "datagen/quality_clf.py docstring (hashed char 2-4 grams + LR, few hundred hand labels)",
-   "config": {
-    "diagnosis": "char n-grams rank by TOPIC while labels split on REGISTER; a ceiling more labels do not lift"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.teacher.speed_cost",
-   "value": 0.76,
-   "unit": "docs/s",
-   "measured": "2026-08-30",
-   "source": "datagen/train_quality_head.py docstring",
-   "config": {
-    "corpus_size": 1970000,
-    "pod_days": 4,
-    "note": "27B annotating 1.97M docs needs four pod-days; head needs minutes"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.scaling.drop_mechanical",
-   "value": "domain loss drop over a fixed data multiplier is proportional to remaining loss above floor: Delta_d = (L_d - A_d)(1 - 16^-beta); small-share domains drop more even when the optimal mixture is uniform",
-   "measured": "2026-08-30",
-   "source": "derived from power-law learning curves: Kaplan arXiv:2001.08361, Chinchilla arXiv:2203.15556",
-   "config": {
-    "implication": "the 16x drop table (dq.domain_loss.drops_16x) cannot by itself justify upweighting math/code; decision-relevant quantity is marginal w_d * dL_d/dC_d, not Delta_d",
-    "literature_direct_observation": "none found -- no paper directly states small-share domains drop more"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.reweight.doremi",
-   "value": "+6.5pp average few-shot accuracy; 2.6x fewer training steps to baseline accuracy",
-   "measured": "2026-08-30",
-   "source": "arXiv:2305.10429 (DoReMi)",
-   "config": {
-    "method": "Group DRO on 280M proxy learns domain weights, sampled for 8B (30x)",
-    "corpus": "The Pile",
-    "evidence": "paper self-reported, single corpus, no third-party replication"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.reweight.regmix",
-   "value": "best of 64 candidate mixtures at 1B/25B; matches or beats DoReMi at ~10% of its compute",
-   "measured": "2026-08-30",
-   "source": "arXiv:2407.01492 (RegMix, ICLR 2025)",
-   "config": {
-    "method": "512 small models (1M/1B tokens) regress mixture performance, extrapolate",
-    "evidence": "self-reported"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.reweight.data_mixing_laws",
-   "value": "optimized mixture matches default mixture trained 48% longer (or saves to 73% of steps); beats DoGE/DoReMi at same budget",
-   "measured": "2026-08-30",
-   "source": "arXiv:2403.16952 (Data Mixing Laws)",
-   "config": {
-    "method": "fit L_i(r) = c_i + k_i * exp(sum_j t_ij * r_j) on 70M-410M grid, extrapolate to 1B/100B RedPajama",
-    "evidence": "self-reported, validated at <=1B"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.math.deepseekmath_ablation",
-   "value": "GSM8K 2.9->23.8, MMLU-STEM 19.5->33.1, MMLU 49.1->54.9, BBH 55.2->59.5; code slightly down (HumanEval 43.2->40.9, MBPP 60.4->52.6)",
-   "measured": "2026-08-30",
-   "source": "arXiv:2402.03300 (DeepSeekMath) tables 1 and 4",
-   "config": {
-    "scale": "DeepSeek-LLM 1.3B base, few-shot CoT",
-    "intervention": "continued pretraining with vs without math corpus (500B tokens, 120B math)",
-    "note": "strongest causal evidence that math pretraining transfers to general reasoning; also the only with/without ablation found"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.math.llama3_mix",
-   "value": "25% math+reasoning tokens, 17% code, 8% multilingual, ~50% general knowledge; 15.6T tokens",
-   "measured": "2026-08-30",
-   "source": "arXiv:2407.21783 (Llama 3)",
-   "config": {
-    "evidence": "recipe disclosure only, no ablation, no causality",
-    "note": "DeepSeek-V3 arXiv:2412.19437 and Qwen2.5 arXiv:2412.15115 also tilt to math/code but give no percentages (verified in full text)"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.math.dclm_counter",
-   "value": "mixing 33% wiki/books/StackExchange/arXiv/GitHub into already-filtered CC hurts average performance by 1.2pp at 1B (+2.2pp on weakly-filtered C4)",
-   "measured": "2026-08-30",
-   "source": "arXiv:2406.11794 (DCLM) table 6",
-   "config": {
-    "note": "counter-evidence: domain mixing helps only when base filtering is weak; phi-1.5 arXiv:2309.05463 shows narrow textbook-only weighting costs knowledge; Kimi k1.5 arXiv:2501.12599 shows math/code ability can be injected later via RL"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.e2.matched_token_protocol",
-   "value": "E2 RUN 2026-08-30 (domain_loss_v2.jsonl, 262K tokens/domain, six 0830v1 checkpoints): domains do NOT collapse -- shared-curve RMSE 1.04 nat (100x eval noise). math/code residuals -0.29/-0.92 nat (BELOW the curve): their larger 16x drop is the mechanical small-share effect, the claim is REFUTED. web_hq +1.50 and wiki +1.18 nat sit ABOVE the curve; web_hq has the flattest log-log slope (-0.123 vs -0.26 for textbook/en) -- its tokens buy the least loss reduction.",
-   "measured": "2026-08-30",
-   "source": "agent B derivation from dq.scaling.drop_mechanical; data source eval/domain_loss.py on the six 0830v1 checkpoints",
-   "config": {
-    "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
-    "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
-    "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free",
-    "result": "math/code: below curve -> keep weights, do not upweight. web_hq/wiki: above curve (flat slopes: web_hq log-log -0.123 vs -0.26 textbook/en) -- higher loss at matched tokens. CAVEAT (fb 2026-08-30): flat slope + high loss are two faces of one observation and are EXPECTED under both 'dirty web' and 'clean web with high intrinsic entropy' -- the matched-token plot cannot separate A_d (floor) from B_d (token value), and the three facts (largest domain, flattest slope, 30% measured junk) do NOT constitute convergent evidence. The slope is directly decision-relevant for WEIGHTS regardless of cause; the A_d/B_d split is what the filter-strength A/B would separate.",
-    "architecture_boundary": "the six 0830v1 checkpoints are the OLD architecture (1024 sliding window + blocks=4, archived, experimental line judged fail). The relative per-domain pattern is expected to survive architecture, but old-arch and new-arch domain-loss numbers must never be pooled -- re-run E2 on the new-arch six points when they land"
-   },
-   "uncertainty": "single-seed checkpoints; residuals are 15-30x seed noise (0.05 nat) so the pattern is real; A_d vs B_d attribution is open by construction",
-   "status": "measured"
-  },
-  {
-   "id": "dq.criterion.rule_split",
-   "value": "filter rules split into corpus-independent (byte/encoding/duplication -- always valid) and corpus-dependent (regex tables, SPAM keyword list, quality-head threshold -- necessarily fail on a new corpus)",
-   "measured": "2026-08-30",
-   "source": "read of filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py, datagen/quality_clf.py SPAM, datagen/train_quality_head.py",
-   "config": {
-    "independent": "encoding, byte-level, MinHash duplication",
-    "dependent": "pass1-3 regex patterns (written against cosmopedia/fineweb2 failure modes), SPAM gambling/adult keywords, quality-head threshold (trained on web labels)",
-    "evidence": "dependent rules retained 97.1% of CCI3-HQ while hand-read found 40% garbage (dq.cci3.filter_retention, dq.cci3.handread_150)"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.criterion.recall_ratio",
-   "value": "transfer criterion: hand-label N=150 docs from the new corpus, run the corpus-dependent filter on the same docs, compute recall_new = P(filter=drop | hand=garbage); compare to recall_home on the corpus the filter was tuned on; ratio >= 0.8 VALID, < 0.5 RECALIBRATE, in between WEAK (RECALIBRATE if garbage rate > 10%)",
-   "measured": "2026-08-30",
-   "source": "project design (this session)",
-   "config": {
-    "sample_size": "N=150 gives +-0.08 on a proportion at p=0.5; 385 for +-0.05",
-    "recalibration": "cluster hand-labeled garbage by failure pattern, add 1-2 regexes per pattern or a few hundred labels to the quality head, re-test on a FRESH sample until ratio >= 0.8 (never re-test on the calibration sample)",
-    "thresholds_justification": "0.5 ratio = filter catches less than half of what it catches at home; 0.8 = within normal corpus variation",
-    "independence": "hand-labels for the known-answer case (CCI3-HQ) were produced by aupai-3b for a quality audit before this criterion existed -- not shared assumptions with the criterion"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.criterion.known_answer_cci3",
-   "value": "RECALIBRATE (recall_new <= 0.073, ratio <= 0.073 even assuming recall_home = 1.0)",
-   "measured": "2026-08-30",
-   "source": "arithmetic on dq.cci3.filter_retention (0.971 kept -> 0.029 dropped) and dq.cci3.handread_150 (0.40 garbage): recall = 0.029/0.40 = 0.0725, upper bound assuming every dropped doc was truly garbage",
-   "config": {
-    "known_answer": "CCI3-HQ is the negative control: filter is KNOWN to fail there (hand-read 40% garbage, retention 97.1%); criterion outputs RECALIBRATE -- matches the known answer",
-    "note": "verdict does not depend on recall_home: even a perfect home filter gives ratio 0.073 < 0.5",
-    "positive_control_pending": "web_hq with data/web_labels.jsonl on pod -- in-sample by construction (filter tuned on those labels), sanity check only, not a transfer test"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.dedup.minhash_rates",
-   "value": "near-duplicate rates: C4 3.04%, RealNews 13.63%, Wiki-40B 0.39% of docs",
-   "measured": "2026-08-30",
-   "source": "Lee et al. 2022, arXiv:2107.06499",
-   "config": {
-    "method": "MinHash 5-gram, 9000-dim signature, LSH b=20/r=450, edit sim >0.8",
-    "note": "farm-dense corpora expected higher; same paper: ExactSubstr 50-token substrings remove 7.18% of C4 tokens, dedup cuts memorization 1.926%->0.189%"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.dedup.spin_evades_ngram",
-   "value": "spun document pairs show only 20.8-38.8% 4-gram shingling similarity -- indistinguishable from unrelated articles",
-   "measured": "2026-08-30",
-   "source": "DSpin, NDSS 2014, DOI 10.14722/ndss.2014.23004",
-   "config": {
-    "tool": "The Best Spinner",
-    "implication": "any literal/n-gram regex or high-threshold MinHash misses synonym-replacement rewrites by design; 52% of abused-wiki pages were auto-generated spin, 68.0% SEO spam"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.dedup.dspin_anchor",
-   "value": "immutable-anchor detector (function-word sequence alignment, threshold 0.75): spun pages 77-93% similarity vs non-spun 59.4%",
-   "measured": "2026-08-30",
-   "source": "DSpin, NDSS 2014",
-   "config": {
-    "chinese_adaptation": "50-100 high-frequency function characters as immutable anchors",
-    "validation_asset": "the 2.07% fingerprint docs (dq.cci3.rewrite_fingerprint) are self-admitted rewrites -- a ready validation set where recall should approach 100%"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.classifier.cci3_pipeline",
-   "value": "Qwen2-72B-Instruct labels 145k random docs 0-5 (140k train/14k test) -> BGE-M3 + regression head (threshold 3) -> applied to 1.5B docs (9700 A100 hours); macro F1 0.73; ~80% agreement with GPT-4 labels",
-   "measured": "2026-08-30",
-   "source": "arXiv:2410.18505 (CCI3.0-HQ -- the paper for THIS project's corpus)",
-   "config": {
-    "benchmarks": "FineWeb-edu 0.47, ChineseWebText 0.39, IndustryCorpus2 0.60 macro F1",
-    "gap": "paper reports no human-read count, no dedup removal rate, no per-stage removal rates",
-    "implication": "directly copyable; extend the label dimension from educational value to farm/advertorial/template"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.classifier.dclm_fasttext",
-   "value": "fastText bigram classifier on 400k labels (200k positive = OpenHermes2.5 + high-score ELI5; 200k negative = random RefinedWeb), keep top 10%",
-   "measured": "2026-08-30",
-   "source": "arXiv:2406.11794 (DCLM)",
-   "config": {
-    "note": "cheapest proven recipe; no LLM annotation needed; Core 28.6->30.2"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.classifier.human_agreement_counter",
-   "value": "AskLLM filter had highest human agreement (ROC-AUC 82%) but WORST downstream (Core 28.5 vs fastText >31); human agreement vs downstream R^2 < 0.3",
-   "measured": "2026-08-30",
-   "source": "arXiv:2406.11794 (DCLM) Appendix N",
-   "config": {
-    "setup": "16 annotators, ~500 docs x 3 labels, IAA 71%, 1B models, same pool top~15%",
-    "implication": "before setting weights, decide the objective: human 'usable' rate or downstream eval (R6 EM-LLM); the two can rank filters oppositely"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.filter.fineweb_rules",
-   "value": "duplicate-line char ratio >= 0.1 removes 12.47% of tokens; punctuation-line ratio <= 0.12 removes 10.14%; short-line ratio >= 0.67 removes 3.73%",
-   "measured": "2026-08-30",
-   "source": "arXiv:2406.17557 (FineWeb)",
-   "config": {
-    "note": "corpus-independent structural rules; most effective on template/question-bank garbage; ChineseWebText 2.0 (arXiv:2411.19668) total removal 42.4% with BERT quality score + 13-gram dedup"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.sample.size_table",
-   "value": "n=150 gives +-7.8pp at p=0.6 (95% CI); +-5pp needs 369; +-3pp needs 1025; +-2pp needs 2305",
-   "measured": "2026-08-30",
-   "source": "arithmetic on n = z^2 p(1-p) / e^2, z=1.96, simple random sampling",
-   "config": {
-    "note": "the project's +-10 was conservative; the 30-vs-120 flip (57% vs 62% farm, 19pp, SE~10.1pp, ~1.9 sigma, p~0.06) is confounded: reading order was not randomized, so drift vs corpus heterogeneity cannot be separated"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.sample.kim_two_stage",
-   "value": "two-stage human-LLM protocol: human labels needed n = n* x (1 - rho^2), rho^2 = human-LLM R^2; at rho^2=0.7, +-3pp needs ~308 human labels instead of 1025",
-   "measured": "2026-08-30",
-   "source": "Kim 2026, arXiv:2605.16354",
-   "config": {
-    "protocol": "randomize order -> LLM-score 3000-5000 docs -> stratified double-label 300-500 -> doubly-robust estimate",
-    "warning": "use the pilot R^2 lower confidence bound -- overestimating rho^2 under-allocates human labels (author-stated)",
-    "stratified_gain": "DEFF = 1 - sum W_h(p_h-p)^2/[p(1-p)]; example strata save 17.5%"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.sample.drift",
-   "value": "IAA drops >32 points across 8 batches; same-minute annotation kappa=0.98 vs next-day 0.65; two annotators showed 'autopilot' streaks",
-   "measured": "2026-08-30",
-   "source": "Abdulmumin et al. 2026, arXiv:2605.27239",
-   "config": {
-    "setup": "3565 tweets, 3 annotators, 8 batches, timestamps",
-    "controls": "batch size <=50-100, 10-15 gold calibration docs per batch, re-label calibration set at session start/end, monitor annotation speed"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.hidden.prevalence",
-   "value": "p_hidden = 0.080 (32/400); total rewrite = 2.07% + 0.9793 x 0.080 = 9.91%",
-   "measured": "2026-08-30",
-   "source": "agent C 400-doc hand audit, data/corpus/sample/cci3_audit_400.jsonl (seed 20260830, non-fingerprint pool)",
-   "config": {
-    "rubric": "rewrite=Y iff explicit transfer marker (\u6587\u7ae0\u6765\u6e90\u4e8e/\u8f6c\u81ea/\u8f6c\u8f7d\u81ea/\u6765\u6e90:/\u6458\u81ea/\u6574\u7406\u7f16\u8f91/\u7efc\u5408\u6574\u7406/\u9009\u8f7d\u6743); stock disclaimers without named source (\u56fe\u7247\u6765\u81ea\u7f51\u7edc\u4fb5\u5220 etc.) count N",
-    "ci": "+-2.7pp (n=400, binomial, p=0.08)",
-    "contrast": "self-admitted fingerprint rate 2.07% -- un-admitted rewrites are ~4x the admitted rate; total ~10% of CCI3-HQ docs are rewrites"
-   },
-   "uncertainty": 0.027,
-   "status": "measured"
-  },
-  {
-   "id": "dq.fineweb_edu.chinese_failure",
-   "value": "FineWeb-Edu classifier on Chinese web: precision 0.91, recall 0.02, F1 0.03 (vs CCI3's own classifier macro F1 0.73)",
-   "measured": "2026-08-30",
-   "source": "arXiv:2410.18505 (CCI3.0-HQ) Table 4",
-   "config": {
-    "note": "direct cross-language failure measurement; the English-trained head is not usable on Chinese"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.register.style_flip",
-   "value": "rewriting documents into Wikipedia style (facts preserved, token count +-10%) flips ~7% of FineWeb-Edu filter decisions; all 26 tested domains score higher after rewrite",
-   "measured": "2026-08-30",
-   "source": "arXiv:2605.23721 (Klimaszewski & Andruszkiewicz, ACL 2026)",
-   "config": {
-    "setup": "100k FineWeb docs, Qwen2.5-72B-Instruct rewriter, 26 domains x 20k",
-    "note": "same failure mode as the project's quality head scoring cosmopedia below raw web (unpublished, mechanism-consistent); two Nemotron-CC-derived classifiers failed the same test"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.criterion.hq_intersection",
-   "value": "three mainstream classifiers (FineWeb-Edu, DCLM fastText, Nemotron LLM ensemble) agree on only 10.1% of docs as HQ; top-1k domain intersection is 368",
-   "measured": "2026-08-30",
-   "source": "arXiv:2412.02595 (Nemotron-CC)",
-   "config": {
-    "implication": "'quality' has no consensus definition across classifiers; a single criterion is a choice of target distribution, not a universal property"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.universal.criterion_absent",
-   "value": "no validated universal quality criterion exists; quality is operationalized as similarity to a target distribution (Llama 3, SkyPile, RedPajama all use 'Wikipedia suitability')",
-   "measured": "2026-08-30",
-   "source": "three independent direct measurements: dq.fineweb_edu.chinese_failure, dq.register.style_flip, dq.criterion.hq_intersection; review arXiv:2402.16827 ('no one-size-fits-all'); DSIR arXiv:2302.03169 (worst target pairing -6% F1, HyperPartisan -30%)",
-   "config": {
-    "transferable_practices": "DCLM-style fastText with target-domain positives (zero LLM labels); LLM-annotate+distill with per-register prompts and per-register validation; multi-classifier ensemble (Nemotron-CC: HQ 8-14% -> 25%); per-domain thresholds (CCI4: 26 subdomains x 99.5 percentile, arXiv:2506.07463)"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.classifier.sample_complexity",
-   "value": "published FineWeb-Edu-style annotation budgets: CCI3 140k (0.5B model, smallest), FineWeb-Edu 460k (110M), DCLM 400k (fastText), Ultra-FineWeb 600k (fastText), CCI4 460k",
-   "measured": "2026-08-30",
-   "source": "arXiv:2410.18505, 2406.17557, 2406.11794, 2505.05427, 2506.07463",
-   "config": {
-    "lower_bound": "unmeasured -- no published scaling study of labels-vs-AUC for this head type; project must run its own learning curve",
-    "dclm_zero_llm": "DCLM proves zero LLM annotation works: curated positives (OpenHermes2.5 + ELI5) + random negatives, downstream beats AskLLM and perplexity filtering (Core 30.2 vs 28.6 vs 29.0)"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.cost.zero_shot_vs_distill",
-   "value": "at 100GB Chinese scale (~2B tokens): zero-shot 70B scoring ~1100 H100-hours; distillation route ~6 H100-hours annotation + CPU-class training/inference",
-   "measured": "2026-08-30",
-   "source": "arithmetic by agent A on literature anchors: Ultra-FineWeb 15T tokens LLM filter = 6000 H100-hours (arXiv:2505.05427); assumptions: UTF-8 3 bytes/char, Qwen tokenizer ~1.7 chars/token, 70B vLLM batch 5k tok/s/H100",
-   "config": {
-    "note": "two orders of magnitude; zero-shot also re-pays the full cost on every register/criterion change"
-   },
-   "uncertainty": 0.3,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.fineweb_edu.metrics_gap",
-   "value": "FineWeb-Edu never reported AUC; official metric is F1 82% at threshold 3 (model card: accuracy 0.71, macro F1 0.50)",
-   "measured": "2026-08-30",
-   "source": "arXiv:2406.17557 Appendix F.1 + HF model card HuggingFaceTB/fineweb-edu-classifier",
-   "config": {
-    "implication": "the project's head AUC 0.823 (dq.quality_head.auc_vs_hand) is not comparable to the official F1 82%; also FineWeb-Edu has no standalone arXiv paper (HF tech report DOI 10.57967/hf/2497)"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "dq.hidden.preliminary_estimate",
-   "value": "hidden rewrite prevalence among non-fingerprint docs ~8.1% (SE 2.3pp), derived from 3b's 150-doc read: 10% rewrite total minus 2.07% self-admitted",
-   "measured": "2026-08-30",
-   "source": "arithmetic on dq.cci3.handread_150 and dq.cci3.rewrite_fingerprint",
-   "config": {
-    "computation": "(0.10 - 0.0207) / 0.9793 = 0.0807; SE = sqrt(0.081*0.919/147) ~ 0.023",
-    "note": "preliminary only -- the 150-doc read was not stratified by fingerprint, so this mixes pools; the 400-doc audit (dq.audit.protocol_400) tightens it",
-    "audit_confirmation": "CONFIRMED by the 400-doc audit: p_hidden = 8.0% vs the preliminary 8.1% (SE 2.3pp) -- the mixed-pool derivation happened to be right"
-   },
-   "uncertainty": 0.023,
-   "status": "measured"
-  },
-  {
-   "id": "dq.audit.protocol_400",
-   "value": "junk 121/400 = 30.3%; rewrite 32/400 = 8.0%; single reader (agent C), rubric fixed before reading",
-   "measured": "2026-08-30",
-   "source": "agent C hand audit of data/corpus/sample/cci3_audit_400.jsonl; labels persisted in session notes",
-   "config": {
-    "junk_rubric": "content farm/SEO/template/\u9898\u5e93/\u4f5c\u6587/book-TOC+metadata/exam catalog/marketing/ads/product-placement/headless fragment/conversion artifacts",
-    "junk_rate_vs_150": "30.3% vs 3b's 39.3% on 150 -- same ballpark, different pools (400 excludes fingerprint pool)",
-    "iaa": "NO overlap with 3b's 150 by id or text prefix -- the two samples share zero docs; free IAA not available, would need 3b to re-read a subset of the 400",
-    "headless_rule": "docs beginning mid-word/mid-sentence counted junk (conversion artifact): 8 docs"
-   },
-   "uncertainty": "+-4.6pp junk (p=0.30), +-2.7pp rewrite (p=0.08)",
-   "status": "measured"
-  },
-  {
-   "id": "dq.criterion.positive_control_protocol",
-   "value": "MEASURED 2026-08-30: recall_home = 3.4% (5/147 hand-junk dropped, all garbage_topic), precision = 5/5 = 1.0; ratio = recall_new/recall_home = 0.017/0.034 = 0.50 -- exactly on the VALID/RECALIBRATE boundary, not the clean VALID a positive control wants. The filter catches almost nothing of what humans reject on BOTH corpora (home 3.4%, CCI3 1.7%): it is a format/encoding filter with perfect precision and near-zero recall, not a quality filter. Correction to the earlier in-sample warning: the pass1-3 regexes were never tuned on web_labels (they are cosmopedia-oriented and predate it) -- web_labels is an INDEPENDENT test, which makes the low home recall stronger evidence, not weaker.",
-   "measured": "2026-08-30",
-   "source": "project measurement: datagen/build_corpus.py reject_reason() run on data/corpus/sample/web_labels.jsonl (180 rows, staged to git commit d76a8a1); same code path as the CCI3 measurement in dq.criterion.cci3_measured",
-   "config": {
-    "matrix": {
-     "hand_junk_drop": 5,
-     "hand_junk_keep": 142,
-     "hand_usable_drop": 0,
-     "hand_usable_keep": 33
+    {
+      "id": "dq.cci3.filter_retention",
+      "value": 0.971,
+      "unit": "fraction kept",
+      "measured": "2026-08-30",
+      "source": "project filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + quality_clf SPAM) run on CCI3-HQ",
+      "config": {
+        "contrast": "hand-read says ~40% garbage; filter written for fineweb2 gambling/adult SEO and cosmopedia templates, misses CCI3-HQ's failure modes"
+      },
+      "uncertainty": "pass rate exact for the filter run; n not recorded. The finding is the 40pp gap to the hand-read, not the rate's precision",
+      "status": "measured"
     },
-    "junk_rate": 0.817,
-    "rubric": "web_labels y=0 means 'no educational value' (score_web_27b.py BINARY rubric) -- stricter than 3b's CCI3 usable/junk rubric (39.3% junk); the recall gap is therefore partly a rubric gap, but 3.4% under the home rubric still says the regex layer does not make quality decisions",
-    "drop_reasons": "garbage_topic x5 only",
-    "implication": "the ratio criterion needs an absolute floor on recall_home (proposed >=0.5): without it a do-nothing filter scores ratio 1.0 = VALID on every corpus -- the degenerate case the positive control was built to catch, inverted"
-   },
-   "uncertainty": null,
-   "status": "measured",
-   "claim": "the criterion outputs VALID/WEAK (not RECALIBRATE) on the filter's home corpus",
-   "audit": "REFUTED as designed: ratio 0.50 is boundary, and recall_home 3.4% is below any meaningful absolute floor -- the criterion as originally specified would pass a do-nothing filter; fixed by adding the recall_home floor (dq.criterion.ratio_needs_floor)",
-   "refuted_by": "this measurement itself"
-  },
-  {
-   "id": "dq.web_hq.build_path",
-   "value": "web_hq is NOT built through build_corpus.py's regex-only path. Its pipeline: datagen/score_corpus.sh scores every web shard with the distilled quality head (data/quality_head.pt, 231 docs/s) -> datagen/build_web_hq.sh keeps top 40% by score -> datagen/clean_web.py applies four hard filters (spam/short/repetitive/fragmented) plus the score cut (cut = 60th percentile). The 3.4% regex-layer recall_home (dq.criterion.positive_control_protocol) therefore does NOT represent web_hq's actual quality gate -- the head is the gate; the regex layer is a format pre-filter. Resolved 2026-08-30 in response to fb's blocking question before the first pretrain (web_hq = 32.4% of mix_scale_0.2b).",
-   "measured": "2026-08-30",
-   "source": "code-verified: datagen/build_web_hq.sh, datagen/score_corpus.sh, datagen/clean_web.py (repo has no second web_hq builder); pod-side run inferred from data/corpus/web_hq existing in the retired pre-0830v1 mix -- the actual pod run log was not inspected",
-   "config": {
-    "keep_fraction": 0.4,
-    "head_auc_vs_hand": 0.823,
-    "teacher_vs_hand": 0.739,
-    "caveat": "head 2x2 confusion at the operating point (top-40% cut) on web_labels was never computed -- needs pod-side head + 200M backbone to score web_labels; recorded as dq.web_hq.head_operating_point",
-    "web_labels_junk_rate": 0.817,
-    "web_labels_note": "81.7% is the PRE-cut raw web sample; the top-40% cut removes most but AUC 0.823 is not perfect separation"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.web_hq.head_operating_point",
-   "value": "quality head's 2x2 confusion at the top-40% operating cut on web_labels (180 hand labels) -- the true recall_home of web_hq's actual quality gate",
-   "measured": "2026-08-30",
-   "source": "design (this session); not yet computed",
-   "config": {
-    "how": "pod-side: score data/corpus/sample/web_labels.jsonl with data/quality_head.pt + ckpt_k5_clean_0827.pt backbone (audit_source_score.py has the wiring), cut at the same 60th-percentile threshold used by build_web_hq.sh, compare drop/keep vs hand y",
-    "blocker": "head and backbone checkpoints are pod-side only",
-    "why_it_matters": "the ratio criterion's recall_home floor (>=0.5) should be evaluated on the component that makes the quality decision; if the head's operating-point recall is also <0.5 the floor binds on the real gate, not just the regex layer"
-   },
-   "uncertainty": null,
-   "status": "unmeasured",
-   "claim": "the head's operating-point recall_home is measurable and should be >=0.5 for the criterion to pass web_hq's own gate",
-   "audit": "not yet run; blocked on pod-side weights",
-   "refuted_by": "measured recall <0.5 at the operating cut"
-  },
-  {
-   "id": "dq.criterion.ratio_needs_floor",
-   "value": "the recall-ratio criterion must require BOTH ratio >= 0.8 AND recall_home >= 0.5 absolute; a ratio alone is gamed by a do-nothing filter (recall 0 on every corpus -> ratio undefined/1.0 -> VALID everywhere). The web_hq positive control caught exactly this: home recall 3.4% means 0.8 x home = 2.7%, a band so thin that 'VALID' would certify near-total blindness. With the floor, the existing regex filter itself reads RECALIBRATE-class on its home corpus -- quality decisions live in the quality head (AUC 0.823 vs hand, dq.quality_head.auc_vs_hand), not in the regex layer.",
-   "measured": "2026-08-30",
-   "source": "derived from dq.criterion.positive_control_protocol (measured) and dq.criterion.cci3_measured",
-   "config": {
-    "floor_value": "0.5 proposed, not yet validated -- set from the intuition that a filter catching <50% of hand-junk is not a quality filter; adjust when the quality head's home 2x2 is measured",
-    "scope": "floor applies to whatever component makes the quality decision (quality head once retrained); the regex layer keeps its format-filter role with precision 1.0"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.criterion.cci3_measured",
-   "value": "RECALIBRATE (measured recall_new = 1.7%, 1/59)",
-   "measured": "2026-08-30",
-   "source": "aupai-3b 2x2 confusion matrix: 150 hand-read CCI3-HQ docs x existing filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + datagen/quality_clf.py SPAM, non-sentence-boundary criteria not_zh/boilerplate/symbols/garbage_topic)",
-   "config": {
-    "matrix": {
-     "hand_junk_drop": 1,
-     "hand_junk_keep": 58,
-     "hand_usable_drop": 1,
-     "hand_usable_keep": 90
+    {
+      "id": "dq.cci3.rewrite_fingerprint",
+      "value": 0.0207,
+      "unit": "fraction of docs",
+      "measured": "2026-08-30",
+      "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
+      "config": {
+        "fingerprint": "'原文地址:' tail marker",
+        "note": "self-admitted rewrites only; un-admitted fraction unmeasured"
+      },
+      "uncertainty": null,
+      "status": "measured"
     },
-    "junk_rate": 0.393,
-    "false_positive": "1/91 usable dropped (\u9152\u9a7e\u56fd\u6807, symbols)",
-    "structural_blindness": "filter passes 58/59 content-farm/rewrite/SEO/template docs -- blind to the class, not off on threshold; supersedes the 0.073 arithmetic upper bound in dq.criterion.known_answer_cci3 with a measurement"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.criterion.bound_vs_measured",
-   "value": "arithmetic upper bound recall <= 0.073 was 4x looser than measured 1.7%",
-   "measured": "2026-08-30",
-   "source": "comparison of dq.criterion.known_answer_cci3 (bound) and dq.criterion.cci3_measured (measurement)",
-   "config": {
-    "why": "the bound used the full-corpus drop rate 2.9% (retention 97.1%); the 150-doc sample showed only 1.3% drops (2/150, and one of them was usable) -- drop-rate sample variance plus the bound's optimistic assumption that every drop hit garbage",
-    "lesson": "reality was worse than the most pessimistic derivation; when a bound and a measurement disagree, the measurement also audits the bound's assumptions"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.audit.confusion_400",
-   "value": "existing filter on the 400-doc audit sample: recall 17.4% (21/121 hand-junk dropped), precision 53.8% (21/39 drops); 100/121 hand-junk docs pass",
-   "unit": "2x2 on the locked re-test sample",
-   "measured": "2026-08-30",
-   "source": "agent C ran reject_reason from datagen/build_corpus.py on all 400 audit docs vs hand labels",
-   "config": {
-    "matrix": {
-     "TP": 21,
-     "FP": 18,
-     "FN": 100,
-     "TN": 261
+    {
+      "id": "dq.handread.small_sample_flip",
+      "value": "first 30 docs read 57% farm; later 120 docs read 62% usable",
+      "measured": "2026-08-30",
+      "source": "aupai-3b hand-read, same annotator same criteria",
+      "config": {
+        "n_first": 30,
+        "n_later": 120,
+        "implication": "n=30 binomial SE ~0.09; small-sample hand-read conclusions flip"
+      },
+      "uncertainty": null,
+      "status": "measured"
     },
-    "fp_breakdown": "10/18 FP are not_zh (English academic papers -- language gate working as designed, not real errors); 8 real Chinese FPs: garbage_topic 5, nav_menu 2, boilerplate 1",
-    "role": "PRE-RECALIBRATION BASELINE on the fresh sample: any recalibrated filter/head must beat recall 17.4% here without wrecking precision; this sample stays locked -- never calibrate on it",
-    "fn_note": "all 100 FNs were 'keep' -- the filter is structurally blind to CCI3-HQ junk, same conclusion as dq.criterion.cci3_measured on the 150"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "dq.regex.recal_step01",
-   "value": "Step 0+1 shipped in filters/pass3_garbage.py (merged into GARBAGE, head-600 check). Production path (full text, reject_reason): on 3b's 150 (junk 60 after the 0cf1eb8fa4ae rubric flip) OLD recall 11.7%/precision 53.8% (7TP/6FP) -> NEW 31.7%/76.0% (19TP/6FP); new patterns alone 14 hits / 14 junk = 100% precision (the single earlier 'FP' was a book-TOC+metadata page 3b relabeled junk 2026-08-30). Locked 400 one-shot re-test (2000-char texts, same basis as the 17.4% baseline): recall 17.4%->21.5%, precision 53.8%->59.1%, TP 21->26, FP flat at 18 -- new patterns +5 TP, 0 FP on the fresh sample.",
-   "unit": "recall/precision of the regex recalibration layer",
-   "measured": "2026-08-30",
-   "source": "agent C full-text run on the pod via reject_reason from datagen/build_corpus.py over data/raw/cci3_hq/ (150 docs by id from data/corpus/sample/cci3_handread_150.jsonl); locked re-test on data/corpus/sample/cci3_audit_400.jsonl vs cci3_audit_400_labels.jsonl",
-   "config": {
-    "step0": "fingerprint \u539f\u6587\u5730\u5740[:\uff1a] -> 7/7 junk on 150 full text; corpus-wide 2.46% hit rate, 99.0% in first 600 chars (6-shard pod scan, n=1.01M)",
-    "step1": "zuowen 2/2, tiku 2/2, jiaoan 2/2 on 150; on locked 400 zuowen 5/5, jiaoan 1/1, tiku 0",
-    "toc_tightening": "loose TOC (400: 6 hits/3 junk) replaced by line-anchored two-consecutive-chapter-lines after a 150 FP was prose cross-refs; tightened version kills that FP; its 150 hit (0cf1eb8fa4ae) was relabeled junk by 3b (book-TOC+metadata), so TOC ends at 14/14 on the 150; 0 hits on the locked 400",
-    "baseline_correction": "3b's 1.7% baseline was run on 120-char excerpts, not the production code path; full-text OLD baseline on the same 150 is 11.9% (7/59)",
-    "pod_hygiene": "candidate patterns validated from /tmp on the pod; /work/aupai/filters untouched while 3b's rebuild runs; data/quality_head.pt not touched (swap timing is fb's call)",
-    "verdict": "shipped; Step 2 (quality head retrain) FAILED the bar -- see dq.head.recal_step2_failed; the regex layer is now the only measured junk filter on CCI3",
-    "label_version": "all 150 numbers are on label_set_version v2 (0cf1eb8fa4ae=junk, commit 88a31f1); v1 had it usable -- v1 would read NEW recall 30.5%/precision 72.0%, new-pattern precision 13/14"
-   },
-   "uncertainty": "150-sample precision +/-9pp at n=150; rubric on book-TOC+metadata pages now aligned between 3b and agent C (3b conceded 2026-08-30)",
-   "status": "measured"
-  },
-  {
-   "id": "dq.head.recal_step2_failed",
-   "value": "Quality-head retrain on 3b's 150 hand labels: locked-400 (CCI3) AUC 0.555 vs the deployed head's 0.541 on CCI3; at recall>=0.5 the best precision either head reaches is 0.37 -- the recall>=0.5 AND precision>=0.8 bar is UNREACHABLE in this feature space ON CCI3. Bottleneck is the architecture, not the labels: 20K teacher labels ~= 150 hand labels (0.541 vs 0.555), head-512 ~= tail-512 pooling (0.541 vs 0.542). Same deployed head on web_labels (fineweb2 distribution): AUC 0.823 vs hand -- the 0.28 AUC gap between distributions is the no-transfer criterion itself, not a broken head: the fineweb2 rebuild runs on the distribution where the head is strong and is unaffected.",
-   "unit": "AUC / 2x2 of the distilled quality head on the locked 400",
-   "measured": "2026-08-30",
-   "source": "agent C ran datagen/train_quality_head.py on the pod (GPU 7, ckpt retired_pre0830v2/ckpt_k5_clean_0827.pt == local base, md5 b5eb6f206d02) with /tmp/head_labels_150.jsonl (150 full texts from data/raw/cci3_hq, s=1 usable); eval on /tmp/head_check_400.jsonl (400 full texts by id)",
-   "config": {
-    "new_head_curve": "in-sample held-out-teacher AUC plateaued at 0.66 (15 docs) -- weak even in-sample; locked-400 AUC 0.555",
-    "old_head_curve": "deployed data/quality_head.pt on the same 400: AUC 0.541; drop-50% gives recall 0.512 / precision 0.310",
-    "pooling_check": "tail-512 pooling with the old head: AUC 0.542 -- feature location is not the bottleneck",
-    "implication": "0.541's role is to reinforce the CCI3 exclusion ruling (quality judgements do not transfer across corpora), NOT to question the fineweb2 rebuild -- that rebuild scores with the head at AUC 0.823 on its own distribution. 3b's running web_hq rebuild: continue, no stop",
-    "hygiene": "new head saved as /tmp/quality_head_recal.pt on the pod, NOT deployed; data/quality_head.pt untouched (swap timing is fb's call, now moot -- the new head is not better)",
-    "next_levers": "fastText ALSO FAILED (dq.fasttext.cci3_failed): locked-400 AUC 0.574, web_labels 0.577 vs old head 0.823. Quality-classifier route on 150 labels exhausted across 3 feature families. Remaining: 27B LLM judge on CCI3 (deferred, GPU contention) or accept the regex layer + CCI3 exclusion",
-    "label_version": "head trained on v1 labels (0cf1eb8fa4ae=usable); the v2 flip of one training doc does not move the locked-400 result (400 never touched); fastText follow-up trains on v2"
-   },
-   "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
-   "status": "measured"
-  },
-  {
-   "id": "dq.fasttext.cci3_failed",
-   "value": "DCLM-style fastText (hashed char 2-5gram + word 1-2gram, 2^20 buckets, L2-normalized, logistic/L-BFGS, 5-fold CV reg selection) trained on the 150 v2 hand labels: locked-400 AUC 0.574 -- the recall>=0.5 AND precision>=0.8 bar is unreachable (best precision at recall>=0.5 is 0.38 at drop-15%); web_labels AUC 0.577 vs the deployed head's 0.823 -- the non-degradation check FAILS by 0.25 AUC. Diagnosis: in-sample AUC 1.000 / 5-fold CV 0.682 / transfer 0.574 -- the capacity memorizes 150 docs, generalizes weakly in-distribution, and CCI3-learned junk signals do not transfer to fineweb2.",
-   "unit": "AUC / 2x2 of the fastText junk classifier",
-   "measured": "2026-08-30",
-   "source": "agent C ran datagen/fasttext_junk.py on the pod (CPU) with 150 v2 labels (60 junk) from data/raw/cci3_hq; locked re-test on the 400 by id; web_labels from data/corpus/sample/web_labels.jsonl (180 docs)",
-   "config": {
-    "feature_family_scoreboard": "mean-hidden head (20K teacher labels) 0.541; head (150 hand) 0.555; tail-512 pooling 0.542; hashed n-gram fastText 0.574 -- all on the locked 400, all far below the bar",
-    "overfitting_evidence": "in-sample 1.000 vs CV 0.682 vs transfer 0.574; more labels would narrow the CV gap but the transfer gap says the 150 and 400 differ in junk composition",
-    "fineweb2_transfer": "0.577 on web_labels vs 0.823 for the old head -- a CCI3-trained classifier is a net loss for the fineweb2 domain, consistent with the no-transfer criterion",
-    "verdict": "quality-classifier route at n=150 exhausted; regex layer (dq.regex.recal_step01) remains the only measured junk filter on CCI3; CCI3 stays excluded from training",
-    "reproduction": "repo version (datagen/fasttext_junk.py) re-run on the pod: locked-400 AUC 0.579, web_labels 0.573 -- same conclusion within +-0.005 (Python hash() salt differs per process, exact scores not bit-reproducible)"
-   },
-   "uncertainty": "n=400 AUC +/-0.035; CV-AUC +/-0.05 at 5-fold on 150; a larger label budget (1000+) might lift the CV ceiling but cannot fix the fineweb2 transfer failure",
-   "status": "measured"
-  },
-  {
-   "id": "dq.verification.eqcheck_blind_spot",
-   "value": 0.2156,
-   "unit": "coverage on blossom-math-v4-10k",
-   "measured": "2026-08-30",
-   "source": "/tmp/survival_blossom.py + /tmp/eqcheck_sample.py on pod; scripts/eqcheck.py applied to blossom-math-v4-10k outputs",
-   "config": {
-    "coverage": "2156/10000 docs have >=1 verifiable two-operand equation",
-    "conditional_survival": "91.65% of covered docs (1976/2156) had zero bad steps \u2014 MEANINGLESS: manual review of 25 flagged equations shows ~all are false positives",
-    "fp_patterns": "chain detector (CHAIN regex) is broken by Chinese units/variables between operands: '1600\u5143 \u00d7 3/10 = 480' is mis-read as '3/10 = 480'; '867 + 231 = 3 \u00d7 X' mis-read as '= 3'; 'X - 7 - 6.25 = 5.5' mis-read as '7 - 6.25 = 5.5'",
-    "verdict": "eqcheck is unusable as a verification filter on Chinese synthetic math: it sees 21.6% of docs and flags its own blind spots, not solution errors. Arithmetic-step checking is the wrong instrument for this data",
-    "eqcheck_role": "remains valid as a data-filter/eval sanity check on texts with clean ASCII two-operand equations (its original shared role); not as a batch survival checker"
-   },
-   "uncertainty": "exact on 10000 docs; FP rate from 25-equation manual sample (all 25 false positives)",
-   "status": "measured"
-  },
-  {
-   "id": "dq.verification.blossom_gold_agreement",
-   "value": 0.9985,
-   "unit": "fraction with extractable final answer agreeing with gold",
-   "measured": "2026-08-30",
-   "source": "/tmp/gold_answer_agree.py on pod; blossom-math-v4-10k (100% records carry an `answer` field) vs output final answer",
-   "config": {
-    "extraction": "last number-like token (int/decimal/fraction/percent, trailing Chinese units stripped) \u2014 pre-registered before running",
-    "raw_agreement": "9985/10000 = 99.85%; extraction success 100%",
-    "disagreement_review": "all 15 reviewed: ~6 extractor artifacts (mixed-number '3 and 2/3' grabbed as 2/3; '1 million' vs '1,000,000'; answer before trailing context), ~9 genuine (0.09%) \u2014 mostly integer rounding of exact fractional answers (13 days vs 13.33) plus >=1 real misread (id=294: '1/4\u7c73' read as quarter-of-rope)",
-    "true_agreement": "99.91-99.97% after artifact correction",
-    "pipeline_implication": "answer-level verification (extract final answer vs gold) is the right instrument; arithmetic-step is not. Synthetic batches must RETAIN the gold answer field, and free-text generations need an extraction contract \u2014 \\boxed{} (math_short_v10 format) is the existing extractable target",
-    "batch_verdict": "blossom-math-v4-10k is a clean batch under answer-level checking"
-   },
-   "uncertainty": "raw exact; true agreement bounded by manual review of 15 disagreements",
-   "status": "measured"
-  },
-  {
-   "id": "dq.sft_termination_underdetermined",
-   "value": "SFT \u7ec8\u6b62\u6b20\u5b9a,\u5b9e\u6d4b:49,481 \u6761 source \u5bf9(per-source 8K x9,\u5168\u6821\u6e90)\u219243,836 \u7c07;\u8fd1\u91cd\u7ec4(>=2)1,606 \u7c07=3.7%;**\u5176\u4e2d 23.9%(384 \u7c07)\u7b54\u6848\u7ed3\u6784\u5f62\u6001 >1**(mean 1.26 \u5f62\u6001/\u65cf),342 \u7c07\u7ec8\u7b26\u65cf\u4e0d\u540c\u3002**\u96c6\u4e2d\u5728 math/general,\u4e0d\u5728 code**:school_math 81%(91/113)\u3001s1k 82%(23/28)\u3001openo1 67%(6/9)\u3001coig 27%(257/940)\u3001alpaca 35%(6/17);code_python 0%(0/81)\u3001math_gsm8k 0%(0/360)\u3002\u542b fb \u7684 FoNE \u4e00\u9898\u4e00\u683c\u5f0f\u89c4\u5219\u7684\u63a8\u5e7f:\u540c\u4e00\u8fd1\u91cd\u9898\u88ab\u6559\u591a\u79cd\u6536\u5c3e\u2192\u7ec8\u6b62\u6b20\u5b9a\u3002 | **\u673a\u5236\u89e3\u91ca(fb \u786e\u8ba4,\u975e\u76f8\u5173\u6027)**:code \u6e90\u6709\u786e\u5b9a\u8fb9\u754c(\u56f4\u680f/\u4ee3\u7801\u5757)\u6240\u4ee5\u4e0d\u6b20\u5b9a\u2014\u2014\u8fd9\u4e2a\u7ed3\u6784\u89e3\u91ca\u9884\u6d4b\u4e86\u54ea\u4e9b\u6e90\u6b20\u5b9a\u4e14\u9884\u6d4b\u5bf9\u3002**\u72ec\u7acb\u6210\u7acb\u7684\u6570\u636e\u7f3a\u9677,\u975e\u89e3\u91ca\u5931\u8d25**\u3002**\u4fee\u6cd5 = renderer-per-source(nanochat \u5f0f:\u6bcf\u4efb\u52a1\u4e00\u5f62\u6001,\u7531\u4ee3\u7801\u5b9a,\u4e0d\u7ee7\u627f\u6e90\u81ea\u5e26\u5f62\u6001),\u975e\u6253\u5305\u5f52\u4e00\u65f6(on-time \u5f52\u4e00)). \u03bb \u5408\u6210\u76ee\u6807:\u6bcf\u7c07\u4e00\u79cd\u5f62\u6001,\u7531\u751f\u6210\u5668\u5f3a\u5236**\u3002code \u91cd\u590d\u7684 55.8% \u6210\u56e0\u53e6\u8bb0(eval f8c08c1:\u8d2a\u5fc3 55.8%/t=0.8 17%/base 25.4%,\u5faa\u73af\u65e0\u85cf\u7269,\u6210\u56e0\u5728\u89e3\u7801\u5668\u4e0d\u5728\u6a21\u578b/\u6570\u636e)\u3002",
-   "measured": "2026-08-30",
-   "source": "pod \u5b9e\u6d4b eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 \u6e90 per-source 8K",
-   "config": {
-    "cluster": "MinHashLSH 128-perm/16-band + union-find over band keys",
-    "shape_features": [
-     "fence",
-     "latex_env",
-     "display_math",
-     "preamble",
-     "star_head",
-     "terminal_family"
-    ],
-    "sample": "per-source 8000 x 9 sources",
-    "n_pairs": 49481,
-    "n_clusters": 43836,
-    "near_dup_families": 1606,
-    "shapes_gt1_families": 384,
-    "shapes_gt1_rate": 0.239,
-    "terminal_diff_families": 342,
-    "note": "OOM \u75d5\u8ff9\u4fdd\u7559(\u7eaf python MinHash \u7684\u6210\u672c\u8bb0\u5f55);\u672c\u5b9e\u73b0\u8dd1\u901a\u540e\u53e6\u8bb0 completed"
-   },
-   "uncertainty": "\u8fd1\u91cd\u662f\u542f\u53d1\u5f0f(MinHash ~0.8 Jac);\u5f62\u72b6\u7279\u5f81\u662f\u5206\u7c7b\u5668\u975e\u539f\u59cb token;code \u6e90 0% \u672a\u89c1\u591a\u6837\u6027\u53ef\u80fd\u56e0 code \u7b54\u6848\u6709\u786e\u5b9a\u7ed3\u6784",
-   "status": "measured"
-  },
-  {
-   "id": "dq.code_rp1t_handread_50",
-   "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each. Near-dup rate 6/50 = 12% (Wilson 95% CI ~5-24% at n=50) -- this is the number that makes stage 2's parallel MinHash re-stamp non-optional. The stage-1 run trains on the set as is.",
-   "measured": "2026-08-31",
-   "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
-   "config": {
-    "n": 50,
-    "denominator": "all 50 sampled docs, single-reader hand-read",
-    "sampling": "first 400 lines of each of 197 shards (78,800 docs scanned; shards are shuffled corpus slices, so shard-head is effectively uniform), reservoir per detected PL, cap 8 docs/PL, shuffled to 50",
-    "stratification": "by programming language via head-600-char regex heuristic; labels corrected by hand in the tally",
-    "rubric": "keepable = real, non-trivial, hand-written code (tests, configs, interfaces, thin real classes kept); reject reasons: view/template glue, POJO boilerplate, generated, dead/commented",
-    "near_dedup": "false on this domain (accepted risk, t48 stage-2 re-stamp prerequisite); visible near-dups among the 50 tallied as required",
-    "threshold": "none pre-registered for keep rate -- descriptive; cci3 handread precedent dq.cci3.handread_150"
-   },
-   "uncertainty": "Single reader. PL classifier mislabeled PHP files (the `use`/`class` regexes matched python/rust patterns) -- labels were corrected by hand in the tally, counts above use corrected labels. Six kept docs are real-but-trivial (thin interfaces, 6-line exception class, one-assertion test); a stricter rubric would put keep rate at ~34/50 = 68%. Sample is shard-head, not uniform over docs (defensible because shards are shuffled). 80% keepable is a description of this 197-shard stage-1 subset; the 39 rest shards were not in the sample frame.",
-   "status": "measured"
-  },
-  {
-   "id": "dq.near_dedup_literature",
-   "value": "Five-source survey for the stage-2 MinHash hard gate. Lee 2021 (C4 360M docs): word 5-gram, Jaccard 0.8 + edit-sim 0.8, removed 3.04% C4 / 13.63% RealNews / 0.39% Wiki-40B, memorization ~10x lower, PPL equal or better. FineWeb (15T tok): word 5-gram, Jaccard 0.75, removed 44% per-snapshot (36T to 20T tokens), global iterative up to 90% rejected. Dolma (3T tok): exact URL/doc/paragraph, removed 53.2%/14.9%/18.7%; code (the Stack) MinHash settings unreported. SemDeDup: embedding cosine eps 0.03, up to 37% removed at no perf drop. D4 (600M docs): MinHash shingle/threshold unreported. Adoption rule outcome: only one <=1B source reports a Jaccard threshold (Lee 0.8); FineWeb 0.75 is 15T-scale; condition not met, stricter is 0.75, but calibration (dq.near_dedup_gate_calibration) shows neither catches the observed class.",
-   "measured": "2026-08-31",
-   "source": "arXiv:2107.06499, 2406.17557, 2402.00159, 2303.09540, 2308.12284; docs/lessons/near_dedup_gate.md",
-   "config": {
-    "survey": "Lee/FineWeb/Dolma/SemDeDup/D4",
-    "extraction": "full-text HTML, exact quotes"
-   },
-   "uncertainty": "FineWeb/D4 removal rates conflate dedup with other pipeline stages; Dolma code settings unreported",
-   "status": "recorded"
-  },
-  {
-   "id": "dq.near_dedup_gate_calibration",
-   "value": "Calibrated on the 50-doc t24 hand-read sample (2 template clusters, 6-8 docs: Yii CRUD {3,24,30,38}, Java POJO {5,7,19,35}). Literature standard (raw word 5-gram, J 0.75-0.8) catches 0/8: Yii tops out at raw J 0.181, POJO under 0.01. Chosen gate: normalize (comments/strings/numbers/identifiers stripped, 70-word keyword stoplist), 3-word shingles, Jaccard >= 0.5, union-find, keep one per cluster. Catches 5/8 cluster docs {5,7,19,30,38} with 0 false pairs among the other 42 (nearest false pair 0.462, python-rust boilerplate). Implied removed fraction 5/50 = 10% (Wilson 95% CI 3.4-21%); the sample is language-stratified (PHP 32%) so the corpus-wide fraction is measured by 3b at re-stamp. Misses the most divergent cluster members (docs 24, 35). Normalized containment (threshold 0.77) catches the same 5 with a thinner margin (0.778 vs 0.739).",
-   "measured": "2026-08-31",
-   "source": "data/corpus/sample/code_rp1t_handread50.jsonl; docs/lessons/near_dedup_gate.md",
-   "config": {
-    "sample": "t24 stratified 50 docs",
-    "shingle": "3-word, normalized",
-    "threshold": "Jaccard 0.5",
-    "cluster_membership": "post-hoc reconstruction, 8 candidates vs hand-read tally 6"
-   },
-   "uncertainty": "n=50, Wilson CI 3.4-21%; cluster membership reconstructed post-hoc; corpus-wide fraction unmeasured",
-   "status": "recorded"
-  },
-  {
-   "id": "dq.corpus_exact_dup_is_zero",
-   "value": 0.0,
-   "unit": "fraction of rows that are exact duplicates",
-   "measured": "2026-09-01",
-   "source": "probes/t62_corpus_dup_rate.py (full-domain), probes/t63_cross_domain_dup.py (cross-domain)",
-   "config": {
-    "task": "P0 duplication hypothesis",
-    "within_domain_full_scan": "cot 851,965 rows / 851,965 unique; textbook_30b 920,692 / 920,692; wiki_chat 372,827 / 372,827. max_copies 1 in every case.",
-    "cross_domain": "7 domains x 250,000 rows = 1,750,000 rows, 1,750,000 distinct keys, ZERO cross-domain collisions. Key is build_corpus.exact_key's normaliser (strip [\\s\\W_]+, sha1).",
-    "known_answer_verification": "planting 100 unique docs + one body at 7 copies + one at 3 returns 109 scanned / 101 unique / 8 dup rows / max 7. The instrument detects what it looks for; the zero is a measurement, not a silence.",
-    "why_within_domain_zero_is_expected": "build_corpus._parallel_exact_pass ran on every domain build and is global across that domain's shards, so within-domain zero is that pass WORKING, not evidence of a clean source.",
-    "why_cross_domain_zero_is_the_new_information": "no pass ever compared two domains -- dedup_corpus.py never ran (data/dedup/ absent) and has no consumer. The gap is real in code; this measures it empty in this corpus.",
-    "hardlink_false_lead": "2010 of 3422 shards have link count 2. The pairs are staging->assembled (web_cci3_p* <-> zh_web, wiki <-> wiki_chat, math <-> math_seed); only the assembled name appears in a mix, so no inode is read twice in one run."
-   },
-   "uncertainty": "EXACT duplication only. A paraphrase, a boilerplate-heavy pair, or a reformatted copy hashes differently and is counted unique -- and near-dedup has never run on this corpus (every build carries --no_near_dedup; build_corpus._near_dedup_postpass has no caller outside its own test). dq.code_rp1t_handread_50 measures 12% near-dup in code_rp1t by hand, which this number does not contradict and does not cover. code_rp1t and math_owm_stage2/en_c4_stage2/zh_web were scanned at a 250K-row prefix cross-domain, not in full.",
-   "boundary": "This REFUTES the exact-duplication leg of the P0 hypothesis and refutes nothing else. Read it as 'exact duplication is absent', never as 'the corpus is clean'.",
-   "status": "measured"
-  },
-  {
-   "id": "dq.domain_loss_scores_the_training_pool",
-   "value": 0.00625,
-   "unit": "fraction of scored docs that are actually held out",
-   "measured": "2026-09-01",
-   "source": "probes/t64_val_head_overlap.py; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
-   "config": {
-    "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
-    "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
-    "measured_on": "cot, 851,965 docs, 13 shards, seed 0",
-    "scored_docs_landing_in_first_5000_shuffled": 0.00625,
-    "expected_if_uniform": 0.00587,
-    "reading": "0.625% vs 0.587% expected by chance -- indistinguishable. The scored set is a uniform random sample of the pool, i.e. ~99.4% training data.",
-    "affected_numbers": "every per-domain nat in the 16B/22B/30B readouts and all four score_matrix profiles, including code_rp1t 0.795 nats = ppl 2.21",
-    "not_affected": "train.py's own printed val figure (validate() at :977) reads vcat, which comes from val and never from pools -- that one is genuinely row-disjoint."
-   },
-   "uncertainty": "Measured on cot at seed 0. The mechanism is seed-independent (any shuffle scatters the first shard uniformly), but the exact fraction per domain is not separately measured. eval/ppl.py reproduces the real val slice correctly and has zero callers.",
-   "boundary": "THE DEEPER POINT, which survives even if the head/val bug is fixed: a val set drawn from the training DISTRIBUTION cannot separate 'learned the distribution' from 'memorised its documents'. Row-disjointness is not the property the question needs. This explains loss falling while MC sits at chance without requiring any duplication -- and it is why the duplication hypothesis was reachable at all: the instrument that would have refuted it earlier was measuring the wrong rows.",
-   "status": "measured"
-  },
-  {
-   "id": "dq.near_dup_rate_at_the_real_normaliser",
-   "value": 4.77,
-   "unit": "percent of rows removable, code_rp1t, J>=0.5",
-   "measured": "2026-09-01",
-   "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
-   "config": {
-    "task": "P0 duplication -- the one leg exact-dedup could not answer",
-    "sample": "20,000 documents per domain, first shards in sorted order",
-    "engine": "128 perms, 64 bands x 2 rows, word 3-gram shingles, exact Jaccard on LSH candidates -- build_corpus's parameters, not reimplemented",
-    "normaliser": "_norm_skeleton (lowercase + collapse whitespace)",
-    "sweep_rows_removable_pct": {
-     "code_rp1t": {
-      "0.3": 8.84,
-      "0.4": 6.7,
-      "0.5": 4.77,
-      "0.6": 3.01,
-      "0.7": 1.76,
-      "0.8": 1.2,
-      "0.9": 0.4
-     },
-     "cot": {
-      "0.3": 0.76,
-      "0.4": 0.38,
-      "0.5": 0.14,
-      "0.6": 0.08,
-      "0.7": 0.04,
-      "0.8": 0.01,
-      "0.9": 0.0
-     },
-     "textbook_30b": {
-      "0.3": 0.0,
-      "0.5": 0.0,
-      "0.9": 0.0
-     }
+    {
+      "id": "dq.domain_loss.drops_16x",
+      "value": {
+        "web_hq": -1.663,
+        "textbook": -1.76,
+        "wiki": -1.901,
+        "en": -1.858,
+        "math": -1.962,
+        "code": -1.988,
+        "chat": -1.762
+      },
+      "unit": "held-out loss drop over 16x data span",
+      "measured": "2026-08-30",
+      "source": "six checkpoints, per-domain held-out loss (aupai-fb)",
+      "config": {
+        "shares": {
+          "web_hq": 0.324,
+          "textbook": 0.496,
+          "wiki": 0.076,
+          "en": 0.05,
+          "math": 0.025,
+          "code": 0.018,
+          "chat": 0.012
+        },
+        "observation": "smallest-share domains (math/code) drop most; largest-share textbook below average; web_hq smallest drop"
+      },
+      "uncertainty": null,
+      "status": "measured"
     },
-    "candidate_pairs": {
-     "code_rp1t": 156138,
-     "cot": 91645,
-     "textbook_30b": 148
+    {
+      "id": "dq.quality_head.auc_vs_hand",
+      "value": 0.823,
+      "unit": "AUC",
+      "measured": "2026-08-30",
+      "source": "project measurement (aupai-fb)",
+      "config": {
+        "method": "FineWeb-Edu stage 2: 27B teacher labels distilled to logistic head on 200M mean hidden state (datagen/train_quality_head.py)",
+        "domain": "web only",
+        "failure": "scores cosmopedia below raw web -- head does not transfer across registers"
+      },
+      "uncertainty": null,
+      "status": "measured"
     },
-    "reconciles_with_handread": "dq.code_rp1t_handread_50 measured 12% by hand (n=50, Wilson 5-24%). 8.84% at the loosest threshold sits inside that interval; a human calls things near-duplicate that word-3-gram Jaccard does not, so hand-read above machine is the expected direction."
-   },
-   "uncertainty": "A SWEEP, NOT A POINT, and deliberately so. near_dedup_gate.md calibrates J>=0.5 against per-domain normalisers (norm_code, norm_en_c4, norm_math with a 70-word keyword stoplist and LaTeX mapping) that DO NOT EXIST in the repo -- grep returns nothing. The only normaliser present is _norm_skeleton, under which the gate doc's own example cluster scores 0.181 against its 0.5 threshold. Reporting a single number at 0.5 would be a fact about a measuring stick the code does not have. 20K-row prefix samples, not full domains; en_c4_stage2, math_owm_stage2 and zh_web unmeasured.",
-   "boundary": "A GATE THAT CERTIFIES ITS OWN NO-OP. Wiring _near_dedup_postpass up at its documented defaults today would remove approximately nothing AND stamp near_dedup: True while doing it (build_corpus.py:918-919), because the threshold is calibrated for a normaliser that was never written. The gate encodes 'the interesting case is above 0.5 under the calibrated normaliser' and neither half of that assumption holds. Same class as eff.fp8_weight_byte_cache measuring a disabled path: a check's assumption about where the interesting case lives is the one thing the check never tests. SEPARATELY: this measures near-duplication and refutes nothing about the P0 symptom -- code_rp1t is the only domain carrying meaningful near-dup, it falls off a cliff with threshold, and there is no setting at which near-dedup removes a large share of this corpus.",
-   "status": "measured"
-  }
- ]
+    {
+      "id": "dq.quality_head.teacher_vs_hand",
+      "value": 0.739,
+      "unit": "AUC",
+      "measured": "2026-08-30",
+      "source": "datagen/train_quality_head.py:150 (27B teacher vs hand labels)",
+      "config": {
+        "note": "teacher itself is 2.9x better than chance; head cannot exceed teacher by much"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.char_ngram.ceiling",
+      "value": 0.6,
+      "unit": "AUC",
+      "measured": "2026-08-30",
+      "source": "datagen/quality_clf.py docstring (hashed char 2-4 grams + LR, few hundred hand labels)",
+      "config": {
+        "diagnosis": "char n-grams rank by TOPIC while labels split on REGISTER; a ceiling more labels do not lift"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.teacher.speed_cost",
+      "value": 0.76,
+      "unit": "docs/s",
+      "measured": "2026-08-30",
+      "source": "datagen/train_quality_head.py docstring",
+      "config": {
+        "corpus_size": 1970000,
+        "pod_days": 4,
+        "note": "27B annotating 1.97M docs needs four pod-days; head needs minutes"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.scaling.drop_mechanical",
+      "value": "domain loss drop over a fixed data multiplier is proportional to remaining loss above floor: Delta_d = (L_d - A_d)(1 - 16^-beta); small-share domains drop more even when the optimal mixture is uniform",
+      "measured": "2026-08-30",
+      "source": "derived from power-law learning curves: Kaplan arXiv:2001.08361, Chinchilla arXiv:2203.15556",
+      "config": {
+        "implication": "the 16x drop table (dq.domain_loss.drops_16x) cannot by itself justify upweighting math/code; decision-relevant quantity is marginal w_d * dL_d/dC_d, not Delta_d",
+        "literature_direct_observation": "none found -- no paper directly states small-share domains drop more"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.reweight.doremi",
+      "value": "+6.5pp average few-shot accuracy; 2.6x fewer training steps to baseline accuracy",
+      "measured": "2026-08-30",
+      "source": "arXiv:2305.10429 (DoReMi)",
+      "config": {
+        "method": "Group DRO on 280M proxy learns domain weights, sampled for 8B (30x)",
+        "corpus": "The Pile",
+        "evidence": "paper self-reported, single corpus, no third-party replication"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.reweight.regmix",
+      "value": "best of 64 candidate mixtures at 1B/25B; matches or beats DoReMi at ~10% of its compute",
+      "measured": "2026-08-30",
+      "source": "arXiv:2407.01492 (RegMix, ICLR 2025)",
+      "config": {
+        "method": "512 small models (1M/1B tokens) regress mixture performance, extrapolate",
+        "evidence": "self-reported"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.reweight.data_mixing_laws",
+      "value": "optimized mixture matches default mixture trained 48% longer (or saves to 73% of steps); beats DoGE/DoReMi at same budget",
+      "measured": "2026-08-30",
+      "source": "arXiv:2403.16952 (Data Mixing Laws)",
+      "config": {
+        "method": "fit L_i(r) = c_i + k_i * exp(sum_j t_ij * r_j) on 70M-410M grid, extrapolate to 1B/100B RedPajama",
+        "evidence": "self-reported, validated at <=1B"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.math.deepseekmath_ablation",
+      "value": "GSM8K 2.9->23.8, MMLU-STEM 19.5->33.1, MMLU 49.1->54.9, BBH 55.2->59.5; code slightly down (HumanEval 43.2->40.9, MBPP 60.4->52.6)",
+      "measured": "2026-08-30",
+      "source": "arXiv:2402.03300 (DeepSeekMath) tables 1 and 4",
+      "config": {
+        "scale": "DeepSeek-LLM 1.3B base, few-shot CoT",
+        "intervention": "continued pretraining with vs without math corpus (500B tokens, 120B math)",
+        "note": "strongest causal evidence that math pretraining transfers to general reasoning; also the only with/without ablation found"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.math.llama3_mix",
+      "value": "25% math+reasoning tokens, 17% code, 8% multilingual, ~50% general knowledge; 15.6T tokens",
+      "measured": "2026-08-30",
+      "source": "arXiv:2407.21783 (Llama 3)",
+      "config": {
+        "evidence": "recipe disclosure only, no ablation, no causality",
+        "note": "DeepSeek-V3 arXiv:2412.19437 and Qwen2.5 arXiv:2412.15115 also tilt to math/code but give no percentages (verified in full text)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.math.dclm_counter",
+      "value": "mixing 33% wiki/books/StackExchange/arXiv/GitHub into already-filtered CC hurts average performance by 1.2pp at 1B (+2.2pp on weakly-filtered C4)",
+      "measured": "2026-08-30",
+      "source": "arXiv:2406.11794 (DCLM) table 6",
+      "config": {
+        "note": "counter-evidence: domain mixing helps only when base filtering is weak; phi-1.5 arXiv:2309.05463 shows narrow textbook-only weighting costs knowledge; Kimi k1.5 arXiv:2501.12599 shows math/code ability can be injected later via RL"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.e2.matched_token_protocol",
+      "value": "E2 RUN 2026-08-30 (domain_loss_v2.jsonl, 262K tokens/domain, six 0830v1 checkpoints): domains do NOT collapse -- shared-curve RMSE 1.04 nat (100x eval noise). math/code residuals -0.29/-0.92 nat (BELOW the curve): their larger 16x drop is the mechanical small-share effect, the claim is REFUTED. web_hq +1.50 and wiki +1.18 nat sit ABOVE the curve; web_hq has the flattest log-log slope (-0.123 vs -0.26 for textbook/en) -- its tokens buy the least loss reduction.",
+      "measured": "2026-08-30",
+      "source": "agent B derivation from dq.scaling.drop_mechanical; data source eval/domain_loss.py on the six 0830v1 checkpoints",
+      "config": {
+        "decision_rule": "math/code on the curve -> artifact, keep weights; above the curve -> B_d genuinely larger, upweight (w_d* proportional to B_d^(1/beta))",
+        "cost": "zero new training; domain_loss.py on 6 checkpoints on pod (3b/de)",
+        "status_note": "no paper has done this matched-token plot -- the project's 6-checkpoint design makes it free",
+        "result": "math/code: below curve -> keep weights, do not upweight. web_hq/wiki: above curve (flat slopes: web_hq log-log -0.123 vs -0.26 textbook/en) -- higher loss at matched tokens. CAVEAT (fb 2026-08-30): flat slope + high loss are two faces of one observation and are EXPECTED under both 'dirty web' and 'clean web with high intrinsic entropy' -- the matched-token plot cannot separate A_d (floor) from B_d (token value), and the three facts (largest domain, flattest slope, 30% measured junk) do NOT constitute convergent evidence. The slope is directly decision-relevant for WEIGHTS regardless of cause; the A_d/B_d split is what the filter-strength A/B would separate.",
+        "architecture_boundary": "the six 0830v1 checkpoints are the OLD architecture (1024 sliding window + blocks=4, archived, experimental line judged fail). The relative per-domain pattern is expected to survive architecture, but old-arch and new-arch domain-loss numbers must never be pooled -- re-run E2 on the new-arch six points when they land"
+      },
+      "uncertainty": "single-seed checkpoints; residuals are 15-30x seed noise (0.05 nat) so the pattern is real; A_d vs B_d attribution is open by construction",
+      "status": "measured"
+    },
+    {
+      "id": "dq.criterion.rule_split",
+      "value": "filter rules split into corpus-independent (byte/encoding/duplication -- always valid) and corpus-dependent (regex tables, SPAM keyword list, quality-head threshold -- necessarily fail on a new corpus)",
+      "measured": "2026-08-30",
+      "source": "read of filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py, datagen/quality_clf.py SPAM, datagen/train_quality_head.py",
+      "config": {
+        "independent": "encoding, byte-level, MinHash duplication",
+        "dependent": "pass1-3 regex patterns (written against cosmopedia/fineweb2 failure modes), SPAM gambling/adult keywords, quality-head threshold (trained on web labels)",
+        "evidence": "dependent rules retained 97.1% of CCI3-HQ while hand-read found 40% garbage (dq.cci3.filter_retention, dq.cci3.handread_150)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.criterion.recall_ratio",
+      "value": "transfer criterion: hand-label N=150 docs from the new corpus, run the corpus-dependent filter on the same docs, compute recall_new = P(filter=drop | hand=garbage); compare to recall_home on the corpus the filter was tuned on; ratio >= 0.8 VALID, < 0.5 RECALIBRATE, in between WEAK (RECALIBRATE if garbage rate > 10%)",
+      "measured": "2026-08-30",
+      "source": "project design (this session)",
+      "config": {
+        "sample_size": "N=150 gives +-0.08 on a proportion at p=0.5; 385 for +-0.05",
+        "recalibration": "cluster hand-labeled garbage by failure pattern, add 1-2 regexes per pattern or a few hundred labels to the quality head, re-test on a FRESH sample until ratio >= 0.8 (never re-test on the calibration sample)",
+        "thresholds_justification": "0.5 ratio = filter catches less than half of what it catches at home; 0.8 = within normal corpus variation",
+        "independence": "hand-labels for the known-answer case (CCI3-HQ) were produced by aupai-3b for a quality audit before this criterion existed -- not shared assumptions with the criterion"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.criterion.known_answer_cci3",
+      "value": "RECALIBRATE (recall_new <= 0.073, ratio <= 0.073 even assuming recall_home = 1.0)",
+      "measured": "2026-08-30",
+      "source": "arithmetic on dq.cci3.filter_retention (0.971 kept -> 0.029 dropped) and dq.cci3.handread_150 (0.40 garbage): recall = 0.029/0.40 = 0.0725, upper bound assuming every dropped doc was truly garbage",
+      "config": {
+        "known_answer": "CCI3-HQ is the negative control: filter is KNOWN to fail there (hand-read 40% garbage, retention 97.1%); criterion outputs RECALIBRATE -- matches the known answer",
+        "note": "verdict does not depend on recall_home: even a perfect home filter gives ratio 0.073 < 0.5",
+        "positive_control_pending": "web_hq with data/web_labels.jsonl on pod -- in-sample by construction (filter tuned on those labels), sanity check only, not a transfer test"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.dedup.minhash_rates",
+      "value": "near-duplicate rates: C4 3.04%, RealNews 13.63%, Wiki-40B 0.39% of docs",
+      "measured": "2026-08-30",
+      "source": "Lee et al. 2022, arXiv:2107.06499",
+      "config": {
+        "method": "MinHash 5-gram, 9000-dim signature, LSH b=20/r=450, edit sim >0.8",
+        "note": "farm-dense corpora expected higher; same paper: ExactSubstr 50-token substrings remove 7.18% of C4 tokens, dedup cuts memorization 1.926%->0.189%"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.dedup.spin_evades_ngram",
+      "value": "spun document pairs show only 20.8-38.8% 4-gram shingling similarity -- indistinguishable from unrelated articles",
+      "measured": "2026-08-30",
+      "source": "DSpin, NDSS 2014, DOI 10.14722/ndss.2014.23004",
+      "config": {
+        "tool": "The Best Spinner",
+        "implication": "any literal/n-gram regex or high-threshold MinHash misses synonym-replacement rewrites by design; 52% of abused-wiki pages were auto-generated spin, 68.0% SEO spam"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.dedup.dspin_anchor",
+      "value": "immutable-anchor detector (function-word sequence alignment, threshold 0.75): spun pages 77-93% similarity vs non-spun 59.4%",
+      "measured": "2026-08-30",
+      "source": "DSpin, NDSS 2014",
+      "config": {
+        "chinese_adaptation": "50-100 high-frequency function characters as immutable anchors",
+        "validation_asset": "the 2.07% fingerprint docs (dq.cci3.rewrite_fingerprint) are self-admitted rewrites -- a ready validation set where recall should approach 100%"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.classifier.cci3_pipeline",
+      "value": "Qwen2-72B-Instruct labels 145k random docs 0-5 (140k train/14k test) -> BGE-M3 + regression head (threshold 3) -> applied to 1.5B docs (9700 A100 hours); macro F1 0.73; ~80% agreement with GPT-4 labels",
+      "measured": "2026-08-30",
+      "source": "arXiv:2410.18505 (CCI3.0-HQ -- the paper for THIS project's corpus)",
+      "config": {
+        "benchmarks": "FineWeb-edu 0.47, ChineseWebText 0.39, IndustryCorpus2 0.60 macro F1",
+        "gap": "paper reports no human-read count, no dedup removal rate, no per-stage removal rates",
+        "implication": "directly copyable; extend the label dimension from educational value to farm/advertorial/template"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.classifier.dclm_fasttext",
+      "value": "fastText bigram classifier on 400k labels (200k positive = OpenHermes2.5 + high-score ELI5; 200k negative = random RefinedWeb), keep top 10%",
+      "measured": "2026-08-30",
+      "source": "arXiv:2406.11794 (DCLM)",
+      "config": {
+        "note": "cheapest proven recipe; no LLM annotation needed; Core 28.6->30.2"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.classifier.human_agreement_counter",
+      "value": "AskLLM filter had highest human agreement (ROC-AUC 82%) but WORST downstream (Core 28.5 vs fastText >31); human agreement vs downstream R^2 < 0.3",
+      "measured": "2026-08-30",
+      "source": "arXiv:2406.11794 (DCLM) Appendix N",
+      "config": {
+        "setup": "16 annotators, ~500 docs x 3 labels, IAA 71%, 1B models, same pool top~15%",
+        "implication": "before setting weights, decide the objective: human 'usable' rate or downstream eval (R6 EM-LLM); the two can rank filters oppositely"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.filter.fineweb_rules",
+      "value": "duplicate-line char ratio >= 0.1 removes 12.47% of tokens; punctuation-line ratio <= 0.12 removes 10.14%; short-line ratio >= 0.67 removes 3.73%",
+      "measured": "2026-08-30",
+      "source": "arXiv:2406.17557 (FineWeb)",
+      "config": {
+        "note": "corpus-independent structural rules; most effective on template/question-bank garbage; ChineseWebText 2.0 (arXiv:2411.19668) total removal 42.4% with BERT quality score + 13-gram dedup"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.sample.size_table",
+      "value": "n=150 gives +-7.8pp at p=0.6 (95% CI); +-5pp needs 369; +-3pp needs 1025; +-2pp needs 2305",
+      "measured": "2026-08-30",
+      "source": "arithmetic on n = z^2 p(1-p) / e^2, z=1.96, simple random sampling",
+      "config": {
+        "note": "the project's +-10 was conservative; the 30-vs-120 flip (57% vs 62% farm, 19pp, SE~10.1pp, ~1.9 sigma, p~0.06) is confounded: reading order was not randomized, so drift vs corpus heterogeneity cannot be separated"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.sample.kim_two_stage",
+      "value": "two-stage human-LLM protocol: human labels needed n = n* x (1 - rho^2), rho^2 = human-LLM R^2; at rho^2=0.7, +-3pp needs ~308 human labels instead of 1025",
+      "measured": "2026-08-30",
+      "source": "Kim 2026, arXiv:2605.16354",
+      "config": {
+        "protocol": "randomize order -> LLM-score 3000-5000 docs -> stratified double-label 300-500 -> doubly-robust estimate",
+        "warning": "use the pilot R^2 lower confidence bound -- overestimating rho^2 under-allocates human labels (author-stated)",
+        "stratified_gain": "DEFF = 1 - sum W_h(p_h-p)^2/[p(1-p)]; example strata save 17.5%"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.sample.drift",
+      "value": "IAA drops >32 points across 8 batches; same-minute annotation kappa=0.98 vs next-day 0.65; two annotators showed 'autopilot' streaks",
+      "measured": "2026-08-30",
+      "source": "Abdulmumin et al. 2026, arXiv:2605.27239",
+      "config": {
+        "setup": "3565 tweets, 3 annotators, 8 batches, timestamps",
+        "controls": "batch size <=50-100, 10-15 gold calibration docs per batch, re-label calibration set at session start/end, monitor annotation speed"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.hidden.prevalence",
+      "value": "p_hidden = 0.080 (32/400); total rewrite = 2.07% + 0.9793 x 0.080 = 9.91%",
+      "measured": "2026-08-30",
+      "source": "agent C 400-doc hand audit, data/corpus/sample/cci3_audit_400.jsonl (seed 20260830, non-fingerprint pool)",
+      "config": {
+        "rubric": "rewrite=Y iff explicit transfer marker (文章来源于/转自/转载自/来源:/摘自/整理编辑/综合整理/选载权); stock disclaimers without named source (图片来自网络侵删 etc.) count N",
+        "ci": "+-2.7pp (n=400, binomial, p=0.08)",
+        "contrast": "self-admitted fingerprint rate 2.07% -- un-admitted rewrites are ~4x the admitted rate; total ~10% of CCI3-HQ docs are rewrites"
+      },
+      "uncertainty": 0.027,
+      "status": "measured"
+    },
+    {
+      "id": "dq.fineweb_edu.chinese_failure",
+      "value": "FineWeb-Edu classifier on Chinese web: precision 0.91, recall 0.02, F1 0.03 (vs CCI3's own classifier macro F1 0.73)",
+      "measured": "2026-08-30",
+      "source": "arXiv:2410.18505 (CCI3.0-HQ) Table 4",
+      "config": {
+        "note": "direct cross-language failure measurement; the English-trained head is not usable on Chinese"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.register.style_flip",
+      "value": "rewriting documents into Wikipedia style (facts preserved, token count +-10%) flips ~7% of FineWeb-Edu filter decisions; all 26 tested domains score higher after rewrite",
+      "measured": "2026-08-30",
+      "source": "arXiv:2605.23721 (Klimaszewski & Andruszkiewicz, ACL 2026)",
+      "config": {
+        "setup": "100k FineWeb docs, Qwen2.5-72B-Instruct rewriter, 26 domains x 20k",
+        "note": "same failure mode as the project's quality head scoring cosmopedia below raw web (unpublished, mechanism-consistent); two Nemotron-CC-derived classifiers failed the same test"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.criterion.hq_intersection",
+      "value": "three mainstream classifiers (FineWeb-Edu, DCLM fastText, Nemotron LLM ensemble) agree on only 10.1% of docs as HQ; top-1k domain intersection is 368",
+      "measured": "2026-08-30",
+      "source": "arXiv:2412.02595 (Nemotron-CC)",
+      "config": {
+        "implication": "'quality' has no consensus definition across classifiers; a single criterion is a choice of target distribution, not a universal property"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.universal.criterion_absent",
+      "value": "no validated universal quality criterion exists; quality is operationalized as similarity to a target distribution (Llama 3, SkyPile, RedPajama all use 'Wikipedia suitability')",
+      "measured": "2026-08-30",
+      "source": "three independent direct measurements: dq.fineweb_edu.chinese_failure, dq.register.style_flip, dq.criterion.hq_intersection; review arXiv:2402.16827 ('no one-size-fits-all'); DSIR arXiv:2302.03169 (worst target pairing -6% F1, HyperPartisan -30%)",
+      "config": {
+        "transferable_practices": "DCLM-style fastText with target-domain positives (zero LLM labels); LLM-annotate+distill with per-register prompts and per-register validation; multi-classifier ensemble (Nemotron-CC: HQ 8-14% -> 25%); per-domain thresholds (CCI4: 26 subdomains x 99.5 percentile, arXiv:2506.07463)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.classifier.sample_complexity",
+      "value": "published FineWeb-Edu-style annotation budgets: CCI3 140k (0.5B model, smallest), FineWeb-Edu 460k (110M), DCLM 400k (fastText), Ultra-FineWeb 600k (fastText), CCI4 460k",
+      "measured": "2026-08-30",
+      "source": "arXiv:2410.18505, 2406.17557, 2406.11794, 2505.05427, 2506.07463",
+      "config": {
+        "lower_bound": "unmeasured -- no published scaling study of labels-vs-AUC for this head type; project must run its own learning curve",
+        "dclm_zero_llm": "DCLM proves zero LLM annotation works: curated positives (OpenHermes2.5 + ELI5) + random negatives, downstream beats AskLLM and perplexity filtering (Core 30.2 vs 28.6 vs 29.0)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.cost.zero_shot_vs_distill",
+      "value": "at 100GB Chinese scale (~2B tokens): zero-shot 70B scoring ~1100 H100-hours; distillation route ~6 H100-hours annotation + CPU-class training/inference",
+      "measured": "2026-08-30",
+      "source": "arithmetic by agent A on literature anchors: Ultra-FineWeb 15T tokens LLM filter = 6000 H100-hours (arXiv:2505.05427); assumptions: UTF-8 3 bytes/char, Qwen tokenizer ~1.7 chars/token, 70B vLLM batch 5k tok/s/H100",
+      "config": {
+        "note": "two orders of magnitude; zero-shot also re-pays the full cost on every register/criterion change"
+      },
+      "uncertainty": 0.3,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.fineweb_edu.metrics_gap",
+      "value": "FineWeb-Edu never reported AUC; official metric is F1 82% at threshold 3 (model card: accuracy 0.71, macro F1 0.50)",
+      "measured": "2026-08-30",
+      "source": "arXiv:2406.17557 Appendix F.1 + HF model card HuggingFaceTB/fineweb-edu-classifier",
+      "config": {
+        "implication": "the project's head AUC 0.823 (dq.quality_head.auc_vs_hand) is not comparable to the official F1 82%; also FineWeb-Edu has no standalone arXiv paper (HF tech report DOI 10.57967/hf/2497)"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "dq.hidden.preliminary_estimate",
+      "value": "hidden rewrite prevalence among non-fingerprint docs ~8.1% (SE 2.3pp), derived from 3b's 150-doc read: 10% rewrite total minus 2.07% self-admitted",
+      "measured": "2026-08-30",
+      "source": "arithmetic on dq.cci3.handread_150 and dq.cci3.rewrite_fingerprint",
+      "config": {
+        "computation": "(0.10 - 0.0207) / 0.9793 = 0.0807; SE = sqrt(0.081*0.919/147) ~ 0.023",
+        "note": "preliminary only -- the 150-doc read was not stratified by fingerprint, so this mixes pools; the 400-doc audit (dq.audit.protocol_400) tightens it",
+        "audit_confirmation": "CONFIRMED by the 400-doc audit: p_hidden = 8.0% vs the preliminary 8.1% (SE 2.3pp) -- the mixed-pool derivation happened to be right"
+      },
+      "uncertainty": 0.023,
+      "status": "measured"
+    },
+    {
+      "id": "dq.audit.protocol_400",
+      "value": "junk 121/400 = 30.3%; rewrite 32/400 = 8.0%; single reader (agent C), rubric fixed before reading",
+      "measured": "2026-08-30",
+      "source": "agent C hand audit of data/corpus/sample/cci3_audit_400.jsonl; labels persisted in session notes",
+      "config": {
+        "junk_rubric": "content farm/SEO/template/题库/作文/book-TOC+metadata/exam catalog/marketing/ads/product-placement/headless fragment/conversion artifacts",
+        "junk_rate_vs_150": "30.3% vs 3b's 39.3% on 150 -- same ballpark, different pools (400 excludes fingerprint pool)",
+        "iaa": "NO overlap with 3b's 150 by id or text prefix -- the two samples share zero docs; free IAA not available, would need 3b to re-read a subset of the 400",
+        "headless_rule": "docs beginning mid-word/mid-sentence counted junk (conversion artifact): 8 docs"
+      },
+      "uncertainty": "+-4.6pp junk (p=0.30), +-2.7pp rewrite (p=0.08)",
+      "status": "measured"
+    },
+    {
+      "id": "dq.criterion.positive_control_protocol",
+      "value": "MEASURED 2026-08-30: recall_home = 3.4% (5/147 hand-junk dropped, all garbage_topic), precision = 5/5 = 1.0; ratio = recall_new/recall_home = 0.017/0.034 = 0.50 -- exactly on the VALID/RECALIBRATE boundary, not the clean VALID a positive control wants. The filter catches almost nothing of what humans reject on BOTH corpora (home 3.4%, CCI3 1.7%): it is a format/encoding filter with perfect precision and near-zero recall, not a quality filter. Correction to the earlier in-sample warning: the pass1-3 regexes were never tuned on web_labels (they are cosmopedia-oriented and predate it) -- web_labels is an INDEPENDENT test, which makes the low home recall stronger evidence, not weaker.",
+      "measured": "2026-08-30",
+      "source": "project measurement: datagen/build_corpus.py reject_reason() run on data/corpus/sample/web_labels.jsonl (180 rows, staged to git commit d76a8a1); same code path as the CCI3 measurement in dq.criterion.cci3_measured",
+      "config": {
+        "matrix": {
+          "hand_junk_drop": 5,
+          "hand_junk_keep": 142,
+          "hand_usable_drop": 0,
+          "hand_usable_keep": 33
+        },
+        "junk_rate": 0.817,
+        "rubric": "web_labels y=0 means 'no educational value' (score_web_27b.py BINARY rubric) -- stricter than 3b's CCI3 usable/junk rubric (39.3% junk); the recall gap is therefore partly a rubric gap, but 3.4% under the home rubric still says the regex layer does not make quality decisions",
+        "drop_reasons": "garbage_topic x5 only",
+        "implication": "the ratio criterion needs an absolute floor on recall_home (proposed >=0.5): without it a do-nothing filter scores ratio 1.0 = VALID on every corpus -- the degenerate case the positive control was built to catch, inverted"
+      },
+      "uncertainty": null,
+      "status": "measured",
+      "claim": "the criterion outputs VALID/WEAK (not RECALIBRATE) on the filter's home corpus",
+      "audit": "REFUTED as designed: ratio 0.50 is boundary, and recall_home 3.4% is below any meaningful absolute floor -- the criterion as originally specified would pass a do-nothing filter; fixed by adding the recall_home floor (dq.criterion.ratio_needs_floor)",
+      "refuted_by": "this measurement itself"
+    },
+    {
+      "id": "dq.web_hq.build_path",
+      "value": "web_hq is NOT built through build_corpus.py's regex-only path. Its pipeline: datagen/score_corpus.sh scores every web shard with the distilled quality head (data/quality_head.pt, 231 docs/s) -> datagen/build_web_hq.sh keeps top 40% by score -> datagen/clean_web.py applies four hard filters (spam/short/repetitive/fragmented) plus the score cut (cut = 60th percentile). The 3.4% regex-layer recall_home (dq.criterion.positive_control_protocol) therefore does NOT represent web_hq's actual quality gate -- the head is the gate; the regex layer is a format pre-filter. Resolved 2026-08-30 in response to fb's blocking question before the first pretrain (web_hq = 32.4% of mix_scale_0.2b).",
+      "measured": "2026-08-30",
+      "source": "code-verified: datagen/build_web_hq.sh, datagen/score_corpus.sh, datagen/clean_web.py (repo has no second web_hq builder); pod-side run inferred from data/corpus/web_hq existing in the retired pre-0830v1 mix -- the actual pod run log was not inspected",
+      "config": {
+        "keep_fraction": 0.4,
+        "head_auc_vs_hand": 0.823,
+        "teacher_vs_hand": 0.739,
+        "caveat": "head 2x2 confusion at the operating point (top-40% cut) on web_labels was never computed -- needs pod-side head + 200M backbone to score web_labels; recorded as dq.web_hq.head_operating_point",
+        "web_labels_junk_rate": 0.817,
+        "web_labels_note": "81.7% is the PRE-cut raw web sample; the top-40% cut removes most but AUC 0.823 is not perfect separation"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.web_hq.head_operating_point",
+      "value": "quality head's 2x2 confusion at the top-40% operating cut on web_labels (180 hand labels) -- the true recall_home of web_hq's actual quality gate",
+      "measured": "2026-08-30",
+      "source": "design (this session); not yet computed",
+      "config": {
+        "how": "pod-side: score data/corpus/sample/web_labels.jsonl with data/quality_head.pt + ckpt_k5_clean_0827.pt backbone (audit_source_score.py has the wiring), cut at the same 60th-percentile threshold used by build_web_hq.sh, compare drop/keep vs hand y",
+        "blocker": "head and backbone checkpoints are pod-side only",
+        "why_it_matters": "the ratio criterion's recall_home floor (>=0.5) should be evaluated on the component that makes the quality decision; if the head's operating-point recall is also <0.5 the floor binds on the real gate, not just the regex layer"
+      },
+      "uncertainty": null,
+      "status": "unmeasured",
+      "claim": "the head's operating-point recall_home is measurable and should be >=0.5 for the criterion to pass web_hq's own gate",
+      "audit": "not yet run; blocked on pod-side weights",
+      "refuted_by": "measured recall <0.5 at the operating cut"
+    },
+    {
+      "id": "dq.criterion.ratio_needs_floor",
+      "value": "the recall-ratio criterion must require BOTH ratio >= 0.8 AND recall_home >= 0.5 absolute; a ratio alone is gamed by a do-nothing filter (recall 0 on every corpus -> ratio undefined/1.0 -> VALID everywhere). The web_hq positive control caught exactly this: home recall 3.4% means 0.8 x home = 2.7%, a band so thin that 'VALID' would certify near-total blindness. With the floor, the existing regex filter itself reads RECALIBRATE-class on its home corpus -- quality decisions live in the quality head (AUC 0.823 vs hand, dq.quality_head.auc_vs_hand), not in the regex layer.",
+      "measured": "2026-08-30",
+      "source": "derived from dq.criterion.positive_control_protocol (measured) and dq.criterion.cci3_measured",
+      "config": {
+        "floor_value": "0.5 proposed, not yet validated -- set from the intuition that a filter catching <50% of hand-junk is not a quality filter; adjust when the quality head's home 2x2 is measured",
+        "scope": "floor applies to whatever component makes the quality decision (quality head once retrained); the regex layer keeps its format-filter role with precision 1.0"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.criterion.cci3_measured",
+      "value": "RECALIBRATE (measured recall_new = 1.7%, 1/59)",
+      "measured": "2026-08-30",
+      "source": "aupai-3b 2x2 confusion matrix: 150 hand-read CCI3-HQ docs x existing filter (filters/pass1_garbage.py, filters/pass2_garbage.py, filters/pass3_garbage.py + datagen/quality_clf.py SPAM, non-sentence-boundary criteria not_zh/boilerplate/symbols/garbage_topic)",
+      "config": {
+        "matrix": {
+          "hand_junk_drop": 1,
+          "hand_junk_keep": 58,
+          "hand_usable_drop": 1,
+          "hand_usable_keep": 90
+        },
+        "junk_rate": 0.393,
+        "false_positive": "1/91 usable dropped (酒驾国标, symbols)",
+        "structural_blindness": "filter passes 58/59 content-farm/rewrite/SEO/template docs -- blind to the class, not off on threshold; supersedes the 0.073 arithmetic upper bound in dq.criterion.known_answer_cci3 with a measurement"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.criterion.bound_vs_measured",
+      "value": "arithmetic upper bound recall <= 0.073 was 4x looser than measured 1.7%",
+      "measured": "2026-08-30",
+      "source": "comparison of dq.criterion.known_answer_cci3 (bound) and dq.criterion.cci3_measured (measurement)",
+      "config": {
+        "why": "the bound used the full-corpus drop rate 2.9% (retention 97.1%); the 150-doc sample showed only 1.3% drops (2/150, and one of them was usable) -- drop-rate sample variance plus the bound's optimistic assumption that every drop hit garbage",
+        "lesson": "reality was worse than the most pessimistic derivation; when a bound and a measurement disagree, the measurement also audits the bound's assumptions"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.audit.confusion_400",
+      "value": "existing filter on the 400-doc audit sample: recall 17.4% (21/121 hand-junk dropped), precision 53.8% (21/39 drops); 100/121 hand-junk docs pass",
+      "unit": "2x2 on the locked re-test sample",
+      "measured": "2026-08-30",
+      "source": "agent C ran reject_reason from datagen/build_corpus.py on all 400 audit docs vs hand labels",
+      "config": {
+        "matrix": {
+          "TP": 21,
+          "FP": 18,
+          "FN": 100,
+          "TN": 261
+        },
+        "fp_breakdown": "10/18 FP are not_zh (English academic papers -- language gate working as designed, not real errors); 8 real Chinese FPs: garbage_topic 5, nav_menu 2, boilerplate 1",
+        "role": "PRE-RECALIBRATION BASELINE on the fresh sample: any recalibrated filter/head must beat recall 17.4% here without wrecking precision; this sample stays locked -- never calibrate on it",
+        "fn_note": "all 100 FNs were 'keep' -- the filter is structurally blind to CCI3-HQ junk, same conclusion as dq.criterion.cci3_measured on the 150"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "dq.regex.recal_step01",
+      "value": "Step 0+1 shipped in filters/pass3_garbage.py (merged into GARBAGE, head-600 check). Production path (full text, reject_reason): on 3b's 150 (junk 60 after the 0cf1eb8fa4ae rubric flip) OLD recall 11.7%/precision 53.8% (7TP/6FP) -> NEW 31.7%/76.0% (19TP/6FP); new patterns alone 14 hits / 14 junk = 100% precision (the single earlier 'FP' was a book-TOC+metadata page 3b relabeled junk 2026-08-30). Locked 400 one-shot re-test (2000-char texts, same basis as the 17.4% baseline): recall 17.4%->21.5%, precision 53.8%->59.1%, TP 21->26, FP flat at 18 -- new patterns +5 TP, 0 FP on the fresh sample.",
+      "unit": "recall/precision of the regex recalibration layer",
+      "measured": "2026-08-30",
+      "source": "agent C full-text run on the pod via reject_reason from datagen/build_corpus.py over data/raw/cci3_hq/ (150 docs by id from data/corpus/sample/cci3_handread_150.jsonl); locked re-test on data/corpus/sample/cci3_audit_400.jsonl vs cci3_audit_400_labels.jsonl",
+      "config": {
+        "step0": "fingerprint 原文地址[:：] -> 7/7 junk on 150 full text; corpus-wide 2.46% hit rate, 99.0% in first 600 chars (6-shard pod scan, n=1.01M)",
+        "step1": "zuowen 2/2, tiku 2/2, jiaoan 2/2 on 150; on locked 400 zuowen 5/5, jiaoan 1/1, tiku 0",
+        "toc_tightening": "loose TOC (400: 6 hits/3 junk) replaced by line-anchored two-consecutive-chapter-lines after a 150 FP was prose cross-refs; tightened version kills that FP; its 150 hit (0cf1eb8fa4ae) was relabeled junk by 3b (book-TOC+metadata), so TOC ends at 14/14 on the 150; 0 hits on the locked 400",
+        "baseline_correction": "3b's 1.7% baseline was run on 120-char excerpts, not the production code path; full-text OLD baseline on the same 150 is 11.9% (7/59)",
+        "pod_hygiene": "candidate patterns validated from /tmp on the pod; /work/aupai/filters untouched while 3b's rebuild runs; data/quality_head.pt not touched (swap timing is fb's call)",
+        "verdict": "shipped; Step 2 (quality head retrain) FAILED the bar -- see dq.head.recal_step2_failed; the regex layer is now the only measured junk filter on CCI3",
+        "label_version": "all 150 numbers are on label_set_version v2 (0cf1eb8fa4ae=junk, commit 88a31f1); v1 had it usable -- v1 would read NEW recall 30.5%/precision 72.0%, new-pattern precision 13/14"
+      },
+      "uncertainty": "150-sample precision +/-9pp at n=150; rubric on book-TOC+metadata pages now aligned between 3b and agent C (3b conceded 2026-08-30)",
+      "status": "measured"
+    },
+    {
+      "id": "dq.head.recal_step2_failed",
+      "value": "Quality-head retrain on 3b's 150 hand labels: locked-400 (CCI3) AUC 0.555 vs the deployed head's 0.541 on CCI3; at recall>=0.5 the best precision either head reaches is 0.37 -- the recall>=0.5 AND precision>=0.8 bar is UNREACHABLE in this feature space ON CCI3. Bottleneck is the architecture, not the labels: 20K teacher labels ~= 150 hand labels (0.541 vs 0.555), head-512 ~= tail-512 pooling (0.541 vs 0.542). Same deployed head on web_labels (fineweb2 distribution): AUC 0.823 vs hand -- the 0.28 AUC gap between distributions is the no-transfer criterion itself, not a broken head: the fineweb2 rebuild runs on the distribution where the head is strong and is unaffected.",
+      "unit": "AUC / 2x2 of the distilled quality head on the locked 400",
+      "measured": "2026-08-30",
+      "source": "agent C ran datagen/train_quality_head.py on the pod (GPU 7, ckpt retired_pre0830v2/ckpt_k5_clean_0827.pt == local base, md5 b5eb6f206d02) with /tmp/head_labels_150.jsonl (150 full texts from data/raw/cci3_hq, s=1 usable); eval on /tmp/head_check_400.jsonl (400 full texts by id)",
+      "config": {
+        "new_head_curve": "in-sample held-out-teacher AUC plateaued at 0.66 (15 docs) -- weak even in-sample; locked-400 AUC 0.555",
+        "old_head_curve": "deployed data/quality_head.pt on the same 400: AUC 0.541; drop-50% gives recall 0.512 / precision 0.310",
+        "pooling_check": "tail-512 pooling with the old head: AUC 0.542 -- feature location is not the bottleneck",
+        "implication": "0.541's role is to reinforce the CCI3 exclusion ruling (quality judgements do not transfer across corpora), NOT to question the fineweb2 rebuild -- that rebuild scores with the head at AUC 0.823 on its own distribution. 3b's running web_hq rebuild: continue, no stop",
+        "hygiene": "new head saved as /tmp/quality_head_recal.pt on the pod, NOT deployed; data/quality_head.pt untouched (swap timing is fb's call, now moot -- the new head is not better)",
+        "next_levers": "fastText ALSO FAILED (dq.fasttext.cci3_failed): locked-400 AUC 0.574, web_labels 0.577 vs old head 0.823. Quality-classifier route on 150 labels exhausted across 3 feature families. Remaining: 27B LLM judge on CCI3 (deferred, GPU contention) or accept the regex layer + CCI3 exclusion",
+        "label_version": "head trained on v1 labels (0cf1eb8fa4ae=usable); the v2 flip of one training doc does not move the locked-400 result (400 never touched); fastText follow-up trains on v2"
+      },
+      "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
+      "status": "measured"
+    },
+    {
+      "id": "dq.fasttext.cci3_failed",
+      "value": "DCLM-style fastText (hashed char 2-5gram + word 1-2gram, 2^20 buckets, L2-normalized, logistic/L-BFGS, 5-fold CV reg selection) trained on the 150 v2 hand labels: locked-400 AUC 0.574 -- the recall>=0.5 AND precision>=0.8 bar is unreachable (best precision at recall>=0.5 is 0.38 at drop-15%); web_labels AUC 0.577 vs the deployed head's 0.823 -- the non-degradation check FAILS by 0.25 AUC. Diagnosis: in-sample AUC 1.000 / 5-fold CV 0.682 / transfer 0.574 -- the capacity memorizes 150 docs, generalizes weakly in-distribution, and CCI3-learned junk signals do not transfer to fineweb2.",
+      "unit": "AUC / 2x2 of the fastText junk classifier",
+      "measured": "2026-08-30",
+      "source": "agent C ran datagen/fasttext_junk.py on the pod (CPU) with 150 v2 labels (60 junk) from data/raw/cci3_hq; locked re-test on the 400 by id; web_labels from data/corpus/sample/web_labels.jsonl (180 docs)",
+      "config": {
+        "feature_family_scoreboard": "mean-hidden head (20K teacher labels) 0.541; head (150 hand) 0.555; tail-512 pooling 0.542; hashed n-gram fastText 0.574 -- all on the locked 400, all far below the bar",
+        "overfitting_evidence": "in-sample 1.000 vs CV 0.682 vs transfer 0.574; more labels would narrow the CV gap but the transfer gap says the 150 and 400 differ in junk composition",
+        "fineweb2_transfer": "0.577 on web_labels vs 0.823 for the old head -- a CCI3-trained classifier is a net loss for the fineweb2 domain, consistent with the no-transfer criterion",
+        "verdict": "quality-classifier route at n=150 exhausted; regex layer (dq.regex.recal_step01) remains the only measured junk filter on CCI3; CCI3 stays excluded from training",
+        "reproduction": "repo version (datagen/fasttext_junk.py) re-run on the pod: locked-400 AUC 0.579, web_labels 0.573 -- same conclusion within +-0.005 (Python hash() salt differs per process, exact scores not bit-reproducible)"
+      },
+      "uncertainty": "n=400 AUC +/-0.035; CV-AUC +/-0.05 at 5-fold on 150; a larger label budget (1000+) might lift the CV ceiling but cannot fix the fineweb2 transfer failure",
+      "status": "measured"
+    },
+    {
+      "id": "dq.verification.eqcheck_blind_spot",
+      "value": 0.2156,
+      "unit": "coverage on blossom-math-v4-10k",
+      "measured": "2026-08-30",
+      "source": "/tmp/survival_blossom.py + /tmp/eqcheck_sample.py on pod; scripts/eqcheck.py applied to blossom-math-v4-10k outputs",
+      "config": {
+        "coverage": "2156/10000 docs have >=1 verifiable two-operand equation",
+        "conditional_survival": "91.65% of covered docs (1976/2156) had zero bad steps — MEANINGLESS: manual review of 25 flagged equations shows ~all are false positives",
+        "fp_patterns": "chain detector (CHAIN regex) is broken by Chinese units/variables between operands: '1600元 × 3/10 = 480' is mis-read as '3/10 = 480'; '867 + 231 = 3 × X' mis-read as '= 3'; 'X - 7 - 6.25 = 5.5' mis-read as '7 - 6.25 = 5.5'",
+        "verdict": "eqcheck is unusable as a verification filter on Chinese synthetic math: it sees 21.6% of docs and flags its own blind spots, not solution errors. Arithmetic-step checking is the wrong instrument for this data",
+        "eqcheck_role": "remains valid as a data-filter/eval sanity check on texts with clean ASCII two-operand equations (its original shared role); not as a batch survival checker"
+      },
+      "uncertainty": "exact on 10000 docs; FP rate from 25-equation manual sample (all 25 false positives)",
+      "status": "measured"
+    },
+    {
+      "id": "dq.verification.blossom_gold_agreement",
+      "value": 0.9985,
+      "unit": "fraction with extractable final answer agreeing with gold",
+      "measured": "2026-08-30",
+      "source": "/tmp/gold_answer_agree.py on pod; blossom-math-v4-10k (100% records carry an `answer` field) vs output final answer",
+      "config": {
+        "extraction": "last number-like token (int/decimal/fraction/percent, trailing Chinese units stripped) — pre-registered before running",
+        "raw_agreement": "9985/10000 = 99.85%; extraction success 100%",
+        "disagreement_review": "all 15 reviewed: ~6 extractor artifacts (mixed-number '3 and 2/3' grabbed as 2/3; '1 million' vs '1,000,000'; answer before trailing context), ~9 genuine (0.09%) — mostly integer rounding of exact fractional answers (13 days vs 13.33) plus >=1 real misread (id=294: '1/4米' read as quarter-of-rope)",
+        "true_agreement": "99.91-99.97% after artifact correction",
+        "pipeline_implication": "answer-level verification (extract final answer vs gold) is the right instrument; arithmetic-step is not. Synthetic batches must RETAIN the gold answer field, and free-text generations need an extraction contract — \\boxed{} (math_short_v10 format) is the existing extractable target",
+        "batch_verdict": "blossom-math-v4-10k is a clean batch under answer-level checking"
+      },
+      "uncertainty": "raw exact; true agreement bounded by manual review of 15 disagreements",
+      "status": "measured"
+    },
+    {
+      "id": "dq.sft_termination_underdetermined",
+      "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。 | **机制解释(fb 确认,非相关性)**:code 源有确定边界(围栏/代码块)所以不欠定——这个结构解释预测了哪些源欠定且预测对。**独立成立的数据缺陷,非解释失败**。**修法 = renderer-per-source(nanochat 式:每任务一形态,由代码定,不继承源自带形态),非打包归一时(on-time 归一)). λ 合成目标:每簇一种形态,由生成器强制**。code 重复的 55.8% 成因另记(eval f8c08c1:贪心 55.8%/t=0.8 17%/base 25.4%,循环无藏物,成因在解码器不在模型/数据)。",
+      "measured": "2026-08-30",
+      "source": "pod 实测 eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
+      "config": {
+        "cluster": "MinHashLSH 128-perm/16-band + union-find over band keys",
+        "shape_features": [
+          "fence",
+          "latex_env",
+          "display_math",
+          "preamble",
+          "star_head",
+          "terminal_family"
+        ],
+        "sample": "per-source 8000 x 9 sources",
+        "n_pairs": 49481,
+        "n_clusters": 43836,
+        "near_dup_families": 1606,
+        "shapes_gt1_families": 384,
+        "shapes_gt1_rate": 0.239,
+        "terminal_diff_families": 342,
+        "note": "OOM 痕迹保留(纯 python MinHash 的成本记录);本实现跑通后另记 completed"
+      },
+      "uncertainty": "近重是启发式(MinHash ~0.8 Jac);形状特征是分类器非原始 token;code 源 0% 未见多样性可能因 code 答案有确定结构",
+      "status": "measured"
+    },
+    {
+      "id": "dq.code_rp1t_handread_50",
+      "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each. Near-dup rate 6/50 = 12% (Wilson 95% CI ~5-24% at n=50) -- this is the number that makes stage 2's parallel MinHash re-stamp non-optional. The stage-1 run trains on the set as is.",
+      "measured": "2026-08-31",
+      "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
+      "config": {
+        "n": 50,
+        "denominator": "all 50 sampled docs, single-reader hand-read",
+        "sampling": "first 400 lines of each of 197 shards (78,800 docs scanned; shards are shuffled corpus slices, so shard-head is effectively uniform), reservoir per detected PL, cap 8 docs/PL, shuffled to 50",
+        "stratification": "by programming language via head-600-char regex heuristic; labels corrected by hand in the tally",
+        "rubric": "keepable = real, non-trivial, hand-written code (tests, configs, interfaces, thin real classes kept); reject reasons: view/template glue, POJO boilerplate, generated, dead/commented",
+        "near_dedup": "false on this domain (accepted risk, t48 stage-2 re-stamp prerequisite); visible near-dups among the 50 tallied as required",
+        "threshold": "none pre-registered for keep rate -- descriptive; cci3 handread precedent dq.cci3.handread_150"
+      },
+      "uncertainty": "Single reader. PL classifier mislabeled PHP files (the `use`/`class` regexes matched python/rust patterns) -- labels were corrected by hand in the tally, counts above use corrected labels. Six kept docs are real-but-trivial (thin interfaces, 6-line exception class, one-assertion test); a stricter rubric would put keep rate at ~34/50 = 68%. Sample is shard-head, not uniform over docs (defensible because shards are shuffled). 80% keepable is a description of this 197-shard stage-1 subset; the 39 rest shards were not in the sample frame.",
+      "status": "measured"
+    },
+    {
+      "id": "dq.near_dedup_literature",
+      "value": "Five-source survey for the stage-2 MinHash hard gate. Lee 2021 (C4 360M docs): word 5-gram, Jaccard 0.8 + edit-sim 0.8, removed 3.04% C4 / 13.63% RealNews / 0.39% Wiki-40B, memorization ~10x lower, PPL equal or better. FineWeb (15T tok): word 5-gram, Jaccard 0.75, removed 44% per-snapshot (36T to 20T tokens), global iterative up to 90% rejected. Dolma (3T tok): exact URL/doc/paragraph, removed 53.2%/14.9%/18.7%; code (the Stack) MinHash settings unreported. SemDeDup: embedding cosine eps 0.03, up to 37% removed at no perf drop. D4 (600M docs): MinHash shingle/threshold unreported. Adoption rule outcome: only one <=1B source reports a Jaccard threshold (Lee 0.8); FineWeb 0.75 is 15T-scale; condition not met, stricter is 0.75, but calibration (dq.near_dedup_gate_calibration) shows neither catches the observed class.",
+      "measured": "2026-08-31",
+      "source": "arXiv:2107.06499, 2406.17557, 2402.00159, 2303.09540, 2308.12284; docs/lessons/near_dedup_gate.md",
+      "config": {
+        "survey": "Lee/FineWeb/Dolma/SemDeDup/D4",
+        "extraction": "full-text HTML, exact quotes"
+      },
+      "uncertainty": "FineWeb/D4 removal rates conflate dedup with other pipeline stages; Dolma code settings unreported",
+      "status": "recorded"
+    },
+    {
+      "id": "dq.near_dedup_gate_calibration",
+      "value": "Calibrated on the 50-doc t24 hand-read sample (2 template clusters, 6-8 docs: Yii CRUD {3,24,30,38}, Java POJO {5,7,19,35}). Literature standard (raw word 5-gram, J 0.75-0.8) catches 0/8: Yii tops out at raw J 0.181, POJO under 0.01. Chosen gate: normalize (comments/strings/numbers/identifiers stripped, 70-word keyword stoplist), 3-word shingles, Jaccard >= 0.5, union-find, keep one per cluster. Catches 5/8 cluster docs {5,7,19,30,38} with 0 false pairs among the other 42 (nearest false pair 0.462, python-rust boilerplate). Implied removed fraction 5/50 = 10% (Wilson 95% CI 3.4-21%); the sample is language-stratified (PHP 32%) so the corpus-wide fraction is measured by 3b at re-stamp. Misses the most divergent cluster members (docs 24, 35). Normalized containment (threshold 0.77) catches the same 5 with a thinner margin (0.778 vs 0.739).",
+      "measured": "2026-08-31",
+      "source": "data/corpus/sample/code_rp1t_handread50.jsonl; docs/lessons/near_dedup_gate.md",
+      "config": {
+        "sample": "t24 stratified 50 docs",
+        "shingle": "3-word, normalized",
+        "threshold": "Jaccard 0.5",
+        "cluster_membership": "post-hoc reconstruction, 8 candidates vs hand-read tally 6"
+      },
+      "uncertainty": "n=50, Wilson CI 3.4-21%; cluster membership reconstructed post-hoc; corpus-wide fraction unmeasured",
+      "status": "recorded"
+    },
+    {
+      "id": "dq.corpus_exact_dup_is_zero",
+      "value": 0.0,
+      "unit": "fraction of rows that are exact duplicates",
+      "measured": "2026-09-01",
+      "source": "probes/t62_corpus_dup_rate.py (full-domain), probes/t63_cross_domain_dup.py (cross-domain)",
+      "config": {
+        "task": "P0 duplication hypothesis",
+        "within_domain_full_scan": "cot 851,965 rows / 851,965 unique; textbook_30b 920,692 / 920,692; wiki_chat 372,827 / 372,827. max_copies 1 in every case.",
+        "cross_domain": "7 domains x 250,000 rows = 1,750,000 rows, 1,750,000 distinct keys, ZERO cross-domain collisions. Key is build_corpus.exact_key's normaliser (strip [\\s\\W_]+, sha1).",
+        "known_answer_verification": "planting 100 unique docs + one body at 7 copies + one at 3 returns 109 scanned / 101 unique / 8 dup rows / max 7. The instrument detects what it looks for; the zero is a measurement, not a silence.",
+        "why_within_domain_zero_is_expected": "build_corpus._parallel_exact_pass ran on every domain build and is global across that domain's shards, so within-domain zero is that pass WORKING, not evidence of a clean source.",
+        "why_cross_domain_zero_is_the_new_information": "no pass ever compared two domains -- dedup_corpus.py never ran (data/dedup/ absent) and has no consumer. The gap is real in code; this measures it empty in this corpus.",
+        "hardlink_false_lead": "2010 of 3422 shards have link count 2. The pairs are staging->assembled (web_cci3_p* <-> zh_web, wiki <-> wiki_chat, math <-> math_seed); only the assembled name appears in a mix, so no inode is read twice in one run."
+      },
+      "uncertainty": "EXACT duplication only. A paraphrase, a boilerplate-heavy pair, or a reformatted copy hashes differently and is counted unique -- and near-dedup has never run on this corpus (every build carries --no_near_dedup; build_corpus._near_dedup_postpass has no caller outside its own test). dq.code_rp1t_handread_50 measures 12% near-dup in code_rp1t by hand, which this number does not contradict and does not cover. code_rp1t and math_owm_stage2/en_c4_stage2/zh_web were scanned at a 250K-row prefix cross-domain, not in full.",
+      "boundary": "This REFUTES the exact-duplication leg of the P0 hypothesis and refutes nothing else. Read it as 'exact duplication is absent', never as 'the corpus is clean'.",
+      "status": "measured"
+    },
+    {
+      "id": "dq.domain_loss_scores_the_training_pool",
+      "value": 0.00625,
+      "unit": "fraction of scored docs that are actually held out",
+      "measured": "2026-09-01",
+      "source": "probes/t64_val_head_overlap.py; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
+      "config": {
+        "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
+        "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
+        "measured_on": "cot, 851,965 docs, 13 shards, seed 0",
+        "scored_docs_landing_in_first_5000_shuffled": 0.00625,
+        "expected_if_uniform": 0.00587,
+        "reading": "0.625% vs 0.587% expected by chance -- indistinguishable. The scored set is a uniform random sample of the pool, i.e. ~99.4% training data.",
+        "affected_numbers": "every per-domain nat in the 16B/22B/30B readouts and all four score_matrix profiles, including code_rp1t 0.795 nats = ppl 2.21",
+        "not_affected": "train.py's own printed val figure (validate() at :977) reads vcat, which comes from val and never from pools -- that one is genuinely row-disjoint."
+      },
+      "uncertainty": "Measured on cot at seed 0. The mechanism is seed-independent (any shuffle scatters the first shard uniformly), but the exact fraction per domain is not separately measured. eval/ppl.py reproduces the real val slice correctly and has zero callers.",
+      "boundary": "THE DEEPER POINT, which survives even if the head/val bug is fixed: a val set drawn from the training DISTRIBUTION cannot separate 'learned the distribution' from 'memorised its documents'. Row-disjointness is not the property the question needs. This explains loss falling while MC sits at chance without requiring any duplication -- and it is why the duplication hypothesis was reachable at all: the instrument that would have refuted it earlier was measuring the wrong rows.",
+      "status": "measured"
+    },
+    {
+      "id": "dq.near_dup_rate_at_the_real_normaliser",
+      "value": 4.77,
+      "unit": "percent of rows removable, code_rp1t, J>=0.5",
+      "measured": "2026-09-01",
+      "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
+      "config": {
+        "task": "P0 duplication -- the one leg exact-dedup could not answer",
+        "sample": "20,000 documents per domain, first shards in sorted order",
+        "engine": "128 perms, 64 bands x 2 rows, word 3-gram shingles, exact Jaccard on LSH candidates -- build_corpus's parameters, not reimplemented",
+        "normaliser": "_norm_skeleton (lowercase + collapse whitespace)",
+        "sweep_rows_removable_pct": {
+          "code_rp1t": {
+            "0.3": 8.84,
+            "0.4": 6.7,
+            "0.5": 4.77,
+            "0.6": 3.01,
+            "0.7": 1.76,
+            "0.8": 1.2,
+            "0.9": 0.4
+          },
+          "cot": {
+            "0.3": 0.76,
+            "0.4": 0.38,
+            "0.5": 0.14,
+            "0.6": 0.08,
+            "0.7": 0.04,
+            "0.8": 0.01,
+            "0.9": 0.0
+          },
+          "textbook_30b": {
+            "0.3": 0.0,
+            "0.5": 0.0,
+            "0.9": 0.0
+          }
+        },
+        "candidate_pairs": {
+          "code_rp1t": 156138,
+          "cot": 91645,
+          "textbook_30b": 148
+        },
+        "reconciles_with_handread": "dq.code_rp1t_handread_50 measured 12% by hand (n=50, Wilson 5-24%). 8.84% at the loosest threshold sits inside that interval; a human calls things near-duplicate that word-3-gram Jaccard does not, so hand-read above machine is the expected direction."
+      },
+      "uncertainty": "A SWEEP, NOT A POINT, and deliberately so. near_dedup_gate.md calibrates J>=0.5 against per-domain normalisers (norm_code, norm_en_c4, norm_math with a 70-word keyword stoplist and LaTeX mapping) that DO NOT EXIST in the repo -- grep returns nothing. The only normaliser present is _norm_skeleton, under which the gate doc's own example cluster scores 0.181 against its 0.5 threshold. Reporting a single number at 0.5 would be a fact about a measuring stick the code does not have. 20K-row prefix samples, not full domains; en_c4_stage2, math_owm_stage2 and zh_web unmeasured.",
+      "boundary": "A GATE THAT CERTIFIES ITS OWN NO-OP. Wiring _near_dedup_postpass up at its documented defaults today would remove approximately nothing AND stamp near_dedup: True while doing it (build_corpus.py:918-919), because the threshold is calibrated for a normaliser that was never written. The gate encodes 'the interesting case is above 0.5 under the calibrated normaliser' and neither half of that assumption holds. Same class as eff.fp8_weight_byte_cache measuring a disabled path: a check's assumption about where the interesting case lives is the one thing the check never tests. SEPARATELY: this measures near-duplication and refutes nothing about the P0 symptom -- code_rp1t is the only domain carrying meaningful near-dup, it falls off a cliff with threshold, and there is no setting at which near-dedup removes a large share of this corpus.",
+      "status": "measured"
+    },
+    {
+      "id": "dq.stage2_corpus_built_with_weaker_filters",
+      "value": "The nine mix_500m domains carry filters_fp 33462c13868a2194, the pod's filters/, which lacked the five CCI3-HQ structural-junk rules main added 2026-08-30 (main was 88ee503b38941bf4). Measured residue by running the five rules over the built corpus, 20000 rows sampled per domain: zh_web 6.68% (983 of 1337 hits are '原文地址:', 296 教案/课件, 79 作文/范文), textbook_30b 0.48%, chatml 0.01%, chat_qa 0.01%, cot 0.00%. Weighted by mix share: 0.25% of the training corpus is Chinese structural junk main's filter would have dropped. English, code and math domains are unaffected -- all five rules are Chinese patterns.",
+      "unit": "fraction of training corpus",
+      "measured": "2026-09-01",
+      "source": "fp_filters on both hosts + the five rules run over data/corpus/<domain>/*.jsonl on the pod",
+      "config": {
+        "sample": "20000 rows per domain, shards in order, holdout_slice_* excluded",
+        "mix": "data/mix_500m.json weights: zh_web 3.05%, textbook_30b 10.16%, chatml 0.74%, chat_qa 0.73%, cot 8.07%",
+        "rules": "the five regexes removed from filters/pass3_garbage.py on the pod copy",
+        "host": "pod /work/aupai"
+      },
+      "uncertainty": "a 20000-row head sample per domain, not a uniform draw; shard order is build order",
+      "status": "measured",
+      "boundary": "Says what the missing rules would have dropped, not whether dropping them helps. The rules were tuned on handread-150 only and no downstream measurement ties them to loss or to any eval. The controller ruled no rebuild at 0.25%."
+    }
+  ]
 }
