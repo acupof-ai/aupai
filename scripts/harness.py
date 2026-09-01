@@ -134,6 +134,9 @@ REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
 REVIEW_RULE_FROM = "2026-08-31 22:00"
+#: From when a close must name a commit that reaches main and touches its evidence.
+#: Rows closed before this keep their prose evidence; the rule is not retroactive.
+TASK_COMMIT_FROM = "2026-09-01 21:30"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -2978,6 +2981,47 @@ def _union_ledgers(root):
     return tuple(out)
 
 
+def check_tasks_closed_by_commit(root):
+    """Every task closed since the rule carries a commit that reaches main and touches
+    its evidence.
+
+    Closing wrote free text, so a task closed on a path that never existed read as
+    delivered and the register could not tell the difference. The rule dates from
+    TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    scope = [t for t in rows
+             if t.get("state") == "done" and (t.get("closed") or "") >= TASK_COMMIT_FROM]
+    if not scope:
+        return SKIP, f"no task closed since the rule took effect ({TASK_COMMIT_FROM})"
+    bad = []
+    for t in scope:
+        sha = t.get("commit")
+        if not sha:
+            bad.append(f"{t['id']}: closed with no commit")
+            continue
+        why = _commit_delivers(sha, t.get("evidence") or "", root)
+        if why:
+            bad.append(f"{t['id']}: {why}")
+    if bad:
+        return FAIL, f"{len(bad)} of {len(scope)} closed task(s): {'; '.join(bad[:3])}"
+    return PASS, f"{len(scope)} closed task(s), each delivered by a commit that reaches main"
+
+
+def _broken_tasks_closed_by_commit():
+    import shutil as _sh
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "tasks.jsonl")
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    _sh.copy(src, dst)
+    rows = [json.loads(x) for x in open(dst, encoding="utf-8") if x.strip()]
+    seed = dict(rows[-1], id="broken-1", state="done", closed="2099-01-01 00:00",
+                evidence="scripts/harness.py", commit="0" * 40, reviewer="44")
+    with open(dst, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    return d
+
+
 def check_review_present(root):
     """Every done task has a review row from the reviewer it named.
 
@@ -4641,6 +4685,35 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def _commit_delivers(sha, evidence, root=None):
+    """Empty string if sha reaches main and its diff touches a path named in evidence.
+
+    The register's evidence field was free text: a path that never existed closed a
+    task, and the register read as delivered. A commit hash is the one claim the repo
+    can refute by itself -- it either resolves, reaches main, and moved that file, or
+    it does not (user ruling 2026-09-01: the conversation is notification, the commit
+    is the truth)."""
+    root = root or ROOT
+    g = ["git", "-C", root]
+    if subprocess.run(g + ["cat-file", "-e", f"{sha}^{{commit}}"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} is not a commit in this repo"
+    if subprocess.run(g + ["merge-base", "--is-ancestor", sha, "main"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
+    r = subprocess.run(g + ["show", "--name-only", "--format=", sha],
+                       capture_output=True, text=True)
+    touched = [p for p in r.stdout.split("\n") if p.strip()]
+    paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
+             if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
+    if not paths:
+        return f"evidence names no path, so nothing can be checked against {sha[:8]}"
+    if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
+        return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
+                "the commit does not deliver what the evidence claims")
+    return ""
+
+
 def cmd_task(argv):
     """harness task {add,done,list}. The controller's assignments, in a file rather than
     in a conversation -- a conversation gets compacted and the assignment goes with it.
@@ -4664,6 +4737,8 @@ def cmd_task(argv):
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
     a.add_argument("--owner", required=True)
+    a.add_argument("--socket", required=True,
+                   help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
@@ -4673,6 +4748,8 @@ def cmd_task(argv):
     d.add_argument("--reviewer", required=True,
                    help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
+    d.add_argument("--commit", required=True,
+                   help="the commit that delivers it: must reach main and must touch --evidence")
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
@@ -4689,6 +4766,7 @@ def cmd_task(argv):
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
+            "socket": args.socket,
             "state": "open",
             "task": args.task,
             "why": args.why,
@@ -4713,9 +4791,13 @@ def cmd_task(argv):
         if args.reviewer not in REVIEW_PAIRS:
             print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
+        bad = _commit_delivers(args.commit, args.evidence)
+        if bad:
+            print(f"refusing: {bad}", file=sys.stderr)
+            return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
-                  closed=time.strftime("%Y-%m-%d %H:%M"))
+                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M"))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -5408,6 +5490,13 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "tasks_closed_by_commit",
+        "every task closed since the rule names a commit that reaches main and touches its evidence",
+        "the register closed on free text, so a task closed on a path that never existed read as delivered; a whole evening's assignments lived only in chat and none was recoverable",
+        check_tasks_closed_by_commit,
+        _broken_tasks_closed_by_commit,
     ),
     (
         "review_present",

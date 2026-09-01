@@ -508,17 +508,33 @@ def selftest():
     structural defence against this file becoming the thing it was written to
     replace -- see WHO_CHECKS_THE_GATE in docs.
     """
+    import atexit
     import shutil
+    import subprocess
     import tempfile
 
+    tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "data", "runs", "scripts"],
+                             capture_output=True, text=True).stdout.split("\n")
+    tracked = [p for p in tracked if p.strip()]
+    if not tracked:
+        print("SKIP: git ls-files returned nothing, so a world would be empty")
+        return 0
+
+    worlds = []
+    atexit.register(lambda: [shutil.rmtree(w, ignore_errors=True) for w in worlds])
+
     def world(mutate):
-        d = tempfile.mkdtemp()
-        for sub in ("data", "runs", "scripts"):
-            src = os.path.join(ROOT, sub)
-            if os.path.isdir(src):
-                shutil.copytree(src, os.path.join(d, sub),
-                                ignore=shutil.ignore_patterns("corpus", "*.pt", "raw", "_*"),
-                                dirs_exist_ok=True)
+        # Tracked files only: 12 MB against 1.5 GB for the whole of data/, and every
+        # artifact a gate reads is committed. The pattern-based copytree that stood here
+        # excluded corpus/ and _* but not data/*.jsonl, so each world carried 1.5 GB of
+        # SFT corpora no gate opens; 7886 undeleted worlds filled the disk to 2 GB free
+        # and broke two sessions' selftests (2026-09-01).
+        d = tempfile.mkdtemp(prefix="gate_world_")
+        worlds.append(d)
+        for rel in tracked:
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
         os.makedirs(os.path.join(d, "data", "corpus"), exist_ok=True)
         mutate(d)
         return d
