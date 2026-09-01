@@ -14,6 +14,7 @@ without retraining. Scores with the vocabulary the checkpoint was trained on.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -65,6 +66,27 @@ def head_texts(path, n):
         if t:
             texts.append(t)
     return texts
+
+
+def head_fp(texts):
+    """sha1 of the exact text this score was computed over, first 16 hex.
+
+    Not the corpus directory's fingerprint and not the domain NAME: the readout's
+    head guard compared names, so two roles scored on different bytes under the
+    same name would have differenced silently, and the guard only ever worked
+    because stage 2 happened to RENAME the domains it rebuilt (b0, 2026-09-01).
+    Hashing the scored text closes both directions -- same name different bytes
+    refuses, and a rename over identical bytes becomes readable.
+
+    It is also for the human reader. A person differencing two rows out of
+    score_matrix.jsonl by hand had nothing in the record telling them the rows
+    were incomparable; they had to go find a separate stats file. That is how
+    this defect was found, by making exactly that mistake."""
+    h = hashlib.sha1()
+    for t in texts:
+        h.update(t.encode("utf-8", "replace"))
+        h.update(b"\x00")
+    return h.hexdigest()[:16]
 
 
 @torch.no_grad()
@@ -169,7 +191,8 @@ def main():
             if loss is None:
                 print(f"  {name:10s} too few tokens to score -- SKIPPED", flush=True)
                 continue
-            row["domains"][name] = {"loss": round(loss, 4), "tokens": ntok}
+            row["domains"][name] = {"loss": round(loss, 4), "tokens": ntok,
+                                    "head_fp": head_fp(texts)}
             print(f"  {name:10s} {loss:.4f}   ({ntok:,} tok)", flush=True)
         vals = [d["loss"] for d in row["domains"].values()]
         row["unweighted_mean"] = round(sum(vals) / len(vals), 4)
