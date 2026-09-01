@@ -1,5 +1,5 @@
 {
- "probe": "t62_copy_rate",
+ "probe": "t69_copy_rate",
  "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
  "ngram_tokens": 8,
  "n_prompts": 62,
@@ -56,5 +56,6 @@
    "mean_gen_tokens": 128.0,
    "drop_from_greedy": -0.4308
   }
- }
+ },
+ "renamed_from": "t62_copy_rate -- collided with another session's probe of the same number; theirs was cited first so mine moved"
 }

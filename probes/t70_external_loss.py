@@ -25,7 +25,7 @@ separates them: the same model scored on corpus text it has certainly seen, held
 at the same sequence length and packing. Without that control this arm should
 report ABSENT rather than a number.
 
-Usage: python probes/t64_external_loss.py --ckpt ckpt_... --out runs/external_loss.json
+Usage: python probes/t70_external_loss.py --ckpt ckpt_... --out runs/external_loss.json
 """
 import argparse
 import glob
@@ -123,7 +123,7 @@ def main():
     dropped = len(unseen) - len(kept)
 
     res = {
-        "probe": "t64_external_loss",
+        "probe": "t70_external_loss",
         "ckpt": os.path.basename(a.ckpt),
         "seq": SEQ,
         "unseen_source": "this repo's docs/ prose, authored 2026-08-30..09-01",
