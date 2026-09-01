@@ -754,6 +754,304 @@ def _parallel_exact_pass(a):
     return 0
 
 
+def _word_shingle_hashes(normalised_text, shingle=3):
+    """Word-n-gram hashes of a normalised doc, distinct and order-stable. blake2b is
+    fixed-reproducible (independent of PYTHONHASHSEED), so serial and parallel workers
+    emit identical shingle sets and the rewrite is byte-identical. The near-dup
+    DECISION is exact Jaccard over THIS set (normalized word-3-gram, near_dedup_gate.md);
+    MinHash only generates candidates. () for docs under `shingle` words: nothing to dedup."""
+    words = normalised_text.split()
+    if len(words) < shingle:
+        return ()
+    seen, out = set(), []
+    for i in range(len(words) - shingle + 1):
+        h = int.from_bytes(
+            hashlib.blake2b(" ".join(words[i : i + shingle]).encode("utf-8"), digest_size=8).digest(), "little"
+        )
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return tuple(out)
+
+
+def _near_coeffs(perms, seed):
+    """(ab, mask): `perms` deterministic permutation coefficients (seed), the same
+    construction MinHashLSH uses. Fixed seed => identical signatures serial vs parallel."""
+    import random as _r  # noqa
+
+    rng = _r.Random(seed)
+    mask = (1 << 61) - 1
+    return [(rng.randrange(1, mask), rng.randrange(0, mask)) for _ in range(perms)], mask
+
+
+def _minhash(shingle_hashes, ab, mask):
+    """MinHash signature (MIN over each permutation of the shingle-hash set). Candidate
+    generator only; a signature asserts nothing about near-ness by itself."""
+    return tuple(min(((a * h + b) & mask) for h in shingle_hashes) for a, b in ab)
+
+
+def _norm_skeleton(t):
+    """Default post-pass normaliser: lowercase + collapse whitespace. The real
+    per-domain code/en_c4/math_owm normalisers (with 44's calibrated keyword stoplist
+    and LaTeX mapping) are injected per domain at run time; this keeps the core
+    engine testable and normaliser-agnostic while the domain constants are
+    calibration artifacts (bake the gate's margins)."""
+    return " ".join(t.lower().split())
+
+
+def _lsh_candidates(sigs, bands, rows):
+    """Candidate ordinal pairs from MinHash LSH: two docs sharing any band's full
+    row-tuple are candidates. False candidates cost compute only -- the exact-J
+    decision below filters them and never errs upward."""
+    rivals = set()
+    for b in range(bands):
+        table = {}
+        for o, sig in sigs.items():
+            table.setdefault(sig[b * rows : (b + 1) * rows], []).append(o)
+        for members in table.values():
+            if len(members) > 1:
+                members.sort()
+                for i in range(len(members)):
+                    for j in range(i + 1, len(members)):
+                        rivals.add((members[i], members[j]))
+    return rivals
+
+
+def _lsh_recall_bound(bands, rows, jac):
+    """MinHash LSH collision probability at Jaccard `jac`: 1-(1-jac**rows)**bands. The
+    THEORETICAL recall -- the acceptance basis at 8M-doc scale, where the 50-doc
+    hand-read (1225 pairs) cannot empirically cover recall (44 condition 1). epsilon =
+    1 - bound at the gate threshold is a second error term of the removed-fraction fact,
+    beside the Wilson CI (44 condition 1; a missed pair here survives as a near-dup)."""
+    return 1.0 - (1.0 - jac**rows) ** bands
+
+
+def _union_find(n):
+    """Disjoint-set over 0..n-1 with path-halving + rank union. Deterministic: cluster
+    assignment depends only on the unordered set of union() calls, so serial and
+    parallel runs compute identical survivors (kept = min ordinal per cluster)."""
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+
+    return find, union
+
+
+def _near_emit_slice(args):
+    """Phase A worker: (path, base, ab, mask, normaliser) -> list[(ordinal, sig)].
+    Ordinal = position among non-empty content lines in global shard order (identical
+    walk in the rewrite); sig = MinHash or None for docs too short to shingle (always
+    survive). The stamped input is already holdout- and exact-deduped, so near-dup is
+    the only axis. Module-level for mp.Pool pickling."""
+    path, base, ab, mask, norm = args
+    emit, ords = [], 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+            if not t:
+                continue
+            sh = _word_shingle_hashes(norm(t))
+            emit.append((base + ords, _minhash(sh, ab, mask) if sh else None))
+            ords += 1
+    return emit
+
+
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg):
+    """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
+    carry the near-dedup configuration and result: they are part of the artifact's
+    meaning, and the removed-fraction fact reads them off the stamp."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+    from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    _settle_dir(out, domain, SETTLE_S)
+    stats = {
+        "domain": domain, "reasons": dict(reasons), "kept": kept,
+        "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
+        "filters": "near-dedup-postpass", "n_shards": nshards,
+        "filters_fp": _fp_filters(),
+        "fingerprint": _fp_dir(out),
+        "near_dedup": True,
+        "removed_fraction": (removed_n / total_docs) if total_docs else 0.0,
+        "recall_bound": recall,
+        "recall_epsilon": 1.0 - recall,
+        "config": cfg,
+    }
+    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    if os.path.exists(tok_path):
+        try:
+            from tokenizers import Tokenizer  # noqa: I001 -- same nested-import shape as _write_stats:622
+
+            from count_tokens import CONVENTION, count_shards
+
+            shards = sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))
+            if shards:
+                n_sample = min(3, len(shards))
+                tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
+                stats["tokens"] = tokens
+                stats["tokens_status"] = "measured"
+                stats["tokens_config"] = f"{n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
+        except Exception as e:
+            stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+    else:
+        stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+    with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=1)
+
+
+def _near_dedup_postpass(a, normaliser=None, perms=128, bands=8, rows=16, jaccard=0.5, seed=17):
+    """Calibrated near-dedup post-pass (fb ruling 2026-08-31; 44 conditions 2026-09-01).
+    Runs AFTER the stage-2 run finished (never launch-parallel); rewrites the stamped
+    {domain}_*.jsonl in place (new corpus_fp, forces retokenize). Byte-identical to a
+    single-worker run of the same pipeline.
+
+    Fork C (memory-bounded): Phase A keeps only each doc's MinHash signature in memory
+    (1GB at 8M docs -- NOT the ~40GB of shingle sets), LSH yields candidate pairs, and
+    the exact normalized word-3-gram Jaccard DECISION is made by re-reading only the
+    candidate docs' source lines. Exact-J >= jaccard keeps the removed-fraction fact on
+    44's calibrated measure: MinHash/LSH is a candidate generator, never a decider."""
+    import multiprocessing as mp
+
+    if bands * rows != perms:
+        raise ValueError(f"bands*rows ({bands}x{rows}) != perms ({perms})")
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)
+    normaliser = normaliser or _norm_skeleton
+    ab, mask = _near_coeffs(perms, seed)
+
+    paths = sorted(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    if not paths:
+        raise SystemExit(f"REFUSE: no {a.domain}_*.jsonl shards to near-dedup in {a.out}")
+
+    doc_counts = []
+    for p in paths:
+        n = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+        doc_counts.append(n)
+    bases, acc = [], 0
+    for n in doc_counts:
+        bases.append(acc)
+        acc += n
+    total_docs = acc
+
+    with mp.Pool(a.workers) as pool:
+        phase_a = pool.map(_near_emit_slice, [(p, bases[i], ab, mask, normaliser) for i, p in enumerate(paths)])
+    sigs = {}
+    for emit in phase_a:
+        for o, sig in emit:
+            if sig is not None:
+                sigs[o] = sig
+
+    removed = set()
+    rivals = _lsh_candidates(sigs, bands, rows)
+    if rivals:
+        wanted = set()
+        for lo, hi in rivals:
+            wanted.add(lo)
+            wanted.add(hi)
+        import bisect
+
+        by_shard = {}
+        for o in wanted:
+            by_shard.setdefault(bisect.bisect_right(bases, o) - 1, set()).add(o)
+        shingle = {}
+        for i, p in enumerate(paths):
+            cur = by_shard.get(i)
+            if not cur:
+                continue
+            off = 0
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                    if bases[i] + off in cur and t:
+                        shingle[bases[i] + off] = _word_shingle_hashes(normaliser(t))
+                    if t:
+                        off += 1
+        find, union = _union_find(total_docs)
+        for lo, hi in rivals:
+            A = shingle.get(lo)
+            B = shingle.get(hi)
+            if not A or not B:
+                continue
+            sa, sb = set(A), set(B)
+            j = len(sa & sb) / len(sa | sb) if (sa | sb) else 0.0
+            if j >= jaccard:
+                union(lo, hi)
+        roots = {}
+        for o in sigs:
+            roots.setdefault(find(o), []).append(o)
+        for members in roots.values():
+            if len(members) > 1:
+                removed |= set(members) - {min(members)}
+
+    kept_flags = bytearray(b"\x01") * total_docs  # 8M flags ~8MB, not a set
+    for o in removed:
+        kept_flags[o] = 0
+
+    # rewrite survivors in global order into a staging dir, then move over originals.
+    nd = os.path.join(a.out, f".near_{a.domain}")
+    os.makedirs(nd, exist_ok=True)
+    w = ShardWriter(nd, a.domain)
+    kept = kept_chars = 0
+    for i, p in enumerate(paths):
+        ords = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                if not t:
+                    continue
+                if kept_flags[bases[i] + ords]:
+                    kept += 1
+                    kept_chars += len(t)
+                    w.write(json.loads(line))
+                ords += 1
+    w.close()
+    for p in paths:
+        os.remove(p)
+    for sp in sorted(glob.glob(f"{nd}/{a.domain}_*.jsonl")):
+        os.replace(sp, os.path.join(a.out, os.path.basename(sp)))
+    os.rmdir(nd)
+
+    removed_n = total_docs - kept
+    recall = _lsh_recall_bound(bands, rows, jaccard)
+    nshards = len(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    reasons = Counter({"kept": kept, "near_dup": removed_n})
+    _near_write_stats(
+        a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
+        {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
+    )
+    return 0
+
+
 def _ladder_frozen_domains():
     """Domain names any mix_scale_*.json freezes. Writing into one is a silent
     fingerprint break (2026-08-31: ten shards into data/corpus/code/); new corpus
