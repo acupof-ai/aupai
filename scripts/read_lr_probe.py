@@ -131,7 +131,24 @@ def report(a, b):
     out.append(f"  gap {gap:.4f}, SEM of the difference {sem_d:.4f} = {sig:.2f} sigma"
                f"  -- two arms with NO true difference land here or higher "
                f"{p_null * 100:.0f}% of the time")
-    out.append(f"\n  VERDICT: {v}  ({why})")
+    # fb: the warning goes ON the verdict line, not beside it. A reader who stops at
+    # the verdict is exactly the reader this protects, and a number that lives only in
+    # the ruling does not exist. Likewise "not-decidable" must say WHY -- resolution,
+    # not sample count -- because the two imply opposite next moves: run longer, or fix
+    # the logging (the two layers that together take SEM down by about sqrt(70)).
+    if v == "not-decidable" and not (a["refuted"] or b["refuted"]):
+        line = (f"VERDICT: not-decidable (gap {gap:.4f} < 0.05, and that threshold is "
+                f"{0.05 / sem_d:.2f} sigma on this instrument -- the limit is "
+                f"RESOLUTION, not run length)")
+    elif v == "not-decidable":
+        line = f"VERDICT: not-decidable  ({why})"
+    elif p_null >= 0.05:
+        line = (f"VERDICT: {v} (gap {gap:.4f}) -- but two arms with no true difference "
+                f"produce a gap this large or larger about {p_null * 100:.0f}% of the "
+                f"time. Not enough on its own to change the recipe.")
+    else:
+        line = f"VERDICT: {v} (gap {gap:.4f}, {sig:.2f} sigma)  ({why})"
+    out.append("\n  " + line)
     return "\n".join(out)
 
 
