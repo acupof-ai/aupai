@@ -1,0 +1,32 @@
+{
+ "probe": "t63_self_repeat",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "ngram_tokens": 8,
+ "n_prompts": 62,
+ "max_new": 256,
+ "rep_stop": false,
+ "arms": {
+  "greedy": {
+   "n": 62,
+   "self_repeat_median": 0.747,
+   "self_repeat_mean": 0.6783,
+   "self_repeat_p10": 0.2289,
+   "self_repeat_p90": 0.9558,
+   "frac_above_0.5": 0.7419,
+   "max_run_median": 175,
+   "max_run_p90": 238,
+   "mean_gen_tokens": 256.0
+  },
+  "sampled_t0.8": {
+   "n": 62,
+   "self_repeat_median": 0.0884,
+   "self_repeat_mean": 0.1921,
+   "self_repeat_p10": 0.0,
+   "self_repeat_p90": 0.5462,
+   "frac_above_0.5": 0.1129,
+   "max_run_median": 9,
+   "max_run_p90": 101,
+   "mean_gen_tokens": 235.6
+  }
+ }
+}
