@@ -27,6 +27,7 @@ MAX = 5 * 1024 * 1024
 
 ALLOWED = [
     "data/mix_*.json",
+    "data/token_cache_pools.json",
     "data/eval/*",
     "data/synthetic/*",
     "data/corpus/sample/*",

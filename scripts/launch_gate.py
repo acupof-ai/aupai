@@ -111,10 +111,22 @@ def gate_epochs_measured(root, mix_path, world):
     missing = []
     for name, spec in m["domains"].items():
         src = spec.get("epochs_pool_source")
-        if src is None:
+        flag = spec.get("epochs_pool_measured")
+        if src is None and flag is None:
             missing.append(name)
+        elif flag is not None:
+            # A structured field, checked first. Grepping the prose for "ESTIMATED" tested a
+            # WORD, not the property: writing "DERIVED from the stamp" for four domains with
+            # no cache flipped this gate from NO-GO to GO with nothing measured (b0,
+            # 2026-09-01, caught in my own change). A mix that carries the boolean is judged
+            # on the boolean; the string stays for the reader, not the gate.
+            if not flag:
+                est.append(name)
         elif "ESTIMATED" in str(src).upper():
             est.append(name)
+        else:
+            # Neither a boolean nor the legacy marker: unreadable provenance is not a pass.
+            missing.append(name)
     if missing:
         return NOGO, (f"{len(missing)} domain(s) carry no epochs_pool_source at all: "
                       f"{', '.join(missing[:4])} -- provenance absent, not merely estimated")
