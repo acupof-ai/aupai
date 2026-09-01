@@ -33,9 +33,10 @@ import sys
 PASS, FAIL, UNCOVERED = "PASS", "FAIL", "UNCOVERED"
 
 CURSOR_RE = re.compile(r"cursor discarded")
-# "mix: <domain> rows ... from row N" -- the adopted-cursor line, whatever its wording,
-# always names the domain and the row it starts at.
-START_RE = re.compile(r"mix: (\w+).*?(?:from row|start(?:ing)? at row|cursor) (\d+)")
+# train.py:1907, the line the ADOPT branch prints -- verified against the source, not
+# guessed from the shape of the other mix: lines. An earlier version of this pattern
+# matched none of them, and would have reported UNCOVERED on a run that printed all nine.
+START_RE = re.compile(r"mix: (\w+) resuming at row (\d+)")
 JOIN_RE = re.compile(r"WSD JOIN: resumed at step (\d+)/(\d+)")
 
 
@@ -72,48 +73,44 @@ def read_log(lines, expect_step, plan_steps):
     return out, join
 
 
-def read_cursors(lines, before, after):
-    """Condition 3, criterion B (fb): the SUM strictly increased and no domain fell.
+def read_cursors(lines, before):
+    """Condition 3: every domain resumed AT the row the checkpoint recorded, exactly.
 
-    Criterion A -- every domain strictly greater -- needs an exemption table. At the test
-    shape the two smallest domains gain only ~4.6 and ~4.7 rows between step 40 and 60, so
-    the shuffle leaves one of them empty about 1.84% of the time: one false red in every
-    54 runs of a gate whose red blocks a launch. A table fixes that and then rots -- change
-    a mix weight and the stale exemption waves through a real defect.
+    Read from the log's adopt line (:1907), compared against the checkpoint that run 2
+    was given. Not from the later checkpoint: the cursor does NOT accumulate across a
+    resume -- :2308 sets _plan_step_origin to resume_step and :1386 counts (step-origin)
+    rows, so step 60's cursor describes the 640 rows of the NEW plan, not 1920 from the
+    start. Comparing the two checkpoints reads that as every domain going backwards.
 
-    B needs no table. The sum gains 640 rows, which cannot come out zero, so there is no
-    false red; and "no domain fell" is exactly the re-read signature, because a domain that
-    restarts at row 0 comes back BELOW where it stopped rather than merely level. Immune to
-    weight changes by construction.
-
-    Read from the checkpoints, not the log: build_mix prints on both discard branches
-    (:1886 seed, :1895 fingerprint) and prints nothing when the cursor IS adopted, so a
-    silent adopt and a silent skip look identical in the restart output.
+    Which killed both earlier criteria: "strictly greater" (A) and "sum grew, no domain
+    fell" (B) each assumed an accumulating counter. What is actually verifiable is that
+    the number the writer stored is the number the reader adopted -- write/read agreement,
+    which is all conditions 1-4 were ever able to establish.
     """
+    seen = {}
+    for ln in lines:
+        m = START_RE.search(ln)
+        if m:
+            seen.setdefault(m.group(1), int(m.group(2)))
     if not before:
-        return [(FAIL, "3. cursor sum grew, no domain fell",
-                 "the resume-source checkpoint has no row_cursor -- nothing to advance from")]
-    if not after:
-        return [(UNCOVERED, "3. cursor sum grew, no domain fell",
-                 "run 2 wrote no checkpoint carrying row_cursor")]
-    missing = sorted(set(before) - set(after))
-    fell = sorted(d for d in before if d in after and after[d] < before[d])
-    grew = sum(after.get(d, 0) for d in before) - sum(before.values())
-    if missing or fell or grew <= 0:
+        return [(FAIL, "3. every domain resumed at the recorded row",
+                 "the resume-source checkpoint carries no row_cursor")]
+    if not seen:
+        return [(FAIL, "3. every domain resumed at the recorded row",
+                 f"the restart printed no 'resuming at row' line for any of the "
+                 f"{len(before)} domains -- the cursor was not adopted at all")]
+    bad = [f"{d}: log {v}, checkpoint {before.get(d)}"
+           for d, v in sorted(seen.items()) if before.get(d) != v]
+    absent = sorted(set(before) - set(seen))
+    if bad or absent:
         detail = []
-        if missing:
-            detail.append(f"absent from the later cursor: {missing}")
-        if fell:
-            detail.append("went BACKWARD (the re-read signature): "
-                          + ", ".join(f"{d} {before[d]}->{after[d]}" for d in fell))
-        if grew <= 0:
-            detail.append(f"sum did not grow: {grew:+d} rows")
-        return [(FAIL, "3. cursor sum grew, no domain fell", "; ".join(detail))]
-    still = sorted(d for d in before if after[d] == before[d])
-    return [(PASS, "3. cursor sum grew, no domain fell",
-             f"sum +{grew} rows over {len(before)} domains"
-             + (f"; {len(still)} level ({', '.join(still)}) -- allowed, the shuffle can miss "
-                f"a small domain in 640 rows" if still else ""))]
+        if bad:
+            detail.append("disagree: " + "; ".join(bad))
+        if absent:
+            detail.append(f"no resuming line: {absent}")
+        return [(FAIL, "3. every domain resumed at the recorded row", " | ".join(detail))]
+    return [(PASS, "3. every domain resumed at the recorded row",
+             f"{len(seen)} domains, every one character-for-character equal")]
 
 
 def read_sum(cursor, step, batch, accum, world):
@@ -202,22 +199,21 @@ def report(rows):
 
 def _selftest():
     good = [
-        "mix: cot rows 1234 from row 900",
-        "mix: zh_web rows 9999 from row 4400",
+        "mix: cot resuming at row 900 (0.01 epochs consumed)",
+        "mix: zh_web resuming at row 4400 (0.00 epochs consumed)",
         "WSD JOIN: resumed at step 40/60 under mix mix_500m | lr_mult 1.0000",
     ]
     b4 = {"cot": 900, "zh_web": 4400}
-    aft = {"cot": 1350, "zh_web": 6600}
     rows, _ = read_log(good, 40, 20)
-    rows += read_cursors(good, b4, aft)
+    rows += read_cursors(good, b4)
     assert [r[0] for r in rows] == [PASS] * 4, rows
 
-    # Re-read from row 0: the domain ends up nonzero but BELOW where it stopped. This is
-    # the case "nonzero" would have passed and strictly-greater catches.
-    assert read_cursors(good, b4, {"cot": 450, "zh_web": 6600})[0][0] == FAIL
-    # One domain level is ALLOWED under B: the shuffle can miss a small domain in 640 rows.
-    assert read_cursors(good, b4, {"cot": 900, "zh_web": 6600})[0][0] == PASS
-    assert read_cursors(good, b4, {"cot": 1350})[0][0] == FAIL                  # domain vanished
+    # The log says one thing, the checkpoint another -- write and read disagree.
+    assert read_cursors(good, {"cot": 900, "zh_web": 4401})[0][0] == FAIL
+    # A domain the checkpoint knows never printed a resuming line: it was not adopted.
+    assert read_cursors(good, {"cot": 900, "zh_web": 4400, "chatml": 63})[0][0] == FAIL
+    # No adopt line at all -- the whole cursor was ignored, which is the bug under test.
+    assert read_cursors(["WSD JOIN: resumed at step 40/60"], b4)[0][0] == FAIL
 
     # Condition 6: 1280 rows/rank x 7 = 8960, int() truncation can cost 9x7=63.
     nine = {f"d{i}": 995 for i in range(9)}          # sums to 8955, inside [8897, 8960]
@@ -264,7 +260,7 @@ def _selftest():
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == UNCOVERED
     print("read_resume_proof selftest OK: 16 cases "
-          "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor re-read/level-ok/vanish, "
+          "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor equal/disagree/absent/none, "
           "sum ok/world-dropped/empty, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
 
@@ -295,7 +291,7 @@ def main(argv):
     d = torch.load(tail, map_location="cpu", weights_only=False, mmap=True) if tail else {}
 
     rows, _ = read_log(lines, 40, 20)
-    rows += read_cursors(lines, ck.get("row_cursor") or {}, d.get("row_cursor") or {})
+    rows += read_cursors(lines, ck.get("row_cursor") or {})
     cfg = ck.get("cfg") or {}
     rows += read_sum(ck.get("row_cursor") or {}, ck.get("step") or 40,
                      cfg.get("batch") or 32, cfg.get("accum") or 1, world)
