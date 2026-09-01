@@ -16,7 +16,7 @@ plan that is materialised in order, so restarting at step k reads row k·B·A on
 
 The break is **across mixes**. Stage 2 builds a new plan from its own mix with
 `used` at 0, so every domain restarts at row 0 of its pool while the tail stays
-unread. Measured by b0: 26% of code_rp1t, 34% of en_c4, 92% of zh_web.
+unread. DERIVED by b0 (docs/lessons/stage2_composition.md 3.5, commit 6375636, 2026-08-31 22:26): 26% of code_rp1t, 34% of en_c4, 92% of zh_web. NOT a measurement -- no run, no checkpoint, no log. It is arithmetic on stage-1 and stage-2 want/pool row counts under the ASSUMPTION that used[] resets, and it shows how large the consequence would be, never that the premise holds. The premise cited train.py:1563/1575/1591, which today are _encode_worker and _sample_seed. de's d5ed78c (2026-09-01 03:19, five hours later) wired the cursor through; read 2205-2206, passed 2234-2236, applied 1881-1882.
 
 This narrows the fix. The cursor does not need to survive a within-run crash —
 `--auto-resume` already handles that through the step seek. It needs to survive a
@@ -96,7 +96,7 @@ anything else:
 > than read from an artifact stage 1 wrote. No record of stage-1's actual
 > consumption exists; the run finished before the field did. Two independent
 > cross-checks agree with the replay: cot capped at 295,512 rows (44's measured
-> figure) and zh_web at 0.08 epochs (b0's 92%-unread finding), neither supplied
+> figure) and zh_web at 0.08 epochs (b0's 92%-unread DERIVATION, see above), neither supplied
 > to the tool. That is good evidence and it is not a recorded artifact. A
 > stage-2 data anomaly should suspect this before anything else.
 
@@ -247,7 +247,7 @@ establish which — here the checkpoint's mtime against the fix date — or say 
 6. Only then let the resume run.
 
 Skipping this repeats rows the weights have already seen while the tail goes unread:
-b0's measured shape is 26% of code_rp1t, 34% of en_c4, 92% of zh_web.
+b0's DERIVED shape is 26% of code_rp1t, 34% of en_c4, 92% of zh_web -- conditional on a premise de has since refuted; see the note at the top of this file.
 
 **Stage 3 planning:** assume the stage-2 final checkpoint has no cursor and budget the
 reconstruction. A post-fix checkpoint written before stage 3 starts supersedes this;
