@@ -8,6 +8,14 @@ CKPT=$1; N=${2:-6}
 # The vocabulary the checkpoint was trained on: a rebuild changes ids, and a
 # mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
+# A rescore of a checkpoint already scored once must be possible without editing this
+# file. eval_hard.sh has read FORCE/RUN since 2026-08-31; these two never did, so every
+# generative metric in the step15000 milestone errored at ArtifactExists and the record
+# kept only the domain_loss/mc_full half (de, 2026-09-01). FORCE=1 replaces, RUN=<name>
+# versions. Both are passed to the SHARD writers and to the merge below: guarding one
+# and not the other is how the merged file -- the one facts cite -- got clobbered before.
+FORCE_ARG=""; [ "${FORCE:-}" = "1" ] && FORCE_ARG="--force"
+RUN_ARG=""; [ -n "${RUN:-}" ] && RUN_ARG="--run ${RUN}"
 cd "$(dirname "$0")/.."
 bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs
@@ -20,6 +28,7 @@ pids=()
 source eval/_devs.sh "$N"
 for i in $(seq 0 $((N-1))); do
   CUDA_VISIBLE_DEVICES=${_DEVS[$i]} python3 eval/math_zh.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
+    $FORCE_ARG $RUN_ARG \
     > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
 done
@@ -34,14 +43,34 @@ done
 grep -h "math-500" "$LOGDIR"/shard_*.log
 python3 - "$CKPT" "$N" "$EXPECTED" <<'PY'
 import json, os, sys
+sys.path.insert(0, "scripts")
+from eval_artifacts import open_artifact, seal  # noqa: E402
+
 ck, n, expected = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+run = os.environ.get("RUN") or None
+force = os.environ.get("FORCE") == "1"
 base = f"data/eval/preds_{os.path.basename(ck)}"
-suffix = lambda i: f".{i}" if n > 1 else ""
-rows = [json.loads(l) for i in range(n) for l in open(f"{base}{suffix(i)}.jsonl", encoding="utf-8")]
+# The shard writers apply --run themselves, so the merge must read the versioned
+# paths too. Reading the unversioned ones would merge a PREVIOUS run's shards under
+# this run's name -- the same authorship confusion that put a stale degeneration rate
+# in the step15000 record. The order is the writer's, not the obvious one: --run is
+# applied by versioned_path AFTER the shard index, so shard 0 of run r2 is
+# preds_x.0.r2.jsonl, not preds_x.r2.0.jsonl. Written the other way round this merge
+# raised FileNotFoundError on a run that had just succeeded (caught by the probe).
+shard = lambda i: f"{base}{'.%d' % i if n > 1 else ''}{'.' + run if run else ''}.jsonl"
+rows = [json.loads(l) for i in range(n) for l in open(shard(i), encoding="utf-8")]
 assert len(rows) == expected, f"merged {len(rows)} preds, expected {expected} — a shard is short"
 ok = sum(r["ok"] for r in rows)
-with open(f"{base}.jsonl", "w", encoding="utf-8") as f:
-    for r in rows:
-        f.write(json.dumps(r, ensure_ascii=False) + "\n")
+out_path = f"{base}.{run}.jsonl" if run else f"{base}.jsonl"
+if n > 1:
+    # The MERGED file is what facts cite, so it goes through the same refusal as the
+    # shards (eval_hard.sh, e1 2026-08-31). At n == 1 there is nothing to merge: the
+    # single shard already wrote exactly this path with exactly these rows, and
+    # rewriting it would be a file refusing to overwrite itself.
+    with open_artifact(out_path, force=force) as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+sealed, msg = seal(out_path, expected, written=len(rows))
+print(("  " if sealed else "  INCOMPLETE: ") + msg)
 print(f"TOTAL math-500: {ok:.0f}/{len(rows)} = {ok / len(rows):.1%}")
 PY
