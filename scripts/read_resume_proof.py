@@ -73,36 +73,47 @@ def read_log(lines, expect_step, plan_steps):
 
 
 def read_cursors(lines, before, after):
-    """Condition 3, in fb's tightened form: every domain's cursor STRICTLY ADVANCED.
+    """Condition 3, criterion B (fb): the SUM strictly increased and no domain fell.
 
-    `before` is row_cursor from the checkpoint run 2 resumed FROM, `after` from the one
-    run 2 wrote. Strictly-greater is the point: "nonzero" can be satisfied by a domain
-    that restarted at row 0 and read its way somewhere, which is the exact failure being
-    tested for. Only "further along than where it stopped" separates continuing from
-    re-reading.
+    Criterion A -- every domain strictly greater -- needs an exemption table. At the test
+    shape the two smallest domains gain only ~4.6 and ~4.7 rows between step 40 and 60, so
+    the shuffle leaves one of them empty about 1.84% of the time: one false red in every
+    54 runs of a gate whose red blocks a launch. A table fixes that and then rots -- change
+    a mix weight and the stale exemption waves through a real defect.
 
-    Read from the checkpoints, not the log: the adopt branch prints nothing (only the two
-    discard branches do, :1886 and :1895), so the log cannot answer this at all.
+    B needs no table. The sum gains 640 rows, which cannot come out zero, so there is no
+    false red; and "no domain fell" is exactly the re-read signature, because a domain that
+    restarts at row 0 comes back BELOW where it stopped rather than merely level. Immune to
+    weight changes by construction.
+
+    Read from the checkpoints, not the log: build_mix prints on both discard branches
+    (:1886 seed, :1895 fingerprint) and prints nothing when the cursor IS adopted, so a
+    silent adopt and a silent skip look identical in the restart output.
     """
     if not before:
-        return [(FAIL, "3. every domain's cursor strictly advanced",
+        return [(FAIL, "3. cursor sum grew, no domain fell",
                  "the resume-source checkpoint has no row_cursor -- nothing to advance from")]
     if not after:
-        return [(UNCOVERED, "3. every domain's cursor strictly advanced",
+        return [(UNCOVERED, "3. cursor sum grew, no domain fell",
                  "run 2 wrote no checkpoint carrying row_cursor")]
     missing = sorted(set(before) - set(after))
-    stalled = sorted(d for d in before if d in after and after[d] <= before[d])
-    if missing or stalled:
+    fell = sorted(d for d in before if d in after and after[d] < before[d])
+    grew = sum(after.get(d, 0) for d in before) - sum(before.values())
+    if missing or fell or grew <= 0:
         detail = []
         if missing:
             detail.append(f"absent from the later cursor: {missing}")
-        if stalled:
-            detail.append("did not advance: "
-                          + ", ".join(f"{d} {before[d]}->{after[d]}" for d in stalled))
-        return [(FAIL, "3. every domain's cursor strictly advanced", "; ".join(detail))]
-    grew = min(after[d] - before[d] for d in before)
-    return [(PASS, "3. every domain's cursor strictly advanced",
-             f"{len(before)} domains, smallest advance {grew} rows")]
+        if fell:
+            detail.append("went BACKWARD (the re-read signature): "
+                          + ", ".join(f"{d} {before[d]}->{after[d]}" for d in fell))
+        if grew <= 0:
+            detail.append(f"sum did not grow: {grew:+d} rows")
+        return [(FAIL, "3. cursor sum grew, no domain fell", "; ".join(detail))]
+    still = sorted(d for d in before if after[d] == before[d])
+    return [(PASS, "3. cursor sum grew, no domain fell",
+             f"sum +{grew} rows over {len(before)} domains"
+             + (f"; {len(still)} level ({', '.join(still)}) -- allowed, the shuffle can miss "
+                f"a small domain in 640 rows" if still else ""))]
 
 
 def read_sum(cursor, step, batch, accum, world):
@@ -178,6 +189,11 @@ def report(rows):
         print(f"NOT PROVEN: {len(fails)} condition(s) failed. Per the user's order, "
               f"this blocks the launch.")
         return 1
+    print("NOT COVERED by this test, and not implied by its green: the startup refusal "
+          "logic itself (the six conditions all take the happy path and never reach it); "
+          "an optimizer ORDER swap (zip(strict=True) sees a changed count, not a swap); "
+          "the rows_done > plan refusal at :1387 (only a full 20B run reaches it).")
+    print()
     print("PROVEN: every condition that this test can answer, passed."
           + (f" {len(unc)} reported UNCOVERED above -- they were not tested, which is "
              f"not the same as passing." if unc else ""))
@@ -199,7 +215,8 @@ def _selftest():
     # Re-read from row 0: the domain ends up nonzero but BELOW where it stopped. This is
     # the case "nonzero" would have passed and strictly-greater catches.
     assert read_cursors(good, b4, {"cot": 450, "zh_web": 6600})[0][0] == FAIL
-    assert read_cursors(good, b4, {"cot": 900, "zh_web": 6600})[0][0] == FAIL   # stalled
+    # One domain level is ALLOWED under B: the shuffle can miss a small domain in 640 rows.
+    assert read_cursors(good, b4, {"cot": 900, "zh_web": 6600})[0][0] == PASS
     assert read_cursors(good, b4, {"cot": 1350})[0][0] == FAIL                  # domain vanished
 
     # Condition 6: 1280 rows/rank x 7 = 8960, int() truncation can cost 9x7=63.
@@ -247,7 +264,7 @@ def _selftest():
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == UNCOVERED
     print("read_resume_proof selftest OK: 16 cases "
-          "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor re-read/stall/vanish, "
+          "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor re-read/level-ok/vanish, "
           "sum ok/world-dropped/empty, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
 
