@@ -31,6 +31,14 @@ GPU = os.environ.get("E2E_GPU", "").strip()
 assert GPU, "set E2E_GPU=<idx>. The pod's cards are shared, so this test will not pick one."
 os.environ["CUDA_VISIBLE_DEVICES"] = GPU  # before any torch import, incl. transitive ones
 STEPS = int(os.environ.get("E2E_STEPS", "6"))
+# The shape to build, as train.py flags. Default: whatever Cfg says, which is what this
+# test has always run. E2E_LAYERS=32 runs the joins at the 493.6M shape -- the launch
+# gate asks whether the pipeline holds at the shape being launched, and a run at
+# Cfg.layers answers that only while Cfg.layers happens to be that shape. The flag is
+# --dim, not --d: run_ddp.sh's args pass through torchrun's parser first, where prefix
+# matching makes --d ambiguous (754b624).
+E2E_LAYERS = os.environ.get("E2E_LAYERS", "").strip()
+E2E_SHAPE = ["--layers", E2E_LAYERS] if E2E_LAYERS else []
 MIX = "data/mix_sample.json"
 DOMAIN = "sample"
 
@@ -117,6 +125,7 @@ def main():
                 "512",
                 "--warmup",
                 "2",
+                *E2E_SHAPE,
             ]
         )
         assert os.path.exists(ckpt), f"train.py produced no {ckpt}\n{out[-1500:]}"
@@ -160,6 +169,15 @@ def main():
             assert getattr(cfg, k) == v, f"cfg.{k} = {getattr(cfg, k)!r}, checkpoint says {v!r}"
         n_par = sum(p.numel() for p in model.parameters())
         print(f"    {n_par / 1e6:.1f}M params, d={cfg.d} layers={cfg.layers} seq={cfg.seq} from the ckpt")
+        # A requested shape that did not take is the failure this test cannot afford to
+        # miss: the run would be green, at the wrong shape, and read as a pass of the
+        # shape it was launched for. train.py's shape flags are generated from a help
+        # dict rather than written as add_argument calls, so a rename reaches the parser
+        # and not the caller (754b624 renamed --d to --dim for exactly that reason).
+        if E2E_LAYERS:
+            assert cfg.layers == int(E2E_LAYERS), (
+                f"asked for --layers {E2E_LAYERS}, the checkpoint says {cfg.layers}: the "
+                f"flag did not take, and everything below tests the wrong shape")
         del model
 
         stage(7, "pack an SFT set; its fingerprint must equal the checkpoint's")
@@ -242,6 +260,16 @@ def main():
         print(f"    vocab_id {sk['vocab_id']} survived SFT")
 
         print(f"\ne2e OK: mix -> tokenize -> pretrain -> ckpt -> pack -> sft -> generate, {STEPS} steps")
+        # The gate's record, and the shape comes from the checkpoint this run produced
+        # -- ck["cfg"], not the flag that was requested. The flag says what was asked
+        # for; the checkpoint says what was built, and only the second is evidence. This
+        # test requires a GPU, so a run that reaches here ran real kernels.
+        from launch_tests import record_launch_test
+
+        cf = ck["cfg"]
+        record_launch_test(__file__, "pass",
+                           {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
+                           real_kernel=True)
         return 0
     finally:
         # Always clean up the temp checkpoints; the .ep1 carries optimizer state and is the

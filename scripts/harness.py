@@ -134,6 +134,9 @@ REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
 REVIEW_RULE_FROM = "2026-08-31 22:00"
+#: From when a close must name a commit that reaches main and touches its evidence.
+#: Rows closed before this keep their prose evidence; the rule is not retroactive.
+TASK_COMMIT_FROM = "2026-09-01 21:30"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1023,21 +1026,49 @@ def check_no_foreground_pod_training(root):
     whole card at 100% after the tn tunnel dies, which once contaminated a
     seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
-    if not os.path.exists(pod) or pod_drift.is_pod(root):
-        return SKIP, "host-side check; needs ~/bin/pod"
-    allrows, err = _pod_ps_rows()
-    if err:
-        return SKIP, err
+    fake = os.environ.get("HARNESS_POD_PS")
+    if fake:
+        # Selftest injection. The check's broken world is a process TABLE, not a repo tree,
+        # and the pod is shared -- staging the violation live would mean starting a
+        # foreground trainer on the box running the 15B job.
+        allrows = [tuple(p) for p in (ln.split(None, 5) for ln in open(fake, encoding="utf-8"))
+                   if len(p) == 6 and p[0].isdigit()]
+    else:
+        if not os.path.exists(pod) or pod_drift.is_pod(root):
+            return SKIP, "host-side check; needs ~/bin/pod"
+        allrows, err = _pod_ps_rows()
+        if err:
+            return SKIP, err
     return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
-    # A broken world here would need a real foreground training process on the pod --
-    # i.e. committing the exact incident the check exists to prevent, on the box
-    # running the 15B job. The check reads live process state, not a repo artifact,
-    # so there is nothing in a temp tree to break. Skipped out loud rather than
-    # given a hand-written world that would share the check's own assumptions.
-    raise SelftestSkip("reads live pod process state; no repo artifact to break")
+    """The FAIL table, captured live on the pod, fed through HARNESS_POD_PS.
+
+    judge_pod_ps is covered by scripts/test_pod_ps_judge.py in CI, but the harness's own
+    selftest skipped this check -- and a skip here means `harness --selftest` reports the
+    check as unexercised, which is how it drifted into four false positives in one day.
+    The predicate and the check are different things: the test proves the judgement, this
+    proves the check WIRES that judgement to a FAIL.
+
+    Rows are verbatim from de's capture: `pod "cd /work/aupai && ./run_ddp.sh --name
+    fixture_fg_probe --help; sleep 40"` -- a real torchrun in a real crictl exec session,
+    off every card before capture. Not hand-written: staging it live would mean starting
+    a foreground trainer on a shared box, i.e. committing the incident the check prevents.
+    """
+    FOREGROUND = [
+        "1389335 1389335 1389335       0 Ss   bash -lc cd /work/aupai && ./run_ddp.sh --name fixture_fg_probe --help >/dev/null 2>&1; sleep 40",
+        "1389346 1389335 1389335 1389335 S    /bin/bash ./run_ddp.sh --name fixture_fg_probe --help",
+        "1389348 1389335 1389335 1389346 Sl   /usr/bin/python3 /usr/local/bin/torchrun --nproc_per_node=8 train.py --fp8 --name fixture_fg_probe",
+        "1389417 1389417 1389417 1389348 Rsl  /usr/bin/python3 -u train.py --fp8 --name fixture_fg_probe --help",
+    ]
+    d = _tmp_repo()
+    ps = os.path.join(d, "data", "pod_ps.txt")
+    os.makedirs(os.path.dirname(ps), exist_ok=True)
+    with open(ps, "w", encoding="utf-8") as f:
+        f.write("\n".join(FOREGROUND) + "\n")
+    os.environ["HARNESS_POD_PS"] = ps
+    return d
 
 
 def check_curl_ipv4(root):
@@ -1571,6 +1602,84 @@ def check_pinned_ids(root):
 
 
 MAX_TRACKED_MB = 5
+
+
+# Scripts harness.py shells out to, as (path relative to ROOT, what invokes it). A subprocess
+# path is a reference the interpreter never resolves until the moment it runs, so a moved file
+# leaves it looking correct and failing only when someone actually needs that command.
+_SPAWNED_SCRIPTS = [
+    ("scripts/exp.py", "the experiment ledger, several call sites"),
+    ("scripts/pod_drift.py", "manifest regeneration"),
+    ("datagen/pretokenize.py", "harness run pretokenize"),
+    ("eval/eval_all.sh", "harness eval"),
+    ("eval/eval_hard.sh", "harness eval --hard"),
+    ("run_ddp.sh", "harness launch"),
+]
+
+
+def check_spawned_scripts_exist(root):
+    """Every script harness.py spawns is where harness.py says it is.
+
+    c3a47e8 moved the corpus-build scripts from scripts/ to datagen/ and three
+    os.path.join(HERE, ...) call sites kept pointing at scripts/. Nothing noticed, because a
+    subprocess path is only resolved when the command runs, and none of the three had run
+    since: `harness run pretokenize` is the step that warms token caches -- the launch gate's
+    own epochs prerequisite -- and it would have died on FileNotFoundError at the moment
+    someone tried to clear that gate (b0, 2026-09-01).
+
+    Checking the list rather than parsing the source: a regex over os.path.join(HERE, "x.py")
+    would miss an f-string or a variable, and the failure mode here is a path that reads fine.
+    The list is asserted complete by the selftest against a grep of the source."""
+    missing = [(p, why) for p, why in _SPAWNED_SCRIPTS
+               if not os.path.exists(os.path.join(root, p))]
+    if missing:
+        return FAIL, (
+            f"{len(missing)} spawned script(s) absent: "
+            + "; ".join(f"{p} ({why})" for p, why in missing[:3])
+            + " -- a subprocess path resolves only when it runs, so this fails at use, not here"
+        )
+    # The list must also be COMPLETE, or the check reports green over a call site nobody
+    # listed. Scan this file's own source for the literal-path shape and require every hit to
+    # be covered. Known ceiling, stated rather than hidden: this finds os.path.join(<dir>,
+    # "name.py"/"name.sh") literals, not f-strings or variables. Those exist and are not
+    # covered -- a wider net would need a real call-graph, and a check that overstates its
+    # coverage is the defect this whole file spent the day on.
+    src = open(os.path.join(root, "scripts", "harness.py"), encoding="utf-8").read() \
+        if os.path.exists(os.path.join(root, "scripts", "harness.py")) else ""
+    # Only paths built INSIDE a command list. The first version matched any
+    # os.path.join(DIR, "x.py") and reported six extras -- a shutil.copy, three file reads,
+    # a substring test, and a filename quoted in this docstring. It conflated "a path is
+    # constructed" with "a script is spawned", which would have trained the next reader to
+    # add unrelated files to the list until the check meant nothing.
+    named = set(re.findall(
+        r'(?:subprocess\.(?:run|Popen|check_output)\(|cmd\s*=\s*)\[[^]]*?'
+        r'os\.path\.join\([A-Z]+,\s*(?:"[a-z_]+",\s*)?"([a-z_]+\.(?:py|sh))"', src, re.S))
+    listed = {os.path.basename(p) for p, _ in _SPAWNED_SCRIPTS}
+    unlisted = sorted(named - listed - {"harness.py"})
+    if unlisted:
+        return FAIL, (
+            f"{len(unlisted)} spawned script(s) in the source but not in _SPAWNED_SCRIPTS: "
+            f"{', '.join(unlisted)} -- add them, or this check is green over an unchecked path"
+        )
+    return PASS, f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present, and the list covers "\
+                 f"every literal path in harness.py"
+
+
+def _broken_spawned_scripts_exist():
+    """A tree where pretokenize.py sits at the path the refactor left behind.
+
+    The real defect, minimised: the file exists in the repo, just not where the caller looks.
+    That is why it read as fine -- `ls datagen/` and `grep pretokenize` both succeed."""
+    d = _tmp_repo()
+    for p, _ in _SPAWNED_SCRIPTS:
+        full = os.path.join(d, p)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        open(full, "w").write("# stub\n")
+    # move the one the refactor moved, to where it used to live
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    os.rename(os.path.join(d, "datagen", "pretokenize.py"),
+              os.path.join(d, "scripts", "pretokenize.py"))
+    return d
 
 
 def check_no_oversized_blob(root):
@@ -2870,6 +2979,47 @@ def _union_ledgers(root):
         if path.endswith(".jsonl"):
             out.append(path)
     return tuple(out)
+
+
+def check_tasks_closed_by_commit(root):
+    """Every task closed since the rule carries a commit that reaches main and touches
+    its evidence.
+
+    Closing wrote free text, so a task closed on a path that never existed read as
+    delivered and the register could not tell the difference. The rule dates from
+    TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    scope = [t for t in rows
+             if t.get("state") == "done" and (t.get("closed") or "") >= TASK_COMMIT_FROM]
+    if not scope:
+        return SKIP, f"no task closed since the rule took effect ({TASK_COMMIT_FROM})"
+    bad = []
+    for t in scope:
+        sha = t.get("commit")
+        if not sha:
+            bad.append(f"{t['id']}: closed with no commit")
+            continue
+        why = _commit_delivers(sha, t.get("evidence") or "", root)
+        if why:
+            bad.append(f"{t['id']}: {why}")
+    if bad:
+        return FAIL, f"{len(bad)} of {len(scope)} closed task(s): {'; '.join(bad[:3])}"
+    return PASS, f"{len(scope)} closed task(s), each delivered by a commit that reaches main"
+
+
+def _broken_tasks_closed_by_commit():
+    import shutil as _sh
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "tasks.jsonl")
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    _sh.copy(src, dst)
+    rows = [json.loads(x) for x in open(dst, encoding="utf-8") if x.strip()]
+    seed = dict(rows[-1], id="broken-1", state="done", closed="2099-01-01 00:00",
+                evidence="scripts/harness.py", commit="0" * 40, reviewer="44")
+    with open(dst, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    return d
 
 
 def check_review_present(root):
@@ -4535,6 +4685,35 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def _commit_delivers(sha, evidence, root=None):
+    """Empty string if sha reaches main and its diff touches a path named in evidence.
+
+    The register's evidence field was free text: a path that never existed closed a
+    task, and the register read as delivered. A commit hash is the one claim the repo
+    can refute by itself -- it either resolves, reaches main, and moved that file, or
+    it does not (user ruling 2026-09-01: the conversation is notification, the commit
+    is the truth)."""
+    root = root or ROOT
+    g = ["git", "-C", root]
+    if subprocess.run(g + ["cat-file", "-e", f"{sha}^{{commit}}"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} is not a commit in this repo"
+    if subprocess.run(g + ["merge-base", "--is-ancestor", sha, "main"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
+    r = subprocess.run(g + ["show", "--name-only", "--format=", sha],
+                       capture_output=True, text=True)
+    touched = [p for p in r.stdout.split("\n") if p.strip()]
+    paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
+             if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
+    if not paths:
+        return f"evidence names no path, so nothing can be checked against {sha[:8]}"
+    if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
+        return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
+                "the commit does not deliver what the evidence claims")
+    return ""
+
+
 def cmd_task(argv):
     """harness task {add,done,list}. The controller's assignments, in a file rather than
     in a conversation -- a conversation gets compacted and the assignment goes with it.
@@ -4558,6 +4737,8 @@ def cmd_task(argv):
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
     a.add_argument("--owner", required=True)
+    a.add_argument("--socket", required=True,
+                   help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
@@ -4567,6 +4748,8 @@ def cmd_task(argv):
     d.add_argument("--reviewer", required=True,
                    help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
+    d.add_argument("--commit", required=True,
+                   help="the commit that delivers it: must reach main and must touch --evidence")
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
@@ -4583,6 +4766,7 @@ def cmd_task(argv):
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
+            "socket": args.socket,
             "state": "open",
             "task": args.task,
             "why": args.why,
@@ -4607,9 +4791,13 @@ def cmd_task(argv):
         if args.reviewer not in REVIEW_PAIRS:
             print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
+        bad = _commit_delivers(args.commit, args.evidence)
+        if bad:
+            print(f"refusing: {bad}", file=sys.stderr)
+            return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
-                  closed=time.strftime("%Y-%m-%d %H:%M"))
+                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M"))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -5197,6 +5385,15 @@ CHECKS = [
         _broken_blob,
     ),
     (
+        "spawned_scripts_exist",
+        "every script harness.py shells out to is at the path harness.py uses",
+        "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
+        "a subprocess path resolves only when it runs, so `harness run pretokenize` -- the step "
+        "that warms the token caches the launch gate requires -- was broken and silent",
+        check_spawned_scripts_exist,
+        _broken_spawned_scripts_exist,
+    ),
+    (
         "tokenizer_roundtrip",
         "data/tokenizer.json decodes back to the exact input bytes",
         "the k5 vocabulary silently dropped NUL and tab",
@@ -5293,6 +5490,13 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "tasks_closed_by_commit",
+        "every task closed since the rule names a commit that reaches main and touches its evidence",
+        "the register closed on free text, so a task closed on a path that never existed read as delivered; a whole evening's assignments lived only in chat and none was recoverable",
+        check_tasks_closed_by_commit,
+        _broken_tasks_closed_by_commit,
     ),
     (
         "review_present",
@@ -5796,9 +6000,9 @@ def measure(only=None, ngpu=None, tokenizer=None, dry=False, full=False):
         # reads, and the only thing that closes a gaps entry. The MC suite is ~30% of the
         # matrix's runtime and eval_all.sh's own comment says it sits at the chance line.
         if full:
-            cmd = ["bash", os.path.join(HERE, "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
+            cmd = ["bash", os.path.join(ROOT, "eval", "eval_all.sh"), ck] + ([tokenizer] if tokenizer else [])
         else:
-            cmd = ["bash", os.path.join(HERE, "eval_hard.sh"), ck, str(ngpu or 6)]
+            cmd = ["bash", os.path.join(ROOT, "eval", "eval_hard.sh"), ck, str(ngpu or 6)]
         print(f"\n  === {ck} ===", flush=True)
         p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True)
         # eval_all.sh writes runs/evalall_<ckpt>.log unconditionally, so a crash after the
@@ -6213,6 +6417,68 @@ def _selftest_cold_cache_refuses():
     assert i < src.index("args.gate_timeout = derived or"), (
         "the refusal must precede the 120s fallback, or the fallback still wins")
     print("  gate: a training launch with cold caches refuses rather than taking 120s")
+
+
+def _selftest_provenance_states_the_tree():
+    """Every `check` run must say which tree it describes, and say BEHIND when behind.
+
+    Built on real git repositories, because the whole claim is about what git reports:
+    a hand-written world would share this function's own assumptions about rev-list.
+    The three cases are the three a reader acts on differently -- up to date, behind,
+    and no main at all (a temp repo, a single-branch clone), where the honest answer is
+    that the question has no answer rather than zero."""
+    import shutil
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    try:
+        def git(*a, cwd=d):
+            return sp.run(["git", "-C", cwd, *a], capture_output=True, text=True)
+
+        git("init", "-q", ".")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        open(os.path.join(d, "f"), "w").write("a")
+        git("add", "f")
+        git("commit", "-qm", "base")
+        # a repo with no `main` ref at all: the count cannot be taken
+        head_branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if head_branch != "main":
+            line = tree_provenance(d)
+            assert "unknown (no main ref)" in line, (
+                f"a repo without main must say the question has no answer: {line}")
+            git("branch", "-m", "main")
+
+        line = tree_provenance(d)
+        assert "up to date with main" in line, f"on main, at main: {line}"
+        assert "BEHIND" not in line, line
+
+        git("checkout", "-qb", "side")
+        git("checkout", "-q", "main")
+        open(os.path.join(d, "f"), "w").write("b")
+        git("add", "f")
+        git("commit", "-qm", "ahead")
+        git("checkout", "-q", "side")
+        line = tree_provenance(d)
+        assert "BEHIND main by 1" in line, f"one commit behind must say so: {line}"
+        assert "branch side" in line, f"the branch must be named: {line}"
+        assert "git merge" in line, f"it must say what to do about it: {line}"
+
+        open(os.path.join(d, "g"), "w").write("c")
+        git("add", "g")
+        assert "1 uncommitted file(s)" in tree_provenance(d), tree_provenance(d)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # and it must actually reach the output of every check run
+    import inspect
+
+    src = inspect.getsource(run_checks)
+    assert "tree_provenance" in src, (
+        "run_checks no longer prints the tree: a red is then indistinguishable from a "
+        "red in a stale tree, which is the confusion this exists to end")
+    print("  provenance: check names its tree; behind-main is stated, no-main is not 0")
 
 
 def _selftest_refusal_writes_no_row():
@@ -7023,8 +7289,11 @@ def _demo():
     # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
     # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
     # env_importable joins it for the same reason: its artifact is process import state,
-    # not a tree, so no world it builds can hold a repo file.
-    synthetic_world = {"no_oversized_blob", "env_importable"}
+    # not a tree, so no world it builds can hold a repo file. no_foreground_pod_training
+    # joins for the same reason again -- its artifact is a process TABLE. Its rows are not
+    # hand-written despite sitting in a fixture: they are de's verbatim capture of a real
+    # foreground trainer on the pod, which is what the reality rule actually asks for.
+    synthetic_world = {"no_oversized_blob", "env_importable", "no_foreground_pod_training"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
@@ -7057,6 +7326,7 @@ def _demo():
         finally:
             shutil.rmtree(root, ignore_errors=True)
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
+            os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
@@ -7363,6 +7633,7 @@ def _demo():
     _selftest_milestone_reachable()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
+    _selftest_provenance_states_the_tree()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
@@ -7448,7 +7719,7 @@ def _exp(action, **kw):
 
 
 def _run_pretokenize(step_args, forced):
-    cmd = [sys.executable, os.path.join(HERE, "pretokenize.py"), *step_args]
+    cmd = [sys.executable, os.path.join(ROOT, "datagen", "pretokenize.py"), *step_args]
     _exp("start", name="pretokenize", cmd=" ".join(cmd),
          hypothesis=f"tokenize every mix domain into its cache before training{forced}")
     r = subprocess.run(cmd, cwd=ROOT)
