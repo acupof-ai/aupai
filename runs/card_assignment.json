@@ -11,15 +11,26 @@
   "launch_block_granted": false,
   "block_cards": null,
   "lane_card": null,
-  "note": "Refused on purpose, not unanswered. The block is not granted because the launch is not ready: code_py_starcoder holds 3 files against a projected 8.85B tokens, all nine domains carry epochs marked ESTIMATED rather than derived from a token cache, and no domain carries a stamp the corpora gate can compare. Granting seven cards now idles them behind a NO-GO. Lifted when corpora and epochs_measured both read GO.",
-  "verified": "2026-09-01 20:30 by nvidia-smi on the pod: cards 1-7 at 0 MiB, card 0 at 5795 MiB",
+  "note": "Refused for the 20B run: corpora and epochs_measured are not GO. Cards 1-7 ARE lent to tilerl right now for a 500-step two-arm LR probe (lr_scale 0.85 vs 1.2) at the real shape -- see probe_grant. That lend is NOT this flag: fb set this flag true for the probe at 21:0x and the gate read it as the run being cleared, printing GO. The flag answers one question -- may the 20B run start -- and a lend for a bounded probe is a different one.",
+  "verified": "2026-09-01 21:0x by nvidia-smi on the pod: all 8 cards at 0 MiB after de's e2e exited 0",
   "current_holders": [
-    {"cards": "0", "who": "de", "job": "E2E_GPU=0 E2E_LAYERS=32 scripts/.test_e2e_staged.py", "until": "self-terminating", "verified": "container pid 1701559, 12m elapsed"}
+    {
+      "cards": "1-7",
+      "who": "tilerl",
+      "job": "500-step two-arm LR probe at d1024/L32 on mix_probe_lr.json",
+      "until": "self-terminating, ~2x8min"
+    }
   ],
   "next_grant": {
     "to": "the 500M run",
     "for": "the 7-card block",
-    "blocked_on": "corpora and epochs_measured reaching GO",
-    "note": "no 6-card substitute for the memory question: the DDP bucket grows with world, so a 6-card peak cannot answer whether b32 fits at 7. That question is now answered (69.63 GiB at world=7, runs/w7_b32a1.log); the block is held for the corpus, not the memory."
+    "blocked_on": "corpora (3b's starcoder) and epochs_measured (b0, 5/9 done)"
+  },
+  "probe_grant": {
+    "cards": "1-7",
+    "who": "tilerl",
+    "job": "500-step two-arm LR probe at d1024/L32",
+    "until": "self-terminating, ~30-35min per tilerl's measured compile time",
+    "not_the_run": true
   }
 }

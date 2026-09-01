@@ -1765,10 +1765,12 @@ def check_spawned_scripts_exist(root):
     #
     # -c "import ..." rather than --help: --help exits before some scripts finish importing,
     # and a check that passes because it stopped early is the shape this file keeps finding.
-    broken = []
-    for rel, why in _SPAWNED_SCRIPTS:
-        if not rel.endswith(".py"):
-            continue
+    # Concurrently: each import costs ~2.5s of interpreter startup plus torch, and six
+    # of them serially is 15s against this check's 5s budget. It timed out seven runs in
+    # a row and blocked every commit in the repo, reporting "has not actually run since"
+    # -- a red that carried no information and could not be cleared by fixing anything.
+    def _import_check(item):
+        rel, why = item
         full = os.path.join(root, rel)
         r = subprocess.run(
             [sys.executable, "-c",
@@ -1779,9 +1781,15 @@ def check_spawned_scripts_exist(root):
              "spec.loader.exec_module(m)"],
             capture_output=True, text=True, cwd=root, timeout=120,
         )
-        err = (r.stderr or "")
+        err = r.stderr or ""
         if "ModuleNotFoundError" in err or "ImportError" in err:
-            broken.append(f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})")
+            return f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})"
+        return None
+
+    import concurrent.futures as _cf
+    py = [(rel, why) for rel, why in _SPAWNED_SCRIPTS if rel.endswith(".py")]
+    with _cf.ThreadPoolExecutor(max_workers=max(1, len(py))) as ex:
+        broken = [b for b in ex.map(_import_check, py) if b]
     if broken:
         return FAIL, (
             f"{len(broken)} spawned script(s) present but not importable: "
