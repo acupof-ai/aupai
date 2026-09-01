@@ -127,6 +127,8 @@ REVIEW_RULE_FROM = "2026-08-31 22:00"
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
 _RULE_CHECKS = {
+    "The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map":
+        "selftests_are_gated",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
@@ -151,6 +153,10 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "A hook edit made in a branch worktree does not run until it is merged":
+        "a fact about how git resolves .git/hooks symlinks across worktrees; no artifact "
+        "records which hook BODY executed for a given commit, which is exactly why the "
+        "mistake is invisible and has to be written down",
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
@@ -197,7 +203,14 @@ _MANUAL_RULES = {
 #: catches an orphan that is holding a card at the instant it runs, which is the
 #: consequence, not the discipline. The rule was written because the consequence went
 #: unnoticed for two minutes with nobody looking (eval/run_eval.py pid 313429 on GPU7).
-_MANUAL_BASELINE = 23
+#: 23 -> 24 on 2026-09-01 for the hook-symlink rule. Which became unenforceable and
+#: why: .git/hooks/pre-commit is a symlink resolved against MAIN's worktree, so every
+#: worktree runs main's copy and a hook edit in a branch is inert until merged. No
+#: artifact records which hook BODY executed for a given commit -- that is precisely
+#: what makes the mistake invisible, and precisely why it cannot be checked. The
+#: companion rule in the same commit went the other way, to check_selftests_are_gated,
+#: so the pair is +1 manual and +1 checked rather than +2 manual.
+_MANUAL_BASELINE = 24
 
 
 def _norm_rule(text):
@@ -407,6 +420,52 @@ def _broken_milestone_ckpt_pinned():
     return d
 
 
+def check_selftests_are_gated(root):
+    """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
+
+    2026-09-01: a readout commit landed with its selftest RED under five green hook
+    lines, because the hook ran tree/blob/ruff/harness and none of them knew the
+    edited file carried fifteen cases testing the guard the commit was changing. The
+    hook checked what it happened to check rather than what the commit changed. A
+    selftest not in the map is a selftest nobody runs, which is worse than none --
+    it reads as coverage."""
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook):
+        return SKIP, "no scripts/hooks/pre-commit"
+    src = open(hook, encoding="utf-8").read()
+    m = re.search(r"SELFTEST_FILES\s*=\s*\{([^}]*)\}", src)
+    if not m:
+        return FAIL, ("scripts/hooks/pre-commit has no SELFTEST_FILES map, so no staged "
+                      "file's selftest runs at commit time")
+    gated = set(re.findall(r'"([^"]+)"', m.group(1)))
+    # A file the hook cannot run here is still accounted for, with the reason recorded.
+    # "not in the map" and "cannot run at commit time" are different facts, and only
+    # the second is acceptable -- silence about the first is how a selftest goes unrun.
+    nd = re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
+    gated |= set(re.findall(r'"([^"]+)":', nd.group(1))) if nd else set()
+    have = set()
+    for sub in ("eval", "scripts", "datagen", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for nm in os.listdir(d):
+            if not nm.endswith(".py"):
+                continue
+            rel = f"{sub}/{nm}"
+            try:
+                body = open(os.path.join(d, nm), encoding="utf-8").read()
+            except OSError:
+                continue
+            if '"--selftest"' in body and "add_argument" in body:
+                have.add(rel)
+    missing = sorted(have - gated)
+    if missing:
+        return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
+                      f"SELFTEST_FILES, so nothing runs them at commit time: "
+                      f"{', '.join(missing[:4])}")
+    return PASS, f"{len(have)} selftest-carrying file(s), all gated by the hook"
+
+
 def check_probe_numbers_unique(root):
     """Surface tNN numbers claimed by more than one probe. WARN, not FAIL.
 
@@ -529,6 +588,30 @@ def check_no_duplicate_defs(root):
     if bad:
         return FAIL, f"{len(bad)} duplicate top-level def(s): {'; '.join(bad[:3])}"
     return PASS, f"{scanned} module(s), no duplicate top-level definitions"
+
+
+def _broken_selftests_are_gated():
+    """The REAL hook with one REAL selftest-carrying file dropped from the map.
+
+    Mutating the live artifact rather than writing a fixture: the reweight gate passed
+    every synthetic case and returned None for every real role, because the fixture
+    encoded the author's assumption twice (7.3)."""
+    d = _tmp_repo()
+    hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    ev = os.path.join(ROOT, "eval", "readout_30b.py")
+    if not (os.path.exists(hook) and os.path.exists(ev)):
+        return None
+    text = open(hook, encoding="utf-8").read()
+    if '"eval/readout_30b.py"' not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
+        text.replace('"eval/readout_30b.py", ', "").replace('"eval/readout_30b.py"', '"x/y.py"'))
+    # the real file, so the check must find its --selftest and miss it in the map
+    open(os.path.join(d, "eval", "readout_30b.py"), "w", encoding="utf-8").write(
+        open(ev, encoding="utf-8").read())
+    return d
 
 
 def _broken_no_duplicate_defs():
@@ -4982,6 +5065,13 @@ CHECKS = [
         _broken_milestone_ckpt_pinned,
     ),
     (
+        "selftests_are_gated",
+        "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
+        "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
+        check_selftests_are_gated,
+        _broken_selftests_are_gated,
+    ),
+    (
         "probe_numbers_unique",
         "tNN numbers claimed by more than one probe are surfaced for a human to judge",
         "three collisions in one afternoon: t62/t63/t64 each named two probes from two sessions, so a fact citing a number resolves to whichever file the reader finds",
@@ -6494,26 +6584,44 @@ def _demo():
     # alongside evidence), not a smarter regex -- that is an arms race with string formats. Not
     # done; the next person should know this green does not cover a no-digit PASS.
     #
+    # The leading boundary is load-bearing, not tidiness: without it the regex reads a count out
+    # of a PATH. In a worktree named aupai-b0, root_durable's "root /.../aupai-b0 is not on a
+    # known-ephemeral mount" yields the match "0 is", the only "count" in the string, so a
+    # correct PASS was reported as vacuous and the selftest was red in that worktree and green
+    # in the main one (b0, 2026-09-01). A count is preceded by whitespace or start-of-string;
+    # a digit glued to a word is part of a name.
+    #
     # The meta-check carries its own failing case: a fake check whose PASS is vacuous. Without
     # it nothing proves the meta-check fires -- the exact defect it guards against.
     def _vacuous_pass(_root):
         return PASS, "0 domain(s) match filters abc"
 
+    # ...and its own false-positive case, the one above: a path-embedded digit is not a count.
+    def _pass_with_digit_in_a_path(_root):
+        return PASS, "root /Users/x/code/aupai-b0 is not on a known-ephemeral mount"
+
     vacuous = []
-    for name, _a, _i, fn, _b in list(CHECKS) + [("fake_vacuous_pass", "", "", _vacuous_pass, None)]:
+    for name, _a, _i, fn, _b in list(CHECKS) + [
+        ("fake_vacuous_pass", "", "", _vacuous_pass, None),
+        ("fake_digit_in_a_path", "", "", _pass_with_digit_in_a_path, None),
+    ]:
         try:
             state, evidence = fn(ROOT)
         except Exception:
             continue  # a crash against the real repo is the broken-world loop's territory
         if state != PASS:
             continue
-        counts = [int(m.group(1)) for m in re.finditer(r"(\d+)\s+[a-zA-Z]", str(evidence))]
+        counts = [int(m.group(1)) for m in re.finditer(r"(?:^|\s)(\d+)\s+[a-zA-Z]", str(evidence))]
         if counts and all(c == 0 for c in counts):
             vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
     assert any(v.startswith("fake_vacuous_pass") for v in vacuous), (
         "meta-check did not catch its own deliberately-vacuous PASS -- the regex or loop regressed"
     )
-    real = [v for v in vacuous if not v.startswith("fake_vacuous_pass")]
+    assert not any(v.startswith("fake_digit_in_a_path") for v in vacuous), (
+        "meta-check read a count out of a path -- the leading boundary regressed"
+    )
+    real = [v for v in vacuous
+            if not v.startswith("fake_vacuous_pass") and not v.startswith("fake_digit_in_a_path")]
     assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
 
     # sync selftest: a merge that loses a row must FAIL. The incident: a hand-merge

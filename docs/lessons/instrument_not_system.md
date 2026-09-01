@@ -105,6 +105,61 @@ written prediction of 0.36 to make it a finding.
 anomaly. A prediction you did not write down cannot fail, and a result that
 cannot fail teaches nothing.
 
+## Padding that is indistinguishable from content at the point of comparison
+
+A different family from the rest of this page: not an instrument reporting
+itself, but **a shape quantity leaking into a semantic one because both are
+integers named `vocab`.**
+
+This repo has three fields that read as "vocabulary size" and **only one is a
+count of tokens**:
+
+| field | value | what it is |
+|---|---|---|
+| `Cfg.vocab_real` | 32773 | the tokenizer. The only token count. |
+| `Cfg.vocab` | 32784 | +11, padded to a multiple of 16 so the aligned cuBLAS head kernel is chosen |
+| `model.padded_vocab` | 32832 | +48 more, padded to 64 for the embedding and head matrices |
+
+Ids 32773–32831 are addressable and decode to nothing: **59 slots of pure
+alignment** that a comparison cannot distinguish from vocabulary.
+
+`build_tokenizer.py` compared its built vocabulary against `Cfg.vocab`. Both
+sides were plausible integers, the name matched, and the comparison was wrong:
+the trainer targeted `32784 - 5 = 32779` merges, so a rebuild would have emitted
+a **32784-token vocabulary** — eleven real merges of what exists only to make a
+matrix multiply fast. `load_tokenizer` asserts `size == vocab_real`, so the next
+load of **every existing checkpoint** would have failed.
+
+**The tell is that the wrong value is not absurd.** 32784 is a defensible
+vocabulary size. Nothing about it looks like padding at the moment of
+comparison, which is exactly why the comparison survived review — including
+mine, since I read that line while answering a different question and only
+caught it by deriving what the build would produce.
+
+Three rules, in cost order:
+
+1. **A padded quantity and its unpadded source must not share a name stem.**
+   `vocab` / `vocab_real` / `padded_vocab` differ by a suffix, so at every use
+   site the correct choice is one character away from an incorrect one that
+   still runs.
+2. **Comparisons against a count use the count, and shapes use the shape.** The
+   test is not "which variable is in scope" but "is this line asking about
+   tokens or about matrix width". `train.py:749` gets this right —
+   `head.weight[vocab_real:vocab].zero_()` deliberately spans the padding — and
+   it reads almost identically to the line that got it wrong.
+3. **Where a docstring names one and the code asserts the other, the docstring
+   is a defect.** `scripts/loader.py:84` said "size == cfg.vocab" while the code
+   asserted `vocab_real`. The code was correct; the sentence a reader trusts was
+   not — **and a comment asserting an invariant is checked by nothing.** That is
+   why the rule here is to *assert* the invariant rather than describe it: an
+   assert fails when it stops being true, and a sentence goes on being read.
+
+**Why this belongs on this page.** The general form is the same as an
+off-config trace or a too-small shift window: *a quantity that is correct for
+one purpose being read as if it answered another*, with no error at the moment
+of the mistake. Alignment padding is content-shaped, and content-shaped noise is
+what defeats a comparison.
+
 ## Before anything else: is this code path reached in the live configuration?
 
 One line, and it precedes every other check on this page. It is last here only

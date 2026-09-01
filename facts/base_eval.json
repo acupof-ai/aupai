@@ -1068,6 +1068,38 @@
    "boundary": "A PRE-REGISTERED PREDICTION FAILED AND THE FAILURE IS THE RESULT. I wrote the ~0.36 arithmetic in advance specifically so no measured value could be presented as unsurprising. It came back 0.25, which falsified the assumption inside the prediction -- that degenerate loops score near zero -- rather than the conclusion the prediction was defending. Without the arithmetic written down, 0.25 would have read as bland confirmation and the loop-echo mechanism would not have been noticed at all. This is the third instrument of mine to be the limit today, after the +-4 shift window and the anchor regex.",
    "status": "measured",
    "refuted_by": "a bin-1 measurement on prompts whose gold shares no opening tokens with the prompt text, where loops and attempts should separate if the coincidental-overlap mechanism is right"
+  },
+  {
+   "id": "be.one_seed_family_misstates_its_own_noise_by_2x",
+   "claim": "how much seed evidence it takes to know the seed noise, measured on two independent families",
+   "value": "TWO INDEPENDENT FOUR-SEED FAMILIES DISAGREE ABOUT THE NOISE BY A FACTOR OF TWO. Found free in runs/experiments.jsonl + runs/score_matrix.jsonl -- no new compute -- while sizing a seed arm for the FoNE A/B. Both families are mix_scale_0.2b, same config, `--seed N` the only difference, mean domain loss over scored domains. p02: seeds 0-3 give 3.7588 / 3.8085 / 3.7433 / 3.7009, spread 0.1076, sd 0.0444. p02_fp32m: 3.8693 / 3.8379 / 3.8874 / 3.8403, spread 0.0495, sd 0.0239. THE CONSEQUENCE IS GENERAL AND OUTLIVES FoNE: four seeds is more than anyone here normally spends on a noise estimate, and a single four-seed family would have mis-stated the noise by 2x IN AN UNKNOWN DIRECTION. Only having two families reveals it; with one, the number looks like a measurement. So a noise bound from a single family is a point estimate with an uncharacterised error, and any A/B threshold set as a multiple of it inherits that error. WHICH TO USE: the LARGER family. Understating noise ships a null as a finding, which is the more expensive error in both directions -- it costs the work built on the false positive plus the credibility of the next real one.",
+   "measured": "2026-09-01",
+   "source": "e1, from existing ledger rows: runs/experiments.jsonl (p02_s0..s3, p02_fp32m_s0..s3, all `bash run_ddp.sh --mix data/mix_scale_0.2b.json --seed N`) folded by (name, started), and runs/score_matrix.jsonl domain_loss per checkpoint folded last-wins",
+   "config": {
+    "scale": "mix_scale_0.2b",
+    "seeds_per_family": 4,
+    "p02": [
+     3.7588,
+     3.8085,
+     3.7433,
+     3.7009
+    ],
+    "p02_spread": 0.1076,
+    "p02_sd": 0.0444,
+    "p02_fp32m": [
+     3.8693,
+     3.8379,
+     3.8874,
+     3.8403
+    ],
+    "p02_fp32m_spread": 0.0495,
+    "p02_fp32m_sd": 0.0239,
+    "sd_ratio": 1.86
+   },
+   "uncertainty": "0.2B tokens, so these are an UPPER BOUND on seed noise at 1B or 2B -- noise shrinks with tokens. That direction is the safe one for setting a threshold (a rule calibrated here is conservative at larger scale) but it is not a measurement at those scales and must not be quoted as one. n=4 per family, so each sd is itself imprecise; the 2x ratio is the finding, not either sd. The two families differ in more than seed (fp32 master weights), so they are independent estimates of the noise, not repeated estimates of one configuration's noise.",
+   "boundary": "This was found while sizing a measurement, not by measuring: the cheapest decidable seed arm was costed at 2.4 h and a ten-minute read of the ledger produced a better bound for free, with n=4 twice instead of the single gap 2.4 h would have bought. Worth stating because the search was proposed as a long shot and returned more evidence than the run it replaced.",
+   "status": "measured",
+   "refuted_by": "a third four-seed family at the same scale whose sd lands within 10% of either, which would suggest the 2x gap is specific to these two rather than characteristic"
   }
  ]
 }
