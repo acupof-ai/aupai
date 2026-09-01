@@ -1,7 +1,24 @@
 {
- "_schema": "card_assignment: launch_block_granted must be true AND note must say who granted it and when. This is the one gate that cannot be derived from a measurement -- card ownership is a decision, so it is recorded as one rather than inferred from nvidia-smi being idle.",
- "_filled_by": "the controller",
- "_created": "2026-09-01 by e1 (schema only)",
- "launch_block_granted": false,
- "note": "UNSOURCED -- no grant recorded"
+  "_comment": [
+    "Card ownership, granted by the controller. launch_gate reads launch_block_granted.",
+    "Idle is not free: a card's owner is the job still running or the one the controller",
+    "has queued, never the instantaneous nvidia-smi row. Three collisions on 2026-09-01",
+    "came from reading an idle card as an available one."
+  ],
+  "granted_by": "fb",
+  "granted": "2026-09-01",
+  "launch_block_granted": false,
+  "block_cards": null,
+  "lane_card": null,
+  "why_not_granted": "The 7-card block is not granted because the launch is not ready: the corpus build is unfinished, mix epochs are still ESTIMATED, and no world=7 memory peak exists. Granting the block now would idle seven cards behind a NO-GO gate.",
+  "current_holders": [
+    {"cards": "0", "who": "44", "job": "200M degeneration/L0' baseline", "until": "self-terminating"},
+    {"cards": "4,5,6", "who": "tilerl", "job": "shape500_b32 world=3, final validate", "until": "self-terminating"}
+  ],
+  "next_grant": {
+    "to": "tilerl",
+    "for": "world=7 peak memory, b32 and b16+accum2, 30 steps each",
+    "blocked_on": "card 0 freeing when 44's baseline finishes",
+    "note": "no 6-card substitute: the DDP bucket grows with world, so a 6-card peak cannot answer whether b32 fits at 7"
+  }
 }
