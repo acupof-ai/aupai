@@ -250,8 +250,8 @@ tok/s 是 77K/GPU。本文所有百分比对的是 t57 自己的 span 1676.63 ms
 写"同样的活在生产规模上同时存在于 head 和 body"——**这句是错的：那份 trace
 本身是带 `FP8_HEAD=1` 抓的**（tilerl t61，`eff.fusion_and_elementwise_are_disjoint_but_the_trace_is_off_config`）。
 按 Liger region 包含关系拆分，elementwise 组 250.6 ms 里有 156.9 ms 是 head
-的活，四个量化算子 **92.9% 属于 head**。**live 侧的量化税约 12 ms，不是
-165.7 ms。** 机制保留，范围推翻。
+的活，四个量化算子 **92.5% 属于 head**（153.24 / 165.68 ms）。**live 侧的
+量化税是 12.4 ms，不是 165.7 ms。** 机制保留，范围推翻。
 
 **先问这段代码在 live 配置里跑不跑。** 字节缓存测得干净——预先声明、交错、
 自身 spread 的 350 倍、两臂只差被测项、带 parity gate——**每一项质量检查都

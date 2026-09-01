@@ -26,6 +26,14 @@ false positives.
 
 Exit 1 on any arithmetic mismatch. Retired-phrase hits print and do not fail,
 since only a reader can tell a quote from a relapse.
+
+WHAT IT DOES NOT COVER, so nobody reads a clean run as more than it is: every
+check needs the number and its inputs stated TOGETHER, joined by an operator.
+A percentage in prose whose components sit in a table forty lines away has no
+operator between them and is invisible here. That shape has already produced a
+real error (a head share typed as 92.9% beside a table summing to 92.5%), and
+it was caught by a human reading this tool's output against the table, not by
+the tool. A clean run means every number stated with its arithmetic is right.
 """
 import argparse
 import re
