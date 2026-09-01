@@ -2,6 +2,7 @@
 question: "can a second workload share a training card productively, on our hardware and at our occupancy"
 status: open
 source: "e1-5 2026-09-01; arithmetic over eff.steady_state_composition (t57) and eff.kda_occupancy_bound; literature per row"
+span_ms: 1676.63  # denominator for every percentage here, t57's own span; scripts/doc_numbers_check.py reads it
 ---
 
 > **Status: open.** The verdict below is written to closure on the evidence
@@ -137,7 +138,7 @@ bandwidth-bound and not grid-bound.
 
 | response | ceiling | who benefits |
 |---|---|---|
-| raise KDA to the 85% of HBM peak its healthy neighbours achieve | 174 ms → 59 ms, **saving 115 ms = 6.8% of the step** | the primary |
+| raise KDA to the 85% of HBM peak its healthy neighbours achieve | 174 ms → 59 ms, **saving 115 ms = 6.86% of the step** | the primary |
 | fill the same window with a second workload | up to **9.0–9.8% of the step** of slot-time, minus whatever bandwidth contention removes | the co-tenant |
 
 **The two options compete for the same 174 ms.** That is the sharp version of the
