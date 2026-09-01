@@ -37,18 +37,27 @@ DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
+#: A deadline hit is its OWN state, not a SKIP. A SKIP means "this check does not apply
+#: here" -- the hook prints nothing for it and `check` exits 0, so a check that times out
+#: on EVERY run is a permanent silent pass wearing a legitimate state's name (44, D5).
+#: TIMEOUT says the check was meant to run and did not. It is non-blocking once, because
+#: a slow machine is not a defect; twice in a row it is FAIL, because a deadline nothing
+#: can meet is a check nobody has.
+TIMEOUT = "TIME"
 
 # Per-check deadline. A check that hangs blocks the pre-commit hook and trains
-# people to --no-verify; a timed-out check SKIPs and names itself in the output.
+# people to --no-verify; a timed-out check reports TIMEOUT and names itself.
 _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
     "eval_sft_template_contamination": 90,
-    # measured 6.1 s on 2026-09-01 (one remote ps per training process); stopgap until the
-    # read is batched -- the 5 s default killed the whole run because no SIGALRM handler existed
-    "no_foreground_pod_training": 15,
 }
+#: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
+#: to notice a check that times out run AFTER run, and each run is a fresh process.
+_TIMEOUT_STATE = os.path.join(ROOT, "runs", "check_timeouts.json")
+#: Consecutive timeouts before a TIMEOUT becomes a FAIL.
+_TIMEOUT_STRIKES = 2
 
 
 class SelftestSkip(Exception):
@@ -95,8 +104,21 @@ def _is_mount(path):
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
 REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl",
                 "3b": "e1", "e1": "3b", "fb": "44"}
-#: A review that has not arrived within this many minutes of the done row FAILs.
-#: Inside it, WARN: a missing review must not block a close, and must not stay invisible.
+#: How long a dirty or untracked file may sit before the check names it. ONE constant
+#: for both: they measure the same thing (work parked in a tree others share) and split
+#: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
+#: every session mid-edit while the quieter half slept through a whole day.
+#: 6 h (user, 2026-09-01, cutting friction): long enough that an in-progress edit is
+#: never named, short enough that nothing survives a working session unowned. Both
+#: stay WARN; neither ever blocked a commit.
+_AGE_HOURS = 6
+
+#: A review that has not arrived within this many minutes of the done row WARNs.
+#: There is no FAIL tier: the user cut the friction on 2026-09-01 -- a missing review
+#: blocking a commit makes the reviewer the bottleneck for work already delivered, and
+#: the check's job is to make an unread delivery VISIBLE, not to stop the tree. The
+#: window still means something: inside it the WARN is routine, past it the evidence
+#: line says overdue and names the pair.
 REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
@@ -112,7 +134,7 @@ _RULE_CHECKS = {
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
     "setsid, not nohup": "no_foreground_pod_training",
-    "CUDA_VISIBLE_DEVICES, not cuda:N": "gemm_dims_aligned",
+    "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
     "Outbound network: curl -4, always": "curl_ipv4",
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
@@ -214,12 +236,19 @@ def check_cited_artifacts_attested(root):
     overwrote preds_l1_d3.jsonl and left five facts pointing at 477 rows of a different
     run for hours (e1, 44's contract, 2026-08-31).
 
-    What this proves is historical -- the cited bytes existed when the citation was
-    made. It deliberately does NOT compare against the current file: preds are
-    regenerated every run, so a current-state check would fail on every legitimate
-    rerun. The writer's attestation row is the proof."""
+    What this proves is historical -- the cited bytes existed at that path when the
+    citation was made. It deliberately does NOT compare against the current file: preds
+    are regenerated every run, so a current-state check would fail on every legitimate
+    rerun. The writer's attestation row is the proof.
+
+    The match is on (path, sha256), not the hash alone. Hash-only accepted an
+    attestation of a DIFFERENT path carrying the same bytes -- which is precisely the
+    versioned-write case the attestation exists for: open_artifact(path, run=...) writes
+    preds_x.r1.jsonl while a careless writer attests preds_x.jsonl, and identical bytes
+    at two paths is the normal state during a rerun, not a coincidence
+    (tilerl T7-1, probe probes/t7_attest_path.py)."""
     refs = os.path.join(root, "runs", "artifact_refs.jsonl")
-    attested = set()
+    attested = set()  # (basename, sha256)
     if os.path.exists(refs):
         for line in open(refs, encoding="utf-8"):
             if not line.strip():
@@ -228,8 +257,12 @@ def check_cited_artifacts_attested(root):
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if r.get("sha256"):
-                attested.add(r["sha256"])
+            if r.get("sha256") and r.get("path"):
+                # Basename, not the full path: a fact cites the repo-relative path while
+                # the writer attests whatever path it opened, which differs by the
+                # writer's cwd. The versioned SUFFIX -- the part T7-1 is about -- lives
+                # in the basename, so it is still compared.
+                attested.add((os.path.basename(r["path"]), r["sha256"]))
     # The contract starts here. 18 citations predate it and cannot grow an attestation
     # retroactively -- their artifacts were written before any writer attested, and
     # several no longer exist. Failing them is a red nobody can act on, which is the
@@ -250,10 +283,19 @@ def check_cited_artifacts_attested(root):
                     continue
                 cited += 1
                 sha = e.get("artifact_sha256") or ""
+                base = os.path.basename(path)
                 if not sha:
                     bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
-                elif sha not in attested:
-                    bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
+                elif (base, sha) not in attested:
+                    if any(s == sha for _b, s in attested):
+                        # The bytes are attested, at some OTHER path. That is the T7-1
+                        # defect, and it earns its own message: the citation and the
+                        # attestation disagree about WHICH FILE holds these bytes.
+                        other = sorted(b for b, s in attested if s == sha)
+                        bad.append(f"{e.get('id')} cites {path} sha {sha[:12]}, but that hash "
+                                   f"is attested for {other[:2]} -- wrong path")
+                    else:
+                        bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
     if not cited:
         return SKIP, (f"no fact measured since {contract_from} cites a data/eval artifact "
                       f"({legacy} predate the contract)")
@@ -420,14 +462,56 @@ def _broken_no_duplicate_defs():
     return d
 
 
+def _agents_coverage_table(root):
+    """The Rule coverage table's (rule, enforcer) pairs, or ({}, err).
+
+    Scoped to that ONE section: AGENTS.md holds a dozen other two-column tables
+    (layout, entry points, the checks table), and reading them all reports every
+    markdown row as a rule -- 104 rows and 74 false drifts when I first tried it.
+    """
+    p = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(p):
+        return {}, "AGENTS.md missing"
+    rows, inside = {}, False
+    for line in open(p, encoding="utf-8").read().split("\n"):
+        if re.match(r"^## ", line):
+            inside = line.startswith("## Rule coverage")
+            continue
+        if not inside:
+            continue
+        m = re.match(r"^\|\s*(.+?)\s*\|\s*(.+?)\s*\|$", line)
+        if not m:
+            continue
+        rule, val = m.group(1), m.group(2)
+        if rule == "Rule" or set(rule) <= set("-: "):
+            continue
+        rows[rule] = val
+    return rows, None
+
+
 def check_agents_rules_covered(root):
-    """Every AGENTS.md rule maps to a check name or an explicit manual reason.
+    """Every AGENTS.md rule maps to a check name or an explicit manual reason, and the
+    table in the doc says the same thing as the map in the code.
 
     A rule that is only prose is one people break for cause: tonight the register
     refusal in a worktree pushed a session into the shared tree, and 'run it in the
     main checkout' was a documented instruction pointing at the one place sessions
     overwrite each other. Coverage cannot prove a mapping is honest -- it proves one
-    was made, and the manual count is ratcheted so 'manual' cannot quietly win."""
+    was made, and the manual count is ratcheted so 'manual' cannot quietly win.
+
+    Two things it now also proves, both from real misses:
+
+    The named check must be the one that ENFORCES the rule, not merely a check that
+    exists. The CUDA_VISIBLE_DEVICES rule named gemm_dims_aligned (GEMM shapes) while
+    the enforcer is device_set_honoured; both are real checks, so the existence test
+    passed and the rule was unenforced in fact while reading as covered (44 and 3b,
+    independently, 2026-09-01). Ceiling, stated rather than papered over: existence is
+    checkable, relevance is not. Nothing here can see a pair that names a real check
+    which does not enforce that rule -- only a human re-reading the pair can.
+
+    The doc's table must agree with the code's map. Nothing read the table at all -- it
+    was a hand-maintained copy of _RULE_CHECKS, so the two could drift and, in the
+    CUDA_VISIBLE_DEVICES row, were wrong together."""
     bullets, err = _agents_rule_bullets(root)
     if err:
         return FAIL, err
@@ -450,10 +534,55 @@ def check_agents_rules_covered(root):
     bad_ref = [v for v in covered.values() if v not in known]
     if bad_ref:
         return FAIL, f"rule maps to a check that does not exist: {bad_ref[:3]}"
-    return PASS, f"{len(bullets)} rules: {len(bullets) - n_manual} checked, {n_manual} manual (baseline {_MANUAL_BASELINE})"
+    # The doc's copy of the map.
+    table, terr = _agents_coverage_table(root)
+    if terr:
+        return FAIL, terr
+    if not table:
+        return FAIL, "the Rule coverage table is empty or its heading was renamed"
+    drift = []
+    for rule, val in table.items():
+        nr = _norm_rule(rule)
+        # The same prefix match the bullet loop uses: the table truncates long bullets,
+        # so the row text and the map key are not equal strings.
+        in_map = next((v for k, v in covered.items() if nr.startswith(_norm_rule(k)[:38])), None)
+        in_manual = next((v for k, v in _MANUAL_RULES.items() if nr.startswith(_norm_rule(k)[:38])), None)
+        v = val.strip("`").strip()
+        if in_map is None and in_manual is None:
+            drift.append(f"{rule[:34]}: in the table, in neither map")
+        elif v.startswith("manual"):
+            if in_manual is None:
+                drift.append(f"{rule[:34]}: table says manual, code says {in_map}")
+        elif in_map is None:
+            drift.append(f"{rule[:34]}: table says {v}, code says manual")
+        elif v != in_map:
+            drift.append(f"{rule[:34]}: table says {v}, code says {in_map}")
+    if drift:
+        return FAIL, f"{len(drift)} coverage row(s) disagree with _RULE_CHECKS: {'; '.join(drift[:3])}"
+    return PASS, (f"{len(bullets)} rules: {len(bullets) - n_manual} checked, {n_manual} manual "
+                  f"(baseline {_MANUAL_BASELINE}); {len(table)} table rows agree with the code")
 
 
 def _broken_agents_rules_covered():
+    """The REAL AGENTS.md with its CUDA_VISIBLE_DEVICES coverage row reverted to the
+    wrong check it carried until 2026-09-01 -- the exact defect 44 and 3b found.
+
+    This breaks the TABLE half, which the old broken world (an unmapped bullet) never
+    exercised. The bullet half is covered by _broken_agents_rules_unmapped."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    row = "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |"
+    if row not in text:
+        raise SelftestSkip("the coverage row moved; update _broken_agents_rules_covered")
+    text = text.replace(row, "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `gemm_dims_aligned` |", 1)
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_agents_rules_unmapped():
     """The REAL AGENTS.md with a new unmapped rule bullet appended to Hard constraints."""
     d = _tmp_repo()
     src = os.path.join(ROOT, "AGENTS.md")
@@ -470,10 +599,44 @@ def _broken_agents_rules_covered():
 
 def _ppid_of(pid):
     """Parent pid on the pod, or None. ppid 1 means init adopted the process -- the
-    launching shell exited and it survived, which is the property setsid provides."""
+    launching shell exited and it survived, which is the property setsid provides.
+
+    Single-pid form, kept for callers outside the check. The check itself reads every
+    ppid in ONE ps (see _pod_ps_rows): a call per process cost 11 round trips and 6.3 s,
+    which is what forced the 15 s deadline stopgap."""
     r = subprocess.run([os.path.expanduser("~/bin/pod"), f"ps -o ppid= -p {pid}"],
                        capture_output=True, text=True)
     return r.stdout.strip() or None
+
+
+def _pod_ps_rows(timeout=20):
+    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+
+    The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
+    fields from the same table. Reading them as one `ps -eo` is one round trip
+    regardless of how many training processes are up; the previous shape ran a
+    `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
+    training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
+
+    Returns (rows, error). A non-empty error means the read failed and the caller
+    must SKIP -- never treat an unreadable pod as a clean one.
+    """
+    pod = os.path.expanduser("~/bin/pod")
+    try:
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,args --no-headers"],
+                           capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return None, f"pod unreachable: {type(e).__name__}"
+    if r.returncode != 0:
+        return None, f"pod ps exit {r.returncode}"
+    rows = []
+    for ln in r.stdout.splitlines():
+        parts = ln.split(None, 4)
+        if len(parts) == 5 and parts[0].isdigit():
+            rows.append(tuple(parts))
+    if not rows:
+        return None, "pod ps returned nothing"
+    return rows, None
 
 
 def check_no_foreground_pod_training(root):
@@ -486,21 +649,19 @@ def check_no_foreground_pod_training(root):
     pod = os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod) or pod_drift.is_pod(root):
         return SKIP, "host-side check; needs ~/bin/pod"
-    try:
-        r = subprocess.run(
-            [pod, "ps -eo pid,sid,pgid,args --no-headers | grep -E 'train[.]py|run_ddp' | grep -v grep"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (subprocess.TimeoutExpired, OSError) as e:
-        return SKIP, f"pod unreachable: {type(e).__name__}"
-    rows = [ln.split(None, 3) for ln in r.stdout.strip().split("\n") if ln.strip()]
+    allrows, err = _pod_ps_rows()
+    if err:
+        return SKIP, err
+    # The training rows, selected from the one read rather than by a second remote grep.
+    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
+    ppid = {x[0]: x[3] for x in allrows}
     # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
     # leaves a bash -lc whose argv contains the whole launch command, so a match on
     # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
     # training process and is correctly not a session leader. It names setsid in its
     # own command line; the job it spawned is the thing to judge (2026-09-01, this
     # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not (len(x) > 3 and "setsid" in x[3] and x[3].startswith("bash -lc"))]
+    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
     if not rows:
         return PASS, "no training process on the pod"
     # ppid == 1 means init adopted it: the launching shell is gone and the process
@@ -509,12 +670,12 @@ def check_no_foreground_pod_training(root):
     # a correctly detached trainer as unsupervised -- this refused a commit while
     # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
     # this check).
-    detached = {x[0] for x in rows if len(x) >= 4 and x[3].startswith(("/usr/bin/python3", "python3"))
-                and _ppid_of(x[0]) == "1"}
-    attached = [x for x in rows if len(x) >= 3 and x[0] != x[1] and x[0] not in detached]
+    detached = {x[0] for x in rows if x[4].startswith(("/usr/bin/python3", "python3"))
+                and ppid.get(x[0]) == "1"}
+    attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
     # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if len(x) >= 2 and x[0] == x[1]}
-    orphans = [x for x in attached if len(x) >= 2 and x[1] not in leaders]
+    leaders = {x[1] for x in rows if x[0] == x[1]}
+    orphans = [x for x in attached if x[1] not in leaders]
     if orphans:
         return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
     return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
@@ -2310,9 +2471,9 @@ def check_review_present(root):
             age_min = REVIEW_GRACE_MIN + 1  # unparseable timestamp: treat as due
         (overdue if age_min > REVIEW_GRACE_MIN else pending).append(f"{tid}->{named}")
     if no_reviewer:
-        return FAIL, f"{len(no_reviewer)} done task(s) name no reviewer: {no_reviewer[:4]}"
+        return WARN, f"{len(no_reviewer)} done task(s) name no reviewer: {no_reviewer[:4]}"
     if overdue:
-        return FAIL, f"{len(overdue)} review(s) over {REVIEW_GRACE_MIN}min overdue: {overdue[:4]}"
+        return WARN, f"{len(overdue)} review(s) over {REVIEW_GRACE_MIN}min overdue: {overdue[:4]}"
     if pending:
         return WARN, f"{len(pending)} review(s) pending inside the {REVIEW_GRACE_MIN}min window: {pending[:4]}"
     return PASS, f"{len(in_scope)} task(s) closed since {REVIEW_RULE_FROM}, every one reviewed by the peer it named"
@@ -4345,10 +4506,10 @@ def _broken_device_set_honoured():
 
 
 def check_untracked_aged(root):
-    """Untracked files older than 24h in the shared tree — someone's unfinished work.
+    """Untracked files older than _AGE_HOURS in the shared tree -- someone's unfinished work.
 
     In a multi-session tree an untracked file belongs to the session that made it.
-    After 24h it is either forgotten or blocked; either way the owner should give
+    Past the window it is either forgotten or blocked; either way the owner should give
     it a fate (commit, gitignore, delete). WARN, not FAIL: the file is not wrong,
     it is just unowned."""
     if not os.path.exists(os.path.join(root, ".git")):  # worktree .git is a file
@@ -4359,14 +4520,14 @@ def check_untracked_aged(root):
     )
     if r.returncode != 0:
         return SKIP, f"git ls-files failed: {r.stderr.strip()}"
-    cutoff = time.time() - 24 * 3600
+    cutoff = time.time() - _AGE_HOURS * 3600
     aged = []
     for f in r.stdout.splitlines():
         p = os.path.join(root, f)
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
             aged.append(f)
     if aged:
-        return WARN, f"{len(aged)} untracked file(s) older than 24h: {', '.join(aged[:5])}"
+        return WARN, f"{len(aged)} untracked file(s) older than {_AGE_HOURS}h: {', '.join(aged[:5])}"
     return PASS, "no aged untracked files"
 
 
@@ -4390,7 +4551,7 @@ def _broken_untracked_aged():
 
 
 def check_dirty_aged(root):
-    """Tracked files dirty longer than 30 minutes — uncommitted work sitting in the
+    """Tracked files dirty longer than _AGE_HOURS -- uncommitted work sitting in the
     shared tree. In a multi-session tree a dirty file is a landmine: it blocks anyone
     who needs to push it, and a broad `git add` sweeps it into someone else's commit
     (d535674 swept 26 files; 2026-08-31 ruled that nothing stays uncommitted).
@@ -4404,7 +4565,7 @@ def check_dirty_aged(root):
     )
     if r.returncode != 0:
         return SKIP, f"git status failed: {r.stderr.strip()}"
-    cutoff = time.time() - 30 * 60
+    cutoff = time.time() - _AGE_HOURS * 3600
     aged = []
     for line in r.stdout.splitlines():
         # XY porcelain: X = index status, Y = worktree status. A file staged and then
@@ -4418,14 +4579,19 @@ def check_dirty_aged(root):
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
             aged.append(line[3:])
     if aged:
-        return WARN, f"{len(aged)} tracked file(s) dirty >30min: {', '.join(aged[:5])}"
+        return WARN, f"{len(aged)} tracked file(s) dirty >{_AGE_HOURS}h: {', '.join(aged[:5])}"
     return PASS, "no aged dirty files"
 
 
 def _broken_dirty_aged():
-    """A real git repo with one tracked file dirty for 2 hours. No git identity is
-    configured, so the commit fails and the file sits staged-and-modified ("AM" in
-    porcelain) -- the exact shape the old line[:2].strip() parser missed on CI."""
+    """A real git repo with one tracked file dirty for longer than _AGE_HOURS. No git
+    identity is configured, so the commit fails and the file sits staged-and-modified
+    ("AM" in porcelain) -- the exact shape the old line[:2].strip() parser missed on CI.
+
+    The age is DERIVED from the check's constant, not written beside it. A hardcoded
+    2 hours was aged under the old 30-minute threshold and is not under 6 hours: raising
+    the threshold turned this broken world green and the selftest caught it, which is
+    the one thing a hand-written age cannot promise to keep doing."""
     import shutil
     import subprocess as sp
 
@@ -4437,7 +4603,7 @@ def _broken_dirty_aged():
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("\n# dirty\n")
-    old = time.time() - 2 * 60 * 60
+    old = time.time() - (_AGE_HOURS * 3600 + 600)
     os.utime(os.path.join(d, "AGENTS.md"), (old, old))
     return d
 
@@ -4782,14 +4948,14 @@ CHECKS = [
     ),
     (
         "untracked_aged",
-        "untracked files older than 24h in the shared tree get a fate",
+        f"untracked files older than {_AGE_HOURS}h in the shared tree get a fate",
         "a session's unfinished work sits unowned for days; nobody knows if it is safe to delete",
         check_untracked_aged,
         _broken_untracked_aged,
     ),
     (
         "dirty_aged",
-        "tracked files dirty longer than 30min are named so the owner commits or reverts",
+        f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
         check_dirty_aged,
         _broken_dirty_aged,
@@ -4832,8 +4998,32 @@ def _check_deadline(signum, frame):
     raise TimeoutError("check deadline")
 
 
-def run_checks(root=ROOT, quiet=False):
+def _read_timeout_strikes():
+    """Consecutive-timeout count per check, from the last run. Unreadable = empty:
+    the ledger is an optimisation over 'this timed out before', never a gate on its own."""
+    try:
+        with open(_TIMEOUT_STATE, encoding="utf-8") as f:
+            obj = json.load(f)
+        return {k: int(v) for k, v in obj.items() if isinstance(v, (int, float))}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _write_timeout_strikes(strikes):
+    """Persist the counts. A failure here must not fail the run -- it only costs the
+    NEXT run its memory, which degrades to the single-timeout behaviour."""
+    try:
+        os.makedirs(os.path.dirname(_TIMEOUT_STATE), exist_ok=True)
+        with open(_TIMEOUT_STATE, "w", encoding="utf-8") as f:
+            json.dump(strikes, f, indent=1, sort_keys=True)
+    except OSError:
+        pass
+
+
+def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     results = []
+    prev_strikes = _read_timeout_strikes()
+    strikes = {}
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
@@ -4841,7 +5031,19 @@ def run_checks(root=ROOT, quiet=False):
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)}s"
+            # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
+            # is what separates "this machine was busy" from "this check never runs".
+            n = prev_strikes.get(name, 0) + 1
+            strikes[name] = n
+            limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
+            if n >= _TIMEOUT_STRIKES:
+                state = FAIL
+                evidence = (f"timed out after {limit}s on {n} consecutive runs -- this check "
+                            f"has not actually run since; raise its deadline or fix it")
+            else:
+                state = TIMEOUT
+                evidence = (f"timed out after {limit}s (strike {n}/{_TIMEOUT_STRIKES}; "
+                            f"the next consecutive timeout FAILs)")
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
@@ -4850,11 +5052,15 @@ def run_checks(root=ROOT, quiet=False):
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
             print(f"  [{state:^4}] {name:<22} {evidence}  ({dur:.1f}s)")
-            if state in (FAIL, WARN):
+            if state in (FAIL, WARN, TIMEOUT):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
                 print(f"         prevents: {incident}")
     signal.signal(signal.SIGALRM, _prev_alarm_handler)
+    # Only checks that timed out THIS run keep a count; anything that ran resets to zero
+    # by absence. Written after the loop so a partial run cannot bank a strike.
+    if persist_timeouts:
+        _write_timeout_strikes(strikes)
     return results
 
 
@@ -5730,30 +5936,29 @@ def _selftest_attest_written_path():
 
 
 def _selftest_check_timeout_skips():
-    """A slow check must SKIP naming its deadline, not kill the harness.
+    """A slow check must report TIMEOUT naming its deadline, not kill the harness, and
+    a SECOND consecutive timeout must FAIL.
 
-    signal.alarm() with no handler runs SIG_DFL, which terminates: the
-    `except TimeoutError -> SKIP` in run_checks was dead code and a slow check exited
-    -14/142 with empty stdout and stderr. The hook then refused the commit with no
-    check named and told the reader to rerun by hand, where it passes -- the
+    Two defects, one test. (a) signal.alarm() with no handler runs SIG_DFL, which
+    terminates: the `except TimeoutError` in run_checks was dead code and a slow check
+    exited -14/142 with empty stdout and stderr. The hook then refused the commit with
+    no check named and told the reader to rerun by hand, where it passes -- the
     --no-verify training P8 exists to prevent. It refused the commit carrying the
     e1-4 review of itself (2026-09-01).
 
-    Tests the PROPERTY -- run_checks turns an overrun into a named SKIP -- not the
-    mechanism. My first version asserted a handler was installed at import time,
-    which was true only of my own fix; de's is scoped to run_checks and restores the
-    previous handler, which is better, and the test failed on the better code. A test
-    that encodes one implementation rejects its replacement."""
+    (b) That fix reported SKIP, which the hook prints nothing for and `check` exits 0
+    on. A check that times out on EVERY run was therefore a permanent silent pass
+    wearing a legitimate state's name (44, D5). TIMEOUT is its own state, and the second
+    consecutive strike is a FAIL -- a deadline nothing can meet is a check nobody has.
+
+    Tests the PROPERTY -- run_checks turns an overrun into a named non-pass, and a
+    repeat into a failure -- not the mechanism. My first version asserted a handler was
+    installed at import time, which was true only of my own fix; de's is scoped to
+    run_checks and restores the previous handler, which is better, and the test failed
+    on the better code. A test that encodes one implementation rejects its replacement."""
     slow_name = "__selftest_slow__"
-
-    def slow(_root):
-        time.sleep(3)
-        return PASS, "should never be reached"
-
     saved_checks = list(CHECKS)
     saved_to = _CHECK_TIMEOUTS.get(slow_name)
-    CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
-                   slow, lambda: _tmp_repo()))
     _CHECK_TIMEOUTS[slow_name] = 1
     try:
         # Time the SLOW CHECK, not the whole run: run_checks executes all 51, so a
@@ -5770,22 +5975,45 @@ def _selftest_check_timeout_skips():
                 marks.append(time.time() - t)
             return PASS, "should never be reached"
 
-        CHECKS[-1] = (slow_name, "a check that overruns", "the harness dying with no name",
-                      timed_slow, lambda: _tmp_repo())
-        results = run_checks(ROOT, quiet=True)
-        row = [r for r in results if r[0] == slow_name]
-        assert row, f"{slow_name} produced no result -- the run died"
-        _, state, evidence, _, _ = row[0]
-        assert state == SKIP, f"an overrunning check must SKIP, got {state}: {evidence}"
-        assert "timed out" in evidence, f"the SKIP must name the deadline: {evidence}"
+        CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
+                       timed_slow, lambda: _tmp_repo()))
+
+        def run_and_read():
+            # persist_timeouts=False: the real ledger must not carry this fixture's strikes.
+            results = run_checks(ROOT, quiet=True, persist_timeouts=False)
+            row = [r for r in results if r[0] == slow_name]
+            assert row, f"{slow_name} produced no result -- the run died"
+            return row[0][1], row[0][2]
+
+        real_read = globals()["_read_timeout_strikes"]
+        # Strike 1, from a clean slate: TIMEOUT, non-blocking, names the deadline.
+        globals()["_read_timeout_strikes"] = lambda: {}
+        try:
+            state, evidence = run_and_read()
+        finally:
+            globals()["_read_timeout_strikes"] = real_read
+        assert state == TIMEOUT, f"an overrunning check must report TIMEOUT, got {state}: {evidence}"
+        assert state != SKIP, "TIMEOUT must not be a SKIP -- that is the silent pass"
+        assert "timed out" in evidence, f"the TIMEOUT must name the deadline: {evidence}"
         assert marks and marks[0] < 2.5, f"the alarm did not interrupt the check ({marks}s)"
+
+        # Strike 2, with the previous run's count in hand: FAIL, so `check` exits 1.
+        globals()["_read_timeout_strikes"] = lambda: {slow_name: 1}
+        try:
+            state2, evidence2 = run_and_read()
+        finally:
+            globals()["_read_timeout_strikes"] = real_read
+        assert state2 == FAIL, (
+            f"a second consecutive timeout must FAIL, got {state2}: {evidence2} -- "
+            f"otherwise a check that never runs never says so")
+        assert "consecutive" in evidence2, f"the FAIL must say why: {evidence2}"
     finally:
         CHECKS[:] = saved_checks
         if saved_to is None:
             _CHECK_TIMEOUTS.pop(slow_name, None)
         else:
             _CHECK_TIMEOUTS[slow_name] = saved_to
-    print("  check timeout: an overrunning check SKIPs and names its deadline; the run survives")
+    print("  check timeout: strike 1 TIMEOUTs naming its deadline, strike 2 FAILs; the run survives both")
 
 
 def _selftest_exp_fold():
@@ -6084,7 +6312,11 @@ def _demo():
     # not a tree, so no world it builds can hold a repo file.
     synthetic_world = {"no_oversized_blob", "env_importable"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
-    warn_only = {"untracked_aged", "dirty_aged"}
+    # review_present joined them on 2026-09-01 when the user cut the blocking: a check
+    # with no FAIL tier cannot have a FAILing broken world, and demanding one would
+    # force the tier back. What its world must still prove is that removing a review row
+    # is VISIBLE -- WARN is the signal, silence is the defect.
+    warn_only = {"untracked_aged", "dirty_aged", "review_present"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -8215,8 +8447,9 @@ def main():
         res = run_checks()
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
+        timed = [n for n, s, *_ in res if s == TIMEOUT]
     else:
-        bad, warns = [], []
+        bad, warns, timed = [], [], []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -8233,6 +8466,11 @@ def main():
     if bad:
         print(f"\n{len(bad)} invariant(s) FAILED: {', '.join(bad)}")
         return 1
+    if timed:
+        # Non-blocking on the first strike, but never silent: a check that did not run
+        # is not a check that passed, and the next consecutive timeout exits 1.
+        print(f"\n{len(timed)} check(s) TIMED OUT and did not run: {', '.join(timed)} "
+              f"-- a second consecutive timeout FAILs")
     if warns:
         print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
     return 0
