@@ -167,6 +167,52 @@ know its shape, and the first class's fourth rule -- look, because looking is fr
 applies here too: when a metric's subject matter is something the codebase elsewhere
 defends against, check whether the defence is running during the measurement.
 
+## A third class, all three instances mine, all three in one evening: the check shares the defect's premise
+
+The first class is a check whose scope misses the case. This one is worse, because no
+amount of care in writing the check reaches it: the check and the code under test express
+the same belief, so the check cannot fail on that belief being wrong. Agreement between
+two expressions of one belief is not evidence.
+
+| what I wrote | how it agreed with the defect | how it was caught |
+|---|---|---|
+| `test_fewshot_demos.py` v1 | rebuilt the demo pool itself with `rows[:n]` and asserted against `build_prompt`. The defect was in `main()`'s pool sizing, which the test never called | restored the pre-fix file and ran it: **exit 0** |
+| `score_code_exec.runs_to` v1 | swallowed the sandbox's not-root `RuntimeError` into `False`. On any machine without the sandbox it would report pass 0.0% -- in a file written to stop exactly that reading | its own selftest, on `assert runs_to("print(7)", "7")` |
+| `_selftest_merge_cherry_pick_not_a_drop` v1 | the fixture's `git merge` CONFLICTS, so no merge commit existed and `check_merge_complete` returned "HEAD is not a merge" -- a PASS indistinguishable from the real one | neutered the fix; the selftest still printed OK |
+
+The third is the sharpest instance because it happened while I was writing the fix for a
+false positive in a check I had written that morning, in a file whose whole subject is
+checks that do not check. Knowing the class does not confer immunity to it.
+
+**The reliable detector is not review. It is reinstating the defect and confirming the
+check goes red.** Every one of the three was caught that way or by a known-answer pair,
+and none by reading. Two of them I had already read and approved. So the operational rule,
+and it is the strongest thing in this document:
+
+> A test written after a fix, that has never been observed to FAIL on the unfixed code, is
+> an assertion, not a test. Reinstate the defect in the real file, watch the check go red,
+> then restore. It costs two minutes.
+
+tilerl's generalisation of the first class already implied this -- *any check worth having
+should be able to say what input would make it fire, and someone should have supplied that
+input at least once* -- and these three instances are what turn it from a good principle
+into a procedure with a cost attached. The refinement this class adds: the input has to be
+the **actual historical defect in the real file**, not a synthetic stand-in. A stand-in is
+built from the same understanding as the check, which is the very thing in question.
+
+Two secondary properties, both load-bearing when hunting the class:
+
+**A vacuous PASS looks exactly like a real one.** The merge fixture printed the same OK
+line either way. This is why the neutering step cannot be replaced by reading the check's
+output -- the output is identical in both worlds, and that is the definition of the class.
+
+**A check that can only ever report absence is the highest-risk shape.**
+`probes/chatml_in_corpus.py` scans for a string and expects to find none; a typo in the
+needle produces 0 everywhere, which reads as precisely the finding it was written to look
+for. Its selftest therefore asserts the scan **finds** ChatML in a row that has it. Any
+check whose success condition is a zero needs that pair, and this repo now has three such
+checks.
+
 ## Findings
 
 ### D1 -- `save_checkpoint` has never written a row cursor (P3, principle) -- FIXED in the next window
@@ -372,9 +418,50 @@ I wrote the call before checking, and it would have no-opped silently -- and inv
 third value for a status field every reader folds on would trade this defect for a fold
 defect, which is the trade this whole document argues against.
 
-## What I verified and found clean
+### D7 -- the correct diagnosis existed eleven days early and lost to a table entry (P1, principle) -- the closing finding
 
-- **The 22B pairing chain.** Simulated the watcher's default pairing against the real
+`eval/l1_fewshot.py`'s docstring, written 2026-08-30:
+
+> ChatML is NOT used: the base saw 1.18% chat-domain data and the zero-shot ChatML 0/500
+> confounds format with capability; plain continuation is the clean bridge.
+
+That is today's finding, correct, in the repository, eleven days before anyone acted on
+it. Meanwhile `SKIP_REASON` listed `l1_fewshot` as a base-panel metric that does not
+apply, so the one instrument built on the correct diagnosis was the one marked
+inapplicable, and every code-500 and math-500 number was taken through
+`loader.format_prompt`'s ChatML.
+
+The docstring even understated its own case. It said the base saw 1.18% chat-domain data.
+The corpus scan says the base saw **no ChatML at all** -- 0 of 168,000 rows across 42
+domains, the chat domain being `问：/答：` throughout, bounding the rate below 0.075% per
+domain at 95%. The author had the right conclusion from a weaker premise than the one
+that actually holds.
+
+**The failure was not missing knowledge. It was knowledge that lost to a default.** A
+docstring is read by whoever opens the file; a `SKIP_REASON` table entry is read by the
+runner, every run, and decides what happens. When those two disagree, the table wins
+silently and forever, and nothing in the system is capable of noticing the disagreement.
+No amount of writing the insight down more clearly would have changed the outcome --
+it was already written clearly.
+
+So the finding is about placement, not about care:
+
+> A conclusion that contradicts a default must change the default, or it will lose to it.
+> Prose next to the code is not where a decision lives; the table the runner reads is.
+
+Which is also the only defence available. There is no check for this -- a doc comment and
+a config entry that disagree are two valid strings, and no static analysis can know which
+one is right. What can be done is cheaper: **when a docstring explains why something is
+wrong, look for the config that encodes the wrong thing, in the same commit.** That is the
+mechanical form, and it is the same instruction the first class ends on.
+
+The scale is the argument for taking it seriously. This one entry meant that every
+generative capability number this project holds on a base checkpoint -- math-500,
+code-500, greedy and sampled, all checkpoints, all day -- measured response to a prefix
+the model has never seen. Not one of them was wrong as a number. Every one answered a
+question nobody asked.
+
+## What I verified and found clean- **The 22B pairing chain.** Simulated the watcher's default pairing against the real
   ledger: 16b already scored and skipped, 22b pairs the 16B pin, 30b pairs the 22B
   checkpoint. Both within-stage, so the per-role head guard does not refuse them. A global
   `--paired` would have pinned 30B's pair to 16B too and skipped 22B as its natural pair --

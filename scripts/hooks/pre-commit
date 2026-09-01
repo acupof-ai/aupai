@@ -153,7 +153,8 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
-        "eval/score_math_formatfree.py",
+        "eval/score_math_formatfree.py", "eval/score_code_exec.py",
+        "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
