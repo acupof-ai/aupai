@@ -793,17 +793,18 @@ def _pod_ps_rows(timeout=20):
     """
     pod = os.path.expanduser("~/bin/pod")
     try:
-        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,args --no-headers"],
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,stat,args --no-headers"],
                            capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"pod unreachable: {type(e).__name__}"
     if r.returncode != 0:
         return None, f"pod ps exit {r.returncode}"
+    # stat read and dropped: a zombie holds a pid slot but runs nothing.
     rows = []
     for ln in r.stdout.splitlines():
-        parts = ln.split(None, 4)
-        if len(parts) == 5 and parts[0].isdigit():
-            rows.append(tuple(parts))
+        parts = ln.split(None, 5)
+        if len(parts) == 6 and parts[0].isdigit() and not parts[4].startswith("Z"):
+            rows.append((parts[0], parts[1], parts[2], parts[3], parts[5]))
     if not rows:
         return None, "pod ps returned nothing"
     return rows, None
