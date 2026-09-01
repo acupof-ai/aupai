@@ -1,7 +1,7 @@
 ---
 question: "how do you notice that a measurement describes the measuring tool rather than the system"
 status: recorded
-source: "tilerl-10 2026-09-01; four instances found in one hour: runs/t56_elementwise_owner.json (the broken join), the pretrain_30b_s2 log's tok/s and ETA format strings, eff.kda_occupancy_bound (config drift). Check proposal reviewed by fb; de-8 carries the seven-sighting class ticket."
+source: "tilerl-10 2026-09-01; six instances found in one day: runs/t56_elementwise_owner.json (the broken join, and its fix breaking the same way on cuda_driver), the pretrain_30b_s2 log's tok/s and ETA format strings, eff.kda_occupancy_bound (config drift), eff.quant_tax_is_the_elementwise_group (off-config trace). Check proposal reviewed by fb, tightened by 62; de-8 carries the seven-sighting class ticket."
 ---
 
 # The instrument, not the system
@@ -33,24 +33,59 @@ condition under which the path runs, and the check FAILs when a fact claims a
 production saving for a path the default configuration does not reach.** The flag
 name is in the fact; the default is in the source.
 
+62's tightening, which is the version worth building: *"the fact names the flag"*
+is satisfiable by a fact that names the flag **and still claims the production
+saving**. The check has to read the flag's default from the source and compare it
+against the claim, or it tests whether a field is populated as a proxy for whether
+the claim is true — which is the same class it exists to catch.
+
+### And the rung below it: the flag can be in the evidence rather than the claim
+
+Found hours later, answering a different question, and it is the harder half.
+
+`eff.quant_tax_is_the_elementwise_group` attributed a 250.6 ms/step group to the
+fp8 quantisation tax at 99.98% resolution. The attribution was right. But the
+trace it ran on was **captured with `FP8_HEAD=1`** — 181 `aten::_scaled_mm` per
+step inside a Liger FLCE region, and only `patch_liger_flce_fp8` puts them there.
+Splitting each kernel by whether its launch is contained in a Liger region: 156.9
+of the 250.6 ms is head work that does not run live, and the four quantisation ops
+are **92.9% head**. The live tax in that group is ~12 ms, not 165.7. The
+mechanism claim survived; the scope claim did not.
+
+The fact **never mentioned `FP8_HEAD`**. Nothing in its text was flag-dependent —
+the flag was in the capture conditions of a 415 MB file nobody re-reads. A check
+that reads flags out of fact bodies passes this cleanly.
+
+So the general form is one step back from where the first version put it: **a
+measurement's provenance is part of the measurement.** A fact must record the
+configuration its *evidence* was captured under, not only the configuration its
+*claim* asserts. Both failures ask the same question — is this the live
+configuration — at two different places, and only one of them is in the text.
+
+A second reproducibility trap in the same investigation, worth its own line
+because it produces plausible numbers rather than an error: the backup directory
+held **different, earlier traces under identical filenames**. Re-running the probe
+there returns 29.6 ms where the real capture returns 250.61. A filename is not a
+provenance record either.
+
 ---
 
 An instrument returning a confident number that describes the instrument rather
-than the system. Four instances on 2026-09-01, all found within about an hour of
-each other, all in tools we trusted. The tell is the same every time: **a number
-too clean for the thing it claims to measure.**
+than the system. Six instances on 2026-09-01 — the first four inside about an
+hour, all in tools we trusted. The tell is the same every time: **a number too
+clean for the thing it claims to measure.**
 
 ## The rule
 
 **Before using a logged value as a statistic, read its format string.** A derived
 statistic's resolution is bounded by the printf that produced its input. Three of
-the four instances below are one `%.1f` away from being real measurements.
+the six instances below are one `%.1f` away from being real measurements.
 
 The corollary, for attribution and joins: **treat any result of exactly 0% or
 exactly 100% as a suspected tooling failure until the join is verified on a case
 whose answer is already known.**
 
-## The four
+## The first four
 
 | # | what was reported | what it actually measured | the tell |
 |---|---|---|---|
@@ -64,6 +99,23 @@ was measured by `eval/kda_probe.py` at its `--chunk 64` default, while
 `train.py:153` had shipped `chunk_size=32` the same morning. The number was real;
 it just described a configuration that no longer runs. **Also check that a cited
 number still describes what currently ships.**
+
+A sixth, and it is #4's own fix breaking the same way in the opposite direction.
+The corrected join — kernel → `cuda_runtime` → cpu_op — resolves 99.98% of aten
+kernels and **0.00% of triton kernels**, because inductor launches through
+`cuda_driver` (`cuLaunchKernel`) and aten through `cuda_runtime`
+(`cudaLaunchKernel`). Same shape as #4: a confident, complete null for an entire
+250-region group, produced by a join that had *just been verified* on a case whose
+answer was known. **Verifying a join on one case licenses it for that keyspace and
+no other.** Fix is one line — build the correlation map from both categories —
+and the recurrence is the argument for making the join a shared helper instead of
+re-deriving it per probe.
+
+One more from the same probe, in the tell family rather than the join family: for
+a triton kernel, the "innermost launching cpu_op" is the **inductor wrapper of the
+same name**. Grouping by it produces a clean table that says
+`triton_poi_fused_… ← triton_poi_fused_…`. A tautology renders exactly like an
+attribution. If a resolution step returns its own input, it resolved nothing.
 
 ## The pair that tells you how to read a moved number
 
@@ -114,7 +166,9 @@ argued with — someone asks where it came from. #4 produced a wrong *negative*:
 completed investigation with a disappointing result, and it was one commit from
 being written into a fact as a finding. The corrected join resolves **99.98%**, and
 the answer reversed a rung: 66% of that group is the fp8 quantisation tax, which
-merged the "copies" rung into the fp8-head rung instead of refuting it.
+merged the "copies" rung into the fp8-head rung instead of refuting it. (That 66%
+is a share of the *traced* group, and #5 later showed 93% of it is head work that
+does not run live — the mechanism held, the scope did not.)
 
 The cost asymmetry is the point. A false positive costs a review cycle. A false
 negative closes a line of work permanently and silently.
@@ -124,7 +178,15 @@ negative closes a line of work permanently and silently.
 None of these were caught by the statistic itself — only by looking at the
 instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
-quantisation band, firing on rounding. #4 nearly retired a live 4.44% lever.
+quantisation band, firing on rounding. #4 nearly retired a 4.44% lever — and
+here is the twist worth keeping, because this sentence was wrong for six hours:
+that lever turned out to be **93% head work on a path the live run does not
+reach**, so #4's correction rescued a rung that #5's class then took away again.
+Both steps were right. A number can be rescued from one defect and still be
+carrying another. #6 would have published "the fusion group is disjoint from the
+quantisation tax" as a *null* — the right answer, reached by a broken join, which
+is the one way to be correct that teaches you nothing and cannot be trusted next
+time.
 
 ## The generalisation: a threshold set from the wrong quantity
 
