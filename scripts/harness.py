@@ -134,6 +134,9 @@ REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
 REVIEW_RULE_FROM = "2026-08-31 22:00"
+#: From when a close must name a commit that reaches main and touches its evidence.
+#: Rows closed before this keep their prose evidence; the rule is not retroactive.
+TASK_COMMIT_FROM = "2026-09-01 21:30"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1481,51 +1484,42 @@ def _gpu_present():
 
 
 def check_non_shard_jsonl_excluded(root):
-    """train.py's shard glob must skip every non-shard .jsonl a domain dir can hold.
+    """train.py must classify every .jsonl in a domain dir, and REFUSE the unclassifiable.
 
-    NON_SHARD_JSONL is a list of exact filenames. holdout_slice_<phase>.jsonl is a FAMILY --
-    build_corpus's holdout gate writes one per phase into the domain dir -- so it could never
-    be on an exact-name list that nobody edits when a phase is added. It was not, and the miss
-    surfaced only at tokenize time as `KeyError: 'content'` from inside _jsonl_content, on all
-    three of chatml/chat_qa/code_py_rp1t at once, blocking the launch gate's epochs item
-    (b0, 2026-09-01). build_corpus.py already excluded the same family by prefix at :982; the
-    two files disagreed about what a shard is.
+    Written when holdout_slice_<phase>.jsonl -- a per-phase family an exact-name list could
+    never cover -- was globbed as a shard and three domains died on KeyError: 'content'. My
+    first fix added a prefix skip. main's (044e5ed) is strictly better and replaced it: a
+    whitelist for shards, a pattern for known non-shards, and a REFUSAL for anything matching
+    neither. The difference matters -- a prefix skip silently drops a real shard someone
+    misnames, which is the expensive failure; refusing costs two minutes at step 0.
 
-    Checks the RULE, not the current corpus: a dev box has no domain dirs, and a check that
-    silently passes on an empty directory is the shape this file exists to retire."""
+    This checks the rule, not today's corpus: a dev box has no domain dirs, and a check that
+    passes on an empty directory is the vacuous shape this file exists to retire."""
     src = os.path.join(root, "train.py")
     if not os.path.exists(src):
         return SKIP, "no train.py"
     body = open(src, encoding="utf-8").read()
-    if "NON_SHARD_PREFIXES" not in body:
-        return FAIL, ("train.py has no NON_SHARD_PREFIXES: holdout_slice_*.jsonl and any "
-                      "future per-phase family will be tokenized as corpus rows")
-    m = re.search(r"NON_SHARD_PREFIXES\s*=\s*\(([^)]*)\)", body)
-    prefixes = re.findall(r'"([^"]+)"', m.group(1)) if m else []
-    if "holdout_slice_" not in prefixes:
-        return FAIL, f"NON_SHARD_PREFIXES is {prefixes}, missing holdout_slice_"
-    # and the glob must actually apply it, not merely define it
-    if "startswith(NON_SHARD_PREFIXES)" not in body:
-        return FAIL, ("NON_SHARD_PREFIXES is defined but the shard glob does not use it -- "
-                      "a constant nothing reads is a comment")
-    # any real domain dir that holds a slice must have it excluded by the same rule
-    leaked = []
-    for d in glob.glob(os.path.join(root, "data", "corpus", "*")):
-        for f in glob.glob(os.path.join(d, "holdout_slice_*.jsonl")):
-            if os.path.basename(f) in prefixes:
-                leaked.append(f)
-    if leaked:
-        return FAIL, f"{len(leaked)} holdout slice(s) not covered: {leaked[:2]}"
-    return PASS, f"train.py excludes {prefixes} by prefix and applies it in the shard glob"
+    # Match the DEFINITION, not the name. `"SHARD_RE" in body` is satisfied by the comment
+    # above it, so deleting the assignment left the check green on its own broken world --
+    # a substring test passing on prose, which is the same defect as grepping a gate's
+    # message for "ESTIMATED" (b0, 2026-09-01, twice in one day).
+    for name in ("SHARD_RE", "NON_SHARD_RE"):
+        if not re.search(rf"^{name}\s*=\s*re\.compile", body, re.M):
+            return FAIL, (f"train.py does not define {name}: a new artifact written into a "
+                          f"corpus dir will be tokenized as rows")
+    # the refusal branch is the point -- a whitelist that silently skips is only half the fix
+    if "REFUSING" not in body.split("def _domain_seqs")[1][:4000]:
+        return FAIL, ("_domain_seqs classifies shards but does not REFUSE the unknown -- a "
+                      "misnamed shard would be dropped from training in silence")
+    return PASS, "train.py whitelists shards, patterns known non-shards, and refuses the rest"
 
 
 def _broken_non_shard_jsonl_excluded():
-    """train.py as it stood before tonight: the exact-name list, no prefix rule."""
+    """train.py with the shard whitelist removed -- the pre-044e5ed world, where an unknown
+    .jsonl in a corpus dir is read as data."""
     d = _tmp_repo()
-    src = os.path.join(ROOT, "train.py")
-    body = open(src, encoding="utf-8").read()
-    body = body.replace('NON_SHARD_PREFIXES = ("holdout_slice_",)', "")
-    body = body.replace("        and not os.path.basename(p).startswith(NON_SHARD_PREFIXES)\n", "")
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    body = body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', "")
     with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as f:
         f.write(body)
     return d
@@ -3082,6 +3076,47 @@ def _union_ledgers(root):
         if path.endswith(".jsonl"):
             out.append(path)
     return tuple(out)
+
+
+def check_tasks_closed_by_commit(root):
+    """Every task closed since the rule carries a commit that reaches main and touches
+    its evidence.
+
+    Closing wrote free text, so a task closed on a path that never existed read as
+    delivered and the register could not tell the difference. The rule dates from
+    TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    scope = [t for t in rows
+             if t.get("state") == "done" and (t.get("closed") or "") >= TASK_COMMIT_FROM]
+    if not scope:
+        return SKIP, f"no task closed since the rule took effect ({TASK_COMMIT_FROM})"
+    bad = []
+    for t in scope:
+        sha = t.get("commit")
+        if not sha:
+            bad.append(f"{t['id']}: closed with no commit")
+            continue
+        why = _commit_delivers(sha, t.get("evidence") or "", root)
+        if why:
+            bad.append(f"{t['id']}: {why}")
+    if bad:
+        return FAIL, f"{len(bad)} of {len(scope)} closed task(s): {'; '.join(bad[:3])}"
+    return PASS, f"{len(scope)} closed task(s), each delivered by a commit that reaches main"
+
+
+def _broken_tasks_closed_by_commit():
+    import shutil as _sh
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "tasks.jsonl")
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    _sh.copy(src, dst)
+    rows = [json.loads(x) for x in open(dst, encoding="utf-8") if x.strip()]
+    seed = dict(rows[-1], id="broken-1", state="done", closed="2099-01-01 00:00",
+                evidence="scripts/harness.py", commit="0" * 40, reviewer="44")
+    with open(dst, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    return d
 
 
 def check_review_present(root):
@@ -4747,6 +4782,35 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def _commit_delivers(sha, evidence, root=None):
+    """Empty string if sha reaches main and its diff touches a path named in evidence.
+
+    The register's evidence field was free text: a path that never existed closed a
+    task, and the register read as delivered. A commit hash is the one claim the repo
+    can refute by itself -- it either resolves, reaches main, and moved that file, or
+    it does not (user ruling 2026-09-01: the conversation is notification, the commit
+    is the truth)."""
+    root = root or ROOT
+    g = ["git", "-C", root]
+    if subprocess.run(g + ["cat-file", "-e", f"{sha}^{{commit}}"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} is not a commit in this repo"
+    if subprocess.run(g + ["merge-base", "--is-ancestor", sha, "main"],
+                      capture_output=True).returncode != 0:
+        return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
+    r = subprocess.run(g + ["show", "--name-only", "--format=", sha],
+                       capture_output=True, text=True)
+    touched = [p for p in r.stdout.split("\n") if p.strip()]
+    paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
+             if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
+    if not paths:
+        return f"evidence names no path, so nothing can be checked against {sha[:8]}"
+    if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
+        return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
+                "the commit does not deliver what the evidence claims")
+    return ""
+
+
 def cmd_task(argv):
     """harness task {add,done,list}. The controller's assignments, in a file rather than
     in a conversation -- a conversation gets compacted and the assignment goes with it.
@@ -4770,6 +4834,8 @@ def cmd_task(argv):
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
     a.add_argument("--owner", required=True)
+    a.add_argument("--socket", required=True,
+                   help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
@@ -4779,6 +4845,8 @@ def cmd_task(argv):
     d.add_argument("--reviewer", required=True,
                    help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
+    d.add_argument("--commit", required=True,
+                   help="the commit that delivers it: must reach main and must touch --evidence")
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
@@ -4795,6 +4863,7 @@ def cmd_task(argv):
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
+            "socket": args.socket,
             "state": "open",
             "task": args.task,
             "why": args.why,
@@ -4819,9 +4888,13 @@ def cmd_task(argv):
         if args.reviewer not in REVIEW_PAIRS:
             print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
+        bad = _commit_delivers(args.commit, args.evidence)
+        if bad:
+            print(f"refusing: {bad}", file=sys.stderr)
+            return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
-                  closed=time.strftime("%Y-%m-%d %H:%M"))
+                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M"))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -5523,6 +5596,13 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "tasks_closed_by_commit",
+        "every task closed since the rule names a commit that reaches main and touches its evidence",
+        "the register closed on free text, so a task closed on a path that never existed read as delivered; a whole evening's assignments lived only in chat and none was recoverable",
+        check_tasks_closed_by_commit,
+        _broken_tasks_closed_by_commit,
     ),
     (
         "review_present",
