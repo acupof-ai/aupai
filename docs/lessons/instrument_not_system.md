@@ -97,6 +97,120 @@ instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
 quantisation band, firing on rounding. #4 nearly retired a live 4.44% lever.
 
+## The generalisation: a threshold set from the wrong quantity
+
+The printf cases are one instance of something wider, and it was named only after
+it had been violated four more times in a single afternoon:
+
+> **A threshold set from a quantity that is not the quantity it will be compared
+> against.**
+
+The stage-2 loss kill rule is the clean example. The threshold 0.15 came from a
+healthy run's **30-step half-split** (+0.12). The rule compares **60-step block
+medians**. Nobody computed the block distribution before setting a number against
+it. When someone finally did — ten minutes of work — the block-to-block delta SD
+was **0.141**, so the threshold was 1.06× the noise it was meant to clear, and
+rises past 0.15 occurred in 18 of 137 blocks against falls past −0.15 in 19.
+Symmetric: the signature of noise, not drift. The rule fired on a healthy run.
+
+**Two people approved that threshold — the controller who issued it and the
+reviewer who sustained it — and neither had the distribution, because nobody had
+computed it. Approval by two parties is not a substitute for one measurement.**
+
+The same shape covers everything above: a spread compared against a resolution
+nobody read, a component bounded by an aggregate that did not contain it, a
+denominator that did not drive its numerator, two instruments summed without
+showing they do not overlap.
+
+### It recurs while you are writing the rule against it
+
+This is the part worth internalising. Having written the retraction, I then
+derived a lever at 7.5 ms from a peak-bandwidth model and quoted it before
+measuring — it measured 39.4 ms, off by 5.3×. Having written *that* down, I
+evaluated the replacement kill rule by comparing the event against **the whole
+run's median** when the rule's window is **three blocks either side**; at the
+rule's own window the event fires. b0 wrote a usage restriction in §6 of a
+document and violated its generalisation in §1 of the same document, minutes
+apart.
+
+Two authors, six instances, each within an hour of writing down why not to. **The
+discipline does not transfer from the case you derived it on to the next case
+with the same shape.** That is the argument for a mechanical test over a
+principle: a test is checkable against a specific number, a principle is
+checkable against nothing.
+
+### Two tests, at two levels (44's refinement)
+
+The skim test below operates on a single number, at writing time, held by the
+author. It does not catch the document-level failure, where the restriction and
+the number it governs live in different sections with no mechanism connecting
+them. That needs a second, reviewer-held test:
+
+> **List every restriction the document states. Apply each, mechanically, to
+> every number in every table.**
+
+That is a cross-product, not a judgement, and it is exactly how 44 caught b0's §1
+— not by understanding the rule better, but by applying b0's own §6 to b0's own
+§1. **An author holding a rule is not the same as the rule being applied.** Both
+tests are reviewable artifacts; neither substitutes for the other.
+
+### A guard that passes is only informative where it could have failed
+
+The mirror image of the broken join, and the reason a green board is weaker
+evidence than it looks. Today's guard failures were **input-specific**:
+
+- the readout's head guard fired correctly on renamed roles, and would have
+  stayed silent on identical ones — it was never exercised where it could not
+  have fired;
+- the budget gate never fired at all, because both callers omitted
+  `--actual-tokens`/`--paired-tokens`. It is silently absent on exactly the
+  retention pairs where it is the correct check.
+
+So "the checks passed" means *the checks that could fire on this input found
+nothing*. That is real and it is much narrower than "the instrument works". When
+reading a clean result, ask which guards were even reachable on that input — and
+if the answer is unknown, the clean result is not yet evidence of soundness
+(b0, on how to read the 22B milestone table).
+
+## When a qualifier has to be a restriction
+
+A number can be correct and still be misused, and the qualifier you attach
+decides which. **A caveat degrades gracefully under skimming; a restriction does
+not.** So there is a test:
+
+> If a reader skims the qualifier and uses the number anyway, are they wrong?
+> If yes, it is a restriction — it belongs in the usage clause, not the
+> uncertainty field.
+
+Two cases from 2026-09-01, one each side:
+
+- **`eff.fp8_weight_byte_cache`, 39.4 ms.** Measured on one card, synthetic
+  tensors of the production shape. It licenses *build this lever*. It does not
+  license *this lever delivers 39.4 ms in the live run*, and it does not license
+  summing with a lever measured on another instrument. Skim the hedge and you
+  promise 39.4 ms to someone. Restriction.
+- **b0's nat-per-own-token.** Dividing Δloss by a domain's own tokens assumes the
+  domain's loss is driven only by its own tokens; transfer violates that, and the
+  bias differs by role so it does not even preserve ranking. Skim the caveat and
+  you rank domains by nat/B. Restriction — and the doc now restricts the metric's
+  *use* (one role across time, never one role against another) rather than
+  flagging uncertainty.
+
+**The second case is the worse kind, and the difference is worth naming.** Mine
+was checkable — I measured my way out of it. b0's needs seven single-domain
+ablations that the run does not contain, so it is **unfalsifiable within the run
+that uses it**. A wrong denominator you can measure your way out of is a bug; one
+you cannot is a scope limit.
+
+### The corollary for sums
+
+Two measured numbers from different instruments do not add unless you have shown
+they do not overlap. The doc summing this lever's 39.4 ms with the seam's 54.9 ms
+now reads **"two measured levers, assumed independent, not jointly measured"** —
+because HBM traffic inside FLCE and compile stalls at the `rms_norm`→flash seam
+*look* independent, and "looks independent" is precisely the reasoning that
+produced the aggregate-as-bound error above.
+
 ## The fix, in priority order
 
 1. **One wall-clock timestamp per logged step.** Retires #1, #2 and #3 together:
