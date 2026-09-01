@@ -146,13 +146,25 @@ def gate_corpora(root, mix_path, world):
         except (OSError, ValueError) as e:
             bad.append(f"{name}: stats unreadable ({e})")
             continue
-        if want and got != want:
+        # A COMPARISON THAT DID NOT RUN IS NOT A COMPARISON THAT PASSED. My first
+        # version read `if want and got != want`, so a domain with no fingerprint in
+        # the mix skipped the check and the gate printed GO having compared nothing.
+        # b0 measured the blast radius: 12 of 13 mixes have at least one such domain
+        # and mix_500m -- the launch mix -- has NINE OF NINE. The gate would have
+        # certified "fingerprints match" for a mix where no fingerprint exists.
+        # Same sentence as "0 files, all compliant": a universal claim over an empty set.
+        if not want:
+            bad.append(f"{name}: mix carries no fingerprint, so nothing was compared")
+        elif not got:
+            bad.append(f"{name}: build_corpus_stats.json carries no fingerprint")
+        elif got != want:
             bad.append(f"{name}: fingerprint {got} != mix's {want}")
         if re.search(r"mix_scale_[\d.]+b", str(spec.get("role", "")) + name):
             bad.append(f"{name}: points at a frozen mix_scale_* pool")
     if bad:
         return NOGO, f"{len(bad)} domain(s) failed: {'; '.join(bad[:3])}"
-    return GO, f"all {len(m['domains'])} corpora present, sharded, fingerprints match"
+    n = len(m["domains"])
+    return GO, f"all {n} corpora present, sharded, {n} fingerprints compared and match"
 
 
 def gate_arch_tests(root, mix_path, world):
@@ -442,6 +454,31 @@ def selftest():
             os.remove(p)
     d = world(_noharness)
     broken["checks_and_drift"] = (d, os.path.join(d, mix_rel))
+
+    # corpora gets a SECOND world: dirs and shards all present, but the mix carries no
+    # fingerprint. This is b0's find and my first version passed it -- `if want and ...`
+    # skipped the comparison and reported "fingerprints match" having compared nothing.
+    # The missing-dirs world cannot catch it, because it fails earlier for another
+    # reason: a gate can be right about one input and blind on another.
+    def _nofp(d):
+        m = json.load(open(real_mix, encoding="utf-8"))
+        for spec in m["domains"].values():
+            spec.pop("fingerprint", None)
+        os.makedirs(os.path.join(d, "data"), exist_ok=True)
+        json.dump(m, open(os.path.join(d, mix_rel), "w", encoding="utf-8"),
+                  ensure_ascii=False)
+        # give every domain a real-looking dir + shard + stats, so the ONLY defect
+        # left is the absent fingerprint
+        for name in m["domains"]:
+            cd = os.path.join(d, "data", "corpus", name)
+            os.makedirs(cd, exist_ok=True)
+            open(os.path.join(cd, "x_000.jsonl"), "w").write('{"content":"x"}\n')
+            json.dump({"fingerprint": "deadbeefdeadbeef"},
+                      open(os.path.join(cd, "build_corpus_stats.json"), "w"))
+    dnf = world(_nofp)
+    st, why = gate_corpora(dnf, os.path.join(dnf, mix_rel), 7)
+    assert st != GO, f"a mix with no fingerprints must not report a match: {why}"
+    assert "compared" in why or "no fingerprint" in why, f"the reason must name it: {why}"
 
     ungated = [n for n, _ in GATES if n not in broken]
     assert not ungated, (
