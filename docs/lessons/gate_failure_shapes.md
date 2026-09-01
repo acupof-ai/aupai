@@ -117,7 +117,7 @@ token 数矛盾——是实测的,后来查明是 `len(ids)` vs `ids+EOS` 的口
 
 一个测试如果用 try/except 包住「造破坏世界」的步骤,世界没造出来时断言不会执行——测试打印通过,而它专门要抓的那份代码从未被检验。世界造不成必须是测试失败,不是测试跳过。
 
-**判据:任何 `except: world = None` 后面跟 `if world:` 都是这个形状**,和具体撞上什么环境事实无关。
+**判据:任何造世界的步骤有静默失败路径**——世界没造出来而测试不报错。`except: world = None` 后面跟 `if world:` 是它最常见的形状,和具体撞上什么环境事实无关。
 
 实例:给 check_head 加「必须打出文件名」的断言。破坏世界用 `shutil.copytree` 复制 `.git`,但 worktree 里 `.git` 是文件不是目录,copytree 抛 NotADirectoryError,except 吞掉,整块在 `if world:` 下被跳过。它在「只打计数」的旧代码上是**绿的**——即在它存在的唯一理由上通过了。修法不是修 copytree,是去掉复制:check_head 只需要 MANIFEST 和 `git show HEAD:path`,直接读真仓库、只把临时 manifest 里一条的 sha 改坏,并加一条「fixture 必须找到一个 .py 去改坏」的断言,让空 manifest 也不能平凡通过(5fa5946)。
 
