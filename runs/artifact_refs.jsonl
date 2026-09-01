@@ -1,1 +1,2 @@
 {"path": "data/eval/preds_l1_d3.l1_15b_final.jsonl", "sha256": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205", "bytes": 914964, "rows": 497, "written_at": "2026-08-31 23:50:51"}
+{"ts": "2026-09-01 16:10", "path": "data/eval/code_holdout_500.jsonl", "sha256": "a5c2be9cb04f4fbb27a21277538c1484ca5a7ba216cbc75c74d3354f17268f95", "run": "t62/t63/rep_stop A/B", "note": "INPUT prompts, not an output: identical sha on the pod and in the worktree, so the A/B and both probes read the same 500 rows."}
