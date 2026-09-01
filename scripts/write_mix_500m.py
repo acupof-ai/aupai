@@ -171,29 +171,37 @@ SUPPLY = {
     "cot":               424_056_227,   # stamped, fp 388496b76ed9bf88
     "textbook_30b":    1_610_210_330,   # stamped, fp 3f237c5191cb8571
     "zh_web":         21_293_403_945,   # stamped, fp a0d44fc44a289d60
-    # MEASURED by 3b, exact token counts (2026-09-01): data/corpus/chat/ is 160,414 rows =
-    # 38,027,236 tokens, and data/corpus/chatml/ is the same 160,414 rows re-rendered with
-    # ChatML markup = 38,995,846, the +968,610 being special tokens. fb ruled both renders,
-    # into two directories; chat/ was left untouched (its name and fingerprint are load-bearing
-    # for six ladder mixes) and chatml/ is new.
+    # MEASURED by 3b, exact and in TRAINING UNITS (2026-09-01). Both domains hold the same
+    # 160,414 documents; chatml is the ChatML re-render, larger by its markup.
     #
-    # These are the only two supplies given as exact integers rather than a stamp, because they
-    # are the only two whose weight is decided within a rounding error of the 4-epoch line --
-    # see SUPPLY_RELATIVE_ERROR, now empty. Every other domain's slack is measured in whole
-    # epochs and does not care about its last significant figure.
+    #   chat_qa  38,187,650   data/corpus/chat_qa/  (a copy read out of chat/, which is untouched)
+    #   chatml   38,995,846   data/corpus/chatml/
+    #
+    # THE UNIT IS THE POINT. scripts/count_tokens.py:16 defines the corpus convention as
+    # "ids + one <eos> per document (train.py encode)" -- count_docs sums len(ids)+1 -- so a
+    # stamp counts what training actually consumes. 3b first sent chat_qa as bare ids
+    # (38,027,236) and chatml as its stamp (38,995,846): two domains in two different units,
+    # and both plausible. Caught because the gap to chat_qa's stamp was 160,414, exactly one
+    # token per document; a byte-scaled extrapolation cannot land on integer-1-per-doc, so
+    # "that stamp is a 3-shard estimate" could not be the explanation.
+    #
+    # A mix pool must be in the same units as train.py, because every other supply here comes
+    # from a stamp. Taking bare ids for these two would put one domain pair on a different
+    # ruler from the other seven -- structurally this morning's wiki_chat defect: the guard is
+    # fine, the number handed to it is not the quantity it names. Cost was 157 rows of draw,
+    # in the direction of under-reading.
     #
     # Not 0.076B for either: that figure is the two summed, and no single domain contains it.
     # I introduced it in my own message to fb and it came back in the ruling as a 1.52%
-    # per-domain ceiling, which is 8.00 epochs, double the cap. The correct ceiling is ~0.76%
-    # each, ~1.52% combined.
+    # per-domain ceiling, which is 8.00 epochs, double the cap.
     #
-    # The number this replaced was wiki_chat's stamp, 0.284B, ~7x over: wiki_chat is a MERGED
-    # wiki+chat domain and the QA-format rows are only a subset of it. At 0.284B the 4-epoch
-    # ceiling read 2.11 and said nothing; at the true 0.038B the draw would have been 15.79
-    # epochs. The ceiling was never broken -- it was fed a supply figure that had never been
-    # measured for the domain it names.
-    "chatml":         38_995_846,   # ChatML render, data/corpus/chatml/ (new directory)
-    "chat_qa":        38_027_236,   # plain 问：/答： render, data/corpus/chat/ (untouched)
+    # The number all of this replaced was wiki_chat's stamp, 0.284B, ~7x over: wiki_chat is a
+    # MERGED wiki+chat domain and the QA rows are only a subset of it. At 0.284B the 4-epoch
+    # ceiling read 2.11 and said nothing; at the true supply the draw would have been 15.79
+    # epochs. The ceiling was never broken -- it was fed a figure never measured for the
+    # domain it names. Three defects now, one domain, one day, all in the INPUT.
+    "chatml":         38_995_846,   # ChatML render, data/corpus/chatml/
+    "chat_qa":        38_187_650,   # plain 问：/答： render, data/corpus/chat_qa/
 }
 
 # Supply figures that are NOT measurements of the domain they name. A comment saying so is
@@ -224,6 +232,47 @@ LADDER_DIRS = {"chat", "code", "en", "math", "textbook", "web_hq", "wiki"}
 # domain to arrive as a rounded figure needs it on arrival, not after it ships. Selftest 9
 # exercises it against the weight that actually shipped.
 SUPPLY_RELATIVE_ERROR = {}
+
+# Where each supply figure came from, and in which units. Every entry must be TRAIN_UNITS:
+# ids plus one <eos> per document (scripts/count_tokens.py CONVENTION), which is what a corpus
+# stamp records and what train.py consumes.
+#
+# This exists because units are the one property of a supply that no arithmetic on the supply
+# can recover. 3b sent chat_qa as bare ids (38,027,236) and chatml as its stamp (38,995,846):
+# two domains, two rulers, and BOTH figures individually reasonable -- nothing about either
+# number looks wrong on its own. It was caught only by comparing chat_qa against its own stamp,
+# where the gap was 160,414, exactly one token per document.
+#
+# My first attempt at a guard tried to detect it from the two supplies alone, by looking for a
+# sibling gap of n_docs. That is not decidable: the observed gap is the markup delta PLUS the
+# missing EOS, and the markup delta is not known in advance. The check passed its own selftest
+# only because I had picked the fixture to match my rule. Deleted -- a guard whose predicate is
+# invented tests the author's imagination, which is the thing this file keeps re-learning.
+#
+# What IS enforceable is a declaration. Adding a supply means stating its units here, and the
+# mix refuses to build if any domain is on a different ruler from the rest. That does not
+# detect a mislabelled number, and it is not claimed to: it makes the question unskippable at
+# the point where the number enters, which is where 3b's two figures would have collided.
+TRAIN_UNITS = "ids + one <eos> per document (scripts/count_tokens.py CONVENTION)"
+SUPPLY_UNITS = {name: TRAIN_UNITS for name in SUPPLY}
+
+
+def _refuse_mixed_units():
+    """Refuse a mix whose supplies are not all in the same units."""
+    missing = sorted(set(SUPPLY) - set(SUPPLY_UNITS))
+    if missing:
+        raise SystemExit(
+            f"REFUSING: {', '.join(missing)} has a supply but no declared unit. Every other "
+            f"supply here is {TRAIN_UNITS}; a figure on a different ruler silently rescales one "
+            f"domain's epochs against the rest of the mix. State the units."
+        )
+    odd = sorted(n for n, u in SUPPLY_UNITS.items() if u != TRAIN_UNITS)
+    if odd:
+        raise SystemExit(
+            f"REFUSING: {', '.join(odd)} is not in training units ({TRAIN_UNITS}). Bare ids "
+            f"undercount by one token per document; the mix pool must be the number train.py "
+            f"consumes, because every other supply here is a stamp."
+        )
 
 # Muennighoff's repeat-decay constant: R_D* = 15.4, and <=4 epochs costs ~nothing
 # (ds.muennighoff_four_epoch: 8.7B at 4 epochs finishes +0.5% val vs single-epoch).
@@ -447,6 +496,7 @@ def build(code_tokens):
     total_rows_used = 0
     for name, (rows, why) in spec.items():
         _refuse_cross_role_rate(name, why)
+
         assert name not in LADDER_DIRS, (
             f"{name} collides with a directory named by data/mix_scale_*.json; a new corpus there "
             "falsifies the ladder's fingerprint"
@@ -741,7 +791,43 @@ def selftest():
     print("  9 the hand-typed 0.0076 fails the error-band ceiling it passed on the point "
           "estimate; with exact counts the derivation uses the sharp ceiling to the last row")
 
-    print("selftest: 9/9")
+    # 10. the units declaration. Every supply must be on one ruler, and adding a domain must
+    #     be unable to skip saying which. 3b sent chat_qa as bare ids and chatml as its stamp;
+    #     both figures were individually reasonable, and the mix would have built happily with
+    #     one domain undercounted by one token per document.
+    #
+    #     What this does NOT do is detect a mislabelled number -- and the first version of this
+    #     check claimed to. It looked for a sibling gap of exactly n_docs, which is not
+    #     decidable: the real gap is the markup delta PLUS the missing EOS, and the markup delta
+    #     is unknown a priori. It passed only because I chose the fixture to fit my rule. The
+    #     honest guard is narrower: an undeclared supply is refused.
+    _refuse_mixed_units()                        # the shipped set must pass
+    saved_units = dict(SUPPLY_UNITS)
+    try:
+        SUPPLY_UNITS.pop("chat_qa")
+        try:
+            _refuse_mixed_units()
+            raise AssertionError("a supply with no declared unit passed")
+        except SystemExit as e:
+            assert "no declared unit" in str(e), str(e)
+        SUPPLY_UNITS["chat_qa"] = "bare ids"
+        try:
+            _refuse_mixed_units()
+            raise AssertionError("a bare-ids declaration passed")
+        except SystemExit as e:
+            assert "not in training units" in str(e), str(e)
+    finally:
+        SUPPLY_UNITS.clear(); SUPPLY_UNITS.update(saved_units)
+    # the shipped pair really is +EOS: each is its domain's stamp, and the two differ by the
+    # ChatML markup (808,196), not by n_docs (160,414), which is what a unit slip would show.
+    assert SUPPLY["chatml"] - SUPPLY["chat_qa"] == 808_196, (
+        f"the render delta moved: {SUPPLY['chatml'] - SUPPLY['chat_qa']:,}. If it is now "
+        f"160,414 one supply is bare ids again"
+    )
+    print("  10 every supply declares its units; an undeclared or bare-ids supply is refused, "
+          "and the shipped pair differs by markup rather than by n_docs")
+
+    print("selftest: 10/10")
     return 0
 
 
