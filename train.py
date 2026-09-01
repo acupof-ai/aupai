@@ -103,6 +103,21 @@ NON_SHARD_JSONL = {
     "web_labels.jsonl",
 }
 
+# A shard is NAMED like one: ShardWriter emits <prefix>_<NNN>.jsonl and nothing else does.
+# This is a whitelist because the blacklist above only knows the non-shards that existed
+# when someone wrote it down -- on 2026-09-01 datagen started writing
+# holdout_slice_<domain>.jsonl INTO the corpus directory it describes, _domain_seqs globbed
+# it as a shard, and its header row {phase, rule_fp, n} died on ["content"]. Four domains
+# carried one, code_py_starcoder among them, so the 20B run would have died before step 0
+# with eight idle cards and nobody watching.
+#
+# Neither side was wrong -- putting the slice beside its corpus is right, and globbing
+# *.jsonl was right for two years. The direction of the default is the whole fix: a
+# blacklist reads an unknown new file as DATA, a whitelist ignores it. Verified against
+# every corpus on the pod: 3453 of 3459 files match, and the 6 that do not are exactly
+# the 4 slices plus 2 sample/ label files.
+SHARD_RE = re.compile(r"_\d{3,}\.jsonl$")
+
 try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
     from fla.ops.kda import chunk_kda
     from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
@@ -1602,7 +1617,8 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     shards = sorted(
         p
         for p in glob.glob(os.path.join(DATA, "corpus", domain, "*.jsonl"))
-        if os.path.basename(p) not in NON_SHARD_JSONL
+        if SHARD_RE.search(os.path.basename(p))
+        and os.path.basename(p) not in NON_SHARD_JSONL
     )
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
