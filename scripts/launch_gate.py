@@ -35,6 +35,40 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
+
+def _launch_root(root):
+    """The tree launch state is read from: MAIN's, not whichever worktree ran this.
+
+    Controller rule 2026-09-01: gate state is read off main. A worktree can be ahead
+    of main (a fix committed but unmerged) or behind it (a peer's fix not pulled), and
+    both directions give an answer about a tree nothing will launch from. The launch
+    happens from main, so main is the only tree whose state is the launch's state.
+
+    Returns (root_to_read, note). A worktree whose HEAD differs from main is REPORTED
+    rather than silently redirected -- a gate that quietly reads somewhere other than
+    where it was pointed is its own defect.
+    """
+    try:
+        import subprocess as _sp
+        here = _sp.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                       text=True, timeout=20).stdout.strip()
+        main = _sp.run(["git", "rev-parse", "main"], cwd=root, capture_output=True,
+                       text=True, timeout=20).stdout.strip()
+    except (OSError, ValueError):
+        return root, "could not read git HEAD/main; gate state is this tree's"
+    if not here or not main:
+        return root, "not a git tree; gate state is this tree's"
+    if here == main:
+        return root, f"tree is at main ({here[:8]})"
+    try:
+        behind = _sp.run(["git", "merge-base", "--is-ancestor", "HEAD", "main"],
+                         cwd=root, capture_output=True, timeout=20).returncode == 0
+    except (OSError, ValueError):
+        behind = False
+    where = "behind" if behind else "ahead of or diverged from"
+    return root, (f"WARNING: this tree ({here[:8]}) is {where} main ({main[:8]}). "
+                  f"Launch state is main's. Merge main and re-run before trusting a GO")
+
 GO, NOGO, UNKNOWN = "GO", "NO-GO", "UNKNOWN"
 
 # The recipe values that must each trace to an artifact. Derived from run_ddp.sh's
@@ -289,8 +323,10 @@ def main():
     if a.selftest:
         sys.exit(selftest())
 
-    rows = run(ROOT, a.mix, a.world)
-    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}\n")
+    root, note = _launch_root(ROOT)
+    rows = run(root, a.mix, a.world)
+    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}")
+    print(f"             {note}\n")
     for name, state, why in rows:
         print(f"  [{state:^7}] {name:<20} {why}")
     blocking = [r for r in rows if r[1] != GO]
@@ -299,6 +335,9 @@ def main():
         print(f"NO-GO: {len(blocking)} of {len(rows)} gate(s) not GO")
         for name, state, why in blocking:
             print(f"  {state}: {name} -- {why}")
+        return 1
+    if note.startswith("WARNING"):
+        print("REFUSING to print GO: " + note)
         return 1
     print(f"GO: all {len(rows)} gates computed GO from artifacts.")
     print("     This is not a proof the run is safe -- it is a proof that these nine")
