@@ -2008,6 +2008,46 @@
    "boundary": "METHOD WARNING, second instance of the same class in one day and the reason this probe exists: the correlation join that resolved the elementwise group at 99.98% resolves 0.00% of triton kernels. Aten kernels launch through `cuda_runtime` (cudaLaunchKernel), triton kernels through `cuda_driver` (cuLaunchKernel), and a map built from cuda_runtime alone therefore returns a clean, confident, totally wrong null for every fusion. Build the correlation map from BOTH categories. AND THE LARGER ONE: every check on this trace passed -- 99.98% resolved, groups verified disjoint by kernel identity, three independent discriminators -- while the trace itself was captured under a flag the production run does not set. Correctness and relevance fail independently. Before attributing a trace, verify the CONFIGURATION it was captured under, not only that the attribution resolves.",
    "status": "measured",
    "refuted_by": "a trace captured with FP8_HEAD unset showing the same 250.6 ms elementwise group with the same per-owner split"
+  },
+  {
+   "id": "eff.grad_ckpt_inverts_with_depth",
+   "claim": "whether gradient checkpointing is worth it at the ruled 500M shape (d1024 L32), given it lost at 12 layers",
+   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2374-2379): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py on GPU2; cross-reference b0 t71 (c13fdc8) for the O(L^2) AttnRes source-read count",
+   "config": {
+    "task": "500M depth shape, fb/user order",
+    "shape": "d=1024 layers=32 heads=8 ffn_hidden=3072, head_dim 128 (FlashKDA)",
+    "params_M": 493.6,
+    "attn_res": "Full, ON in every measurement (decided, not retested)",
+    "seq": 4096,
+    "world": 1,
+    "accum": 1,
+    "card": "H20, GPU2",
+    "statistic": "200 timed steps, median-free mean over the window, 50-step warmup discarded",
+    "off_b4": {
+     "ms_per_step": 2069.5,
+     "tok_s": 7917,
+     "peak_GiB": 54.5,
+     "mfu_pct": 15.8
+    },
+    "on_b4": {
+     "ms_per_step": 2309.4,
+     "tok_s": 7094,
+     "peak_GiB": 13.36,
+     "mfu_pct": 14.2
+    },
+    "max_batch_off": 4,
+    "max_batch_off_peak_GiB": 56.38,
+    "max_batch_on": 16,
+    "max_batch_on_peak_GiB": 49.18,
+    "ckpt_cost_at_equal_batch": 1.116,
+    "prior_at_12_layers": 2.4,
+    "ruling": "fb: grad_ckpt ON, batch 16, accum 2"
+   },
+   "uncertainty": "EVERY NUMBER HERE IS world=1. DDP gradient buckets and NCCL staging add to peak, so the world=7 figure will be HIGHER, not lower, and batch 16 is not certified until measured at world=7 -- that measurement is pending cards clearing. Max batch is the largest POWER OF TWO that fits, because the search doubles; 24 was not measured. MFU is derived (6ND against a 148 TFLOPS vendor peak), labelled as such, and inherits whatever error 6ND carries for a hybrid KDA/attention model.",
+   "boundary": "A CONSTANT MEASURED AT ONE DEPTH AND CARRIED TO ANOTHER. The 2.4x was correct at 12 layers and wrong by more than 2x in the losing direction at 32. Third instance the same afternoon of a depth-fitted constant that did not survive the depth change (with b0's warmup 20 and momentum 150), each found only by measuring rather than inheriting. ALSO A METHOD NOTE THAT NEARLY COST THE RESULT: the first version of this probe called model(idx, targets=tgt) and backwarded the return, which silently drops the fused LM head -- the largest single consumer in the step. It would have produced a confident throughput number for a model we do not run. Same class as eff.fp8_weight_byte_cache measuring a disabled path.",
+   "status": "measured"
   }
  ]
 }
