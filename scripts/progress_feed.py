@@ -64,12 +64,14 @@ def render(rows):
         f'<p class=sub>最新在上 · 每 15 秒自动刷新 · 页面生成于 {now} · {len(rows)} 条</p>',
         "<ol>",
     ]
-    for r in rows:
+    for i, r in enumerate(rows):
         label, colour = KINDS.get(r["kind"], KINDS["note"])
         parts.append(f'<li style="border-left-color:{colour}">')
         parts.append(f'<div class=t><span>{html.escape(r["at"])}</span>')
         if label:
             parts.append(f'<span class=k style="color:{colour}">{label}</span>')
+        if i == 0:
+            parts.append('<span class=k style="color:#059669">最新</span>')
         parts.append("</div>")
         parts.append(f'<div class=m>{html.escape(r["text"])}</div></li>')
     parts.append("</ol></body></html>")
