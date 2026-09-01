@@ -5129,7 +5129,9 @@ def cmd_task(argv):
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
     a.add_argument("--pair", required=True,
-                   help="the second session who agreed this task before it started; not the owner")
+                   help="the second session who agreed this task before it started, and who "
+                        "second-reads it after; NOT a co-executor and not the owner -- the pair "
+                        "reviews, the owner writes")
     a.add_argument("--prior", required=True,
                    help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
                         "'defect-fix' when the task repairs our own code and no prior art applies")
