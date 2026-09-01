@@ -718,13 +718,7 @@ def build(code_tokens):
             # it out; saying WHY it is out is the only version that survives being read by
             # someone who is about to launch.
             "fingerprint": _corpus_fingerprint(name),
-            "fingerprint_source": (
-                f"read from data/corpus/{name}/build_corpus_stats.json"
-                if _corpus_fingerprint(name) else
-                f"NOT READ: data/corpus/{name}/build_corpus_stats.json is absent on this host. "
-                f"Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a "
-                f"null, which is the intended behaviour"
-            ),
+            "fingerprint_source": f"read from data/corpus/{name}/build_corpus_stats.json",
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil(({used}+{runtime})/{pool_rows_est}). PROVISIONAL: the pool "
                 f"is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token "
@@ -1060,7 +1054,31 @@ def selftest():
     print("  11 the probe mix renormalises the shipped ratios (no weight re-decided), omits "
           "the unbuilt domain, sums to its row budget, and draws under one epoch everywhere")
 
-    print("selftest: 11/11")
+    # 12. the writer REFUSES a mix with any null fingerprint, rather than labelling it. The
+    #     labelled version was honest and still shipped a file: on 2026-09-01 a Mac-generated
+    #     copy carrying nine nulls plus nine explanations overwrote the pod's nine correct
+    #     fingerprints, four hours after they were right. Nobody read the explanation.
+    #
+    #     Exercised through main(), not by re-deriving the condition: the refusal lives at the
+    #     write, and a check that recomputes `any null` would pass while main() still wrote
+    #     the file.
+    import subprocess
+
+    for argv in ([], ["--probe"]):
+        r = subprocess.run([sys.executable, __file__, *argv], capture_output=True, text=True)
+        on_host = all(_corpus_fingerprint(n) for n in OBJECTIVE if n not in ("chatml", "chat_qa"))
+        if on_host:
+            assert r.returncode == 0, f"corpora are present but the writer refused: {r.stderr[:200]}"
+        else:
+            assert r.returncode == 1, (
+                f"no corpora on this host, so {argv or ['(mix)']} must REFUSE, got exit "
+                f"{r.returncode}"
+            )
+            assert "REFUSING" in r.stderr and "WHERE THE CORPUS IS" in r.stderr, r.stderr[:200]
+    print("  12 the writer refuses to emit a mix with a null fingerprint, and says where to "
+          "run it instead -- a labelled null is still a file that can overwrite a correct one")
+
+    print("selftest: 12/12")
     return 0
 
 
@@ -1169,6 +1187,23 @@ def main():
         return selftest()
     m = build_probe() if a.probe else build(a.code_tokens)
     out = PROBE_OUT if a.probe else OUT
+    # REFUSE, do not label. The previous version wrote null plus a fingerprint_source string
+    # explaining that the corpus was not on this host -- honest, and still a file. On
+    # 2026-09-01 that file was generated on a Mac and pushed over the pod's copy, replacing
+    # nine correct fingerprints with nine nulls four hours after they were right. Nobody read
+    # the explanation; they read the mix. A generator that cannot do its job must not produce
+    # an artifact that outranks one that could (b0-7, fb).
+    null_fp = sorted(n for n, d in m["domains"].items() if not d.get("fingerprint"))
+    if null_fp:
+        print(
+            f"REFUSING to write {os.path.basename(out)}: {len(null_fp)} domain(s) have no "
+            f"fingerprint -- {', '.join(null_fp[:4])}. Their build_corpus_stats.json is not on "
+            f"this host, so this machine cannot produce a launchable mix. Run this WHERE THE "
+            f"CORPUS IS (the pod). Writing the file anyway is how a Mac-generated copy "
+            f"overwrote the pod's correct fingerprints today.",
+            file=sys.stderr,
+        )
+        return 1
     text = json.dumps(m, indent=1, ensure_ascii=False) + "\n"
     if a.check:
         if not os.path.exists(out):
