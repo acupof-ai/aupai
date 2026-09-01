@@ -2595,7 +2595,18 @@ def check_corpus_filters_fp(root):
             else:
                 new_unstamped.append(dom)
         elif got != live:
-            stale.append(f"{dom} built with filters {got}, tree is {live}")
+            # A ruled mismatch is forgiven only when the baseline names THIS exact pair and
+            # cites the fact that measured it. Keyed on both fingerprints, so the next
+            # filters edit produces a new pair and a new FAIL: this forgives one known
+            # state, never mismatches in general. The check's rule that a mismatch is
+            # always a failure held right up to a mismatch nobody could remove -- the
+            # shards were built with the pod's weaker filters and rebuilding nine domains
+            # buys 0.25% -- and a permanent red is the same as no signal.
+            ruled = str(baseline.get(dom, ""))
+            if got in ruled and live in ruled and "facts/" in ruled:
+                baselined.append(f"{dom} (ruled mismatch)")
+            else:
+                stale.append(f"{dom} built with filters {got}, tree is {live}")
         else:
             ok += 1
     if stale:

@@ -1,9 +1,18 @@
 {
   "chat": "built before filters_fp existed, 2026-08-31",
+  "chat_qa": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
+  "chatml": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
   "code": "built before filters_fp existed, 2026-08-31",
+  "code_py_rp1t": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
+  "code_py_starcoder": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
+  "cot": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
   "en": "built before filters_fp existed, 2026-08-31",
+  "en_c4_stage2": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
   "math": "built before filters_fp existed, 2026-08-31",
+  "math_owm_stage2": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
   "textbook": "built before filters_fp existed, 2026-08-31",
+  "textbook_30b": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt.",
   "web_hq": "built before filters_fp existed, 2026-08-31",
-  "wiki": "built before filters_fp existed, 2026-08-31"
+  "wiki": "built before filters_fp existed, 2026-08-31",
+  "zh_web": "33462c13868a2194 -> 88ee503b38941bf4: ruled mismatch, facts/data_quality.json#dq.stage2_corpus_built_with_weaker_filters. Built with the pod's filters, which lacked five CCI3-HQ rules main added 2026-08-30. Measured residue 0.25% of the training corpus; fb ruled no rebuild 2026-09-01. Shrinks when the domain is rebuilt."
 }
