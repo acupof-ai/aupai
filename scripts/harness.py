@@ -512,7 +512,7 @@ def check_milestone_ckpt_pinned(root):
     # Only the pod holds checkpoints; a dev box would report every row unpinned.
     if not glob.glob(os.path.join(root, "ckpt_*.pt")):
         return SKIP, "no checkpoints on this machine (pod holds them)"
-    lost, ok = [], 0
+    lost, gone, ok = [], [], 0
     for r in rows:
         ck = r.get("ckpt")
         if not ck:
@@ -524,11 +524,20 @@ def check_milestone_ckpt_pinned(root):
         pins = glob.glob(os.path.join(root, f"*milestone_{tok}*.pt")) if tok else []
         if pins:
             ok += 1
+        elif r.get("unrepeatable"):
+            gone.append(f"{ck}: {r['unrepeatable']}")
         else:
             lost.append(f"{ck} (milestone {tok or '?'})")
     if lost:
         return FAIL, (f"{len(lost)} milestone row(s) whose checkpoint is gone with no pinned "
                       f"copy: {'; '.join(lost[:3])} -- that measurement cannot be repeated")
+    # Named on every PASS, never counted as ok. Unlike a retired mix, nothing LOADS a
+    # milestone row -- people read it -- so the marker's teeth are that it cannot become
+    # invisible, not that something refuses it. Weights that are gone cannot be pinned
+    # afterwards, so the alternatives were a permanent red or deleting the number.
+    if gone:
+        return PASS, (f"{ok} milestone checkpoint(s) present or pinned; "
+                      f"{len(gone)} unrepeatable and marked: {'; '.join(gone)[:150]}")
     return PASS, f"{ok} milestone checkpoint(s) present or pinned"
 
 
