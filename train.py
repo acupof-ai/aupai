@@ -191,6 +191,14 @@ class Cfg:
     # roughly constant count (eff.warmup_absolute_not_fractional: at the 0.2b point, 2 steps
     # lost 0.52 val vs 20). The fraction varies 9.2% (0.2b) to 0.57% (3.24b) -- a known
     # confound that overestimates beta; the proportional alternative biased the same way harder.
+    # SCOPE OF THAT EVIDENCE (b0 2026-09-01): it is ONE-SIDED. 2-vs-20 establishes a floor above
+    # 2; nothing above 20 has ever been measured, so 20 is the bottom of a tested range being
+    # used as an optimum, not a fitted value. It is also being carried far past where it was
+    # measured: 10.486% of the 191-step run it was fitted on, 0.061% of a 32,697-step 500M run.
+    # Untested at that length, not wrong. Before lengthening this to protect an early window,
+    # read docs/lessons/warmup_momentum_interaction.md -- warmup ends at step 20 while Muon's
+    # momentum is 13% into the hardcoded 150-step ramp at line ~1121, and that ramp, not this
+    # constant, is what the mechanism points at.
     warmdown = 0.65
     final_lr_frac = 0.05
     clip = 1.0
@@ -1127,6 +1135,11 @@ def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
         for g in opt.param_groups:
             g["lr"] = g["initial_lr"] * lr_scale * m
             if isinstance(opt, Muon):
+                # The 150 is a constant fitted at L=12 and never revisited. It interacts with
+                # cfg.warmup: LR reaches full value at step `warmup` (20) while momentum is only
+                # 13% through this ramp -- an averaging window of ~7.3 steps against ~20 at the
+                # final 0.95. Two constants, one early window, neither examined since L=12.
+                # docs/lessons/warmup_momentum_interaction.md has the table and the reasoning.
                 g["momentum"] = 0.85 + 0.10 * min(1.0, step / 150)
                 g["weight_decay"] = g["initial_wd"] * max(0.0, 1.0 - step / total)
 
@@ -2580,11 +2593,22 @@ def main():
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
                     eta = (total_steps - step) * dt / 10
+                    # Peak memory decides whether a batch fits at a given world, and it
+                    # was not readable from a training run at all -- the 500M shape work
+                    # had to read nvidia-smi, which reports the caching allocator's
+                    # reservation rather than the high-water mark of live tensors. This
+                    # is rank 0 only (the whole log line is is_main); ranks differ by
+                    # their DDP bucket, so rank 0 is a lower bound on the worst rank, not
+                    # the max. Reset each window so a late spike is not hidden by an
+                    # earlier, larger one (2026-09-01).
+                    peak_gib = torch.cuda.max_memory_allocated() / 2**30
+                    torch.cuda.reset_peak_memory_stats()
                     runlog(
                         f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "
                         f"| lr {optimizers[0].param_groups[0]['lr']:.2e} | gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
-                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% | ETA {eta / 3600:.1f}h"
+                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
+                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
                 if step >= total_steps:
                     break

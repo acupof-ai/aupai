@@ -24,8 +24,11 @@ import time
 STORE = os.path.expanduser("~/.aupai-progress.jsonl")
 STATUS = os.path.expanduser("~/.aupai-status.json")
 PAGE = os.path.expanduser("~/aupai-progress.html")
+PATROL = os.path.expanduser("~/.aupai-patrol")
 KEEP = 60
 SHOWN = 10
+
+SRC_TAG = {"machine": ("测", "#0d9488"), "person": ("说", "#7c5cff")}
 
 KINDS = {
     "rule": ("裁定", "#7c5cff"),
@@ -50,12 +53,12 @@ h1{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
 .live i{width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;
  animation:beat 2s infinite}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:18px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:18px}
 .card{background:var(--card);border:1px solid var(--line);border-top:3px solid;
  border-radius:8px;padding:11px 13px}
 .card .ti{font-size:11px;color:var(--dim);letter-spacing:.05em}
-.card .bi{font-size:20px;font-weight:700;margin:3px 0 2px;font-variant-numeric:tabular-nums}
-.card .su{font-size:12px;color:var(--dim);line-height:1.45}
+.card .bi{font-size:22px;font-weight:700;margin:3px 0 2px;font-variant-numeric:tabular-nums}
+.card .su{font-size:12.5px;color:var(--dim);line-height:1.5}
 .bar{height:6px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:3px}
 h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
@@ -67,6 +70,7 @@ li:last-child{border-bottom:0}
 .t{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;
  padding-top:2px;min-width:34px}
 .k{font-weight:600;font-size:11px;padding-top:2px;min-width:26px}
+.s{font-size:10px;padding-top:3px;min-width:14px;font-weight:700}
 .m{flex:1}
 details{margin-top:10px}
 summary{font-size:12px;color:var(--dim);cursor:pointer}
@@ -77,10 +81,15 @@ details li{font-size:12.5px;color:var(--dim)}
 def _row(r):
     label, colour = KINDS.get(r["kind"], KINDS["note"])
     chip = f'<span class=k style="color:{colour}">{label}</span>' if label else ""
+    src = r.get("src", "")
+    stag = ""
+    if src in SRC_TAG:
+        t, c = SRC_TAG[src]
+        stag = f'<span class=s style="color:{c}" title="{src}">{t}</span>'
     return (
         "<li>"
         f'<span class=t>{html.escape(r["at"])}</span>'
-        f"{chip}"
+        f"{stag}{chip}"
         f'<span class=m>{html.escape(r["text"])}</span>'
         "</li>"
     )
@@ -88,13 +97,17 @@ def _row(r):
 
 def render(rows):
     now = time.strftime("%H:%M:%S")
+    patrol = ""
+    if os.path.exists(PATROL):
+        with open(PATROL, encoding="utf-8") as fh:
+            patrol = f' · 最后巡检 {html.escape(fh.read().strip())}'
     parts = [
         "<!doctype html><html lang=zh><head><meta charset=utf-8>",
         '<meta http-equiv="refresh" content="15">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
         "<title>aupai 进展</title><style>", CSS, "</style></head><body>",
         "<header><h1>aupai 进展</h1>",
-        f'<span class=live><i></i>每 15 秒自动刷新 · 生成于 {now}</span></header>',
+        f'<span class=live><i></i>每 15 秒自动刷新 · 生成于 {now}{patrol}</span></header>',
     ]
     if os.path.exists(STATUS):
         with open(STATUS, encoding="utf-8") as fh:
@@ -126,12 +139,17 @@ def render(rows):
 
 def main():
     if len(sys.argv) >= 3:
+        src = sys.argv[-1] if len(sys.argv) >= 4 and sys.argv[-1] in SRC_TAG else None
+        text_args = sys.argv[2:-1] if src else sys.argv[2:]
+        row = {
+            "at": time.strftime("%H:%M"),
+            "kind": sys.argv[1],
+            "text": " ".join(text_args),
+        }
+        if src:
+            row["src"] = src
         with open(STORE, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "at": time.strftime("%H:%M"),
-                "kind": sys.argv[1],
-                "text": " ".join(sys.argv[2:]),
-            }, ensure_ascii=False) + "\n")
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     rows = []
     if os.path.exists(STORE):

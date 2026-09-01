@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Shared board: topics anyone can post to and everyone can read.
 
+    board.py who                          the roster: name, socket, what they own
     board.py topics                       one line per topic, newest state first
     board.py show <topic>                 that topic's rows, oldest first
     board.py post <topic> <kind> <text> [--artifact P] [--who W]
     board.py feed [-n N]                  everything, newest first
+    board.py brief                        what others posted since you last looked
     board.py open <topic> --owner W --question Q
 
 kind: find | rule | block | done | ask | note
 A find/rule/done without --artifact is refused: a claim nobody can check is chatter.
+
+Every command prints what others posted since this session last ran one, so
+reading the board is a side effect of writing to it. Nobody has to remember.
 
 restartable: one append per call to a union-merged JSONL; an interrupt loses
 at most the row being written.
@@ -62,6 +67,35 @@ def append(row):
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+SEEN = os.path.join(ROOT, "runs", ".board_seen.json")
+
+
+def broadcast(me):
+    rs = rows()
+    seen = {}
+    if os.path.exists(SEEN):
+        try:
+            seen = json.load(open(SEEN, encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    mark = seen.get(me, 0)
+    fresh = [r for i, r in enumerate(rs) if i >= mark and r["who"] != me]
+    if fresh:
+        print(f"--- {len(fresh)} new since you last looked ---")
+        for r in fresh[-12:]:
+            art = f"  [{r['artifact']}]" if r.get("artifact") else ""
+            print(f"{r['ts']}  {r['topic']:<16}{r['who']:<10}{r['kind']:<6}{r['text'][:96]}{art}")
+        blocked = [r for r in fresh if r["kind"] == "block"]
+        if blocked:
+            print(f"--- {len(blocked)} of them are BLOCK ---")
+        print("---")
+    seen[me] = len(rs)
+    try:
+        json.dump(seen, open(SEEN, "w", encoding="utf-8"))
+    except OSError:
+        pass
+
+
 def cmd_post(a):
     if a.kind not in KINDS:
         sys.exit(f"kind must be one of {', '.join(KINDS)}")
@@ -80,6 +114,25 @@ def cmd_open(a):
             "topic": a.topic, "kind": "open", "text": a.question,
             "artifact": "", "owner": a.owner})
     print(f"opened {a.topic} (owner {a.owner})")
+
+
+def cmd_who(a):
+    p = os.path.join(ROOT, "runs", "roster.json")
+    if not os.path.exists(p):
+        sys.exit("no runs/roster.json")
+    r = json.load(open(p, encoding="utf-8"))
+    owner = {}
+    for m in r["members"]:
+        for t in m["topics"]:
+            owner.setdefault(t, m["name"])
+    print(f"{'name':<8}{'role':<13}{'socket':<34}{'topics':<26}note")
+    for m in r["members"]:
+        print(f"{m['name']:<8}{m['role']:<13}{m['socket']:<34}"
+              f"{','.join(m['topics']) or '-':<26}{m['note']}")
+    print("\nnot on this team:")
+    for m in r["not_on_this_team"]:
+        print(f"  {m['name']:<22}{m['why']}")
+    print("\naddress by socket, never by name -- names collide.")
 
 
 def cmd_topics(a):
@@ -135,6 +188,9 @@ def main():
     q.add_argument("--who", default="")
     q.set_defaults(fn=cmd_open)
 
+    q = sub.add_parser("who")
+    q.set_defaults(fn=cmd_who)
+
     q = sub.add_parser("topics")
     q.set_defaults(fn=cmd_topics)
 
@@ -146,7 +202,11 @@ def main():
     q.add_argument("-n", type=int, default=40)
     q.set_defaults(fn=cmd_feed)
 
+    q = sub.add_parser("brief")
+    q.set_defaults(fn=lambda a: None)
+
     a = p.parse_args()
+    broadcast(getattr(a, "who", "") or whoami())
     a.fn(a)
 
 

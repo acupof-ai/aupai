@@ -109,9 +109,13 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature; 0 = greedy")
     ap.add_argument("--selfcheck", action="store_true")
-    ap.add_argument("--demos", type=int, default=N_DEMOS, choices=[0, 1, 3],
+    ap.add_argument("--demos", type=int, default=N_DEMOS, choices=[0, 1, 3, 8],
                     help="number of few-shot demos (0 = pure continuation, tests whether "
                          "demos help or hurt; fb 2026-08-30)")
+    ap.add_argument("--eval-from", type=int, default=8,
+                    help="eval rows start at this index; demo pool is rows[:eval-from]. "
+                         "Pinned at 8 so the 0/1/3/8 sweep scores the same 492 problems "
+                         "(honest_measurement_prereg §2)")
     ap.add_argument("--force", action="store_true",
         help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
     ap.add_argument("--run", default=None,
@@ -131,23 +135,16 @@ def main():
     num_id = getattr(cfg, "num_id", None)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
-    # Rows 0-2 are the demo pool, always excluded from eval -- so every arm
-    # (0/1/3-shot) scores on the same 497 problems. fb 2026-08-30: a comparison
-    # that needs a "N differs slightly" footnote is not the same comparison.
-    DEMO_POOL = 3
-    # The eval split is pinned at DEMO_POOL while the prompt is sized by --demos, so
-    # the two agree only while --demos <= DEMO_POOL. `choices` enforces that today and
-    # nothing states the dependency: widening choices to 8 would put rows 3-7 in both
-    # the prompt and the eval set, inflating silently. This is the same shape as the
-    # l1_fewshot --demos defect (de, 2026-09-01) -- correct here, but by a guard three
-    # lines away that does not say what it is protecting.
-    assert args.demos <= DEMO_POOL, (
-        f"--demos {args.demos} exceeds the {DEMO_POOL}-problem demo pool, so rows "
-        f"{DEMO_POOL}..{args.demos - 1} would be shown as demos AND scored as eval; "
-        f"raise DEMO_POOL with it or the arms are not comparable")
+    # Demo pool = rows[:eval_from], eval = rows[eval_from:]. Every arm (0/1/3/8)
+    # scores the same 492 problems; --demos <= --eval-from keeps demos out of eval.
+    # Pinned 2026-09-01 (honest_measurement_prereg §2): the 3-vs-8 byte-identical
+    # defect in l1_fewshot came from a pool sized to the smallest arm.
+    assert args.demos <= args.eval_from, (
+        f"--demos {args.demos} would show rows also scored as eval "
+        f"(eval starts at {args.eval_from})")
     demos = [(r["instruction"], r["reference_code"], r["expected_output"])
              for r in rows[:args.demos]]
-    evals = rows[DEMO_POOL:]
+    evals = rows[args.eval_from:]
     print(f"code few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
     preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot"
@@ -165,7 +162,8 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
+                out = generate_batch(model, prompts, args.max_new, args.device,
+                                     args.temperature, pvals, rep_stop=False)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs, pr in zip(batch, out_ids, out_vals, prompts):
                 # slice the continuation off the prompt BEFORE decode: the

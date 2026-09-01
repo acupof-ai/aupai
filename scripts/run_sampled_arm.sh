@@ -24,6 +24,7 @@ cd /work/aupai
 export TOKENIZER=${TOKENIZER:-data/tokenizer.json}
 RUN=${RUN:-sampled_t08_k8}
 
+failed=0
 for CK in ckpt_pretrain_30b_s2.pt.step24000 ckpt_pretrain_30b_s2.milestone_16b_step17500.pt; do
   for EV in math code; do
     echo "=== ${EV}-500  ${CK}  t=0.8 k=8 rep_stop=OFF"
@@ -34,7 +35,23 @@ for CK in ckpt_pretrain_30b_s2.pt.step24000 ckpt_pretrain_30b_s2.milestone_16b_s
       python3 eval/code_zh.py --ckpt "$CK" --tokenizer "$TOKENIZER" \
         --k 8 --temperature 0.8 --no_rep_stop --run "$RUN" 2>&1
     fi
-    echo "   rc=$?"
+    rc=$?
+    echo "   rc=$rc ${EV} ${CK}"
+    # A cell that died must reach the EXIT STATUS, not only the log. The previous
+    # version printed rc and dropped it, then closed with "all four cells attempted"
+    # and exited 0. Two 16B cells died at 32 of 500 problems -- open_artifact
+    # correctly refused to overwrite a partial file from an earlier attempt -- and
+    # the wrapper reported success. Worse, the refusal landed in THIS log while each
+    # cell's own log stayed zero bytes, so the visible symptom was silence two files
+    # from the message. "Attempted" is not a result (de, 2026-09-01).
+    [ "$rc" -eq 0 ] || failed=$((failed + 1))
   done
 done
-echo "=== all four cells attempted"
+if [ "$failed" -ne 0 ]; then
+  echo "=== $failed of 4 cells FAILED -- their preds files are partial, not results."
+  echo "    Count distinct questions in each preds file before reading any of them:"
+  echo "    a complete cell holds 500. Rerun a failed cell under a NEW --run tag;"
+  echo "    reusing the tag hits the overwrite refusal, which is what happened here."
+  exit 1
+fi
+echo "=== all four cells completed"

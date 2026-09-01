@@ -1,5 +1,39 @@
 {
- "_schema": "memory_peaks: key is the WORLD SIZE as a string, value the measured peak. A world size absent here is not extrapolated -- launch-gate refuses. Two points and a straight line was nearly drawn four times on 2026-09-01.",
- "_filled_by": "tilerl (world=7 measurement)",
- "_created": "2026-09-01 by e1 (schema only)"
+ "_schema": "world size (as a string) -> the measured peak for that world. A key exists only if a run at THAT world size reported it; extrapolating from another world is what gate_memory_measured refuses.",
+ "_filled_by": "scripts/w7_peak.sh via scripts/w7_driver.sh, cards 1-7, 2026-09-01",
+ "_caveat": "Every peak here is RANK 0 (train.py's log line is is_main), so each is a LOWER bound on the worst rank -- per-rank DDP buckets differ. Safe to rule from at 25 GiB of headroom; NOT safe below about 10 GiB, where every rank has to report before the number means anything.",
+ "_why_not_nvidia_smi": "nvidia-smi reads the caching allocator's reservation, not the high-water mark of live tensors. It returned 74.10 GiB at world=3 and 74.09 at world=7 -- the DDP bucket growth these measurements exist to find is invisible to it, because a larger bucket is served from cache the allocator never returns. Every fits/does-not-fit call in this repo before train.py:2604 (661e5ce) came from that number.",
+ "7": {
+  "peak_GiB": 69.63,
+  "config": "b32 accum1 d1024 L32 h8 ffn3072 seq4096 grad_ckpt compiled fp8 attn_res-Full",
+  "params_M": 493.6,
+  "tok_per_step": 917504,
+  "card_usable_GiB": 95.22,
+  "headroom_GiB": 25.59,
+  "nvidia_smi_GiB": 74.1,
+  "steps": 30,
+  "stable_across_windows": [10, 20, 30],
+  "cards": "1-7",
+  "log": "runs/w7_b32a1.log",
+  "measured": "2026-09-01"
+ },
+ "7_alt_b16a2": {
+  "peak_GiB": 36.29,
+  "config": "b16 accum2 -- same 917,504 tok/step as b32 accum1, half the activation set",
+  "headroom_GiB": 58.93,
+  "steps": 30,
+  "stable_across_windows": [10, 20, 30],
+  "cards": "1-7",
+  "log": "runs/w7_b16a2.log",
+  "role": "control, not fallback. Its purpose was to prove the peak field tracks configuration at all -- the prediction that it must read materially lower was recorded in eff.w7_peak_memory_b32_fits before this arm ran. It is also the reserve: where 33 GiB comes from if seq or mix complexity grows.",
+  "measured": "2026-09-01"
+ },
+ "_model": {
+  "form": "peak_GiB = 2.95 + 33.34 * (batch / 16)",
+  "fixed_GiB_measured": 2.95,
+  "fixed_GiB_predicted": 2.76,
+  "predicted_from": "493.6M params x 2 bytes x 3 copies (weights + Muon momentum + grads); agreement to 0.19 GiB is what makes this a model rather than a two-point fit",
+  "activations_GiB_per_batch16": 33.34,
+  "note": "Peak is LINEAR in batch. A first reading that grad_ckpt made activations sub-linear was wrong. Extrapolations from this line assume activation memory scales with seq the way it scales with batch, which is UNTESTED -- attention's quadratic term and the KDA recurrent state need not move together. On that assumption seq 8192 puts b32 at ~136 GiB (does not fit) and b16a2 at ~70 GiB (fits), making b32 the ceiling for this card at seq 4096."
+ }
 }

@@ -470,7 +470,16 @@ def check_selftests_are_gated(root):
                 body = open(os.path.join(d, nm), encoding="utf-8").read()
             except OSError:
                 continue
-            if '"--selftest"' in body and "add_argument" in body:
+            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+            # narrow predicate assumed every selftest is wired through argparse; nine
+            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+            # that cannot see a file cannot report it missing, so its PASS counted only
+            # the files it already understood -- the check encoding an assumption about
+            # where the interesting case lives, which is this repo's named class, in
+            # the check written to catch that class (de, 2026-09-01, on 62's gate).
+            if "--selftest" in body:
                 have.add(rel)
     missing = sorted(have - gated)
     if missing:
@@ -609,21 +618,30 @@ def _broken_selftests_are_gated():
 
     Mutating the live artifact rather than writing a fixture: the reweight gate passed
     every synthetic case and returned None for every real role, because the fixture
-    encoded the author's assumption twice (7.3)."""
+    encoded the author's assumption twice (7.3).
+
+    The dropped file is scripts/eval_artifacts.py SPECIFICALLY, not an argparse-wired
+    one. It dispatches on sys.argv --
+    `sys.exit(_selftest() if "--selftest" in sys.argv else 0)` -- so under the old
+    narrow predicate ('"--selftest"' near add_argument) the check could not see it at
+    all and this world would have gone GREEN with the file unguarded. That is exactly
+    the defect the widening fixes, and using an argparse file here would leave the
+    widening untested (de, 2026-09-01).
+    """
     d = _tmp_repo()
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    ev = os.path.join(ROOT, "eval", "readout_30b.py")
+    ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
     if not (os.path.exists(hook) and os.path.exists(ev)):
         return None
     text = open(hook, encoding="utf-8").read()
-    if '"eval/readout_30b.py"' not in text:
+    if '"scripts/eval_artifacts.py"' not in text:
         return None
     os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
-        text.replace('"eval/readout_30b.py", ', "").replace('"eval/readout_30b.py"', '"x/y.py"'))
+        text.replace('"scripts/eval_artifacts.py", ', "")
+            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
     # the real file, so the check must find its --selftest and miss it in the map
-    open(os.path.join(d, "eval", "readout_30b.py"), "w", encoding="utf-8").write(
+    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
         open(ev, encoding="utf-8").read())
     return d
 
@@ -794,13 +812,19 @@ def _ppid_of(pid):
 
 
 def _pod_ps_rows(timeout=20):
-    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
 
     The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
     fields from the same table. Reading them as one `ps -eo` is one round trip
     regardless of how many training processes are up; the previous shape ran a
     `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
     training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
+
+    stat is here for the zombie case: a reaped-but-not-waited process keeps its argv
+    in ps as `[run_ddp.sh] <defunct>`, matches any regex over the command line, and
+    has no session of its own -- so a check that judges detachment by session reads
+    it as a foreground trainer. It runs no code and holds no card. Only stat tells
+    them apart (2026-09-01).
 
     Returns (rows, error). A non-empty error means the read failed and the caller
     must SKIP -- never treat an unreadable pod as a clean one.
@@ -813,19 +837,57 @@ def _pod_ps_rows(timeout=20):
         return None, f"pod unreachable: {type(e).__name__}"
     if r.returncode != 0:
         return None, f"pod ps exit {r.returncode}"
-    # stat read and dropped: a zombie holds a pid slot but runs nothing. It holds no card
-    # either, so judging one as "unsupervised training" reports a card as busy when it is
-    # free -- which it did on 2026-09-01, immediately after a correct kill, the third false
-    # positive from this check in one day. Filtered here rather than in the caller so the
-    # 5-tuple every consumer indexes stays the same shape.
+    # stat is kept in the row: a zombie holds a pid slot, runs nothing, and holds no card,
+    # but keeps its argv (`[run_ddp.sh] <defunct>`) so it matches any command regex. Only
+    # stat tells it from a live trainer. judge_pod_ps drops them; the rows carry stat so
+    # it can (2026-09-01).
     rows = []
     for ln in r.stdout.splitlines():
         parts = ln.split(None, 5)
-        if len(parts) == 6 and parts[0].isdigit() and not parts[4].startswith("Z"):
-            rows.append((parts[0], parts[1], parts[2], parts[3], parts[5]))
+        if len(parts) == 6 and parts[0].isdigit():
+            rows.append(tuple(parts))
     if not rows:
         return None, "pod ps returned nothing"
     return rows, None
+
+
+def judge_pod_ps(allrows):
+    """(state, evidence) from a `ps -eo pid,sid,pgid,ppid,stat,args` table.
+
+    A foreground training job is one whose SESSION LEADER is the crictl exec shell,
+    because that shell dies with the tn tunnel and leaves the trainer holding a card.
+    `pod "<cmd>"` runs the command as `bash -lc <cmd>`, so the leader's own argv says
+    which it was: a detached launch names setsid there and the job it spawns lands in
+    a new session; a foreground launch does not, and the job stays in the shell's.
+    That is the whole rule -- read the leader, not the child.
+
+    Four false positives in one day came from inferring detachment from the child
+    instead: a launcher shell matched on its quoted argv, a trainer whose leader had
+    become a zombie read as sessionless, a zombie trainer read as a live one, and a
+    trainer adopted by init read as an orphan. Each refused a commit while the pod was
+    behaving exactly as intended. The evidence those versions wanted -- an intact
+    parent chain -- is reaped in the normal case, so they were reading absence and
+    calling it a violation (de, 2026-09-01).
+
+    Tested by scripts/test_pod_ps_judge.py against captured tables, which the check
+    itself cannot be: it reads the live pod and its broken() raises SelftestSkip.
+    """
+    # Zombies keep their argv (`[run_ddp.sh] <defunct>`) so they match any command
+    # regex, but they run no code and hold no card.
+    live = [x for x in allrows if "Z" not in x[4]]
+    leader = {x[0]: x[5] for x in live if x[0] == x[1]}
+    rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # A leader that IS a training row is a detached launcher, never the exec shell.
+    fg = [x for x in rows
+          if x[0] != x[1]
+          and leader.get(x[1], "").startswith("bash -lc")
+          and "setsid" not in leader.get(x[1], "")]
+    if fg:
+        return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
+                      f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
+    if not rows:
+        return PASS, "no training process on the pod"
+    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -833,44 +895,14 @@ def check_no_foreground_pod_training(root):
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. A detached job's session id differs from its pid's
-    parent shell; a foreground one shares the crictl exec session."""
+    seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod) or pod_drift.is_pod(root):
         return SKIP, "host-side check; needs ~/bin/pod"
     allrows, err = _pod_ps_rows()
     if err:
         return SKIP, err
-    # The training rows, selected from the one read rather than by a second remote grep.
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
-    ppid = {x[0]: x[3] for x in allrows}
-    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
-    # leaves a bash -lc whose argv contains the whole launch command, so a match on
-    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
-    # training process and is correctly not a session leader. It names setsid in its
-    # own command line; the job it spawned is the thing to judge (2026-09-01, this
-    # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    if not rows:
-        return PASS, "no training process on the pod"
-    # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. This is the reliable signal; a
-    # leader-presence test is not, because the leader may be a zombie ([bash]
-    # <defunct>) and zombies are filtered out of rows upstream -- so its correctly
-    # detached children read as leaderless. No command-name restriction: run_ddp.sh is
-    # a bash launcher adopted by init and is exactly as detached as its python ranks
-    # (2026-09-01, this check's second and fourth false positives, both this shape).
-    detached = {x[0] for x in rows if ppid.get(x[0]) == "1"}
-    # A rank whose parent is itself detached is under that same setsid session.
-    for _ in range(4):  # ponytail: 4 passes covers launcher->torchrun->rank; deeper trees do not occur here
-        detached |= {x[0] for x in rows if ppid.get(x[0]) in detached}
-    attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
-    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if x[0] == x[1]}
-    orphans = [x for x in attached if x[1] not in leaders]
-    if orphans:
-        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
-    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+    return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
@@ -894,19 +926,31 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    for ext in ("*.py", "*.sh"):
-        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
-            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
-                text = open(p, encoding="utf-8", errors="replace").read()
-                # Drop docstrings and comments before looking for invocations.
-                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-                for n, line in enumerate(text.split("\n"), 1):
-                    s = line.split("#", 1)[0]
-                    if inv.search(s) and not re.search(r"-4\b", s):
-                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    # The POPULATION, not just the predicate. A hand-listed set of directories was
+    # missing probes/ and the repo root, and the evidence still said "every curl call
+    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
+    # tree and exclude what cannot hold a tracked invocation, so a new directory is
+    # covered by default rather than by someone remembering to add it (fb's sweep,
+    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not (fn.endswith(".py") or fn.endswith(".sh")):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Drop docstrings and comments before looking for invocations.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+            for n, line in enumerate(text.split("\n"), 1):
+                s = line.split("#", 1)[0]
+                if inv.search(s) and not re.search(r"-4\b", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
-    return PASS, "every curl call passes -4"
+    return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
 def _broken_curl_ipv4():
@@ -1152,6 +1196,45 @@ def _tmp_repo(mix_obj=None):
         p = os.path.join(d, cfg_default("mix"))
         os.makedirs(os.path.dirname(p), exist_ok=True)
         json.dump(mix_obj, open(p, "w"))
+    return d
+
+
+def _tmp_repo_shaped(mix_obj=None):
+    """A throwaway tree that SEES the real code, docs and data directories.
+
+    A world built on the bare `_tmp_repo()` resolves nothing, so any check that reads a
+    path FAILs there whether or not the mutation is present -- three worlds were green
+    for exactly that reason (entrypoints_ran on 38 absent citations, pod_drift on 238,
+    facts_well_formed on absent docs/ and data/eval). Symlinks, so the world costs
+    nothing and the mutation is the only thing wrong with it. Write into a symlinked
+    directory and you write into the repo, so a world that mutates a file under one must
+    copy it in first (de, 2026-09-01)."""
+    import shutil
+    import subprocess
+
+    d = _tmp_repo(mix_obj)
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
+    # A real `git init` plus a COPIED .gitignore. `_is_gitignored` shells out to
+    # `git check-ignore` and only falls back to reading .gitignore itself, and that
+    # fallback is weaker than git -- it missed data/corpus/math/, so every gitignored
+    # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
+    # .gitignore, so this one is copied while everything else is linked.
+    shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    for sub in os.listdir(os.path.join(ROOT, "data")):
+        src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    for f in os.listdir(os.path.join(ROOT, "runs")):
+        src, dst = os.path.join(ROOT, "runs", f), os.path.join(d, "runs", f)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
     return d
 
 
@@ -2903,38 +2986,72 @@ def check_facts_well_formed(root):
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
     note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
+    # State the population, not just the count. "every entry carries its config" over
+    # 7 files reads identically whether 7 is all of them or 7 of 9 -- and it IS 7 of 9
+    # here, the two baselines being deliberately excluded. A universal quantifier over
+    # a self-constructed population is only as true as the construction, and the
+    # reader cannot audit the construction from a bare N (fb's sweep, 2026-09-01,
+    # after selftests_are_gated reported "27 files, all gated" over a real 36).
+    _all = len(glob.glob(os.path.join(facts_dir, "*.json")))
+    _pop = f"{len(files)} of {_all} facts/*.json" if _all != len(files) else f"all {_all} facts/*.json"
+    return PASS, (f"{len(entries)} facts in {_pop} (baselines excluded), every entry "
+                  f"carries its config{note}")
 
 
 def _broken_facts():
     """The REAL facts files and REAL AGENTS.md, with one entry's config deleted and
-    one entry's source pointing at a non-existent data/ path. A hand-written file
+    one entry's source pointing at a non-existent scripts/ path. A hand-written file
     would share the check's own assumptions.
 
-    The source mutation uses a bare data/ path with no other prefix substring:
-    the old regex (no data/ in its prefix list) found no match and silently passed
-    it; the new regex matches data/... and FAILs on the missing file. This is the
-    coverage the broken world lacked -- it only exercised the missing-config path,
-    which is why the missing left anchor and missing data/ prefix went unnoticed."""
+    The source mutation uses a path under scripts/: a data/ path would be gitignored by
+    data/*.jsonl and silently SKIPped, so it must be one the three-state check treats
+    as FAIL. That coverage is what the world lacked when the source regex had no left
+    anchor and no data/ prefix.
+
+    The code and docs directories are symlinked in because OTHER entries' sources cite
+    them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
+    exist` for facts nobody mutated -- so the selftest was green on absence, and would
+    have stayed green with both mutations removed. Verified by removing them
+    (de, 2026-09-01)."""
     import shutil
 
-    d = _tmp_repo()
+    d = _tmp_repo_shaped()
     os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod skips the path half
+    os.remove(os.path.join(d, "facts"))
     os.makedirs(os.path.join(d, "facts"))
     for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
-    # A source under scripts/ (not gitignored, not in the baseline) that does not
-    # exist. A data/ path would be gitignored by data/*.jsonl and silently SKIPped --
-    # the source-path mutation must use a path the three-state check treats as FAIL.
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
 
-ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|py)|run_ddp\.sh")
+# The POPULATION, not just the predicate. This hand-listed four directories, so the
+# entry-point table's own FIRST row -- train.py sft.py sft_math.py serve.py chat.py
+# infer.py, the repo's actual entry points -- was invisible to a check whose evidence
+# says "every tried entry-point command". Widened to any path ending .sh/.py, which is
+# what a table row citing a script looks like regardless of where it lives. Four more
+# rows come into scope and the cited-file-exists tier stays green on all of them; the
+# citations are bare basenames (exp.py, tokenizer_report.py) in prose rows, so the
+# existence tier is resolved against scripts/ as well as the root (fb's sweep for
+# universals over self-built populations, de 2026-09-01).
+ENTRY_SCRIPT_RE = re.compile(r"(?:[\w.-]+/)?[\w.-]+\.(?:sh|py)")
+# Where a bare basename in a prose row may live. A row saying `exp.py done` cites
+# scripts/exp.py; resolving only against the root would call a real script missing.
+ENTRY_SEARCH_DIRS = ("", "scripts", "eval", "datagen", "probes", "mathbank", "algorithms", "filters")
+
+
+def _entry_exists(root, s):
+    """A cited path with a directory must exist AT that path -- `scripts/foo.py` naming a
+    file that actually lives in eval/ is exactly the doc rot this tier catches. Only a
+    bare basename in a prose row (`exp.py done`) is searched, because prose does not
+    carry a directory to be wrong about."""
+    if "/" in s:
+        return os.path.exists(os.path.join(root, s))
+    return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
 
 
 def check_entrypoints_ran(root):
@@ -2958,14 +3075,16 @@ def check_entrypoints_ran(root):
         # as "never tried", never as PASS.
         return SKIP, "runs/experiments.jsonl has no rows"
     missing, stale = [], []
+    n_rows = 0
     for line in open(agents, encoding="utf-8"):
         if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
             continue
+        n_rows += 1
         # Task-cell tokens catch attempts logged under an inner command (the wrapper is
         # invisible to the log).
         task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
         for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
-            if not os.path.exists(os.path.join(root, s)):
+            if not _entry_exists(root, s):
                 missing.append(s)
                 continue
             matched = [
@@ -2988,7 +3107,7 @@ def check_entrypoints_ran(root):
         return FAIL, f"entry-point table cites script(s) not in the repo: {missing}"
     if stale:
         return WARN, "; ".join(stale[:4])
-    return PASS, "every tried entry-point command has at least one ok run"
+    return PASS, f"{n_rows} script-citing row(s) in AGENTS.md; every tried entry-point command has an ok run"
 
 
 def check_entrypoints_table_present(root):
@@ -3005,16 +3124,35 @@ def check_entrypoints_table_present(root):
 
 
 def _broken_entrypoint():
-    """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
-    FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
-    synthetic world. The log row is written by the REAL logger with --root d, so the check
-    runs instead of SKIPping on an absent log."""
+    """The REAL AGENTS.md, in a tree holding the REAL scripts it cites, with two rows
+    added citing scripts that do not exist. Two, because the population widened:
+    `scripts/ghost_command.sh` is a pathed citation and `ghost_prose_only.py` is a bare
+    basename in a prose row, which the old four-directory predicate could not see.
+
+    The empty `_tmp_repo()` was not a broken world for this check. Every one of the 38
+    real citations resolved to nothing there, so the world FAILed with or without a
+    ghost -- the selftest was green on 38 false positives and would have stayed green
+    if the ghost detection were deleted outright. Confirmed by running the check on the
+    same world with both ghosts removed: still FAIL. Symlinking the cited directories
+    makes the ghost the only thing wrong, which is what the world has to isolate
+    (de, 2026-09-01).
+
+    The WARN tier is live in the real repo (run_ablation.sh), so it needs no synthetic
+    world. The log row is written by the REAL logger with --root d, so the check runs
+    instead of SKIPping on an absent log."""
     import shutil, subprocess
 
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ENTRY_SEARCH_DIRS:
+        if name and os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
+        f.write("| Ghost prose | a rule enforced by `ghost_prose_only.py`, nowhere in the tree |\n")
     subprocess.run(
         [
             sys.executable,
@@ -3335,11 +3473,23 @@ def _read_guard_phrases(root):
 
 
 def _broken_readme_current():
-    """The REAL README with a retired phrase spliced back in -- the FAIL tier."""
+    """The REAL README with a retired phrase spliced back in -- the FAIL tier.
+
+    The world also needs the code directories: tier (c) resolves every path README's
+    command blocks cite, and without them the world FAILed on `./run_ddp.sh`,
+    `eval/score_matrix.py` and the rest whether or not the phrase was spliced. Same
+    defect as entrypoints_ran's world (de, 2026-09-01)."""
     import shutil
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     p = os.path.join(d, "README.md")
     text = open(p, encoding="utf-8").read()
     with open(p, "w", encoding="utf-8") as f:
@@ -4029,17 +4179,40 @@ def _broken_ghost_running():
 
 
 def _broken_pod_drift():
-    """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
-    mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
+    """Every file the REAL manifest names, copied in, the manifest REGENERATED over
+    those copies, then one file mutated. Two bugs made the old world green for free:
+
+    It copied the manifest plus one file, so the other 238 named files were absent and
+    the check reported "239 drifted: missing AGENTS.md; missing algorithms/..." with or
+    without the mutation. Verified by restoring the appended file and rerunning: still
+    FAIL, same 239. Selftest green on 238 absences.
+
+    Copying all 239 was not enough either -- the manifest records committed hashes and a
+    dev checkout has uncommitted edits, so the world drifted on whatever the session
+    happened to have open. Regenerating over the copies makes the world self-consistent,
+    and then the appended line is the only difference there is (de, 2026-09-01).
+
+    The CI branch cannot be exercised here -- the selftest world has no .git."""
     import shutil
 
     d = _tmp_repo()
-    os.makedirs(os.path.join(d, "scripts"))
-    shutil.copy(
-        os.path.join(ROOT, "data", "pod_head_manifest.txt"),
-        os.path.join(d, "data", "pod_head_manifest.txt"),
-    )
-    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"), os.path.join(d, "scripts", "harness.py"))
+    man_rel = os.path.join("data", "pod_head_manifest.txt")
+    rels = []
+    for line in open(os.path.join(ROOT, man_rel), encoding="utf-8"):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rel = parts[1]
+        src = os.path.join(ROOT, rel)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        rels.append((rel, parts[2] if len(parts) > 2 else "docs"))
+    with open(os.path.join(d, man_rel), "w", encoding="utf-8") as f:
+        for rel, tag in rels:
+            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  {tag}\n")
     with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
         f.write("\n# broken world drift\n")
     return d
@@ -8225,6 +8398,32 @@ def _ckpt_env_fp(path):
         return None
 
 
+def _drop_zombies(host_pids):
+    """Keep only pids that are actually running.
+
+    `pgrep -f X` matches on argv, and a zombie KEEPS its argv (`[run_ddp.sh] <defunct>`)
+    while running nothing and holding no card. So a name match is not evidence of a live
+    process -- on 2026-09-01 `pgrep -f compile_worker | wc -l` returned 1577 where 1570
+    were zombies and 38 were live, and the miscount was read as CPU saturation on an idle
+    machine. On a kill path the same substitution is worse than a miscount: it makes the
+    caller act on processes that already exited.
+
+    Filtered here rather than remembered at each call site, because knowing the trap
+    exists and recalling it at the moment of use are different things -- the miscount
+    above was made 15 minutes after merging the fix whose docstring states it.
+    """
+    if not host_pids:
+        return []
+    r = subprocess.run(["tn", "exec", f"ps -o pid=,stat= -p {','.join(host_pids)}"],
+                       capture_output=True, text=True)
+    live = set()
+    for ln in r.stdout.splitlines():
+        f = ln.split()
+        if len(f) >= 2 and not f[1].startswith("Z"):
+            live.add(f[0])
+    return [p for p in host_pids if p in live]
+
+
 def _gpu_descendants(root_host_pid):
     """Host pids holding GPU memory that descend from root_host_pid.
 
@@ -8298,7 +8497,7 @@ def cmd_kill(argv):
         return 1
     pattern = re.escape(cmdline)
     r = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    host_pids = [p for p in r.stdout.split() if p.strip()]
+    host_pids = _drop_zombies([p for p in r.stdout.split() if p.strip()])
     parent, children = None, []
     for hp in host_pids:
         s = subprocess.run(["tn", "exec", f"grep -h NSpid /proc/{hp}/status"], capture_output=True, text=True)
@@ -8310,7 +8509,7 @@ def cmd_kill(argv):
             children.append(hp)
     # The monitor's embedded code names the container pid; it is the only other match.
     r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
-    monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
+    monitor_pids = _drop_zombies([p for p in r.stdout.split() if p.strip() and p not in host_pids])
     # Differently-named children holding GPU memory (score_matrix -> math_zh.py etc).
     gpu_kids = [p for p in _gpu_descendants(parent) if p not in host_pids] if parent else []
     print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, "
