@@ -82,7 +82,7 @@ fb 2026-09-01:val-slice 缺陷后(`eval/domain_loss.py:47` 的 scored 集是训�
 
 **带(sanity band, not a comparison——单位、语料、文本类型都不同,见下):** 100-150M **2.36-2.61 nats/token ≈ 0.85-0.94 BPB**;250-400M **2.11-2.35 ≈ 0.76-0.85 BPB**;600-800M **1.99-2.18 ≈ 0.72-0.79 BPB**。
 
-**BPB 是显式换算的,不是发表的:** BPB = nats/token × 1.4427 ÷ bytes/token。上表用 **4.0 bytes/token**(50K 级 BPE 在英文为主文本上的经验值;这些 tokenizer 在 The Pile 上的 bytes/token 没有发表,敏感性:3.5 → BPB 高 14%,4.5 → 低 11%)。我们的数是 **gold answer 字符串上的 bits/UTF-8 byte(code 0.918,math 0.590)**——不同单位、不同语料、不同文本类型。**不要把 0.918 和 0.85 并排读成"可比 Mamba-130M":math 0.590 低于带内任何值,反映的是答案字符串的公式化低熵,不是优越性。这个带只能做水平 sanity check。**
+**BPB 是显式换算的,不是发表的:** BPB = nats/token × 1.4427 ÷ bytes/token。上表用 **4.0 bytes/token**(50K 级 BPE 在英文为主文本上的经验值;这些 tokenizer 在 The Pile 上的 bytes/token 没有发表,敏感性:3.5 → BPB 高 14%,4.5 → 低 11%)。**这个敏感性(±11-14%)大于相邻规模档之间的带距(~0.09-0.11 BPB)——单是 tokenizer 假设就能把一个模型移过一整个规模档,这本身就是"只能做 sanity check"的理由,不只是免责声明。**我们的数是 **gold answer 字符串上的 bits/UTF-8 byte(code 0.918,math 0.590)**——不同单位、不同语料、不同文本类型。**不要把 0.918 和 0.85 并排读成"可比 Mamba-130M":math 0.590 低于带内任何值,反映的是答案字符串的公式化低熵,不是优越性。这个带只能做水平 sanity check。**
 
 **条件 NLL of gold answers:没有发表(这本身是个发现)。** 这个规模的论文都报 accuracy/EM,不报 gold-answer NLL 的水平值。**所以 e1 的仪器没有外部参照,只能按趋势读——正如它预注册的那样。** 不用再找了。
 
