@@ -49,7 +49,12 @@ def main():
                 for doc in ss:
                     f.write(json.dumps(doc) + "\n")
         a = argparse.Namespace(out=d, domain="t", workers=3 if par else 1)
-        B._near_dedup_postpass(a, perms=128, bands=128, rows=1, jaccard=0.5, seed=17)
+        # Run at the PRODUCTION default banding, not an override. e1 N1: the old test
+        # forced bands=128, rows=1, whose LSH knee is J=0.008 -- every pair a candidate,
+        # so the byte-identity was carried by the exact-J stage alone and could not see
+        # an LSH regression. At the default (64,2) recall at J=0.5 is ~1.0, so a true
+        # near-dup pair still collapses, and a future LSH bug now reddens the test.
+        B._near_dedup_postpass(a, perms=128, jaccard=0.5, seed=17)
         merged = b"".join(
             open(os.path.join(d, p), "rb").read()  # noqa: SIM115 -- shards are small, reuse the line
             for p in sorted(os.listdir(d))
