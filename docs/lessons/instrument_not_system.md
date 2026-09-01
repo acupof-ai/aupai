@@ -6,6 +6,35 @@ source: "tilerl-10 2026-09-01; four instances found in one hour: runs/t56_elemen
 
 # The instrument, not the system
 
+## Before anything else: is this code path reached in the live configuration?
+
+One line, and it precedes every other check on this page. It is last here only
+because it was found last.
+
+`probes/t60_weight_cache.py` measured a **39.4 ms/step** saving from caching the
+head weight's fp8 bytes. The measurement was correct. But `_fp8_mm` exists only on
+the FLCE path installed by `patch_liger_flce_fp8`, which runs **only under
+`FP8_HEAD=1`** (train.py:2143) — and `FP8_HEAD=1` is itself no-ship at −3.91%
+(`eff.fp8_head_ab_noship`). The live run has no `FP8_HEAD` in its environment and
+zero "routed through `_scaled_mm`" lines in its log. The lever saves **0 ms of
+what runs**, and re-enabling the path with it is −59.6 + 39.4 = **−20.2 ms**,
+still a regression.
+
+**Every check I applied passed**: the statistic was pre-declared, the arms were
+interleaved, the spread was 0.003–0.007 ms/chunk, and after review the arms
+differed only in the treatment. A parity gate was specified. Those are all checks
+on *measurement quality*, and **none of them asks whether the thing measured
+runs**. Correctness and relevance fail independently, and the checks for the first
+do not detect a failure of the second.
+
+The enforceable version, now proposed as a harness check: **any fact whose value
+depends on a code path behind a flag or an env var must name the flag and the
+condition under which the path runs, and the check FAILs when a fact claims a
+production saving for a path the default configuration does not reach.** The flag
+name is in the fact; the default is in the source.
+
+---
+
 An instrument returning a confident number that describes the instrument rather
 than the system. Four instances on 2026-09-01, all found within about an hour of
 each other, all in tools we trusted. The tell is the same every time: **a number
@@ -138,6 +167,14 @@ discipline does not transfer from the case you derived it on to the next case
 with the same shape.** That is the argument for a mechanical test over a
 principle: a test is checkable against a specific number, a principle is
 checkable against nothing.
+
+**A seventh, and the most instructive:** b0 wrote this very rule into a
+document's methods section in one commit, and left two live instances of it four
+screens above — summary sentences still reading "the software ceiling is
+single-digit percent" after the epilogue had lost 36 ms *and* the EVT row had
+gone to zero. **Summary sentences are what rot**, because they restate a
+conclusion without restating its inputs, so they survive every input changing
+underneath them. Any document-level check has to sweep prose, not only tables.
 
 ### Two tests, at two levels (44's refinement)
 
