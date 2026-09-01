@@ -14,12 +14,19 @@ absolute step against a relative plan and returned plan-complete counts for a 40
 run, silently, 2.2M rows ahead of the truth. Injecting that cursor would have caused the
 exact failure the cursor exists to prevent.
 
-Both were found by running the recovery procedure rather than by reading it.
+Two further findings. D6 is a live proxy failure that records succeeded jobs as failed --
+two milestones whose readouts were written 22 and 54 minutes AFTER the monitor closed their
+rows `fail`. D5 is a correction to my own first draft of this document: I read the first of
+two ledger rows and reported it as the state, which is the class this document is about,
+committed while describing it. It is kept in place rather than quietly rewritten.
+
+Nine sightings were found by running things -- the recovery procedure, the ledger fold --
+rather than by reading them.
 
 ## The class: the test and the code agree, and neither touches the case that matters
 
-Seven sightings on 2026-09-01, across five owners' code. They are one defect class, and
-the fix is one sentence in every instance.
+Nine sightings on 2026-09-01, across five owners' code and this document. They are one
+defect class, and the fix is one sentence in every instance.
 
 | # | site | what it does | what it should do |
 |---|---|---|---|
@@ -30,17 +37,22 @@ the fix is one sentence in every instance.
 | 5 | `readout_30b.load_score_record` | returns the FIRST match, shadowing a re-score | fold last-wins, like every other reader |
 | 6 | `readout_30b` head guard (fixed, b0 8215856) | refused a whole metric for one bad role | refuse per role -- **the reference implementation** |
 | 7 | `agents_rules_covered` | asserts the named check EXISTS, not that it enforces the rule | compare the doc's table to the code's map |
+| 8 | `harness launch` monitor | calls a silent-but-working job `fail` on 600 s of no log growth | liveness by process, not by log bytes |
+| 9 | my own D5 draft | read the FIRST ledger row of two and reported it as the state | read the fold, not the first match |
 
 Two sub-shapes, and the split matters because the fixes differ:
 
-**Reports one member of a class it detected** (3, 6, 7). The check knows about the whole
+**Reports one member of a class it detected** (3, 6, 7, 9). The check knows about the whole
 set and prints one element. The failure mode is specific: a fixer repairs the named
 element, reruns, and the same red returns naming the next one. tilerl hit this live on
 `no_stale_running` -- read "1", and had they fixed only that row it would have come back
 twelve more times.
 
-**Acts on one of many where it should refuse** (2, 4, 5). Silent-wrong-target. Nobody sees
+**Acts on one of many where it should refuse** (2, 4, 5). Silent-wrong-target: nobody sees
 a red at all; the tool acts on a row the operator did not name and reports success.
+Instance 8 is its inverse and belongs beside it -- the monitor refuses (records `fail`) on
+a job that succeeded. So a refusal is not automatically the safe direction: it is safe when
+the alternative is a wrong number, not when it overwrites a right one.
 
 **Returns a wrong answer where a stop belonged** is the aggravating factor across 1, 2, 4
 and 5. A refusal is recoverable at any hour; a wrong number recorded as a measurement is
@@ -69,17 +81,24 @@ the test replaced with itself.
 
 **A broken world must contain TWO offenders, and the check's evidence must name both.**
 
-Applied to the seven: it catches 3 directly, and 4 and 5 (a ledger with two rows for one
-name is a two-offender world). It does not catch 1 or 2, which need the second rule below.
-Cheap to add -- it is a rule about `broken()`, not new machinery -- and mechanically
-checkable: for any check whose evidence string is singular, the selftest can assert that a
-two-offender world produces evidence naming two.
+Applied to the nine: it catches 3 directly, and 4, 5 and 9 (a ledger with two rows for one
+name IS a two-offender world -- and 9 is me failing exactly that world by hand). It does
+not catch 1, 2 or 8, which need the two narrower rules below. Cheap to add -- it is a rule
+about `broken()`, not new machinery -- and mechanically checkable: for any check whose
+evidence string is singular, the selftest can assert that a two-offender world produces
+evidence naming two.
 
-**Second, narrower, for the other half: a selftest must call what production calls.** Not
-mechanically checkable in general. What IS checkable is the special case that produced 1
-and 2: a guard whose body is unreachable. A dead-branch scan over the guard functions --
-does any `if` in a check or guard have a condition that is constant after the assignments
-above it -- would have caught `:1315` at the moment it was written.
+**Second, for 1 and 2: a selftest must call what production calls.** Not mechanically
+checkable in general. What IS checkable is the special case that produced both: a guard
+whose body is unreachable. A dead-branch scan over the guard functions -- does any `if` in
+a check or guard have a condition that is constant after the assignments above it -- would
+have caught `:1315` at the moment it was written.
+
+**Third, for 8: a liveness proxy must name itself as a proxy in the row it writes.** The
+monitor wrote `status=fail, result="log silent"` for two jobs that were running fine. It
+cannot know they were fine -- but it can say the verdict came from log growth rather than
+from the process, so a reader knows which claim to distrust. A row that says `fail` without
+saying how it decided is indistinguishable from one that watched the process die.
 
 ## Findings
 
@@ -181,20 +200,84 @@ b0's 16B re-run is, one file over. `readout_30b.py` is not frozen, but it is in 
 readout's path at ~12:02; changing it during the window is the larger risk. Fix after the
 22B milestone scores: last-match, matching `_exp_row_status`.
 
-### D5 -- the 16B ledger row still records a superseded pairing (P5-adjacent, defect) -- not mine to fix
+### D5 -- CORRECTED: b0's re-run did land; what survives is one stale ledger row and a shared readout path (P4, defect)
 
-`runs/milestones.jsonl` row 6 reads `paired=ckpt_p324.pt, metrics_moved=0`, and
-`runs/readout_ckpt_pretrain_30b_s2.pt.step17500.txt` is still the p324 text: "no metric
-moved (all floor/flat/absent)", with `per_role_domain_loss` REFUSING on the whole set and
-`code_500`/`math_hard` ABSENT. That is a non-reading, not a null.
+**My first version of this finding was wrong in two of its three claims, and the error is
+worth keeping visible because it is this document's own class.** I read
+`runs/milestones.jsonl` row 6 (`paired=ckpt_p324.pt`, `metrics_moved=0`) and the readout
+file, concluded that b0's re-run "overwrote neither artifact", and wrote that
+`facts/base_eval.json` had no entry at all. I had read the FIRST matching ledger row and
+stopped -- the same first-match reflex I filed as D4 one section above. Checking every row
+rather than the first:
 
-b0's re-run against `ckpt_pretrain_15b_s1.pt.step8500` with the per-role head guard is the
-result of record, but it overwrote neither artifact, and `facts/base_eval.json` has no
-`be.milestone_*` entry for step17500 at all. A reader of the ledger gets the superseded
-reading with no marker. Proposed: b0 appends a corrected row so the union fold's
-last-row-wins makes the re-run the reading of record while the p324 row stays as history.
-The writer attesting their own re-run is the honest shape; flagged to fb rather than done
-unilaterally.
+| what I claimed | what is true |
+|---|---|
+| the readout is still the p324 text | **false** -- it is b0's re-run, mtime 03:20, "vs ckpt_pretrain_15b_s1.pt.step8500", summary "at least one metric moved" |
+| no `be.milestone_*` fact for step17500 | **false** -- `be.milestone_16b` exists and cites the 8B baseline |
+| the ledger carries the superseded pairing | **true, and it is the whole finding** |
+
+What is actually wrong, and it is narrower and more precise than what I first wrote:
+
+**Two rows for one milestone, and both name the same readout file.** Row 6 (`paired=ckpt_p324.pt`,
+`metrics_moved=0`) and row 7 (`paired=ckpt_pretrain_15b_s1.pt.step8500`, `metrics_moved=3`,
+`pinned_as`/`paired_pinned_as` recorded) both carry
+`readout: runs/readout_ckpt_pretrain_30b_s2.pt.step17500.txt`. That path holds ONE file and
+the re-run overwrote it, so row 6 now cites a document that contradicts row 6's own
+`metrics_moved=0`. The union fold's last-row-wins makes row 7 the reading of record, which
+is correct -- but a reader who takes the first match (D4's shape, and mine a moment ago)
+gets the superseded pairing pointing at evidence for the other one.
+
+The readout of record, for anyone who needs the number rather than the defect:
+`textbook_30b +0.1382`, `wiki_chat +0.1571`, `zh_web +0.1504` all moved past the
+0.1176 nat threshold; `cot` floor at +0.0821; `code_rp1t` refused as reweighted
+(0.372 -> 0.293, 0.79x); `en_c4`/`math_owm` refused per role as different heads. That is
+the per-role guard working -- three roles judged, two refused for cause, one flagged as
+reweighted -- and it is exactly what the whole-metric refusal in the p324 version threw
+away.
+
+Fix, and it is a fold defect rather than a data one: a derived artifact whose name does not
+distinguish its inputs cannot serve two readings of the same checkpoint. Either the readout
+path carries the pair (`readout_<ckpt>_vs_<paired>.txt`) or a superseded row is marked
+superseded when the file it cites is rewritten. The first is cheaper and matches the
+`vocab_id`/`.srcfp` rule already in force: a derived artifact carries the fingerprint of
+what produced it, and the pair IS part of what produced a readout.
+
+Not fixed here: `runs/milestones.jsonl` is append-only and row 6 is b0's write.
+
+### D6 -- two milestones report status=fail while their artifacts are consumed as authoritative (P2, defect)
+
+`ms_ckpt_pretrain_15b_s1.pt.step16000` (22:00) and
+`ms_ckpt_pretrain_30b_s2.pt.step17500` (01:56) both closed `status=fail`,
+`result: "log silent"`, `finding: "monitor: no growth in 600s"`. Both are treated as
+completed everywhere else, and correctly so:
+
+| | exp row | score record | readout |
+|---|---|---|---|
+| step16000 | fail, closed 22:14 | 8 metric families, complete | written 22:36 -- **22 min after the row said fail** |
+| step17500 | fail, closed 02:26 | 8 metric families, complete | written 03:20 -- **54 min after the row said fail** |
+
+The jobs were never dead. The monitor's liveness proxy is **log growth**, and a
+`score_matrix --profile milestone` run spends long stretches inside a generative eval
+writing nothing to stdout; 600 s of silence is normal there, not a hang. The monitor killed
+the ROW, not the process -- the process ran on and produced everything.
+
+This is a proxy failure (P2) of the same family as `pgrep -f` and `os.path.exists`: log
+output is a proxy for progress, and it is a bad one for a job whose work is silent by
+construction. The consequence is the inverse of the usual: not a job wrongly believed
+alive, but a **completed job permanently recorded as failed**, so the ledger disagrees with
+every artifact it points at and `no_stale_running`-style bookkeeping is poisoned for
+anyone reading status.
+
+It also explains an oddity I hit independently: my own jitter score at 03:20 shows the same
+`fail / log silent` and I read it as "the 03:20 run died and produced nothing". It may well
+have produced a partial run too. What is verifiable is that no score record exists for
+step15000, so in that instance nothing was lost.
+
+Fix: liveness by process, not by log bytes -- the pid is known to the launcher, and
+`_run_alive`-style checks already exist in the harness for exactly this. Failing that,
+raise the silence budget for generative profiles specifically and say in the row that the
+verdict came from a proxy. A monitor that reports `fail` on a job that succeeded is worse
+than no monitor, because the row outlives the memory of the incident.
 
 ## What I verified and found clean
 
