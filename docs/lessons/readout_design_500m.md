@@ -8,7 +8,7 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 
 ## 0. 问题精确化
 
-"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`(save_every=1000 步 = 1.25B token/档,已评 17500/24000;pod 上若全量存活则有 24 个点,待盘点)。
+"起作用"不是"500M 比 200M 强"——是 **500M 在 matched-token 上的仪器曲线离开 200M 的曲线,超过仪器噪声**。比较轴是 token 数,不是 checkpoint 序号:500M@T vs 200M@T,T 相同。200M 曲线 = `ckpt_pretrain_30b_s2`。**pod /work/aupai 实测(2026-09-01):存活仅 5 点**——step17500(16B)、step24000(22B)、step25500/26000/26500(尾部 500 步密档,~22–24.3B);0–16B 无存活 checkpoint,跑程止于 step26500(~24.3B)。**matched-token 轴从 16B 才开始;16B 以下的 500M checkpoint 用绝对阈值(仪器地板 + 2δ)读,是 weaker 读法,如实标注。**
 
 "最早第几个 token" = 主读数仪器首次越过阈值、且**连续两个 checkpoint 成立**的第一个 checkpoint;报分辨率区间 [T_prev, T*],不报单点。
 
@@ -47,11 +47,9 @@ source: fb tasking 2026-09-01("这个答案值三天机时"); builds on readout_
 - 数据活是 44 的(reasoning_panel §5 点名 3b/44)。交付:数据集 + 脚本 + selftest,**在 500M 第一批 checkpoint 落地之前**。
 - 分支(测前写死):200M@30B 基线 ≤60% → L0' 升为快主读数,§3 节奏改快档;>80% → 饱和,留作护栏;60–80% → 与生成并列双主读数,任一 moved 即 WORKING。
 
-## 5. 格式分支(语料是否含答案格式)
+## 5. 格式分支(已解决:格式在语料里)
 
-500M 配比(b0 的 mix_500m.json)落地后查:语料里是否有 boxed/答案是/代码 fence 的解答形态。
-- **有:** 生成读数按能力读,阈值照 §2。
-- **无:** 预期重演 R3(弱信号天花板),OOE-a 式阈值(>+5pt over shuffle);生成仍是仪器,但预期写低,不事后调。
+mix_500m.json(96b5fdd,9 域)实测组成:math_owm_stage2 26.4%(OpenWebMath,含 \boxed 解答)、cot 8.1%、**chatml 0.77% + chat_qa 0.75%(答案格式显式喂入)**、textbook_30b 10.2%、code_py_starcoder 33.0%。**分支落点:有 → 生成读数按能力读,阈值照 §2。** 与上一轮的关键差别:200M 语料 ChatML 上界 <0.075%,这一轮 chatml/chat_qa 是显式 1.5%——500M 的生成数若仍地板,不能再归因于"语料没有格式"。token cache 落地后抽查 chatml/chat_qa 域确含答案形态(\boxed/答案是/fence),作为本分支的验证脚注。
 
 ## 6. 报告纪律
 
