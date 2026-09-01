@@ -832,6 +832,42 @@
    "boundary": "Both probes pass rep_stop=False; with the default they would have measured over truncated prefixes (be.rep_stop_truncates_the_thing_it_measures). This entry REFUTES a hypothesis rather than confirming one, and the refutation would have been half a result on its own -- the alternative mechanism was run unasked because 'not copying' explains nothing about a symptom someone actually observed.",
    "status": "measured",
    "refuted_by": "a t=0.8 arm on the same prompts scoring materially above zero on capability, which would show the zeros are decoding rather than knowledge; or a word-level 8-gram copy rate near 1.0 at greedy, which would mean the token-level measure missed the copying"
+  },
+  {
+   "id": "be.gold_bpb_falls_while_generation_scores_zero",
+   "claim": "whether knowledge is accumulating across checkpoints in a form generation cannot express",
+   "value": "YES ON CODE, YES-WITH-ONE-BUMP ON MATH. Gold-answer BPB -- conditional NLL of the gold string given the prompt, over the gold's UTF-8 bytes -- falls across the whole checkpoint ladder while code_500 generative accuracy stays 0.0. THE METRIC HAS NO DECODER, which is why it is worth having today: no sampling, no greedy, no repetition, no fence parsing, no stop condition, so none of the confounds found on 2026-09-01 can reach it (be.self_repetition_not_context_copying, be.rep_stop_truncates_the_thing_it_measures). Same tokenizer (fp db1025e19d15401b) on all five checkpoints, 200 (question, gold) pairs per set, prompt tokens masked. CODE-500, bits/byte: p324 3.24B 1.08724 -> 8B 1.05279 -> 15B 0.98617 -> 16B pin 0.93617 -> 22B step24000 0.91778. Strictly monotone, total fall 0.16946 = 15.6%. MATH-500: 0.74017 -> 0.67373 -> 0.61572 -> 0.61706 -> 0.58956. Total fall 0.15061 = 20.3%, NOT monotone: the 16B pin rises +0.00134 over 15B, a bump of 0.2% of the level. WHAT THIS LICENSES, per the pre-registration written before the run: 'the model assigns increasing probability to correct answers' and 'the 0.0 generative scores are not proof of learning nothing'. WHAT IT DOES NOT LICENSE: 'the model can do math', 'the generative zeros are only a decoding artifact', or any prediction of a recovered score. The gap between assigning probability to a correct answer and producing it is exactly what SFT and decoding are for. So the project state is 'knowledge accumulating that generation cannot express', which is a different state from 'learned nothing' and was indistinguishable from it before this measurement.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/gold_bpb_prereg.md (9af1eb1) before runs/gold_bpb.json existed; probes/t65_gold_bpb.py on GPU6; runs/gold_bpb.json",
+   "config": {
+    "tokenizer_fp": "db1025e19d15401b",
+    "pairs_per_set": 200,
+    "prompt_masked": true,
+    "unit": "bits per UTF-8 byte of the gold string",
+    "code_500": {
+     "p324": 1.08724,
+     "8b": 1.05279,
+     "15b": 0.98617,
+     "16b_pin": 0.93617,
+     "22b_step24000": 0.91778
+    },
+    "math_500": {
+     "p324": 0.74017,
+     "8b": 0.67373,
+     "15b": 0.61572,
+     "16b_pin": 0.61706,
+     "22b_step24000": 0.58956
+    },
+    "code_total_fall": 0.16946,
+    "math_total_fall": 0.15061,
+    "code_monotone": true,
+    "math_monotone": false,
+    "math_16b_pin_delta": 0.00134
+   },
+   "uncertainty": "THE SEED SPREAD OF GOLD BPB AT THIS SCALE IS UNMEASURED, so 'monotone' is a SHAPE claim and not a significance claim -- the pre-registration fixed this caveat in advance rather than adding it after seeing the curve. The falls are 0.15-0.17 bits/byte end to end, comfortably above the 0.05 line below which I committed to calling the trend unbounded, so the OVERALL direction is safe; the individual steps are not. In particular math's +0.00134 bump at the 16B pin is 0.2% of the level and must NOT be read as a regression: it is far smaller than any spread anyone has bounded. The two sets also start at very different levels (code 1.09 vs math 0.74), which is a property of gold length and style, not of difficulty -- do not compare the sets to each other.",
+   "boundary": "Measures probability assigned to a FIXED gold string. A model could assign rising probability to one correct phrasing while remaining unable to produce any correct answer, and this metric cannot tell the difference. It is evidence about the model's distribution, not about its output. Also: the golds are fixed files identical across checkpoints, so the standard BPB failure -- shorter golds falling for the wrong reason -- cannot occur here, and was checked rather than assumed.",
+   "status": "measured",
+   "refuted_by": "a re-run at another seed or another gold set showing the code curve non-monotone by more than the total fall, or a same-tokenizer ladder where BPB is flat within 0.02 bits/byte"
   }
  ]
 }
