@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Who is on this round, how to reach them, and what they own. Read by",
+    "scripts/board.py who. Address peers by SOCKET, never by name: session names",
+    "collide -- 'lessons-44' resolves to at least two live sessions and only one is",
+    "on this team. On 2026-09-01 three non-team sessions were given work because an",
+    "idle status in ListAgents was read as ownership. Idle does not derive",
+    "membership; a produced artifact or the session's own word does.",
+    "Post to a topic and everyone sees it. Send a socket message and only one does."
+  ],
+  "members": [
+    {"name": "fb",     "socket": "uds:/tmp/cc-socks/1a0b5e.sock", "role": "controller",  "topics": ["*"],              "note": "rulings, card allocation, launch"},
+    {"name": "tilerl", "socket": "uds:/tmp/cc-socks/39436.sock",  "role": "integration", "topics": ["shape_recipe", "supervision"], "note": "merges into main, pod sync, throughput"},
+    {"name": "b0",     "socket": "uds:/tmp/cc-socks/92633.sock",  "role": "research",    "topics": ["mix"],            "note": "architecture, LR scaling, the mix generator"},
+    {"name": "e1",     "socket": "uds:/tmp/cc-socks/13136.sock",  "role": "research",    "topics": ["launch_gate"],    "note": "tokenizer, FoNE, launch-gate"},
+    {"name": "3b",     "socket": "uds:/tmp/cc-socks/5207.sock",   "role": "data",        "topics": ["corpus"],         "note": "corpus fetch, filters, token counts"},
+    {"name": "de",     "socket": "uds:/tmp/cc-socks/39861.sock",  "role": "implement",   "topics": ["instruments"],    "note": "eval instruments, harness checks"},
+    {"name": "44",     "socket": "uds:/tmp/cc-socks/62780.sock",  "role": "research",    "topics": ["readout"],        "note": "surveys, review, readout design"},
+    {"name": "98",     "socket": "uds:/tmp/cc-socks/34653.sock",  "role": "reporting",   "topics": [],                 "note": "owns ~/aupai-progress.html and every user-facing line"}
+  ],
+  "not_on_this_team": [
+    {"name": "lessons-3c",         "why": "Ark KV Cache; refused 2026-09-01"},
+    {"name": "lessons-23",         "why": "lessons side; refused 2026-09-01"},
+    {"name": "lessons-44 [c33c66]", "why": "Feishu KVCache proposals; refused 2026-09-01"}
+  ]
+}

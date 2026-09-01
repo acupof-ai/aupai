@@ -160,6 +160,11 @@ _MANUAL_RULES = {
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
+    "A PID is only meaningful in the namespace that read it.":
+        "no artifact records which namespace a pid was read in -- the host and the "
+        "container both print bare integers and both are correct. A check would need "
+        "to know the reader's view, which is not in the repo. The enforceable half is "
+        "already covered: pod_drift and lane_respected key on GPU UUID and cmdline",
     "A kill is not finished until nvidia-smi says the card is free":
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
@@ -210,7 +215,16 @@ _MANUAL_RULES = {
 #: what makes the mistake invisible, and precisely why it cannot be checked. The
 #: companion rule in the same commit went the other way, to check_selftests_are_gated,
 #: so the pair is +1 manual and +1 checked rather than +2 manual.
-_MANUAL_BASELINE = 24
+#: 24 -> 25 on 2026-09-01: "a PID is only meaningful in the namespace that read it".
+#: The host and the container print bare integers for the same process and both are
+#: correct; nothing in a command or a log records which view produced one. A check
+#: would have to know the reader's namespace, which is not a repo fact. The
+#: consequences ARE checked -- pod_drift and lane_respected key on GPU UUID and
+#: cmdline, the two identities that survive the boundary -- but the discipline of
+#: reading and killing in the same view is not, and a guard on [ -d /proc/<pid> ]
+#: written across it evaluated false on its first pass and launched a job onto a
+#: running probe's cards.
+_MANUAL_BASELINE = 25
 
 
 def _norm_rule(text):
@@ -456,7 +470,16 @@ def check_selftests_are_gated(root):
                 body = open(os.path.join(d, nm), encoding="utf-8").read()
             except OSError:
                 continue
-            if '"--selftest"' in body and "add_argument" in body:
+            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+            # narrow predicate assumed every selftest is wired through argparse; nine
+            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+            # that cannot see a file cannot report it missing, so its PASS counted only
+            # the files it already understood -- the check encoding an assumption about
+            # where the interesting case lives, which is this repo's named class, in
+            # the check written to catch that class (de, 2026-09-01, on 62's gate).
+            if "--selftest" in body:
                 have.add(rel)
     missing = sorted(have - gated)
     if missing:
@@ -595,21 +618,30 @@ def _broken_selftests_are_gated():
 
     Mutating the live artifact rather than writing a fixture: the reweight gate passed
     every synthetic case and returned None for every real role, because the fixture
-    encoded the author's assumption twice (7.3)."""
+    encoded the author's assumption twice (7.3).
+
+    The dropped file is scripts/eval_artifacts.py SPECIFICALLY, not an argparse-wired
+    one. It dispatches on sys.argv --
+    `sys.exit(_selftest() if "--selftest" in sys.argv else 0)` -- so under the old
+    narrow predicate ('"--selftest"' near add_argument) the check could not see it at
+    all and this world would have gone GREEN with the file unguarded. That is exactly
+    the defect the widening fixes, and using an argparse file here would leave the
+    widening untested (de, 2026-09-01).
+    """
     d = _tmp_repo()
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    ev = os.path.join(ROOT, "eval", "readout_30b.py")
+    ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
     if not (os.path.exists(hook) and os.path.exists(ev)):
         return None
     text = open(hook, encoding="utf-8").read()
-    if '"eval/readout_30b.py"' not in text:
+    if '"scripts/eval_artifacts.py"' not in text:
         return None
     os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
-        text.replace('"eval/readout_30b.py", ', "").replace('"eval/readout_30b.py"', '"x/y.py"'))
+        text.replace('"scripts/eval_artifacts.py", ', "")
+            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
     # the real file, so the check must find its --selftest and miss it in the map
-    open(os.path.join(d, "eval", "readout_30b.py"), "w", encoding="utf-8").write(
+    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
         open(ev, encoding="utf-8").read())
     return d
 
@@ -780,7 +812,7 @@ def _ppid_of(pid):
 
 
 def _pod_ps_rows(timeout=20):
-    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
 
     The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
     fields from the same table. Reading them as one `ps -eo` is one round trip
@@ -788,79 +820,74 @@ def _pod_ps_rows(timeout=20):
     `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
     training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
 
+    stat is here for the zombie case: a reaped-but-not-waited process keeps its argv
+    in ps as `[run_ddp.sh] <defunct>`, matches any regex over the command line, and
+    has no session of its own -- so a check that judges detachment by session reads
+    it as a foreground trainer. It runs no code and holds no card. Only stat tells
+    them apart (2026-09-01).
+
     Returns (rows, error). A non-empty error means the read failed and the caller
     must SKIP -- never treat an unreadable pod as a clean one.
     """
     pod = os.path.expanduser("~/bin/pod")
     try:
-        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,args --no-headers"],
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,stat,args --no-headers"],
                            capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"pod unreachable: {type(e).__name__}"
     if r.returncode != 0:
         return None, f"pod ps exit {r.returncode}"
+    # stat is kept in the row: a zombie holds a pid slot, runs nothing, and holds no card,
+    # but keeps its argv (`[run_ddp.sh] <defunct>`) so it matches any command regex. Only
+    # stat tells it from a live trainer. judge_pod_ps drops them; the rows carry stat so
+    # it can (2026-09-01).
     rows = []
     for ln in r.stdout.splitlines():
-        parts = ln.split(None, 4)
-        if len(parts) == 5 and parts[0].isdigit():
+        parts = ln.split(None, 5)
+        if len(parts) == 6 and parts[0].isdigit():
             rows.append(tuple(parts))
     if not rows:
         return None, "pod ps returned nothing"
     return rows, None
 
 
-def foreground_training_orphans(allrows):
-    """The training rows on the pod that are NOT under a setsid session.
+def judge_pod_ps(allrows):
+    """(state, evidence) from a `ps -eo pid,sid,pgid,ppid,stat,args` table.
 
-    Split out of the check so it can be TESTED. The predicate lived inside the
-    check, entangled with a live remote read, so _broken_no_foreground_pod_training
-    had to skip -- "reads live pod process state; no repo artifact to break". The
-    cost of that came due on 2026-09-01: three false positives in one day, each
-    found by a person reading ps by hand after a commit was refused, and each
-    patched by adding one more special case to an untested predicate. A guard
-    nothing can exercise accumulates exactly this.
+    A foreground training job is one whose SESSION LEADER is the crictl exec shell,
+    because that shell dies with the tn tunnel and leaves the trainer holding a card.
+    `pod "<cmd>"` runs the command as `bash -lc <cmd>`, so the leader's own argv says
+    which it was: a detached launch names setsid there and the job it spawns lands in
+    a new session; a foreground launch does not, and the job stays in the shell's.
+    That is the whole rule -- read the leader, not the child.
 
-    What "detached" actually means here. setsid makes the job its own session
-    leader; the launching shell then exits and init adopts the tree. So the
-    evidence of a correct detach is the SESSION, not any one row:
+    Four false positives in one day came from inferring detachment from the child
+    instead: a launcher shell matched on its quoted argv, a trainer whose leader had
+    become a zombie read as sessionless, a zombie trainer read as a live one, and a
+    trainer adopted by init read as an orphan. Each refused a commit while the pod was
+    behaving exactly as intended. The evidence those versions wanted -- an intact
+    parent chain -- is reaped in the normal case, so they were reading absence and
+    calling it a violation (de, 2026-09-01).
 
-      - the session leader is often a zombie ([bash] <defunct>, sid alive but
-        holding no argv) -- a leader-presence test reads a correct detach as an
-        orphan;
-      - the ranks torchrun spawns are session leaders of their OWN sessions,
-        so the parent's sid appears in no leader set built from the training rows;
-      - a <defunct> row is a corpse, not a process holding a card.
-
-    The rule that survives all three: walk each row's ppid chain. If it reaches
-    init (ppid 1) without leaving the pod's process table, the launching shell is
-    gone and the job is detached -- which is what setsid buys. If the chain ends
-    at a live non-init ancestor that is NOT part of this training tree, the job is
-    still attached to a shell and dies with the tunnel. That is the failure this
-    check exists for.
+    Tested by scripts/test_pod_ps_judge.py against captured tables, which the check
+    itself cannot be: it reads the live pod and its broken() raises SelftestSkip.
     """
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
-    # The launcher's own wrapper: `pod "... setsid nohup python3 ..."` leaves a
-    # bash -lc whose argv contains the whole command, so a text match catches it.
-    # It is not a training process.
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    # A corpse holds no GPU. <defunct> rows are what is left of a session leader
-    # after the tree was adopted -- the signature of a correct detach, not an orphan.
-    rows = [x for x in rows if "<defunct>" not in x[4]]
-    ppid = {x[0]: x[3] for x in allrows}
-    orphans = []
-    for x in rows:
-        pid, seen = x[0], set()
-        while pid and pid not in seen and pid != "1":
-            seen.add(pid)
-            pid = ppid.get(pid)
-        # Reached init => adopted => detached. Anything else -- a live non-init
-        # ancestor, or a chain that falls off the table -- is NOT proof of a detach,
-        # and an unprovable detach must read as attached. Defaulting the unknown case
-        # to "fine" is how a guard goes quiet: this predicate's whole job is to fail
-        # when it cannot show the launching shell is gone.
-        if pid != "1":
-            orphans.append(x)
-    return orphans
+    # Zombies keep their argv (`[run_ddp.sh] <defunct>`) so they match any command
+    # regex, but they run no code and hold no card.
+    live = [x for x in allrows if "Z" not in x[4]]
+    leader = {x[0]: x[5] for x in live if x[0] == x[1]}
+    rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # A leader that IS a training row is a detached launcher, never the exec shell.
+    fg = [x for x in rows
+          if x[0] != x[1]
+          and leader.get(x[1], "").startswith("bash -lc")
+          and "setsid" not in leader.get(x[1], "")]
+    if fg:
+        return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
+                      f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
+    if not rows:
+        return PASS, "no training process on the pod"
+    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -868,93 +895,23 @@ def check_no_foreground_pod_training(root):
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. The predicate is foreground_training_orphans, kept
-    separate so it can be tested against captured ps output."""
+    seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
-    fake = os.environ.get("HARNESS_POD_PS")
-    if fake:
-        # Selftest injection point. The check's own broken world needs a process table,
-        # not a repo tree, and the pod is a shared box -- staging the real violation on
-        # it would mean committing the incident this check prevents.
-        allrows = [tuple(ln.split(None, 4)) for ln in open(fake, encoding="utf-8")
-                   if len(ln.split(None, 4)) == 5]
-    else:
-        if not os.path.exists(pod) or pod_drift.is_pod(root):
-            return SKIP, "host-side check; needs ~/bin/pod"
-        allrows, err = _pod_ps_rows()
-        if err:
-            return SKIP, err
-    orphans = foreground_training_orphans(allrows)
-    live = [x for x in allrows
-            if re.search(r"train\.py|run_ddp", x[4]) and "<defunct>" not in x[4]
-            and not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    if not live:
-        return PASS, "no training process on the pod"
-    if orphans:
-        return FAIL, (
-            f"{len(orphans)} training process(es) not under a setsid session: "
-            f"pid {orphans[0][0]} ({orphans[0][4][:60]})"
-        )
-    return PASS, f"{len(live)} training process(es), all detached"
+    if not os.path.exists(pod) or pod_drift.is_pod(root):
+        return SKIP, "host-side check; needs ~/bin/pod"
+    allrows, err = _pod_ps_rows()
+    if err:
+        return SKIP, err
+    return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
-    # The predicate is now separable from the remote read, so it can be exercised
-    # against captured ps output instead of skipped. Every fixture below is REAL:
-    # DETACHED is tilerl's shape500_b32 job as ps reported it on 2026-09-01, the
-    # exact table that produced this check's third false positive in one day. An
-    # invented table would have shared the check's own assumptions -- which is how
-    # three special cases were added to an untested predicate and it still failed.
-    #
-    # (pid, sid, pgid, ppid, args)
-    DETACHED = [
-        ("1367423", "1367423", "1367423", "1", "[bash] <defunct>"),
-        ("1367615", "1367423", "1367423", "1", "[run_ddp.sh] <defunct>"),
-        ("1370843", "1370843", "1370843", "1", "[bash] <defunct>"),
-        ("1382838", "1370843", "1370843", "1", "/bin/bash ./run_ddp.sh --mix data/mix_30b_stage2.json --name shape500_b32"),
-        ("1382840", "1370843", "1370843", "1382838", "/usr/bin/python3 /usr/local/bin/torchrun --nproc_per_node=3 train.py --fp8"),
-        ("1382917", "1382917", "1382917", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
-        ("1382918", "1382918", "1382918", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
-        ("1382919", "1382919", "1382919", "1382840", "/usr/bin/python3 -u train.py --fp8 --mix data/mix_30b_stage2.json"),
-    ]
-    orphans = foreground_training_orphans(DETACHED)
-    assert not orphans, (
-        f"a correctly setsid'd job read as {len(orphans)} orphan(s): "
-        f"{[x[0] for x in orphans]} -- this is the false positive, fourth time"
-    )
-    # Each false positive this check actually produced, as its own case, so a future
-    # rewrite cannot reintroduce one of them silently.
-    assert not foreground_training_orphans([
-        ("900", "800", "800", "800", "bash -lc pod \"setsid nohup python3 train.py --mix x\""),
-    ]), "the launcher's own bash -lc wrapper is not a training process (FP #1)"
-    assert not foreground_training_orphans([
-        ("901", "901", "901", "1", "[bash] <defunct>"),
-        ("902", "901", "901", "1", "/usr/bin/python3 -u train.py --name a"),
-    ]), "a zombie session leader means adopted, not unsupervised (FP #2)"
-    assert not foreground_training_orphans([
-        ("903", "903", "903", "1", "[run_ddp.sh] <defunct>"),
-    ]), "a corpse holds no GPU (FP #3)"
-    # And the failure it exists for MUST still be caught: a trainer whose launching
-    # shell is alive dies with the tunnel. Without this the whole check is a no-op.
-    ATTACHED = [
-        ("500", "500", "500", "499", "bash"),
-        ("501", "500", "500", "500", "/usr/bin/python3 -u train.py --fp8 --name foreground"),
-    ]
-    caught = foreground_training_orphans(ATTACHED)
-    assert [x[0] for x in caught] == ["501"], (
-        f"a foreground trainer under a live shell must be caught, got {caught}"
-    )
-    # And the CHECK, not just the predicate, must report FAIL on that table. A pod is a
-    # shared box, so the world is injected as a captured ps rather than staged there --
-    # staging it would mean committing the incident this check exists to prevent.
-    d = _tmp_repo()
-    ps = os.path.join(d, "data", "pod_ps.txt")
-    os.makedirs(os.path.dirname(ps), exist_ok=True)
-    with open(ps, "w", encoding="utf-8") as f:
-        for row in ATTACHED:
-            f.write(" ".join(row) + "\n")
-    os.environ["HARNESS_POD_PS"] = ps
-    return d
+    # A broken world here would need a real foreground training process on the pod --
+    # i.e. committing the exact incident the check exists to prevent, on the box
+    # running the 15B job. The check reads live process state, not a repo artifact,
+    # so there is nothing in a temp tree to break. Skipped out loud rather than
+    # given a hand-written world that would share the check's own assumptions.
+    raise SelftestSkip("reads live pod process state; no repo artifact to break")
 
 
 def check_curl_ipv4(root):
@@ -969,19 +926,31 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    for ext in ("*.py", "*.sh"):
-        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
-            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
-                text = open(p, encoding="utf-8", errors="replace").read()
-                # Drop docstrings and comments before looking for invocations.
-                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-                for n, line in enumerate(text.split("\n"), 1):
-                    s = line.split("#", 1)[0]
-                    if inv.search(s) and not re.search(r"-4\b", s):
-                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    # The POPULATION, not just the predicate. A hand-listed set of directories was
+    # missing probes/ and the repo root, and the evidence still said "every curl call
+    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
+    # tree and exclude what cannot hold a tracked invocation, so a new directory is
+    # covered by default rather than by someone remembering to add it (fb's sweep,
+    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not (fn.endswith(".py") or fn.endswith(".sh")):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Drop docstrings and comments before looking for invocations.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+            for n, line in enumerate(text.split("\n"), 1):
+                s = line.split("#", 1)[0]
+                if inv.search(s) and not re.search(r"-4\b", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
-    return PASS, "every curl call passes -4"
+    return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
 def _broken_curl_ipv4():
@@ -1586,6 +1555,12 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         return []
     both = (set(git("diff", "--name-only", base, ours).split())
             & set(git("diff", "--name-only", base, theirs).split()))
+
+    def _blobs_in(side, path):
+        """Every blob this side's history has ever held at `path`."""
+        shas = git("rev-list", side, "--", path).split()
+        return {git("rev-parse", f"{s}:{path}").strip() for s in shas} - {""}
+
     out = []
     for path in sorted(both):
         mv = git("rev-parse", f"{m}:{path}").strip()
@@ -1594,11 +1569,32 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         if not mv or a == b:
             continue
         if mv == a:
-            lost = len(git("rev-list", f"{ours}..{theirs}", "--", path).split())
-            out.append((path, "ours", lost))
+            taken, other, side = ours, b, "ours"
         elif mv == b:
-            lost = len(git("rev-list", f"{theirs}..{ours}", "--", path).split())
-            out.append((path, "theirs", lost))
+            taken, other, side = theirs, a, "theirs"
+        else:
+            continue
+        # CHERRY-PICK, not a drop. If the side we took has itself HELD the other
+        # side's exact blob at some point in its history, that content was never
+        # discarded -- it was received and then built upon. This is what a cherry-pick
+        # across worktrees produces, and the commit count cannot see it: the picked
+        # commit has a different sha, so `rev-list ours..theirs` still counts it.
+        #
+        # de, 2026-09-01, on this check's own author: tilerl cherry-picked my 5927ed6
+        # into main as b8cae37 to unblock a launch. The blobs are byte-identical
+        # (adb4224 both), my branch then added a comment on top, and the merge
+        # correctly took my newer file -- while this check reported "2 commit(s) from
+        # the other side lost". Nothing was lost. A permanent red is the same as no
+        # signal, and a false positive on the normal way an urgent fix reaches main
+        # would have been read past within a day.
+        #
+        # Exact blob equality, so it cannot excuse a real drop: a resolution that
+        # discarded work produces a blob the taken side never held.
+        if other and other in _blobs_in(taken, path):
+            continue
+        lost = len(git("rev-list", f"{taken}..{ours if side == 'theirs' else theirs}",
+                       "--", path).split())
+        out.append((path, side, lost))
     return out
 
 
@@ -2951,7 +2947,16 @@ def check_facts_well_formed(root):
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
     note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
+    # State the population, not just the count. "every entry carries its config" over
+    # 7 files reads identically whether 7 is all of them or 7 of 9 -- and it IS 7 of 9
+    # here, the two baselines being deliberately excluded. A universal quantifier over
+    # a self-constructed population is only as true as the construction, and the
+    # reader cannot audit the construction from a bare N (fb's sweep, 2026-09-01,
+    # after selftests_are_gated reported "27 files, all gated" over a real 36).
+    _all = len(glob.glob(os.path.join(facts_dir, "*.json")))
+    _pop = f"{len(files)} of {_all} facts/*.json" if _all != len(files) else f"all {_all} facts/*.json"
+    return PASS, (f"{len(entries)} facts in {_pop} (baselines excluded), every entry "
+                  f"carries its config{note}")
 
 
 def _broken_facts():
@@ -6147,6 +6152,94 @@ def _selftest_merge_fix_not_deadlocked():
     print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
 
 
+def _selftest_merge_cherry_pick_not_a_drop():
+    """A cherry-picked commit is not a lost commit.
+
+    The real case, 2026-09-01, on this check's own author: tilerl cherry-picked de's
+    5927ed6 into main as b8cae37 to unblock a launch. Byte-identical blobs, de's
+    branch then added a comment on top, and the merge correctly took the newer file --
+    while check_merge_complete reported "2 commit(s) from the other side lost".
+    Nothing was lost. The commit count cannot see it: a cherry-pick has a different
+    sha, so rev-list still counts it as absent.
+
+    This matters because the cherry-pick is the NORMAL way an urgent fix reaches main
+    here, so the false positive would have fired on the common path and a permanent
+    red is the same as no signal. The fix is exact blob equality -- did the side we
+    took ever HOLD the other side's blob -- which cannot excuse a real drop, and the
+    third assertion below is what pins that.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)  # noqa: E731
+    try:
+        sh("init", "-q")
+        sh("config", "user.email", "t@t")
+        sh("config", "user.name", "t")
+        rel = os.path.join("scripts", "loader.py")
+        src = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        open(src, "w").write("def f():\n    return 1\n")
+        sh("add", "-A")
+        sh("commit", "-qm", "base")
+        main = sh("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        sh("checkout", "-qb", "feature")
+
+        # feature makes the fix
+        fix = "def f():\n    FIX = 'urgent'\n    return 1\n"
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: the urgent fix")
+
+        # main CHERRY-PICKS it: same content, different sha
+        sh("checkout", "-q", main)
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "main: cherry-pick of the urgent fix")
+
+        # feature builds on top, then main merges feature
+        sh("checkout", "-q", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: a comment on top")
+        sh("checkout", "-q", main)
+        # The merge CONFLICTS -- both sides changed the line -- so it must be resolved
+        # and committed, or there is no merge commit and check_merge_complete returns
+        # "HEAD is not a merge": a vacuous PASS that looks exactly like the real one.
+        # My first version of this fixture stopped at `git merge` and asserted PASS,
+        # and it passed with the fix neutered. Third instance today of a check that
+        # agrees with the thing it is checking (de, 2026-09-01).
+        sh("merge", "--no-commit", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", rel)
+        sh("commit", "-qm", "merge feature (took the newer file)")
+        parents = sh("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
+        assert len(parents) >= 3, (
+            f"the fixture must produce a MERGE commit, got {len(parents) - 1} parent(s) "
+            f"-- otherwise check_merge_complete returns 'not a merge' and the assertion "
+            f"below passes without ever running the code under test")
+        took = merge_took_one_side(d)
+        assert not took, f"the cherry-picked blob must not count as a drop: {took}"
+
+        state, evidence = check_merge_complete(d)
+        assert state == PASS, (
+            f"a cherry-pick is not a drop -- main HELD that exact blob before the "
+            f"merge, and the merge took the newer file: {state} {evidence}")
+
+        # and the real drop must STILL fail: a blob the taken side never held.
+        d2 = _broken_merge_complete()
+        try:
+            state, _ = check_merge_complete(d2)
+            assert state == FAIL, (
+                "the cherry-pick exemption must not excuse a genuine one-side "
+                f"resolution, got {state}")
+        finally:
+            shutil.rmtree(d2, ignore_errors=True)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge cherry-pick: picked commit not counted as lost, genuine drop still refused")
+
+
 def _selftest_merge_reverted_content():
     """Real merges as the cases, plus the deliberate deletion that must NOT fire.
 
@@ -6626,13 +6719,8 @@ def _demo():
     # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
     # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
     # env_importable joins it for the same reason: its artifact is process import state,
-    # not a tree, so no world it builds can hold a repo file. no_foreground_pod_training
-    # joins on 2026-09-01 for the same reason again -- its artifact is a process TABLE.
-    # Its world is not hand-written despite sitting here: the rows are a verbatim capture
-    # of the pod's ps during tilerl's shape500_b32 run, which is what the reality rule is
-    # actually asking for. Staging the real violation on the pod would mean starting a
-    # foreground trainer on a shared box -- committing the incident the check prevents.
-    synthetic_world = {"no_oversized_blob", "env_importable", "no_foreground_pod_training"}
+    # not a tree, so no world it builds can hold a repo file.
+    synthetic_world = {"no_oversized_blob", "env_importable"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
@@ -6665,7 +6753,6 @@ def _demo():
         finally:
             shutil.rmtree(root, ignore_errors=True)
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
-            os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
@@ -6985,6 +7072,7 @@ def _demo():
     _selftest_check_timeout_skips()
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
+    _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
@@ -7118,6 +7206,7 @@ _FROZEN_KEYS = (
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
+    "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -7125,12 +7214,12 @@ _FROZEN_KEYS = (
 # edit, and ladder_config_frozen compares them against the JSON as documented
 # intent -- closing the gap where all six points agree with each other but not
 # with what was intended (fb regenerated the manifest mid-ladder, blinding pod_drift).
-_CODE_FROZEN_KEYS = ("chunk_size", "layers", "d", "heads", "ffn_hidden")
+_CODE_FROZEN_KEYS = ("chunk_size",)  # the shape moved to _FROZEN_KEYS when it got flags
 
 # CLI flags whose name differs from their Cfg field (--no_attn_res sets Cfg.attn_res).
 # --no_doc_mask is gone: it existed because the attention fallback could not honour
 # doc_mask, and now it can, so the flag was only a way to turn a frozen recipe key off.
-_FLAG_TO_CFG = {"no_attn_res": "attn_res"}
+_FLAG_TO_CFG = {"no_attn_res": "attn_res", "dim": "d"}
 
 # Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
 # architecture or the recipe is frozen; these are run-management, measurement, or
@@ -7269,8 +7358,14 @@ def _run_point(step_args, forced):
                   f"forges a regression rather than measuring one.")
             return 2
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(world))
+        # _CFG_TO_FLAG, not f"--{k}": Cfg.d's flag is --dim, because "--d" is ambiguous
+        # inside torchrun's own parser and run_ddp.sh's args pass through it.
+        # Only the renames, not the negations: reversing no_attn_res->attn_res would emit
+        # "--no_attn_res 1", the opposite of what it says. Bools never reach here today,
+        # which is why an inverted map would have been silent.
+        _cfg_to_flag = {"d": "dim"}
         frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
-                       for v in (f"--{k}", str(frozen[k]))]
+                       for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
         print(
             f"run point: frozen config -> cards={frozen['cards']} "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)

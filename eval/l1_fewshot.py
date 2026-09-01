@@ -39,17 +39,44 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-N_DEMOS = 3
+N_DEMOS = 3  # the pinned default only; --demos sizes the pool (see split_rows)
 
 # Inlined from eval/math_zh.py: importing that module sets FLA_FLASH_KDA=0,
 # which kills chunk_kda for the new-arch ladder checkpoints.
 ANS_RE = re.compile(r"答案是[:：]\s*(.+?)(?:[。\n]|$)")
 
 
+EX_OPEN = "题目："  # build_prompt's example opener == the stop sequence, derived not restated
+
+
+def model_turn(gen):
+    """The model's answer to the question it was ASKED, i.e. everything before it
+    opens a new few-shot example of its own.
+
+    Continuation prompting has no turn terminator, so generation runs to max_new and
+    a 512-token budget buys three or four more problems after the answer. The model
+    invents them: 43.5% of the 3-demo generations open a new 题目 and solve it. Nothing
+    in the harness passed EX_OPEN as a stop sequence, so `score` read the whole buffer
+    and `extract_boxed`'s last-box rule -- correct for a single-answer SFT output --
+    graded the answer to a question nobody asked. The measured case: gold 8, the model
+    answers \\boxed{8}, then writes "小明有10个苹果，他给了小李3个" and answers \\boxed{7};
+    last-box scored it wrong. 45 first-box vs 25 last-box on the same file was the
+    disagreement that surfaced this (de, 2026-09-01).
+
+    Truncating is not the same as taking the first box. Within a turn the last box is
+    still right -- a solution that boxes an intermediate result and then the answer is
+    graded on the answer -- and 62 of 497 turns hold more than one box. First-box beats
+    last-box only by accident, because it happens to stop before the fabrications.
+    """
+    i = gen.find(EX_OPEN)
+    return gen if i < 0 else gen[:i]
+
+
 def score(gen, gold):
     gold_ans = extract_boxed(gold)
     if gold_ans is None:
         return 0.0
+    gen = model_turn(gen)
     if extract_boxed(gen) is not None:
         return reward_fn(gen, gold_ans)
     m = ANS_RE.search(gen)
@@ -59,9 +86,44 @@ def score(gen, gold):
 
 
 def build_prompt(demos, target_q):
-    parts = [f"题目：{q}\n解答：{a}" for q, a in demos]
-    parts.append(f"题目：{target_q}\n解答：")
+    parts = [f"{EX_OPEN}{q}\n解答：{a}" for q, a in demos]
+    parts.append(f"{EX_OPEN}{target_q}\n解答：")
     return "\n\n".join(parts)
+
+
+def split_rows(rows, n_demos, eval_from=None):
+    """(demos, evals, err). The demo pool is SIZED by n_demos -- it used to be built
+    from the hardcoded N_DEMOS = 3 and then sliced by args.demos, so --demos 8 ran 3
+    demos while the console printed "8 demos" and the preds landed at preds_l1_d8:
+    both the log and the artifact asserted a configuration that never ran. A 3-vs-8
+    comparison came back byte-identical (md5 e2639d8b) which is the only reason it was
+    caught (de, 2026-09-01).
+
+    It is a function, not four lines in main(), for one reason: main() needs a
+    checkpoint and a GPU, so nothing living there can be tested. The first version of
+    scripts/test_fewshot_demos.py rebuilt the pool itself and asserted against
+    build_prompt -- it passed on the defective code, because the test and the code
+    agreed on everything except the line that was wrong.
+
+    The eval set excludes the demos, so it SHRINKS as n_demos grows -- 497 at 3 demos,
+    492 at 8. Two arms with different demo counts therefore score different problem
+    sets, and comparing their rates compares populations as well as prompts. eval_from
+    pins the first eval index so a sweep holds the set fixed. Stated rather than
+    silently equalised: dropping problems to match would change the denominator of the
+    arm that did not need it.
+    """
+    n_demos = max(0, n_demos)
+    if n_demos >= len(rows):
+        return None, None, (f"--demos {n_demos} but the set holds {len(rows)} problems; "
+                            f"there would be nothing left to evaluate")
+    start = n_demos if eval_from is None else eval_from
+    if start < n_demos:
+        return None, None, (f"--eval-from {start} overlaps the {n_demos} demo problems: "
+                            f"the model would be scored on problems it was shown the "
+                            f"answers to")
+    demos = [(r["instruction"], r["output"]) for r in rows[:n_demos]]
+    assert len(demos) == n_demos, f"asked for {n_demos} demos, built {len(demos)}"
+    return demos, rows[start:], None
 
 
 def main():
@@ -74,6 +136,11 @@ def main():
                          "0-shot continuation vs 3-shot; pre-registered reading: "
                          "0-shot > 3-shot by >2delta=12.6pt => demos interfere; "
                          "both zero => the zero is not a prompt-format artefact)")
+    ap.add_argument("--eval-from", type=int, default=None,
+                    help="first problem index to evaluate (default: right after the "
+                         "demos). Pin it when sweeping --demos, or each arm scores a "
+                         "different set and the comparison carries a population change "
+                         "as well as a prompt change.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
     ap.add_argument("--temperature", type=float, default=0.0,
@@ -93,9 +160,10 @@ def main():
     num_id = getattr(cfg, "num_id", None)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
-    demos = [(r["instruction"], r["output"]) for r in rows[:N_DEMOS]]
-    evals = rows[N_DEMOS:]
-    print(f"L1 few-shot: {args.demos} demos, {len(evals)} eval problems", flush=True)
+    demos, evals, err = split_rows(rows, args.demos, args.eval_from)
+    if err:
+        sys.exit(err)
+    print(f"L1 few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
     preds_path = os.path.join(ROOT, "data", "eval",
                               f"preds_l1_d{args.demos}"
@@ -108,7 +176,7 @@ def main():
         out_path = fout.name
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
-            texts_in = [build_prompt(demos[:args.demos], r["instruction"]) for r in batch]
+            texts_in = [build_prompt(demos, r["instruction"]) for r in batch]
             if fone_on:
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:
@@ -121,7 +189,8 @@ def main():
                 ok = score(gen, r["output"])
                 correct += int(ok)
                 total += 1
-                n_box += int("\\boxed" in gen or "答案是" in gen)
+                turn = model_turn(gen)
+                n_box += int("\\boxed" in turn or "答案是" in turn)
                 fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
             if total % 64 < args.batch or total == len(evals):

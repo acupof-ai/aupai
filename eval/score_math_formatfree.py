@@ -135,14 +135,35 @@ def score_file(path, seed=0):
             out["sampled"] = {"rate": round(s[0], 4), "n": s[1]}
             # pass@k over the sampled draws of each problem, keyed by question text.
             byq = {}
-            for r, h in zip(rows, hit):
+            for r, h, f in zip(rows, hit, finals):
                 if r.get("greedy") is False:
-                    byq.setdefault(r.get("q"), []).append(h)
+                    e = byq.setdefault(r.get("q"), {"hits": [], "finals": [],
+                                                    "gold": gold_number(r.get("gold", ""))})
+                    e["hits"].append(h)
+                    e["finals"].append(f)
             if byq:
+                # pass@k needs its OWN control, not the per-row one. With 8 draws of a
+                # 664-char generation the union of numbers produced per question is
+                # large, so "some draw ends on the gold number" happens by coincidence
+                # far more often than a single draw does. Measured on step24000: real
+                # 17.9% against a shuffled 20.1% -- BELOW chance. Reporting 17.9% beside
+                # a 2.9% per-row control would have read as a strong signal; it is the
+                # opposite, and only a control at the same aggregation shows that.
+                qs = list(byq)
+                sh = qs[:]
+                random.Random(seed).shuffle(sh)
+                other_gold = {q: byq[o]["gold"] for q, o in zip(qs, sh)}
+                ctrl_hits = sum(
+                    1 for q in qs
+                    if any(_eq(f, other_gold[q]) for f in byq[q]["finals"])
+                )
+                real_hits = sum(1 for q in qs if any(byq[q]["hits"]))
                 out["pass_at_k_formatfree"] = {
-                    "rate": round(sum(1 for v in byq.values() if any(v)) / len(byq), 4),
-                    "n_questions": len(byq),
-                    "k_median": sorted(len(v) for v in byq.values())[len(byq) // 2],
+                    "rate": round(real_hits / len(qs), 4),
+                    "shuffled_control": round(ctrl_hits / len(qs), 4),
+                    "delta_pt": round((real_hits - ctrl_hits) / len(qs) * 100, 1),
+                    "n_questions": len(qs),
+                    "k_median": sorted(len(v["hits"]) for v in byq.values())[len(qs) // 2],
                 }
     return out, None
 
@@ -162,8 +183,35 @@ def selftest():
         "an unformatted correct answer must score"
     # and the case that keeps it honest: a generation full of numbers is not a hit
     assert not _eq(final_number("1 2 3 4 5 6"), gold_number(r"\boxed{7}"))
+
+    # pass@k must be reported against a control at ITS OWN aggregation. Eight draws that
+    # each end on a different number will "pass" almost any gold, so a per-row control
+    # does not bound the per-question one. The fixture is that case: 8 draws ending on
+    # 1..8, so every question passes and every SHUFFLED question passes too -- real and
+    # control both 100%, delta 0, which must not read as a signal. On the real preds
+    # this is 17.9% real against 20.1% control, i.e. below chance.
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as _d:
+        _p = os.path.join(_d, "p.jsonl")
+        with open(_p, "w", encoding="utf-8") as _f:
+            for qi in range(4):
+                _f.write(json.dumps({"q": f"q{qi}", "gold": r"\boxed{%d}" % (qi + 1),
+                                     "gen": "x", "greedy": True}) + "\n")
+                for d in range(1, 9):
+                    _f.write(json.dumps({"q": f"q{qi}", "gold": r"\boxed{%d}" % (qi + 1),
+                                         "gen": f"answer {d}", "greedy": False}) + "\n")
+        _rec, _err = score_file(_p)
+        assert _err is None, _err
+        _pk = _rec["pass_at_k_formatfree"]
+        assert _pk["rate"] == 1.0, f"every question has a draw ending on its gold: {_pk}"
+        assert _pk["shuffled_control"] == 1.0, (
+            f"the control must ALSO be 1.0 -- eight draws covering 1..8 pass any gold in "
+            f"range, which is exactly the coincidence this control exists to expose: {_pk}")
+        assert _pk["delta_pt"] == 0.0, f"a 100%% pass@k over chance is not a reading: {_pk}"
+
     print("selftest OK: parses, prefers the last number, scores unformatted answers, "
-          "rejects number soup")
+          "rejects number soup, and controls pass@k at its own aggregation")
     return 0
 
 
@@ -189,11 +237,20 @@ def main():
         print(f"\n{name}")
         print(f"  rows {rec['n_rows']}, {rec['with_number']} carry a number, "
               f"{rec['gold_parsed']} golds parsed")
-        for k in ("all", "greedy", "sampled", "pass_at_k_formatfree", "shuffled_control"):
+        for k in ("all", "greedy", "sampled", "shuffled_control"):
             if k in rec:
                 v = rec[k]
-                n = v.get("n") or v.get("n_questions")
-                print(f"  {k:22s} {v['rate']:.1%}  (n={n})")
+                print(f"  {k:22s} {v['rate']:.1%}  (n={v['n']})")
+        pk = rec.get("pass_at_k_formatfree")
+        if pk:
+            # Printed WITH its own control on the same line. The per-row control does
+            # not bound it: 8 draws of a long generation produce many numbers, so a
+            # union-over-draws hits any gold far more often than one draw does.
+            verdict = ("above control" if pk["delta_pt"] > 0 else
+                       "AT OR BELOW CONTROL -- not a reading")
+            print(f"  {'pass_at_k_formatfree':22s} {pk['rate']:.1%}  vs control "
+                  f"{pk['shuffled_control']:.1%}  ({pk['delta_pt']:+.1f}pt, {verdict}; "
+                  f"n={pk['n_questions']} q, k~{pk['k_median']})")
         ctrl = rec["shuffled_control"]["rate"]
         if rec["all"]["rate"] <= ctrl:
             print(f"  -> AT OR BELOW its shuffled control ({ctrl:.1%}): not a reading")

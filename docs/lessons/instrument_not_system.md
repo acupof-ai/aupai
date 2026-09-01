@@ -105,6 +105,61 @@ written prediction of 0.36 to make it a finding.
 anomaly. A prediction you did not write down cannot fail, and a result that
 cannot fail teaches nothing.
 
+## Padding that is indistinguishable from content at the point of comparison
+
+A different family from the rest of this page: not an instrument reporting
+itself, but **a shape quantity leaking into a semantic one because both are
+integers named `vocab`.**
+
+This repo has three fields that read as "vocabulary size" and **only one is a
+count of tokens**:
+
+| field | value | what it is |
+|---|---|---|
+| `Cfg.vocab_real` | 32773 | the tokenizer. The only token count. |
+| `Cfg.vocab` | 32784 | +11, padded to a multiple of 16 so the aligned cuBLAS head kernel is chosen |
+| `model.padded_vocab` | 32832 | +48 more, padded to 64 for the embedding and head matrices |
+
+Ids 32773–32831 are addressable and decode to nothing: **59 slots of pure
+alignment** that a comparison cannot distinguish from vocabulary.
+
+`build_tokenizer.py` compared its built vocabulary against `Cfg.vocab`. Both
+sides were plausible integers, the name matched, and the comparison was wrong:
+the trainer targeted `32784 - 5 = 32779` merges, so a rebuild would have emitted
+a **32784-token vocabulary** — eleven real merges of what exists only to make a
+matrix multiply fast. `load_tokenizer` asserts `size == vocab_real`, so the next
+load of **every existing checkpoint** would have failed.
+
+**The tell is that the wrong value is not absurd.** 32784 is a defensible
+vocabulary size. Nothing about it looks like padding at the moment of
+comparison, which is exactly why the comparison survived review — including
+mine, since I read that line while answering a different question and only
+caught it by deriving what the build would produce.
+
+Three rules, in cost order:
+
+1. **A padded quantity and its unpadded source must not share a name stem.**
+   `vocab` / `vocab_real` / `padded_vocab` differ by a suffix, so at every use
+   site the correct choice is one character away from an incorrect one that
+   still runs.
+2. **Comparisons against a count use the count, and shapes use the shape.** The
+   test is not "which variable is in scope" but "is this line asking about
+   tokens or about matrix width". `train.py:749` gets this right —
+   `head.weight[vocab_real:vocab].zero_()` deliberately spans the padding — and
+   it reads almost identically to the line that got it wrong.
+3. **Where a docstring names one and the code asserts the other, the docstring
+   is a defect.** `scripts/loader.py:84` said "size == cfg.vocab" while the code
+   asserted `vocab_real`. The code was correct; the sentence a reader trusts was
+   not — **and a comment asserting an invariant is checked by nothing.** That is
+   why the rule here is to *assert* the invariant rather than describe it: an
+   assert fails when it stops being true, and a sentence goes on being read.
+
+**Why this belongs on this page.** The general form is the same as an
+off-config trace or a too-small shift window: *a quantity that is correct for
+one purpose being read as if it answered another*, with no error at the moment
+of the mistake. Alignment padding is content-shaped, and content-shaped noise is
+what defeats a comparison.
+
 ## Before anything else: is this code path reached in the live configuration?
 
 One line, and it precedes every other check on this page. It is last here only
@@ -617,3 +672,72 @@ This catches #1–#3 mechanically, and it is worth having. Two honest limits:
 
 So: the check is worth building for the printf class, and it should be filed
 alongside an explicit "no check sees this" entry for the broken-join class.
+
+## The closing finding: remembering-rules against refusing-rules
+
+Every rule broken on 2026-09-01 was of the first kind. Every durable thing this
+repo has is of the second.
+
+**A rule that must be recalled at the point of use has already failed. Only a
+rule that refuses at the point of use holds.**
+
+fb's framing, and the day's evidence is unambiguous. Three failures inside one
+hour, all mine, all after the rule was not just known but freshly written:
+
+1. **The eager row.** This document's own boundary section says the eager
+   measurements describe a path we do not run and must not be ruled from. I
+   quoted the eager batch-4 row against a compiled row **in the message after
+   writing that**, and it inverted a conclusion: the matched compiled pair says
+   L=32 reaches 43.5 TFLOPS/GPU against L=12's 23.7, so the deeper model uses
+   the hardware 1.84x better, where I had reported it as slightly worse.
+2. **The denominator.** `train.py:2267` divides by 296 TFLOPS under `--fp8` and
+   148 without. `probes/t66` never enables fp8 and hardcoded 148. Both outputs
+   were labelled "MFU" and I set them side by side. `verify-capture-config` was
+   supposed to cover this and did not, because nobody classes a FLOP ceiling as
+   *configuration* — it reads as a property of the hardware, which is exactly
+   why it travels invisibly.
+3. **The A/B with one arm.** Both invocations passed `--ar-blocks 0`, and 0 is
+   the default. The two arms were identical. It would have reported a difference
+   of zero, and I would have read that as "Full AttnRes is free" — a correct
+   computation over an experiment that never varied its variable.
+
+At the moment of the error, none of the three *felt* like the situation the rule
+was about. That is not a lapse to be corrected by resolving harder; it is the
+normal condition. Two people broke two different rules of this kind on the same
+day — b0's §6 nat/B ban, broken twice inside the document that states it, and
+mine above. A rule whose enforcement mechanism is human attention has an error
+rate, and that rate does not go down when the rule is written more firmly.
+
+**What separates the two kinds:** a refusing-rule is evaluated by something that
+is not the person who might forget it, at a moment when forgetting is still
+recoverable. `UNTRUSTED_SUPPLY`, the vocab_id refusal, the fingerprint stamps,
+the dynamo assert, the `.REFUSED` sidecar — none of these ask anyone to
+remember anything.
+
+The three fixes from this hour are all of the second kind:
+
+- Every t66 row carries `peak_tflops` and `fp8`, so a mismatched comparison is
+  visible **in the JSON** rather than in someone's memory. A percentage hides its
+  denominator by construction, which is the argument against percentages as the
+  unit anything is compared in.
+- `_ab_guard` refuses to run an arm whose args hash matches one already recorded.
+  Its `--selftest` asserts the guard *fires*, and the file is registered in the
+  hook's `SELFTEST_FILES` — because a selftest nothing runs is itself a
+  remembering-rule wearing the costume of a refusing one.
+- `no_foreground_pod_training` no longer reads a zombie as a live trainer.
+
+**The open one, named rather than solved:** the third-point rule ("before
+extrapolating from two points, check whether a third is already on disk") has no
+mechanical trigger and I am not going to pretend writing it down again is one. A
+refusing version would need to know that a series was being extrapolated, which
+nothing in the current tooling sees. Filed as an open item with that framing,
+because "add a check" and "write it down more firmly" are different responses
+and only one of them has ever worked here.
+
+**The asymmetry that makes #3 the worst of the three:** a wrong number invites
+argument, and a zero does not. An A/B that reports no difference, a join that
+resolves 0%, a probe that finds no duplicates — each is a clean result that
+nobody interrogates. This is why `probes/t62`–`t65` each ship a `--selftest`
+asserting they FIND planted positives: a null from an instrument that has never
+been shown capable of a non-null is not evidence of absence. It is no evidence
+at all.
