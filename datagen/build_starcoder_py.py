@@ -19,6 +19,8 @@ RAW = "/work/aupai/data/raw/ms_starcoder_py"
 DST = "/work/aupai/data/corpus/code_py_starcoder"
 PHASE = "code_py_starcoder"
 DONE = os.path.join(DST, ".built_shards")
+STAGE = os.path.join(DST, ".stage")  # per-run staging; jsonl move into DST only on completion,
+# so an interrupt never re-clobbers prior output (ShardWriter numbers jsonl from 0).
 
 
 def built_set():
@@ -70,7 +72,8 @@ def main():
         return
     B._LOCK_FD = B._build_lock(DST)
     os.makedirs(DST, exist_ok=True)
-    w = B.ShardWriter(DST, "code_py_starcoder")
+    os.makedirs(STAGE, exist_ok=True)
+    w = B.ShardWriter(STAGE, "code_py_starcoder")  # stage; move to DST only on completion
     rows_keep = 0
     tok_keep = 0
     done = list(built)
@@ -96,6 +99,16 @@ def main():
               f"cumulative_tokens={tok_keep}", flush=True)
         done.append(shard)
     w.close()
+    # publish: renumber staged jsonl to continue AFTER DST's existing max, NEVER delete.
+    # A resume's todo (via .built_shards) only has the remaining shards, so STAGE holds
+    # just the new rows; deleting DST's prior output would clear done work and then
+    # .built_shards claims it complete (fb's catch, 2026-09-01). Appending at the next
+    # index across resumes keeps prior shards' rows and only adds the new ones.
+    existing = sorted(glob.glob(os.path.join(DST, "code_py_starcoder_*.jsonl")))
+    nxt = int(os.path.basename(existing[-1]).split("_")[-1].split(".")[0]) + 1 if existing else 0
+    for sp in sorted(glob.glob(os.path.join(STAGE, "code_py_starcoder_*.jsonl"))):
+        os.replace(sp, os.path.join(DST, f"code_py_starcoder_{nxt:03d}.jsonl"))
+        nxt += 1
     with open(DONE, "w") as f:
         f.write("\n".join(done) + "\n")
     B._emit_holdout_slice(DST, PHASE, held_out, allow_empty=True)
