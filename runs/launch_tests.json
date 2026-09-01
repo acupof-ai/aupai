@@ -1,0 +1,28 @@
+{
+ "scripts/test_arch_L32.py": {
+  "host": "iv-yeozpb5g5cbw80bls64e",
+  "real_kernel": true,
+  "recorded": "2026-09-01 14:23",
+  "result": "pass",
+  "shape": {
+   "d": 1024,
+   "ffn_hidden": 3072,
+   "heads": 8,
+   "layers": 32
+  },
+  "test_sha256": "98f8fcb77c180a9259522420de65777c3504ad6f56aa49d5808f86b0e6f53ee5"
+ },
+ "scripts/test_e2e.py": {
+  "host": "iv-yeozpb5g5cbw80bls64e",
+  "real_kernel": true,
+  "recorded": "2026-09-01 14:50",
+  "result": "pass",
+  "shape": {
+   "d": 1024,
+   "ffn_hidden": 3072,
+   "heads": 8,
+   "layers": 32
+  },
+  "test_sha256": "50d064eb7645f5d3c0e7b92f8103946e8e3b0fa7ccdcfb991fd1acf19a9104a5"
+ }
+}
