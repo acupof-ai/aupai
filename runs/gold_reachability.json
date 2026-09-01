@@ -1,0 +1,79 @@
+{
+ "probe": "t66_gold_reachability",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "limit": 200,
+ "teacher_forced": true,
+ "confound": "ranks are teacher-forced: each gold position is scored given a CORRECT prefix the model would not have produced, which biases toward the decoding-deficit reading. Not a caveat -- the reason a high top-1 cannot settle the split alone.",
+ "sets": {
+  "code_500": {
+   "n": 200,
+   "top1": {
+    "median": 0.7273,
+    "mean": 0.7051,
+    "p10": 0.5918,
+    "p90": 0.7959
+   },
+   "top1_pess": {
+    "median": 0.7209,
+    "mean": 0.7016,
+    "p10": 0.5918,
+    "p90": 0.7949
+   },
+   "top10_pess": {
+    "median": 0.9059,
+    "mean": 0.896,
+    "p10": 0.8542,
+    "p90": 0.9444
+   },
+   "top10": {
+    "median": 0.907,
+    "mean": 0.8981,
+    "p10": 0.8542,
+    "p90": 0.9444
+   },
+   "top100": {
+    "median": 0.9592,
+    "mean": 0.9593,
+    "p10": 0.9429,
+    "p90": 0.9873
+   },
+   "gold_beats_greedy_frac": 0.0,
+   "median_gold_tokens": 36.0
+  },
+  "math_500": {
+   "n": 200,
+   "top1": {
+    "median": 0.6932,
+    "mean": 0.6879,
+    "p10": 0.614,
+    "p90": 0.7579
+   },
+   "top1_pess": {
+    "median": 0.6889,
+    "mean": 0.6854,
+    "p10": 0.6129,
+    "p90": 0.7578
+   },
+   "top10_pess": {
+    "median": 0.905,
+    "mean": 0.9022,
+    "p10": 0.8616,
+    "p90": 0.9419
+   },
+   "top10": {
+    "median": 0.9059,
+    "mean": 0.9033,
+    "p10": 0.865,
+    "p90": 0.9419
+   },
+   "top100": {
+    "median": 0.9784,
+    "mean": 0.9764,
+    "p10": 0.9602,
+    "p90": 0.9917
+   },
+   "gold_beats_greedy_frac": 0.0,
+   "median_gold_tokens": 184.5
+  }
+ }
+}

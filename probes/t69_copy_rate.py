@@ -22,7 +22,7 @@ TWO THINGS THAT WOULD SILENTLY DECIDE THE ANSWER, both handled here:
    high greedy copy rate alone proves nothing. That is why the sampled and
    few-shot arms are not optional extras -- they are the arms that can falsify.
 
-Usage: python probes/t62_copy_rate.py --ckpt ckpt_pretrain_30b_s2.pt.step24000 \
+Usage: python probes/t69_copy_rate.py --ckpt ckpt_pretrain_30b_s2.pt.step24000 \
            --out runs/copy_arms_step24000.json [--n 64] [--max_new 128]
 """
 import argparse
@@ -154,7 +154,7 @@ def main():
         "fewshot3_greedy": dict(temperature=0.0, shots=True),
     }
     out = {
-        "probe": "t62_copy_rate",
+        "probe": "t69_copy_rate",
         "ckpt": os.path.basename(a.ckpt),
         "ngram_tokens": N,
         "n_prompts": len(ctxs),

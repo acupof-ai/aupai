@@ -63,6 +63,35 @@ fb 记忆核验:**SmolLM-135M @ 600B token、FineWeb-Edu + Cosmopedia——token
 - 135M–1.3B 之间(我们坐的位置)没有任何有能力的文献点。
 - Phi-1 的"50B token seen"vs 7B 数据集是 ~7 epoch;Phi-1.5 是 30B 数据集 5 epoch。epoch 重复在小预算下是未量化的变量。
 
+## 6. e1 仪器的文献参考带(BPB / 条件 NLL)
+
+fb 2026-09-01:val-slice 缺陷后(`eval/domain_loss.py:47` 的 scored 集是训练池均匀随机样本,不是 held-out——tilerl 实测 0.625% 落 val vs 0.587% 随机期望),唯一不被解码病理和 val-slice 缺陷混杂的仪器是 e1 在建的 bits-per-byte 或 gold-answer 条件 NLL。文献里 100-500M 级有没有参考带?
+
+**有,但发表的形式是 The Pile 上的 nats/token(或 ppl),不是 BPB。**
+
+| 模型 | 参数 | 训练 token | Pile nats/token | 来源 |
+|---|---|---|---|---|
+| Cerebras-GPT-111M | 111M | 2.2B(Chinchilla 最优) | 2.608 | Cerebras-GPT 论文 Table 3 |
+| Mamba-130M | 130M | 300B | 2.357(ppl 10.56) | Mamba 论文 Table 1 |
+| Pythia-160M | 160M | 300B | 3.389(ppl 29.64) | Mamba 论文 Table 1 基线 |
+| Cerebras-GPT-256M | 256M | 5.1B | 2.349 | Cerebras-GPT |
+| Mamba-370M | 370M | 300B | 2.114(ppl 8.28) | Mamba |
+| Pythia-410M | 410M | 300B | 2.298(ppl 9.95) | Mamba 基线 |
+| Cerebras-GPT-590M | 590M | 11.8B | 2.181 | Cerebras-GPT |
+| Mamba-790M | 790M | 300B | 1.992(ppl 7.33) | Mamba |
+
+**带(sanity band, not a comparison——单位、语料、文本类型都不同,见下):** 100-150M **2.36-2.61 nats/token ≈ 0.85-0.94 BPB**;250-400M **2.11-2.35 ≈ 0.76-0.85 BPB**;600-800M **1.99-2.18 ≈ 0.72-0.79 BPB**。
+
+**BPB 是显式换算的,不是发表的:** BPB = nats/token × 1.4427 ÷ bytes/token。上表用 **4.0 bytes/token**(50K 级 BPE 在英文为主文本上的经验值;这些 tokenizer 在 The Pile 上的 bytes/token 没有发表,敏感性:3.5 → BPB 高 14%,4.5 → 低 11%)。**这个敏感性(±11-14%)大于相邻规模档之间的带距(~0.09-0.11 BPB)——单是 tokenizer 假设就能把一个模型移过一整个规模档,这本身就是"只能做 sanity check"的理由,不只是免责声明。**我们的数是 **gold answer 字符串上的 bits/UTF-8 byte(code 0.918,math 0.590)**——不同单位、不同语料、不同文本类型。**不要把 0.918 和 0.85 并排读成"可比 Mamba-130M":math 0.590 低于带内任何值,反映的是答案字符串的公式化低熵,不是优越性。这个带只能做水平 sanity check。**
+
+**条件 NLL of gold answers:没有发表(这本身是个发现)。** 这个规模的论文都报 accuracy/EM,不报 gold-answer NLL 的水平值。**所以 e1 的仪器没有外部参照,只能按趋势读——正如它预注册的那样。** 不用再找了。
+
+**Pythia-160M 离群值(3.39 vs 同 token 数 Mamba-130M 2.36):** 保留。Pythia 自己的论文提到最小规模配置表现不佳,但我查过的来源没有确立确切原因(可能与全规模统一的大 batch 配置有关)——不知道就是不知道,不编。
+
+**val-slice 缺陷的精确范围(44 分析,fb 2026-09-01 全量接受):** 杀掉的是跨实验水平比较(我们的 ppl vs 发表值)和任何"held-out 泛化"读法;**不杀**同实验同 scored 文本上的 Δ vs 同仪器 σ̂ floor(16B 判决作为"仪器相对"存活,30B prereg 同范围)。e1 的仪器是正解。
+
+**跨角色过拟合混杂(与缺陷同级,必须写进事实):** scored 集是训练池的随机样本,所以**一个被读 6 次的域在自己的训练文档上损失天然低于被读 0.08 次的域,这读起来就是"学得更多"**——cot 6 epoch vs wiki_chat 0.077 epoch。我们已发表的任何跨角色排序都带着这个方向已知的偏差(多 epoch 域被系统性高估)。16B 的 nat/B 表和 §3 的成本表都在此列;角色内跨时间比较不受此混杂影响。
+
 ## Sources
 
 - SmolLM 博客(语料 220B/28B/4B,600B token): https://huggingface.co/blog/smollm
@@ -76,3 +105,5 @@ fb 记忆核验:**SmolLM-135M @ 600B token、FineWeb-Edu + Cosmopedia——token
 - TinyStories 论文(<10M,合成,连贯性): https://arxiv.org/abs/2305.07759
 - DCLM 论文(过滤是关键;7B @ 2.6T → MMLU 64%): https://arxiv.org/abs/2406.11794
 - Pythia 论文(300B The Pile,与同参 OPT 持平——原始基线): https://arxiv.org/abs/2304.01373
+- Cerebras-GPT 论文(Pile nats/token 表,§6 参考带): https://arxiv.org/abs/2304.03208
+- Mamba 论文(Pile ppl 表 + Pythia 基线,§6 参考带): https://arxiv.org/abs/2312.00752

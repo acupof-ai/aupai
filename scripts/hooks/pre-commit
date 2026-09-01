@@ -158,7 +158,9 @@ def main():
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
-        "probes/t62_copy_rate.py", "probes/t63_self_repeat.py", "probes/t65_gold_bpb.py",
+        "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
+        "probes/t67_self_repeat.py", "probes/t68_free_running.py",
+        "probes/t69_copy_rate.py",
     }
     NEEDS_DATA = {
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",

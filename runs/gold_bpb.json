@@ -1,0 +1,86 @@
+{
+ "probe": "t65_gold_bpb",
+ "tokenizer_fp": "db1025e19d15401b",
+ "limit": 200,
+ "sets": {
+  "code_500": 200,
+  "math_500": 200
+ },
+ "checkpoints": [
+  {
+   "ckpt": "ckpt_0830v1_3.24b.pt.ep1",
+   "code_500": {
+    "bpb": 1.08724,
+    "n": 200,
+    "gold_bytes": 17273,
+    "gold_tokens": 7602
+   },
+   "math_500": {
+    "bpb": 0.74017,
+    "n": 200,
+    "gold_bytes": 155955,
+    "gold_tokens": 44857
+   }
+  },
+  {
+   "ckpt": "ckpt_pretrain_15b_s1.milestone_8b_step8500.pt",
+   "code_500": {
+    "bpb": 1.05279,
+    "n": 200,
+    "gold_bytes": 17273,
+    "gold_tokens": 7602
+   },
+   "math_500": {
+    "bpb": 0.67373,
+    "n": 200,
+    "gold_bytes": 155955,
+    "gold_tokens": 44857
+   }
+  },
+  {
+   "ckpt": "ckpt_pretrain_15b_s1.milestone_15b.pt",
+   "code_500": {
+    "bpb": 0.98617,
+    "n": 200,
+    "gold_bytes": 17273,
+    "gold_tokens": 7602
+   },
+   "math_500": {
+    "bpb": 0.61572,
+    "n": 200,
+    "gold_bytes": 155955,
+    "gold_tokens": 44857
+   }
+  },
+  {
+   "ckpt": "ckpt_pretrain_30b_s2.milestone_16b_step17500.pt",
+   "code_500": {
+    "bpb": 0.93617,
+    "n": 200,
+    "gold_bytes": 17273,
+    "gold_tokens": 7602
+   },
+   "math_500": {
+    "bpb": 0.61706,
+    "n": 200,
+    "gold_bytes": 155955,
+    "gold_tokens": 44857
+   }
+  },
+  {
+   "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+   "code_500": {
+    "bpb": 0.91778,
+    "n": 200,
+    "gold_bytes": 17273,
+    "gold_tokens": 7602
+   },
+   "math_500": {
+    "bpb": 0.58956,
+    "n": 200,
+    "gold_bytes": 155955,
+    "gold_tokens": 44857
+   }
+  }
+ ]
+}
