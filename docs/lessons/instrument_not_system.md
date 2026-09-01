@@ -57,6 +57,21 @@ other started describing a system that had changed.** The way to tell them apart
 is to ask which source of truth moved: if the code under test moved and the
 instrument did not, it is the first kind.
 
+**But that discriminator has to be captured by the guard, not reconstructed by
+the reader afterwards** (b0's point, and it corrects an overstatement in the
+first version of this page). At the moment you observe the two cases they are
+indistinguishable — both are a world that quietly went green. Asking "which
+source of truth moved" is only answerable if the guard recorded *what it was
+comparing against at the time it ran*. Where no such record exists the question
+cannot be settled from the output at all: b0's `holdout_hashes` empty-set
+incident is the same shape and had no record, so it took a downstream failure to
+surface.
+
+So the rule is not only "ask which moved" — it is **make the guard record its
+own comparand**, i.e. the threshold, the expectation, the set size it checked
+against. A guard that prints only pass/fail cannot distinguish a defect from a
+legitimate change afterwards, no matter how carefully anyone reads it.
+
 That is also the argument for running the selftest on every commit rather than
 before a release. Both changes were invisible in the statistic; only the
 mechanism caught them, and it caught them the moment they appeared rather than
