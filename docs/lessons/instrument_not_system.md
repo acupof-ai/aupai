@@ -97,6 +97,63 @@ instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
 quantisation band, firing on rounding. #4 nearly retired a live 4.44% lever.
 
+## The generalisation: a threshold set from the wrong quantity
+
+The printf cases are one instance of something wider, and it was named only after
+it had been violated four more times in a single afternoon:
+
+> **A threshold set from a quantity that is not the quantity it will be compared
+> against.**
+
+The stage-2 loss kill rule is the clean example. The threshold 0.15 came from a
+healthy run's **30-step half-split** (+0.12). The rule compares **60-step block
+medians**. Nobody computed the block distribution before setting a number against
+it. When someone finally did — ten minutes of work — the block-to-block delta SD
+was **0.141**, so the threshold was 1.06× the noise it was meant to clear, and
+rises past 0.15 occurred in 18 of 137 blocks against falls past −0.15 in 19.
+Symmetric: the signature of noise, not drift. The rule fired on a healthy run.
+
+**Two people approved that threshold — the controller who issued it and the
+reviewer who sustained it — and neither had the distribution, because nobody had
+computed it. Approval by two parties is not a substitute for one measurement.**
+
+The same shape covers everything above: a spread compared against a resolution
+nobody read, a component bounded by an aggregate that did not contain it, a
+denominator that did not drive its numerator, two instruments summed without
+showing they do not overlap.
+
+### It recurs while you are writing the rule against it
+
+This is the part worth internalising. Having written the retraction, I then
+derived a lever at 7.5 ms from a peak-bandwidth model and quoted it before
+measuring — it measured 39.4 ms, off by 5.3×. Having written *that* down, I
+evaluated the replacement kill rule by comparing the event against **the whole
+run's median** when the rule's window is **three blocks either side**; at the
+rule's own window the event fires. b0 wrote a usage restriction in §6 of a
+document and violated its generalisation in §1 of the same document, minutes
+apart.
+
+Two people, six instances, each within an hour of writing down why not to. **The
+discipline does not transfer from the case you derived it on to the next case
+with the same shape.** That is the argument for a mechanical test over a
+principle: a test is checkable against a specific number, a principle is
+checkable against nothing.
+
+### Two tests, at two levels (44's refinement)
+
+The skim test below operates on a single number, at writing time, held by the
+author. It does not catch the document-level failure, where the restriction and
+the number it governs live in different sections with no mechanism connecting
+them. That needs a second, reviewer-held test:
+
+> **List every restriction the document states. Apply each, mechanically, to
+> every number in every table.**
+
+That is a cross-product, not a judgement, and it is exactly how 44 caught b0's §1
+— not by understanding the rule better, but by applying b0's own §6 to b0's own
+§1. **An author holding a rule is not the same as the rule being applied.** Both
+tests are reviewable artifacts; neither substitutes for the other.
+
 ## When a qualifier has to be a restriction
 
 A number can be correct and still be misused, and the qualifier you attach
