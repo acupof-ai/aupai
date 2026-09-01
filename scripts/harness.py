@@ -1489,6 +1489,12 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         return []
     both = (set(git("diff", "--name-only", base, ours).split())
             & set(git("diff", "--name-only", base, theirs).split()))
+
+    def _blobs_in(side, path):
+        """Every blob this side's history has ever held at `path`."""
+        shas = git("rev-list", side, "--", path).split()
+        return {git("rev-parse", f"{s}:{path}").strip() for s in shas} - {""}
+
     out = []
     for path in sorted(both):
         mv = git("rev-parse", f"{m}:{path}").strip()
@@ -1497,11 +1503,32 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         if not mv or a == b:
             continue
         if mv == a:
-            lost = len(git("rev-list", f"{ours}..{theirs}", "--", path).split())
-            out.append((path, "ours", lost))
+            taken, other, side = ours, b, "ours"
         elif mv == b:
-            lost = len(git("rev-list", f"{theirs}..{ours}", "--", path).split())
-            out.append((path, "theirs", lost))
+            taken, other, side = theirs, a, "theirs"
+        else:
+            continue
+        # CHERRY-PICK, not a drop. If the side we took has itself HELD the other
+        # side's exact blob at some point in its history, that content was never
+        # discarded -- it was received and then built upon. This is what a cherry-pick
+        # across worktrees produces, and the commit count cannot see it: the picked
+        # commit has a different sha, so `rev-list ours..theirs` still counts it.
+        #
+        # de, 2026-09-01, on this check's own author: tilerl cherry-picked my 5927ed6
+        # into main as b8cae37 to unblock a launch. The blobs are byte-identical
+        # (adb4224 both), my branch then added a comment on top, and the merge
+        # correctly took my newer file -- while this check reported "2 commit(s) from
+        # the other side lost". Nothing was lost. A permanent red is the same as no
+        # signal, and a false positive on the normal way an urgent fix reaches main
+        # would have been read past within a day.
+        #
+        # Exact blob equality, so it cannot excuse a real drop: a resolution that
+        # discarded work produces a blob the taken side never held.
+        if other and other in _blobs_in(taken, path):
+            continue
+        lost = len(git("rev-list", f"{taken}..{ours if side == 'theirs' else theirs}",
+                       "--", path).split())
+        out.append((path, side, lost))
     return out
 
 
@@ -6050,6 +6077,94 @@ def _selftest_merge_fix_not_deadlocked():
     print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
 
 
+def _selftest_merge_cherry_pick_not_a_drop():
+    """A cherry-picked commit is not a lost commit.
+
+    The real case, 2026-09-01, on this check's own author: tilerl cherry-picked de's
+    5927ed6 into main as b8cae37 to unblock a launch. Byte-identical blobs, de's
+    branch then added a comment on top, and the merge correctly took the newer file --
+    while check_merge_complete reported "2 commit(s) from the other side lost".
+    Nothing was lost. The commit count cannot see it: a cherry-pick has a different
+    sha, so rev-list still counts it as absent.
+
+    This matters because the cherry-pick is the NORMAL way an urgent fix reaches main
+    here, so the false positive would have fired on the common path and a permanent
+    red is the same as no signal. The fix is exact blob equality -- did the side we
+    took ever HOLD the other side's blob -- which cannot excuse a real drop, and the
+    third assertion below is what pins that.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)  # noqa: E731
+    try:
+        sh("init", "-q")
+        sh("config", "user.email", "t@t")
+        sh("config", "user.name", "t")
+        rel = os.path.join("scripts", "loader.py")
+        src = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        open(src, "w").write("def f():\n    return 1\n")
+        sh("add", "-A")
+        sh("commit", "-qm", "base")
+        main = sh("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        sh("checkout", "-qb", "feature")
+
+        # feature makes the fix
+        fix = "def f():\n    FIX = 'urgent'\n    return 1\n"
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: the urgent fix")
+
+        # main CHERRY-PICKS it: same content, different sha
+        sh("checkout", "-q", main)
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "main: cherry-pick of the urgent fix")
+
+        # feature builds on top, then main merges feature
+        sh("checkout", "-q", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: a comment on top")
+        sh("checkout", "-q", main)
+        # The merge CONFLICTS -- both sides changed the line -- so it must be resolved
+        # and committed, or there is no merge commit and check_merge_complete returns
+        # "HEAD is not a merge": a vacuous PASS that looks exactly like the real one.
+        # My first version of this fixture stopped at `git merge` and asserted PASS,
+        # and it passed with the fix neutered. Third instance today of a check that
+        # agrees with the thing it is checking (de, 2026-09-01).
+        sh("merge", "--no-commit", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", rel)
+        sh("commit", "-qm", "merge feature (took the newer file)")
+        parents = sh("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
+        assert len(parents) >= 3, (
+            f"the fixture must produce a MERGE commit, got {len(parents) - 1} parent(s) "
+            f"-- otherwise check_merge_complete returns 'not a merge' and the assertion "
+            f"below passes without ever running the code under test")
+        took = merge_took_one_side(d)
+        assert not took, f"the cherry-picked blob must not count as a drop: {took}"
+
+        state, evidence = check_merge_complete(d)
+        assert state == PASS, (
+            f"a cherry-pick is not a drop -- main HELD that exact blob before the "
+            f"merge, and the merge took the newer file: {state} {evidence}")
+
+        # and the real drop must STILL fail: a blob the taken side never held.
+        d2 = _broken_merge_complete()
+        try:
+            state, _ = check_merge_complete(d2)
+            assert state == FAIL, (
+                "the cherry-pick exemption must not excuse a genuine one-side "
+                f"resolution, got {state}")
+        finally:
+            shutil.rmtree(d2, ignore_errors=True)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge cherry-pick: picked commit not counted as lost, genuine drop still refused")
+
+
 def _selftest_merge_reverted_content():
     """Real merges as the cases, plus the deliberate deletion that must NOT fire.
 
@@ -6882,6 +6997,7 @@ def _demo():
     _selftest_check_timeout_skips()
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
+    _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
