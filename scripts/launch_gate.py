@@ -411,11 +411,13 @@ AUTHORITY = {
 
 # Env-state checks: their evidence lives only on the pod (GPU, corpus, caches,
 # checkpoints, running processes). Objectively derived -- this is exactly the set
-# that does not run on a Mac (their SKIP set, 2026-09-01), and the selftest fails
-# if the two drift apart. Everything else is repo-scan: it answers on main, where
-# the pod's 168 one-off files do not exist. A repo-scan check can never be clean
-# on the pod by construction, so its pod FAILs do not gate the launch -- they
-# read as UNKNOWN, authority=main (fb, 2026-09-01).
+# that does not run on a CLEAN CHECKOUT (their evidence is gitignored data, not
+# code). A machine that happens to hold some of it (this Mac has tokenizer.json)
+# runs a few of them, which is fine: the set is defined by where the evidence
+# lives, not by what this dev box cached. Everything else is repo-scan: it
+# answers on main, where the pod's 168 one-off files do not exist. A repo-scan
+# check can never be clean on the pod by construction, so its pod FAILs do not
+# gate the launch -- they read as UNKNOWN, authority=main (fb, 2026-09-01).
 ENV_STATE_CHECKS = frozenset({
     "env_importable", "mix_shards_present", "tokenizer_roundtrip", "pinned_ids",
     "no_ghost_running", "corpus_filters_fp", "score_input_fresh", "sft_pack_holdout",
@@ -895,17 +897,24 @@ def selftest():
     s, _ = _partition_fails([fl("mix_supply"), fl("entrypoint_help")], "pod", 40)
     if s != NOGO:
         bad.append(f"mixed FAILs on pod did not NO-GO on the env-state one ({s})")
-    # The env-state set must stay equal to the checks that actually skip off-pod,
-    # or the partition rots into opinion.
+    # The env-state set must not rot. A check that SKIPs live has its evidence
+    # elsewhere, so an unclassified one is a pod FAIL that would not gate -- the
+    # false-GO direction. A classified name that no longer exists is a stale
+    # entry. SUBSET, not equality: a machine holding some gitignored evidence
+    # (this Mac has tokenizer.json) runs a few env-state checks live, and the
+    # guard must not call that drift (tilerl's merge catch, 2026-09-01).
     if _here() == "main":
         out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "harness.py"),
                               "check"], capture_output=True, text=True, timeout=600, cwd=ROOT)
-        skipped = {ln.split("]")[1].split()[0] for ln in out.stdout.splitlines()
-                   if "[SKIP]" in ln}
-        if skipped != ENV_STATE_CHECKS:
-            bad.append(f"ENV_STATE_CHECKS drifted from the off-pod SKIP set: "
-                       f"only-in-set {sorted(ENV_STATE_CHECKS - skipped)}, "
-                       f"only-skipped {sorted(skipped - ENV_STATE_CHECKS)}")
+        lines = out.stdout.splitlines()
+        skipped = {ln.split("]")[1].split()[0] for ln in lines if "[SKIP]" in ln}
+        ran = {ln.split("]")[1].split()[0] for ln in lines
+               if re.search(r"\[\s*(PASS|FAIL|WARN)\s*\]", ln)}
+        unclassified = skipped - ENV_STATE_CHECKS
+        stale = ENV_STATE_CHECKS - (ran | skipped)
+        if unclassified or stale:
+            bad.append(f"ENV_STATE_CHECKS drifted: unclassified {sorted(unclassified)}, "
+                       f"stale {sorted(stale)}")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
