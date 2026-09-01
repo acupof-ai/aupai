@@ -958,6 +958,45 @@
    "boundary": "The refutation improved the estimate without changing the verdict: anchoring lifts LCS from 0.2317 to 0.4524, so the preamble WAS costing roughly half the measured agreement -- it is a real effect and not the cause. A refutation that fails can still move a number, and reporting only 'refutation failed' would have hidden that the unanchored 0.23 understates within-code agreement.",
    "status": "measured",
    "refuted_by": "an anchoring method with materially higher coverage -- if 80% of generations can be anchored and still score in the drift band, this conclusion strengthens; if the currently-unanchored 81% would score high under a better anchor, it weakens"
+  },
+  {
+   "id": "be.the_loss_is_immediate_not_gradual",
+   "claim": "whether free-running agreement is lost at the first step off a gold prefix or accumulates over the horizon",
+   "value": "IMMEDIATE, and this REFUTES my own compounding story. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, greedy, rep_stop=False, agreement binned by distance from the prompt on the SHIFT-ALIGNED sequence. CODE-500 median agreement by bin: 1-8 0.250, 9-16 0.125, 17-32 0.000, 33-64 0.000, 65-128 0.000. MATH-500: 1-8 0.125, 9-16 0.125, 17-32 0.0625, 33-64 0.0408, 65-128 0.0946, 129-192 0.0469. Against the pre-registered test, which required BOTH clauses: bin1 <= 0.40 (code 0.250, math 0.125, both pass) AND the teacher-forced-to-bin1 drop exceeding the bin1-to-last-bin decay -- code 0.477 vs 0.250, math 0.562 vs 0.078. Both sets satisfy both clauses, math overwhelmingly. SO THE FIRST EIGHT TOKENS OFF A GOLD PREFIX COST MORE THAN THE ENTIRE REMAINING 184: the model's conditional distribution is calibrated on gold prefixes and is already off-distribution at step one. Compounding then makes a bad start worse, but compounding is not the mechanism. WHAT THIS CHANGES: search and better sampling operate on the trajectory, and the trajectory is wrong from its first token, so neither addresses the mechanism. It also reconciles the two earlier results -- gold beats 45-53% of sampled sequences on length-normalised log-prob (local preference is correct) while free-running agreement is ~0.23 (the trajectory leaves immediately). Local calibration and trajectory calibration are different properties and this model has the first without the second.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_profile_prereg.md (aaed72a) before runs/positional_profile.json existed; GPU5",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts_per_set": 100,
+    "greedy": true,
+    "rep_stop": false,
+    "shift_aligned_to": 150,
+    "code_bins": {
+     "1-8": 0.25,
+     "9-16": 0.125,
+     "17-32": 0.0,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "math_bins": {
+     "1-8": 0.125,
+     "9-16": 0.125,
+     "17-32": 0.0625,
+     "33-64": 0.0408,
+     "65-128": 0.0946,
+     "129-192": 0.0469
+    },
+    "code_tf_top1": 0.7273,
+    "math_tf_top1": 0.6875,
+    "code_tf_to_bin1_drop": 0.477,
+    "code_bin1_to_last_drop": 0.25,
+    "math_tf_to_bin1_drop": 0.562,
+    "math_bin1_to_last_drop": 0.078
+   },
+   "uncertainty": "POSITIONAL BINS ARE NOT INDEPENDENT PER-POSITION ACCURACY and the pre-registration said so before the run: once a generation diverges, every later bin is scored on a trajectory already off the gold, so late-bin agreement means 'accuracy given N tokens of prior divergence', not 'accuracy at position N'. The profile shows WHERE THE LOSS BEGINS, nothing more. Bin 1 is the only bin conditioned on a mostly-correct prefix and therefore the only one comparable to the teacher-forced figure; later bins are not compared to it. Math's non-monotone tail (0.0408 -> 0.0946 -> 0.0469) is consistent with noise on a low base and is not read as recovery.",
+   "boundary": "PROVENANCE. A ruling reached me citing a positional profile of 0.343 in the first eight tokens decaying to 0.078, attributed to me, alongside commits c3d1b3f and 72d70bd. I did not produce it; neither commit exists on any branch and no artifact backs it. fb verified independently and retracted. The bands above were fixed WITHOUT reference to those numbers so this is an independent measurement rather than a replication of an unbacked one -- and the shape agrees while the values do not, which is the outcome that makes the independence worth having.",
+   "status": "measured",
+   "refuted_by": "a bin-1 agreement above 0.55 on a larger sample, or a TF-to-bin1 drop smaller than the bin1-to-last decay on either set"
   }
  ]
 }
