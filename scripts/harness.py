@@ -897,21 +897,49 @@ def check_no_foreground_pod_training(root):
     whole card at 100% after the tn tunnel dies, which once contaminated a
     seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
-    if not os.path.exists(pod) or pod_drift.is_pod(root):
-        return SKIP, "host-side check; needs ~/bin/pod"
-    allrows, err = _pod_ps_rows()
-    if err:
-        return SKIP, err
+    fake = os.environ.get("HARNESS_POD_PS")
+    if fake:
+        # Selftest injection. The check's broken world is a process TABLE, not a repo tree,
+        # and the pod is shared -- staging the violation live would mean starting a
+        # foreground trainer on the box running the 15B job.
+        allrows = [tuple(p) for p in (ln.split(None, 5) for ln in open(fake, encoding="utf-8"))
+                   if len(p) == 6 and p[0].isdigit()]
+    else:
+        if not os.path.exists(pod) or pod_drift.is_pod(root):
+            return SKIP, "host-side check; needs ~/bin/pod"
+        allrows, err = _pod_ps_rows()
+        if err:
+            return SKIP, err
     return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
-    # A broken world here would need a real foreground training process on the pod --
-    # i.e. committing the exact incident the check exists to prevent, on the box
-    # running the 15B job. The check reads live process state, not a repo artifact,
-    # so there is nothing in a temp tree to break. Skipped out loud rather than
-    # given a hand-written world that would share the check's own assumptions.
-    raise SelftestSkip("reads live pod process state; no repo artifact to break")
+    """The FAIL table, captured live on the pod, fed through HARNESS_POD_PS.
+
+    judge_pod_ps is covered by scripts/test_pod_ps_judge.py in CI, but the harness's own
+    selftest skipped this check -- and a skip here means `harness --selftest` reports the
+    check as unexercised, which is how it drifted into four false positives in one day.
+    The predicate and the check are different things: the test proves the judgement, this
+    proves the check WIRES that judgement to a FAIL.
+
+    Rows are verbatim from de's capture: `pod "cd /work/aupai && ./run_ddp.sh --name
+    fixture_fg_probe --help; sleep 40"` -- a real torchrun in a real crictl exec session,
+    off every card before capture. Not hand-written: staging it live would mean starting
+    a foreground trainer on a shared box, i.e. committing the incident the check prevents.
+    """
+    FOREGROUND = [
+        "1389335 1389335 1389335       0 Ss   bash -lc cd /work/aupai && ./run_ddp.sh --name fixture_fg_probe --help >/dev/null 2>&1; sleep 40",
+        "1389346 1389335 1389335 1389335 S    /bin/bash ./run_ddp.sh --name fixture_fg_probe --help",
+        "1389348 1389335 1389335 1389346 Sl   /usr/bin/python3 /usr/local/bin/torchrun --nproc_per_node=8 train.py --fp8 --name fixture_fg_probe",
+        "1389417 1389417 1389417 1389348 Rsl  /usr/bin/python3 -u train.py --fp8 --name fixture_fg_probe --help",
+    ]
+    d = _tmp_repo()
+    ps = os.path.join(d, "data", "pod_ps.txt")
+    os.makedirs(os.path.dirname(ps), exist_ok=True)
+    with open(ps, "w", encoding="utf-8") as f:
+        f.write("\n".join(FOREGROUND) + "\n")
+    os.environ["HARNESS_POD_PS"] = ps
+    return d
 
 
 def check_curl_ipv4(root):
@@ -6719,8 +6747,11 @@ def _demo():
     # Known ceiling: this catches worlds built on made-up paths, not worlds that mutate one
     # real file and hand-write the rest -- the latter is a code-review property, not a tree one.
     # env_importable joins it for the same reason: its artifact is process import state,
-    # not a tree, so no world it builds can hold a repo file.
-    synthetic_world = {"no_oversized_blob", "env_importable"}
+    # not a tree, so no world it builds can hold a repo file. no_foreground_pod_training
+    # joins for the same reason again -- its artifact is a process TABLE. Its rows are not
+    # hand-written despite sitting in a fixture: they are de's verbatim capture of a real
+    # foreground trainer on the pod, which is what the reality rule actually asks for.
+    synthetic_world = {"no_oversized_blob", "env_importable", "no_foreground_pod_training"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
@@ -6753,6 +6784,7 @@ def _demo():
         finally:
             shutil.rmtree(root, ignore_errors=True)
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
+            os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)

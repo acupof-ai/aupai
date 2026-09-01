@@ -171,29 +171,29 @@ SUPPLY = {
     "cot":               424_056_227,   # stamped, fp 388496b76ed9bf88
     "textbook_30b":    1_610_210_330,   # stamped, fp 3f237c5191cb8571
     "zh_web":         21_293_403_945,   # stamped, fp a0d44fc44a289d60
-    # MEASURED by 3b: data/corpus/chat/ is 160,414 rows = 0.038B, full-domain tokenize.
-    # fb ruled both renders of those SAME rows, into two directories. chatml re-renders the
-    # same 160,414 rows with ChatML markup, so it is slightly LARGER than the plain form:
-    # 0.039B measured (3b, 2026-09-01), the delta being special tokens.
+    # MEASURED by 3b, exact token counts (2026-09-01): data/corpus/chat/ is 160,414 rows =
+    # 38,027,236 tokens, and data/corpus/chatml/ is the same 160,414 rows re-rendered with
+    # ChatML markup = 38,995,846, the +968,610 being special tokens. fb ruled both renders,
+    # into two directories; chat/ was left untouched (its name and fingerprint are load-bearing
+    # for six ladder mixes) and chatml/ is new.
+    #
+    # These are the only two supplies given as exact integers rather than a stamp, because they
+    # are the only two whose weight is decided within a rounding error of the 4-epoch line --
+    # see SUPPLY_RELATIVE_ERROR, now empty. Every other domain's slack is measured in whole
+    # epochs and does not care about its last significant figure.
     #
     # Not 0.076B for either: that figure is the two summed, and no single domain contains it.
-    # I introduced the 0.076B in my own message to fb and it came back in the ruling as a 1.52%
-    # per-domain ceiling, which is 8.00 epochs, double the cap. The correct ceiling is 0.76%
-    # each, 1.52% combined.
+    # I introduced it in my own message to fb and it came back in the ruling as a 1.52%
+    # per-domain ceiling, which is 8.00 epochs, double the cap. The correct ceiling is ~0.76%
+    # each, ~1.52% combined.
     #
     # The number this replaced was wiki_chat's stamp, 0.284B, ~7x over: wiki_chat is a MERGED
     # wiki+chat domain and the QA-format rows are only a subset of it. At 0.284B the 4-epoch
     # ceiling read 2.11 and said nothing; at the true 0.038B the draw would have been 15.79
     # epochs. The ceiling was never broken -- it was fed a supply figure that had never been
     # measured for the domain it names.
-    #
-    # PRECISION IS LOAD-BEARING HERE, unlike the other seven. Both figures sit within a few
-    # percent of the 4-epoch line, so a rounding error in the stamp moves the cap by a whole
-    # epoch -- 0.038B lands on 4.000 exactly. 3b reported two significant figures; the exact
-    # integers are requested and these are placeholders until they land. Every other domain in
-    # this table has slack measured in whole epochs and does not care.
-    "chatml":             39_000_000,   # ChatML render of data/corpus/chat/, 2sf
-    "chat_qa":            38_000_000,   # plain 问：/答： render, same 160,414 rows, 2sf
+    "chatml":         38_995_846,   # ChatML render, data/corpus/chatml/ (new directory)
+    "chat_qa":        38_027_236,   # plain 问：/答： render, data/corpus/chat/ (untouched)
 }
 
 # Supply figures that are NOT measurements of the domain they name. A comment saying so is
@@ -211,14 +211,19 @@ UNTRUSTED_SUPPLY = {
 # this two days ago. The writer refuses a domain whose name collides.
 LADDER_DIRS = {"chat", "code", "en", "math", "textbook", "web_hq", "wiki"}
 
-# Relative uncertainty of each supply figure. Absent = exact (a stamp is an integer count).
-# 3b reported chatml/chat_qa to two significant figures, so 38_000_000 means 38.0M +/- 0.5M.
-# This exists because a fractional-epoch verdict is only as sharp as the supply behind it:
-# chat_qa's shipped draw is 3.99996 epochs, four parts in 100,000 under the line, on a number
-# whose own error bar is 1.3%. The ceiling PASSES and cannot know it is passing -- the same
-# shape as the wiki_chat defect, where a guard was silent because its input was wrong. There
-# the input named the wrong domain; here it names the right domain at the wrong precision.
-SUPPLY_RELATIVE_ERROR = {"chatml": 0.5 / 39.0, "chat_qa": 0.5 / 38.0}
+# Relative uncertainty of each supply figure. EMPTY is the correct state: every supply here
+# is now an exact count. It existed because chatml/chat_qa arrived as two significant figures
+# and their draw lands within a rounding error of the 4-epoch line -- chat_qa read 3.99996
+# epochs, a PASS by four parts in 100,000, from a number carrying +/-1.3%. The ceiling PASSED
+# and could not know it was passing: the same shape as the wiki_chat defect, where a guard was
+# silent because its input was wrong. There the input named the wrong domain; there it named
+# the right domain at the wrong precision.
+#
+# Kept, empty, rather than deleted: the mechanism is the only thing that makes an imprecise
+# supply say so instead of returning the comfortable side of its own error bar, and the next
+# domain to arrive as a rounded figure needs it on arrival, not after it ships. Selftest 9
+# exercises it against the weight that actually shipped.
+SUPPLY_RELATIVE_ERROR = {}
 
 # Muennighoff's repeat-decay constant: R_D* = 15.4, and <=4 epochs costs ~nothing
 # (ds.muennighoff_four_epoch: 8.7B at 4 epochs finishes +0.5% val vs single-epoch).
@@ -292,6 +297,34 @@ def _refuse_cross_role_rate(name, why):
             "unmeasured, role-dependent amount, so the ordering is not known to hold. Justify "
             "the weight from the objective, or from a within-role change over time."
         )
+
+
+def _band_warning(name, rows, pool_tok):
+    """Refuse a ceiling verdict that flips inside the supply's own error bar.
+
+    A supply given to two significant figures cannot decide a draw that lands four parts in
+    100,000 under the line, which is exactly where chat_qa sat: 3.99996 epochs, a PASS, from a
+    number carrying +/-1.3%. At the low end of that band the draw is 4.05. The guard was not
+    broken and was not fed the wrong domain -- it was fed the right domain at a precision too
+    coarse for the question, and returned the comfortable side of its own uncertainty.
+
+    Returns a list so build() can extend unconditionally, and so the selftest can call the real
+    predicate rather than a second copy of the arithmetic.
+    """
+    rel = SUPPLY_RELATIVE_ERROR.get(name)
+    if not rel:
+        return []
+    point = rows * SEQ / pool_tok
+    worst = rows * SEQ / (pool_tok * (1 - rel))
+    if not (point <= EPOCH_SOFT_CEILING < worst):
+        return []
+    return [
+        f"{name}: {point:.5f} epochs is UNDER the {EPOCH_SOFT_CEILING}-epoch line, but the "
+        f"supply is known to +/-{rel * 100:.1f}% and at the low end the draw is {worst:.2f}. The "
+        f"verdict flips inside the error bar, so this is not a pass -- it is a guard reporting "
+        f"on a number too coarse to decide with. Get the exact token count, or cut the weight "
+        f"until the WHOLE band clears."
+    ]
 
 
 def _allocation():
@@ -445,21 +478,10 @@ def build(code_tokens):
                 f"line (ds.muennighoff_four_epoch). Past 4 epochs repeated tokens stop paying and "
                 f"this weight is buying re-reads, not information."
             )
-        # A PASS the supply is not precise enough to support is not a pass. Widen the draw by the
-        # supply's own error bar; if the ceiling verdict flips inside that band, the guard has no
-        # opinion and must say so instead of returning the comfortable side of it.
-        rel = SUPPLY_RELATIVE_ERROR.get(name)
-        if rel:
-            worst = runtime * SEQ / (pool_tok * (1 - rel))
-            if runtime * SEQ / pool_tok <= EPOCH_SOFT_CEILING < worst:
-                warnings.append(
-                    f"{name}: {runtime * SEQ / pool_tok:.5f} epochs is UNDER the "
-                    f"{EPOCH_SOFT_CEILING}-epoch line, but the supply is known to +/-{rel * 100:.1f}% "
-                    f"and at the low end the draw is {worst:.2f}. The verdict flips inside the error "
-                    f"bar, so this is not a pass -- it is a guard reporting on a number too coarse "
-                    f"to decide with. Get the exact token count, or cut the weight until the WHOLE "
-                    f"band clears."
-                )
+        # A PASS the supply is not precise enough to support is not a pass -- see
+        # _band_warning. Called, not inlined, so the selftest exercises this code and not a
+        # second copy of the same arithmetic.
+        warnings.extend(_band_warning(name, runtime, pool_tok))
         total_rows_used += runtime
         domains[name] = {
             "weight": w,
@@ -659,46 +681,65 @@ def selftest():
     print("  8 section-6 refusal fires on the withdrawn text, passes every shipped "
           "justification and a within-role claim")
 
-    # 9. the error-band refusal. A supply known to 2sf cannot decide a verdict that flips inside
-    #    its own error bar, and the shipped chat_qa was exactly there: 3.99996 epochs -- a PASS,
-    #    four parts in 100,000 under the line, from a number carrying +/-1.3%. The point estimate
-    #    was on the right side of the ceiling by less than the ceiling could resolve.
+    # 9. the error-band refusal, on its OWN fixture. This is the case that shipped: chat_qa at a
+    #    hand-typed 0.76% drew 3.99996 epochs -- a PASS, four parts in 100,000 under the line,
+    #    from a supply given to two significant figures (+/-1.3%). At the low end of that band
+    #    the draw is 4.05. The point estimate was on the right side of the ceiling by less than
+    #    the ceiling could resolve.
     #
-    #    Two directions, because "it does not warn now" is what the wiki_chat ceiling also said.
-    #    First: force the weight back to the hand-typed 0.0076 and the band refusal MUST fire --
-    #    this is the real configuration that shipped, not an invented one. Second: with the
-    #    derived weight the whole band clears, so the pass is a pass at BOTH ends of the supply.
-    rel = SUPPLY_RELATIVE_ERROR["chat_qa"]
-    hand_typed_rows = int(ROWS * 0.0076)
-    assert hand_typed_rows * SEQ / SUPPLY["chat_qa"] <= EPOCH_SOFT_CEILING, (
-        "check 9 assumes the hand-typed weight PASSED the point-estimate ceiling; if it now "
-        "fails outright the band refusal is not what is being tested"
-    )
-    assert hand_typed_rows * SEQ / (SUPPLY["chat_qa"] * (1 - rel)) > EPOCH_SOFT_CEILING, (
-        "the hand-typed 0.0076 must cross the line at the low end of the supply -- that is the "
-        "defect this check exists for"
+    #    The fixture is planted rather than read from SUPPLY because 3b has since measured the
+    #    exact integers and SUPPLY_RELATIVE_ERROR is empty. A check keyed to the live values
+    #    would have gone red the moment the defect was FIXED -- which is testing the defect, not
+    #    the guard. Check 7 had exactly this shape earlier today and was rewritten for it.
+    saved_sup, saved_err = dict(SUPPLY), dict(SUPPLY_RELATIVE_ERROR)
+    SUPPLY["chat_qa"] = 38_000_000          # what 2sf reporting gave us
+    SUPPLY_RELATIVE_ERROR["chat_qa"] = 0.5 / 38.0
+    try:
+        rel = SUPPLY_RELATIVE_ERROR["chat_qa"]
+        hand_typed_rows = int(ROWS * 0.0076)
+        assert hand_typed_rows * SEQ / SUPPLY["chat_qa"] <= EPOCH_SOFT_CEILING, (
+            "check 9 assumes the hand-typed weight PASSED the point-estimate ceiling; if it now "
+            "fails outright the band refusal is not what is being tested"
+        )
+        assert hand_typed_rows * SEQ / (SUPPLY["chat_qa"] * (1 - rel)) > EPOCH_SOFT_CEILING, (
+            "the hand-typed 0.0076 must cross the line at the low end of the supply -- that is "
+            "the defect this check exists for"
+        )
+        # the derived weight, on that same imprecise supply, must clear the WHOLE band
+        rows = int(ROWS * _ceiling_weight("chat_qa"))
+        assert rows * SEQ / (SUPPLY["chat_qa"] * (1 - rel)) <= EPOCH_SOFT_CEILING, (
+            f"derived weight draws {rows * SEQ / (SUPPLY['chat_qa'] * (1 - rel)):.4f} epochs at "
+            f"the low end -- the band must clear, not just the point estimate"
+        )
+        assert rows < hand_typed_rows, "clearing the band has to cost something, or it is a no-op"
+        # and the WARNING must fire on the shipped-at-the-time configuration, not just the
+        # arithmetic above: the refusal reaches a reader through build()'s warnings, or not at
+        # all. Calls the real predicate, not a restatement of it.
+        warns = _band_warning("chat_qa", hand_typed_rows, SUPPLY["chat_qa"])
+        assert warns and "error bar" in warns[0], f"band refusal did not fire: {warns}"
+        # and it must NOT fire on the derived weight, whose whole band clears
+        assert not _band_warning("chat_qa", rows, SUPPLY["chat_qa"]), (
+            "the band refusal fires on a weight that clears at both ends -- it would then refuse "
+            "every capped domain forever, which is a guard nobody can act on"
+        )
+    finally:
+        SUPPLY.clear(); SUPPLY.update(saved_sup)
+        SUPPLY_RELATIVE_ERROR.clear(); SUPPLY_RELATIVE_ERROR.update(saved_err)
+    # With the exact integers now in hand, every capped domain clears on its own terms and the
+    # derivation uses the whole sharp ceiling -- no error bar left to be conservative about.
+    assert not SUPPLY_RELATIVE_ERROR, (
+        "SUPPLY_RELATIVE_ERROR should be empty now that 3b measured exact counts; a stale entry "
+        "silently costs weight"
     )
     for name in SUPPLY_CAPPED:
         rows = int(ROWS * _ceiling_weight(name))
-        low = SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0))
-        assert rows * SEQ / low <= EPOCH_SOFT_CEILING, (
-            f"{name}: derived weight draws {rows * SEQ / low:.4f} epochs at the low end of its "
-            f"supply -- the band must clear, not just the point estimate"
+        draw = rows * SEQ / SUPPLY[name]
+        assert draw <= EPOCH_SOFT_CEILING, f"{name}: {draw:.6f} epochs overshoots the ceiling"
+        assert (rows + 1) * SEQ / SUPPLY[name] > EPOCH_SOFT_CEILING, (
+            f"{name}: one more row still fits, so the sharp ceiling is leaving rows unused"
         )
-    # and with an EXACT supply the derivation returns to the sharp ceiling, using all of it
-    saved_err = dict(SUPPLY_RELATIVE_ERROR)
-    SUPPLY_RELATIVE_ERROR.clear()
-    try:
-        sharp = int(ROWS * _ceiling_weight("chat_qa"))
-        assert sharp >= hand_typed_rows, (
-            f"with no error bar the derivation must not be more conservative than the hand-typed "
-            f"weight: {sharp} rows vs {hand_typed_rows}"
-        )
-        assert sharp * SEQ / SUPPLY["chat_qa"] <= EPOCH_SOFT_CEILING, "sharp ceiling overshot"
-    finally:
-        SUPPLY_RELATIVE_ERROR.update(saved_err)
     print("  9 the hand-typed 0.0076 fails the error-band ceiling it passed on the point "
-          "estimate; the derived weight clears at both ends and reverts to sharp when exact")
+          "estimate; with exact counts the derivation uses the sharp ceiling to the last row")
 
     print("selftest: 9/9")
     return 0
