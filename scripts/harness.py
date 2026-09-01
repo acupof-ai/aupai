@@ -4584,9 +4584,14 @@ def check_dirty_aged(root):
 
 
 def _broken_dirty_aged():
-    """A real git repo with one tracked file dirty for 2 hours. No git identity is
-    configured, so the commit fails and the file sits staged-and-modified ("AM" in
-    porcelain) -- the exact shape the old line[:2].strip() parser missed on CI."""
+    """A real git repo with one tracked file dirty for longer than _AGE_HOURS. No git
+    identity is configured, so the commit fails and the file sits staged-and-modified
+    ("AM" in porcelain) -- the exact shape the old line[:2].strip() parser missed on CI.
+
+    The age is DERIVED from the check's constant, not written beside it. A hardcoded
+    2 hours was aged under the old 30-minute threshold and is not under 6 hours: raising
+    the threshold turned this broken world green and the selftest caught it, which is
+    the one thing a hand-written age cannot promise to keep doing."""
     import shutil
     import subprocess as sp
 
@@ -4598,7 +4603,7 @@ def _broken_dirty_aged():
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("\n# dirty\n")
-    old = time.time() - 2 * 60 * 60
+    old = time.time() - (_AGE_HOURS * 3600 + 600)
     os.utime(os.path.join(d, "AGENTS.md"), (old, old))
     return d
 
@@ -6307,7 +6312,11 @@ def _demo():
     # not a tree, so no world it builds can hold a repo file.
     synthetic_world = {"no_oversized_blob", "env_importable"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
-    warn_only = {"untracked_aged", "dirty_aged"}
+    # review_present joined them on 2026-09-01 when the user cut the blocking: a check
+    # with no FAIL tier cannot have a FAILing broken world, and demanding one would
+    # force the tier back. What its world must still prove is that removing a review row
+    # is VISIBLE -- WARN is the signal, silence is the defect.
+    warn_only = {"untracked_aged", "dirty_aged", "review_present"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
