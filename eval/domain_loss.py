@@ -25,6 +25,26 @@ sys.path.insert(0, ROOT)
 
 from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 
+# WRONG SINCE THE SHUFFLE, corrected 2026-09-01 (tilerl measured it, de fixed it).
+#
+# The reasoning below was right when it was written: train.py held out the HEAD of each
+# domain, so the head of the first shard was unseen by construction. train.py now
+# SHUFFLES the packed sequences (Random(Cfg.seed).shuffle) and then slices val off the
+# shuffled order, so the head of the alphabetically-first raw shard has no relationship
+# to val at all. Measured on cot: 0.625% of the docs this scored land in val, against
+# 0.587% expected by pure chance -- indistinguishable. Every per-domain nat this has
+# produced, in every readout, is TRAINING-SET loss.
+#
+# The old comment is kept above the fix because it explains why nobody caught it: the
+# rationale is sound, internally consistent, and cites a real line. It stopped being
+# true when a different file changed, and a comment cannot notice that.
+#
+# The fix reconstructs val the way train.py does -- through the same token cache, the
+# same seeded shuffle, the same val_frac and val_rows_max -- which is what eval/ppl.py
+# already did with zero callers. Sequences, not raw source lines: the shuffle operates
+# on packed sequences, so there is no way back to "which lines were val".
+#
+# Original reasoning, retained:
 # train.py:1187 holds out the HEAD of each domain -- seqs[:n_val] is validation, seqs[n_val:]
 # is the training pool -- so the head is unseen for EVERY budget by construction. Scoring the
 # tail instead reads the training pool, and reads more of it the larger the budget: at epoch cap
@@ -33,6 +53,24 @@ from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 # report. Score the head.
 HOLDOUT_ROWS = 4000  # source lines read from the first shard, packed then truncated to SEQ_CAP
 SEQ_CAP = 64  # sequences per domain: 64 x 4096 = 262K tokens, enough for +-0.01 nat
+
+
+def val_seqs(domain, tok, cap=SEQ_CAP):
+    """The rows train.py actually holds out for this domain, as packed sequences.
+
+    Goes through train._domain_seqs, so it shares the token cache (and its vocab_id and
+    .srcfp guards) and the seeded shuffle. Returns None when the domain has no shards --
+    absent is not zero, and a domain that cannot be scored must be skipped rather than
+    contribute a number.
+    """
+    import train
+
+    seqs = train._domain_seqs(domain, tok, True, False)
+    seqs = seqs[0] if train.Cfg.fone else seqs
+    if seqs is None or not len(seqs):
+        return None
+    n_val = min(max(1, int(len(seqs) * train.Cfg.val_frac)), train.Cfg.val_rows_max)
+    return seqs[:n_val][:cap].long()
 
 
 def domain_files(mix_path, root):
@@ -80,18 +118,36 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
     n = min(n, cap)
     x = torch.tensor(ids[: n * seq], dtype=torch.long).view(n, seq).to(device)
     y = torch.tensor(ids[1 : n * seq + 1], dtype=torch.long).view(n, seq).to(device)
+    return _ce(model, x, y, bs)
+
+
+def domain_loss_seqs(model, rows, device, bs=4):
+    """Mean next-token CE over rows train.py actually held out (from val_seqs).
+
+    Separate from domain_loss because the input is different in kind: val_seqs returns
+    sequences train.py already packed and shuffled, and re-deriving text from them to
+    feed the packing path would reorder exactly what makes them val.
+    """
+    if rows is None or not len(rows):
+        return None, 0
+    x = rows[:, :-1].to(device)
+    y = rows[:, 1:].to(device)
+    return _ce(model, x, y, bs)
+
+
+def _ce(model, x, y, bs):
+    """Sum CE over (x, y) in batches; the loss and the token count it averages over."""
     tot = cnt = 0.0
-    for i in range(0, n, bs):
+    for i in range(0, len(x), bs):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
             logits = model(x[i : i + bs])
         if isinstance(logits, tuple):
             logits = logits[0]
-        b = logits.shape[0]
         loss = torch.nn.functional.cross_entropy(
             logits.float().view(-1, logits.shape[-1]), y[i : i + bs].reshape(-1), reduction="sum"
         )
         tot += loss.item()
-        cnt += b * seq
+        cnt += y[i : i + bs].numel()
     return tot / cnt, int(cnt)
 
 

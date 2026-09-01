@@ -36,7 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from domain_loss import HOLDOUT_ROWS, domain_files, domain_loss, head_texts  # noqa: E402
+from domain_loss import domain_loss_seqs, val_seqs  # noqa: E402
 
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
@@ -125,20 +125,37 @@ def read_cfg(ckpt_path):
 
 
 def metric_domain_loss(model, tok, seq, device, mix_path):
-    files = domain_files(mix_path, ROOT)
-    if not files:
-        return None, f"no shards for any domain in {mix_path}"
-    cache = {name: head_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
-    out = {}
-    for name, texts in cache.items():
-        loss, ntok = domain_loss(model, tok, texts, seq, device)
+    """Per-domain loss on the rows train.py actually held out.
+
+    Was the head of each domain's alphabetically-first shard, which stopped being val
+    when train.py started shuffling before slicing: 0.625% of the scored docs landed in
+    val against 0.587% by chance, so every per-domain nat ever recorded here was
+    TRAINING-SET loss (tilerl measured it, 2026-09-01). val_seqs reconstructs val the
+    way train.py builds it -- same cache, same seeded shuffle, same val_frac.
+
+    A domain with no shards is SKIPPED, never scored as zero, and the skip is reported:
+    a mean over a silently smaller set of domains is a different metric wearing the same
+    name.
+    """
+    mix = json.load(open(mix_path, encoding="utf-8"))
+    out, skipped = {}, []
+    for name in mix["domains"]:
+        rows = val_seqs(name, tok)
+        if rows is None:
+            skipped.append(name)
+            continue
+        loss, ntok = domain_loss_seqs(model, rows, device)
         if loss is None:
+            skipped.append(name)
             continue
         out[name] = {"loss": round(loss, 4), "tokens": ntok}
     if not out:
-        return None, "every domain had too few tokens to score"
+        return None, f"no domain had val rows to score ({len(skipped)} skipped: {skipped[:5]})"
     vals = [d["loss"] for d in out.values()]
     out["unweighted_mean"] = round(sum(vals) / len(vals), 4)
+    out["_split"] = "val"  # the record says which split it is: the old numbers were train
+    if skipped:
+        out["_skipped"] = skipped
     return out, None
 
 
