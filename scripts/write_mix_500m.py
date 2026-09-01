@@ -547,6 +547,23 @@ def build(code_tokens):
             "cursor_used_rows": used,
             "cap_covers": used + runtime,
             "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+            # No fingerprint, and that is a STATEMENT, not an omission. launch_gate's corpora
+            # gate pins each domain dir to the bytes the mix was written against by comparing
+            # this to the corpus stamp -- and its old code skipped the comparison when the
+            # field was absent, then printed "fingerprints match". Every mix but
+            # mix_30b_stage2.json carries none, so that GO was routinely a claim about a
+            # check that never ran (found and fixed today, b0).
+            #
+            # This generator cannot fill it honestly: the corpora live on the pod and nothing
+            # here can read their stamps. Writing a placeholder would be worse than leaving
+            # it out; saying WHY it is out is the only version that survives being read by
+            # someone who is about to launch.
+            "fingerprint": None,
+            "fingerprint_source": (
+                "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. "
+                "Fill from each domain's build_corpus_stats.json fingerprint before launch -- "
+                "launch_gate.gate_corpora refuses a null, which is the intended behaviour"
+            ),
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil(({used}+{runtime})/{pool_rows_est}). PROVISIONAL: the pool "
                 f"is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token "

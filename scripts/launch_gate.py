@@ -112,7 +112,17 @@ def gate_corpora(root, mix_path, world):
         except (OSError, ValueError) as e:
             bad.append(f"{name}: stats unreadable ({e})")
             continue
-        if want and got != want:
+        # A domain with no fingerprint in the mix used to fall through `if want and ...`
+        # and land in the GO line "fingerprints match" -- a gate claiming a comparison it
+        # never ran. Every shipped mix except mix_30b_stage2.json carries none, so this
+        # was the normal case, not an edge one (b0, 2026-09-01). Absent provenance is
+        # NO-GO for the same reason gate_epochs_measured refuses a missing
+        # epochs_pool_source: unknown is not clean.
+        if not want:
+            bad.append(f"{name}: mix carries no fingerprint, so nothing pins this dir to "
+                       f"the bytes the mix was written against (corpus stamp says {got})")
+            continue
+        if got != want:
             bad.append(f"{name}: fingerprint {got} != mix's {want}")
         if re.search(r"mix_scale_[\d.]+b", str(spec.get("role", "")) + name):
             bad.append(f"{name}: points at a frozen mix_scale_* pool")
@@ -418,6 +428,38 @@ def selftest():
             state, why = NOGO, f"raised {type(e).__name__}"
         if state == GO:
             bad.append(f"{name} reported GO on its broken world ({why[:60]})")
+
+    # gate_corpora needs a SECOND world. Its broken world above is "the dirs are absent",
+    # which returns NO-GO before the fingerprint comparison is ever reached -- so the gate
+    # passed its selftest for a year with a hole in the branch the selftest never entered.
+    # The hole: `if want and got != want` skipped the check entirely when the mix carried
+    # no fingerprint, and the GO line still read "fingerprints match". Every shipped mix
+    # except mix_30b_stage2.json carries none, so that was the NORMAL case (b0 2026-09-01).
+    #
+    # A gate that asserts a comparison it did not run is worse than one that skips loudly:
+    # the reader is told the thing was verified.
+    fp_world = tempfile.mkdtemp()
+    try:
+        cd = os.path.join(fp_world, "data", "corpus", "fp_probe")
+        os.makedirs(cd)
+        open(os.path.join(cd, "fp_probe_0000.jsonl"), "w").write("{}\n")
+        json.dump({"fingerprint": "deadbeefdeadbeef"},
+                  open(os.path.join(cd, "build_corpus_stats.json"), "w"))
+        mixp = os.path.join(fp_world, "data", "mix_fp_probe.json")
+        base = {"weight": 1.0, "role": "probe", "epochs_pool_source": "token cache"}
+        json.dump({"domains": {"fp_probe": dict(base)}}, open(mixp, "w"))
+        state, why = gate_corpora(fp_world, mixp, 7)
+        if state == GO:
+            bad.append(f"corpora reported GO on a mix with NO fingerprint ({why[:70]})")
+        # and the matching case must still pass, or the fix is just a permanent refusal
+        json.dump({"domains": {"fp_probe": dict(base, fingerprint="deadbeefdeadbeef")}},
+                  open(mixp, "w"))
+        state, why = gate_corpora(fp_world, mixp, 7)
+        if state != GO:
+            bad.append(f"corpora refuses a mix whose fingerprint MATCHES ({why[:70]})")
+    finally:
+        shutil.rmtree(fp_world, ignore_errors=True)
+
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
     print(f"launch_gate selftest OK: {len(GATES)} gates, each FAILs on a damaged real artifact")

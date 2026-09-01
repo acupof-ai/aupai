@@ -44,6 +44,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 1288592,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 1 = ceil((0+1288592)/1584774). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "en_c4_stage2": {
@@ -60,6 +62,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 792979,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 2 = ceil((0+792979)/581696). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "cot": {
@@ -76,6 +80,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 396490,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 5 = ceil((0+396490)/98504). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "textbook_30b": {
@@ -92,6 +98,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 495612,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 2 = ceil((0+495612)/388021). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "chatml": {
@@ -108,6 +116,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 38081,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 5 = ceil((0+38081)/9043). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "chat_qa": {
@@ -124,6 +134,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 37292,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 5 = ceil((0+37292)/8854). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "zh_web": {
@@ -140,6 +152,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 148684,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 1 = ceil((0+148684)/5192316). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "code_py_starcoder": {
@@ -156,6 +170,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 1608623,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 1 = ceil((0+1608623)/2155117.0). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "code_py_rp1t": {
@@ -172,6 +188,8 @@
    "cursor_used_rows": 0,
    "cap_covers": 76459,
    "epochs_pool_source": "ESTIMATED from the stamp; no token cache exists yet",
+   "fingerprint": null,
+   "fingerprint_source": "NOT READ: the corpus dirs are on the pod, so this host cannot hash them. Fill from each domain's build_corpus_stats.json fingerprint before launch -- launch_gate.gate_corpora refuses a null, which is the intended behaviour",
    "epoch_cap_note": "epochs 1 = ceil((0+76459)/97671). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   }
  }
