@@ -15,9 +15,11 @@ not "has it ever passed".
 
     python3 scripts/launch_tests.py --selftest
 """
+import contextlib
+import hashlib
+import io
 import json
 import os
-import hashlib
 import sys
 import time
 
@@ -32,6 +34,23 @@ def _sha256(p):
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _launch_shape():
+    """The gate's expectation, imported rather than restated.
+
+    One definition, in launch_gate.py:191. A second copy here would drift, and the drift
+    would be invisible in exactly the case this warning exists for -- the two would
+    disagree while each looked internally consistent. Imported lazily: launch_gate is the
+    heavier module and record_launch_test is called from tests that do not otherwise need
+    it. This reads the expectation to WARN about a mismatch, never to choose a shape to
+    run at -- a test that picked its shape from the gate's expectation would make the
+    gate's comparison a tautology, and launch_gate.py:727's deliberately-wrong world
+    could not be constructed at all (de).
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from launch_gate import LAUNCH_SHAPE
+    return LAUNCH_SHAPE
 
 
 def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=ROOT):
@@ -66,10 +85,22 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
     with open(path, "w", encoding="utf-8") as f:
         json.dump(rows, f, indent=1, sort_keys=True)
         f.write("\n")
+    # Say it here, where the run just happened, rather than leaving it for the gate to
+    # discover later. A pass at the wrong shape is a real pass -- the run happened, the
+    # test succeeded -- so the row is still written; what it must not do is look like
+    # evidence for the launch. NOT a refusal to write: "ran at another shape" and "never
+    # ran" need different actions, and collapsing them loses the only fact that says
+    # which (de). Measured 2026-09-02: an e2e pass at layers 12 was carried toward the
+    # gate as though it cleared arch_tests, and nothing between the run and the gate said
+    # otherwise.
+    off = {k: (v, shape.get(k)) for k, v in _launch_shape().items() if shape.get(k) != v}
+    warn = ("  [NOT THE LAUNCH SHAPE: " +
+            ", ".join(f"{k} is {got}, launch is {want}" for k, (want, got) in sorted(off.items()))
+            + "]") if off else ""
     print(f"  recorded {key}: {result} at "
           f"d{shape['d']} L{shape['layers']} "
           f"{'real kernel' if real_kernel else 'STAND-IN kernel'} -> "
-          f"{os.path.relpath(path, root)}")
+          f"{os.path.relpath(path, root)}{warn}")
     return rows[key]
 
 
@@ -117,7 +148,36 @@ def _selftest():
             pass
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("launch_tests selftest OK: what the writer writes is what the gate accepts")
+    # The warning is the point of the last change, so it has a case: a row recorded at
+    # the wrong depth must SAY so on the line the runner sees, and must still be written.
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "scripts"))
+        for n in ARCH_TESTS:
+            with open(os.path.join(d, n), "w") as f:
+                f.write("")
+        p2 = os.path.join(d, "runs", "launch_tests.json")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass",
+                               dict(LAUNCH_SHAPE, layers=12), real_kernel=True,
+                               path=p2, root=d)
+        out = buf.getvalue()
+        assert "NOT THE LAUNCH SHAPE" in out, f"a wrong-shape pass said nothing: {out!r}"
+        assert "layers is 12, launch is 32" in out, f"the warning does not name it: {out!r}"
+        with open(p2, encoding="utf-8") as f:
+            assert json.load(f)[ARCH_TESTS[0]]["shape"]["layers"] == 12, (
+                "the row was not written -- 'ran at another shape' must not be erased "
+                "into 'never ran'")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                               real_kernel=True, path=p2, root=d)
+        assert "NOT THE LAUNCH SHAPE" not in buf.getvalue(), (
+            "the launch shape itself was flagged; a warning that fires on the good case "
+            "gets ignored on the bad one")
+
+    print("launch_tests selftest OK: what the writer writes is what the gate accepts, "
+          "and a wrong-shape pass says so")
     return 0
 
 
