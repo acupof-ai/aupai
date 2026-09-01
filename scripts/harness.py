@@ -160,6 +160,11 @@ _MANUAL_RULES = {
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
+    "A PID is only meaningful in the namespace that read it.":
+        "no artifact records which namespace a pid was read in -- the host and the "
+        "container both print bare integers and both are correct. A check would need "
+        "to know the reader's view, which is not in the repo. The enforceable half is "
+        "already covered: pod_drift and lane_respected key on GPU UUID and cmdline",
     "A kill is not finished until nvidia-smi says the card is free":
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
@@ -210,7 +215,16 @@ _MANUAL_RULES = {
 #: what makes the mistake invisible, and precisely why it cannot be checked. The
 #: companion rule in the same commit went the other way, to check_selftests_are_gated,
 #: so the pair is +1 manual and +1 checked rather than +2 manual.
-_MANUAL_BASELINE = 24
+#: 24 -> 25 on 2026-09-01: "a PID is only meaningful in the namespace that read it".
+#: The host and the container print bare integers for the same process and both are
+#: correct; nothing in a command or a log records which view produced one. A check
+#: would have to know the reader's namespace, which is not a repo fact. The
+#: consequences ARE checked -- pod_drift and lane_respected key on GPU UUID and
+#: cmdline, the two identities that survive the boundary -- but the discipline of
+#: reading and killing in the same view is not, and a guard on [ -d /proc/<pid> ]
+#: written across it evaluated false on its first pass and launched a job onto a
+#: running probe's cards.
+_MANUAL_BASELINE = 25
 
 
 def _norm_rule(text):
@@ -799,7 +813,11 @@ def _pod_ps_rows(timeout=20):
         return None, f"pod unreachable: {type(e).__name__}"
     if r.returncode != 0:
         return None, f"pod ps exit {r.returncode}"
-    # stat read and dropped: a zombie holds a pid slot but runs nothing.
+    # stat read and dropped: a zombie holds a pid slot but runs nothing. It holds no card
+    # either, so judging one as "unsupervised training" reports a card as busy when it is
+    # free -- which it did on 2026-09-01, immediately after a correct kill, the third false
+    # positive from this check in one day. Filtered here rather than in the caller so the
+    # 5-tuple every consumer indexes stays the same shape.
     rows = []
     for ln in r.stdout.splitlines():
         parts = ln.split(None, 5)
@@ -836,13 +854,16 @@ def check_no_foreground_pod_training(root):
     if not rows:
         return PASS, "no training process on the pod"
     # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. Its session leader may be a zombie ([bash]
-    # <defunct>, sid alive but absent from ps output), so a leader-presence test reads
-    # a correctly detached trainer as unsupervised -- this refused a commit while
-    # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
-    # this check).
-    detached = {x[0] for x in rows if x[4].startswith(("/usr/bin/python3", "python3"))
-                and ppid.get(x[0]) == "1"}
+    # survived, which IS what setsid buys. This is the reliable signal; a
+    # leader-presence test is not, because the leader may be a zombie ([bash]
+    # <defunct>) and zombies are filtered out of rows upstream -- so its correctly
+    # detached children read as leaderless. No command-name restriction: run_ddp.sh is
+    # a bash launcher adopted by init and is exactly as detached as its python ranks
+    # (2026-09-01, this check's second and fourth false positives, both this shape).
+    detached = {x[0] for x in rows if ppid.get(x[0]) == "1"}
+    # A rank whose parent is itself detached is under that same setsid session.
+    for _ in range(4):  # ponytail: 4 passes covers launcher->torchrun->rank; deeper trees do not occur here
+        detached |= {x[0] for x in rows if ppid.get(x[0]) in detached}
     attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
     # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
     leaders = {x[1] for x in rows if x[0] == x[1]}
@@ -8844,10 +8865,6 @@ def main():
         return cmd_clean(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "launch-gate":
-        import launch_gate
-        sys.argv = [sys.argv[0]] + sys.argv[2:]
-        return launch_gate.main()
     if len(sys.argv) > 1 and sys.argv[1] == "launch":
         return cmd_launch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "kill":

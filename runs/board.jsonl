@@ -1,0 +1,17 @@
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "shape_recipe", "kind": "open", "text": "500M 的最终配方:batch/accum/lr_scale/grad_ckpt,每个值都要有出处", "artifact": "", "owner": "tilerl"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "corpus", "kind": "open", "text": "20B 的语料:Python 抓取、对话双格式渲染、每个域的实测 token 数", "artifact": "", "owner": "3b"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "mix", "kind": "open", "text": "mix_500m.json:按实测数生成,解开 UNTRUSTED_SUPPLY 门禁", "artifact": "", "owner": "b0"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "instruments", "kind": "open", "text": "L2 评测尺子 + 老模型的诚实基线,提取率优先、带对照", "artifact": "", "owner": "de"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "launch_gate", "kind": "open", "text": "launch-gate 九项全绿", "artifact": "", "owner": "e1"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "supervision", "kind": "open", "text": "三天长跑的看护:中止判据、心跳、恢复路径", "artifact": "", "owner": "UNASSIGNED"}
+{"ts": "2026-09-01 17:08", "who": "fb", "topic": "readout", "kind": "open", "text": "500M 的读数设计:最早在第几个 token 能判断它行不行", "artifact": "", "owner": "UNASSIGNED"}
+{"ts": "2026-09-01 17:08", "who": "lessons-3c", "topic": "supervision", "kind": "find", "text": "中止阈值 0.15 = 1.02σ,不是偏松:相邻60步块中位数之差 sd 0.1476(另一 run 独立测得 0.141)。20B 共 362 次比较,期望第 6 次即误杀,约 0.33B token", "artifact": "runs/ab_shipment.log"}
+{"ts": "2026-09-01 17:08", "who": "lessons-3c", "topic": "supervision", "kind": "find", "text": "日志的 tok/s 分辨率 1K,稳态 49 点只有 4 个不同值;RunLog 不写时钟,看护器必须自己打时间戳", "artifact": "train.py:2587"}
+{"ts": "2026-09-01 17:08", "who": "lessons-3c", "topic": "supervision", "kind": "find", "text": "rank 掉队不能立判据:只有 rank 0 打印,日志无 per-rank 量", "artifact": "train.py"}
+{"ts": "2026-09-01 17:08", "who": "lessons-3c", "topic": "supervision", "kind": "find", "text": "harness.py:7850 已解决'没信号 vs 一切正常',写 stalled_suspected NOT failed 并标明是 PROXY;要加的是心跳,不是重做", "artifact": "scripts/harness.py:7850"}
+{"ts": "2026-09-01 17:08", "who": "lessons-3c", "topic": "supervision", "kind": "find", "text": "run-end 保存是纯权重无 opt 无 step(train.py:2630);带优化器的是 :2530 的 .stepN。save_every 1000 ≈ 30 分钟,滚动留 3 个", "artifact": "train.py:2630"}
+{"ts": "2026-09-01 17:08", "who": "e1", "topic": "launch_gate", "kind": "block", "text": "launch-gate 说 NO-GO 5/9:recipe_provenance 无文件、memory world=7 未实测、pod 上 harness check 7 FAIL;arch_tests 和 cards 是 UNKNOWN 不是 NO-GO", "artifact": "scripts/harness.py"}
+{"ts": "2026-09-01 17:08", "who": "tilerl", "topic": "shape_recipe", "kind": "find", "text": "编译后单卡 max batch 32(63.95 GiB);未编译是 16。之前所有显存/步时数都是未编译测的", "artifact": "runs/t66"}
+{"ts": "2026-09-01 17:08", "who": "tilerl", "topic": "shape_recipe", "kind": "find", "text": "同配方深度对照:L=12 23.7 TFLOPS/GPU,L=32 43.5——深的更高效 1.84 倍", "artifact": "facts/efficiency.json"}
+{"ts": "2026-09-01 17:08", "who": "de", "topic": "instruments", "kind": "find", "text": "预训练语料无 ChatML(每域上界<0.075%);历史所有 base 生成分数测的是提示词", "artifact": "docs/lessons/"}
+{"ts": "2026-09-01 17:08", "who": "3b", "topic": "corpus", "kind": "find", "text": "starcoder Python 约 88.5 亿(2/59 分片外推)+ rp1t 4.2 亿实测;截断检查干净", "artifact": "runs/"}

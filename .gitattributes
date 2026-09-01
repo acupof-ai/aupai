@@ -7,3 +7,4 @@ runs/tasks.jsonl merge=union
 runs/retro.jsonl merge=union
 runs/review.jsonl merge=union
 runs/milestones.jsonl merge=union
+runs/board.jsonl merge=union
