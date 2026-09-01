@@ -194,7 +194,9 @@ Per-domain weight, epoch cap, anneal weight. `train.py` builds the schedule and 
 
 ### Chat format
 
-ChatML, owned by `scripts/loader.format_prompt / format_example / format_history`. The pretraining chat domain renders in ChatML too, so SFT does not teach the format from nothing. `scripts/test_sft_pack.py` checks the loss mask directly (CI): every masked span ends at `assistant\n`, the turn terminator is supervised.
+ChatML, owned by `scripts/loader.format_prompt / format_example / format_history`. **The pretraining corpus contains no ChatML at all** — `<|im_start|>` occurs 0 times in 168,000 rows sampled across all 42 domains, and the chat domain is `问：/答：` plain text in 4000 of 4000 rows (de, 2026-09-01). The line that stood here said the opposite and was believed for weeks.
+
+The consequence is not that ChatML is under-taught. `eval/code_zh.py` and `eval/math_zh.py` prompt through `format_prompt`, so **every generative number ever taken on a base checkpoint handed the model a prefix that appears nowhere in its training data**, then scored the continuation — the model repeats the input or drifts to web boilerplate, which is what an unseen prefix produces. Same checkpoint, continuation prompt with one demo: 94.4% of generations contain `def ` against 0.3% under ChatML. **Base generative zeros taken before this date measure response to an unseen prefix, not capability.** Rules that follow: base evals prompt in continuation format, which is in-distribution; a base eval may not introduce a token sequence absent from pretraining; SFT does teach ChatML from nothing, so the SFT-side loss-mask check below is unaffected. `scripts/test_sft_pack.py` checks the loss mask directly (CI): every masked span ends at `assistant\n`, the turn terminator is supervised.
 
 ### Synthetic data
 
