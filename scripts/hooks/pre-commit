@@ -146,7 +146,26 @@ def main():
     # Run from the SELFTEST_FILES map rather than probing for the flag: a script that
     # exits 0 on an unknown argument would otherwise register as a pass.
     t0 = time.time()
-    SELFTEST_FILES = {"eval/readout_30b.py", "scripts/doc_numbers_check.py"}
+    # Every file carrying its own --selftest, split by whether it can run at commit
+    # time on a dev box. check_selftests_are_gated requires the union to be complete,
+    # so a new selftest cannot be silently unguarded; NEEDS_DATA records WHY each one
+    # is not run here, because "not in the map" and "cannot run here" are different
+    # facts and only the second is acceptable.
+    SELFTEST_FILES = {
+        "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
+        "scripts/restartability_audit.py", "scripts/shape_audit.py",
+        "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
+        "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
+        "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
+        "probes/t62_copy_rate.py", "probes/t63_self_repeat.py", "probes/t65_gold_bpb.py",
+    }
+    NEEDS_DATA = {
+        "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
+        "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
+        "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
+        "scripts/harness.py": "the hook already runs `harness check`, which is its selftest",
+    }
     for f in sorted(SELFTEST_FILES & set(staged("AM"))):
         r = subprocess.run([sys.executable, f, "--selftest"], capture_output=True, text=True)
         if r.returncode != 0:
