@@ -1,6 +1,6 @@
 ---
 question: pod 上 214 个不在 main 的 .py 文件，每一个是什么
-status: inventory only -- nothing deleted, nothing moved
+status: recorded
 source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: a file's
   bytes are hashed as a git blob and looked up with `git cat-file --batch-check` against
   the integration tree. That answers "were these exact bytes ever recorded by git", with
@@ -9,6 +9,8 @@ source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: 
 ---
 
 # pod 独有的 214 个 .py：分类，不是清理
+
+**本文只做分类：一个字节都没删，一个文件都没移。**
 
 **交付物是分类和证据，一个字节都没删。** fb 的硬边界二：先知道每个文件是什么，再动它。
 
