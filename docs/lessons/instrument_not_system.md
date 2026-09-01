@@ -133,7 +133,7 @@ rule's own window the event fires. b0 wrote a usage restriction in §6 of a
 document and violated its generalisation in §1 of the same document, minutes
 apart.
 
-Two people, six instances, each within an hour of writing down why not to. **The
+Two authors, six instances, each within an hour of writing down why not to. **The
 discipline does not transfer from the case you derived it on to the next case
 with the same shape.** That is the argument for a mechanical test over a
 principle: a test is checkable against a specific number, a principle is
@@ -153,6 +153,24 @@ That is a cross-product, not a judgement, and it is exactly how 44 caught b0's �
 — not by understanding the rule better, but by applying b0's own §6 to b0's own
 §1. **An author holding a rule is not the same as the rule being applied.** Both
 tests are reviewable artifacts; neither substitutes for the other.
+
+### A guard that passes is only informative where it could have failed
+
+The mirror image of the broken join, and the reason a green board is weaker
+evidence than it looks. Today's guard failures were **input-specific**:
+
+- the readout's head guard fired correctly on renamed roles, and would have
+  stayed silent on identical ones — it was never exercised where it could not
+  have fired;
+- the budget gate never fired at all, because both callers omitted
+  `--actual-tokens`/`--paired-tokens`. It is silently absent on exactly the
+  retention pairs where it is the correct check.
+
+So "the checks passed" means *the checks that could fire on this input found
+nothing*. That is real and it is much narrower than "the instrument works". When
+reading a clean result, ask which guards were even reachable on that input — and
+if the answer is unknown, the clean result is not yet evidence of soundness
+(b0, on how to read the 22B milestone table).
 
 ## When a qualifier has to be a restriction
 
