@@ -2048,6 +2048,49 @@
    "uncertainty": "EVERY NUMBER HERE IS world=1. DDP gradient buckets and NCCL staging add to peak, so the world=7 figure will be HIGHER, not lower, and batch 16 is not certified until measured at world=7 -- that measurement is pending cards clearing. Max batch is the largest POWER OF TWO that fits, because the search doubles; 24 was not measured. MFU is derived (6ND against a 148 TFLOPS vendor peak), labelled as such, and inherits whatever error 6ND carries for a hybrid KDA/attention model.",
    "boundary": "A CONSTANT MEASURED AT ONE DEPTH AND CARRIED TO ANOTHER. The 2.4x was correct at 12 layers and wrong by more than 2x in the losing direction at 32. Third instance the same afternoon of a depth-fitted constant that did not survive the depth change (with b0's warmup 20 and momentum 150), each found only by measuring rather than inheriting. ALSO A METHOD NOTE THAT NEARLY COST THE RESULT: the first version of this probe called model(idx, targets=tgt) and backwarded the return, which silently drops the fused LM head -- the largest single consumer in the step. It would have produced a confident throughput number for a model we do not run. Same class as eff.fp8_weight_byte_cache measuring a disabled path.",
    "status": "measured"
+  },
+  {
+   "id": "eff.depth_is_not_the_mfu_gap",
+   "claim": "why 500M at L=32 reads 11-12% MFU when the 206M/L=12 run read 32%, and whether depth is the cause",
+   "value": "DEPTH IS NOT THE CAUSE. The one-variable control settles it: d1024 L=12 in the PROBE's own configuration reaches 16.0% MFU, not 32%. Depth from 12 to 32 costs at most ~2 MFU points (16.0 -> 14.2); the configuration costs the rest. Measured single-card, everything identical but depth -- d1024, batch 16, grad_ckpt ON, compiled, AttnRes Full, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup: L=12, 206.1M params, 3419.6 ms/step, 19,165 tok/s, 14.84 GiB peak, MFU 16.0%. WHY THE 32% WAS NEVER THE BASELINE: the 206M production run was world=7, batch 32, NO checkpointing. That configuration is UNREACHABLE at L=32 -- batch 32 without checkpointing does not fit on an 80 GiB card at this depth (compiled no-ckpt fits batch 8 at 74.66 GiB). So depth does not cost throughput through one term; it forces a chain. L=32 forbids batch 32 without checkpointing, checkpointing adds a second forward that 6ND does not count (~+33% real work, so MFU understates by ~25%), and the smaller batch amortises each kernel launch over less work. Those are not competing explanations to rank -- the depth decision selected all three at once, so 'what does depth cost' and 'what does our depth recipe cost' are the same question and only the second is answerable (fb). COMPILED BATCH CEILINGS, which corrected an earlier eager measurement that had been ruled from: grad_ckpt ON fits batch 32 at 63.95 GiB, OFF fits batch 8 at 74.66 GiB. Eager was 16 and 4 -- both wrong by the same factor in the same direction, so grad_ckpt's 4x batch advantage survived compilation intact and the ruling it supported did not need revisiting.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py, candidates S (d1024 L32) and S12 (d1024 L12), GPU1/GPU2; shape500_probe.log for the world=3 reading",
+   "config": {
+    "task": "500M depth shape, fb P0",
+    "control": "S12 = d1024 L12 h8 ffn3072, 206.1M -- identical to S but for depth",
+    "s12": {
+     "ms_per_step": 3419.6,
+     "tok_s": 19165,
+     "peak_GiB": 14.84,
+     "mfu_pct": 16.0,
+     "batch": 16,
+     "grad_ckpt": true,
+     "compiled": true,
+     "world": 1,
+     "accum": 1
+    },
+    "compiled_max_batch_ckpt_on": 32,
+    "compiled_max_batch_ckpt_on_peak_GiB": 63.95,
+    "compiled_max_batch_ckpt_off": 8,
+    "compiled_max_batch_ckpt_off_peak_GiB": 74.66,
+    "eager_max_batch_ckpt_on": 16,
+    "eager_max_batch_ckpt_off": 4,
+    "probe_world3_b16": {
+     "mfu_pct": 11,
+     "tok_s_per_gpu": 11000,
+     "flat_from_step": 20
+    },
+    "production_206M_reference": {
+     "mfu_pct": 32,
+     "world": 7,
+     "batch": 32,
+     "grad_ckpt": false,
+     "note": "NOT a baseline -- a different model in a configuration L=32 cannot reach"
+    }
+   },
+   "uncertainty": "The depth control is world=1, so the probe's world=3 allreduce cost is absent from BOTH arms -- it cancels for the depth comparison but not against the 206M run's 32%. The L=32 matched row at batch 16 compiled was still running when this was written; the 14.2% quoted for L=32 is the eager batch-4 figure and will be replaced by the matched pair. MFU is derived (6ND against a 148 TFLOPS vendor peak) and inherits whatever error 6ND carries for a hybrid KDA/attention model, plus the checkpointing undercount named above. b32 at world=7 is NOT certified: 63.95 GiB at world=1 leaves ~16 GiB before DDP buckets and NCCL staging, and that margin has been refused four times pending a world=3 measurement.",
+   "boundary": "AN EAGER MEASUREMENT WAS RULED FROM. Every batch and memory figure I reported before this entry was uncompiled while Cfg.compile is True (train.py:206), so it described an execution path we do not run -- max batch 16 became 32, max batch 4 became 8. The loss path had been checked and fixed (the fused LM head was missing from the first harness); the EXECUTION path had not. Verifying one axis of fidelity and treating the model as verified is the same class as eff.fp8_weight_byte_cache measuring a disabled path. ALSO: the 32% was treated as a baseline for hours by two sessions before anyone asked whether the configuration behind it was reachable at the new shape. A reference number is not a baseline unless its configuration is available to the thing being compared.",
+   "status": "measured"
   }
  ]
 }

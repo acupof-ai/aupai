@@ -29,17 +29,23 @@ CANDIDATES = {  # d, layers; heads := d//128, ffn fixed 3072 for the ruled shape
     "B": (1152, 30),
     "C": (1024, 36),
     "S": (1024, 32),   # the ruled shape: d1024 L32 heads8 ffn3072
+    # The depth control: identical to S but L=12. The 200M run's 32% MFU is NOT a baseline --
+    # different model, different world/batch/ckpt. This is the only comparison on the board
+    # where depth is the sole variable (fb, 2026-09-01).
+    "S12": (1024, 12),
 }
 WARMUP = 50  # fb: steady-state window past step 50
+_AR_BLOCKS = [0]  # set by --ar-blocks; 0 is Full, the pinned default
 
 
 def configure(name, seq, batch):
     d, layers = CANDIDATES[name]
     T.Cfg.d, T.Cfg.layers = d, layers
     T.Cfg.heads = d // 128            # head_dim pinned at 128 by the FlashKDA kernel
-    T.Cfg.ffn_hidden = 3072 if name == "S" else 3 * d
+    T.Cfg.ffn_hidden = 3072 if name.startswith("S") else 3 * d
     T.Cfg.seq, T.Cfg.batch = seq, batch
     T.Cfg.attn_res = True             # ON in every measurement, per the order
+    T.Cfg.attn_res_blocks = _AR_BLOCKS[0]  # 0 = Full (every sublayer a source); N = N blocks
     T.Cfg.fone = False
     return d, layers
 
@@ -55,12 +61,24 @@ def params_of(model):
     return n
 
 
-def run(name, seq, batch, steps, grad_ckpt=False):
+def _apply_compile():
+    """train.py:2317-2330's dynamo settings. AttnRes Full builds 1 + 2*layers graphs, so the
+    cache limit has to move with depth or compile silently falls back to eager from graph 65
+    on -- which is the same eager-vs-compiled confusion this function exists to remove."""
+    need = max(64, 2 * T.Cfg.layers + 8)
+    torch._dynamo.config.cache_size_limit = need
+    torch._dynamo.config.accumulated_cache_size_limit = 4 * need
+
+
+def run(name, seq, batch, steps, grad_ckpt=False, compile_=True):
     d, layers = configure(name, seq, batch)
     T.Cfg.grad_ckpt = grad_ckpt
     torch.manual_seed(0)
     dev = "cuda"
     model = T.HybridLM(T.Cfg).to(dev).to(torch.bfloat16)
+    if compile_:
+        _apply_compile()
+        model = torch.compile(model, dynamic=False)
     opts = T.build_optimizers(model, T.Cfg)
     nparams = params_of(model)
     torch.cuda.reset_peak_memory_stats()
@@ -100,7 +118,8 @@ def run(name, seq, batch, steps, grad_ckpt=False):
     # MFU: 6ND is the standard train-FLOPs approximation (fwd+bwd), H20 bf16 peak 148 TFLOPS.
     flops = 6 * nparams * tok
     return {"candidate": name, "d": d, "layers": layers, "heads": d // 128,
-            "grad_ckpt": grad_ckpt, "world": 1, "accum": 1,
+            "grad_ckpt": grad_ckpt, "compiled": compile_, "attn_res_blocks": _AR_BLOCKS[0],
+            "world": 1, "accum": 1,
             "params_M": round(nparams / 1e6, 1), "seq": seq, "batch": batch,
             "steps_timed": steps, "warmup": WARMUP,
             "ms_per_step": round(dt / steps * 1000, 1),
@@ -109,7 +128,7 @@ def run(name, seq, batch, steps, grad_ckpt=False):
             "mfu_pct_derived": round(100 * flops / dt / 148e12, 1)}
 
 
-def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False):
+def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False, compile_=True):
     """Largest batch that fits: double until OOM. Measured, not estimated.
 
     Doubling only -- it reports the largest POWER OF TWO that fits, which is what a batch
@@ -124,6 +143,9 @@ def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False):
             torch.cuda.reset_peak_memory_stats()
             torch.manual_seed(0)
             m = T.HybridLM(T.Cfg).to("cuda").to(torch.bfloat16)
+            if compile_:
+                _apply_compile()
+                m = torch.compile(m, dynamic=False)
             o = T.build_optimizers(m, T.Cfg)
             x = torch.randint(0, T.Cfg.vocab, (b, seq + 1), device="cuda")
             ii, tt = x[:, :-1].contiguous(), x[:, 1:].contiguous()
@@ -156,10 +178,18 @@ if __name__ == "__main__":
     ap.add_argument("--steps", type=int, default=200)
     ap.add_argument("--find-batch", action="store_true")
     ap.add_argument("--grad-ckpt", dest="grad_ckpt", action="store_true")
+    # Default ON: Cfg.compile is True, so an eager measurement describes a model we do not run.
+    ap.add_argument("--eager", action="store_true", help="measure uncompiled (NOT the shipped path)")
+    ap.add_argument("--ar-blocks", type=int, default=0,
+                    help="attn_res_blocks: 0=Full (pinned default), N=N blocks. Full source "
+                         "reads are O(L^2) -- 2145 at L=32 vs 353 at blocks=8 (b0 t71).")
     a = ap.parse_args()
+    _AR_BLOCKS[0] = a.ar_blocks
     if a.find_batch:
-        got, pk = find_batch(a.candidate, a.seq, grad_ckpt=a.grad_ckpt)
+        got, pk = find_batch(a.candidate, a.seq, grad_ckpt=a.grad_ckpt, compile_=not a.eager)
         print(json.dumps({"candidate": a.candidate, "seq": a.seq, "grad_ckpt": a.grad_ckpt,
+                          "compiled": not a.eager, "attn_res_blocks": a.ar_blocks,
                           "largest_batch_that_fits": got, "peak_mem_GiB_at_that_batch": pk}))
     else:
-        print(json.dumps(run(a.candidate, a.seq, a.batch, a.steps, a.grad_ckpt)))
+        print(json.dumps(run(a.candidate, a.seq, a.batch, a.steps, a.grad_ckpt,
+                             compile_=not a.eager)))
