@@ -80,31 +80,80 @@ OBJECTIVE = {
                                 "0.424B, the smallest of the eight, so at 9% of 20B it draws 4.24 "
                                 "epochs and crosses Muennighoff's 4-epoch line while 8% draws 3.77. "
                                 "Held at the largest value that stays under. WHAT THIS WEIGHT IS "
-                                "NOT: it is not derived from cot's value to the objective, because "
-                                "nothing measures that. The 16B readout's 0.1180 nat/B is a "
-                                "within-role rate and docs/standards/training_loop.md section 6 -- "
-                                "which I wrote -- forbids using nat/B for cross-role allocation, "
-                                "since transfer inflates every such rate by an unmeasured and "
-                                "role-dependent amount. An earlier draft of this file justified "
-                                "moving a point from cot to textbook as 'same cost, 4.3x the "
-                                "measured rate'. That is exactly the forbidden comparison and it is "
-                                "withdrawn."),
+                                "NOT: it is not derived from this role's value to the objective, "
+                                "because nothing measures that. An earlier draft moved a point out "
+                                "of here by comparing two roles' per-token nat/B, which "
+                                "docs/standards/training_loop.md section 6 -- which I wrote -- "
+                                "forbids: transfer inflates every such rate by an unmeasured, "
+                                "role-dependent amount, so the ordering across roles is not known "
+                                "to hold. That sentence is withdrawn, and _refuse_cross_role_rate "
+                                "now refuses it mechanically. The withdrawn numbers are not quoted "
+                                "here because the refusal cannot tell a citation from a quotation "
+                                "of one, and it should not try -- an exemption for 'but I am "
+                                "disowning it' is the hole the next violation goes through."),
     "textbook_30b":      (0.10, "textbook/instructional. The Phi-1 'textbook quality' arm: curated "
                                 "instructional prose is the ingredient that paper credits, and this "
                                 "is the closest domain we have to it. 10% rather than 9% because "
                                 "cot's ceiling released a point and textbook is the domain the "
                                 "OBJECTIVE ranks next -- not because its measured nat/B is higher, "
                                 "which would be the cross-role comparison section 6 forbids."),
-    "chatml":            (0.03, "ChatML-rendered chat. The corpus contains effectively none "
-                                "(<0.075% per domain) and the 200M round showed SFT installs only "
-                                "the canon it is fed -- relying on SFT to teach a prefix the base "
-                                "has never seen is a bet this project already lost once."),
-    "zh_web":            (0.03, "Chinese web, capped by the objective. Was 10.955%; the target is "
-                                "an English-language code model and zh_web's 0.1657 nat/B was the "
-                                "third-lowest of seven. 21.3B of supply is now irrelevant -- this "
-                                "is the clearest single case of composition following the target "
-                                "rather than the warehouse."),
+    "chatml":            (None, "ChatML-rendered chat. The corpus contains effectively none "
+                                  "(<0.075% per domain) and the 200M round showed SFT installs "
+                                  "only the canon it is fed -- relying on SFT to teach a prefix "
+                                  "the base has never seen is a bet this project already lost "
+                                  "once. WEIGHT IS None BECAUSE IT IS NOT A JUDGEMENT: this "
+                                  "domain is SUPPLY_CAPPED, so _ceiling_weight derives it from "
+                                  "the measured supply and the 4-epoch line. A literal here "
+                                  "would be a second copy of that arithmetic, free to drift from "
+                                  "it -- and it did: the typed 0.0076 was sized for a supply of "
+                                  "exactly 38.0M and survived the switch to a 2sf measurement "
+                                  "that made it a coin flip. The cap is deliberate rather than "
+                                  "regrettable: the job is to make a FORMAT in-distribution, and "
+                                  "formats are cheap to learn. Fifteen epochs would buy "
+                                  "memorisation of 39M tokens of QA content we do not want "
+                                  "memorised, in order to teach a markup (fb 2026-09-01). Too "
+                                  "few epochs is measurable and fixable next run; 15 is baked "
+                                  "into the weights."),
+    "chat_qa":           (None, "The same QA rows in plain 问：/答： form, rendered into its own "
+                                  "directory. Two renders of one source, so each domain holds "
+                                  "~0.038B and each is capped independently -- the pair is ~1.5% "
+                                  "combined, not each. Weight is None for the same reason as "
+                                  "chatml: derived, not chosen. It lands 0.01pt below chatml "
+                                  "purely because the plain render is slightly smaller than the "
+                                  "marked-up one. NAMED chat_qa, not chat: data/corpus/chat/ is "
+                                  "named by all six data/mix_scale_*.json ladder mixes (weight "
+                                  "0.011768), so a re-render written there would put new bytes "
+                                  "under a name six committed mixes fingerprint. The LADDER_DIRS "
+                                  "guard refused `chat` when fb's ruling reached the generator "
+                                  "-- the ruling and the constraint collided, and the guard is "
+                                  "the reason anyone noticed."),
+    "zh_web":            (0.03, "Chinese web, capped by the objective. Was 10.955%, and that "
+                                "number came from the warehouse: 21.3B sitting on disk. The target "
+                                "is an English-language code model, and Chinese web prose is not "
+                                "an ingredient of it -- 3% is kept only so the tokenizer's Chinese "
+                                "side does not go cold. The first draft also cited this role's "
+                                "own-token nat/B and its rank among the seven; the rank is struck, "
+                                "because ranking roles by nat/B is the section-6 comparison, and "
+                                "the weight does not need it: the objective already excludes "
+                                "Chinese prose. 21.3B of supply is now irrelevant -- the clearest "
+                                "single case of composition following the target, not the stock."),
 }
+
+# Domains whose weight is a SUPPLY CEILING rather than an objective share. Their weight is
+# whatever keeps them at EPOCH_SOFT_CEILING epochs, and the remainder is renormalised across
+# the objective domains in proportion -- which preserves every ratio the objective states and
+# asserts nothing new. Without this the freed points vanish into the allocator's rounding: the
+# chat cap released 1.48pt and the weights simply summed to 0.9852, which the largest-remainder
+# allocator absorbed silently. Freed weight is a composition decision, not a rounding one.
+SUPPLY_CAPPED = {"chat_qa", "chatml"}
+assert all(OBJECTIVE[n][0] is None for n in SUPPLY_CAPPED), (
+    "a supply-capped domain must carry weight None -- _ceiling_weight derives it, and a literal "
+    "beside the derivation is a second source of truth that will drift from it"
+)
+assert all(w is not None for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_CAPPED), (
+    "an objective-weighted domain needs its weight stated; None means 'derived' and nothing "
+    "derives these"
+)
 
 # Parse-verified Python recovered from the code_rp1t stamp: 209,668 of 3,747,157 rows survive
 # ast.parse, for 420,646,182 tokens. We already paid a full-corpus pass to establish this, and
@@ -122,21 +171,29 @@ SUPPLY = {
     "cot":               424_056_227,   # stamped, fp 388496b76ed9bf88
     "textbook_30b":    1_610_210_330,   # stamped, fp 3f237c5191cb8571
     "zh_web":         21_293_403_945,   # stamped, fp a0d44fc44a289d60
-    # UNTRUSTED, and the guard cannot see it. This was taken from wiki_chat's stamp
-    # (b864d32f9452a7c8), but wiki_chat is a MERGED wiki+chat domain (12 shards) and the
-    # QA-format chat rows are only data/corpus/chat/ -- 160,414 rows, 0.038B tokens measured
-    # by 3b. Using a merged domain's stamp for one of its subsets overstates supply ~7x.
+    # MEASURED by 3b: data/corpus/chat/ is 160,414 rows = 0.038B, full-domain tokenize.
+    # fb ruled both renders of those SAME rows, into two directories. chatml re-renders the
+    # same 160,414 rows with ChatML markup, so it is slightly LARGER than the plain form:
+    # 0.039B measured (3b, 2026-09-01), the delta being special tokens.
     #
-    # Why this is worse than a wrong number: at 0.284B the 4-epoch warning stays SILENT
-    # (2.11 epochs). If the true supply is 0.038B the real draw is 15.79 epochs at this
-    # weight -- a 0.038B corpus read sixteen times, far past Muennighoff's line, with the
-    # ceiling reporting nothing. The guard is not broken; it was fed a supply figure that
-    # was never measured for the domain it names. A check is only as true as its input.
+    # Not 0.076B for either: that figure is the two summed, and no single domain contains it.
+    # I introduced the 0.076B in my own message to fb and it came back in the ruling as a 1.52%
+    # per-domain ceiling, which is 8.00 epochs, double the cap. The correct ceiling is 0.76%
+    # each, 1.52% combined.
     #
-    # Awaiting fb's ruling on the render SOURCE (chat-only vs merged wiki_chat) and 3b's
-    # measured token count. Do not launch on this number. If the ruling is chat-only, the
-    # weight has to fall to <=1.52% (the 4-epoch ceiling at 0.076B) rather than hold 3%.
-    "chatml":            283_903_257,   # SEE ABOVE -- wrong domain, replace before launch
+    # The number this replaced was wiki_chat's stamp, 0.284B, ~7x over: wiki_chat is a MERGED
+    # wiki+chat domain and the QA-format rows are only a subset of it. At 0.284B the 4-epoch
+    # ceiling read 2.11 and said nothing; at the true 0.038B the draw would have been 15.79
+    # epochs. The ceiling was never broken -- it was fed a supply figure that had never been
+    # measured for the domain it names.
+    #
+    # PRECISION IS LOAD-BEARING HERE, unlike the other seven. Both figures sit within a few
+    # percent of the 4-epoch line, so a rounding error in the stamp moves the cap by a whole
+    # epoch -- 0.038B lands on 4.000 exactly. 3b reported two significant figures; the exact
+    # integers are requested and these are placeholders until they land. Every other domain in
+    # this table has slack measured in whole epochs and does not care.
+    "chatml":             39_000_000,   # ChatML render of data/corpus/chat/, 2sf
+    "chat_qa":            38_000_000,   # plain 问：/答： render, same 160,414 rows, 2sf
 }
 
 # Supply figures that are NOT measurements of the domain they name. A comment saying so is
@@ -144,17 +201,24 @@ SUPPLY = {
 # refusal flag and print a loud line, so the number cannot be used by someone who did not read
 # the comment above it. Empty is the normal state; a name here blocks launch until measured.
 UNTRUSTED_SUPPLY = {
-    "chatml": ("taken from wiki_chat's stamp, but wiki_chat is a MERGED wiki+chat domain and the "
-               "QA-format rows are only data/corpus/chat/ (160,414 rows, 0.038B, measured by 3b) "
-               "-- overstates supply ~7x, and at the true figure this domain draws 15.79 epochs "
-               "while the 4-epoch ceiling stays silent. Awaiting fb's ruling on the render source "
-               "and 3b's measured count."),
+    # Empty is the normal state. chatml/chat_qa cleared once 3b measured data/corpus/chat/ at
+    # 0.038B (full-domain tokenize, 160,414 rows) and fb ruled the render source; the entry is
+    # kept as a comment rather than deleted so the next person can see the shape of a real one.
 }
 
 # Directories named by any data/mix_scale_*.json. Writing new corpus into one of these
 # falsifies the ladder's fingerprint; an A/B was correctly stopped at startup over exactly
 # this two days ago. The writer refuses a domain whose name collides.
 LADDER_DIRS = {"chat", "code", "en", "math", "textbook", "web_hq", "wiki"}
+
+# Relative uncertainty of each supply figure. Absent = exact (a stamp is an integer count).
+# 3b reported chatml/chat_qa to two significant figures, so 38_000_000 means 38.0M +/- 0.5M.
+# This exists because a fractional-epoch verdict is only as sharp as the supply behind it:
+# chat_qa's shipped draw is 3.99996 epochs, four parts in 100,000 under the line, on a number
+# whose own error bar is 1.3%. The ceiling PASSES and cannot know it is passing -- the same
+# shape as the wiki_chat defect, where a guard was silent because its input was wrong. There
+# the input named the wrong domain; here it names the right domain at the wrong precision.
+SUPPLY_RELATIVE_ERROR = {"chatml": 0.5 / 39.0, "chat_qa": 0.5 / 38.0}
 
 # Muennighoff's repeat-decay constant: R_D* = 15.4, and <=4 epochs costs ~nothing
 # (ds.muennighoff_four_epoch: 8.7B at 4 epochs finishes +0.5% val vs single-epoch).
@@ -175,6 +239,99 @@ def _weight_for_rows(rows, total_rows):
     raise AssertionError(f"no weight up to 12dp yields {rows} rows")
 
 
+# The 16B readout's per-role nat/B figures. Present here ONLY so the refusal below can
+# recognise them; nothing in this file may use them to set a weight.
+NAT_PER_B = {
+    "wiki_chat": 2.8541, "textbook_30b": 0.5024, "zh_web": 0.1657, "cot": 0.1180,
+    "code_rp1t": 0.0162,
+}
+
+# Prose names the roles the way a person does. The first version of the refusal keyed on the
+# NAT_PER_B keys alone, so the real withdrawn sentence -- which says "textbook", not
+# "textbook_30b" -- matched one role instead of two and walked straight through the gate. The
+# guard was written against the violation and still did not catch it, because the violation is
+# written in English and the guard was reading identifiers.
+ROLE_ALIASES = {
+    "wiki_chat": ("wiki_chat", "wiki"),
+    "textbook_30b": ("textbook_30b", "textbook"),
+    "zh_web": ("zh_web", "chinese web"),
+    "cot": ("cot", "chain-of-thought"),
+    "code_rp1t": ("code_rp1t", "code"),
+}
+assert set(ROLE_ALIASES) == set(NAT_PER_B), "every rate needs its prose names"
+
+
+def _refuse_cross_role_rate(name, why):
+    """Refuse a weight justified by comparing per-role nat/B across roles.
+
+    docs/standards/training_loop.md section 6 bans this: nat/B divides a role's dloss by its
+    OWN tokens, so transfer inflates every figure by an unmeasured, role-dependent amount and
+    the cross-role ordering cannot be assumed to survive. I wrote section 6. I then violated it
+    twice in two days -- once inside the document that states the ban (caught by 44), and once
+    justifying this file's cot->textbook move as "same cost, 4.3x the measured rate".
+
+    Twice by the author is data about the rule, not about the author: the numbers are sitting
+    right there, they answer the question being asked, and the ban lives in a paragraph nobody
+    re-reads while allocating. A rule that must be remembered has already failed; a rule that
+    refuses at the point of use cannot fail that way (fb 2026-09-01).
+
+    The predicate is deliberately crude -- two or more roles named in one justification, next to
+    a nat/B figure. Crude in the direction of false positives: a legitimate mention has to be
+    reworded, which costs a sentence, while a missed violation costs a weight nobody can defend.
+    Match on PROSE names (ROLE_ALIASES), not the domain keys: the sentence that had to be
+    withdrawn says "textbook", and a guard reading identifiers scores that as one role.
+    """
+    low = why.lower()
+    mentioned = sorted({r for r, names in ROLE_ALIASES.items() if any(n in low for n in names)})
+    rates = [f"{v:.4f}" for v in NAT_PER_B.values() if f"{v:.4f}" in why]
+    if len(mentioned) >= 2 and rates:
+        raise SystemExit(
+            f"REFUSING: {name}'s justification cites nat/B ({', '.join(rates)}) while naming "
+            f"{len(mentioned)} roles ({', '.join(mentioned)}). training_loop.md section 6 bans "
+            "nat/B for cross-role allocation -- transfer inflates each role's rate by an "
+            "unmeasured, role-dependent amount, so the ordering is not known to hold. Justify "
+            "the weight from the objective, or from a within-role change over time."
+        )
+
+
+def _allocation():
+    """The objective's weights with supply-capped domains held fixed and the rest renormalised.
+
+    One function because the selftest needs the same numbers build() uses, and a selftest that
+    recomputes an allocation is testing its own copy of the logic -- which is how a check drifts
+    from the thing it checks. `code` appears here as a single objective; _code_split divides its
+    rows afterwards.
+    """
+    capped = {n: _ceiling_weight(n) for n in OBJECTIVE if n in SUPPLY_CAPPED}
+    free = {n: w for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_CAPPED}
+    free["code"] = CODE_TOTAL
+    scale = (1.0 - sum(capped.values())) / sum(free.values())
+    return dict({n: w * scale for n, w in free.items()}, **capped)
+
+
+def _ceiling_weight(name):
+    """The largest weight for a supply-capped domain whose WHOLE error band clears the ceiling.
+
+    A supply-capped weight is not a judgement, it is arithmetic on the supply -- so it should be
+    computed from the supply rather than typed in beside it. The hand-typed 0.0076 was correct
+    for a supply of exactly 38.0M and wrong for the 2sf figure actually measured: it drew 3.99996
+    epochs, four parts in 100,000 under the line, from a number carrying +/-1.3%. That is not a
+    pass, it is a coin flip that landed well.
+
+    So the band, not the point estimate, has to clear: size the weight against the LOW end of the
+    supply. It costs 0.01pt of chat_qa and buys a verdict that does not depend on which way a
+    rounding went. When 3b lands the exact integers, SUPPLY_RELATIVE_ERROR loses the entry and
+    this returns to the sharp ceiling with no other edit.
+    """
+    rel = SUPPLY_RELATIVE_ERROR.get(name, 0.0)
+    max_rows = int(EPOCH_SOFT_CEILING * SUPPLY[name] * (1 - rel)) // SEQ
+    # _weight_for_rows, not a floor at some chosen precision: build_mix draws int(ROWS*weight),
+    # so the weight has to hit max_rows EXACTLY. Flooring to 4dp instead cost 488 rows -- a
+    # rounding loss dressed as a safety margin, and indistinguishable from one by anyone reading
+    # the shipped weight.
+    return _weight_for_rows(max_rows, ROWS)[0]
+
+
 def _rows_for_weights(weights, total_rows):
     """Allocate total_rows across weights by LARGEST REMAINDER, so the parts sum to the whole.
 
@@ -186,8 +343,15 @@ def _rows_for_weights(weights, total_rows):
     """
     floors = {n: int(total_rows * w) for n, w in weights.items()}
     short = total_rows - sum(floors.values())
-    order = sorted(weights, key=lambda n: total_rows * weights[n] - floors[n], reverse=True)
-    for n in order[:short]:
+    # Never hand a leftover row to a SUPPLY-CAPPED domain. Its weight was computed to land
+    # exactly on the epoch ceiling, so one extra row puts it over: chatml drew 37,110 rows for
+    # 4.000067 epochs and tripped its own ceiling warning. The overshoot is 6.7e-5 of an epoch
+    # and utterly harmless -- and that is the trap, because the cheap fix is a tolerance in the
+    # comparison, which silences a guard to hide a rounding bug instead of not creating one.
+    eligible = [n for n in sorted(weights, key=lambda n: total_rows * weights[n] - floors[n],
+                                  reverse=True) if n not in SUPPLY_CAPPED]
+    assert len(eligible) >= short, f"cannot place {short} leftover rows outside capped domains"
+    for n in eligible[:short]:
         floors[n] += 1
     assert sum(floors.values()) == total_rows, floors
     return floors
@@ -231,7 +395,7 @@ def build(code_tokens):
     # Derived here, not cached at module level: the ladder-dir selftest mutates OBJECTIVE,
     # and a module-level snapshot would not follow it -- the refusal then dies on a
     # KeyError instead of its own assertion, which is a guard failing for the wrong reason.
-    alloc = dict({n: w for n, (w, _) in OBJECTIVE.items()}, code=CODE_TOTAL)
+    alloc = _allocation()
     rows_by_name = _rows_for_weights(alloc, ROWS)
     code = _code_split(code_tokens, rows_by_name.pop("code"))
     spec = {n: (rows_by_name[n], why) for n, (_, why) in OBJECTIVE.items()}
@@ -249,6 +413,7 @@ def build(code_tokens):
     domains, warnings = {}, []
     total_rows_used = 0
     for name, (rows, why) in spec.items():
+        _refuse_cross_role_rate(name, why)
         assert name not in LADDER_DIRS, (
             f"{name} collides with a directory named by data/mix_scale_*.json; a new corpus there "
             "falsifies the ladder's fingerprint"
@@ -274,12 +439,27 @@ def build(code_tokens):
             f"{name}: pool {pool_rows_est} x epochs {epochs} < used {used} + want {runtime}; "
             "build_mix would clamp the draw and silently under-train this domain"
         )
-        if epochs > EPOCH_SOFT_CEILING:
+        if runtime * SEQ / pool_tok > EPOCH_SOFT_CEILING:
             warnings.append(
                 f"{name}: {runtime * SEQ / pool_tok:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
                 f"line (ds.muennighoff_four_epoch). Past 4 epochs repeated tokens stop paying and "
                 f"this weight is buying re-reads, not information."
             )
+        # A PASS the supply is not precise enough to support is not a pass. Widen the draw by the
+        # supply's own error bar; if the ceiling verdict flips inside that band, the guard has no
+        # opinion and must say so instead of returning the comfortable side of it.
+        rel = SUPPLY_RELATIVE_ERROR.get(name)
+        if rel:
+            worst = runtime * SEQ / (pool_tok * (1 - rel))
+            if runtime * SEQ / pool_tok <= EPOCH_SOFT_CEILING < worst:
+                warnings.append(
+                    f"{name}: {runtime * SEQ / pool_tok:.5f} epochs is UNDER the "
+                    f"{EPOCH_SOFT_CEILING}-epoch line, but the supply is known to +/-{rel * 100:.1f}% "
+                    f"and at the low end the draw is {worst:.2f}. The verdict flips inside the error "
+                    f"bar, so this is not a pass -- it is a guard reporting on a number too coarse "
+                    f"to decide with. Get the exact token count, or cut the weight until the WHOLE "
+                    f"band clears."
+                )
         total_rows_used += runtime
         domains[name] = {
             "weight": w,
@@ -347,7 +527,7 @@ def selftest():
     #    only enough decimals to hit its own row target, so the weights sum to 0.34 +- 2e-8 by
     #    construction. Testing the encoding instead of the quantity would fail on rounding that
     #    cannot move a single row.
-    code_rows_target = _rows_for_weights(dict({n: w for n, (w, _) in OBJECTIVE.items()}, code=CODE_TOTAL), ROWS)["code"]
+    code_rows_target = _rows_for_weights(_allocation(), ROWS)["code"]
     for cs in (3.0e9, 6.0e9):
         m = build(cs)["domains"]
         got = (m["code_py_starcoder"]["rows_from_weight_at_runtime"]
@@ -437,24 +617,90 @@ def selftest():
 
     # 7. the untrusted-supply gate fires, and an empty set does not block. Written because a
     #    COMMENT saying "this number is wrong" is not a gate: the mix still builds and still
-    #    launches, and the reader who needed the warning is the one who did not read it. The
-    #    live case is chatml -- its supply came from wiki_chat's merged stamp, so the domain
-    #    draws 15.79 epochs while the 4-epoch ceiling reports nothing. The ceiling is fine; it
-    #    was fed a supply figure never measured for the domain it names.
-    m = build(8.85e9)
-    assert "chatml" in m["_launch_blocked"], (
-        f"chatml's untrusted supply is not blocking launch: {m['_launch_blocked']}"
+    #    launches, and the reader who needed the warning is the one who did not read it.
+    #
+    #    The gate uses its OWN fixture rather than the live UNTRUSTED_SUPPLY. The first version
+    #    asserted chatml was blocked, which was true while chatml's supply was wrong and became
+    #    a failing test the moment 3b measured it -- a test that goes red when a defect is FIXED
+    #    is testing the defect, not the guard. The live set is empty now and must stay testable.
+    assert not build(8.85e9)["_launch_blocked"], (
+        f"nothing should be blocked once every supply is measured: "
+        f"{build(8.85e9)['_launch_blocked']}"
     )
-    assert m["_untrusted_supply"]["chatml"], "blocked without a reason is not a usable refusal"
     saved = dict(UNTRUSTED_SUPPLY)
-    UNTRUSTED_SUPPLY.clear()
+    UNTRUSTED_SUPPLY["cot"] = "fixture: pretend cot's supply came from the wrong domain"
     try:
-        assert not build(8.85e9)["_launch_blocked"], "an empty untrusted set must not block"
+        m = build(8.85e9)
+        assert m["_launch_blocked"] == ["cot"], f"gate did not fire: {m['_launch_blocked']}"
+        assert m["_untrusted_supply"]["cot"], "blocked without a reason is not a usable refusal"
     finally:
+        UNTRUSTED_SUPPLY.clear()
         UNTRUSTED_SUPPLY.update(saved)
-    print(f"  7 untrusted-supply gate blocks launch on {sorted(saved)}, and clears when empty")
+    assert not build(8.85e9)["_launch_blocked"], "the fixture leaked into the real set"
+    print("  7 untrusted-supply gate blocks launch on a planted entry, clears when empty, "
+          "and the live set is empty (chatml resolved by measurement)")
 
-    print("selftest: 7/7")
+    # 8. the section-6 refusal fires on the EXACT text I shipped and had to withdraw, and does
+    #    not fire on the replacement. A guard whose failing case is invented tests the guard
+    #    against the author's imagination; this one is tested against the real violation.
+    real_violation = ("textbook/instructional. The 16B readout measured it at 0.5024 nat/B "
+                      "own-token, second-steepest of the seven and 30x cot's rate. Took cot's "
+                      "released point for exactly that reason: same cost, 4.3x the measured rate.")
+    try:
+        _refuse_cross_role_rate("textbook_30b", real_violation)
+        raise AssertionError("the withdrawn justification passed the section-6 refusal")
+    except SystemExit as e:
+        assert "section 6" in str(e) and "0.5024" in str(e), str(e)
+    # the shipped replacement, which justifies from the objective, must pass
+    for name, (_, why) in OBJECTIVE.items():
+        _refuse_cross_role_rate(name, why)
+    # and a within-role claim over time is legitimate: one role, its own rate
+    _refuse_cross_role_rate("cot", "cot's 0.1180 nat/B at 16B, to be re-read at 22B")
+    print("  8 section-6 refusal fires on the withdrawn text, passes every shipped "
+          "justification and a within-role claim")
+
+    # 9. the error-band refusal. A supply known to 2sf cannot decide a verdict that flips inside
+    #    its own error bar, and the shipped chat_qa was exactly there: 3.99996 epochs -- a PASS,
+    #    four parts in 100,000 under the line, from a number carrying +/-1.3%. The point estimate
+    #    was on the right side of the ceiling by less than the ceiling could resolve.
+    #
+    #    Two directions, because "it does not warn now" is what the wiki_chat ceiling also said.
+    #    First: force the weight back to the hand-typed 0.0076 and the band refusal MUST fire --
+    #    this is the real configuration that shipped, not an invented one. Second: with the
+    #    derived weight the whole band clears, so the pass is a pass at BOTH ends of the supply.
+    rel = SUPPLY_RELATIVE_ERROR["chat_qa"]
+    hand_typed_rows = int(ROWS * 0.0076)
+    assert hand_typed_rows * SEQ / SUPPLY["chat_qa"] <= EPOCH_SOFT_CEILING, (
+        "check 9 assumes the hand-typed weight PASSED the point-estimate ceiling; if it now "
+        "fails outright the band refusal is not what is being tested"
+    )
+    assert hand_typed_rows * SEQ / (SUPPLY["chat_qa"] * (1 - rel)) > EPOCH_SOFT_CEILING, (
+        "the hand-typed 0.0076 must cross the line at the low end of the supply -- that is the "
+        "defect this check exists for"
+    )
+    for name in SUPPLY_CAPPED:
+        rows = int(ROWS * _ceiling_weight(name))
+        low = SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0))
+        assert rows * SEQ / low <= EPOCH_SOFT_CEILING, (
+            f"{name}: derived weight draws {rows * SEQ / low:.4f} epochs at the low end of its "
+            f"supply -- the band must clear, not just the point estimate"
+        )
+    # and with an EXACT supply the derivation returns to the sharp ceiling, using all of it
+    saved_err = dict(SUPPLY_RELATIVE_ERROR)
+    SUPPLY_RELATIVE_ERROR.clear()
+    try:
+        sharp = int(ROWS * _ceiling_weight("chat_qa"))
+        assert sharp >= hand_typed_rows, (
+            f"with no error bar the derivation must not be more conservative than the hand-typed "
+            f"weight: {sharp} rows vs {hand_typed_rows}"
+        )
+        assert sharp * SEQ / SUPPLY["chat_qa"] <= EPOCH_SOFT_CEILING, "sharp ceiling overshot"
+    finally:
+        SUPPLY_RELATIVE_ERROR.update(saved_err)
+    print("  9 the hand-typed 0.0076 fails the error-band ceiling it passed on the point "
+          "estimate; the derived weight clears at both ends and reverts to sharp when exact")
+
+    print("selftest: 9/9")
     return 0
 
 
