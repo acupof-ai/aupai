@@ -148,9 +148,11 @@ Three rules, in cost order:
    `head.weight[vocab_real:vocab].zero_()` deliberately spans the padding — and
    it reads almost identically to the line that got it wrong.
 3. **Where a docstring names one and the code asserts the other, the docstring
-   is a defect.** `scripts/loader.py:84` says "size == cfg.vocab" and the code
-   asserts `vocab_real`. The code is correct; the sentence a reader trusts is
-   not.
+   is a defect.** `scripts/loader.py:84` said "size == cfg.vocab" while the code
+   asserted `vocab_real`. The code was correct; the sentence a reader trusts was
+   not — **and a comment asserting an invariant is checked by nothing.** That is
+   why the rule here is to *assert* the invariant rather than describe it: an
+   assert fails when it stops being true, and a sentence goes on being read.
 
 **Why this belongs on this page.** The general form is the same as an
 off-config trace or a too-small shift window: *a quantity that is correct for
