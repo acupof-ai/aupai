@@ -16,7 +16,7 @@ source: fb P0 tasking 2026-09-01; all numbers fetched 2026-09-01 from primary so
 | SmolLM2-135M | 135M | 2T | FineWeb-Edu + DCLM + The Stack + 新过滤集(未公开分数) | 教育/精选 |
 | SmolLM-135M/360M | 135M/360M | 600B | FineWeb-Edu 220B(87%)+ Cosmopedia v2 28B(11%,Mixtral 合成教科书)+ Python-Edu 4B(2%) | 98% 教育过滤+合成 |
 | Phi-1.5 | 1.3B | 30B(150B seen,~5 epoch) | 80% 合成教科书(20K 主题)+ 20% phi-1 数据(6B 过滤代码 web + 1B 合成) | ~80% 合成,~20% 过滤 web |
-| Phi-1 | 1.3B | 7B | 6B web(The Stack Python + StackOverflow,35B→6B 教育过滤,留 17%)+ <1B 合成教科书 + 180M 合成练习 | 86% 教育过滤 web,14% 合成 |
+| Phi-1 | 1.3B | 7B | 6B web(The Stack Python + StackOverflow,35B→6B;过滤器 = GPT-4 标注 ~100K 样本训练的随机森林,教育价值轴,**从不执行代码**——见 phi1_recipe.md;17% 为算术推导)+ <1B GPT-3.5 合成教科书 + <180M 合成练习(879.5K 题) | 86% 教育过滤 web,14% 合成 |
 | MobileLLM-125M/350M | 125M/350M | 1T | 论文未披露 | — |
 | TinyStories | <10M | ~1–2B | 100% 合成(GPT-3.5/4 生成儿童故事,~2M 篇) | 100% 合成 |
 
@@ -53,7 +53,7 @@ fb 记忆核验:**SmolLM-135M @ 600B token、FineWeb-Edu + Cosmopedia——token
 1. **原始抓取占比 89% 与所有有能力的配方相反**。每个有能力的点都做了重过滤(教育分类器)或合成。DCLM(7B 级)的结论也是 model-based filtering 是关键。这是方向性结论,不是量级结论。
 2. **若预算锁死 22B**:唯一证据是 Phi-1.5 路线——合成教科书为主(它 80%),且参数要涨到 1.3B 级。200M/22B 出推理在文献里没有先例,目标应改为"连贯 + 浅层知识",仪器用 MMLU/ARC-E 不用 GSM8K。
 3. **若参数锁死 200M**:SmolLM 配方(FineWeb-Edu 式教育过滤 + 合成教科书 + 教育代码)@ 600B+ token 是唯一有先例的路径,且按 SmolLM2-135M 的证据,预期知识可测、数学推理不可测。
-4. **代码是小预算最容易出能力的域**(Phi-1:7B token → HumanEval 50.6 @ 1.3B),因为可执行性提供了其他域没有的过滤信号。我们 code_rp1t 是原始 RedPajama GitHub,没做教育过滤——Phi-1 从 35B 过滤到 6B(留 17%)。
+4. **代码是小预算最容易出能力的域**(Phi-1:7B token → HumanEval 50.6 @ 1.3B),因为可执行性提供了其他域没有的过滤信号。我们 code_rp1t 是原始 RedPajama GitHub,没做教育过滤——Phi-1 从 35B 过滤到 6B(留 17%,推导值),但注意 Phi-1 的过滤器是 **GPT-4 标注的质量分类器(教育价值轴),不是可执行性过滤**——见 phi1_recipe.md。
 
 ## 5. 证据薄处(诚实标注)
 
