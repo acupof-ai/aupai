@@ -87,6 +87,31 @@ Naming it in advance because it is the outcome most easily written up as B.
 - **A number that clears A on format but sits between 1.0% and 2.0%** is reported as
   exactly that. 497 problems cannot separate 1.5% from 2.5%.
 
+## Amendment, written 2026-09-01 before either arm produced output: a second demo count
+
+Reading C — the demos do not induce the format — is the likeliest single outcome, and
+with one arm it is indistinguishable from "this model cannot be prompted into the
+format at all". Those call for different next steps: more demos, versus abandoning
+prompting and fixing the format in training.
+
+So a second arm runs concurrently on the same checkpoint with **8 demos** instead of 3.
+One variable, the amount of format evidence in context. Pre-registered readings for the
+pair:
+
+| 3-demo format rate | 8-demo format rate | reading |
+|---|---|---|
+| < 20% | ≥ 20% | the format is inducible; 3 demos was simply too few. C for the 3-demo arm, and the 8-demo accuracy becomes the A/B test |
+| < 20% | < 20% | in-context format induction fails at this scale. Not a capability result; the next step is training, not prompting |
+| ≥ 20% | ≥ 20% | the manipulation took at both counts; compare accuracy, and 8-vs-3 gives a crude dose-response |
+
+The dose-response row is the one worth naming: if format rate rises with demos and
+accuracy does not, that is B with a mechanism — the model learns the shape from context
+and still cannot fill it.
+
+This amendment is written before any output exists from either arm, which is the only
+thing that makes it a pre-registration rather than a description. Both arms launched at
+the same time on GPU2 and GPU3.
+
 ## What this cannot answer
 
 It cannot distinguish reasoning from retrieval of a similar training problem. It cannot
