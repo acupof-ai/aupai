@@ -512,7 +512,7 @@ def check_milestone_ckpt_pinned(root):
     # Only the pod holds checkpoints; a dev box would report every row unpinned.
     if not glob.glob(os.path.join(root, "ckpt_*.pt")):
         return SKIP, "no checkpoints on this machine (pod holds them)"
-    lost, ok = [], 0
+    lost, gone, ok = [], [], 0
     for r in rows:
         ck = r.get("ckpt")
         if not ck:
@@ -524,11 +524,20 @@ def check_milestone_ckpt_pinned(root):
         pins = glob.glob(os.path.join(root, f"*milestone_{tok}*.pt")) if tok else []
         if pins:
             ok += 1
+        elif r.get("unrepeatable"):
+            gone.append(f"{ck}: {r['unrepeatable']}")
         else:
             lost.append(f"{ck} (milestone {tok or '?'})")
     if lost:
         return FAIL, (f"{len(lost)} milestone row(s) whose checkpoint is gone with no pinned "
                       f"copy: {'; '.join(lost[:3])} -- that measurement cannot be repeated")
+    # Named on every PASS, never counted as ok. Unlike a retired mix, nothing LOADS a
+    # milestone row -- people read it -- so the marker's teeth are that it cannot become
+    # invisible, not that something refuses it. Weights that are gone cannot be pinned
+    # afterwards, so the alternatives were a permanent red or deleting the number.
+    if gone:
+        return PASS, (f"{ok} milestone checkpoint(s) present or pinned; "
+                      f"{len(gone)} unrepeatable and marked: {'; '.join(gone)[:150]}")
     return PASS, f"{ok} milestone checkpoint(s) present or pinned"
 
 
@@ -1885,6 +1894,12 @@ def _broken_spawned_scripts_importable():
             shutil.copy(src, full)
         else:
             open(full, "w").write("# stub\n")
+    # The module the mutation makes unreachable must EXIST in the world, or the resolver
+    # reads `harness` as third-party and skips it -- the world passed for that reason, not
+    # because the defect was absent.
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"),
+                os.path.join(d, "scripts", "harness.py"))
     pre = os.path.join(d, "datagen", "pretokenize.py")
     body = open(pre).read().replace(
         'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
@@ -2082,6 +2097,46 @@ def merge_took_one_side(root, merge_sha="HEAD"):
     return out
 
 
+def _content_restored(root, base, losing, path, staged_blob):
+    """Is the losing side's own new content back in the staged blob?
+
+    The escape hatch used to ask whether the staged blob DIFFERS from the parent that
+    was taken whole. Differing is not restoring: staging the offending content plus one
+    comment changes the blob and restores nothing, and the hatch called that a fix.
+    Measured on the check's own broken world, 2026-09-01 -- a comment line above the
+    resolution turned FAIL into "1 contested file(s) re-resolved", a false GO reached by
+    a legal edit. Same shape as the day's other holes: an honest record plus a criterion
+    that does not read it.
+
+    So the question becomes the one fb named: is the content still there. Scope is one
+    already-contested path, not the whole merge, which is why line granularity is safe
+    here and wrong for merge_reverted_content -- the lost marker in the real incident
+    was a line inside a surviving function, and a def-level test cannot see it.
+
+    Non-empty lines that are not comments, compared as a set: reindentation and
+    reordering during a hand resolution are not losses, and a moved line is still
+    present. A line the losing side introduced and the fix rewrote rather than copied
+    reads as missing, which errs toward FAIL and asks for a human -- the direction this
+    check is supposed to fail in."""
+    def show(rev):
+        r = subprocess.run(["git", "-C", root, "show", f"{rev}:{path}"],
+                           capture_output=True, text=True)
+        return r.stdout if r.returncode == 0 else ""
+
+    def code(src):
+        return {ln.strip() for ln in src.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")}
+
+    r = subprocess.run(["git", "-C", root, "cat-file", "-p", staged_blob],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    added = code(show(losing)) - code(show(base))
+    if not added:
+        return True  # the losing side added nothing here; there is nothing to restore
+    return not (added - code(r.stdout))
+
+
 def check_merge_complete(root):
     """A merge must not resolve a contested file by discarding one side.
 
@@ -2108,23 +2163,24 @@ def check_merge_complete(root):
     # resolution discarded anything. Seven of the nine hits over one day's 93 merges
     # were this shape.
     took = [t for t in took if t[2] > 0]
-    # A path whose STAGED blob differs from the parent the merge took whole is being
-    # fixed right now. Judge what is about to be committed, not what was.
+    # A path whose STAGED blob RESTORES the losing side's content is being fixed right
+    # now. Judge what is about to be committed, not what was.
     parents = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
                              capture_output=True, text=True).stdout.split()
     ours, theirs = (parents[1], parents[2]) if len(parents) >= 3 else (None, None)
+    base = subprocess.run(["git", "-C", root, "merge-base", ours, theirs],
+                          capture_output=True, text=True).stdout.strip() if ours else ""
     fixed = []
     for path, side, n in list(took):
         staged = subprocess.run(["git", "-C", root, "rev-parse", f":{path}"],
                                 capture_output=True, text=True).stdout.strip()
         if not staged:
             continue  # nothing staged for it; the merge's own blob stands
-        offending = ours if side == "ours" else theirs
-        blob = subprocess.run(["git", "-C", root, "rev-parse", f"{offending}:{path}"],
-                              capture_output=True, text=True).stdout.strip()
-        if blob and staged != blob:
-            took.remove((path, side, n))
-            fixed.append(path)
+        losing = theirs if side == "ours" else ours
+        if not base or not _content_restored(root, base, losing, path, staged):
+            continue
+        took.remove((path, side, n))
+        fixed.append(path)
     if took:
         return FAIL, (
             f"{len(took)} contested file(s) resolved by taking one side whole: "
@@ -2437,7 +2493,14 @@ def check_guard_on_path(root):
     called = {c.func.id for c in ast.walk(fn) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
     if "_assert_mix_domains" not in called:
         return FAIL, "main() does not call _assert_mix_domains; run_ddp.sh is unguarded"
-    return PASS, "main() calls _assert_mix_domains"
+    # The retirement marker's teeth. mix_supply stops gating a mix that carries _retired,
+    # which is only honest while train.py refuses to start on one; without this assert the
+    # marker would be a label that silences a check and permits the run it describes.
+    asserts = [n for n in ast.walk(fn) if isinstance(n, ast.Assert)]
+    if not any('"_retired"' in ast.dump(a) or "'_retired'" in ast.dump(a) for a in asserts):
+        return FAIL, ("main() does not refuse a mix carrying _retired, so the marker "
+                      "silences mix_supply without stopping the run it describes")
+    return PASS, "main() calls _assert_mix_domains and refuses a retired mix"
 
 
 def check_gemm_dims(root):
@@ -2532,7 +2595,18 @@ def check_corpus_filters_fp(root):
             else:
                 new_unstamped.append(dom)
         elif got != live:
-            stale.append(f"{dom} built with filters {got}, tree is {live}")
+            # A ruled mismatch is forgiven only when the baseline names THIS exact pair and
+            # cites the fact that measured it. Keyed on both fingerprints, so the next
+            # filters edit produces a new pair and a new FAIL: this forgives one known
+            # state, never mismatches in general. The check's rule that a mismatch is
+            # always a failure held right up to a mismatch nobody could remove -- the
+            # shards were built with the pod's weaker filters and rebuilding nine domains
+            # buys 0.25% -- and a permanent red is the same as no signal.
+            ruled = str(baseline.get(dom, ""))
+            if got in ruled and live in ruled and "facts/" in ruled:
+                baselined.append(f"{dom} (ruled mismatch)")
+            else:
+                stale.append(f"{dom} built with filters {got}, tree is {live}")
         else:
             ok += 1
     if stale:
@@ -4573,6 +4647,16 @@ def check_mix_supply(root, mix_glob=None):
         # a mix with all domains under _blocked is a deliberate pre-corpus state, and a
         # SKIP that calls it "no matching files" gets filed as a gap (fb, 2026-08-31).
         return SKIP, f"no mix files match {os.path.basename(pattern)}"
+    # A retired mix is not gated, and the marker has teeth: train.py refuses to start on
+    # one, so "retired" is a property of the artifact rather than a label this check
+    # agreed to ignore. The ladder's anneal demand exceeds its cache supply and cannot be
+    # corrected -- ladder_config_frozen forbids editing it -- so the only honest exits
+    # were retirement or a permanent red, and a permanent red is the same as no signal.
+    retired = [os.path.basename(m) for m in mixes
+               if json.load(open(m, encoding="utf-8")).get("_retired")]
+    mixes = [m for m in mixes if os.path.basename(m) not in retired]
+    if not mixes:
+        return SKIP, f"every matching mix is retired: {', '.join(retired)}"
     bad = []
     val_loss_tokens = 0  # val-split loss at the largest budget point, in tokens
     largest = max(
@@ -4629,10 +4713,13 @@ def _broken_mix_supply():
     import zipfile
 
     d = _tmp_repo()
-    shutil.copy(
-        os.path.join(ROOT, "data", "mix_scale_0.2b.json"),
-        os.path.join(d, "data", "mix_scale_0.2b.json"),
-    )
+    dst = os.path.join(d, "data", "mix_scale_0.2b.json")
+    shutil.copy(os.path.join(ROOT, "data", "mix_scale_0.2b.json"), dst)
+    # Live, because a retired mix is not gated and the world would report SKIP -- which
+    # is what it did the moment the ladder was retired, leaving this check unable to fail.
+    obj = json.load(open(dst, encoding="utf-8"))
+    obj.pop("_retired", None)
+    json.dump(obj, open(dst, "w", encoding="utf-8"), ensure_ascii=False)
     cache_dir = os.path.join(d, "fake_caches")
     os.makedirs(cache_dir)
     seq = cfg_default("seq")
@@ -7068,9 +7155,22 @@ def _selftest_merge_fix_not_deadlocked():
         subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
         state, _ = check_merge_complete(d)
         assert state == FAIL, "restaging the offending content must not pass as a fix"
+        # And the hole that made the hatch escapable: the criterion was "the staged blob
+        # DIFFERS from the parent taken whole", so one comment above the unfixed
+        # resolution changed the blob, restored nothing, and read as a fix. Measured
+        # 2026-09-01: FAIL became "1 contested file(s) re-resolved". A legal edit that
+        # buys a GO is the same shape as the day's other holes.
+        with open(os.path.join(d, rel), "w") as f:
+            f.write("# a comment that restores nothing\n"
+                    "def f():\n    THEIRS_MARKER = 'kept by them'\n    return 1\n")
+        subprocess.run(["git", "-C", d, "add", rel], capture_output=True)
+        state, _ = check_merge_complete(d)
+        assert state == FAIL, ("a staged blob that merely DIFFERS from the offending "
+                               "parent is not a fix; the lost content is still lost")
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
+    print("  merge fix: bad merge refused, real fix accepted, restaged offender and "
+          "cosmetic-only edit still refused")
 
 
 def _selftest_merge_cherry_pick_not_a_drop():

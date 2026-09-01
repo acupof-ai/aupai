@@ -85,6 +85,63 @@ that never ran is more dangerous than a message, **because it will be cited**.
 anyway: 12 of 13 mixes, including the launch mix, were certified by a comparison that
 never happened.
 
+**A read command has four outcomes and three of them look like an answer.** Naming
+the same content five ways in git; only the last two are the file:
+
+```
+git cat-file -p <sha>            # the COMMIT OBJECT: tree/parent/author/message.
+                                 # 10-56 lines, sized by the message, squarely in the
+                                 # range a source file occupies.
+git show <sha> -- path           # that commit's DIFF for the path -- and EMPTY with
+                                 # rc=0 when the commit never touched it.
+git show <sha>:path              # the file. One character from the line above.
+git cat-file -p <sha>:path       # the file.
+git rev-parse <sha>:path         # the blob id -> cat-file -t <id> asserts 'blob'
+                                 # -> cat-file -p <id> reads it.
+```
+
+Return a diff, return a commit object, return empty, return the file. **Three of the
+four look like an answer, and every one exits 0**, so no automation stops on any of
+them. That is why this cost two people an evening.
+
+**Dropping `:path` is the worst of them.** Non-empty, well-formed, plausibly sized. I
+read one 780-line file as 29, 23, 25 and 594 lines through a loop that had lost the
+suffix, watched the count change per commit, and concluded the file was evolving — it
+was the commit messages changing length. On that basis I twice came close to reporting
+colleagues as having dropped work they never touched. **Empty is the second worst**:
+0 lines reads as "the file is empty" or "it does not exist", and both are wrong.
+
+**`rev-parse` first is not immunity, it is a smaller surface** (de's correction to my
+draft): the protection is that there is no `:path` left to drop, not that a blob id
+cannot be misread. **The only check that distinguishes the outcomes before you read is
+`cat-file -t`** — assert `blob` when it matters.
+
+**How this was settled, which matters more than the rule.** I proposed two mechanisms
+and both were wrong: the colon form, then shell word-splitting. 44 refuted the first
+by running all three forms against one sha and getting identical output. de refuted
+the second by showing word-splitting cannot distort this command, then found the last
+unexplained number — 29 is some other commit's object; 8 of ~400 commits here have a
+29-line object. The deadlock broke on a falsifiable criterion de proposed: *which
+mechanism reproduces those four numbers.* **Three people testing separately, not one
+insight** — a reader who mistakes this for a single finding will underestimate what
+convergence costs.
+
+**Word-splitting is the general failure — an unquoted command in a shell variable
+becomes a different command — but record the specific consequence.** "Something
+mangled my command" is not checkable; "`cat-file -p` without `:path` prints the
+commit" is.
+
+**Reproduce a tool defect outside your own harness before writing it into a
+standard.** Twice I recorded a defect in my loop as a defect in git. A wrong mechanism
+trains the wrong reflex in every reader and outlives a wrong number, because numbers
+get rechecked and mechanisms get believed.
+
+**Failing to reproduce disproves the readings you tried, not the existence of a
+reading** (de). State the search space with the result: "8 of ~400 commits" is a
+finding; "I could not find it" is not. fb made the inverse error twice in one evening
+— an empty grep read as "the process is not running", eight idle cards read as "the
+probe never started".
+
 **Every number carries its configuration, and that includes its resolution and its
 extraction rule.** Six numbers were misused that day and every caveat was known at the
 time — none was printed beside the number. A throughput field quantised to 1K was
@@ -113,6 +170,14 @@ names. The guard was not broken.
 **A guard only guarantees the one thing it checks.** An A/B guard that refuses
 identical arms knows nothing about time windows; "the guard passed" was read as "this
 A/B is clean".
+
+**One red light per reason.** A permanent red is no signal — and a red with several
+independent causes is worse, because it cannot be read at all. `restartability` was
+red for three unrelated reasons at once: a 5s timeout, a phantom `.py` another
+session's hook had just written into the directory it scans, and one genuinely
+unlisted script. Any single fix left it red, so each looked ineffective and none was
+finished. Split the causes before judging the light; a check that can fail three ways
+should say which.
 
 **A universal over a self-built population is only as true as the construction.**
 "27 selftest-carrying files, all gated" while the real population was 36. Narrow the

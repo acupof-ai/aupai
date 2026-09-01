@@ -241,7 +241,7 @@ class Cfg:
     # ~10 docs packed into each 4K row.
     doc_mask = True
     # Must name a live mix: a retired one here trains the retired recipe in silence.
-    mix = "data/mix_scale_3.24b.json"  # domain mix (weights / epoch caps / anneal)
+    mix = "data/mix_500m.json"  # domain mix (weights / epoch caps / anneal)
     # Symlinked shards, or a domain whose live bytes mismatch its build_corpus_stats.json
     # fingerprint, refuse to start: a swapped-in corpus trains under another domain's name
     # (the voided 0.2b run: CCI3 shards under web_hq's name). The flag pardons known,
@@ -2149,8 +2149,14 @@ def main():
         f"corpus to train on instead."
     )
     assert os.path.exists(TOK_PATH), "mix mode needs a trained data/tokenizer.json"
+    _mix_obj = json.load(open(mix_path, encoding="utf-8"))
+    assert not _mix_obj.get("_retired"), (
+        f"{Cfg.mix} is retired: {_mix_obj['_retired']}. A retired mix is frozen "
+        f"(ladder_config_frozen) and its supply can no longer be made to match its demand, "
+        f"so it cannot be corrected either -- pick a live mix."
+    )
     fps = _assert_mix_domains(
-        list(json.load(open(mix_path, encoding="utf-8"))["domains"]),
+        list(_mix_obj["domains"]),
         os.path.join(DATA, "corpus"),
         allow_drift=Cfg.allow_corpus_drift,
     )

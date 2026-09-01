@@ -33,11 +33,14 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 
-# Files that execute on the pod (pretrain -> score flow). Mirrors the old
-# pod_sync_check.sh scope; datagen/filters/mathbank/workflows never run there.
+# Files that execute on the pod (pretrain -> score flow), plus the files that DECIDE
+# what the pod runs on: the hooks and the corpus filters. "Never runs there" was the
+# wrong test -- filters/ is read to build the data, and a file nobody executes can still
+# change the result.
 SCOPE = [
     "*.py",
     "*.sh",
+    "scripts/hooks/*",
     "data/mix_*.json",
     "data/tokenizer.json",
     "facts/*.json",
@@ -47,7 +50,26 @@ SCOPE = [
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
 ]
-EXCLUDE_DIRS = ("filters", "mathbank", "workflows")
+# workflows/ only: it holds no code the pod runs. filters/ and mathbank/ were excluded
+# with it and should not have been -- datagen reads filters/ to BUILD the corpus, so a
+# filters/ file that differs silently changes the data, and fp_filters hashes the whole
+# directory. Measured 2026-09-01: pod's filters/pass3_garbage.py was 5 CCI3-HQ rules
+# behind main and the corpus was built with it (fb: ~0.25% residue, not rebuilt), while
+# pod_drift read zero drift throughout.
+EXCLUDE_DIRS = ("workflows",)
+
+# git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
+# to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
+# init` in a throwaway directory reconfigures the REAL repo instead: with GIT_DIR
+# pointing at a worktree gitdir it sets core.bare=true on the shared repo, which breaks
+# every git command for every session until someone unsets it. A selftest must build its
+# world from nothing the caller is holding.
+_GIT_ENV_VARS = ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_CONFIG", "GIT_CONFIG_GLOBAL")
+
+
+def _clean_git_env():
+    return {k: v for k, v in os.environ.items() if k not in _GIT_ENV_VARS}
 
 # Job-class entry points: BFS from these through imports derives the class of
 # every manifest file. Priority: training > eval > corpus > docs.
@@ -260,6 +282,20 @@ def check_pod(root=ROOT, scope=None):
     if extra:
         shown = ", ".join(extra[:5]) + ("..." if len(extra) > 5 else "")
         parts.append(f"{len(extra)} UNREGISTERED .py not in manifest: {shown}")
+    # A leftover in a managed dir is a deletion that never crossed, and it is NOT
+    # covered above: unregistered_py sees only .py, and an extra file drifts nothing
+    # the forward check can detect while still changing fp_filters.
+    stale = unmanaged_extras(root, manifest)
+    if stale:
+        shown = ", ".join(stale[:5]) + ("..." if len(stale) > 5 else "")
+        # "not on main" is what this can prove. It does NOT distinguish a deletion that
+        # never crossed (pod_push only adds) from a file authored here and never
+        # committed -- the first three it found were the latter. Saying "deleted on
+        # main" would put a cause on the evidence and send someone hunting a commit
+        # that does not exist.
+        parts.append(f"{len(stale)} file(s) in managed dirs are NOT on main -- either a "
+                     f"deletion that never crossed (pod_push only adds) or authored "
+                     f"here and never committed: {shown}")
     return True, "; ".join(parts)
 
 
@@ -276,6 +312,38 @@ def unregistered_py(root, manifest=None):
             continue
         for fn in filenames:
             if fn.endswith(".py"):
+                p = os.path.relpath(os.path.join(dirpath, fn), root)
+                if p not in manifest:
+                    out.append(p)
+    return sorted(out)
+
+
+#: Directories whose content is decided entirely by main -- every file in them should be
+#: manifested. A file here that main does not have is not a throwaway probe; it is a
+#: deletion that never crossed. pod_push only adds and overwrites, so a file main deleted
+#: (filters/clean_school_math.py, 964101e) lives on the pod forever, and fp_filters
+#: hashes the WHOLE directory: the fingerprint then stays wrong with no line of code
+#: differing anywhere. fb's 60 deletions tonight were all this one mechanism.
+MANAGED_DIRS = ("filters", "scripts/hooks", "datagen")
+
+
+def unmanaged_extras(root, manifest=None):
+    """Files under MANAGED_DIRS that the manifest does not name -- any extension.
+
+    unregistered_py's counterpart for the directories where an extra file is a defect
+    rather than someone's scratch script. Reported, not failed: deleting on the pod is
+    the operator's call, and this says what to consider."""
+    if manifest is None:
+        manifest = read_manifest(os.path.join(root, "data", "pod_head_manifest.txt"))
+    out = []
+    for d in MANAGED_DIRS:
+        base = os.path.join(root, d)
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [x for x in dirnames
+                           if not x.startswith(".") and x != "__pycache__"]
+            for fn in filenames:
+                if fn.startswith("."):
+                    continue
                 p = os.path.relpath(os.path.join(dirpath, fn), root)
                 if p not in manifest:
                     out.append(p)
@@ -342,12 +410,20 @@ def selftest():
     and a drifted training-scope file must."""
     import tempfile
 
+    # Drop the caller's git env for the whole selftest, not per-subprocess: the helpers
+    # below call write_manifest_index(), which runs its own git commands, and under an
+    # inherited GIT_DIR those read MAIN's repo instead of the temp world -- both branches
+    # then produce the same manifest and the merge case asserts "expected a conflict, got
+    # a clean merge". Stripping at the entry covers every nested call.
+    for _v in _GIT_ENV_VARS:
+        os.environ.pop(_v, None)
+
     d = tempfile.mkdtemp()
-    for sub in ("scripts", "datagen", "data", "mathbank"):
+    for sub in ("scripts", "datagen", "data", "workflows"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
     open(os.path.join(d, "scripts", "real.py"), "w").write("# registered\n")
     open(os.path.join(d, "probe.py"), "w").write("# throwaway\n")
-    open(os.path.join(d, "mathbank", "gen.py"), "w").write("# excluded dir\n")
+    open(os.path.join(d, "workflows", "gen.py"), "w").write("# excluded dir\n")
     open(os.path.join(d, "data", "tool.py"), "w").write("# data dir\n")
     manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
@@ -356,6 +432,21 @@ def selftest():
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest.items()))
     ok, evidence = check_pod(d)
     assert ok and "UNREGISTERED" in evidence, evidence
+
+    # A file main deleted but the pod still holds: pod_push only adds, so it survives
+    # forever and keeps fp_filters wrong with no line of code differing. Must be named,
+    # and must NOT be confused with the unregistered-probe case above.
+    os.makedirs(os.path.join(d, "filters"), exist_ok=True)
+    open(os.path.join(d, "filters", "clean_school_math.py"), "w").write("# deleted on main\n")
+    ok_x, ev_x = check_pod(d)
+    assert ok_x, ev_x
+    assert "NOT on main" in ev_x and "clean_school_math.py" in ev_x, (
+        f"a leftover in a managed dir was not reported: {ev_x}")
+    # And a non-.py leftover, which unregistered_py cannot see at all.
+    open(os.path.join(d, "filters", "stale_rules.txt"), "w").write("x\n")
+    assert "stale_rules.txt" in check_pod(d)[1], "non-.py leftovers are invisible"
+    os.unlink(os.path.join(d, "filters", "clean_school_math.py"))
+    os.unlink(os.path.join(d, "filters", "stale_rules.txt"))
 
     # Scope: a corpus-scope file that drifts must not fail --scope training.
     corpus_sha = sha_disk(os.path.join(d, "scripts", "real.py"))
@@ -385,16 +476,24 @@ def selftest():
     # the shared index and swept another session's staged paths into the manifest.)
     import tempfile
     g = tempfile.mkdtemp()
-    subprocess.run(["git", "init"], cwd=g, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=g, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=g, capture_output=True)
+    # GIT_INDEX_FILE is INHERITED by every git here, and the hook runs this selftest with
+    # it already set to the real commit's temp index. Without stripping it, `git add`
+    # below stages a.py/b.py into the REPO BEING COMMITTED and `git commit` here finds
+    # nothing to commit, so read-tree HEAD dies on a repo with no HEAD. The selftest was
+    # writing to the tree it was meant to be independent of.
+    genv = _clean_git_env()
+    def _g(*a):
+        return subprocess.run(["git", *a], cwd=g, env=genv, capture_output=True)
+    _g("init")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
     open(os.path.join(g, "b.py"), "w").write("# b\n")
-    subprocess.run(["git", "add", "b.py"], cwd=g, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "base"], cwd=g, capture_output=True)
+    _g("add", "b.py")
+    _g("commit", "-m", "base")
     open(os.path.join(g, "a.py"), "w").write("# a: staged in shared index, not in this commit\n")
-    subprocess.run(["git", "add", "a.py"], cwd=g, capture_output=True)
+    _g("add", "a.py")
     tmp_index = os.path.join(g, ".git", "commit-index")
-    env = dict(os.environ, GIT_INDEX_FILE=tmp_index)
+    env = dict(genv, GIT_INDEX_FILE=tmp_index)
     subprocess.run(["git", "read-tree", "HEAD"], cwd=g, env=env, capture_output=True, check=True)
     # git runs the hook with GIT_INDEX_FILE set in the environment, not as a flag.
     os.environ["GIT_INDEX_FILE"] = tmp_index
@@ -415,8 +514,11 @@ def selftest():
     import tempfile
     h = tempfile.mkdtemp()
 
+    henv = _clean_git_env()
+
     def g(*args, check=True):
-        return subprocess.run(["git", *args], cwd=h, capture_output=True, text=True, check=check)
+        return subprocess.run(["git", *args], cwd=h, env=henv, capture_output=True,
+                              text=True, check=check)
 
     g("init")
     g("checkout", "-b", "main")
