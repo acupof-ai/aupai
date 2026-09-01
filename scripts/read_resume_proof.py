@@ -72,25 +72,73 @@ def read_log(lines, expect_step, plan_steps):
     return out, join
 
 
-def read_cursors(lines, ck_cursor):
-    """Condition 2: every domain starts where the checkpoint said it stopped."""
-    seen = {}
-    for ln in lines:
-        m = START_RE.search(ln)
-        if m:
-            seen.setdefault(m.group(1), int(m.group(2)))
-    if not seen:
-        return [(UNCOVERED, "2. cursors adopted and equal to the checkpoint",
-                 "the restart log prints no per-domain start row; read it from the "
-                 "next checkpoint's row_cursor instead of calling this green")]
-    bad = [f"{d}: log {v} vs ckpt {ck_cursor.get(d)}"
-           for d, v in seen.items() if ck_cursor.get(d) != v]
-    zero = [d for d, v in seen.items() if v == 0]
-    if bad or zero:
-        return [(FAIL, "2. cursors adopted and equal to the checkpoint",
-                 f"mismatched: {bad}; at row 0: {zero}")]
-    return [(PASS, "2. cursors adopted and equal to the checkpoint",
-             f"{len(seen)} domains, all nonzero and equal")]
+def read_cursors(lines, before, after):
+    """Condition 3, criterion B (fb): the SUM strictly increased and no domain fell.
+
+    Criterion A -- every domain strictly greater -- needs an exemption table. At the test
+    shape the two smallest domains gain only ~4.6 and ~4.7 rows between step 40 and 60, so
+    the shuffle leaves one of them empty about 1.84% of the time: one false red in every
+    54 runs of a gate whose red blocks a launch. A table fixes that and then rots -- change
+    a mix weight and the stale exemption waves through a real defect.
+
+    B needs no table. The sum gains 640 rows, which cannot come out zero, so there is no
+    false red; and "no domain fell" is exactly the re-read signature, because a domain that
+    restarts at row 0 comes back BELOW where it stopped rather than merely level. Immune to
+    weight changes by construction.
+
+    Read from the checkpoints, not the log: build_mix prints on both discard branches
+    (:1886 seed, :1895 fingerprint) and prints nothing when the cursor IS adopted, so a
+    silent adopt and a silent skip look identical in the restart output.
+    """
+    if not before:
+        return [(FAIL, "3. cursor sum grew, no domain fell",
+                 "the resume-source checkpoint has no row_cursor -- nothing to advance from")]
+    if not after:
+        return [(UNCOVERED, "3. cursor sum grew, no domain fell",
+                 "run 2 wrote no checkpoint carrying row_cursor")]
+    missing = sorted(set(before) - set(after))
+    fell = sorted(d for d in before if d in after and after[d] < before[d])
+    grew = sum(after.get(d, 0) for d in before) - sum(before.values())
+    if missing or fell or grew <= 0:
+        detail = []
+        if missing:
+            detail.append(f"absent from the later cursor: {missing}")
+        if fell:
+            detail.append("went BACKWARD (the re-read signature): "
+                          + ", ".join(f"{d} {before[d]}->{after[d]}" for d in fell))
+        if grew <= 0:
+            detail.append(f"sum did not grow: {grew:+d} rows")
+        return [(FAIL, "3. cursor sum grew, no domain fell", "; ".join(detail))]
+    still = sorted(d for d in before if after[d] == before[d])
+    return [(PASS, "3. cursor sum grew, no domain fell",
+             f"sum +{grew} rows over {len(before)} domains"
+             + (f"; {len(still)} level ({', '.join(still)}) -- allowed, the shuffle can miss "
+                f"a small domain in 640 rows" if still else ""))]
+
+
+def read_sum(cursor, step, batch, accum, world):
+    """Condition 6 (de): the nine cursors must sum to the GLOBAL rows consumed.
+
+    Every other condition compares domains one at a time, so a scale error in the write
+    path -- :1404 multiplies this rank's bincount by world -- passes all of them while
+    the resume position is off by a factor of world. The sum is the only reading that
+    carries a dimension, and it costs nothing: the cursor is already loaded.
+
+    Bound, not equality: each domain's count is an int() truncation, so the sum can fall
+    up to (domains x world) below step*batch*accum*world and still be right.
+    """
+    if not cursor:
+        return [(FAIL, "6. cursors sum to the global rows consumed", "no row_cursor to sum")]
+    got = sum(cursor.values())
+    top = step * batch * accum * world
+    floor = top - len(cursor) * world
+    if floor <= got <= top:
+        return [(PASS, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
+                 f"sum {got} over {len(cursor)} domains")]
+    factor = f" -- that is {got / top:.3g}x the expected total" if top else ""
+    return [(FAIL, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
+             f"sum {got}{factor}; a world-factor error reads exactly like this while every "
+             f"per-domain comparison stays green")]
 
 
 def read_opt(opts):
@@ -141,6 +189,11 @@ def report(rows):
         print(f"NOT PROVEN: {len(fails)} condition(s) failed. Per the user's order, "
               f"this blocks the launch.")
         return 1
+    print("NOT COVERED by this test, and not implied by its green: the startup refusal "
+          "logic itself (the six conditions all take the happy path and never reach it); "
+          "an optimizer ORDER swap (zip(strict=True) sees a changed count, not a swap); "
+          "the rows_done > plan refusal at :1387 (only a full 20B run reaches it).")
+    print()
     print("PROVEN: every condition that this test can answer, passed."
           + (f" {len(unc)} reported UNCOVERED above -- they were not tested, which is "
              f"not the same as passing." if unc else ""))
@@ -153,10 +206,24 @@ def _selftest():
         "mix: zh_web rows 9999 from row 4400",
         "WSD JOIN: resumed at step 40/60 under mix mix_500m | lr_mult 1.0000",
     ]
-    ck = {"cot": 900, "zh_web": 4400}
+    b4 = {"cot": 900, "zh_web": 4400}
+    aft = {"cot": 1350, "zh_web": 6600}
     rows, _ = read_log(good, 40, 20)
-    rows += read_cursors(good, ck)
+    rows += read_cursors(good, b4, aft)
     assert [r[0] for r in rows] == [PASS] * 4, rows
+
+    # Re-read from row 0: the domain ends up nonzero but BELOW where it stopped. This is
+    # the case "nonzero" would have passed and strictly-greater catches.
+    assert read_cursors(good, b4, {"cot": 450, "zh_web": 6600})[0][0] == FAIL
+    # One domain level is ALLOWED under B: the shuffle can miss a small domain in 640 rows.
+    assert read_cursors(good, b4, {"cot": 900, "zh_web": 6600})[0][0] == PASS
+    assert read_cursors(good, b4, {"cot": 1350})[0][0] == FAIL                  # domain vanished
+
+    # Condition 6: 1280 rows/rank x 7 = 8960, int() truncation can cost 9x7=63.
+    nine = {f"d{i}": 995 for i in range(9)}          # sums to 8955, inside [8897, 8960]
+    assert read_sum(nine, 40, 32, 1, 7)[0][0] == PASS
+    assert read_sum({f"d{i}": 142 for i in range(9)}, 40, 32, 1, 7)[0][0] == FAIL  # /7: per-rank, world dropped
+    assert read_sum({}, 40, 32, 1, 7)[0][0] == FAIL
 
     # A discarded cursor is the failure the negative condition exists for.
     bad = good + ["mix: zh_web cursor discarded -- written at sample_seed 42, this run uses 7"]
@@ -175,9 +242,7 @@ def _selftest():
     st2 = ["WSD JOIN: resumed at step 4768/9537 under mix mix_500m"]
     assert [r[0] for r in read_log(st2, 4768, 4769)[0]][1:] == [PASS, PASS]
 
-    # A cursor at row 0 fails even when the log prints it without the word "discarded".
-    z = ["mix: cot rows 1 from row 0", "WSD JOIN: resumed at step 40/60"]
-    assert read_cursors(z, {"cot": 0})[0][0] == FAIL
+
 
     class T:
         def __init__(self, v):
@@ -198,9 +263,9 @@ def _selftest():
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.0)}}}])[0][0] == FAIL  # all zero
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == UNCOVERED
-    print("read_resume_proof selftest OK: 11 cases "
-          "(clean pass, discard, step 0, inflated total, stage-2 equation, row 0, "
-          "no-opt/never-stepped/wrong-index/all-zero/loaded)")
+    print("read_resume_proof selftest OK: 16 cases "
+          "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor re-read/level-ok/vanish, "
+          "sum ok/world-dropped/empty, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
 
 
@@ -211,27 +276,38 @@ def main(argv):
         print(__doc__)
         return 0
     log, ckpt = argv[1], argv[2]
+    # world is the rank count the run used; the cursor is stored global (:1404 multiplies
+    # this rank's count by it), so condition 6 cannot be checked without it.
+    world = int(argv[3]) if len(argv) > 3 else 8
+    import glob
+
     import torch
     ck = torch.load(ckpt, map_location="cpu", weights_only=False, mmap=True)
     with open(log, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
-    rows, _ = read_log(lines, 40, 20)
-    rows += read_cursors(lines, ck.get("row_cursor") or {})
-    # The optimizer buffers come from the checkpoint run 2 WROTE (step 60), not the one it
-    # read: the question is whether the load happened, and step 60's buffers answer it.
-    import glob
+
+    # Conditions 3 and 5 both read the checkpoint run 2 WROTE, not the one it read: the
+    # cursor question is whether it advanced past the resume point, and the optimizer
+    # question is whether the load happened at all. Only the later file answers either.
     later = sorted(glob.glob(ckpt.rsplit(".step", 1)[0] + ".step*"),
-                   key=lambda p: int(p.rsplit(".step", 1)[1]))
+                   key=lambda q: int(q.rsplit(".step", 1)[1]))
     tail = later[-1] if later and later[-1] != ckpt else None
+    d = torch.load(tail, map_location="cpu", weights_only=False, mmap=True) if tail else {}
+
+    rows, _ = read_log(lines, 40, 20)
+    rows += read_cursors(lines, ck.get("row_cursor") or {}, d.get("row_cursor") or {})
+    cfg = ck.get("cfg") or {}
+    rows += read_sum(ck.get("row_cursor") or {}, ck.get("step") or 40,
+                     cfg.get("batch") or 32, cfg.get("accum") or 1, world)
     if tail is None:
-        rows += [(UNCOVERED, "5. optimizer buffers loaded and nonzero",
-                  "run 2 wrote no later checkpoint to read the buffers from")]
+        rows += [(UNCOVERED, "5. Muon momentum loaded and nonzero",
+                  "run 2 wrote no later checkpoint to read the buffers from"),
+                 (UNCOVERED, "5b. optimizer ORDER unchanged", "debt ledger")]
     else:
-        d = torch.load(tail, map_location="cpu", weights_only=False, mmap=True)
         rows += read_opt(d.get("opt") or [])
     print(f"reading {log}")
     print(f"  resume source: {ckpt}")
-    print(f"  buffers from:  {tail or '(none)'}")
+    print(f"  run 2 wrote:   {tail or '(none)'}")
     print()
     return report(rows)
 
