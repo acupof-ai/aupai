@@ -155,6 +155,7 @@ def main():
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         "eval/score_math_formatfree.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
+        "scripts/write_mix_500m.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
