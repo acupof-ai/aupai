@@ -7,6 +7,59 @@ span_ms: 1676.63  # t57's own span; the percentages quoted here are against it
 
 # The instrument, not the system
 
+## The closing lesson: naming a confound is not sizing the instrument for it
+
+Above the others because it is the failure that survives every practice on this
+page. You can pre-register, name the exact confound, commit the falsification
+bands in advance — and still ship a number that is wrong in the direction you
+expected, because the instrument was not built large enough to see the thing you
+named.
+
+Free-running agreement, 2026-09-01. The pre-registration said, in advance:
+
+> *"Prefix-aligned comparison punishes a correct answer phrased differently. If
+> the model emits one extra token early, every later position is compared
+> against the wrong gold index... I will report the best alignment over small
+> shifts (±4 tokens) alongside the naive one."*
+
+The confound is named correctly. The window is ±4. **The model's generations open
+with a preamble of forty to eighty tokens.** So the shift-tolerant variant was
+almost as desynchronised as the naive one, and both read near zero:
+
+| instrument | reading |
+|---|---|
+| naive, prefix-aligned | 0.0000 |
+| ±4 shift (the pre-registered variant) | 0.0483 |
+| ±16 | 0.1026 |
+| ±64 | 0.1883 |
+| ±150 | 0.2059 |
+| alignment-free (LCS ratio) | **0.2317** |
+
+**The pre-registered instrument reported one fifth of the truth**, in the
+direction that made the headline stronger.
+
+Three things make this the worst shape on the page:
+
+1. **Every rigour marker was present.** Pre-registered, bands fixed before the
+   run, confound named in writing. None of them sizes an instrument.
+2. **It errs toward the author's hypothesis.** A too-small window can only
+   *lower* agreement, and low agreement was the interesting result. A confound
+   named but under-provisioned is not neutral noise; it is a thumb on the scale
+   pointing where the author was already looking.
+3. **The check is not "did I think of it" but "can the instrument see it".**
+   Those feel identical while writing the pre-registration and are not.
+
+It was caught by the oldest tell on this page — **a number too clean for the
+thing it claims to measure.** 0.0000 median from a model scoring 72.7%
+teacher-forced is not a low score, it is a broken ruler.
+
+The operational form: **for every confound you name, state the magnitude it can
+reach and show the instrument covers it.** "I will report a shift-tolerant
+variant" is a plan. "Preambles here run 40–80 tokens, so the search must span at
+least 150" is an instrument. Where the magnitude is unknown, sweep the parameter
+and report the curve rather than picking a value — the sweep above is what
+produced the real number, and it cost one extra run.
+
 ## Before anything else: is this code path reached in the live configuration?
 
 One line, and it precedes every other check on this page. It is last here only
