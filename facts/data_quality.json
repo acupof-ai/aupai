@@ -32,7 +32,7 @@
    "measured": "2026-08-30",
    "source": "aupai-3b hand-read of 150 CCI3-HQ docs",
    "config": {
-    "fingerprint": "'原文地址:' tail marker",
+    "fingerprint": "'\u539f\u6587\u5730\u5740:' tail marker",
     "note": "self-admitted rewrites only; un-admitted fraction unmeasured"
    },
    "uncertainty": null,
@@ -397,7 +397,7 @@
    "measured": "2026-08-30",
    "source": "agent C 400-doc hand audit, data/corpus/sample/cci3_audit_400.jsonl (seed 20260830, non-fingerprint pool)",
    "config": {
-    "rubric": "rewrite=Y iff explicit transfer marker (文章来源于/转自/转载自/来源:/摘自/整理编辑/综合整理/选载权); stock disclaimers without named source (图片来自网络侵删 etc.) count N",
+    "rubric": "rewrite=Y iff explicit transfer marker (\u6587\u7ae0\u6765\u6e90\u4e8e/\u8f6c\u81ea/\u8f6c\u8f7d\u81ea/\u6765\u6e90:/\u6458\u81ea/\u6574\u7406\u7f16\u8f91/\u7efc\u5408\u6574\u7406/\u9009\u8f7d\u6743); stock disclaimers without named source (\u56fe\u7247\u6765\u81ea\u7f51\u7edc\u4fb5\u5220 etc.) count N",
     "ci": "+-2.7pp (n=400, binomial, p=0.08)",
     "contrast": "self-admitted fingerprint rate 2.07% -- un-admitted rewrites are ~4x the admitted rate; total ~10% of CCI3-HQ docs are rewrites"
    },
@@ -502,7 +502,7 @@
    "measured": "2026-08-30",
    "source": "agent C hand audit of data/corpus/sample/cci3_audit_400.jsonl; labels persisted in session notes",
    "config": {
-    "junk_rubric": "content farm/SEO/template/题库/作文/book-TOC+metadata/exam catalog/marketing/ads/product-placement/headless fragment/conversion artifacts",
+    "junk_rubric": "content farm/SEO/template/\u9898\u5e93/\u4f5c\u6587/book-TOC+metadata/exam catalog/marketing/ads/product-placement/headless fragment/conversion artifacts",
     "junk_rate_vs_150": "30.3% vs 3b's 39.3% on 150 -- same ballpark, different pools (400 excludes fingerprint pool)",
     "iaa": "NO overlap with 3b's 150 by id or text prefix -- the two samples share zero docs; free IAA not available, would need 3b to re-read a subset of the 400",
     "headless_rule": "docs beginning mid-word/mid-sentence counted junk (conversion artifact): 8 docs"
@@ -590,7 +590,7 @@
      "hand_usable_keep": 90
     },
     "junk_rate": 0.393,
-    "false_positive": "1/91 usable dropped (酒驾国标, symbols)",
+    "false_positive": "1/91 usable dropped (\u9152\u9a7e\u56fd\u6807, symbols)",
     "structural_blindness": "filter passes 58/59 content-farm/rewrite/SEO/template docs -- blind to the class, not off on threshold; supersedes the 0.073 arithmetic upper bound in dq.criterion.known_answer_cci3 with a measurement"
    },
    "uncertainty": null,
@@ -635,7 +635,7 @@
    "measured": "2026-08-30",
    "source": "agent C full-text run on the pod via reject_reason from datagen/build_corpus.py over data/raw/cci3_hq/ (150 docs by id from data/corpus/sample/cci3_handread_150.jsonl); locked re-test on data/corpus/sample/cci3_audit_400.jsonl vs cci3_audit_400_labels.jsonl",
    "config": {
-    "step0": "fingerprint 原文地址[:：] -> 7/7 junk on 150 full text; corpus-wide 2.46% hit rate, 99.0% in first 600 chars (6-shard pod scan, n=1.01M)",
+    "step0": "fingerprint \u539f\u6587\u5730\u5740[:\uff1a] -> 7/7 junk on 150 full text; corpus-wide 2.46% hit rate, 99.0% in first 600 chars (6-shard pod scan, n=1.01M)",
     "step1": "zuowen 2/2, tiku 2/2, jiaoan 2/2 on 150; on locked 400 zuowen 5/5, jiaoan 1/1, tiku 0",
     "toc_tightening": "loose TOC (400: 6 hits/3 junk) replaced by line-anchored two-consecutive-chapter-lines after a 150 FP was prose cross-refs; tightened version kills that FP; its 150 hit (0cf1eb8fa4ae) was relabeled junk by 3b (book-TOC+metadata), so TOC ends at 14/14 on the 150; 0 hits on the locked 400",
     "baseline_correction": "3b's 1.7% baseline was run on 120-char excerpts, not the production code path; full-text OLD baseline on the same 150 is 11.9% (7/59)",
@@ -688,8 +688,8 @@
    "source": "/tmp/survival_blossom.py + /tmp/eqcheck_sample.py on pod; scripts/eqcheck.py applied to blossom-math-v4-10k outputs",
    "config": {
     "coverage": "2156/10000 docs have >=1 verifiable two-operand equation",
-    "conditional_survival": "91.65% of covered docs (1976/2156) had zero bad steps — MEANINGLESS: manual review of 25 flagged equations shows ~all are false positives",
-    "fp_patterns": "chain detector (CHAIN regex) is broken by Chinese units/variables between operands: '1600元 × 3/10 = 480' is mis-read as '3/10 = 480'; '867 + 231 = 3 × X' mis-read as '= 3'; 'X - 7 - 6.25 = 5.5' mis-read as '7 - 6.25 = 5.5'",
+    "conditional_survival": "91.65% of covered docs (1976/2156) had zero bad steps \u2014 MEANINGLESS: manual review of 25 flagged equations shows ~all are false positives",
+    "fp_patterns": "chain detector (CHAIN regex) is broken by Chinese units/variables between operands: '1600\u5143 \u00d7 3/10 = 480' is mis-read as '3/10 = 480'; '867 + 231 = 3 \u00d7 X' mis-read as '= 3'; 'X - 7 - 6.25 = 5.5' mis-read as '7 - 6.25 = 5.5'",
     "verdict": "eqcheck is unusable as a verification filter on Chinese synthetic math: it sees 21.6% of docs and flags its own blind spots, not solution errors. Arithmetic-step checking is the wrong instrument for this data",
     "eqcheck_role": "remains valid as a data-filter/eval sanity check on texts with clean ASCII two-operand equations (its original shared role); not as a batch survival checker"
    },
@@ -703,11 +703,11 @@
    "measured": "2026-08-30",
    "source": "/tmp/gold_answer_agree.py on pod; blossom-math-v4-10k (100% records carry an `answer` field) vs output final answer",
    "config": {
-    "extraction": "last number-like token (int/decimal/fraction/percent, trailing Chinese units stripped) — pre-registered before running",
+    "extraction": "last number-like token (int/decimal/fraction/percent, trailing Chinese units stripped) \u2014 pre-registered before running",
     "raw_agreement": "9985/10000 = 99.85%; extraction success 100%",
-    "disagreement_review": "all 15 reviewed: ~6 extractor artifacts (mixed-number '3 and 2/3' grabbed as 2/3; '1 million' vs '1,000,000'; answer before trailing context), ~9 genuine (0.09%) — mostly integer rounding of exact fractional answers (13 days vs 13.33) plus >=1 real misread (id=294: '1/4米' read as quarter-of-rope)",
+    "disagreement_review": "all 15 reviewed: ~6 extractor artifacts (mixed-number '3 and 2/3' grabbed as 2/3; '1 million' vs '1,000,000'; answer before trailing context), ~9 genuine (0.09%) \u2014 mostly integer rounding of exact fractional answers (13 days vs 13.33) plus >=1 real misread (id=294: '1/4\u7c73' read as quarter-of-rope)",
     "true_agreement": "99.91-99.97% after artifact correction",
-    "pipeline_implication": "answer-level verification (extract final answer vs gold) is the right instrument; arithmetic-step is not. Synthetic batches must RETAIN the gold answer field, and free-text generations need an extraction contract — \\boxed{} (math_short_v10 format) is the existing extractable target",
+    "pipeline_implication": "answer-level verification (extract final answer vs gold) is the right instrument; arithmetic-step is not. Synthetic batches must RETAIN the gold answer field, and free-text generations need an extraction contract \u2014 \\boxed{} (math_short_v10 format) is the existing extractable target",
     "batch_verdict": "blossom-math-v4-10k is a clean batch under answer-level checking"
    },
    "uncertainty": "raw exact; true agreement bounded by manual review of 15 disagreements",
@@ -715,9 +715,9 @@
   },
   {
    "id": "dq.sft_termination_underdetermined",
-   "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。 | **机制解释(fb 确认,非相关性)**:code 源有确定边界(围栏/代码块)所以不欠定——这个结构解释预测了哪些源欠定且预测对。**独立成立的数据缺陷,非解释失败**。**修法 = renderer-per-source(nanochat 式:每任务一形态,由代码定,不继承源自带形态),非打包归一时(on-time 归一)). λ 合成目标:每簇一种形态,由生成器强制**。code 重复的 55.8% 成因另记(eval f8c08c1:贪心 55.8%/t=0.8 17%/base 25.4%,循环无藏物,成因在解码器不在模型/数据)。",
+   "value": "SFT \u7ec8\u6b62\u6b20\u5b9a,\u5b9e\u6d4b:49,481 \u6761 source \u5bf9(per-source 8K x9,\u5168\u6821\u6e90)\u219243,836 \u7c07;\u8fd1\u91cd\u7ec4(>=2)1,606 \u7c07=3.7%;**\u5176\u4e2d 23.9%(384 \u7c07)\u7b54\u6848\u7ed3\u6784\u5f62\u6001 >1**(mean 1.26 \u5f62\u6001/\u65cf),342 \u7c07\u7ec8\u7b26\u65cf\u4e0d\u540c\u3002**\u96c6\u4e2d\u5728 math/general,\u4e0d\u5728 code**:school_math 81%(91/113)\u3001s1k 82%(23/28)\u3001openo1 67%(6/9)\u3001coig 27%(257/940)\u3001alpaca 35%(6/17);code_python 0%(0/81)\u3001math_gsm8k 0%(0/360)\u3002\u542b fb \u7684 FoNE \u4e00\u9898\u4e00\u683c\u5f0f\u89c4\u5219\u7684\u63a8\u5e7f:\u540c\u4e00\u8fd1\u91cd\u9898\u88ab\u6559\u591a\u79cd\u6536\u5c3e\u2192\u7ec8\u6b62\u6b20\u5b9a\u3002 | **\u673a\u5236\u89e3\u91ca(fb \u786e\u8ba4,\u975e\u76f8\u5173\u6027)**:code \u6e90\u6709\u786e\u5b9a\u8fb9\u754c(\u56f4\u680f/\u4ee3\u7801\u5757)\u6240\u4ee5\u4e0d\u6b20\u5b9a\u2014\u2014\u8fd9\u4e2a\u7ed3\u6784\u89e3\u91ca\u9884\u6d4b\u4e86\u54ea\u4e9b\u6e90\u6b20\u5b9a\u4e14\u9884\u6d4b\u5bf9\u3002**\u72ec\u7acb\u6210\u7acb\u7684\u6570\u636e\u7f3a\u9677,\u975e\u89e3\u91ca\u5931\u8d25**\u3002**\u4fee\u6cd5 = renderer-per-source(nanochat \u5f0f:\u6bcf\u4efb\u52a1\u4e00\u5f62\u6001,\u7531\u4ee3\u7801\u5b9a,\u4e0d\u7ee7\u627f\u6e90\u81ea\u5e26\u5f62\u6001),\u975e\u6253\u5305\u5f52\u4e00\u65f6(on-time \u5f52\u4e00)). \u03bb \u5408\u6210\u76ee\u6807:\u6bcf\u7c07\u4e00\u79cd\u5f62\u6001,\u7531\u751f\u6210\u5668\u5f3a\u5236**\u3002code \u91cd\u590d\u7684 55.8% \u6210\u56e0\u53e6\u8bb0(eval f8c08c1:\u8d2a\u5fc3 55.8%/t=0.8 17%/base 25.4%,\u5faa\u73af\u65e0\u85cf\u7269,\u6210\u56e0\u5728\u89e3\u7801\u5668\u4e0d\u5728\u6a21\u578b/\u6570\u636e)\u3002",
    "measured": "2026-08-30",
-   "source": "pod 实测 eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
+   "source": "pod \u5b9e\u6d4b eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 \u6e90 per-source 8K",
    "config": {
     "cluster": "MinHashLSH 128-perm/16-band + union-find over band keys",
     "shape_features": [
@@ -735,9 +735,9 @@
     "shapes_gt1_families": 384,
     "shapes_gt1_rate": 0.239,
     "terminal_diff_families": 342,
-    "note": "OOM 痕迹保留(纯 python MinHash 的成本记录);本实现跑通后另记 completed"
+    "note": "OOM \u75d5\u8ff9\u4fdd\u7559(\u7eaf python MinHash \u7684\u6210\u672c\u8bb0\u5f55);\u672c\u5b9e\u73b0\u8dd1\u901a\u540e\u53e6\u8bb0 completed"
    },
-   "uncertainty": "近重是启发式(MinHash ~0.8 Jac);形状特征是分类器非原始 token;code 源 0% 未见多样性可能因 code 答案有确定结构",
+   "uncertainty": "\u8fd1\u91cd\u662f\u542f\u53d1\u5f0f(MinHash ~0.8 Jac);\u5f62\u72b6\u7279\u5f81\u662f\u5206\u7c7b\u5668\u975e\u539f\u59cb token;code \u6e90 0% \u672a\u89c1\u591a\u6837\u6027\u53ef\u80fd\u56e0 code \u7b54\u6848\u6709\u786e\u5b9a\u7ed3\u6784",
    "status": "measured"
   },
   {
@@ -782,6 +782,92 @@
    },
    "uncertainty": "n=50, Wilson CI 3.4-21%; cluster membership reconstructed post-hoc; corpus-wide fraction unmeasured",
    "status": "recorded"
+  },
+  {
+   "id": "dq.corpus_exact_dup_is_zero",
+   "value": 0.0,
+   "unit": "fraction of rows that are exact duplicates",
+   "measured": "2026-09-01",
+   "source": "probes/t62_corpus_dup_rate.py (full-domain), probes/t63_cross_domain_dup.py (cross-domain)",
+   "config": {
+    "task": "P0 duplication hypothesis",
+    "within_domain_full_scan": "cot 851,965 rows / 851,965 unique; textbook_30b 920,692 / 920,692; wiki_chat 372,827 / 372,827. max_copies 1 in every case.",
+    "cross_domain": "7 domains x 250,000 rows = 1,750,000 rows, 1,750,000 distinct keys, ZERO cross-domain collisions. Key is build_corpus.exact_key's normaliser (strip [\\s\\W_]+, sha1).",
+    "known_answer_verification": "planting 100 unique docs + one body at 7 copies + one at 3 returns 109 scanned / 101 unique / 8 dup rows / max 7. The instrument detects what it looks for; the zero is a measurement, not a silence.",
+    "why_within_domain_zero_is_expected": "build_corpus._parallel_exact_pass ran on every domain build and is global across that domain's shards, so within-domain zero is that pass WORKING, not evidence of a clean source.",
+    "why_cross_domain_zero_is_the_new_information": "no pass ever compared two domains -- dedup_corpus.py never ran (data/dedup/ absent) and has no consumer. The gap is real in code; this measures it empty in this corpus.",
+    "hardlink_false_lead": "2010 of 3422 shards have link count 2. The pairs are staging->assembled (web_cci3_p* <-> zh_web, wiki <-> wiki_chat, math <-> math_seed); only the assembled name appears in a mix, so no inode is read twice in one run."
+   },
+   "uncertainty": "EXACT duplication only. A paraphrase, a boilerplate-heavy pair, or a reformatted copy hashes differently and is counted unique -- and near-dedup has never run on this corpus (every build carries --no_near_dedup; build_corpus._near_dedup_postpass has no caller outside its own test). dq.code_rp1t_handread_50 measures 12% near-dup in code_rp1t by hand, which this number does not contradict and does not cover. code_rp1t and math_owm_stage2/en_c4_stage2/zh_web were scanned at a 250K-row prefix cross-domain, not in full.",
+   "boundary": "This REFUTES the exact-duplication leg of the P0 hypothesis and refutes nothing else. Read it as 'exact duplication is absent', never as 'the corpus is clean'.",
+   "status": "measured"
+  },
+  {
+   "id": "dq.domain_loss_scores_the_training_pool",
+   "value": 0.00625,
+   "unit": "fraction of scored docs that are actually held out",
+   "measured": "2026-09-01",
+   "source": "probes/t64_val_head_overlap.py; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
+   "config": {
+    "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
+    "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
+    "measured_on": "cot, 851,965 docs, 13 shards, seed 0",
+    "scored_docs_landing_in_first_5000_shuffled": 0.00625,
+    "expected_if_uniform": 0.00587,
+    "reading": "0.625% vs 0.587% expected by chance -- indistinguishable. The scored set is a uniform random sample of the pool, i.e. ~99.4% training data.",
+    "affected_numbers": "every per-domain nat in the 16B/22B/30B readouts and all four score_matrix profiles, including code_rp1t 0.795 nats = ppl 2.21",
+    "not_affected": "train.py's own printed val figure (validate() at :977) reads vcat, which comes from val and never from pools -- that one is genuinely row-disjoint."
+   },
+   "uncertainty": "Measured on cot at seed 0. The mechanism is seed-independent (any shuffle scatters the first shard uniformly), but the exact fraction per domain is not separately measured. eval/ppl.py reproduces the real val slice correctly and has zero callers.",
+   "boundary": "THE DEEPER POINT, which survives even if the head/val bug is fixed: a val set drawn from the training DISTRIBUTION cannot separate 'learned the distribution' from 'memorised its documents'. Row-disjointness is not the property the question needs. This explains loss falling while MC sits at chance without requiring any duplication -- and it is why the duplication hypothesis was reachable at all: the instrument that would have refuted it earlier was measuring the wrong rows.",
+   "status": "measured"
+  },
+  {
+   "id": "dq.near_dup_rate_at_the_real_normaliser",
+   "value": 4.77,
+   "unit": "percent of rows removable, code_rp1t, J>=0.5",
+   "measured": "2026-09-01",
+   "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
+   "config": {
+    "task": "P0 duplication -- the one leg exact-dedup could not answer",
+    "sample": "20,000 documents per domain, first shards in sorted order",
+    "engine": "128 perms, 64 bands x 2 rows, word 3-gram shingles, exact Jaccard on LSH candidates -- build_corpus's parameters, not reimplemented",
+    "normaliser": "_norm_skeleton (lowercase + collapse whitespace)",
+    "sweep_rows_removable_pct": {
+     "code_rp1t": {
+      "0.3": 8.84,
+      "0.4": 6.7,
+      "0.5": 4.77,
+      "0.6": 3.01,
+      "0.7": 1.76,
+      "0.8": 1.2,
+      "0.9": 0.4
+     },
+     "cot": {
+      "0.3": 0.76,
+      "0.4": 0.38,
+      "0.5": 0.14,
+      "0.6": 0.08,
+      "0.7": 0.04,
+      "0.8": 0.01,
+      "0.9": 0.0
+     },
+     "textbook_30b": {
+      "0.3": 0.0,
+      "0.5": 0.0,
+      "0.9": 0.0
+     }
+    },
+    "candidate_pairs": {
+     "code_rp1t": 156138,
+     "cot": 91645,
+     "textbook_30b": 148
+    },
+    "reconciles_with_handread": "dq.code_rp1t_handread_50 measured 12% by hand (n=50, Wilson 5-24%). 8.84% at the loosest threshold sits inside that interval; a human calls things near-duplicate that word-3-gram Jaccard does not, so hand-read above machine is the expected direction."
+   },
+   "uncertainty": "A SWEEP, NOT A POINT, and deliberately so. near_dedup_gate.md calibrates J>=0.5 against per-domain normalisers (norm_code, norm_en_c4, norm_math with a 70-word keyword stoplist and LaTeX mapping) that DO NOT EXIST in the repo -- grep returns nothing. The only normaliser present is _norm_skeleton, under which the gate doc's own example cluster scores 0.181 against its 0.5 threshold. Reporting a single number at 0.5 would be a fact about a measuring stick the code does not have. 20K-row prefix samples, not full domains; en_c4_stage2, math_owm_stage2 and zh_web unmeasured.",
+   "boundary": "A GATE THAT CERTIFIES ITS OWN NO-OP. Wiring _near_dedup_postpass up at its documented defaults today would remove approximately nothing AND stamp near_dedup: True while doing it (build_corpus.py:918-919), because the threshold is calibrated for a normaliser that was never written. The gate encodes 'the interesting case is above 0.5 under the calibrated normaliser' and neither half of that assumption holds. Same class as eff.fp8_weight_byte_cache measuring a disabled path: a check's assumption about where the interesting case lives is the one thing the check never tests. SEPARATELY: this measures near-duplication and refutes nothing about the P0 symptom -- code_rp1t is the only domain carrying meaningful near-dup, it falls off a cliff with threshold, and there is no setting at which near-dedup removes a large share of this corpus.",
+   "status": "measured"
   }
  ]
 }

@@ -16,13 +16,13 @@
   {
    "id": "eff.h20_mfu_200m",
    "claim": "a dense ~200M Transformer reaches X% MFU on H20 in FP8 training",
-   "value": "未找到出处 — no published H20 training MFU for ~200M-class dense models found in the literature searched",
+   "value": "\u672a\u627e\u5230\u51fa\u5904 \u2014 no published H20 training MFU for ~200M-class dense models found in the literature searched",
    "measured": "2026-08-30",
    "source": "literature search (WebSearch + arXiv sweeps, 2026-08-30)",
    "config": {
     "searched": [
      "H20 LLM training MFU",
-     "H20 FP8 训练 MFU 小模型",
+     "H20 FP8 \u8bad\u7ec3 MFU \u5c0f\u6a21\u578b",
      "H20 tokens/s training benchmark"
     ]
    },
@@ -55,12 +55,12 @@
     "ratio_ablation": "1:3 vs 1:7"
    },
    "uncertainty": "as reported in the paper; no error bars in Table 4",
-   "boundary": "1.3B scale; fb's 172.5M non-embedding is 7.5x smaller — [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
+   "boundary": "1.3B scale; fb's 172.5M non-embedding is 7.5x smaller \u2014 [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
    "status": "recorded"
   },
   {
    "id": "eff.meta_hybrid_ratio",
-   "value": "Meta systematic hybrid study (2510.04800): balanced 1:1 ratio yields best quality; ~1:5 optimal for quality+efficiency; Transformer blocks must be in middle/later stages — early-layer attention causes significant performance drop, holds at 350M and 1B across ratios 1:1 to 1:12",
+   "value": "Meta systematic hybrid study (2510.04800): balanced 1:1 ratio yields best quality; ~1:5 optimal for quality+efficiency; Transformer blocks must be in middle/later stages \u2014 early-layer attention causes significant performance drop, holds at 350M and 1B across ratios 1:1 to 1:12",
    "measured": "2026-08-30",
    "source": "Hybrid Architectures for Language Models: Systematic Analysis and Design Insights, arXiv 2510.04800, Sec.4.5 + Table 16-17",
    "config": {
@@ -69,12 +69,12 @@
     "ratios_tested": "1:0, 1:1, 1:3, 1:5, 1:12, 0:1"
    },
    "uncertainty": "as reported; no per-seed variance given",
-   "boundary": "350M smallest ablation scale — 2.0x fb's 172.5M [extrapolation]; SWA/Mamba primitives, not KDA",
+   "boundary": "350M smallest ablation scale \u2014 2.0x fb's 172.5M [extrapolation]; SWA/Mamba primitives, not KDA",
    "status": "recorded"
   },
   {
    "id": "eff.meta_hybrid_scaling_method",
-   "value": "IsoFLOPs scaling at 100M/350M/1B/3B across 5 compute budgets (2e19-4e20 FLOPs) using a Trapezoid LR scheduler and REUSING INTERMEDIATE CHECKPOINTS from the largest-budget run — i.e., WSD-style one-run-many-readouts validated at sub-1B scales; 0.5M tokens/step; LR 6e-3/3e-3/6e-4/3e-4",
+   "value": "IsoFLOPs scaling at 100M/350M/1B/3B across 5 compute budgets (2e19-4e20 FLOPs) using a Trapezoid LR scheduler and REUSING INTERMEDIATE CHECKPOINTS from the largest-budget run \u2014 i.e., WSD-style one-run-many-readouts validated at sub-1B scales; 0.5M tokens/step; LR 6e-3/3e-3/6e-4/3e-4",
    "measured": "2026-08-30",
    "source": "arXiv 2510.04800, Appendix M (Sec.4053-4075)",
    "config": {
@@ -82,7 +82,7 @@
     "budgets": "2e19-4e20 FLOPs"
    },
    "uncertainty": "methodology claim; no error bars",
-   "boundary": "validates the checkpoint-reuse scaling methodology at 100M-3B — directly supports the P1 calibration in data_scaling_design.md",
+   "boundary": "validates the checkpoint-reuse scaling methodology at 100M-3B \u2014 directly supports the P1 calibration in data_scaling_design.md",
    "status": "recorded"
   },
   {
@@ -94,7 +94,7 @@
     "validation_scale": "Kimi Linear 48B total / 3B active, 1.4T tokens"
    },
    "uncertainty": "overhead claim is architectural; the <2% latency figure is the paper's, no CI",
-   "boundary": "validated at 48B ONLY — no sub-1B measurement exists; overhead claim is architectural, not measured at 200M",
+   "boundary": "validated at 48B ONLY \u2014 no sub-1B measurement exists; overhead claim is architectural, not measured at 200M",
    "status": "recorded"
   },
   {
@@ -168,7 +168,7 @@
     "corpus": "3.24B unique"
    },
    "uncertainty": "error bars describe fit tightness, not parameter uncertainty (fb's correction)",
-   "boundary": "beta=0.555 is 1.6-2x the literature 0.28-0.37 — steep data exponent at this scale/architecture",
+   "boundary": "beta=0.555 is 1.6-2x the literature 0.28-0.37 \u2014 steep data exponent at this scale/architecture",
    "status": "measured"
   },
   {
@@ -180,7 +180,7 @@
     "range": "70M-16B"
    },
    "uncertainty": "as reported; fit uncertainty not given in the paper",
-   "boundary": "dense Transformers, English MassiveText — [extrapolation] to KDA+MLA hybrid; no joint fit exists for this architecture",
+   "boundary": "dense Transformers, English MassiveText \u2014 [extrapolation] to KDA+MLA hybrid; no joint fit exists for this architecture",
    "status": "recorded"
   },
   {
@@ -194,7 +194,7 @@
      "work": "13.19 TFLOP (exact)",
      "achieved": "61.1 TFLOPS",
      "peak": "148 bf16",
-     "verdict": "41% of peak — cuBLAS picks an SM75 align-1 kernel because vocab 32773 leaves the logits' leading dim 2-byte aligned; 92% after padding to a multiple of 8"
+     "verdict": "41% of peak \u2014 cuBLAS picks an SM75 align-1 kernel because vocab 32773 leaves the logits' leading dim 2-byte aligned; 92% after padding to a multiple of 8"
     },
     {
      "operator": "fp8 linears (189 _scaled_mm)",
@@ -203,7 +203,7 @@
      "work": "67.8 TFLOP (exact)",
      "achieved": "~274 TFLOPS",
      "peak": "296 fp8",
-     "verdict": "93% of peak — compute-bound, no headroom"
+     "verdict": "93% of peak \u2014 compute-bound, no headroom"
     },
     {
      "operator": "AttnRes (delta vs plain residual)",
@@ -221,16 +221,16 @@
      "work": "127 GB (est)",
      "achieved": "3.5 TB/s",
      "peak": "4 TB/s",
-     "verdict": "87% of peak per add — each is optimal, there are just 300 of them"
+     "verdict": "87% of peak per add \u2014 each is optimal, there are just 300 of them"
     },
     {
      "operator": "KDA chunk (9 layers, fwd+bwd)",
      "ms_per_step": 106.4,
      "pct_step": 10.8,
      "work": "~33 GB (est), negligible FLOP",
-     "achieved": "~0.31 TB/s (est) — CORRECTED to 1.16 TB/s measured by ncu, see eff.kda_occupancy_bound",
+     "achieved": "~0.31 TB/s (est) \u2014 CORRECTED to 1.16 TB/s measured by ncu, see eff.kda_occupancy_bound",
      "peak": "4 TB/s",
-     "verdict": "neither roof — latency/occupancy bound, 8% of HBM"
+     "verdict": "neither roof \u2014 latency/occupancy bound, 8% of HBM"
     },
     {
      "operator": "Flash attention (3 layers)",
@@ -239,7 +239,7 @@
      "work": "5.77 TFLOP (exact)",
      "achieved": "85.5 TFLOPS",
      "peak": "148 bf16",
-     "verdict": "58% — compute-bound (FA2 on Hopper)"
+     "verdict": "58% \u2014 compute-bound (FA2 on Hopper)"
     },
     {
      "operator": "liger_cross_entropy_kernel",
@@ -260,12 +260,12 @@
      "verdict": "bandwidth-bound"
     },
     {
-     "operator": "remainder (norms, quant, memset) — UNBROKEN DOWN",
+     "operator": "remainder (norms, quant, memset) \u2014 UNBROKEN DOWN",
      "ms_per_step": 169.0,
      "pct_step": 17.2,
-     "work": "—",
-     "achieved": "—",
-     "peak": "—",
+     "work": "\u2014",
+     "achieved": "\u2014",
+     "peak": "\u2014",
      "verdict": "largest single unexplained item; grows to ~20% once the vocab padding shrinks the denominator"
     }
    ],
@@ -555,7 +555,7 @@
   {
    "id": "eff.gpu4_peak_flops",
    "claim": "GPU4 sustained bf16 GEMM throughput vs GPU0",
-   "value": "GPU4 137.0 TFLOPS, GPU0 137.3 TFLOPS — identical, no hardware throttling",
+   "value": "GPU4 137.0 TFLOPS, GPU0 137.3 TFLOPS \u2014 identical, no hardware throttling",
    "measured": "2026-08-30",
    "source": "probes/bench_gpu_probe.py, 8192^3 bf16 GEMM, 30 iters",
    "config": {
@@ -629,7 +629,7 @@
     "bucket_50_tok_s_gpu": 73000,
     "bucket_25_tok_s_gpu": 73000
    },
-   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K — likely ceiling, may not stack",
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K \u2014 likely ceiling, may not stack",
    "boundary": "3-GPU DDP; 7-GPU optimal bucket may differ (more ranks = smaller per-rank chunks)",
    "status": "recorded"
   },
@@ -682,8 +682,8 @@
     "nccl_protocol": "default (RING_LL)",
     "nccl_algo": "default"
    },
-   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) — NCCL auto-selects good protocol at smaller per-rank chunks",
-   "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU — not ring-length-dependent in this regime",
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) \u2014 NCCL auto-selects good protocol at smaller per-rank chunks",
+   "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU \u2014 not ring-length-dependent in this regime",
    "status": "recorded"
   },
   {
@@ -718,14 +718,14 @@
     "gnorm_step10_warmup_3": 3.38,
     "gnorm_step10_warmup_20": 1.43
    },
-   "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) — the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
-   "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum — the 2->3->20 trend is monotonic — but 20 is the chosen smaller-bias config, not a measured optimum.",
+   "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) \u2014 the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
+   "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum \u2014 the 2->3->20 trend is monotonic \u2014 but 20 is the chosen smaller-bias config, not a measured optimum.",
    "status": "measured"
   },
   {
    "id": "eff.ddp_5k_not_identified",
    "claim": "7-GPU vs single-GPU 6.25% throughput gap: two candidates (static_graph, gradient_as_bucket_view) both exonerated, source not identified",
-   "value": "7-GPU vs single-GPU 6.25% gap. static_graph=False: no change. bucket_view=False: no change. Not proven intrinsic — two candidates excluded, others remain.",
+   "value": "7-GPU vs single-GPU 6.25% gap. static_graph=False: no change. bucket_view=False: no change. Not proven intrinsic \u2014 two candidates excluded, others remain.",
    "measured": "2026-08-30",
    "source": "A/B: b4_no_sg (static_graph=False) vs b4_no_bv (bucket_view=False) vs baseline, 4xGPU4-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32, mix_scale_0.2b, 40 steps, bucket50, default NCCL protocol. Profile: GPU idle only 1.5% (27.7ms/step), NCCL 18.2% (overlapped with compute), GPU 98.5% busy.",
    "config": {
@@ -747,7 +747,7 @@
     "nccl_pct": 18.2
    },
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
-   "boundary": "按时间盒关闭,不是因为查清了。已排除 —— NCCL 传输(18.2% 已重叠)、GPU 空闲(1.5%)、static_graph、gradient_as_bucket_view。未排除 —— CPU 侧 reducer hook 的 launch 拖慢、DDP 引入的额外小 kernel。模型变大时应被摊薄;若不降则此归因需重开。",
+   "boundary": "\u6309\u65f6\u95f4\u76d2\u5173\u95ed,\u4e0d\u662f\u56e0\u4e3a\u67e5\u6e05\u4e86\u3002\u5df2\u6392\u9664 \u2014\u2014 NCCL \u4f20\u8f93(18.2% \u5df2\u91cd\u53e0)\u3001GPU \u7a7a\u95f2(1.5%)\u3001static_graph\u3001gradient_as_bucket_view\u3002\u672a\u6392\u9664 \u2014\u2014 CPU \u4fa7 reducer hook \u7684 launch \u62d6\u6162\u3001DDP \u5f15\u5165\u7684\u989d\u5916\u5c0f kernel\u3002\u6a21\u578b\u53d8\u5927\u65f6\u5e94\u88ab\u644a\u8584;\u82e5\u4e0d\u964d\u5219\u6b64\u5f52\u56e0\u9700\u91cd\u5f00\u3002",
    "status": "recorded"
   },
   {
@@ -893,7 +893,7 @@
   },
   {
    "id": "eff.fetch_curl92_silent_death",
-   "value": "fetch_corpus 12h 无声死亡根因(fb 2026-08-31):subprocess.run(curl, check=True) 被 curl exit 92(HTTP/2 stream error)击穿——一个瞬态 stream 错,curl 内部 --retry 6 后仍非零,check=True 把它变 CalledProcessError,整个 11 文件 fetch 崩,仅落 2 文件 + 1 .part 1.72GB,进程死、无哨兵、日志落 /tmp(非 runs/)。**'失败时不报错'第十号同型的触发因子:check=True 是 fetch 上最不该有的守卫,curl 瞬态错 net 成非零是常态。** 修1(b81d051):curl 非 fatal,外层有界退避续 .part。修2(e0258fa):stale-.part 只在该源变化时删,同源续传留 .part 给 -C -(重启把 resumable 1.72GB 当 stale 删丢带宽)。",
+   "value": "fetch_corpus 12h \u65e0\u58f0\u6b7b\u4ea1\u6839\u56e0(fb 2026-08-31):subprocess.run(curl, check=True) \u88ab curl exit 92(HTTP/2 stream error)\u51fb\u7a7f\u2014\u2014\u4e00\u4e2a\u77ac\u6001 stream \u9519,curl \u5185\u90e8 --retry 6 \u540e\u4ecd\u975e\u96f6,check=True \u628a\u5b83\u53d8 CalledProcessError,\u6574\u4e2a 11 \u6587\u4ef6 fetch \u5d29,\u4ec5\u843d 2 \u6587\u4ef6 + 1 .part 1.72GB,\u8fdb\u7a0b\u6b7b\u3001\u65e0\u54e8\u5175\u3001\u65e5\u5fd7\u843d /tmp(\u975e runs/)\u3002**'\u5931\u8d25\u65f6\u4e0d\u62a5\u9519'\u7b2c\u5341\u53f7\u540c\u578b\u7684\u89e6\u53d1\u56e0\u5b50:check=True \u662f fetch \u4e0a\u6700\u4e0d\u8be5\u6709\u7684\u5b88\u536b,curl \u77ac\u6001\u9519 net \u6210\u975e\u96f6\u662f\u5e38\u6001\u3002** \u4fee1(b81d051):curl \u975e fatal,\u5916\u5c42\u6709\u754c\u9000\u907f\u7eed .part\u3002\u4fee2(e0258fa):stale-.part \u53ea\u5728\u8be5\u6e90\u53d8\u5316\u65f6\u5220,\u540c\u6e90\u7eed\u4f20\u7559 .part \u7ed9 -C -(\u91cd\u542f\u628a resumable 1.72GB \u5f53 stale \u5220\u4e22\u5e26\u5bbd)\u3002",
    "measured": "2026-08-31",
    "source": "/tmp/fetch_code.log traceback; commit b81d051, e0258fa",
    "config": {
@@ -902,12 +902,12 @@
     "landed_before_death": "2 files (2.66+1.58GB) + file3 .part 1.72GB",
     "log_path_bug": "wrote /tmp/fetch_code.log not runs/"
    },
-   "uncertainty": "死亡是否含 pod/网络重启动因未排除;curl 92 是瞬态,非本 fetch 特有",
+   "uncertainty": "\u6b7b\u4ea1\u662f\u5426\u542b pod/\u7f51\u7edc\u91cd\u542f\u52a8\u56e0\u672a\u6392\u9664;curl 92 \u662f\u77ac\u6001,\u975e\u672c fetch \u7279\u6709",
    "status": "measured"
   },
   {
    "id": "eff.short_conv_shifted_madd",
-   "value": "ShortConv 改 K 个 shifted multiply-add 替 nn.Conv1d(t02, 2026-08-31):微基准 D=512 B=16 T=4096 compiled 3.44x(conv1d 0.777→shifted 0.226 ms/call),eager 0.61x(反而慢,只在 torch.compile 下赢);train.py 编译模型体,所以走 compiled regime。end-to-end 7 卡 0.2b 50 步稳态:baseline 71K tok/s/gpu(MFU 30%)vs patched 72K(MFU 30%),约 +1.4%——per-op 3.44x 在一个占 step 极小比例的 op 上,end-to-end 微增。数值与 conv 逐值等价(parity 3e-7),loss 一致(val 5.594 vs 5.602,种子噪声内)。verdict:patched ≥ baseline,ship。",
+   "value": "ShortConv \u6539 K \u4e2a shifted multiply-add \u66ff nn.Conv1d(t02, 2026-08-31):\u5fae\u57fa\u51c6 D=512 B=16 T=4096 compiled 3.44x(conv1d 0.777\u2192shifted 0.226 ms/call),eager 0.61x(\u53cd\u800c\u6162,\u53ea\u5728 torch.compile \u4e0b\u8d62);train.py \u7f16\u8bd1\u6a21\u578b\u4f53,\u6240\u4ee5\u8d70 compiled regime\u3002end-to-end 7 \u5361 0.2b 50 \u6b65\u7a33\u6001:baseline 71K tok/s/gpu(MFU 30%)vs patched 72K(MFU 30%),\u7ea6 +1.4%\u2014\u2014per-op 3.44x \u5728\u4e00\u4e2a\u5360 step \u6781\u5c0f\u6bd4\u4f8b\u7684 op \u4e0a,end-to-end \u5fae\u589e\u3002\u6570\u503c\u4e0e conv \u9010\u503c\u7b49\u4ef7(parity 3e-7),loss \u4e00\u81f4(val 5.594 vs 5.602,\u79cd\u5b50\u566a\u58f0\u5185)\u3002verdict:patched \u2265 baseline,ship\u3002",
    "measured": "2026-08-31",
    "source": "runs/p02_sc_base.log, runs/p02_sc_patched.log, bench_short_conv2.py",
    "config": {
@@ -928,7 +928,7 @@
   },
   {
    "id": "eff.ckpt_resume_16h_interval",
-   "value": "Resume equivalence + checkpoint interval for the 16h 30B run (t38, 2026-08-31): kill by SIGKILL at step 40, resume from a 959MB checkpoint (model+opt+step). Resumed loss step50 5.841 vs ref 5.874, step60 5.532 vs ref 5.503 (|Δ|≤0.033 nat, within t01 val sd 0.039); lr exact at both steps (1.67e-3, 2.00e-3) — schedule and Muon momentum continue from the absolute step, not zero. Checkpoint write 4.91s median (cold) for 959MB with optimizer state at d=1024. Recommend --save_every 500 (~15 min, 0.55% of wall, ≤15 min work lost on crash). Floor is ~8 min (491s) to keep write <1%.",
+   "value": "Resume equivalence + checkpoint interval for the 16h 30B run (t38, 2026-08-31): kill by SIGKILL at step 40, resume from a 959MB checkpoint (model+opt+step). Resumed loss step50 5.841 vs ref 5.874, step60 5.532 vs ref 5.503 (|\u0394|\u22640.033 nat, within t01 val sd 0.039); lr exact at both steps (1.67e-3, 2.00e-3) \u2014 schedule and Muon momentum continue from the absolute step, not zero. Checkpoint write 4.91s median (cold) for 959MB with optimizer state at d=1024. Recommend --save_every 500 (~15 min, 0.55% of wall, \u226415 min work lost on crash). Floor is ~8 min (491s) to keep write <1%.",
    "measured": "2026-08-31",
    "source": "runs/t38_ref.log, runs/t38_resume.log, ckpt_cost.py",
    "config": {
@@ -1796,6 +1796,376 @@
    },
    "uncertainty": "Both peaks are now measured on this pod with the same 8192^3 / 30-iter shape, so the carried-ratio assumption is closed. What remains: a single square GEMM is not the head's 2048x1024x32784 shape, and a peak probe measures the best case rather than what an odd-N shape achieves -- if anything that makes the 98.2% an underestimate of how close the real shapes run to their own attainable peak. The 274.5 TFLOPS still comes from the older prepad trace, not from the same run as the 493.1 ms group figure.",
    "boundary": "GEMM throughput only; says nothing about work around the GEMM (quantisation, epilogue) or about any non-GEMM lever",
+   "status": "measured"
+  },
+  {
+   "id": "eff.quant_tax_is_the_elementwise_group",
+   "claim": "what the 107 ms 'elementwise / copy (aten)' group actually is, and whether it can be fused",
+   "value": "IT IS THE FP8 QUANTISATION TAX, not a residue of unrelated pointwise ops, and it is the SAME lever as the fp8 LM head rather than a separate rung. Attribution by correlation id on the ddp rank0 trace resolves 99.98% of the group (250.57 of 250.61 ms/step): aten::div 84.01 (n=14643), aten::add_ 82.00 (n=30179), aten::copy_ 67.17 (n=21102), aten::abs 13.84 (n=6884), aten::clamp 0.65 (n=6864) -- five ops are 99.0% of it. div + copy_ + abs + clamp = 165.7 ms/step = 66% of the group, and that set is _fp8_mm's signature op for op: abs().amax().clamp(min=1e-12) then (x/s).to(fp8) then .contiguous() (train.py:454). THE COUNTS CORROBORATE, WHICH THE NAMES ALONE WOULD NOT: 343 clamp/step means 343 scales computed per step, 344 abs/step is one abs per scale, and probes/t58_quant_tax.py independently predicted 320 amax reductions per step for the HEAD ALONE (5 per _fp8_mm call x 64 chunks) -- so the head is ~93% of every scale the model computes. CONSEQUENCE: t56's 'copies' rung is un-refuted and MERGES into the fp8-head/epilogue rung. One rung, one ceiling. The ceiling stays the single-instrument 75.5 ms = 4.44% from t58; this trace is corroboration of MECHANISM AND SCOPE, not a larger number -- it is a different run (7 cards, allreduce, different shapes) than t58's single card, and the two must not be added. The honest statement of size is: at least 3.59% of span by direct measurement, with the same work present at production scale across head and body. SEPARATE OPEN ITEM, not part of the epilogue path: aten::add_ at 82.00 ms/step over 1509 calls/step is the one large owner that is not quantisation; the optimizer/accumulate hypothesis for it is UNVERIFIED. CEILING CORRECTION (adversarial review of the probe, same day): t58's bf16 arm ran torch.mm(Gt,A).float() -- a bf16 write plus an fp32 cast -- while BOTH fp8 arms pass out_dtype=torch.float32 and never pay it, ~12.9 GB/step = ~10.4 ms at the probe's own fitted bandwidth. So the baseline was penalised by work the candidate does not do: 205.3 ms against the traced head's 190.0 (eff.lm_head_is_compute_bound, 62.5+63.0+64.5), 8.1% rich. bf16 - pre corrects from 75.5 to 60.2 ms. eff.fp8_weight_byte_cache's 39.4 ms is UNAFFECTED: its three arms differ only in when the weight is quantised and all pay identical GEMMs, so the cast is in every arm and cancels.",
+   "measured": "2026-09-01",
+   "source": "bench_eff/t56_elementwise_owner.py, runs/t56_elementwise_owner.json, /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted); corroborates probes/t58_quant_tax.py + runs/t58_quant_tax.json",
+   "config": {
+    "task": "tilerl-10",
+    "trace": "ddp_trace_rank0.json, 7 cards, rank 0",
+    "n_active_steps": 20,
+    "group_ms_per_step": 250.61,
+    "resolved_ms_per_step": 250.57,
+    "resolved_pct": 99.98,
+    "quant_ops_ms_per_step": 165.7,
+    "quant_pct_of_group": 66,
+    "abs_calls_per_step": 344,
+    "clamp_calls_per_step": 343,
+    "t58_predicted_head_amax_per_step": 320,
+    "add_ms_per_step_unexplained": 82.0,
+    "ceiling_held_at_ms": 60.2,
+    "ceiling_held_at_pct_of_span_1676_63": 3.59,
+    "ceiling_held_at_pct_of_step_1702": 3.54,
+    "ceiling_superseded_ms": 75.5,
+    "probe_bf16_arm_ms": 205.3,
+    "traced_head_ms": 190.0
+   },
+   "uncertainty": "The ddp trace and t58's single-card microbench are different runs and are NOT added; the ceiling remains t58's. The 250.61 ms group total here differs from t56's 107.0 ms because that was the single-card lane trace -- expected by construction, not a discrepancy. aten::add_'s 82 ms has a hypothesis and no verification. The trace itself is uncommitted pod state (415 MB), so this attribution is not reproducible from the repo alone. BASE: percentages here are against t57's span 1676.63 ms, per fb's ruling that a doc and its facts use one base; eff.steady_state_composition already supersedes an entry for mixing span with the throughput-derived 1702 ms step. The 75.5 ms itself is unaffected.",
+   "boundary": "METHOD WARNING, and the reason this entry exists in the form it does: the FIRST run of this attribution reported 0% resolved and was one commit away from being published as the finding 'the trace cannot name it'. That was a broken join, not a property of the trace -- kernels carry args.correlation, cpu_ops carry args['External id'], these are DIFFERENT KEYSPACES, and the cuda_runtime launch event carrying both is the required middle hop. A broken join is indistinguishable from a true negative. This is the only defect found today whose wrong answer was a NEGATIVE result, which is the hardest kind to catch because nobody argues with a null: a confident 'nothing here' invites no scrutiny, while a confident wrong positive gets challenged. Any attribution that resolves 0% or 100% should be treated as a suspected tooling failure until the join is verified on a case whose answer is known.",
+   "status": "measured",
+   "refuted_by": "an attribution on the single-card lane trace showing the elementwise group there is NOT dominated by the same five ops"
+  },
+  {
+   "id": "eff.two_x_not_reachable_by_architecture",
+   "claim": "whether 2x training throughput is reachable at 200M by changing the architecture",
+   "value": "NO on current evidence. Two independent paths, both capped near 1.2x, and they do not add. SOFTWARE: the four non-retired levers, every one idealised and all landing at once, sum to 158.4 ms of a 1676.63 ms span = 9.45% = 1.104x; the two with an established mechanism (fp8 head epilogue 75.5 ms, flash seam 54.9 ms) are 130.4 ms = 7.78% = 1.084x. SHAPE: holding body params L*d^2 fixed and respecting d %% 128 == 0 (hd=128, FlashKDA), the best shape is 2048x3 at 1.20x, because at fixed parameters speed is set by L*d and not L*d^2 -- going shallow-and-wide cuts per-layer bandwidth traffic and pays for it in a head that grows linearly in d. THE FLOOR: fp8 GEMM is 493.1 ms/step and immovable at 98.2% of this pod's measured fp8 peak, so even with head and everything else at ZERO the ceiling is 1676.63/(493.1+76.38) = 2.94x, and 2x requires the non-GEMM 1107 ms to fall to 269 ms, a 76% cut against 158 ms of idealised levers. THE PATHS DO NOT ADD: reshaping changes the same 917.2 ms group that KDA retune and fusion work target -- 2048x3 drops that group to 458.6 ms and halves KDA's absolute headroom -- so summing the two is double counting. WHY THIS REVISES THE EARLIER ~+30-40%% SOFTWARE CEILING: two items collapsed. fp8 GEMM library swap went 2.06% -> 0.53% because the old figure divided by a vendor 296 TFLOPS the silicon does not reach (measured 279.6). The fp8 LM head went +5.67% ideal -> MEASURED -3.91%, because the quantisation tax (135.1 ms) exceeds what fp8 saves on the GEMM itself (75.5 ms). What survives of the head is fusing that tax into an epilogue -- same block of time, different measure.",
+   "measured": "2026-09-01",
+   "source": "docs/lessons/arch_efficiency_2x.md; arithmetic on runs/t57_steady.log (t57 steady trace), runs/t58_quant_tax.json, runs/t59_fp8_peak.json",
+   "config": {
+    "span_ms": 1676.63,
+    "busy_ms": 1600.25,
+    "idle_ms": 76.38,
+    "groups_ms": {
+     "fp8_gemm": 493.1,
+     "bf16_lm_head": 190.0,
+     "rest_fusion_kda_elementwise_flash_flce": 917.2
+    },
+    "scaling_used": {
+     "fp8_gemm": "L*d^2 (params)",
+     "head": "d (vocab fixed 32784)",
+     "rest": "L*d (per-layer per-token bandwidth)"
+    },
+    "shape_constraint": "d %% 128 == 0, hd=128 required by the FlashKDA kernel (train.py Cfg.heads)",
+    "best_shape": {
+     "d": 2048,
+     "L": 3,
+     "busy_ms": 1331.7,
+     "speedup": 1.202,
+     "d_over_L": 682.7
+    },
+    "current_shape": {
+     "d": 1024,
+     "L": 12,
+     "busy_ms": 1600.25,
+     "speedup": 1.0,
+     "d_over_L": 85.3
+    },
+    "levers_ideal_ms": {
+     "fp8_head_epilogue": 75.5,
+     "flash_seam": 54.9,
+     "kda_retune": 15.0,
+     "best_single_fusion": 13.0,
+     "gemm_library_swap_RETIRED": 8.9
+    },
+    "sum_non_retired_ms": 158.4,
+    "sum_non_retired_speedup": 1.104,
+    "sum_with_mechanism_ms": 130.4,
+    "sum_with_mechanism_speedup": 1.084,
+    "zero_non_gemm_ceiling": 2.94,
+    "two_x_requires": "non-GEMM 1107 ms -> 269 ms, a 76% cut"
+   },
+   "uncertainty": "The shape table is DERIVED, not measured: it extrapolates three measured group times by L*d^2 / d / L*d and assumes the group proportions hold as the shape changes. 2048x3 is far from the measurement point (L 12 -> 3) and the `rest` group is where the extrapolation is weakest, since KDA's chunk structure and fusion boundaries both move with layer count. A 20-step trace on any candidate shape is required before the table decides anything. The steady trace itself is one card, profiler window steps 56-76; the 7-card production figure is 77K tok/s/GPU.",
+   "boundary": "Says 2x is not reachable by architecture at 200M on THIS evidence; does not say 2x is impossible. It is silent on what changes the FLOP count itself -- sparsity, MoE, lower precision -- which are architecture changes rather than optimisations, and on any lever not yet identified. It also does not price the quality side of any shape: that is eff.completep_optimal_ratio_is_deeper.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.completep_optimal_ratio_is_deeper",
+   "claim": "which direction the width-to-depth ratio should move at our scale, and what a throughput-motivated reshape would cost in quality",
+   "value": "THE QUALITY EVIDENCE POINTS THE OPPOSITE WAY FROM THE SPEED EVIDENCE, and this is a decision for the user rather than a default. CompleteP (arXiv 2505.01618) measures compute-optimal N:L at 32.0 for 50M non-embedding (N=512, L=16) and 42.7 for 300M (N=1024, L=24), rising with scale and staying under about 60 across the range studied. Our 166M non-embedding sits between those two points, so the indicated optimum is 32-43 and WE ARE AT 85.3. If anything we should go DEEPER for quality and pay throughput. Priced through eff.throughput_quality_exchange_rate at the 0.2b-0.3b slope of 0.91 nat/e-fold: 768x21 (d/L 36.6, toward CompleteP's optimum) runs at 0.874x and must EARN BACK 0.123 nat to break even; 896x15 (d/L 59.7) is 0.975x and -0.023 nat; the fastest shape 2048x3 (d/L 682.7) is 1.202x and buys a +0.167 nat budget. The 1.20x speed ceiling therefore requires moving d/L six times further in the direction the quality evidence argues against.",
+   "measured": "2026-09-01",
+   "source": "arXiv 2505.01618v3 Tables 2-3 (fetched 2026-09-01); throughput column from the derived shape table in docs/lessons/arch_efficiency_2x.md; slope from eff.throughput_quality_exchange_rate",
+   "config": {
+    "completep_50m_optimal": {
+     "N": 512,
+     "L": 16,
+     "ratio": 32.0
+    },
+    "completep_300m_optimal": {
+     "N": 1024,
+     "L": 24,
+     "ratio": 42.7
+    },
+    "completep_1p5b_optimal": {
+     "N": 1984,
+     "L": 32,
+     "ratio": 62.0
+    },
+    "completep_range_statement": "compute-optimal N:L less than about 60 across 50M-1.5B, trending larger with scale",
+    "ours": {
+     "d": 1024,
+     "L": 12,
+     "ratio": 85.3,
+     "non_embedding_params_m": 166
+    },
+    "exchange_slope_nat_per_efold": 0.91,
+    "exchange_slope_segment": "0.2b-0.3b",
+    "quality_budget_nat": {
+     "2048x3": 0.167,
+     "896x15": -0.023,
+     "768x21": -0.123
+    }
+   },
+   "uncertainty": "Two limits on transfer. CompleteP measures dense softmax transformers; we are KDA + gated MLA, and the `rest` bandwidth group whose L*d scaling drives our speed column has no counterpart in their models. And the 0.91 slope is a secant on the 0.2b-0.3b segment that has already fallen 38% by 0.3b-0.4b, so the quality budgets above expire within one budget point and must be recomputed at the budget actually being decided.",
+   "boundary": "Names the direction and prices it; does not establish that a deeper shape would actually earn its 0.123 nat back at our scale on our mix. That requires a run, not a citation.",
+   "status": "recorded"
+  },
+  {
+   "id": "eff.fp8_weight_byte_cache",
+   "claim": "what caching the head weight's fp8 bytes would save IF the fp8 head were re-enabled",
+   "value": "CONDITIONAL, NOT A SHIPPABLE SAVING -- the path it lives on is switched off. _fp8_mm exists only on the FLCE path installed by patch_liger_flce_fp8, which runs ONLY under FP8_HEAD=1 (train.py:2143), and FP8_HEAD=1 is itself no-ship at -3.91% (eff.fp8_head_ab_noship). Verified against the live run rather than assumed: no FP8_HEAD in the launch environment, zero occurrences of 'fp8 head: Liger FLCE's three GEMMs routed through _scaled_mm' in runs/pretrain_30b_s2.log; the 'FP8 compute enabled' line is convert_to_fp8_compute over the BODY linears, not the head. So _FP8_WSCALE is never populated and this cache saves nothing that currently runs. THE COMPLETE STATEMENT, which is more useful than either half: the cache saves 39.4 ms on a path that is off, and re-enabling that path with the cache is -59.6 + 39.4 = -20.2 ms, still a regression. It closes two thirds of the fp8 head's deficit and leaves it losing. HALF OF IT, FROM A DICT. MEASURED 39.4 ms/step = 2.35% of t57's 1676.63 ms span, which is 52% of the full 75.5 ms epilogue ceiling (eff.quant_tax_is_the_elementwise_group) and needs no CUTLASS, no DeepGEMM, no Liger kernel change. _FP8_WSCALE (train.py:448) caches the head weight's SCALE across the 64 FLCE chunks but not its quantised BYTES, so every chunk re-runs divide-and-cast over 67.1 MB, at two call sites in two orientations; site 2 (grad_input) does not pass cache_b so it recomputes the scale as well. The weight is self.head.weight, tied to self.tok.weight (train.py:717), and unchanged within a step. probes/t60_weight_cache.py, three interleaved arms, 64 chunks, spread 0.003-0.007 ms/chunk: live 184.3, scale-cached-both-sites 178.8, bytes-cached 144.9 ms/step. So 5.5 ms is the scale caching already done at site 1 and 33.9 ms (2.02% of span) is new. TWO BOUNDS ON THE EPILOGUE HALF, so nobody re-derives the ceiling as if the full 75.5 ms were reachable: (1) site 2 has NO GEMM to attach an epilogue to -- grad_logits_chunk is written by Liger's liger_cross_entropy_kernel, a Triton softmax/CE kernel that overwrites logits_chunk in place, so emitting fp8 there means editing Liger's Triton kernel, not attaching a CUTLASS node; (2) one materialised fp8 copy of G is IRREDUCIBLE on hardware grounds -- sm90 fp8 tensor cores require TN (both operands K-major), site 2 contracts G over the vocab axis and site 3 over the token axis, and no single layout satisfies both. ~4.3 GB/step, budget 2-4 ms (DERIVED, not measured). DERIVED-VS-MEASURED, stated because it nearly cost this lever: I derived this saving at 7.5 ms from a peak-bandwidth model and measured 39.4 -- under by 5.3x, because the kernels do not reach peak HBM. Third derived figure today to miss a measured one by enough to change a decision.",
+   "measured": "2026-09-01",
+   "source": "probes/t60_weight_cache.py, runs/t60_weight_cache.json; bounds from the EVT feasibility analysis over train.py:454-537 and liger_kernel/ops/fused_linear_cross_entropy.py",
+   "config": {
+    "task": "tilerl-10",
+    "cards": 1,
+    "card_id": 7,
+    "shape": "M=2048 K=1024 N=32784, 64 chunks/step, 2 of 3 call sites",
+    "statistic": "median of 3 interleaved blocks, cuda events",
+    "live_ms_per_step": 184.3,
+    "scale_cached_ms_per_step": 178.8,
+    "bytes_cached_ms_per_step": 144.9,
+    "saving_ms_per_step": 39.4,
+    "saving_pct_of_span_1676_63": 2.35,
+    "new_beyond_scale_ms": 33.9,
+    "new_beyond_scale_pct_of_span": 2.02,
+    "pct_of_epilogue_ceiling": 52,
+    "derived_estimate_ms": 7.5,
+    "derived_miss_factor": 5.3,
+    "gated_behind_flag": "FP8_HEAD=1",
+    "flag_default": "unset",
+    "flag_reaches_production": false,
+    "flag_status": "no-ship, -3.91% (eff.fp8_head_ab_noship)",
+    "net_if_path_re_enabled_ms": -20.2,
+    "saving_in_live_config_ms": 0.0
+   },
+   "uncertainty": "THE CHECK THAT CAUGHT THIS, stated because every other check passed: the probe was pre-declared, interleaved, tight (0.003-0.007 ms/chunk spread), and after correction its arms differed only in the treatment -- and none of those asks whether the code path executes in the live configuration. That question costs one line and precedes all the others. USAGE RESTRICTION, not a caveat (b0's distinction, 2026-09-01: a caveat degrades gracefully under skim-reading and a restriction does not). The 39.4 ms licenses 'this lever is worth building'. It does NOT license 'this lever delivers 39.4 ms in the live run', and it must not be summed with a lever measured on a different instrument unless the two are shown not to overlap. Measured on synthetic tensors of the production shape on ONE card, not in the live 7-card run; the saving is bandwidth-side so DDP is not expected to change it, but that is an expectation and the in-run A/B is what would settle it. Only 2 of the 3 call sites are exercised -- site 3 quantises A and G, not W. The 2-4 ms transpose budget in the value is DERIVED from a traffic model, the same class of estimate that missed this lever by 5.3x.",
+   "boundary": "PATH IS OFF: this fact claims no production saving. Any use of the 39.4 ms must carry the condition FP8_HEAD=1, which is no-ship. NOT scheduled for the between-stages window -- a change to a disabled path, carrying a bit-identity gate against behaviour nobody exercises, should not share a bisect window with a live fix. SHIP GATE, fb 2026-09-01: parity is a veto, not a check -- cached vs live logits must be BIT-IDENTICAL on the first N chunks of a real step, not close and not on synthetic tensors, because this changes WHEN quantisation happens and not what it computes; anything other than exact equality means the cache is stale somewhere and the lever does not ship regardless of the 39.4 ms. INVALIDATION MUST BE STRUCTURAL: key the cache on the weight tensor's data_ptr() AND _version so a mutated weight MISSES instead of serving stale bytes. The two facts that make it safe today -- the optimizer runs after FLCE, and head.weight is tied to tok.weight -- are properties of the current training loop that a future change could break silently, and a comment asserting them is exactly the pattern catalogued in docs/lessons/instrument_not_system.md. No flag: a flag doubles the paths.",
+   "status": "measured",
+   "refuted_by": "a bit-identity check failing on real chunks, or an in-run A/B showing no throughput change"
+  },
+  {
+   "id": "eff.evt_epilogue_has_nothing_to_attach_to",
+   "claim": "whether a CUTLASS EVT or DeepGEMM epilogue can remove the fp8 head's quantisation tax",
+   "value": "NO, ON MECHANISM, not on size. An EVT is a GEMM epilogue, and NONE of the three tensors carrying the 135.1 ms tax is produced by a GEMM. G -- which carries 121 of the 135.1 ms at sites 2 and 3 -- is written IN PLACE by Liger's row-parallel Triton cross-entropy kernel (fused_linear_cross_entropy.py:200 `grad_logits_chunk = logits_chunk`, stored at cross_entropy.py:246). A is written by RMSNorm (train.py:240-247), also not a GEMM; the tool there would be a fused Triton RMSNorm-plus-quantise, not EVT. W is written by the optimizer once per step, which is a CACHING problem and is eff.fp8_weight_byte_cache. The CUTLASS facility itself is real -- Sm90ScaledLinCombPerRowBiasEltActAmaxAux emits fp8 D with a per-tensor scale and an amax -- it simply has no producer here to attach to. DEEPGEMM IS NOT A FALLBACK: its SM90 path is fp8_gemm_nt only with no fp8-output mode, it has no epilogue API, its README assigns fp8 casting and transposition to the caller, and its 1x128/128x128 block scaling is a DIFFERENT NUMERICS RECIPE than the per-tensor e4m3 that eff.fp8_head_activation_range validated -- adopting it reopens a numerics question already closed. RANGE, with the assumption at each end: 1-68 ms. Low: Liger's CE kernel cannot host a usable fp8 store, because a column-major scatter out of a row-parallel kernel is uncoalesced and costs more than it saves, so only the non-epilogue caching survives. High: every producer emits fp8 in its consumer's layout with no coalescing penalty and a delayed scale passes numerics. THE HIGH END REQUIRES EDITING LIGER'S TRITON KERNEL BODY, in a dependency we already patch by source-string rewrite that fails closed on a version bump (train.py:519) -- so it would be a second and more fragile rewrite of a kernel body rather than of a call site. One hardware constraint survives any epilogue: sm90 fp8 requires TN, site 2 contracts G over the vocab axis and site 3 over the token axis, so one materialised fp8 copy of G is irreducible (~4.3 GB/step, budget 2-4 ms, DERIVED). VERDICT: feasibility is established as POOR, not unknown. The rung's practical content is eff.fp8_weight_byte_cache's 39.4 ms.",
+   "measured": "2026-09-01",
+   "source": "paper analysis over train.py:454-537, liger_kernel/ops/fused_linear_cross_entropy.py, liger_kernel/ops/cross_entropy.py, aten/src/ATen/native/cuda/ScaledBlas.cpp, CUTLASS include/cutlass/epilogue/fusion/operations.hpp, DeepGEMM README; three independent adversarial reviews, all refuting",
+   "config": {
+    "task": "tilerl-10",
+    "method": "paper analysis, no GPU",
+    "tax_total_ms": 135.1,
+    "tax_at_sites_2_and_3_ms": 121,
+    "range_low_ms": 1,
+    "range_high_ms": 68,
+    "irreducible_transpose_ms_derived": "2-4",
+    "reviews_refuting": 3,
+    "reviews_total": 3
+   },
+   "uncertainty": "Paper analysis, not measured -- no epilogue was built and no Liger edit attempted. The 1-68 ms range is DERIVED at both ends. What would settle the high end is a prototype fp8 store in Liger's CE kernel measured for coalescing cost, which is a day of work in a vendored dependency and is not justified while the measured 39.4 ms lever is unbuilt.",
+   "boundary": "says nothing about the weight byte cache (eff.fp8_weight_byte_cache), which is not an epilogue and is measured",
+   "status": "recorded",
+   "refuted_by": "a working fp8 store in Liger's CE kernel whose coalescing cost is measured below its saving"
+  },
+  {
+   "id": "eff.fusion_and_elementwise_are_disjoint_but_the_trace_is_off_config",
+   "claim": "whether the inductor-fusion group and the fp8 quantisation tax are the same lever counted twice (lessons-03's question), and whether the trace behind both describes the live run",
+   "value": "DISJOINT, so there is no double count -- and the more consequential answer is that THE TRACE HAS THE FP8 HEAD ON, which the live run does not. (1) NO OVERLAP: t56's elementwise rule matches `^triton_` first, so a triton fusion is never in the elementwise group; the two kernel sets intersect in ZERO kernels, measured, not argued. 511.88 ms fusion + 250.61 ms elementwise double-counts nothing. (2) THE TRACE IS OFF-CONFIG: 181 aten::_scaled_mm per step sit inside a Liger FLCE region, and the ONLY code that puts _scaled_mm inside FLCE is patch_liger_flce_fp8 (train.py:488), reachable only under FP8_HEAD=1 (train.py:2143) -- no-ship at -3.91% and absent from the live environment. Splitting every kernel by whether its launch is contained in a Liger region: HEAD 220.38 ms/step (elementwise 156.86, fp8 GEMM 63.52) vs BODY 1135.81 ms/step. So 156.9 of the elementwise group's 250.6 ms is head work that does not run in production. Per owner: aten::div 79.20 head / 4.82 body, copy_ 60.35 / 6.82, abs 13.08 / 0.76, clamp 0.61 / 0.04. THE FOUR QUANT OPS ARE 92.5% HEAD (153.24 of 165.68 ms). What survives in the live configuration is aten::add_ at 78.52 ms body -- the one owner that was never quantisation and was already flagged unexplained. CONSEQUENCE: eff.quant_tax_is_the_elementwise_group's mechanism claim stands (the group IS the quantisation tax) but its SCOPE claim does not -- 'the same work present at production scale across head and body' is false, it is 92.5% head, and the head is off. The live-configuration quantisation tax in this group is 12.4 ms, not 165.7. (3) THE FUSION GROUP IS BODY WORK and is genuinely a separate lever: 132.91 ms carries both a scale op and a cast (quantisation by structure, from the BODY's torchao fp8 linears, which DO run live), 378.97 ms is model arithmetic. A name-only split gives 180.4 ms and an fp8-GEMM-adjacency split gives 224.3 ms; the three disagree by 91 ms, so no single-digit precision is available here and none is claimed.",
+   "measured": "2026-09-01",
+   "source": "bench_eff/t61_fusion_quant_overlap.py against /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted, captured 2026-09-01 05:51)",
+   "config": {
+    "task": "tilerl-10",
+    "trace": "ddp_trace_rank0.json, 7 cards, rank 0",
+    "n_active_steps": 20,
+    "kernels_shared_between_groups": 0,
+    "fusion_ms_per_step": 511.88,
+    "elementwise_ms_per_step": 250.61,
+    "head_total_ms_per_step": 220.38,
+    "body_total_ms_per_step": 1135.81,
+    "head_elementwise_ms_per_step": 156.86,
+    "body_elementwise_ms_per_step": 93.05,
+    "quant_ops_pct_under_liger": 92.49,
+    "body_add_ms_per_step": 78.52,
+    "fusion_quant_by_structure_ms": 132.91,
+    "fusion_quant_by_name_ms": 180.44,
+    "fusion_quant_by_adjacency_ms": 224.33,
+    "scaled_mm_in_flce_per_step": 181,
+    "gated_behind_flag": "FP8_HEAD=1"
+   },
+   "uncertainty": "The three discriminators for 'is this fusion quantisation' disagree by 91 ms (132.9 structural / 180.4 name / 224.3 fp8-GEMM adjacency) and the structural one is the most conservative, so the fusion group's quantisation share is a band, not a number. The head/body split relies on timestamp containment under a Liger region on the launching thread; a kernel launched outside FLCE that operates on head tensors would be counted as body. The trace is uncommitted pod state, so this is not reproducible from the repo alone.",
+   "boundary": "METHOD WARNING, second instance of the same class in one day and the reason this probe exists: the correlation join that resolved the elementwise group at 99.98% resolves 0.00% of triton kernels. Aten kernels launch through `cuda_runtime` (cudaLaunchKernel), triton kernels through `cuda_driver` (cuLaunchKernel), and a map built from cuda_runtime alone therefore returns a clean, confident, totally wrong null for every fusion. Build the correlation map from BOTH categories. AND THE LARGER ONE: every check on this trace passed -- 99.98% resolved, groups verified disjoint by kernel identity, three independent discriminators -- while the trace itself was captured under a flag the production run does not set. Correctness and relevance fail independently. Before attributing a trace, verify the CONFIGURATION it was captured under, not only that the attribution resolves.",
+   "status": "measured",
+   "refuted_by": "a trace captured with FP8_HEAD unset showing the same 250.6 ms elementwise group with the same per-owner split"
+  },
+  {
+   "id": "eff.grad_ckpt_inverts_with_depth",
+   "claim": "whether gradient checkpointing is worth it at the ruled 500M shape (d1024 L32), given it lost at 12 layers",
+   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2374-2379): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py on GPU2; cross-reference b0 t71 (c13fdc8) for the O(L^2) AttnRes source-read count",
+   "config": {
+    "task": "500M depth shape, fb/user order",
+    "shape": "d=1024 layers=32 heads=8 ffn_hidden=3072, head_dim 128 (FlashKDA)",
+    "params_M": 493.6,
+    "attn_res": "Full, ON in every measurement (decided, not retested)",
+    "seq": 4096,
+    "world": 1,
+    "accum": 1,
+    "card": "H20, GPU2",
+    "statistic": "200 timed steps, median-free mean over the window, 50-step warmup discarded",
+    "off_b4": {
+     "ms_per_step": 2069.5,
+     "tok_s": 7917,
+     "peak_GiB": 54.5,
+     "mfu_pct": 15.8
+    },
+    "on_b4": {
+     "ms_per_step": 2309.4,
+     "tok_s": 7094,
+     "peak_GiB": 13.36,
+     "mfu_pct": 14.2
+    },
+    "max_batch_off": 4,
+    "max_batch_off_peak_GiB": 56.38,
+    "max_batch_on": 16,
+    "max_batch_on_peak_GiB": 49.18,
+    "ckpt_cost_at_equal_batch": 1.116,
+    "prior_at_12_layers": 2.4,
+    "ruling": "fb: grad_ckpt ON, batch 16, accum 2"
+   },
+   "uncertainty": "EVERY NUMBER HERE IS world=1. DDP gradient buckets and NCCL staging add to peak, so the world=7 figure will be HIGHER, not lower, and batch 16 is not certified until measured at world=7 -- that measurement is pending cards clearing. Max batch is the largest POWER OF TWO that fits, because the search doubles; 24 was not measured. MFU is derived (6ND against a 148 TFLOPS vendor peak), labelled as such, and inherits whatever error 6ND carries for a hybrid KDA/attention model.",
+   "boundary": "A CONSTANT MEASURED AT ONE DEPTH AND CARRIED TO ANOTHER. The 2.4x was correct at 12 layers and wrong by more than 2x in the losing direction at 32. Third instance the same afternoon of a depth-fitted constant that did not survive the depth change (with b0's warmup 20 and momentum 150), each found only by measuring rather than inheriting. ALSO A METHOD NOTE THAT NEARLY COST THE RESULT: the first version of this probe called model(idx, targets=tgt) and backwarded the return, which silently drops the fused LM head -- the largest single consumer in the step. It would have produced a confident throughput number for a model we do not run. Same class as eff.fp8_weight_byte_cache measuring a disabled path.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.depth_is_not_the_mfu_gap",
+   "claim": "Depth costs ~2 MFU points: 16.0% at L=12 against 14.2% at L=32, so the recipe and not depth explains the 500M probe's 11-12%.",
+   "value": "RETRACTED, sign inverted. The 14.2% was the EAGER batch-4 row; the 16.0% was compiled at batch 16. Setting them side by side compared an execution path we do not run against one we do -- the exact rule this entry's own boundary section stated, quoted one message after writing it. The matched compiled pair says the opposite: L=32 reaches 43.5 TFLOPS/GPU against L=12's 23.7 at an identical recipe, so the deeper model uses the hardware 1.84x BETTER. Superseded by eff.depth_shape_matched_pair.\n\nA second, independent error: the entry compared a t66 percentage to a train.py percentage. train.py:2267 divides by 296 TFLOPS under --fp8 and 148 without; t66 never enables fp8 and hardcoded 148. Both were labelled 'MFU'. They were never the same statistic.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py; retracted by its own matched pair the same day",
+   "config": {
+    "retracted_rows": {
+     "l12_compiled_b16_mfu_pct": 16.0,
+     "l32_EAGER_b4_mfu_pct": 14.2
+    },
+    "why_not_comparable": "different batch, different compile state, and against train.py a different FLOP denominator"
+   },
+   "uncertainty": "None -- the claim is withdrawn, not qualified.",
+   "boundary": "THREE FAILURES IN ONE HOUR, ALL OF THE SAME KIND: a rule that has to be remembered at the point of use.\n(1) I quoted the eager b4 row against a compiled row, in the message after writing the boundary note that the eager rows must not be ruled from. Assent to a rule does not fire the rule.\n(2) I compared a 148-denominator percentage to a 296-denominator percentage. Both were labelled 'MFU'. A shared NAME is not a shared statistic, and a percentage hides its denominator by construction -- which is exactly why it should not be the unit anything is compared in.\n(3) The AttnRes A/B ran two IDENTICAL arms: `--ar-blocks` defaults to 0 and both invocations passed 0. It would have reported a difference of zero, and zero is the reading that invites no scrutiny -- the same false-negative trap as the 0%-resolution join. An A/B whose arms are equal cannot fail loudly on its own.\nThe fix for all three is the refusing kind, not the remembering kind: rows now carry `peak_tflops` and `fp8` so a mismatched comparison is visible in the JSON, and the harness refuses to run an A/B whose arms hash identically. See probes/t66_depth_shape.py `_ab_guard`.",
+   "audit": "Two of the three defects were rule-recall failures by someone who had written the rule minutes earlier: the eager-row ban was quoted and then broken, and 'record the capture config' did not cover the FLOP ceiling because nobody classed a denominator as configuration. The third was structural -- an A/B whose two arms both passed --ar-blocks 0, where 0 is the default, which would have reported a clean zero. All three are now refused at the point of use rather than remembered: rows carry peak_tflops and fp8, and t66 refuses a repeated arm (probes/t66_depth_shape.py _ab_guard, --selftest asserts it fires).",
+   "refuted_by": "eff.depth_shape_matched_pair",
+   "status": "retracted"
+  },
+  {
+   "id": "eff.depth_shape_matched_pair",
+   "value": "The deeper shape is MORE efficient per GPU, and the 500M probe's low reading is mostly denominator and contention, not the shape. Matched compiled pair, single card, everything identical but depth -- d1024, AttnRes Full, seq 4096, batch 16, grad_ckpt ON, compiled, world=1, accum=1, 200 timed steps past 50 warmup:\n  L=12 (206.1M): 3419.6 ms/step, 19,165 tok/s, 14.84 GiB, 23.7 TFLOPS/GPU\n  L=32 (493.6M): 4463.7 ms/step, 14,682 tok/s, 35.39 GiB, 43.5 TFLOPS/GPU\n1.84x more useful arithmetic per second at 2.4x the parameters: a bigger model amortises the same launch and memory traffic over more work.\n\nTHE 11% vs 32% GAP, ON ONE SCALE. Percentages were not comparable across instruments (train.py:2267 uses 296 TFLOPS under --fp8, 148 without; t66 is bf16-only at 148), so in absolute terms: 206M production world=7 94.7 TFLOPS/GPU; 493M probe world=3 35.5; 493M harness same shape world=1 43.5. The real collapse is 94.7 -> 35.5, i.e. 2.7x not 3x. Since the identical shape reaches 43.5 at world=1, roughly 19% of the probe's shortfall sits in the world=3 allreduce and the rest in the shape and recipe. That is evidence the DDP term is real and SMALLER than the shape term -- it is not a measurement of it.\n\nCOMPILED BATCH CEILINGS (single-process, uncontended, unaffected by the above): grad_ckpt ON fits batch 32 at 63.95 GiB; OFF fits batch 8 at 74.66 GiB. Eager read 16 and 4 -- both low by the same factor, so grad_ckpt's 4x batch advantage survived compilation and the ruling it supported stands. b32 remains the open lever.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py candidates S and S12 on GPU0/GPU2; pod-only log shape500_probe (container /work/aupai/runs, not in repo); train.py:2267 for the denominator",
+   "config": {
+    "matched_pair": {
+     "d": 1024,
+     "heads": 8,
+     "ffn": 3072,
+     "seq": 4096,
+     "batch": 16,
+     "grad_ckpt": true,
+     "compiled": true,
+     "attn_res": "Full (blocks=0)",
+     "world": 1,
+     "accum": 1,
+     "steps_timed": 200,
+     "warmup": 50,
+     "peak_tflops_denominator": 148,
+     "fp8": false
+    },
+    "l12": {
+     "params_M": 206.1,
+     "ms_per_step": 3419.6,
+     "tok_s": 19165,
+     "peak_GiB": 14.84,
+     "tflops_per_gpu": 23.7
+    },
+    "l32": {
+     "params_M": 493.6,
+     "ms_per_step": 4463.7,
+     "tok_s": 14682,
+     "peak_GiB": 35.39,
+     "tflops_per_gpu": 43.5
+    },
+    "absolute_tflops_per_gpu": {
+     "prod_206M_world7": 94.7,
+     "probe_493M_world3": 35.5,
+     "harness_493M_world1": 43.5
+    },
+    "denominators": {
+     "train_py_fp8": 296,
+     "train_py_bf16": 148,
+     "t66": 148
+    },
+    "compiled_max_batch": {
+     "ckpt_on": 32,
+     "ckpt_on_peak_GiB": 63.95,
+     "ckpt_off": 8,
+     "ckpt_off_peak_GiB": 74.66
+    },
+    "eager_max_batch_superseded": {
+     "ckpt_on": 16,
+     "ckpt_off": 4
+    }
+   },
+   "uncertainty": "The probe's own 11-12% is CONTAMINATED and is an upper bound on damage, not a rate: a queued shape500_b32 job guarded on `while [ -d /proc/1302052 ]` -- a HOST pid evaluated inside the container, where it does not exist -- launched immediately onto cards 4/5/6 while the probe held them, ~39 GiB each at 100% util, overlapping roughly steps 150-230. Killed by cmdline-verified pid. The world=3 b32 measurement does not exist yet; the run that would have produced it was the contending job, and the DDP term must not be fitted from world=1. The 19% attribution converts a bf16-denominator harness number and an fp8-denominator train.py number to TFLOPS, which is right for the ratio but leaves the fp8-vs-bf16 execution difference inside it -- the harness is not running the fp8 path, so it is not the same work. 6ND also undercounts grad_ckpt's recompute (~+33%), which cancels within the ckpt-on pair but depresses both against the no-ckpt 206M run. The AttnRes blocks=8 arm is still running; the blocks=0 side is the 4463.7 ms row above.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.w7_peak_memory_b32_fits",
+   "value": "batch 32 FITS at world 7 for the 493.6M shape, with 25.6 GiB to spare, and the tool everyone had been reading could not have told us. Measured on cards 1-7, d1024/L32/h8/ffn3072, grad_ckpt on, compiled, seq 4096, accum 1, fp8: live-tensor peak 69.63 GiB on rank 0, identical at the step-10 and step-20 windows (the counter is reset each window, so those are two independent readings of a shape-stable step). loss 6.54 -> 5.90, gnorm 2.69 -> 1.40, no OOM.\n\nTHE INSTRUMENT WAS THE PROBLEM, NOT THE MARGIN. nvidia-smi reads 74.10 GiB at world=3 and 74.09 at world=7 -- a difference of -0.01 GiB. DDP bucket growth from 3 ranks to 7, the entire quantity this measurement existed to find, is INVISIBLE to it: the caching allocator never returns memory to the driver, so a larger bucket is served from cache and the reservation figure stays pinned. Every fits/does-not-fit judgement in this repo before 661e5ce came from that number. The earlier 'about 6 GiB headroom' was not merely conservative -- it was produced by an instrument with zero resolution on the question being asked. Same shape as the MFU-denominator error the same day: the arithmetic was correct and the quantity was not the one in dispute.\n\nThe allocator's cache is 4.47 GiB of the 74.10 (74.10 live-plus-cache against 69.63 live), so real headroom to the card's usable 95.22 GiB is 25.59 GiB, against the 21.12 GiB nvidia-smi implies.\n\nCORRECTED: the first version of this entry said 9.52 GiB, computed against an 80 GiB card. THE CARDS ARE 97,871 MiB (95.58 GiB, 95.22 usable). I never measured the capacity -- I took 'H20 = 80 GiB' from memory while insisting the numerator be measured rather than read off nvidia-smi. Second denominator error of the day, after comparing a 148-TFLOPS MFU against a 296-TFLOPS one. Care spent on the numerator does not transfer to the denominator, and the denominator is the half that gets filled in from what one already believes.\n\nTHE CONTROL ARM REPORTED AND THE PREDICTION HELD. b16+accum2, everything else identical: 36.29 GiB against b32's 69.63, a ratio of 1.92, stable across its own step-10 and step-20 windows. The prediction that it must read materially lower was written into this entry's uncertainty before the arm ran, so the peak field is confirmed to track configuration rather than printing a constant. Both arms move the same 917,504 tokens per step, so the 33.3 GiB between them is memory spent for no throughput.\n\nTHE PAIR YIELDS A MODEL, NOT TWO POINTS. Solving peak = F + k*A over the two arms gives activations of 33.34 GiB per batch-16 unit and a fixed cost of 2.95 GiB. That fixed term is independently predicted at 2.76 GiB by 493.6M params x 2 bytes x 3 copies (weights + Muon momentum + grads) -- agreement to 0.19 GiB, which is what makes the model trustworthy rather than a two-point fit. Peak is LINEAR in batch here; an initial reading that grad_ckpt made activations sub-linear was wrong and the arithmetic said so.\n\nSo the recipe is settled: b32 accum 1 world 7, and b32 is the ceiling for this card at seq 4096. The model extrapolates -- legitimately, because two points fix a line of KNOWN FORM rather than seeding a guess at a trend: seq 8192 puts b32 at ~136 GiB (does not fit) and b16a2 at ~70 GiB (fits); batch 64 at seq 4096 likewise does not fit. b16+accum2 is therefore not a fallback but a reserve -- it is where 33 GiB comes from if sequence length or mix complexity grows.",
+   "measured": "2026-09-01",
+   "source": "scripts/w7_peak.sh + scripts/w7_driver.sh, cards 1-7; pod-only log w7_b32a1 (container /work/aupai/runs); train.py:2604 peak field added in 661e5ce",
+   "config": {
+    "d": 1024,
+    "layers": 32,
+    "heads": 8,
+    "ffn": 3072,
+    "params_M": 493.6,
+    "seq": 4096,
+    "batch": 32,
+    "accum": 1,
+    "world": 7,
+    "grad_ckpt": true,
+    "compiled": true,
+    "fp8": true,
+    "attn_res": "Full (blocks=0)",
+    "steps": 30,
+    "cards": "1-7",
+    "peak_live_GiB_rank0": 69.63,
+    "nvidia_smi_GiB": 74.1,
+    "allocator_cache_GiB": 4.47,
+    "headroom_GiB": 25.59,
+    "usable_card_GiB": 95.22,
+    "nvidia_smi_world3": 74.1,
+    "nvidia_smi_world7": 74.09,
+    "tok_per_step": 917504,
+    "card_total_MiB": 97871,
+    "headroom_GiB_by_smi": 21.12,
+    "b16a2_peak_GiB": 36.29,
+    "b16a2_headroom_GiB": 58.93,
+    "activations_GiB_per_batch16": 33.34,
+    "fixed_GiB_measured": 2.95,
+    "fixed_GiB_predicted": 2.76
+   },
+   "uncertainty": "RANK 0 ONLY, so this is a LOWER bound on the worst rank, not an upper one -- the whole log line is is_main and per-rank DDP buckets differ. A lower bound mistaken for an upper bound misleads exactly when headroom is tightest, which is the situation this number will be quoted in. Getting the true max needs every rank to report, which is a further change. Also: 30 steps of this configuration is not the full run -- the real job adds a longer mix, periodic validation batches, and checkpoint-time temporaries, none of which are in this window. 25.59 GiB is the margin for what was measured, not a safety budget for 20B tokens. The step-10 reading spans compilation, so its throughput field is meaningless; its PEAK is still valid, because compile-time allocations are real allocations. The b16+accum2 control reported 36.29 GiB, confirming the field tracks configuration. BOTH arms are rank 0, so the linear model is fitted to lower bounds and the worst rank's line sits above it -- fine at 25.6 GiB of headroom, NOT usable if margin ever narrows below about 10 GiB, at which point every rank has to report. The extrapolations to seq 8192 and batch 64 inherit that, and they also assume activation memory scales with seq exactly as it does with batch, which is untested: attention's quadratic term and the KDA recurrent state need not move together. A post-run line reads `ckpt_w7_b32a1.pt: SKIPPED (OutOfMemoryError...)` and is NOT a training or checkpoint failure: the checkpoint wrote (987 MB at 10:57) and the training side had zero OOMs. What failed is the score_matrix eval that auto-triggers afterwards, on card 0, which is outside this measurement's card set. The message's subject is the scoring, not the save -- it reads like the save failed, and on first reading I took it that way.",
    "status": "measured"
   }
  ]

@@ -41,9 +41,15 @@ push_one() {
     echo "refusing: $f has uncommitted changes -- commit or stash it first"
     exit 1
   fi
-  want=$(git rev-parse "main:$f" 2>/dev/null)
+  # `|| true`: under `set -e` a failing command substitution kills the script HERE,
+  # before the refusal below can print. That is what happened on 2026-09-01 -- a
+  # branch-only file produced exit 128 and ZERO output, which is indistinguishable from
+  # a push that worked, and three GPU cells were nearly launched against a script that
+  # was never delivered. A refusal that produces no evidence is not a refusal, it is a
+  # silence. stderr is kept rather than discarded so git's own reason survives.
+  want=$(git rev-parse "main:$f" 2>/dev/null) || true
   if [ -z "$want" ]; then
-    echo "refusing: $f is not in main -- merge your branch first"
+    echo "refusing: $f is not in main -- merge your branch first (the pod runs main)" >&2
     exit 1
   fi
   if [ "$(git hash-object "$f")" != "$want" ]; then

@@ -33,6 +33,7 @@ Usage:
   python3 eval/readout_30b.py --selftest
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -200,26 +201,49 @@ def draws_equal(domain, milestone_mix, paired_mix, seq=4096):
 
 
 def load_score_record(path, ckpt, profile="full"):
-    """The score_matrix record (one jsonl line) for a (ckpt, profile). A row
-    without a profile reads as 'full' (pre-profile ledger, no migration)."""
+    """The score_matrix record for a (ckpt, profile). A row without a profile reads as
+    'full' (pre-profile ledger, no migration).
+
+    LAST match, not first. write_records replaces same-key rows, so duplicates should
+    not exist -- but the file is append-only under a lock, hand-appended rows happen,
+    and a crash between read and write leaves both. When they do exist, first-match
+    returns the OLDEST: a rescore is shadowed by the record it was meant to replace,
+    and the readout prints the superseded number with no sign anything was wrong. Every
+    other reader in this codebase folds last-wins (check_score_matrix, _exp_events);
+    this one did not (de-8 finding #5).
+
+    22 of 36 keys in runs/score_matrix.jsonl are duplicated today. All of them happen to
+    be byte-identical pairs, so nothing published is currently wrong -- which is luck
+    rather than the guard working, and is exactly the state in which a defect is easiest
+    to leave in place.
+    """
     if not path or not os.path.exists(path):
         return None
+    found = None
     for line in open(path, encoding="utf-8"):
+        if not line.strip():
+            continue
         r = json.loads(line)
         if r.get("ckpt") == ckpt and r.get("profile", "full") == profile:
-            return r
-    return None
+            found = r
+    return found
 
 
 def load_domain_loss(path, ckpt):
-    """domain_loss.py --json output: {ckpt, domains: {name: {loss, tokens}}, unweighted_mean}."""
+    """domain_loss.py --json output: {ckpt, domains: {name: {loss, tokens}}, unweighted_mean}.
+
+    LAST match, for the same reason as load_score_record above: a rescore appends, and
+    first-match would hand back the record the rescore replaced."""
     if not path or not os.path.exists(path):
         return None
+    found = None
     for line in open(path, encoding="utf-8"):
+        if not line.strip():
+            continue
         r = json.loads(line)
         if r.get("ckpt") == ckpt:
-            return r
-    return None
+            found = r
+    return found
 
 
 def get_field(record, field):
@@ -448,12 +472,50 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
             m_heads, p_heads = set(m_dl["domains"]), set(p_dl["domains"])
             common = sorted(m_heads & p_heads)
             unmatched = sorted((m_heads - p_heads) | (p_heads - m_heads))
+            # A shared NAME is not shared text. The guard above compares names, and it
+            # has only ever worked because stage 2 renamed the two domains it rebuilt --
+            # rebuild en_c4 in place under the same name and two different corpora
+            # difference silently (b0, 2026-09-01; the same trap caught the author of
+            # this rule by hand-differencing two score_matrix rows). domain_loss now
+            # writes head_fp, the sha1 of the exact text it scored.
+            #
+            # A record written before head_fp existed has no fingerprint, and absent
+            # REFUSES rather than passes. The worst outcome of adding a correctness
+            # field is that it retroactively certifies everything written before it
+            # (fb's ruling).
+            fp_refused = {}
+            for d in list(common):
+                mfp = m_dl["domains"][d].get("head_fp")
+                pfp = p_dl["domains"][d].get("head_fp")
+                if mfp is None or pfp is None:
+                    which = "both" if mfp is None and pfp is None else ("milestone" if mfp is None else "paired")
+                    fp_refused[d] = (
+                        f"no head_fp on the {which} record (written before the field "
+                        f"existed), so it cannot be shown the two sides were scored on "
+                        f"the same text -- rescore both sides with domain_loss >= cb44aa7")
+                    common.remove(d)
+                elif mfp != pfp:
+                    fp_refused[d] = f"head_fp {mfp} vs {pfp} -- same name, different text"
+                    common.remove(d)
+            if not common and fp_refused:
+                print(f"\n{name}: REFUSING -- every shared-name head failed the fingerprint "
+                      f"check. " + "; ".join(f"{d}: {w}" for d, w in sorted(fp_refused.items())))
+                print("  A refusal that leaves the operator guessing is how people reach "
+                      "for --force, so: this is not a defect in the checkpoints. It is that "
+                      "the record predates head_fp and cannot show both sides were scored "
+                      "on the same bytes. Fix: rescore both with eval/domain_loss.py at "
+                      ">= cb44aa7, which writes head_fp beside each loss. There is no "
+                      "override, because grandfathering would certify exactly the rows we "
+                      "know least about.")
+                continue
             if not common:
                 print(f"\n{name}: REFUSING -- the pair shares NO head. milestone "
                       f"{sorted(m_heads)}, paired {sorted(p_heads)}. Domain loss across "
                       f"different corpora measures the corpora, not the models.")
                 continue
             print(f"\n{name}  (threshold={spec['threshold']}{spec['unit']}, states={'/'.join(spec['states'])}, flat unreachable)")
+            for d in sorted(fp_refused):
+                print(f"  {d:15s} REFUSED -- {fp_refused[d]}")
             for d in unmatched:
                 side = "milestone" if d in m_heads else "paired"
                 print(f"  {d:15s} REFUSED -- different head ({side}-only; the two sides were "
@@ -523,6 +585,14 @@ def readout(milestone, paired, score_matrix, milestone_dl, paired_dl, milestone_
 
     print(f"\n=== summary: {'at least one metric moved' if any_moved else 'no metric moved (all floor/flat/absent)'} ===")
     return any_moved
+
+
+def _fp(name):
+    """Fixture head_fp: derived from the head NAME, so a shared name means shared text.
+
+    That is the world these fixtures were written for. The fingerprint cases below
+    override it explicitly to test the two shapes a name cannot express."""
+    return hashlib.sha1(name.encode()).hexdigest()[:16]
 
 
 def selftest():
@@ -691,10 +761,10 @@ def selftest():
     import io as _io
     import tempfile as _t
     m4 = {"ckpt": "m.pt", "profile": "milestone",
-          "metrics": {"domain_loss": {k: {"loss": 2.4} for k in
+          "metrics": {"domain_loss": {k: {"loss": 2.4, "head_fp": _fp(k)} for k in
                       ("code_rp1t", "cot", "en_c4", "math_owm", "textbook_30b", "wiki_chat", "zh_web")}}}
     p4 = {"ckpt": "p.pt", "profile": "full",
-          "metrics": {"domain_loss": {k: {"loss": 1.6} for k in
+          "metrics": {"domain_loss": {k: {"loss": 1.6, "head_fp": _fp(k)} for k in
                       ("chat", "code", "en", "math", "textbook", "web_hq", "wiki")}}}
     with _t.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
         tf.write(json.dumps(m4) + "\n" + json.dumps(p4) + "\n")
@@ -729,9 +799,9 @@ def selftest():
                   open(p5p, "w"))
         # milestone strictly better on every role, so any judged role reads "moved"
         m5 = {"ckpt": "m5.pt", "profile": "milestone",
-              "metrics": {"domain_loss": {k: {"loss": 1.5} for k in W1}}}
+              "metrics": {"domain_loss": {k: {"loss": 1.5, "head_fp": _fp(k)} for k in W1}}}
         p5 = {"ckpt": "p5.pt", "profile": "full",
-              "metrics": {"domain_loss": {k: {"loss": 2.5} for k in W1}}}
+              "metrics": {"domain_loss": {k: {"loss": 2.5, "head_fp": _fp(k)} for k in W1}}}
         sm5 = os.path.join(d5, "sm.jsonl")
         with open(sm5, "w") as f:
             f.write(json.dumps(m5) + "\n" + json.dumps(p5) + "\n")
@@ -834,11 +904,11 @@ def selftest():
     print("\n--- selftest 4b: partial head overlap refuses per role, judges the rest ---")
     _shared = ("code_rp1t", "cot", "textbook_30b", "wiki_chat", "zh_web")
     m4b = {"ckpt": "m.pt", "profile": "milestone", "metrics": {"domain_loss": dict(
-        {k: {"loss": 1.5} for k in _shared}, **{"en_c4_stage2": {"loss": 1.5},
-                                                "math_owm_stage2": {"loss": 1.5}})}}
+        {k: {"loss": 1.5, "head_fp": _fp(k)} for k in _shared}, **{"en_c4_stage2": {"loss": 1.5, "head_fp": _fp("en_c4_stage2")},
+                                                "math_owm_stage2": {"loss": 1.5, "head_fp": _fp("math_owm_stage2")}})}}
     p4b = {"ckpt": "p.pt", "profile": "milestone", "metrics": {"domain_loss": dict(
-        {k: {"loss": 2.5} for k in _shared}, **{"en_c4": {"loss": 2.5},
-                                                "math_owm": {"loss": 2.5}})}}
+        {k: {"loss": 2.5, "head_fp": _fp(k)} for k in _shared}, **{"en_c4": {"loss": 2.5, "head_fp": _fp("en_c4")},
+                                                "math_owm": {"loss": 2.5, "head_fp": _fp("math_owm")}})}}
     with _t.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
         tf.write(json.dumps(m4b) + "\n" + json.dumps(p4b) + "\n")
         tmp4b = tf.name
@@ -875,9 +945,9 @@ def selftest():
         json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in _wp.items()}},
                   open(p5c, "w"))
         m_r = {"ckpt": "m.pt", "profile": "milestone",
-               "metrics": {"domain_loss": {k: {"loss": 1.5} for k in _R}}}
+               "metrics": {"domain_loss": {k: {"loss": 1.5, "head_fp": _fp(k)} for k in _R}}}
         p_r = {"ckpt": "p.pt", "profile": "milestone",
-               "metrics": {"domain_loss": {k: {"loss": 2.5} for k in _R}}}
+               "metrics": {"domain_loss": {k: {"loss": 2.5, "head_fp": _fp(k)} for k in _R}}}
         sm5c = os.path.join(d5c, "sm.jsonl")
         with open(sm5c, "w") as f:
             f.write(json.dumps(m_r) + "\n" + json.dumps(p_r) + "\n")
@@ -895,6 +965,84 @@ def selftest():
         assert "reweighted" not in _ln, f"{_d} held its weight and was refused anyway: {_ln!r}"
         assert "moved" in _ln, f"{_d} held its weight and was not judged: {_ln!r}"
     print("  1 reweighted role refused (2.0x); 4 unchanged roles judged")
+
+    # 5d/5e: the two shapes a NAME cannot express. Both are the live defect, not a
+    # hypothetical: the head guard compared names and passed only because stage 2
+    # renamed the domains it rebuilt (b0, 2026-09-01).
+    ran.append("5d")
+    print("\n--- selftest 5d: same name, different text, refused on head_fp ---")
+
+    def _run_fp(mfp, pfp):
+        with _t5.TemporaryDirectory() as dd:
+            mm, pp = os.path.join(dd, "m.json"), os.path.join(dd, "p.json")
+            w = {k: 0.20 for k in _R}
+            for f_ in (mm, pp):
+                json.dump({"total_tokens": 15e9,
+                           "domains": {k: {"weight": v} for k, v in w.items()}}, open(f_, "w"))
+            mr = {"ckpt": "m.pt", "profile": "milestone", "metrics": {"domain_loss": {
+                k: dict({"loss": 1.5}, **({"head_fp": mfp(k)} if mfp(k) else {})) for k in _R}}}
+            pr = {"ckpt": "p.pt", "profile": "milestone", "metrics": {"domain_loss": {
+                k: dict({"loss": 2.5}, **({"head_fp": pfp(k)} if pfp(k) else {})) for k in _R}}}
+            sm = os.path.join(dd, "sm.jsonl")
+            with open(sm, "w") as f:
+                f.write(json.dumps(mr) + "\n" + json.dumps(pr) + "\n")
+            b = _io.StringIO()
+            with _c.redirect_stdout(b):
+                readout("m.pt", "p.pt", sm, None, None, 16e9, paired_profile="milestone",
+                        milestone_mix=mm, paired_mix=pp)
+            return b.getvalue()
+
+    # cot alone was rebuilt in place: same name, different bytes.
+    _o = _run_fp(lambda k: _fp(k + "_REBUILT") if k == "cot" else _fp(k), _fp)
+    _l = " ".join(x for x in _o.splitlines() if x.strip().startswith("cot"))
+    assert "different text" in _l, (
+        f"a role rebuilt in place under the same name was judged: {_l!r}. This is the "
+        "case the name-comparing guard passes, which is why head_fp exists.")
+    for _d in ("code_rp1t", "textbook_30b"):
+        _ln = " ".join(x for x in _o.splitlines() if x.strip().startswith(_d))
+        assert "moved" in _ln, f"{_d} had identical bytes and was refused anyway: {_ln!r}"
+    print("  same-name-different-bytes refused; identical-bytes roles still judged")
+
+    ran.append("5e")
+    print("\n--- selftest 5e: a record predating head_fp refuses, it does not pass ---")
+    _o2 = _run_fp(lambda k: None, _fp)     # milestone side written before the field existed
+    assert "REFUSING" in _o2 and "predates head_fp" in _o2, (
+        f"a record with no head_fp was judged: {_o2[-400:]!r}. Fail-open on a missing "
+        "correctness field retroactively certifies every row written before it.")
+    print("  absent head_fp refuses (the whole metric, since no head can be verified)")
+
+    # 6. a rescore must not be shadowed by the record it replaced. Two rows for one
+    # (ckpt, profile), the second a rescore: first-match hands back the stale one and
+    # prints it with no sign anything is wrong. 22 of 36 keys in the real ledger are
+    # duplicated today, all byte-identical pairs -- so this is currently latent, which
+    # is the state in which such a defect is easiest to leave in place.
+    print("\n--- selftest 6b: a duplicated key reads LAST, not first ---")
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as _d:
+        _p = os.path.join(_d, "sm.jsonl")
+        with open(_p, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps({"ckpt": "ck.pt", "profile": "full", "measured": "2026-08-30",
+                                 "metrics": {"mc_full": {"Average": 11.1}}}) + "\n")
+            _f.write(json.dumps({"ckpt": "other.pt", "profile": "full", "metrics": {}}) + "\n")
+            _f.write(json.dumps({"ckpt": "ck.pt", "profile": "full", "measured": "2026-09-01",
+                                 "metrics": {"mc_full": {"Average": 22.2}}}) + "\n")
+        _got = load_score_record(_p, "ck.pt")
+        assert _got["measured"] == "2026-09-01", (
+            f"load_score_record returned the {_got['measured']} record; the 2026-09-01 "
+            "rescore was shadowed by the row it replaced")
+        # the profile key still discriminates -- last-wins must not collapse profiles
+        assert load_score_record(_p, "ck.pt", profile="milestone") is None, \
+            "a milestone lookup matched a full record"
+        # and the same for the domain-loss reader
+        _dl = os.path.join(_d, "dl.jsonl")
+        with open(_dl, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps({"ckpt": "ck.pt", "unweighted_mean": 1.0}) + "\n")
+            _f.write(json.dumps({"ckpt": "ck.pt", "unweighted_mean": 2.0}) + "\n")
+        assert load_domain_loss(_dl, "ck.pt")["unweighted_mean"] == 2.0, \
+            "load_domain_loss returned the shadowed record"
+    ran.append("6b")  # "6" is taken; a duplicate label makes the ran list unreadable
+    print("  duplicated key reads last; profile still discriminates; both readers fold")
 
     return _done()
 

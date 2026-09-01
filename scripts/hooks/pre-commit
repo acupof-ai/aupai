@@ -138,6 +138,63 @@ def main():
             pass  # ruff not installed; CI catches it
     print(f"hook: ruff {time.time() - t0:.2f}s", file=sys.stderr)
 
+    # A staged file that carries its own --selftest must pass it. Today a readout
+    # commit landed with its selftest RED: the assertion pinned the old wording of a
+    # refusal message and the message had been reworded in the same commit. Nothing
+    # ran it, so the hook printed five green lines over a broken guard -- the hook
+    # checked what it happened to check, not what the commit changed (b0, 2026-09-01).
+    # Run from the SELFTEST_FILES map rather than probing for the flag: a script that
+    # exits 0 on an unknown argument would otherwise register as a pass.
+    t0 = time.time()
+    # Every file carrying its own --selftest, split by whether it can run at commit
+    # time on a dev box. check_selftests_are_gated requires the union to be complete,
+    # so a new selftest cannot be silently unguarded; NEEDS_DATA records WHY each one
+    # is not run here, because "not in the map" and "cannot run here" are different
+    # facts and only the second is acceptable.
+    SELFTEST_FILES = {
+        "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        "eval/score_math_formatfree.py", "eval/score_code_exec.py",
+        "probes/chatml_in_corpus.py",
+        "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
+        "scripts/write_mix_500m.py",
+        "scripts/restartability_audit.py", "scripts/shape_audit.py",
+        "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
+        "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
+        "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
+        "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
+        "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
+        "probes/t67_self_repeat.py", "probes/t68_free_running.py",
+        "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
+        "probes/t66_depth_shape.py", "scripts/stale_claims.py",
+        "scripts/test_drop_zombies.py",
+        # Nine files the gate could not see until its predicate widened from
+        # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
+        # sys.argv instead of argparse. Five run clean at commit time and are gated
+        # here; the other four are in NEEDS_DATA with their reason (de, 2026-09-01).
+        "probes/t62_corpus_dup_rate.py", "probes/t63_cross_domain_dup.py",
+        "probes/t64_val_head_overlap.py",
+        "scripts/eval_artifacts.py", "scripts/pod_drift.py",
+        "eval/compare_fewshot_arms.py", "scripts/audit_population_universals.py",
+    }
+    NEEDS_DATA = {
+        "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
+        "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        "probes/t65_near_dup_sweep.py": "imports build_corpus off sys.path; runner-only",
+        "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
+        "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
+        "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
+        "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
+        "scripts/harness.py": "the hook already runs `harness check`, which is its selftest",
+    }
+    for f in sorted(SELFTEST_FILES & set(staged("AM"))):
+        r = subprocess.run([sys.executable, f, "--selftest"], capture_output=True, text=True)
+        if r.returncode != 0:
+            tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
+            print(f"REFUSING: {f} --selftest failed:\n" + "\n".join(tail), file=sys.stderr)
+            sys.exit(1)
+    print(f"hook: selftests {time.time() - t0:.2f}s", file=sys.stderr)
+
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP
     # on dev machines. CI is the second line; the commit is the first.
     t0 = time.time()
@@ -174,6 +231,14 @@ def main():
             print("  if this passes when rerun by hand, a concurrent write raced a "
                   "ledger read -- report it, do not --no-verify", file=sys.stderr)
             sys.exit(1)
+        # TIMEOUT lines print on a PASSING run too. A check that hit its deadline did
+        # not run, and the hook is where anyone would notice: while a timeout reported
+        # SKIP, the hook printed nothing and `check` exited 0, so a check that timed out
+        # on every run was a permanent silent pass (44, D5). The commit still proceeds --
+        # one slow run is not a defect -- but the reader is told which check went unrun.
+        for ln in r.stdout.splitlines():
+            if "[TIME]" in ln:
+                print(f"  TIMED OUT (did not run): {ln.strip()}", file=sys.stderr)
     print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Regenerate pod manifest from staged content so it matches HEAD after commit.

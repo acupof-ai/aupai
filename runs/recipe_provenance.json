@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "Where each 500M recipe value came from. A value being set is not provenance;",
+    "each entry names the artifact that determined it. Written by fb 2026-09-01,",
+    "who ruled each one, because nobody else holds the sources.",
+    "Values not on this list were not chosen for this run and keep their Cfg defaults."
+  ],
+  "_run": "500M, d1024/L32, 20B tokens, world 7",
+  "dim": "1024 — held at today's width deliberately. Instantiating the real HybridLM on a meta device gave 493.6M at L32; three later constructions (tilerl, de) agree. Holding width fixed removes the LR width-transfer axis entirely, which was the largest launch risk (fb ruling, board shape_recipe 2026-09-01).",
+  "layers": "32 — the whole parameter increase goes into depth (user order 2026-09-01). d/L 32.0 against the ~45 CompleteP calls compute-optimal at this size: deliberately deeper. Stated to the user as an unsupported bet, not a derivation: 44's survey found no published measurement of depth against free-running agreement in either direction (docs/lessons/trajectory_calibration_survey.md).",
+  "heads": "8 — forced, not chosen. FlashKDA's CUTLASS kernel is compiled for head_dim 128, so heads = dim/128. train.py refuses a mismatched pair rather than failing inside the kernel (a52e074).",
+  "ffn_hidden": "3072 — 3x width, unchanged from the 200M runs. Width did not move, so this constant did not have to.",
+  "batch": "32 — measured. tilerl's compiled batch fit: 32 fits at world=1 (63.95 GiB), 64 does not. The earlier 16 was an EAGER measurement quoted for hours before Cfg.compile was noticed; compile roughly doubles the ceiling in both grad_ckpt arms (probes/t66_depth_shape.py).",
+  "accum": "1 — falls out of batch 32 at world 7: 7 x 32 x 4096 = 917,504 tokens per step, which matches the 200M runs' tok/step exactly, so 44's matched-token comparison axis needs no conversion. b16+accum2 gives the identical tok/step at 36.29 GiB instead of 69.63 and is held in reserve for longer seq, not as a fallback (runs/w7_peak.log).",
+  "lr_scale": "0.85 — b0's t71 measured the depth exponent 12->32 at +0.141 +/- 0.011 over 9 runs, against the 1/sqrt(L) rule's +0.500, so 0.61 was a 2.3x over-correction. Both premises of that rule fail here: AttnRes makes the residual stream a convex combination (sum of softmax weights = 1 at every q scale, so no depth growth to cancel), and Muon normalises away the gradient-magnitude tracking the exponent is derived from. 0.877 is the bound; 0.85 is inside it, chosen because a too-high LR fails loudly in the first 500 steps and a too-low one looks like a healthy run that quietly underperforms (b88de6c, verified by fb running its selftest against the real train.py). The asymmetry is not two symmetric bad outcomes: too high shows up as a loss spike or a gradient-norm blowup in the first 500 steps and is observable; too low produces a curve that looks entirely healthy and simply ends lower than it should, and we have no control run that would reveal it. One failure shouts, the other does not (tilerl).",
+  "grad_ckpt": "true — measured, and it inverts with depth. At L=32 checkpointing costs 1.116x per step and gives 4x the batch at LESS peak memory; the 2.4x cost that ruled it out at L=12 was measured against accum 1, which is not the choice at this depth. Stored activations dominate at depth, which is exactly the regime where trading all of them for one recompute wins (eff.grad_ckpt_inverts_with_depth, bc65b15).",
+  "_not_chosen": {
+    "fone": "off — the mechanism is real but the target capability is short executable functions, not arithmetic. e1 runs the A/B in parallel under a three-band rule whose middle band is a reportable 'not decidable at this budget' (f30ca74).",
+    "attn_res": "Full, on — user order 2026-09-01, no retest. The A/B was run at 200M; the transfer risk is accepted. attn_res_blocks=8 is the lever in reserve if memory ever forces it, and it is a Cfg value, not a code change.",
+    "tokenizer": "not rebuilt — every veto gate passes and the case rested on a compression metric whose documented correlation with downstream reaches -0.09. e1's framing, adopted: rebuilding would be accepting an unmeasured bet, not following the metrics."
+  }
+}

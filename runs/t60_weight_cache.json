@@ -1,0 +1,19 @@
+{
+ "probe": "t60_weight_cache",
+ "shape": {
+  "M": 2048,
+  "K": 1024,
+  "N": 32784,
+  "chunks": 64
+ },
+ "statistic": "median of 3 interleaved blocks, cuda events",
+ "ms_per_step": {
+  "live": 184.29849243164062,
+  "cached": 144.86937713623047,
+  "scale": 178.7729949951172
+ },
+ "byte_cache_saving_ms": 39.429115295410156,
+ "scale_only_saving_ms": 5.5254974365234375,
+ "bytes_beyond_scale_ms": 33.90361785888672,
+ "t58_total_quant_tax_ms": 135.1
+}

@@ -1,0 +1,9 @@
+{
+ "probe": "t71_preamble_refutation",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "n_prompts": 100,
+ "coverage": 19,
+ "anchored_naive_median": 0.04225352112676056,
+ "anchored_shift_median": 0.2608695652173913,
+ "anchored_lcs_median": 0.4523809523809524
+}

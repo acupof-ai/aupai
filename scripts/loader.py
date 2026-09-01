@@ -81,8 +81,15 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
 
 
 def load_tokenizer(path, cfg):
-    """Load the tokenizer and VERIFY it matches the checkpoint: size == cfg.vocab, then
-    fingerprint == cfg.vocab_id. An old checkpoint without vocab_id only warns."""
+    """Load the tokenizer and VERIFY it matches the checkpoint: size == cfg.vocab_real,
+    then fingerprint == cfg.vocab_id. An old checkpoint without vocab_id only warns.
+
+    vocab_REAL, not vocab: cfg.vocab (32784) is vocab_real (32773) padded to a multiple
+    of 16 so the head hits the aligned cuBLAS kernel, and this line asks a question about
+    TOKENS. The docstring said cfg.vocab while the code asserted vocab_real -- harmless
+    here, but the same conflation in build_tokenizer.py targeted 32779 merges and would
+    have emitted a 32784-token vocabulary that this very assert then rejects on every
+    existing checkpoint."""
     from tokenizers import Tokenizer
 
     assert os.path.exists(path), (

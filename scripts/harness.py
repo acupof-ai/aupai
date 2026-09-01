@@ -37,18 +37,27 @@ DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
+#: A deadline hit is its OWN state, not a SKIP. A SKIP means "this check does not apply
+#: here" -- the hook prints nothing for it and `check` exits 0, so a check that times out
+#: on EVERY run is a permanent silent pass wearing a legitimate state's name (44, D5).
+#: TIMEOUT says the check was meant to run and did not. It is non-blocking once, because
+#: a slow machine is not a defect; twice in a row it is FAIL, because a deadline nothing
+#: can meet is a check nobody has.
+TIMEOUT = "TIME"
 
 # Per-check deadline. A check that hangs blocks the pre-commit hook and trains
-# people to --no-verify; a timed-out check SKIPs and names itself in the output.
+# people to --no-verify; a timed-out check reports TIMEOUT and names itself.
 _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
     "eval_sft_template_contamination": 90,
-    # measured 6.1 s on 2026-09-01 (one remote ps per training process); stopgap until the
-    # read is batched -- the 5 s default killed the whole run because no SIGALRM handler existed
-    "no_foreground_pod_training": 15,
 }
+#: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
+#: to notice a check that times out run AFTER run, and each run is a fresh process.
+_TIMEOUT_STATE = os.path.join(ROOT, "runs", "check_timeouts.json")
+#: Consecutive timeouts before a TIMEOUT becomes a FAIL.
+_TIMEOUT_STRIKES = 2
 
 
 class SelftestSkip(Exception):
@@ -95,8 +104,21 @@ def _is_mount(path):
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
 REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl",
                 "3b": "e1", "e1": "3b", "fb": "44"}
-#: A review that has not arrived within this many minutes of the done row FAILs.
-#: Inside it, WARN: a missing review must not block a close, and must not stay invisible.
+#: How long a dirty or untracked file may sit before the check names it. ONE constant
+#: for both: they measure the same thing (work parked in a tree others share) and split
+#: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
+#: every session mid-edit while the quieter half slept through a whole day.
+#: 6 h (user, 2026-09-01, cutting friction): long enough that an in-progress edit is
+#: never named, short enough that nothing survives a working session unowned. Both
+#: stay WARN; neither ever blocked a commit.
+_AGE_HOURS = 6
+
+#: A review that has not arrived within this many minutes of the done row WARNs.
+#: There is no FAIL tier: the user cut the friction on 2026-09-01 -- a missing review
+#: blocking a commit makes the reviewer the bottleneck for work already delivered, and
+#: the check's job is to make an unread delivery VISIBLE, not to stop the tree. The
+#: window still means something: inside it the WARN is routine, past it the evidence
+#: line says overdue and names the pair.
 REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
@@ -105,6 +127,8 @@ REVIEW_RULE_FROM = "2026-08-31 22:00"
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
 _RULE_CHECKS = {
+    "The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map":
+        "selftests_are_gated",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
@@ -112,7 +136,7 @@ _RULE_CHECKS = {
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
     "setsid, not nohup": "no_foreground_pod_training",
-    "CUDA_VISIBLE_DEVICES, not cuda:N": "gemm_dims_aligned",
+    "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
     "Outbound network: curl -4, always": "curl_ipv4",
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
@@ -129,9 +153,22 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "A hook edit made in a branch worktree does not run until it is merged":
+        "a fact about how git resolves .git/hooks symlinks across worktrees; no artifact "
+        "records which hook BODY executed for a given commit, which is exactly why the "
+        "mistake is invisible and has to be written down",
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
+    "A PID is only meaningful in the namespace that read it.":
+        "no artifact records which namespace a pid was read in -- the host and the "
+        "container both print bare integers and both are correct. A check would need "
+        "to know the reader's view, which is not in the repo. The enforceable half is "
+        "already covered: pod_drift and lane_respected key on GPU UUID and cmdline",
+    "A kill is not finished until nvidia-smi says the card is free":
+        "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
+        "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
+        "but nothing in the repo records whether the reader looked after their own kill",
     "Lanes: a 7-card training block, and one lane card for everything else":
         "the lane/block split is allocation policy; lane_respected checks the instant, not the policy",
     "Small jobs queue on the lane card":
@@ -164,7 +201,30 @@ _MANUAL_RULES = {
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
 #: Raising it needs a message saying which rule became unenforceable and why.
-_MANUAL_BASELINE = 22
+#:
+#: 22 -> 23 on 2026-09-01: "a kill is not finished until nvidia-smi says the card is free".
+#: Manual because the rule is an operator SEQUENCE -- kill, read the card, kill what
+#: remains -- and no artifact records whether the second step happened. lane_respected
+#: catches an orphan that is holding a card at the instant it runs, which is the
+#: consequence, not the discipline. The rule was written because the consequence went
+#: unnoticed for two minutes with nobody looking (eval/run_eval.py pid 313429 on GPU7).
+#: 23 -> 24 on 2026-09-01 for the hook-symlink rule. Which became unenforceable and
+#: why: .git/hooks/pre-commit is a symlink resolved against MAIN's worktree, so every
+#: worktree runs main's copy and a hook edit in a branch is inert until merged. No
+#: artifact records which hook BODY executed for a given commit -- that is precisely
+#: what makes the mistake invisible, and precisely why it cannot be checked. The
+#: companion rule in the same commit went the other way, to check_selftests_are_gated,
+#: so the pair is +1 manual and +1 checked rather than +2 manual.
+#: 24 -> 25 on 2026-09-01: "a PID is only meaningful in the namespace that read it".
+#: The host and the container print bare integers for the same process and both are
+#: correct; nothing in a command or a log records which view produced one. A check
+#: would have to know the reader's namespace, which is not a repo fact. The
+#: consequences ARE checked -- pod_drift and lane_respected key on GPU UUID and
+#: cmdline, the two identities that survive the boundary -- but the discipline of
+#: reading and killing in the same view is not, and a guard on [ -d /proc/<pid> ]
+#: written across it evaluated false on its first pass and launched a job onto a
+#: running probe's cards.
+_MANUAL_BASELINE = 25
 
 
 def _norm_rule(text):
@@ -214,12 +274,19 @@ def check_cited_artifacts_attested(root):
     overwrote preds_l1_d3.jsonl and left five facts pointing at 477 rows of a different
     run for hours (e1, 44's contract, 2026-08-31).
 
-    What this proves is historical -- the cited bytes existed when the citation was
-    made. It deliberately does NOT compare against the current file: preds are
-    regenerated every run, so a current-state check would fail on every legitimate
-    rerun. The writer's attestation row is the proof."""
+    What this proves is historical -- the cited bytes existed at that path when the
+    citation was made. It deliberately does NOT compare against the current file: preds
+    are regenerated every run, so a current-state check would fail on every legitimate
+    rerun. The writer's attestation row is the proof.
+
+    The match is on (path, sha256), not the hash alone. Hash-only accepted an
+    attestation of a DIFFERENT path carrying the same bytes -- which is precisely the
+    versioned-write case the attestation exists for: open_artifact(path, run=...) writes
+    preds_x.r1.jsonl while a careless writer attests preds_x.jsonl, and identical bytes
+    at two paths is the normal state during a rerun, not a coincidence
+    (tilerl T7-1, probe probes/t7_attest_path.py)."""
     refs = os.path.join(root, "runs", "artifact_refs.jsonl")
-    attested = set()
+    attested = set()  # (basename, sha256)
     if os.path.exists(refs):
         for line in open(refs, encoding="utf-8"):
             if not line.strip():
@@ -228,8 +295,12 @@ def check_cited_artifacts_attested(root):
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if r.get("sha256"):
-                attested.add(r["sha256"])
+            if r.get("sha256") and r.get("path"):
+                # Basename, not the full path: a fact cites the repo-relative path while
+                # the writer attests whatever path it opened, which differs by the
+                # writer's cwd. The versioned SUFFIX -- the part T7-1 is about -- lives
+                # in the basename, so it is still compared.
+                attested.add((os.path.basename(r["path"]), r["sha256"]))
     # The contract starts here. 18 citations predate it and cannot grow an attestation
     # retroactively -- their artifacts were written before any writer attested, and
     # several no longer exist. Failing them is a red nobody can act on, which is the
@@ -250,10 +321,19 @@ def check_cited_artifacts_attested(root):
                     continue
                 cited += 1
                 sha = e.get("artifact_sha256") or ""
+                base = os.path.basename(path)
                 if not sha:
                     bad.append(f"{e.get('id')} cites {path} with no artifact_sha256")
-                elif sha not in attested:
-                    bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
+                elif (base, sha) not in attested:
+                    if any(s == sha for _b, s in attested):
+                        # The bytes are attested, at some OTHER path. That is the T7-1
+                        # defect, and it earns its own message: the citation and the
+                        # attestation disagree about WHICH FILE holds these bytes.
+                        other = sorted(b for b, s in attested if s == sha)
+                        bad.append(f"{e.get('id')} cites {path} sha {sha[:12]}, but that hash "
+                                   f"is attested for {other[:2]} -- wrong path")
+                    else:
+                        bad.append(f"{e.get('id')} cites {path} sha {sha[:12]} with no attestation")
     if not cited:
         return SKIP, (f"no fact measured since {contract_from} cites a data/eval artifact "
                       f"({legacy} predate the contract)")
@@ -354,6 +434,137 @@ def _broken_milestone_ckpt_pinned():
     return d
 
 
+def check_selftests_are_gated(root):
+    """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
+
+    2026-09-01: a readout commit landed with its selftest RED under five green hook
+    lines, because the hook ran tree/blob/ruff/harness and none of them knew the
+    edited file carried fifteen cases testing the guard the commit was changing. The
+    hook checked what it happened to check rather than what the commit changed. A
+    selftest not in the map is a selftest nobody runs, which is worse than none --
+    it reads as coverage."""
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook):
+        return SKIP, "no scripts/hooks/pre-commit"
+    src = open(hook, encoding="utf-8").read()
+    m = re.search(r"SELFTEST_FILES\s*=\s*\{([^}]*)\}", src)
+    if not m:
+        return FAIL, ("scripts/hooks/pre-commit has no SELFTEST_FILES map, so no staged "
+                      "file's selftest runs at commit time")
+    gated = set(re.findall(r'"([^"]+)"', m.group(1)))
+    # A file the hook cannot run here is still accounted for, with the reason recorded.
+    # "not in the map" and "cannot run at commit time" are different facts, and only
+    # the second is acceptable -- silence about the first is how a selftest goes unrun.
+    nd = re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
+    gated |= set(re.findall(r'"([^"]+)":', nd.group(1))) if nd else set()
+    have = set()
+    for sub in ("eval", "scripts", "datagen", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for nm in os.listdir(d):
+            if not nm.endswith(".py"):
+                continue
+            rel = f"{sub}/{nm}"
+            try:
+                body = open(os.path.join(d, nm), encoding="utf-8").read()
+            except OSError:
+                continue
+            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+            # narrow predicate assumed every selftest is wired through argparse; nine
+            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+            # that cannot see a file cannot report it missing, so its PASS counted only
+            # the files it already understood -- the check encoding an assumption about
+            # where the interesting case lives, which is this repo's named class, in
+            # the check written to catch that class (de, 2026-09-01, on 62's gate).
+            if "--selftest" in body:
+                have.add(rel)
+    missing = sorted(have - gated)
+    if missing:
+        return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
+                      f"SELFTEST_FILES, so nothing runs them at commit time: "
+                      f"{', '.join(missing[:4])}")
+    return PASS, f"{len(have)} selftest-carrying file(s), all gated by the hook"
+
+
+def check_probe_numbers_unique(root):
+    """Surface tNN numbers claimed by more than one probe. WARN, not FAIL.
+
+    Three collisions in one afternoon (2026-09-01): t62, t63 and t64 each named
+    two unrelated probes from two sessions, because a probe number is allocated
+    by guessing the next free integer against a tree other sessions are writing
+    to concurrently. Nothing fails loudly -- both files exist, both run -- but a
+    fact citing "t63" then resolves to whichever the reader finds first.
+
+    WHY THIS IS A WARN AND NOT A FAIL, which my first version got wrong: sharing
+    a number is LEGITIMATE when the files are one task's sub-probes. t57 is
+    t57_absmax / t57_outlier / t57_seam, three angles on one fp8-head question,
+    cited by full filename and unambiguous. My FAIL version reddened the board on
+    that convention -- a check that fires on correct practice trains people to
+    ignore it, which is worse than no check.
+
+    Nothing in the filenames distinguishes "one task, three probes" from "two
+    sessions, one number", and git authorship does not either on a shared
+    machine. So this reports the shared numbers and leaves the judgement to a
+    human, which is the honest limit of what it can know.
+
+    IF YOU ARE HERE TO ADD A SKIP-LIST AND PROMOTE THIS TO FAIL, read this
+    first. That was my first instinct too: keep the FAIL, exempt t57. But every
+    skip-list entry is a claim that reality is wrong, and t57 is not wrong --
+    it is the normal case. **The exception would have been evidence I was
+    measuring the wrong property.** One exemption is a smell; the second is the
+    moment to re-read the check instead of the world. A check that fires on
+    correct practice trains people to ignore it, which is worse than no check.
+    """
+    import collections
+
+    d = os.path.join(root, "probes")
+    if not os.path.isdir(d):
+        return SKIP, "no probes/ directory"
+    seen = collections.defaultdict(list)
+    for f in sorted(os.listdir(d)):
+        m = re.match(r"^(t\d+)_.*\.py$", f)
+        if m:
+            seen[m.group(1)].append(f)
+    if not seen:
+        return SKIP, "probes/ holds no tNN_*.py files"
+    dupes = {k: v for k, v in seen.items() if len(v) > 1}
+    if dupes:
+        detail = "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(dupes.items()))
+        return WARN, (f"{len(dupes)} probe number(s) claimed by >1 file -- fine if they are one "
+                      f"task's sub-probes, a collision if two sessions picked the same integer: {detail}")
+    return PASS, f"{len(seen)} probe numbers, all unique"
+
+
+def _broken_probe_numbers_unique():
+    """A REAL probe plus a second file claiming its number -- the exact shape of
+    today's t62/t63/t64 collisions. Built from a real repo path rather than two
+    invented names, because the meta-check requires the broken world to mirror
+    the tree it stands in, and it is right to: a world of invented paths tests
+    the check against a repo that does not exist.
+
+    WARN, not FAIL: the check cannot tell a collision from one task's sub-probes
+    (t57_absmax / t57_outlier / t57_seam are legitimately one number)."""
+    import shutil as _sh
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "probes"), exist_ok=True)
+    real = None
+    for f in sorted(os.listdir(os.path.join(ROOT, "probes"))):
+        if re.match(r"^t\d+_.*\.py$", f):
+            real = f
+            break
+    if real is None:
+        raise SelftestSkip("no tNN_*.py probe in the repo to build a collision from")
+    _sh.copy(os.path.join(ROOT, "probes", real), os.path.join(d, "probes", real))
+    num = re.match(r"^(t\d+)_", real).group(1)
+    with open(os.path.join(d, "probes", f"{num}_collision.py"), "w", encoding="utf-8") as f:
+        f.write("# a second probe claiming the same number\n")
+    return d
+
+
 def check_no_duplicate_defs(root):
     """No module defines the same top-level name twice.
 
@@ -402,6 +613,39 @@ def check_no_duplicate_defs(root):
     return PASS, f"{scanned} module(s), no duplicate top-level definitions"
 
 
+def _broken_selftests_are_gated():
+    """The REAL hook with one REAL selftest-carrying file dropped from the map.
+
+    Mutating the live artifact rather than writing a fixture: the reweight gate passed
+    every synthetic case and returned None for every real role, because the fixture
+    encoded the author's assumption twice (7.3).
+
+    The dropped file is scripts/eval_artifacts.py SPECIFICALLY, not an argparse-wired
+    one. It dispatches on sys.argv --
+    `sys.exit(_selftest() if "--selftest" in sys.argv else 0)` -- so under the old
+    narrow predicate ('"--selftest"' near add_argument) the check could not see it at
+    all and this world would have gone GREEN with the file unguarded. That is exactly
+    the defect the widening fixes, and using an argparse file here would leave the
+    widening untested (de, 2026-09-01).
+    """
+    d = _tmp_repo()
+    hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
+    if not (os.path.exists(hook) and os.path.exists(ev)):
+        return None
+    text = open(hook, encoding="utf-8").read()
+    if '"scripts/eval_artifacts.py"' not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
+        text.replace('"scripts/eval_artifacts.py", ', "")
+            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
+    # the real file, so the check must find its --selftest and miss it in the map
+    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
+        open(ev, encoding="utf-8").read())
+    return d
+
+
 def _broken_no_duplicate_defs():
     """The REAL harness.py with one of its own functions defined a second time --
     the shape a merge produces, appended rather than hand-written."""
@@ -420,14 +664,56 @@ def _broken_no_duplicate_defs():
     return d
 
 
+def _agents_coverage_table(root):
+    """The Rule coverage table's (rule, enforcer) pairs, or ({}, err).
+
+    Scoped to that ONE section: AGENTS.md holds a dozen other two-column tables
+    (layout, entry points, the checks table), and reading them all reports every
+    markdown row as a rule -- 104 rows and 74 false drifts when I first tried it.
+    """
+    p = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(p):
+        return {}, "AGENTS.md missing"
+    rows, inside = {}, False
+    for line in open(p, encoding="utf-8").read().split("\n"):
+        if re.match(r"^## ", line):
+            inside = line.startswith("## Rule coverage")
+            continue
+        if not inside:
+            continue
+        m = re.match(r"^\|\s*(.+?)\s*\|\s*(.+?)\s*\|$", line)
+        if not m:
+            continue
+        rule, val = m.group(1), m.group(2)
+        if rule == "Rule" or set(rule) <= set("-: "):
+            continue
+        rows[rule] = val
+    return rows, None
+
+
 def check_agents_rules_covered(root):
-    """Every AGENTS.md rule maps to a check name or an explicit manual reason.
+    """Every AGENTS.md rule maps to a check name or an explicit manual reason, and the
+    table in the doc says the same thing as the map in the code.
 
     A rule that is only prose is one people break for cause: tonight the register
     refusal in a worktree pushed a session into the shared tree, and 'run it in the
     main checkout' was a documented instruction pointing at the one place sessions
     overwrite each other. Coverage cannot prove a mapping is honest -- it proves one
-    was made, and the manual count is ratcheted so 'manual' cannot quietly win."""
+    was made, and the manual count is ratcheted so 'manual' cannot quietly win.
+
+    Two things it now also proves, both from real misses:
+
+    The named check must be the one that ENFORCES the rule, not merely a check that
+    exists. The CUDA_VISIBLE_DEVICES rule named gemm_dims_aligned (GEMM shapes) while
+    the enforcer is device_set_honoured; both are real checks, so the existence test
+    passed and the rule was unenforced in fact while reading as covered (44 and 3b,
+    independently, 2026-09-01). Ceiling, stated rather than papered over: existence is
+    checkable, relevance is not. Nothing here can see a pair that names a real check
+    which does not enforce that rule -- only a human re-reading the pair can.
+
+    The doc's table must agree with the code's map. Nothing read the table at all -- it
+    was a hand-maintained copy of _RULE_CHECKS, so the two could drift and, in the
+    CUDA_VISIBLE_DEVICES row, were wrong together."""
     bullets, err = _agents_rule_bullets(root)
     if err:
         return FAIL, err
@@ -450,10 +736,55 @@ def check_agents_rules_covered(root):
     bad_ref = [v for v in covered.values() if v not in known]
     if bad_ref:
         return FAIL, f"rule maps to a check that does not exist: {bad_ref[:3]}"
-    return PASS, f"{len(bullets)} rules: {len(bullets) - n_manual} checked, {n_manual} manual (baseline {_MANUAL_BASELINE})"
+    # The doc's copy of the map.
+    table, terr = _agents_coverage_table(root)
+    if terr:
+        return FAIL, terr
+    if not table:
+        return FAIL, "the Rule coverage table is empty or its heading was renamed"
+    drift = []
+    for rule, val in table.items():
+        nr = _norm_rule(rule)
+        # The same prefix match the bullet loop uses: the table truncates long bullets,
+        # so the row text and the map key are not equal strings.
+        in_map = next((v for k, v in covered.items() if nr.startswith(_norm_rule(k)[:38])), None)
+        in_manual = next((v for k, v in _MANUAL_RULES.items() if nr.startswith(_norm_rule(k)[:38])), None)
+        v = val.strip("`").strip()
+        if in_map is None and in_manual is None:
+            drift.append(f"{rule[:34]}: in the table, in neither map")
+        elif v.startswith("manual"):
+            if in_manual is None:
+                drift.append(f"{rule[:34]}: table says manual, code says {in_map}")
+        elif in_map is None:
+            drift.append(f"{rule[:34]}: table says {v}, code says manual")
+        elif v != in_map:
+            drift.append(f"{rule[:34]}: table says {v}, code says {in_map}")
+    if drift:
+        return FAIL, f"{len(drift)} coverage row(s) disagree with _RULE_CHECKS: {'; '.join(drift[:3])}"
+    return PASS, (f"{len(bullets)} rules: {len(bullets) - n_manual} checked, {n_manual} manual "
+                  f"(baseline {_MANUAL_BASELINE}); {len(table)} table rows agree with the code")
 
 
 def _broken_agents_rules_covered():
+    """The REAL AGENTS.md with its CUDA_VISIBLE_DEVICES coverage row reverted to the
+    wrong check it carried until 2026-09-01 -- the exact defect 44 and 3b found.
+
+    This breaks the TABLE half, which the old broken world (an unmapped bullet) never
+    exercised. The bullet half is covered by _broken_agents_rules_unmapped."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    row = "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |"
+    if row not in text:
+        raise SelftestSkip("the coverage row moved; update _broken_agents_rules_covered")
+    text = text.replace(row, "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `gemm_dims_aligned` |", 1)
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_agents_rules_unmapped():
     """The REAL AGENTS.md with a new unmapped rule bullet appended to Hard constraints."""
     d = _tmp_repo()
     src = os.path.join(ROOT, "AGENTS.md")
@@ -470,10 +801,93 @@ def _broken_agents_rules_covered():
 
 def _ppid_of(pid):
     """Parent pid on the pod, or None. ppid 1 means init adopted the process -- the
-    launching shell exited and it survived, which is the property setsid provides."""
+    launching shell exited and it survived, which is the property setsid provides.
+
+    Single-pid form, kept for callers outside the check. The check itself reads every
+    ppid in ONE ps (see _pod_ps_rows): a call per process cost 11 round trips and 6.3 s,
+    which is what forced the 15 s deadline stopgap."""
     r = subprocess.run([os.path.expanduser("~/bin/pod"), f"ps -o ppid= -p {pid}"],
                        capture_output=True, text=True)
     return r.stdout.strip() or None
+
+
+def _pod_ps_rows(timeout=20):
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
+
+    The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
+    fields from the same table. Reading them as one `ps -eo` is one round trip
+    regardless of how many training processes are up; the previous shape ran a
+    `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
+    training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
+
+    stat is here for the zombie case: a reaped-but-not-waited process keeps its argv
+    in ps as `[run_ddp.sh] <defunct>`, matches any regex over the command line, and
+    has no session of its own -- so a check that judges detachment by session reads
+    it as a foreground trainer. It runs no code and holds no card. Only stat tells
+    them apart (2026-09-01).
+
+    Returns (rows, error). A non-empty error means the read failed and the caller
+    must SKIP -- never treat an unreadable pod as a clean one.
+    """
+    pod = os.path.expanduser("~/bin/pod")
+    try:
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,stat,args --no-headers"],
+                           capture_output=True, text=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return None, f"pod unreachable: {type(e).__name__}"
+    if r.returncode != 0:
+        return None, f"pod ps exit {r.returncode}"
+    # stat is kept in the row: a zombie holds a pid slot, runs nothing, and holds no card,
+    # but keeps its argv (`[run_ddp.sh] <defunct>`) so it matches any command regex. Only
+    # stat tells it from a live trainer. judge_pod_ps drops them; the rows carry stat so
+    # it can (2026-09-01).
+    rows = []
+    for ln in r.stdout.splitlines():
+        parts = ln.split(None, 5)
+        if len(parts) == 6 and parts[0].isdigit():
+            rows.append(tuple(parts))
+    if not rows:
+        return None, "pod ps returned nothing"
+    return rows, None
+
+
+def judge_pod_ps(allrows):
+    """(state, evidence) from a `ps -eo pid,sid,pgid,ppid,stat,args` table.
+
+    A foreground training job is one whose SESSION LEADER is the crictl exec shell,
+    because that shell dies with the tn tunnel and leaves the trainer holding a card.
+    `pod "<cmd>"` runs the command as `bash -lc <cmd>`, so the leader's own argv says
+    which it was: a detached launch names setsid there and the job it spawns lands in
+    a new session; a foreground launch does not, and the job stays in the shell's.
+    That is the whole rule -- read the leader, not the child.
+
+    Four false positives in one day came from inferring detachment from the child
+    instead: a launcher shell matched on its quoted argv, a trainer whose leader had
+    become a zombie read as sessionless, a zombie trainer read as a live one, and a
+    trainer adopted by init read as an orphan. Each refused a commit while the pod was
+    behaving exactly as intended. The evidence those versions wanted -- an intact
+    parent chain -- is reaped in the normal case, so they were reading absence and
+    calling it a violation (de, 2026-09-01).
+
+    Tested by scripts/test_pod_ps_judge.py against captured tables, which the check
+    itself cannot be: it reads the live pod and its broken() raises SelftestSkip.
+    """
+    # Zombies keep their argv (`[run_ddp.sh] <defunct>`) so they match any command
+    # regex, but they run no code and hold no card.
+    live = [x for x in allrows if "Z" not in x[4]]
+    leader = {x[0]: x[5] for x in live if x[0] == x[1]}
+    rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # A leader that IS a training row is a detached launcher, never the exec shell.
+    fg = [x for x in rows
+          if x[0] != x[1]
+          and leader.get(x[1], "").startswith("bash -lc")
+          and "setsid" not in leader.get(x[1], "")]
+    if fg:
+        return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
+                      f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
+    if not rows:
+        return PASS, "no training process on the pod"
+    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -481,43 +895,14 @@ def check_no_foreground_pod_training(root):
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. A detached job's session id differs from its pid's
-    parent shell; a foreground one shares the crictl exec session."""
+    seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod) or pod_drift.is_pod(root):
         return SKIP, "host-side check; needs ~/bin/pod"
-    try:
-        r = subprocess.run(
-            [pod, "ps -eo pid,sid,pgid,args --no-headers | grep -E 'train[.]py|run_ddp' | grep -v grep"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (subprocess.TimeoutExpired, OSError) as e:
-        return SKIP, f"pod unreachable: {type(e).__name__}"
-    rows = [ln.split(None, 3) for ln in r.stdout.strip().split("\n") if ln.strip()]
-    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
-    # leaves a bash -lc whose argv contains the whole launch command, so a match on
-    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
-    # training process and is correctly not a session leader. It names setsid in its
-    # own command line; the job it spawned is the thing to judge (2026-09-01, this
-    # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not (len(x) > 3 and "setsid" in x[3] and x[3].startswith("bash -lc"))]
-    if not rows:
-        return PASS, "no training process on the pod"
-    # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. Its session leader may be a zombie ([bash]
-    # <defunct>, sid alive but absent from ps output), so a leader-presence test reads
-    # a correctly detached trainer as unsupervised -- this refused a commit while
-    # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
-    # this check).
-    detached = {x[0] for x in rows if len(x) >= 4 and x[3].startswith(("/usr/bin/python3", "python3"))
-                and _ppid_of(x[0]) == "1"}
-    attached = [x for x in rows if len(x) >= 3 and x[0] != x[1] and x[0] not in detached]
-    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if len(x) >= 2 and x[0] == x[1]}
-    orphans = [x for x in attached if len(x) >= 2 and x[1] not in leaders]
-    if orphans:
-        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
-    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+    allrows, err = _pod_ps_rows()
+    if err:
+        return SKIP, err
+    return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
@@ -541,19 +926,31 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    for ext in ("*.py", "*.sh"):
-        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
-            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
-                text = open(p, encoding="utf-8", errors="replace").read()
-                # Drop docstrings and comments before looking for invocations.
-                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-                for n, line in enumerate(text.split("\n"), 1):
-                    s = line.split("#", 1)[0]
-                    if inv.search(s) and not re.search(r"-4\b", s):
-                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    # The POPULATION, not just the predicate. A hand-listed set of directories was
+    # missing probes/ and the repo root, and the evidence still said "every curl call
+    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
+    # tree and exclude what cannot hold a tracked invocation, so a new directory is
+    # covered by default rather than by someone remembering to add it (fb's sweep,
+    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not (fn.endswith(".py") or fn.endswith(".sh")):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Drop docstrings and comments before looking for invocations.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+            for n, line in enumerate(text.split("\n"), 1):
+                s = line.split("#", 1)[0]
+                if inv.search(s) and not re.search(r"-4\b", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
-    return PASS, "every curl call passes -4"
+    return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
 def _broken_curl_ipv4():
@@ -799,6 +1196,45 @@ def _tmp_repo(mix_obj=None):
         p = os.path.join(d, cfg_default("mix"))
         os.makedirs(os.path.dirname(p), exist_ok=True)
         json.dump(mix_obj, open(p, "w"))
+    return d
+
+
+def _tmp_repo_shaped(mix_obj=None):
+    """A throwaway tree that SEES the real code, docs and data directories.
+
+    A world built on the bare `_tmp_repo()` resolves nothing, so any check that reads a
+    path FAILs there whether or not the mutation is present -- three worlds were green
+    for exactly that reason (entrypoints_ran on 38 absent citations, pod_drift on 238,
+    facts_well_formed on absent docs/ and data/eval). Symlinks, so the world costs
+    nothing and the mutation is the only thing wrong with it. Write into a symlinked
+    directory and you write into the repo, so a world that mutates a file under one must
+    copy it in first (de, 2026-09-01)."""
+    import shutil
+    import subprocess
+
+    d = _tmp_repo(mix_obj)
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
+    # A real `git init` plus a COPIED .gitignore. `_is_gitignored` shells out to
+    # `git check-ignore` and only falls back to reading .gitignore itself, and that
+    # fallback is weaker than git -- it missed data/corpus/math/, so every gitignored
+    # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
+    # .gitignore, so this one is copied while everything else is linked.
+    shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    for sub in os.listdir(os.path.join(ROOT, "data")):
+        src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    for f in os.listdir(os.path.join(ROOT, "runs")):
+        src, dst = os.path.join(ROOT, "runs", f), os.path.join(d, "runs", f)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
     return d
 
 
@@ -1158,6 +1594,12 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         return []
     both = (set(git("diff", "--name-only", base, ours).split())
             & set(git("diff", "--name-only", base, theirs).split()))
+
+    def _blobs_in(side, path):
+        """Every blob this side's history has ever held at `path`."""
+        shas = git("rev-list", side, "--", path).split()
+        return {git("rev-parse", f"{s}:{path}").strip() for s in shas} - {""}
+
     out = []
     for path in sorted(both):
         mv = git("rev-parse", f"{m}:{path}").strip()
@@ -1166,11 +1608,32 @@ def merge_took_one_side(root, merge_sha="HEAD"):
         if not mv or a == b:
             continue
         if mv == a:
-            lost = len(git("rev-list", f"{ours}..{theirs}", "--", path).split())
-            out.append((path, "ours", lost))
+            taken, other, side = ours, b, "ours"
         elif mv == b:
-            lost = len(git("rev-list", f"{theirs}..{ours}", "--", path).split())
-            out.append((path, "theirs", lost))
+            taken, other, side = theirs, a, "theirs"
+        else:
+            continue
+        # CHERRY-PICK, not a drop. If the side we took has itself HELD the other
+        # side's exact blob at some point in its history, that content was never
+        # discarded -- it was received and then built upon. This is what a cherry-pick
+        # across worktrees produces, and the commit count cannot see it: the picked
+        # commit has a different sha, so `rev-list ours..theirs` still counts it.
+        #
+        # de, 2026-09-01, on this check's own author: tilerl cherry-picked my 5927ed6
+        # into main as b8cae37 to unblock a launch. The blobs are byte-identical
+        # (adb4224 both), my branch then added a comment on top, and the merge
+        # correctly took my newer file -- while this check reported "2 commit(s) from
+        # the other side lost". Nothing was lost. A permanent red is the same as no
+        # signal, and a false positive on the normal way an urgent fix reaches main
+        # would have been read past within a day.
+        #
+        # Exact blob equality, so it cannot excuse a real drop: a resolution that
+        # discarded work produces a blob the taken side never held.
+        if other and other in _blobs_in(taken, path):
+            continue
+        lost = len(git("rev-list", f"{taken}..{ours if side == 'theirs' else theirs}",
+                       "--", path).split())
+        out.append((path, side, lost))
     return out
 
 
@@ -1433,6 +1896,25 @@ def _exp_events(root, folded=True):
     return list(out.values())
 
 
+#: A `running` row older than this is a job that died without exp.py done. Named rather
+#: than inlined so a fixture can derive from it: _selftest_exp_fold hardcoded a date that
+#: was recent when written and aged past 24h as the clock moved, turning the selftest into
+#: a permanent red (e1 found it, 2026-09-01). Same defect as _broken_dirty_aged's, which
+#: was fixed the same day by deriving from _AGE_HOURS -- a constant standing in for a live
+#: threshold is a fixture that expires.
+#:
+#: Swept the other eight hardcoded timestamps in this file after the fix. Only this one
+#: was wrong, and the rule that separates them is the DIRECTION the fixture leans:
+#:   - a fixture that backdates to EXCEED a threshold (_broken_no_stale_running's
+#:     2020-01-01, _broken_no_ghost_running's 2026-08-29) only gets safer as time passes
+#:   - a fixture that must stay UNDER one expires, silently, on a date nobody chose
+#:   - a fixture whose check never reads the clock (_selftest_monitor_settled: settled()
+#:     tests status, not age) cannot expire at all
+#: So the audit question is not "is this date hardcoded" but "which side of the threshold
+#: does it need to be on, and does time carry it across".
+_STALE_RUNNING_H = 24
+
+
 def check_no_stale_running(root):
     evs = _exp_events(root)  # folded: an appended close must clear its start row
     if evs is None:
@@ -1448,7 +1930,7 @@ def check_no_stale_running(root):
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
-        if age_h > 24:
+        if age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
         return FAIL, f"{len(rows)} killed mid-run and never closed: {', '.join(rows[:6])}"
@@ -2310,9 +2792,9 @@ def check_review_present(root):
             age_min = REVIEW_GRACE_MIN + 1  # unparseable timestamp: treat as due
         (overdue if age_min > REVIEW_GRACE_MIN else pending).append(f"{tid}->{named}")
     if no_reviewer:
-        return FAIL, f"{len(no_reviewer)} done task(s) name no reviewer: {no_reviewer[:4]}"
+        return WARN, f"{len(no_reviewer)} done task(s) name no reviewer: {no_reviewer[:4]}"
     if overdue:
-        return FAIL, f"{len(overdue)} review(s) over {REVIEW_GRACE_MIN}min overdue: {overdue[:4]}"
+        return WARN, f"{len(overdue)} review(s) over {REVIEW_GRACE_MIN}min overdue: {overdue[:4]}"
     if pending:
         return WARN, f"{len(pending)} review(s) pending inside the {REVIEW_GRACE_MIN}min window: {pending[:4]}"
     return PASS, f"{len(in_scope)} task(s) closed since {REVIEW_RULE_FROM}, every one reviewed by the peer it named"
@@ -2504,38 +2986,72 @@ def check_facts_well_formed(root):
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
     note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
+    # State the population, not just the count. "every entry carries its config" over
+    # 7 files reads identically whether 7 is all of them or 7 of 9 -- and it IS 7 of 9
+    # here, the two baselines being deliberately excluded. A universal quantifier over
+    # a self-constructed population is only as true as the construction, and the
+    # reader cannot audit the construction from a bare N (fb's sweep, 2026-09-01,
+    # after selftests_are_gated reported "27 files, all gated" over a real 36).
+    _all = len(glob.glob(os.path.join(facts_dir, "*.json")))
+    _pop = f"{len(files)} of {_all} facts/*.json" if _all != len(files) else f"all {_all} facts/*.json"
+    return PASS, (f"{len(entries)} facts in {_pop} (baselines excluded), every entry "
+                  f"carries its config{note}")
 
 
 def _broken_facts():
     """The REAL facts files and REAL AGENTS.md, with one entry's config deleted and
-    one entry's source pointing at a non-existent data/ path. A hand-written file
+    one entry's source pointing at a non-existent scripts/ path. A hand-written file
     would share the check's own assumptions.
 
-    The source mutation uses a bare data/ path with no other prefix substring:
-    the old regex (no data/ in its prefix list) found no match and silently passed
-    it; the new regex matches data/... and FAILs on the missing file. This is the
-    coverage the broken world lacked -- it only exercised the missing-config path,
-    which is why the missing left anchor and missing data/ prefix went unnoticed."""
+    The source mutation uses a path under scripts/: a data/ path would be gitignored by
+    data/*.jsonl and silently SKIPped, so it must be one the three-state check treats
+    as FAIL. That coverage is what the world lacked when the source regex had no left
+    anchor and no data/ prefix.
+
+    The code and docs directories are symlinked in because OTHER entries' sources cite
+    them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
+    exist` for facts nobody mutated -- so the selftest was green on absence, and would
+    have stayed green with both mutations removed. Verified by removing them
+    (de, 2026-09-01)."""
     import shutil
 
-    d = _tmp_repo()
+    d = _tmp_repo_shaped()
     os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod skips the path half
+    os.remove(os.path.join(d, "facts"))
     os.makedirs(os.path.join(d, "facts"))
     for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
-    # A source under scripts/ (not gitignored, not in the baseline) that does not
-    # exist. A data/ path would be gitignored by data/*.jsonl and silently SKIPped --
-    # the source-path mutation must use a path the three-state check treats as FAIL.
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
 
-ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|py)|run_ddp\.sh")
+# The POPULATION, not just the predicate. This hand-listed four directories, so the
+# entry-point table's own FIRST row -- train.py sft.py sft_math.py serve.py chat.py
+# infer.py, the repo's actual entry points -- was invisible to a check whose evidence
+# says "every tried entry-point command". Widened to any path ending .sh/.py, which is
+# what a table row citing a script looks like regardless of where it lives. Four more
+# rows come into scope and the cited-file-exists tier stays green on all of them; the
+# citations are bare basenames (exp.py, tokenizer_report.py) in prose rows, so the
+# existence tier is resolved against scripts/ as well as the root (fb's sweep for
+# universals over self-built populations, de 2026-09-01).
+ENTRY_SCRIPT_RE = re.compile(r"(?:[\w.-]+/)?[\w.-]+\.(?:sh|py)")
+# Where a bare basename in a prose row may live. A row saying `exp.py done` cites
+# scripts/exp.py; resolving only against the root would call a real script missing.
+ENTRY_SEARCH_DIRS = ("", "scripts", "eval", "datagen", "probes", "mathbank", "algorithms", "filters")
+
+
+def _entry_exists(root, s):
+    """A cited path with a directory must exist AT that path -- `scripts/foo.py` naming a
+    file that actually lives in eval/ is exactly the doc rot this tier catches. Only a
+    bare basename in a prose row (`exp.py done`) is searched, because prose does not
+    carry a directory to be wrong about."""
+    if "/" in s:
+        return os.path.exists(os.path.join(root, s))
+    return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
 
 
 def check_entrypoints_ran(root):
@@ -2559,14 +3075,16 @@ def check_entrypoints_ran(root):
         # as "never tried", never as PASS.
         return SKIP, "runs/experiments.jsonl has no rows"
     missing, stale = [], []
+    n_rows = 0
     for line in open(agents, encoding="utf-8"):
         if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
             continue
+        n_rows += 1
         # Task-cell tokens catch attempts logged under an inner command (the wrapper is
         # invisible to the log).
         task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
         for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
-            if not os.path.exists(os.path.join(root, s)):
+            if not _entry_exists(root, s):
                 missing.append(s)
                 continue
             matched = [
@@ -2589,7 +3107,7 @@ def check_entrypoints_ran(root):
         return FAIL, f"entry-point table cites script(s) not in the repo: {missing}"
     if stale:
         return WARN, "; ".join(stale[:4])
-    return PASS, "every tried entry-point command has at least one ok run"
+    return PASS, f"{n_rows} script-citing row(s) in AGENTS.md; every tried entry-point command has an ok run"
 
 
 def check_entrypoints_table_present(root):
@@ -2606,16 +3124,35 @@ def check_entrypoints_table_present(root):
 
 
 def _broken_entrypoint():
-    """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
-    FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
-    synthetic world. The log row is written by the REAL logger with --root d, so the check
-    runs instead of SKIPping on an absent log."""
+    """The REAL AGENTS.md, in a tree holding the REAL scripts it cites, with two rows
+    added citing scripts that do not exist. Two, because the population widened:
+    `scripts/ghost_command.sh` is a pathed citation and `ghost_prose_only.py` is a bare
+    basename in a prose row, which the old four-directory predicate could not see.
+
+    The empty `_tmp_repo()` was not a broken world for this check. Every one of the 38
+    real citations resolved to nothing there, so the world FAILed with or without a
+    ghost -- the selftest was green on 38 false positives and would have stayed green
+    if the ghost detection were deleted outright. Confirmed by running the check on the
+    same world with both ghosts removed: still FAIL. Symlinking the cited directories
+    makes the ghost the only thing wrong, which is what the world has to isolate
+    (de, 2026-09-01).
+
+    The WARN tier is live in the real repo (run_ablation.sh), so it needs no synthetic
+    world. The log row is written by the REAL logger with --root d, so the check runs
+    instead of SKIPping on an absent log."""
     import shutil, subprocess
 
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ENTRY_SEARCH_DIRS:
+        if name and os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
+        f.write("| Ghost prose | a rule enforced by `ghost_prose_only.py`, nowhere in the tree |\n")
     subprocess.run(
         [
             sys.executable,
@@ -2936,11 +3473,23 @@ def _read_guard_phrases(root):
 
 
 def _broken_readme_current():
-    """The REAL README with a retired phrase spliced back in -- the FAIL tier."""
+    """The REAL README with a retired phrase spliced back in -- the FAIL tier.
+
+    The world also needs the code directories: tier (c) resolves every path README's
+    command blocks cite, and without them the world FAILed on `./run_ddp.sh`,
+    `eval/score_matrix.py` and the rest whether or not the phrase was spliced. Same
+    defect as entrypoints_ran's world (de, 2026-09-01)."""
     import shutil
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     p = os.path.join(d, "README.md")
     text = open(p, encoding="utf-8").read()
     with open(p, "w", encoding="utf-8") as f:
@@ -3630,17 +4179,40 @@ def _broken_ghost_running():
 
 
 def _broken_pod_drift():
-    """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
-    mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
+    """Every file the REAL manifest names, copied in, the manifest REGENERATED over
+    those copies, then one file mutated. Two bugs made the old world green for free:
+
+    It copied the manifest plus one file, so the other 238 named files were absent and
+    the check reported "239 drifted: missing AGENTS.md; missing algorithms/..." with or
+    without the mutation. Verified by restoring the appended file and rerunning: still
+    FAIL, same 239. Selftest green on 238 absences.
+
+    Copying all 239 was not enough either -- the manifest records committed hashes and a
+    dev checkout has uncommitted edits, so the world drifted on whatever the session
+    happened to have open. Regenerating over the copies makes the world self-consistent,
+    and then the appended line is the only difference there is (de, 2026-09-01).
+
+    The CI branch cannot be exercised here -- the selftest world has no .git."""
     import shutil
 
     d = _tmp_repo()
-    os.makedirs(os.path.join(d, "scripts"))
-    shutil.copy(
-        os.path.join(ROOT, "data", "pod_head_manifest.txt"),
-        os.path.join(d, "data", "pod_head_manifest.txt"),
-    )
-    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"), os.path.join(d, "scripts", "harness.py"))
+    man_rel = os.path.join("data", "pod_head_manifest.txt")
+    rels = []
+    for line in open(os.path.join(ROOT, man_rel), encoding="utf-8"):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rel = parts[1]
+        src = os.path.join(ROOT, rel)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        rels.append((rel, parts[2] if len(parts) > 2 else "docs"))
+    with open(os.path.join(d, man_rel), "w", encoding="utf-8") as f:
+        for rel, tag in rels:
+            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  {tag}\n")
     with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
         f.write("\n# broken world drift\n")
     return d
@@ -4223,6 +4795,12 @@ def _broken_lane_respected():
 # expansion -- is a physical index that REPLACES the caller's restriction.
 _CVD_SAFE = re.compile(r"^\$\{_DEVS\[|^\$\{CUDA_VISIBLE_DEVICES:-")
 _CVD_ASSIGN = re.compile(r"(?:^|\s)(?:export\s+)?CUDA_VISIBLE_DEVICES=(\S+)")
+# Known false positive, left in on purpose: this matches the TEXT, so a script that
+# names the variable inside an error message ("set CUDA_VISIBLE_DEVICES=<n> first")
+# reads as an assignment. Hit once, 2026-09-01, on run_sampled_arm.sh's usage string.
+# Teaching it to parse shell quoting is more surface than the false positive costs, and
+# the failure direction is right -- it over-reports rather than missing an escape. The
+# fix at the call site is to reword the message, not to exempt the file.
 # A script that reads _DEVS must have sourced eval/_devs.sh, which is what refuses a
 # shard with no device to land on. Reconstructing the array with a bare `read -ra`
 # reintroduces the :-$i fallback the helper exists to remove.
@@ -4345,10 +4923,10 @@ def _broken_device_set_honoured():
 
 
 def check_untracked_aged(root):
-    """Untracked files older than 24h in the shared tree — someone's unfinished work.
+    """Untracked files older than _AGE_HOURS in the shared tree -- someone's unfinished work.
 
     In a multi-session tree an untracked file belongs to the session that made it.
-    After 24h it is either forgotten or blocked; either way the owner should give
+    Past the window it is either forgotten or blocked; either way the owner should give
     it a fate (commit, gitignore, delete). WARN, not FAIL: the file is not wrong,
     it is just unowned."""
     if not os.path.exists(os.path.join(root, ".git")):  # worktree .git is a file
@@ -4359,14 +4937,14 @@ def check_untracked_aged(root):
     )
     if r.returncode != 0:
         return SKIP, f"git ls-files failed: {r.stderr.strip()}"
-    cutoff = time.time() - 24 * 3600
+    cutoff = time.time() - _AGE_HOURS * 3600
     aged = []
     for f in r.stdout.splitlines():
         p = os.path.join(root, f)
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
             aged.append(f)
     if aged:
-        return WARN, f"{len(aged)} untracked file(s) older than 24h: {', '.join(aged[:5])}"
+        return WARN, f"{len(aged)} untracked file(s) older than {_AGE_HOURS}h: {', '.join(aged[:5])}"
     return PASS, "no aged untracked files"
 
 
@@ -4390,7 +4968,7 @@ def _broken_untracked_aged():
 
 
 def check_dirty_aged(root):
-    """Tracked files dirty longer than 30 minutes — uncommitted work sitting in the
+    """Tracked files dirty longer than _AGE_HOURS -- uncommitted work sitting in the
     shared tree. In a multi-session tree a dirty file is a landmine: it blocks anyone
     who needs to push it, and a broad `git add` sweeps it into someone else's commit
     (d535674 swept 26 files; 2026-08-31 ruled that nothing stays uncommitted).
@@ -4404,7 +4982,7 @@ def check_dirty_aged(root):
     )
     if r.returncode != 0:
         return SKIP, f"git status failed: {r.stderr.strip()}"
-    cutoff = time.time() - 30 * 60
+    cutoff = time.time() - _AGE_HOURS * 3600
     aged = []
     for line in r.stdout.splitlines():
         # XY porcelain: X = index status, Y = worktree status. A file staged and then
@@ -4418,14 +4996,19 @@ def check_dirty_aged(root):
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
             aged.append(line[3:])
     if aged:
-        return WARN, f"{len(aged)} tracked file(s) dirty >30min: {', '.join(aged[:5])}"
+        return WARN, f"{len(aged)} tracked file(s) dirty >{_AGE_HOURS}h: {', '.join(aged[:5])}"
     return PASS, "no aged dirty files"
 
 
 def _broken_dirty_aged():
-    """A real git repo with one tracked file dirty for 2 hours. No git identity is
-    configured, so the commit fails and the file sits staged-and-modified ("AM" in
-    porcelain) -- the exact shape the old line[:2].strip() parser missed on CI."""
+    """A real git repo with one tracked file dirty for longer than _AGE_HOURS. No git
+    identity is configured, so the commit fails and the file sits staged-and-modified
+    ("AM" in porcelain) -- the exact shape the old line[:2].strip() parser missed on CI.
+
+    The age is DERIVED from the check's constant, not written beside it. A hardcoded
+    2 hours was aged under the old 30-minute threshold and is not under 6 hours: raising
+    the threshold turned this broken world green and the selftest caught it, which is
+    the one thing a hand-written age cannot promise to keep doing."""
     import shutil
     import subprocess as sp
 
@@ -4437,7 +5020,7 @@ def _broken_dirty_aged():
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("\n# dirty\n")
-    old = time.time() - 2 * 60 * 60
+    old = time.time() - (_AGE_HOURS * 3600 + 600)
     os.utime(os.path.join(d, "AGENTS.md"), (old, old))
     return d
 
@@ -4704,6 +5287,20 @@ CHECKS = [
         _broken_milestone_ckpt_pinned,
     ),
     (
+        "selftests_are_gated",
+        "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
+        "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
+        check_selftests_are_gated,
+        _broken_selftests_are_gated,
+    ),
+    (
+        "probe_numbers_unique",
+        "tNN numbers claimed by more than one probe are surfaced for a human to judge",
+        "three collisions in one afternoon: t62/t63/t64 each named two probes from two sessions, so a fact citing a number resolves to whichever file the reader finds",
+        check_probe_numbers_unique,
+        _broken_probe_numbers_unique,
+    ),
+    (
         "no_duplicate_defs",
         "no module defines the same top-level name twice",
         "two sessions restored one dropped selftest from different commits and harness.py carried it twice; Python binds the second, so the first is dead code that drifts, and ruff F811 does not fire across intervening defs",
@@ -4782,14 +5379,14 @@ CHECKS = [
     ),
     (
         "untracked_aged",
-        "untracked files older than 24h in the shared tree get a fate",
+        f"untracked files older than {_AGE_HOURS}h in the shared tree get a fate",
         "a session's unfinished work sits unowned for days; nobody knows if it is safe to delete",
         check_untracked_aged,
         _broken_untracked_aged,
     ),
     (
         "dirty_aged",
-        "tracked files dirty longer than 30min are named so the owner commits or reverts",
+        f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
         check_dirty_aged,
         _broken_dirty_aged,
@@ -4832,8 +5429,32 @@ def _check_deadline(signum, frame):
     raise TimeoutError("check deadline")
 
 
-def run_checks(root=ROOT, quiet=False):
+def _read_timeout_strikes():
+    """Consecutive-timeout count per check, from the last run. Unreadable = empty:
+    the ledger is an optimisation over 'this timed out before', never a gate on its own."""
+    try:
+        with open(_TIMEOUT_STATE, encoding="utf-8") as f:
+            obj = json.load(f)
+        return {k: int(v) for k, v in obj.items() if isinstance(v, (int, float))}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def _write_timeout_strikes(strikes):
+    """Persist the counts. A failure here must not fail the run -- it only costs the
+    NEXT run its memory, which degrades to the single-timeout behaviour."""
+    try:
+        os.makedirs(os.path.dirname(_TIMEOUT_STATE), exist_ok=True)
+        with open(_TIMEOUT_STATE, "w", encoding="utf-8") as f:
+            json.dump(strikes, f, indent=1, sort_keys=True)
+    except OSError:
+        pass
+
+
+def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     results = []
+    prev_strikes = _read_timeout_strikes()
+    strikes = {}
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
@@ -4841,7 +5462,19 @@ def run_checks(root=ROOT, quiet=False):
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            state, evidence = SKIP, f"timed out after {_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)}s"
+            # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
+            # is what separates "this machine was busy" from "this check never runs".
+            n = prev_strikes.get(name, 0) + 1
+            strikes[name] = n
+            limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
+            if n >= _TIMEOUT_STRIKES:
+                state = FAIL
+                evidence = (f"timed out after {limit}s on {n} consecutive runs -- this check "
+                            f"has not actually run since; raise its deadline or fix it")
+            else:
+                state = TIMEOUT
+                evidence = (f"timed out after {limit}s (strike {n}/{_TIMEOUT_STRIKES}; "
+                            f"the next consecutive timeout FAILs)")
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
@@ -4850,11 +5483,15 @@ def run_checks(root=ROOT, quiet=False):
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
             print(f"  [{state:^4}] {name:<22} {evidence}  ({dur:.1f}s)")
-            if state in (FAIL, WARN):
+            if state in (FAIL, WARN, TIMEOUT):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
                 print(f"         prevents: {incident}")
     signal.signal(signal.SIGALRM, _prev_alarm_handler)
+    # Only checks that timed out THIS run keep a count; anything that ran resets to zero
+    # by absence. Written after the loop so a partial run cannot bank a strike.
+    if persist_timeouts:
+        _write_timeout_strikes(strikes)
     return results
 
 
@@ -5635,6 +6272,94 @@ def _selftest_merge_fix_not_deadlocked():
     print("  merge fix: bad merge refused, real fix accepted, restaged offender still refused")
 
 
+def _selftest_merge_cherry_pick_not_a_drop():
+    """A cherry-picked commit is not a lost commit.
+
+    The real case, 2026-09-01, on this check's own author: tilerl cherry-picked de's
+    5927ed6 into main as b8cae37 to unblock a launch. Byte-identical blobs, de's
+    branch then added a comment on top, and the merge correctly took the newer file --
+    while check_merge_complete reported "2 commit(s) from the other side lost".
+    Nothing was lost. The commit count cannot see it: a cherry-pick has a different
+    sha, so rev-list still counts it as absent.
+
+    This matters because the cherry-pick is the NORMAL way an urgent fix reaches main
+    here, so the false positive would have fired on the common path and a permanent
+    red is the same as no signal. The fix is exact blob equality -- did the side we
+    took ever HOLD the other side's blob -- which cannot excuse a real drop, and the
+    third assertion below is what pins that.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)  # noqa: E731
+    try:
+        sh("init", "-q")
+        sh("config", "user.email", "t@t")
+        sh("config", "user.name", "t")
+        rel = os.path.join("scripts", "loader.py")
+        src = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(src), exist_ok=True)
+        open(src, "w").write("def f():\n    return 1\n")
+        sh("add", "-A")
+        sh("commit", "-qm", "base")
+        main = sh("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        sh("checkout", "-qb", "feature")
+
+        # feature makes the fix
+        fix = "def f():\n    FIX = 'urgent'\n    return 1\n"
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: the urgent fix")
+
+        # main CHERRY-PICKS it: same content, different sha
+        sh("checkout", "-q", main)
+        open(src, "w").write(fix)
+        sh("add", "-A")
+        sh("commit", "-qm", "main: cherry-pick of the urgent fix")
+
+        # feature builds on top, then main merges feature
+        sh("checkout", "-q", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", "-A")
+        sh("commit", "-qm", "feature: a comment on top")
+        sh("checkout", "-q", main)
+        # The merge CONFLICTS -- both sides changed the line -- so it must be resolved
+        # and committed, or there is no merge commit and check_merge_complete returns
+        # "HEAD is not a merge": a vacuous PASS that looks exactly like the real one.
+        # My first version of this fixture stopped at `git merge` and asserted PASS,
+        # and it passed with the fix neutered. Third instance today of a check that
+        # agrees with the thing it is checking (de, 2026-09-01).
+        sh("merge", "--no-commit", "feature")
+        open(src, "w").write(fix.replace("return 1", "# note\n    return 1"))
+        sh("add", rel)
+        sh("commit", "-qm", "merge feature (took the newer file)")
+        parents = sh("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
+        assert len(parents) >= 3, (
+            f"the fixture must produce a MERGE commit, got {len(parents) - 1} parent(s) "
+            f"-- otherwise check_merge_complete returns 'not a merge' and the assertion "
+            f"below passes without ever running the code under test")
+        took = merge_took_one_side(d)
+        assert not took, f"the cherry-picked blob must not count as a drop: {took}"
+
+        state, evidence = check_merge_complete(d)
+        assert state == PASS, (
+            f"a cherry-pick is not a drop -- main HELD that exact blob before the "
+            f"merge, and the merge took the newer file: {state} {evidence}")
+
+        # and the real drop must STILL fail: a blob the taken side never held.
+        d2 = _broken_merge_complete()
+        try:
+            state, _ = check_merge_complete(d2)
+            assert state == FAIL, (
+                "the cherry-pick exemption must not excuse a genuine one-side "
+                f"resolution, got {state}")
+        finally:
+            shutil.rmtree(d2, ignore_errors=True)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  merge cherry-pick: picked commit not counted as lost, genuine drop still refused")
+
+
 def _selftest_merge_reverted_content():
     """Real merges as the cases, plus the deliberate deletion that must NOT fire.
 
@@ -5730,30 +6455,29 @@ def _selftest_attest_written_path():
 
 
 def _selftest_check_timeout_skips():
-    """A slow check must SKIP naming its deadline, not kill the harness.
+    """A slow check must report TIMEOUT naming its deadline, not kill the harness, and
+    a SECOND consecutive timeout must FAIL.
 
-    signal.alarm() with no handler runs SIG_DFL, which terminates: the
-    `except TimeoutError -> SKIP` in run_checks was dead code and a slow check exited
-    -14/142 with empty stdout and stderr. The hook then refused the commit with no
-    check named and told the reader to rerun by hand, where it passes -- the
+    Two defects, one test. (a) signal.alarm() with no handler runs SIG_DFL, which
+    terminates: the `except TimeoutError` in run_checks was dead code and a slow check
+    exited -14/142 with empty stdout and stderr. The hook then refused the commit with
+    no check named and told the reader to rerun by hand, where it passes -- the
     --no-verify training P8 exists to prevent. It refused the commit carrying the
     e1-4 review of itself (2026-09-01).
 
-    Tests the PROPERTY -- run_checks turns an overrun into a named SKIP -- not the
-    mechanism. My first version asserted a handler was installed at import time,
-    which was true only of my own fix; de's is scoped to run_checks and restores the
-    previous handler, which is better, and the test failed on the better code. A test
-    that encodes one implementation rejects its replacement."""
+    (b) That fix reported SKIP, which the hook prints nothing for and `check` exits 0
+    on. A check that times out on EVERY run was therefore a permanent silent pass
+    wearing a legitimate state's name (44, D5). TIMEOUT is its own state, and the second
+    consecutive strike is a FAIL -- a deadline nothing can meet is a check nobody has.
+
+    Tests the PROPERTY -- run_checks turns an overrun into a named non-pass, and a
+    repeat into a failure -- not the mechanism. My first version asserted a handler was
+    installed at import time, which was true only of my own fix; de's is scoped to
+    run_checks and restores the previous handler, which is better, and the test failed
+    on the better code. A test that encodes one implementation rejects its replacement."""
     slow_name = "__selftest_slow__"
-
-    def slow(_root):
-        time.sleep(3)
-        return PASS, "should never be reached"
-
     saved_checks = list(CHECKS)
     saved_to = _CHECK_TIMEOUTS.get(slow_name)
-    CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
-                   slow, lambda: _tmp_repo()))
     _CHECK_TIMEOUTS[slow_name] = 1
     try:
         # Time the SLOW CHECK, not the whole run: run_checks executes all 51, so a
@@ -5770,22 +6494,45 @@ def _selftest_check_timeout_skips():
                 marks.append(time.time() - t)
             return PASS, "should never be reached"
 
-        CHECKS[-1] = (slow_name, "a check that overruns", "the harness dying with no name",
-                      timed_slow, lambda: _tmp_repo())
-        results = run_checks(ROOT, quiet=True)
-        row = [r for r in results if r[0] == slow_name]
-        assert row, f"{slow_name} produced no result -- the run died"
-        _, state, evidence, _, _ = row[0]
-        assert state == SKIP, f"an overrunning check must SKIP, got {state}: {evidence}"
-        assert "timed out" in evidence, f"the SKIP must name the deadline: {evidence}"
+        CHECKS.append((slow_name, "a check that overruns", "the harness dying with no name",
+                       timed_slow, lambda: _tmp_repo()))
+
+        def run_and_read():
+            # persist_timeouts=False: the real ledger must not carry this fixture's strikes.
+            results = run_checks(ROOT, quiet=True, persist_timeouts=False)
+            row = [r for r in results if r[0] == slow_name]
+            assert row, f"{slow_name} produced no result -- the run died"
+            return row[0][1], row[0][2]
+
+        real_read = globals()["_read_timeout_strikes"]
+        # Strike 1, from a clean slate: TIMEOUT, non-blocking, names the deadline.
+        globals()["_read_timeout_strikes"] = lambda: {}
+        try:
+            state, evidence = run_and_read()
+        finally:
+            globals()["_read_timeout_strikes"] = real_read
+        assert state == TIMEOUT, f"an overrunning check must report TIMEOUT, got {state}: {evidence}"
+        assert state != SKIP, "TIMEOUT must not be a SKIP -- that is the silent pass"
+        assert "timed out" in evidence, f"the TIMEOUT must name the deadline: {evidence}"
         assert marks and marks[0] < 2.5, f"the alarm did not interrupt the check ({marks}s)"
+
+        # Strike 2, with the previous run's count in hand: FAIL, so `check` exits 1.
+        globals()["_read_timeout_strikes"] = lambda: {slow_name: 1}
+        try:
+            state2, evidence2 = run_and_read()
+        finally:
+            globals()["_read_timeout_strikes"] = real_read
+        assert state2 == FAIL, (
+            f"a second consecutive timeout must FAIL, got {state2}: {evidence2} -- "
+            f"otherwise a check that never runs never says so")
+        assert "consecutive" in evidence2, f"the FAIL must say why: {evidence2}"
     finally:
         CHECKS[:] = saved_checks
         if saved_to is None:
             _CHECK_TIMEOUTS.pop(slow_name, None)
         else:
             _CHECK_TIMEOUTS[slow_name] = saved_to
-    print("  check timeout: an overrunning check SKIPs and names its deadline; the run survives")
+    print("  check timeout: strike 1 TIMEOUTs naming its deadline, strike 2 FAILs; the run survives both")
 
 
 def _selftest_exp_fold():
@@ -5804,6 +6551,14 @@ def _selftest_exp_fold():
     try:
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         p = os.path.join(d, "runs", "experiments.jsonl")
+        # Run c's timestamp is RELATIVE to now, derived from the same constant the check
+        # reads. It was a hardcoded 2026-08-31 12:45 -- recent when written, older than
+        # 24h a day later -- so the final assertion (c is open AND recent, therefore
+        # PASS) inverted on its own and the selftest went permanently red. A fixture that
+        # expires. Half the threshold, so it is unambiguously inside the window whatever
+        # _STALE_RUNNING_H becomes.
+        recent = time.strftime("%Y-%m-%d %H:%M",
+                               time.localtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
         ev = [
             {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
             {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
@@ -5811,7 +6566,7 @@ def _selftest_exp_fold():
             {"name": "b", "started": "2026-08-31 03:44", "status": "ok", "ended": "2026-08-31 04:16"},
             {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
             # a genuinely open run must survive the fold
-            {"name": "c", "started": "2026-08-31 12:45", "status": "running", "ended": ""},
+            {"name": "c", "started": recent, "status": "running", "ended": ""},
         ]
         with open(p, "w", encoding="utf-8") as f:
             for r in ev:
@@ -5821,10 +6576,13 @@ def _selftest_exp_fold():
         assert folded[("a", "2026-08-31 05:08")]["status"] == "fail", "an appended close must clear its start"
         assert folded[("b", "2026-08-31 03:44")]["status"] == "ok", \
             "a start appended after a close must NOT reopen the run"
-        assert folded[("c", "2026-08-31 12:45")]["status"] == "running", \
+        assert folded[("c", recent)]["status"] == "running", \
             "a genuinely open run must still read as running"
         assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
 
+        # a and b keep fixed dates on purpose: both are CLOSED, and check_no_stale_running
+        # only looks at rows whose status is still running, so no amount of clock movement
+        # reaches them. Only the open row had to become relative.
         state, evidence = check_no_stale_running(d)
         assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
     finally:
@@ -6084,7 +6842,11 @@ def _demo():
     # not a tree, so no world it builds can hold a repo file.
     synthetic_world = {"no_oversized_blob", "env_importable"}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
-    warn_only = {"untracked_aged", "dirty_aged"}
+    # review_present joined them on 2026-09-01 when the user cut the blocking: a check
+    # with no FAIL tier cannot have a FAILing broken world, and demanding one would
+    # force the tier back. What its world must still prove is that removing a review row
+    # is VISIBLE -- WARN is the signal, silence is the defect.
+    warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -6132,26 +6894,44 @@ def _demo():
     # alongside evidence), not a smarter regex -- that is an arms race with string formats. Not
     # done; the next person should know this green does not cover a no-digit PASS.
     #
+    # The leading boundary is load-bearing, not tidiness: without it the regex reads a count out
+    # of a PATH. In a worktree named aupai-b0, root_durable's "root /.../aupai-b0 is not on a
+    # known-ephemeral mount" yields the match "0 is", the only "count" in the string, so a
+    # correct PASS was reported as vacuous and the selftest was red in that worktree and green
+    # in the main one (b0, 2026-09-01). A count is preceded by whitespace or start-of-string;
+    # a digit glued to a word is part of a name.
+    #
     # The meta-check carries its own failing case: a fake check whose PASS is vacuous. Without
     # it nothing proves the meta-check fires -- the exact defect it guards against.
     def _vacuous_pass(_root):
         return PASS, "0 domain(s) match filters abc"
 
+    # ...and its own false-positive case, the one above: a path-embedded digit is not a count.
+    def _pass_with_digit_in_a_path(_root):
+        return PASS, "root /Users/x/code/aupai-b0 is not on a known-ephemeral mount"
+
     vacuous = []
-    for name, _a, _i, fn, _b in list(CHECKS) + [("fake_vacuous_pass", "", "", _vacuous_pass, None)]:
+    for name, _a, _i, fn, _b in list(CHECKS) + [
+        ("fake_vacuous_pass", "", "", _vacuous_pass, None),
+        ("fake_digit_in_a_path", "", "", _pass_with_digit_in_a_path, None),
+    ]:
         try:
             state, evidence = fn(ROOT)
         except Exception:
             continue  # a crash against the real repo is the broken-world loop's territory
         if state != PASS:
             continue
-        counts = [int(m.group(1)) for m in re.finditer(r"(\d+)\s+[a-zA-Z]", str(evidence))]
+        counts = [int(m.group(1)) for m in re.finditer(r"(?:^|\s)(\d+)\s+[a-zA-Z]", str(evidence))]
         if counts and all(c == 0 for c in counts):
             vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
     assert any(v.startswith("fake_vacuous_pass") for v in vacuous), (
         "meta-check did not catch its own deliberately-vacuous PASS -- the regex or loop regressed"
     )
-    real = [v for v in vacuous if not v.startswith("fake_vacuous_pass")]
+    assert not any(v.startswith("fake_digit_in_a_path") for v in vacuous), (
+        "meta-check read a count out of a path -- the leading boundary regressed"
+    )
+    real = [v for v in vacuous
+            if not v.startswith("fake_vacuous_pass") and not v.startswith("fake_digit_in_a_path")]
     assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
 
     # sync selftest: a merge that loses a row must FAIL. The incident: a hand-merge
@@ -6412,6 +7192,7 @@ def _demo():
     _selftest_check_timeout_skips()
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
+    _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
@@ -6545,6 +7326,7 @@ _FROZEN_KEYS = (
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
+    "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -6552,12 +7334,12 @@ _FROZEN_KEYS = (
 # edit, and ladder_config_frozen compares them against the JSON as documented
 # intent -- closing the gap where all six points agree with each other but not
 # with what was intended (fb regenerated the manifest mid-ladder, blinding pod_drift).
-_CODE_FROZEN_KEYS = ("chunk_size", "layers", "d", "heads", "ffn_hidden")
+_CODE_FROZEN_KEYS = ("chunk_size",)  # the shape moved to _FROZEN_KEYS when it got flags
 
 # CLI flags whose name differs from their Cfg field (--no_attn_res sets Cfg.attn_res).
 # --no_doc_mask is gone: it existed because the attention fallback could not honour
 # doc_mask, and now it can, so the flag was only a way to turn a frozen recipe key off.
-_FLAG_TO_CFG = {"no_attn_res": "attn_res"}
+_FLAG_TO_CFG = {"no_attn_res": "attn_res", "dim": "d"}
 
 # Parser flags intentionally outside the frozen set. Criterion: a flag that changes the
 # architecture or the recipe is frozen; these are run-management, measurement, or
@@ -6696,8 +7478,14 @@ def _run_point(step_args, forced):
                   f"forges a regression rather than measuring one.")
             return 2
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(world))
+        # _CFG_TO_FLAG, not f"--{k}": Cfg.d's flag is --dim, because "--d" is ambiguous
+        # inside torchrun's own parser and run_ddp.sh's args pass through it.
+        # Only the renames, not the negations: reversing no_attn_res->attn_res would emit
+        # "--no_attn_res 1", the opposite of what it says. Bools never reach here today,
+        # which is why an inverted map would have been silent.
+        _cfg_to_flag = {"d": "dim"}
         frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
-                       for v in (f"--{k}", str(frozen[k]))]
+                       for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
         print(
             f"run point: frozen config -> cards={frozen['cards']} "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
@@ -7116,10 +7904,12 @@ def _arm_monitor(name, pid, log_path, output_path=None):
     after a real result is worse than no row -- it inverts the verdict, and
     score_matrix_present read that stale fail's predecessor as an unscored ok."""
     output_repr = repr(output_path) if output_path else "None"
+    rc_repr = repr(os.path.join(ROOT, "runs", f"{name}.rc"))
     monitor_code = f'''
 import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
 output = {output_repr}
+rc_file = {rc_repr}
 exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
 silent_limit = 600
 last_size, last_grow = 0, time.time()
@@ -7156,9 +7946,35 @@ while True:
     except OSError:
         alive = False
     if not alive:
+        # The exit code, not the disappearance. A process that is gone has either
+        # finished or been killed, and the monitor cannot tell those apart by watching
+        # a pid -- it used to write status=ok for both. The 22B milestone was killed at
+        # 04:22 to yield the lane and its row reads `ok | process exited`, identical to
+        # a completed score; nothing on the board could see that the 22B reading did
+        # not exist (de, 2026-09-01). cmd_launch's wrapper writes runs/<name>.rc after
+        # the child returns, so the verdict is an artifact.
+        #
+        # No .rc means the wrapper itself died -- SIGKILL to the group, the machine
+        # went down -- which is the killed case, not the finished one. Fail closed:
+        # a run whose fate is unknown is not a success. The row says which of the two
+        # it was, because "no rc" and "rc 137" call for different responses.
+        rc, why = None, ""
+        try:
+            with open(rc_file, encoding="utf-8") as rf:
+                rc = int(rf.read().strip())
+        except (OSError, ValueError):
+            why = "no exit code recorded: the wrapper died with the job (killed group, or the box went away)"
+        if rc == 0:
+            status, result, finding = "ok", "exit 0", "monitor: process exited cleanly"
+        elif rc is None:
+            status, result, finding = "fail", "vanished", "monitor: " + why
+        else:
+            sig = " (signal %d)" % (rc - 128) if rc > 128 else ""
+            status, result = "fail", "exit %d%s" % (rc, sig)
+            finding = "monitor: process exited %d%s" % (rc, sig)
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
-            "--result", "process exited", "--finding", "monitor: process gone",
-            "--decision", "check the log", "--status", "ok"], capture_output=True)
+            "--result", result, "--finding", finding,
+            "--decision", "check the log", "--status", status], capture_output=True)
         break
     grew = False
     for p in ([log] + ([output] if output else [])):
@@ -7169,10 +7985,31 @@ while True:
                 grew = True
                 break
     if not grew and time.time() - last_grow > silent_limit:
-        subprocess.run([sys.executable, exp_py, "done", "--name", name,
-            "--result", "log silent", "--finding", f"monitor: no growth in {{silent_limit}}s",
-            "--decision", "check the process", "--status", "fail"], capture_output=True)
-        break
+        # The process is ALIVE -- the liveness probe above would have broken out of the
+        # loop otherwise. So silence is not death: score_matrix --profile milestone is
+        # silent for long stretches inside a generative eval, and this branch used to
+        # write status=fail on two runs that then produced complete score records and
+        # readouts 22 and 54 minutes LATER (ms_..._15b_s1.pt.step16000,
+        # ms_..._30b_s2.pt.step17500; de-8 D6). The fail row outlived the incident and
+        # the ledger has disagreed with its own artifacts since.
+        #
+        # A monitor that cannot see the process must not overwrite the verdict the
+        # process will produce itself. Warn into the run's own log -- the file the
+        # operator is already tailing -- and say the observation is a PROXY: log bytes,
+        # not process state. Appending to the log rather than the ledger is deliberate:
+        # exp.py has no note verb, and inventing a row state for "suspicious" would put a
+        # third value in a field every reader folds on.
+        try:
+            with open(log, "a", encoding="utf-8") as lf:
+                lf.write(
+                    f"\\n[monitor {{time.strftime('%H:%M:%S')}}] no log growth in {{silent_limit}}s, "
+                    f"but pid {{pid}} is ALIVE -- stalled_suspected, NOT failed. Liveness here is "
+                    f"inferred from LOG BYTES, not from the process; a generative eval is silent "
+                    f"by construction. Leaving the row open: the run decides its own verdict.\\n"
+                )
+        except OSError:
+            pass
+        last_grow = time.time()  # re-arm: one note per silent window, not one per minute
 '''
     monitor_proc = subprocess.Popen(
         [sys.executable, "-c", monitor_code],
@@ -7362,15 +8199,29 @@ def cmd_launch(rest):
     # 3. Launch with setsid nohup
     log_path = os.path.join(ROOT, "runs", f"{args.name}.log")
     pid_path = os.path.join(ROOT, "runs", f"{args.name}.pid")
+    rc_path = os.path.join(ROOT, "runs", f"{args.name}.rc")
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cards
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
 
+    # A stale .rc from a previous run of this name would be read as this run's verdict.
+    if os.path.exists(rc_path):
+        os.unlink(rc_path)
+    # The exit code must outlive the process, because the only thing that can read it
+    # otherwise is whoever reaped the child. The monitor cannot: it polls a pid, sees it
+    # vanish, and has no way to distinguish "finished" from "killed". It wrote status=ok
+    # for both -- the 22B milestone was killed at 04:22 while yielding the lane and its
+    # ledger row reads `ok | process exited`, indistinguishable from a completed score
+    # (de, 2026-09-01). Wrapping the command so the shell records $? makes the verdict an
+    # artifact rather than a guess. `exec` is deliberately absent: the wrapper must
+    # survive the child to write the file.
+    wrapped = ["bash", "-c", 'set -o pipefail; "$@"; rc=$?; printf %s "$rc" > "$0"; exit "$rc"',
+               rc_path, *cmd]
     with open(log_path, "w") as log_f:
         proc = subprocess.Popen(
-            cmd,
+            wrapped,
             stdout=log_f, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             env=env, cwd=ROOT,
@@ -7547,6 +8398,32 @@ def _ckpt_env_fp(path):
         return None
 
 
+def _drop_zombies(host_pids):
+    """Keep only pids that are actually running.
+
+    `pgrep -f X` matches on argv, and a zombie KEEPS its argv (`[run_ddp.sh] <defunct>`)
+    while running nothing and holding no card. So a name match is not evidence of a live
+    process -- on 2026-09-01 `pgrep -f compile_worker | wc -l` returned 1577 where 1570
+    were zombies and 38 were live, and the miscount was read as CPU saturation on an idle
+    machine. On a kill path the same substitution is worse than a miscount: it makes the
+    caller act on processes that already exited.
+
+    Filtered here rather than remembered at each call site, because knowing the trap
+    exists and recalling it at the moment of use are different things -- the miscount
+    above was made 15 minutes after merging the fix whose docstring states it.
+    """
+    if not host_pids:
+        return []
+    r = subprocess.run(["tn", "exec", f"ps -o pid=,stat= -p {','.join(host_pids)}"],
+                       capture_output=True, text=True)
+    live = set()
+    for ln in r.stdout.splitlines():
+        f = ln.split()
+        if len(f) >= 2 and not f[1].startswith("Z"):
+            live.add(f[0])
+    return [p for p in host_pids if p in live]
+
+
 def _gpu_descendants(root_host_pid):
     """Host pids holding GPU memory that descend from root_host_pid.
 
@@ -7620,7 +8497,7 @@ def cmd_kill(argv):
         return 1
     pattern = re.escape(cmdline)
     r = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    host_pids = [p for p in r.stdout.split() if p.strip()]
+    host_pids = _drop_zombies([p for p in r.stdout.split() if p.strip()])
     parent, children = None, []
     for hp in host_pids:
         s = subprocess.run(["tn", "exec", f"grep -h NSpid /proc/{hp}/status"], capture_output=True, text=True)
@@ -7632,7 +8509,7 @@ def cmd_kill(argv):
             children.append(hp)
     # The monitor's embedded code names the container pid; it is the only other match.
     r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
-    monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
+    monitor_pids = _drop_zombies([p for p in r.stdout.split() if p.strip() and p not in host_pids])
     # Differently-named children holding GPU memory (score_matrix -> math_zh.py etc).
     gpu_kids = [p for p in _gpu_descendants(parent) if p not in host_pids] if parent else []
     print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, "
@@ -8215,8 +9092,9 @@ def main():
         res = run_checks()
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
+        timed = [n for n, s, *_ in res if s == TIMEOUT]
     else:
-        bad, warns = [], []
+        bad, warns, timed = [], [], []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -8233,6 +9111,11 @@ def main():
     if bad:
         print(f"\n{len(bad)} invariant(s) FAILED: {', '.join(bad)}")
         return 1
+    if timed:
+        # Non-blocking on the first strike, but never silent: a check that did not run
+        # is not a check that passed, and the next consecutive timeout exits 1.
+        print(f"\n{len(timed)} check(s) TIMED OUT and did not run: {', '.join(timed)} "
+              f"-- a second consecutive timeout FAILs")
     if warns:
         print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
     return 0

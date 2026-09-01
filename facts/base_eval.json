@@ -470,7 +470,8 @@
     "退化是内容问题",
     "content, not format"
    ],
-   "status": "measured"
+   "status": "measured",
+   "boundary": "SUPERSEDED AS A RATE (e1, 2026-09-01): every figure here was produced through train.generate_batch with the default rep_stop=True, which halts decoding on a whitespace 8-gram repeated 3x -- the metric's own predicate. All four rates are therefore LOWER BOUNDS over truncated prefixes, not measurements. A/B at max_new 512 measured 39.6% vs 72.9% on the same prompts, a factor of ~1.8 (be.rep_stop_truncates_the_thing_it_measures). Do NOT apply that factor as a correction -- it is one checkpoint at one length. The WITH-TEMPERATURE conclusion still stands directionally, since both arms carry the same bias, but the absolute rates need a re-run with rep_stop=False before being quoted again."
   },
   {
    "id": "be.agentic_loop_tokens",
@@ -738,6 +739,367 @@
    "uncertainty": "single greedy run; the step is an external attribution from mtime, not read from the checkpoint",
    "status": "measured",
    "artifact_sha256": "55af5955dacb5fab51c5f06f7b9251e3161367422c993d03bf0f3133cfc6e205"
+  },
+  {
+   "id": "be.milestone_16b",
+   "value": "16B milestone (ckpt_pretrain_30b_s2.pt.step17500, 16.056B actual) vs the 8B stage-1 baseline (ckpt_pretrain_15b_s1.pt.step8500, 7.799B): 3 of 9 per-role domain losses moved past the 0.1176 nat floor, all improving -- zh_web 3.7544->3.6040 (+0.1504), wiki_chat 3.3679->3.2108 (+0.1571), textbook_30b 2.0585->1.9203 (+0.1382). cot +0.0821 floor. code_rp1t +0.0483 floor and separately REFUSED by the 7.1 weight gate (0.37200->0.29330 = 0.79x, outside the 5% tolerance). en_c4/en_c4_stage2 and math_owm/math_owm_stage2 refused by name: stage 2 renamed 2 of 7 roles, so those two sides were scored on different text. ceval 22.3->21.6 (-0.70pt, floor at threshold 5.9pt); code_500 0.0->0.0 (floor, degenerate_rate 0.414); math_hard_pass_at_1 and rl_gap ABSENT from one or both records. This is the first live firing of the 7.1 weight gate and the first cross-stage per-role read on byte-identical heads. Read it as SCALE progress, not as a mix read -- the three roles that moved are the ones whose weights barely changed, and the one role that was reweighted is refused.",
+   "measured": "2026-09-01",
+   "source": "runs/readout_ckpt_pretrain_30b_s2.pt.step17500.txt (pod); runs/milestones.jsonl last row for step17500",
+   "config": {
+    "milestone": "ckpt_pretrain_30b_s2.pt.step17500",
+    "paired": "ckpt_pretrain_15b_s1.pt.step8500",
+    "profile": "milestone (both sides)",
+    "milestone_mix": "data/mix_30b_stage2.json",
+    "paired_mix": "data/mix_15b_stage1.json",
+    "heads": "stage-1 7 roles; stage 2 renamed 2 (en_c4->en_c4_stage2, math_owm->math_owm_stage2), 5 byte-identical",
+    "per_role_threshold_nat": 0.1176,
+    "threshold_derivation": "2.28x sigma-hat 0.0516, the 0.2b seed variance",
+    "ceval": {
+     "n": 1300,
+     "threshold_pt": 5.9
+    },
+    "code_500": {
+     "n": 500,
+     "threshold_pt": 12.6
+    },
+    "weight_change_limit": 0.05,
+    "guard_version": "eval/readout_30b.py b0 3087e18, md5 16b4a691f200fcd421894e2bc95323df on the pod, selftest 13/13",
+    "pins": [
+     "ckpt_pretrain_30b_s2.milestone_16b_step17500.pt",
+     "ckpt_pretrain_15b_s1.milestone_8b_step8500.pt"
+    ],
+    "actual_tokens": {
+     "milestone": 16056320000,
+     "paired": 7798784000
+    },
+    "budget_gate": "not applied -- --actual-tokens/--paired-tokens omitted; passing them refuses (51.4% > 5%). See `boundary`.",
+    "cmd": "eval/readout_30b.py --milestone ckpt_pretrain_30b_s2.pt.step17500 --paired ckpt_pretrain_15b_s1.pt.step8500 --milestone-tokens 16e9 --milestone-profile milestone --paired-profile milestone --milestone-mix data/mix_30b_stage2.json --paired-mix data/mix_15b_stage1.json"
+   },
+   "uncertainty": "Cross-stage noise unquantified. 0.1176 nat is a within-run floor; the three moves sit at 1.17-1.34x it, and 8B-stage-1-vs-16B-stage-2 noise was never separately measured -- the adjacent-checkpoint audit (be.adjacent_checkpoint_jitter, 0.005-0.027 nat per role) is within-run and does not cover a stage boundary. Single scoring pass per side, n=1.",
+   "boundary": "Two things this fact does not say. (1) The budget gate did not run: passing --actual-tokens 16056320000 --paired-tokens 7798784000 refuses the pair (gap 51.4% > BUDGET_MISMATCH_LIMIT 0.05, exit 1), and this read omitted both flags -- as the harness milestone path did. On a progress track the budget gap is the treatment, so the gate as written tests the wrong property here; filed as a defect. The consequence stands regardless: part of each move is the extra 8.3B tokens, which is what a progress read is FOR, and none of it is separable from stage-2's composition change. (2) The 24B/30B within-stage reads are the clean ones. Until then these three verdicts are 'moved per the pre-registered floor', not 'improved by a measured amount'.",
+   "status": "measured"
+  },
+  {
+   "id": "be.rep_stop_truncates_the_thing_it_measures",
+   "claim": "whether generate_batch's default repetition-stop biases every degeneration and repetition number this repo has published",
+   "value": "YES, and the bias is roughly 1.8x DOWNWARD. train.generate_batch defaults rep_stop=True (train.py:1176), which halts decoding when a whitespace 8-gram repeats 3x -- which is the definition of the degenerate-repetition metric itself. So the generation is cut at the moment it satisfies the predicate, and any rate computed over the stored tail is a rate over a truncated prefix. MEASURED A/B on ckpt_pretrain_30b_s2.pt.step24000, 48 code-holdout prompts, greedy, max_new 512, identical prompts and seed: rep_stop=True gives 19/48 = 39.6% degenerate at mean 208 tokens; rep_stop=False gives 35/48 = 72.9% at mean 512 tokens. The stop does not merely shorten the text, it removes generations from the numerator: a generation that would have looped for another 300 tokens is stopped early and, on the truncated tail, no longer trips the 3x threshold. SCOPE OF THE CONTAMINATION: every degeneration/repetition figure produced through this helper is a lower bound, not a measurement -- this includes be.degeneration_rate's code base 3-shot 6.6%, base 0-shot 25.4%, SFT v2 greedy 55.8% and SFT v2 t=0.8 17.0%, and any code-500/math-500 degeneration rate quoted from an eval that used the default. The 1.8x factor is measured on ONE checkpoint at ONE max_new and must not be applied as a correction multiplier to those figures; it establishes direction and rough size, not a conversion. CAPABILITY numbers (pass@1, accuracy) are NOT affected: a truncated degenerate generation was going to score 0 either way. The affected class is exactly the format/degeneration family. WHAT TO DO: any probe measuring repetition must pass rep_stop=False and say so in its artifact; rep_stop=True remains correct for capability evals, where it saves compute on generations that are already lost.",
+   "measured": "2026-09-01",
+   "source": "e1, A/B on the pod GPU7; probes/t69_copy_rate.py and probes/t67_self_repeat.py both pass rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 48,
+    "max_new": 512,
+    "temperature": 0.0,
+    "data": "data/eval/code_holdout_500.jsonl",
+    "rep_stop_true_rate": 0.396,
+    "rep_stop_false_rate": 0.729,
+    "rep_stop_true_mean_tokens": 208,
+    "rep_stop_false_mean_tokens": 512,
+    "ratio": 1.84
+   },
+   "uncertainty": "One checkpoint, one max_new, 48 prompts; the ratio is direction-and-size, not a conversion factor. At a smaller max_new the two arms converge, because the stop has less room to act -- so the bias is largest exactly where generations are longest.",
+   "boundary": "Found by READING generate_batch's signature while writing a probe, not by running anything -- the argument is a default, it is documented in the docstring, and it had been in every call site for months. A guard that is correct for its original purpose becomes a confound the moment the thing it guards against becomes the thing under test.",
+   "status": "measured",
+   "refuted_by": "an A/B at the same max_new on another checkpoint showing rep_stop=True and False within a few points",
+   "artifact_sha256": "a5c2be9cb04f4fbb27a21277538c1484ca5a7ba216cbc75c74d3354f17268f95"
+  },
+  {
+   "id": "be.self_repetition_not_context_copying",
+   "claim": "why the 22B checkpoint's generations look like verbatim repetition, and what that implies for its capability zeros",
+   "value": "THE MODEL DOES NOT COPY ITS CONTEXT -- IT REPEATS ITSELF, AND ONLY UNDER GREEDY DECODING. Two behaviours read identically in a bug report and have different causes and different fixes: reproducing the PROMPT (context-copying) and reproducing ITS OWN OUTPUT (self-repetition). Measured on ckpt_pretrain_30b_s2.pt.step24000, 62 code-holdout prompts, 8-gram in TOKENS, rep_stop=False, one prompt set across all arms. COPY-FROM-CONTEXT (t62): greedy median 0.000 (p90 0.4615), sampled t=0.8 median 0.000 (p90 0.0435), 3-shot greedy median 0.4308 (p90 0.8611). Against the pre-registered <=0.30 falsification line, greedy 0.000 REFUTES the copy hypothesis outright; the few-shot arm copies MORE, which is in-context pattern-matching rather than copying and is the opposite of the predicted direction. SELF-REPETITION (t63, max_new 256): greedy median 0.747, p90 0.9558, 74.2% of generations at >=0.5, median longest repeated run 175 tokens; sampled t=0.8 median 0.0884, p90 0.5462, 11.3% at >=0.5, median run 9. The pathology is a property of GREEDY DECODING on this checkpoint, not of the weights. IT IS A MIXTURE, NOT A UNIFORM STATE, and this is the part that changes a decision: 74% of greedy generations loop, and the remaining 26% are fluent, on-topic, WRONG Chinese technical prose with no looping at all. Read from the dump rather than inferred from the statistic. A model producing fluent on-topic prose a quarter of the time is not a broken model -- it is an untuned base model with a decoding pathology on top. CONSEQUENCE FOR EVERY CAPABILITY ZERO AT THIS CHECKPOINT: code_500 0.0 and similar are scored partly because greedy decoding puts three quarters of generations into a loop, not only because the model knows nothing. The two causes are not separated by any measurement we currently have, and 'capability zero' must not be read as 'learned nothing' until they are. DOMAIN CHECK (e1, same day, before the finding hardened): the code-only result was n=62 from ONE domain and the looping text was Chinese prose about code, so 'the model loops' was one repo-wide belief away from resting on a single prompt set. Re-ran on math_test_500, 64 prompts, same checkpoint and settings: greedy median 0.7711 (p90 0.9116), 79.7% at >=0.5, median run 172; sampled t=0.8 median 0.0060 (p90 0.2000), 3.2% at >=0.5, median run 2. The pathology is NOT code-specific -- math greedy is marginally worse (0.771 vs 0.747) and math sampled is markedly cleaner (0.006 vs 0.088). Two domains, same shape, same direction, and the greedy-vs-sampled gap is if anything wider on math.",
+   "measured": "2026-09-01",
+   "source": "e1 P0, pre-registered in docs/lessons/copy_hypothesis_prereg.md (71a0a5e) before any artifact existed; probes/t69_copy_rate.py and probes/t67_self_repeat.py, GPU7; runs/copy_arms_step24000.json, runs/self_repeat_step24000.json, runs/self_repeat_dump.jsonl; runs/self_repeat_math_step24000.json, runs/self_repeat_math_dump.jsonl",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 62,
+    "ngram_tokens": 8,
+    "rep_stop": false,
+    "copy_greedy_median": 0.0,
+    "copy_sampled_median": 0.0,
+    "copy_fewshot3_median": 0.4308,
+    "selfrep_greedy_median": 0.747,
+    "selfrep_sampled_median": 0.0884,
+    "selfrep_greedy_frac_above_0.5": 0.742,
+    "selfrep_maxrun_greedy_median": 175,
+    "selfrep_maxrun_sampled_median": 9,
+    "prereg_copy_falsification_line": 0.3,
+    "math_selfrep_greedy_median": 0.7711,
+    "math_selfrep_sampled_median": 0.006,
+    "math_selfrep_greedy_frac_above_0.5": 0.7969,
+    "math_n_prompts": 64
+   },
+   "uncertainty": "One checkpoint, TWO prompt domains (code holdout n=62, math test n=64). The 8-gram is in TOKENS, not words, and a Chinese corpus tokenises very differently from an English one -- the word-level rate was not measured. The 26% non-looping fraction is characterised by reading 12 dumped generations, which is enough to establish that the fluent mode exists and not enough to quantify how often it is on-topic.",
+   "boundary": "Both probes pass rep_stop=False; with the default they would have measured over truncated prefixes (be.rep_stop_truncates_the_thing_it_measures). This entry REFUTES a hypothesis rather than confirming one, and the refutation would have been half a result on its own -- the alternative mechanism was run unasked because 'not copying' explains nothing about a symptom someone actually observed.",
+   "status": "measured",
+   "refuted_by": "a t=0.8 arm on the same prompts scoring materially above zero on capability, which would show the zeros are decoding rather than knowledge; or a word-level 8-gram copy rate near 1.0 at greedy, which would mean the token-level measure missed the copying"
+  },
+  {
+   "id": "be.gold_bpb_falls_while_generation_scores_zero",
+   "claim": "whether knowledge is accumulating across checkpoints in a form generation cannot express",
+   "value": "YES ON CODE, YES-WITH-ONE-BUMP ON MATH. Gold-answer BPB -- conditional NLL of the gold string given the prompt, over the gold's UTF-8 bytes -- falls across the whole checkpoint ladder while code_500 generative accuracy stays 0.0. THE METRIC HAS NO DECODER, which is why it is worth having today: no sampling, no greedy, no repetition, no fence parsing, no stop condition, so none of the confounds found on 2026-09-01 can reach it (be.self_repetition_not_context_copying, be.rep_stop_truncates_the_thing_it_measures). Same tokenizer (fp db1025e19d15401b) on all five checkpoints, 200 (question, gold) pairs per set, prompt tokens masked. CODE-500, bits/byte: p324 3.24B 1.08724 -> 8B 1.05279 -> 15B 0.98617 -> 16B pin 0.93617 -> 22B step24000 0.91778. Strictly monotone, total fall 0.16946 = 15.6%. MATH-500: 0.74017 -> 0.67373 -> 0.61572 -> 0.61706 -> 0.58956. Total fall 0.15061 = 20.3%, NOT monotone: the 16B pin rises +0.00134 over 15B, a bump of 0.2% of the level. WHAT THIS LICENSES, per the pre-registration written before the run: 'the model assigns increasing probability to correct answers' and 'the 0.0 generative scores are not proof of learning nothing'. WHAT IT DOES NOT LICENSE: 'the model can do math', 'the generative zeros are only a decoding artifact', or any prediction of a recovered score. The gap between assigning probability to a correct answer and producing it is exactly what SFT and decoding are for. So the project state is 'knowledge accumulating that generation cannot express', which is a different state from 'learned nothing' and was indistinguishable from it before this measurement.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/gold_bpb_prereg.md (9af1eb1) before runs/gold_bpb.json existed; probes/t65_gold_bpb.py on GPU6; runs/gold_bpb.json",
+   "config": {
+    "tokenizer_fp": "db1025e19d15401b",
+    "pairs_per_set": 200,
+    "prompt_masked": true,
+    "unit": "bits per UTF-8 byte of the gold string",
+    "code_500": {
+     "p324": 1.08724,
+     "8b": 1.05279,
+     "15b": 0.98617,
+     "16b_pin": 0.93617,
+     "22b_step24000": 0.91778
+    },
+    "math_500": {
+     "p324": 0.74017,
+     "8b": 0.67373,
+     "15b": 0.61572,
+     "16b_pin": 0.61706,
+     "22b_step24000": 0.58956
+    },
+    "code_total_fall": 0.16946,
+    "math_total_fall": 0.15061,
+    "code_monotone": true,
+    "math_monotone": false,
+    "math_16b_pin_delta": 0.00134
+   },
+   "uncertainty": "THE SEED SPREAD OF GOLD BPB AT THIS SCALE IS UNMEASURED, so 'monotone' is a SHAPE claim and not a significance claim -- the pre-registration fixed this caveat in advance rather than adding it after seeing the curve. The falls are 0.15-0.17 bits/byte end to end, comfortably above the 0.05 line below which I committed to calling the trend unbounded, so the OVERALL direction is safe; the individual steps are not. In particular math's +0.00134 bump at the 16B pin is 0.2% of the level and must NOT be read as a regression: it is far smaller than any spread anyone has bounded. The two sets also start at very different levels (code 1.09 vs math 0.74), which is a property of gold length and style, not of difficulty -- do not compare the sets to each other.",
+   "boundary": "Measures probability assigned to a FIXED gold string. A model could assign rising probability to one correct phrasing while remaining unable to produce any correct answer, and this metric cannot tell the difference. It is evidence about the model's distribution, not about its output. Also: the golds are fixed files identical across checkpoints, so the standard BPB failure -- shorter golds falling for the wrong reason -- cannot occur here, and was checked rather than assumed.",
+   "status": "measured",
+   "refuted_by": "a re-run at another seed or another gold set showing the code curve non-monotone by more than the total fall, or a same-tokenizer ladder where BPB is flat within 0.02 bits/byte"
+  },
+  {
+   "id": "be.gold_is_ranked_high_but_not_reachable_by_greedy",
+   "claim": "whether the rising gold probability is reachable, i.e. decoding deficit or knowledge deficit",
+   "value": "THE GOLD IS RANKED HIGH AND GREEDY STILL DOES NOT PRODUCE IT, which lands in the pre-registered DECODING-AND-SEARCH band -- but read the two boundaries below before acting on it, because one of my own falsification rows turned out to be vacuous. Measured on ckpt_pretrain_30b_s2.pt.step24000, 200 pairs per set, teacher-forced, rep_stop irrelevant (no generation). CODE-500: gold token in the model's top-1 at a median 72.7% of positions (p10 0.592, p90 0.796), top-10 90.7%, top-100 95.9%, median gold length 36 tokens. MATH-500: top-1 69.3% (p10 0.614, p90 0.758), top-10 90.6%, top-100 97.8%, median gold length 184.5 tokens. Ties barely matter -- the pessimistic rank (ties counted against the gold) is 0.7209 and 0.6889, within 0.005 of the optimistic one -- so the distribution is genuinely peaked and not flat. AGAINST THE PRE-REGISTERED TABLE: top-1 >= 0.50 puts both sets in the decoding band and well clear of the <= 0.15 knowledge band. The model ranks roughly 7 of every 10 gold tokens first, and 9 of 10 in its top 10, while generative code_500 scores 0.0. WHAT THIS MEANS PRACTICALLY: the per-token distribution is close to correct and the SEQUENCE is not, which is the signature of error compounding -- at 72.7% per-token top-1 accuracy, a 36-token gold has probability 0.727^36 ~ 1e-5 of being produced greedily even if every position were independent. That arithmetic, not a knowledge gap, is sufficient to explain a 0.0 generative score. It also explains why math (184.5-token golds) is worse off than code despite nearly identical per-token ranks: length is the multiplier.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/gold_reachability_prereg.md (38dcde7) before runs/gold_reachability.json existed; probes/t66_gold_reachability.py on GPU6",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "pairs_per_set": 200,
+    "teacher_forced": true,
+    "code_top1_median": 0.7273,
+    "code_top1_pess_median": 0.7209,
+    "code_top10_median": 0.907,
+    "code_top100_median": 0.9592,
+    "code_median_gold_tokens": 36,
+    "math_top1_median": 0.6932,
+    "math_top1_pess_median": 0.6889,
+    "math_top10_median": 0.9059,
+    "math_top100_median": 0.9784,
+    "math_median_gold_tokens": 184.5,
+    "prereg_decoding_band": ">=0.50",
+    "prereg_knowledge_band": "<=0.15"
+   },
+   "uncertainty": "TEACHER FORCING IS THE LIMIT AND IT BIASES TOWARD THIS CONCLUSION. Every gold position is scored given a CORRECT prefix the model would not have produced, so this measures 'can it continue a correct answer', which is strictly easier than 'can it produce one'. The 72.7% is therefore an UPPER bound on free-running per-token accuracy, and the decoding-deficit reading is the one the method favours. Pre-registered as a confound before the run, not discovered after. A free-running comparison is the missing measurement and I did not run it.",
+   "boundary": "ONE OF MY OWN PRE-REGISTERED ROWS WAS VACUOUS AND I AM RECORDING IT RATHER THAN DROPPING IT. I committed 'gold sequence probability >= greedy's on >=30% of problems -> decoding failure by definition'. It measured 0.0 on both sets, and it can only ever measure 0.0: greedy_logprob is the sum of per-position MAXIMA and gold_logprob the sum of per-position gold values, so max >= gold holds at every position by construction and the row can fire only when top-1 == 1.0 exactly. It is an identity, not a measurement, and its 0.0 is not evidence of anything. Same class as the four vacuous tests in the 08-31 retro, committed inside a pre-registration written to prevent exactly that. What would have made it a real test: compare gold against the model's SAMPLED sequences, not against its argmax.",
+   "status": "measured",
+   "refuted_by": "a free-running measurement showing per-token top-1 agreement far below 0.727, which would mean teacher forcing carried the result; or a best-of-n / beam decode that still cannot reach gold, which would move the deficit back toward knowledge"
+  },
+  {
+   "id": "be.free_running_agreement_collapses_below_teacher_forced",
+   "claim": "how far per-token gold agreement falls when the model conditions on its own prefix",
+   "value": "IT COLLAPSES: teacher-forced 72.7% (code) / 68.8% (math) against free-running ~0.23 alignment-free. That lands in the pre-registered <=0.30 band, whose reading is that 'DECODING AND SEARCH' UNDERSTATES THE PROBLEM -- the model's own prefixes destroy the distribution, so compounding is self-reinforcing rather than merely multiplicative. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, rep_stop=False. THE HEADLINE NUMBER NEEDS ITS METHOD ATTACHED, because the first version of it was an artifact of my own alignment window: prefix-aligned agreement reads 0.0000 median (code greedy) and 0.0208 (math greedy), and a +-4 shift search barely moves it to 0.05. Widening the search shows why -- max_shift 4: 0.048, 16: 0.103, 64: 0.188, 150: 0.206, and alignment-free longest-common-subsequence ratio 0.2317 median / 0.2626 mean. So the true free-running agreement is ~0.23, not ~0.0, and the +-4 window I pre-registered was measuring desynchronisation for most of its range. THE CONCLUSION IS UNCHANGED because 0.23 is still deep inside the <=0.30 collapse band, but the 0.0 would have overstated it by an order of magnitude. FR/TF ratio is 0.23/0.727 = 0.32, i.e. free-running retains about a third of the teacher-forced per-token agreement. GOLD VS SAMPLED, the corrected form of the vacuous row: length-normalised gold log-prob beats 45.0% of sampled sequences on code and 52.8% on math, over 320 comparisons each. Against the pre-registered >=25% line that IS a real search failure -- the model assigns higher per-token probability to the gold than to roughly half of what it actually samples, yet does not produce it.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/free_running_prereg.md (caa10c7) before runs/free_running.json existed; probes/t68_free_running.py on GPU6; the shift-window sweep and LCS check run separately on GPU7 after the collapse looked too clean",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "prompts_per_set": 100,
+    "k": 8,
+    "max_new": 192,
+    "rep_stop": false,
+    "code_tf_top1": 0.7273,
+    "code_fr_naive_median": 0.0,
+    "code_fr_shift4_median": 0.05,
+    "math_tf_top1": 0.6875,
+    "math_fr_naive_median": 0.0208,
+    "math_fr_shift4_median": 0.0507,
+    "shift_sweep_code_greedy": {
+     "0": 0.0,
+     "4": 0.0483,
+     "16": 0.1026,
+     "64": 0.1883,
+     "150": 0.2059
+    },
+    "lcs_ratio_median": 0.2317,
+    "lcs_ratio_mean": 0.2626,
+    "fr_over_tf_using_lcs": 0.32,
+    "gold_beats_sampled_code": 0.45,
+    "gold_beats_sampled_math": 0.5281,
+    "gold_vs_sampled_n": 320,
+    "prereg_collapse_band": "<=0.30",
+    "prereg_holds_band": ">=0.60",
+    "prereg_search_failure_line": 0.25
+   },
+   "uncertainty": "The LCS ratio is capped at 120 tokens per side for cost and is a different statistic from per-token top-1, so 0.23-vs-0.727 is not a strict like-for-like ratio -- it is the closest alignment-free comparison available and it brackets the answer rather than pinning it. The shift sweep is on 40 code prompts, greedy only. The gold-vs-sampled fractions are length-normalised; without normalisation the comparison degenerates to 'shorter sequences win'.",
+   "boundary": "MY OWN PRE-REGISTERED SHIFT WINDOW WAS THE DEFECT, and I am recording it because the pre-registration named this exact confound and then under-provisioned for it. I wrote that a low naive number is ambiguous between wrong tokens and shifted tokens, and committed to reporting a shift-tolerant variant -- at +-4 tokens. The generations open with a preamble far longer than 4 tokens, so the shift-tolerant variant was almost as desynchronised as the naive one. Naming a confound in advance is not the same as sizing the instrument for it. The fix was to sweep the window and add an alignment-free statistic, which is what produced 0.23.",
+   "status": "measured",
+   "refuted_by": "a free-running measurement on aligned continuations -- prompts whose gold begins immediately with no preamble -- showing agreement near 0.6, which would mean the collapse is preamble structure rather than distribution drift"
+  },
+  {
+   "id": "be.preamble_is_not_the_cause_of_the_collapse",
+   "claim": "whether the free-running collapse is the model's preamble or genuine distribution drift",
+   "value": "DISTRIBUTION DRIFT STANDS; the preamble is not the cause. My own refutation of be.free_running_agreement_collapses_below_teacher_forced, pre-registered before it ran. Anchoring each generation at its first code-looking token (a ```python fence, or a line opening def/class/an assignment) and scoring from there: anchored naive agreement median 0.0423, best-shift-to-+-150 median 0.2609, alignment-free LCS ratio median 0.4524. Against the pre-registered bands (>=0.60 overturns, <=0.30 leaves drift standing) the shift-aligned figure 0.26 is in the DRIFT band and even the most generous statistic, LCS at 0.45, is short of overturning. FIRST, A FRAMING ERROR I FIXED BEFORE RUNNING: I had named this refutation as 'prompts whose gold begins with no preamble'. The golds ALREADY have no preamble -- code_holdout_500 references start at 'def is_prime(x):' in column one. The preamble is the MODEL's, so there was no aligned subset to select and the measurement had to be 'strip the model's own preamble', not 'pick better prompts'. AND THE LIMIT THAT ACTUALLY DECIDES THIS, written into the pre-registration before the number existed: only 19 of 100 generations contain a code anchor at all. The anchored score is computed on a fifth of the set, and that fifth is SELECTED FOR HAVING PRODUCED CODE -- the best-behaved generations. So 0.26 is an upper bound on a favourable subsample, and the collapse is unmeasured for the other 81%. The honest statement is: even among the generations that reach code, agreement stays in the drift band.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/preamble_refutation_prereg.md (bb22666) before runs/preamble_refutation.json existed; GPU7, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "coverage": 19,
+    "anchored_naive_median": 0.0423,
+    "anchored_shift150_median": 0.2609,
+    "anchored_lcs_median": 0.4524,
+    "unanchored_lcs_median": 0.2317,
+    "prereg_overturn_band": ">=0.60",
+    "prereg_drift_band": "<=0.30"
+   },
+   "uncertainty": "19% coverage is the dominant limitation and it is a SELECTED 19%. The anchor regex is a heuristic -- a generation that produces correct code without a fence and without a def/class/assignment opening is missed, so coverage is a lower bound on 'reached code'. LCS is capped at 120 tokens per side.",
+   "boundary": "The refutation improved the estimate without changing the verdict: anchoring lifts LCS from 0.2317 to 0.4524, so the preamble WAS costing roughly half the measured agreement -- it is a real effect and not the cause. A refutation that fails can still move a number, and reporting only 'refutation failed' would have hidden that the unanchored 0.23 understates within-code agreement.",
+   "status": "measured",
+   "refuted_by": "an anchoring method with materially higher coverage -- if 80% of generations can be anchored and still score in the drift band, this conclusion strengthens; if the currently-unanchored 81% would score high under a better anchor, it weakens"
+  },
+  {
+   "id": "be.the_loss_is_immediate_not_gradual",
+   "claim": "whether free-running agreement is lost at the first step off a gold prefix or accumulates over the horizon",
+   "value": "IMMEDIATE, and this REFUTES my own compounding story. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, greedy, rep_stop=False, agreement binned by distance from the prompt on the SHIFT-ALIGNED sequence. CODE-500 median agreement by bin: 1-8 0.250, 9-16 0.125, 17-32 0.000, 33-64 0.000, 65-128 0.000. MATH-500: 1-8 0.125, 9-16 0.125, 17-32 0.0625, 33-64 0.0408, 65-128 0.0946, 129-192 0.0469. Against the pre-registered test, which required BOTH clauses: bin1 <= 0.40 (code 0.250, math 0.125, both pass) AND the teacher-forced-to-bin1 drop exceeding the bin1-to-last-bin decay -- code 0.477 vs 0.250, math 0.562 vs 0.078. Both sets satisfy both clauses, math overwhelmingly. SO THE FIRST EIGHT TOKENS OFF A GOLD PREFIX COST MORE THAN THE ENTIRE REMAINING 184: the model's conditional distribution is calibrated on gold prefixes and is already off-distribution at step one. Compounding then makes a bad start worse, but compounding is not the mechanism. WHAT THIS CHANGES: search and better sampling operate on the trajectory, and the trajectory is wrong from its first token, so neither addresses the mechanism. It also reconciles the two earlier results -- gold beats 45-53% of sampled sequences on length-normalised log-prob (local preference is correct) while free-running agreement is ~0.23 (the trajectory leaves immediately). Local calibration and trajectory calibration are different properties and this model has the first without the second.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_profile_prereg.md (aaed72a) before runs/positional_profile.json existed; GPU5",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts_per_set": 100,
+    "greedy": true,
+    "rep_stop": false,
+    "shift_aligned_to": 150,
+    "code_bins": {
+     "1-8": 0.25,
+     "9-16": 0.125,
+     "17-32": 0.0,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "math_bins": {
+     "1-8": 0.125,
+     "9-16": 0.125,
+     "17-32": 0.0625,
+     "33-64": 0.0408,
+     "65-128": 0.0946,
+     "129-192": 0.0469
+    },
+    "code_tf_top1": 0.7273,
+    "math_tf_top1": 0.6875,
+    "code_tf_to_bin1_drop": 0.477,
+    "code_bin1_to_last_drop": 0.25,
+    "math_tf_to_bin1_drop": 0.562,
+    "math_bin1_to_last_drop": 0.078
+   },
+   "uncertainty": "POSITIONAL BINS ARE NOT INDEPENDENT PER-POSITION ACCURACY and the pre-registration said so before the run: once a generation diverges, every later bin is scored on a trajectory already off the gold, so late-bin agreement means 'accuracy given N tokens of prior divergence', not 'accuracy at position N'. The profile shows WHERE THE LOSS BEGINS, nothing more. Bin 1 is the only bin conditioned on a mostly-correct prefix and therefore the only one comparable to the teacher-forced figure; later bins are not compared to it. Math's non-monotone tail (0.0408 -> 0.0946 -> 0.0469) is consistent with noise on a low base and is not read as recovery.",
+   "boundary": "PROVENANCE. A ruling reached me citing a positional profile of 0.343 in the first eight tokens decaying to 0.078, attributed to me, alongside commits c3d1b3f and 72d70bd. I did not produce it; neither commit exists on any branch and no artifact backs it. fb verified independently and retracted. The bands above were fixed WITHOUT reference to those numbers so this is an independent measurement rather than a replication of an unbacked one -- and the shape agrees while the values do not, which is the outcome that makes the independence worth having.",
+   "status": "measured",
+   "refuted_by": "a bin-1 agreement above 0.55 on a larger sample, or a TF-to-bin1 drop smaller than the bin1-to-last decay on either set"
+  },
+  {
+   "id": "be.the_anchored_subsample_was_flattering_and_the_anchor_was_blind",
+   "claim": "whether anchored agreement on 19/100 generalises, and how much of the unanchored remainder was regex-invisible rather than code-free",
+   "value": "TWO ANSWERS, AND THE FIRST IS A DEFECT IN MY OWN INSTRUMENT. (1) THE 19% COVERAGE WAS A REGEX ARTIFACT, NOT A PROPERTY OF THE MODEL. My original anchor matched only a ```python fence or a line opening def/class/assignment. Widening it (indented continuations, import/from/return/print(, for/while/if, bare `=` lines, any fence) takes coverage from 19/100 to 69/100 -- FIFTY generations were producing code-shaped output my anchor could not see. Every statement I made about 'the 81% that did not reach code' was wrong about 50 of them. (2) THE SUBSAMPLE WAS FLATTERING, AS PRE-REGISTERED. Scoring the newly-anchored 50 SEPARATELY, never pooled: shift-aligned 0.2029 and LCS 0.2175, against the original 19's 0.2609 and 0.4524. Both land in the pre-registered 0.20-0.40 'roughly representative, drift stands' band on the shift statistic, but the LCS gap is large -- 0.4524 vs 0.2175, a factor of 2.1 -- so the original 19 were materially better-behaved and the 0.4524 I reported earlier does NOT generalise. Drift stands and is if anything understated. (3) THE REMAINING 31 ARE GENUINELY CODE-FREE, established by READING them rather than inferring: they are degenerate Chinese loops -- '求列表 [15, 3, 4, 23, 16] 中所有偶数的和为15, 所以,' repeated to the token limit, or '示例 1: 输入:a=50,b=11...' cycling. No code, not invisible code.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/coverage_anchor_prereg.md (f764839) before runs/coverage_anchor.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "old_coverage": 19,
+    "widened_coverage": 69,
+    "newly_caught": 50,
+    "still_missed": 31,
+    "orig19_shift": 0.2609,
+    "orig19_lcs": 0.4524,
+    "new50_shift": 0.2029,
+    "new50_lcs": 0.2175,
+    "prereg_weakens_band": ">=0.40",
+    "prereg_understated_band": "<=0.20",
+    "prereg_representative_band": "0.20-0.40"
+   },
+   "uncertainty": "The widened anchor is still a regex and could still be blind, though the 31 misses were read and are degenerate loops rather than unmatched code. LCS is capped at 120 tokens. The newly-anchored 50 and original 19 are reported separately and must not be averaged -- pooling would let the better-behaved fifth carry the mean, which is the defect this measurement exists to test.",
+   "boundary": "I PRE-REGISTERED THE WRONG EXPECTATION AND SAID SO IN ADVANCE, WHICH IS THE ONLY REASON IT IS LEGIBLE NOW. I wrote that I EXPECTED coverage to stay below 30% even widened, and that this would mean 'the model mostly does not emit code and the whole anchored line of work was a side quest'. Coverage went to 69%. So the expectation was wrong in the direction that would have demoted my own work -- and the real finding is the opposite: the model emits code-shaped output far more often than my instrument could see, and my instrument was the limit. A prediction recorded and then falsified is worth more than one never written down.",
+   "status": "measured",
+   "refuted_by": "an anchor wider still that lifts coverage materially above 69% and scores the newly caught above 0.40, which would mean the remainder is also regex-invisible rather than degenerate"
+  },
+  {
+   "id": "be.bin1_cannot_separate_loops_from_attempts",
+   "claim": "whether the immediate-loss finding survives restricting to generations that actually reach code",
+   "value": "THE CONCLUSION SURVIVES AND MY STATED PREMISE FOR IT WAS WRONG. Bin-1 agreement, shift-aligned, three populations scored separately and never pooled: anchored 69 -> 0.25, newly caught 50 -> 0.25, UNANCHORED 31 (the degenerate loops) -> 0.25, original 19 -> 0.125. I pre-registered the arithmetic that 0.250 over all 100 with 31 near-zero loop contributors implies ~0.36 over the remaining 69. Measured: 0.25, not 0.36 -- because THE LOOPS DO NOT SCORE NEAR ZERO AT BIN 1. They score 0.25, identically. MECHANISM FOR THAT, which is the finding: a degenerate loop repeats phrasing lifted from the prompt, and the gold's opening tokens overlap that phrasing, so a loop matches gold early BY COINCIDENCE and then diverges. Bin 1 therefore cannot distinguish 'model tracking gold' from 'model echoing the prompt', and no bin-1 comparison between these populations carries information. THE IMMEDIATE-LOSS CLAIM ITSELF STILL HOLDS on real attempts: on the anchored 69, TF 0.727 -> bin1 0.25 is a drop of 0.477 against a bin1-to-last decay of 0.250, satisfying the pre-registered clause that the initial drop exceed the subsequent decay. The original 19 show a non-monotone 0.125 -> 0.4375 -> 0.101 that on n=19 is not read as structure.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_anchored_prereg.md (a083205) before runs/positional_anchored.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "shift_aligned_to": 150,
+    "anchored69_bins": {
+     "1-8": 0.25,
+     "9-16": 0.25,
+     "17-32": 0.0625,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "new50_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "unanchored31_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "orig19_bins": {
+     "1-8": 0.125,
+     "9-16": 0.4375,
+     "17-32": 0.101,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "tf_top1": 0.7273,
+    "anchored69_tf_to_bin1": 0.477,
+    "anchored69_bin1_to_last": 0.25,
+    "prereg_predicted_bin1_if_loops_were_zero": 0.36
+   },
+   "uncertainty": "Populations are 69/50/31/19, so the smaller ones carry wide intervals and the original 19's non-monotone shape is not interpreted. Bins remain non-independent: after divergence every later bin is scored on an already-off trajectory, so only bin 1 is comparable to the teacher-forced figure. The coincidental-overlap mechanism is inferred from the loop text read earlier plus the identical bin-1 values; it is not separately measured.",
+   "boundary": "A PRE-REGISTERED PREDICTION FAILED AND THE FAILURE IS THE RESULT. I wrote the ~0.36 arithmetic in advance specifically so no measured value could be presented as unsurprising. It came back 0.25, which falsified the assumption inside the prediction -- that degenerate loops score near zero -- rather than the conclusion the prediction was defending. Without the arithmetic written down, 0.25 would have read as bland confirmation and the loop-echo mechanism would not have been noticed at all. This is the third instrument of mine to be the limit today, after the +-4 shift window and the anchor regex.",
+   "status": "measured",
+   "refuted_by": "a bin-1 measurement on prompts whose gold shares no opening tokens with the prompt text, where loops and attempts should separate if the coincidental-overlap mechanism is right"
+  },
+  {
+   "id": "be.one_seed_family_misstates_its_own_noise_by_2x",
+   "claim": "how much seed evidence it takes to know the seed noise, measured on two independent families",
+   "value": "TWO INDEPENDENT FOUR-SEED FAMILIES DISAGREE ABOUT THE NOISE BY A FACTOR OF TWO. Found free in runs/experiments.jsonl + runs/score_matrix.jsonl -- no new compute -- while sizing a seed arm for the FoNE A/B. Both families are mix_scale_0.2b, same config, `--seed N` the only difference, mean domain loss over scored domains. p02: seeds 0-3 give 3.7588 / 3.8085 / 3.7433 / 3.7009, spread 0.1076, sd 0.0444. p02_fp32m: 3.8693 / 3.8379 / 3.8874 / 3.8403, spread 0.0495, sd 0.0239. THE CONSEQUENCE IS GENERAL AND OUTLIVES FoNE: four seeds is more than anyone here normally spends on a noise estimate, and a single four-seed family would have mis-stated the noise by 2x IN AN UNKNOWN DIRECTION. Only having two families reveals it; with one, the number looks like a measurement. So a noise bound from a single family is a point estimate with an uncharacterised error, and any A/B threshold set as a multiple of it inherits that error. WHICH TO USE: the LARGER family. Understating noise ships a null as a finding, which is the more expensive error in both directions -- it costs the work built on the false positive plus the credibility of the next real one.",
+   "measured": "2026-09-01",
+   "source": "e1, from existing ledger rows: runs/experiments.jsonl (p02_s0..s3, p02_fp32m_s0..s3, all `bash run_ddp.sh --mix data/mix_scale_0.2b.json --seed N`) folded by (name, started), and runs/score_matrix.jsonl domain_loss per checkpoint folded last-wins",
+   "config": {
+    "scale": "mix_scale_0.2b",
+    "seeds_per_family": 4,
+    "p02": [
+     3.7588,
+     3.8085,
+     3.7433,
+     3.7009
+    ],
+    "p02_spread": 0.1076,
+    "p02_sd": 0.0444,
+    "p02_fp32m": [
+     3.8693,
+     3.8379,
+     3.8874,
+     3.8403
+    ],
+    "p02_fp32m_spread": 0.0495,
+    "p02_fp32m_sd": 0.0239,
+    "sd_ratio": 1.86
+   },
+   "uncertainty": "0.2B tokens, so these are an UPPER BOUND on seed noise at 1B or 2B -- noise shrinks with tokens. That direction is the safe one for setting a threshold (a rule calibrated here is conservative at larger scale) but it is not a measurement at those scales and must not be quoted as one. n=4 per family, so each sd is itself imprecise; the 2x ratio is the finding, not either sd. The two families differ in more than seed (fp32 master weights), so they are independent estimates of the noise, not repeated estimates of one configuration's noise.",
+   "boundary": "This was found while sizing a measurement, not by measuring: the cheapest decidable seed arm was costed at 2.4 h and a ten-minute read of the ledger produced a better bound for free, with n=4 twice instead of the single gap 2.4 h would have bought. Worth stating because the search was proposed as a long shot and returned more evidence than the run it replaced.",
+   "status": "measured",
+   "refuted_by": "a third four-seed family at the same scale whose sd lands within 10% of either, which would suggest the 2x gap is specific to these two rather than characteristic"
   }
  ]
 }

@@ -1,0 +1,61 @@
+{
+ "probe": "t69_copy_rate",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "ngram_tokens": 8,
+ "n_prompts": 62,
+ "max_new": 128,
+ "prompt_tokens": 256,
+ "data": "data/eval/code_holdout_500.jsonl",
+ "rep_stop": false,
+ "rep_stop_note": "generate_batch defaults rep_stop=True, which truncates a repeating generation -- the exact behaviour under test. Disabled here; leaving it on measures the copy rate over a truncated prefix and biases every arm toward the same answer.",
+ "arms": {
+  "greedy": {
+   "n": 62,
+   "median": 0.0,
+   "mean": 0.1303,
+   "p10": 0.0,
+   "p25": 0.0,
+   "p75": 0.2727,
+   "p90": 0.4615,
+   "min": 0.0,
+   "max": 0.6316,
+   "frac_above_0.9": 0.0,
+   "frac_below_0.3": 0.7903,
+   "generations_too_short_to_score": 0,
+   "mean_gen_tokens": 128.0
+  },
+  "sampled_t0.8": {
+   "n": 62,
+   "median": 0.0,
+   "mean": 0.0182,
+   "p10": 0.0,
+   "p25": 0.0,
+   "p75": 0.0,
+   "p90": 0.0435,
+   "min": 0.0,
+   "max": 0.6071,
+   "frac_above_0.9": 0.0,
+   "frac_below_0.3": 0.9839,
+   "generations_too_short_to_score": 0,
+   "mean_gen_tokens": 123.0,
+   "drop_from_greedy": 0.0
+  },
+  "fewshot3_greedy": {
+   "n": 62,
+   "median": 0.4308,
+   "mean": 0.3993,
+   "p10": 0.0,
+   "p25": 0.0,
+   "p75": 0.7308,
+   "p90": 0.8611,
+   "min": 0.0,
+   "max": 1.0,
+   "frac_above_0.9": 0.0968,
+   "frac_below_0.3": 0.4677,
+   "generations_too_short_to_score": 0,
+   "mean_gen_tokens": 128.0,
+   "drop_from_greedy": -0.4308
+  }
+ },
+ "renamed_from": "t62_copy_rate -- collided with another session's probe of the same number; theirs was cited first so mine moved"
+}

@@ -171,7 +171,16 @@ class Cfg:
     vocab_real = 32773  # the frozen tokenizer's size (2026-08-29): 32768 BPE merges + 4 chat
     # specials + [NUM], with <unk>/<eos> inside the merges; vocab - vocab_real is padding
     fone = False
-    num_id = 32772  # [NUM] is the last id, always in the vocab, so --fone resizes nothing
+    # DERIVED, not asserted. [NUM] is the last id in today's tokenizer, so this default is
+    # correct -- and it stays correct only while the vocabulary is frozen. resolve_num_id()
+    # below reads it from the tokenizer and raises if absent; nothing should read this
+    # constant directly. WHY IT IS A HARD FAILURE RATHER THAN A WARNING: num_id is read at
+    # three sites (fone masking :808, digit CE :999, value write-back :1229) and every one
+    # of them fails SILENTLY into plausible training -- a stale id masks an ordinary BPE
+    # token as numeric, computes digit cross-entropy on the wrong positions, and writes
+    # values into the wrong slots, with no shape error and no crash. The danger is that
+    # property, not the probability of a rebuild.
+    num_id = 32772
     fone_loss_w = 1.0
     seq = 4096  # the recurrent arch handles arbitrary length at inference
     batch = (
@@ -182,6 +191,14 @@ class Cfg:
     # roughly constant count (eff.warmup_absolute_not_fractional: at the 0.2b point, 2 steps
     # lost 0.52 val vs 20). The fraction varies 9.2% (0.2b) to 0.57% (3.24b) -- a known
     # confound that overestimates beta; the proportional alternative biased the same way harder.
+    # SCOPE OF THAT EVIDENCE (b0 2026-09-01): it is ONE-SIDED. 2-vs-20 establishes a floor above
+    # 2; nothing above 20 has ever been measured, so 20 is the bottom of a tested range being
+    # used as an optimum, not a fitted value. It is also being carried far past where it was
+    # measured: 10.486% of the 191-step run it was fitted on, 0.061% of a 32,697-step 500M run.
+    # Untested at that length, not wrong. Before lengthening this to protect an early window,
+    # read docs/lessons/warmup_momentum_interaction.md -- warmup ends at step 20 while Muon's
+    # momentum is 13% into the hardcoded 150-step ramp at line ~1121, and that ramp, not this
+    # constant, is what the mechanism points at.
     warmdown = 0.65
     final_lr_frac = 0.05
     clip = 1.0
@@ -1118,6 +1135,11 @@ def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
         for g in opt.param_groups:
             g["lr"] = g["initial_lr"] * lr_scale * m
             if isinstance(opt, Muon):
+                # The 150 is a constant fitted at L=12 and never revisited. It interacts with
+                # cfg.warmup: LR reaches full value at step `warmup` (20) while momentum is only
+                # 13% through this ramp -- an averaging window of ~7.3 steps against ~20 at the
+                # final 0.95. Two constants, one early window, neither examined since L=12.
+                # docs/lessons/warmup_momentum_interaction.md has the table and the reasoning.
                 g["momentum"] = 0.85 + 0.10 * min(1.0, step / 150)
                 g["weight_decay"] = g["initial_wd"] * max(0.0, 1.0 - step / total)
 
@@ -1286,6 +1308,19 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     is rebuilt in place. `cfg` may be a Cfg class, a namespace or a dict; the private keys are
     stripped here rather than at each call site."""
     assert vocab_id, f"refusing to write {path} with no vocab_id: it could never be scored safely"
+    # Read the cursor attributes BEFORE cfg is rebound. The rebind below turns cfg into a
+    # dict on every path, so a `not isinstance(cfg, dict)` guard after it is always false
+    # and getattr never finds a data key on a dict anyway -- the whole cursor block below
+    # was unreachable, and no checkpoint any run ever wrote carried a cursor (de-8 D1).
+    _cur = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor", None)
+    _fps = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor_srcfp", None)
+    _dom_idx = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains", None)
+    _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
+    _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
+    _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
+    _origin = 0 if isinstance(cfg, dict) else (getattr(cfg, "_plan_step_origin", 0) or 0)
+    _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
+    _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
     # Corpus fingerprint alongside vocab_id: which corpus this checkpoint trained on.
     # _corpus_fp is the same hash the startup guard compares to the build-time stamp.
@@ -1312,29 +1347,46 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     # its own mix, so without this every domain restarts at row 0 and the tail is never
     # read. Top-level, not inside cfg -- the cfg dict strips _-prefixed keys, and a
     # cursor is state, not configuration (de-7).
-    cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
-    fps = getattr(cfg, "_row_cursor_srcfp", None) if not isinstance(cfg, dict) else None
+    cur, fps = _cur, _fps
     if cur:
         # AS OF THIS STEP, not the plan's end. The plan-complete counts describe a run
         # that finished; a checkpoint at step k describes one that has read k*batch*accum
         # rows per rank. Seeding stage 2 from the plan-complete figure would skip
         # everything between k and the end -- and --auto-resume makes a mid-plan
         # checkpoint the expected case, not the rare one (fb, 2026-09-01).
-        dom_idx = getattr(cfg, "_plan_domains", None)
-        names = getattr(cfg, "_plan_names", None)
+        dom_idx, names = _dom_idx, _names
         if step is not None and dom_idx is not None and names:
-            rows_done = step * cfg.batch * cfg.accum  # this rank's share, plan order
-            head = dom_idx[:rows_done]
-            counts = torch.bincount(head.to(torch.int64), minlength=len(names))
-            world = int(os.environ.get("WORLD_SIZE", 1))
-            # x world: every rank walks its own stripe of the same plan at the same rate,
-            # so the whole-run consumption of a domain is this rank's count x world.
-            ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
-            ck["row_cursor_as_of_step"] = step
+            # RELATIVE to this plan, not the absolute step. _plan_domains holds only the
+            # current plan's rows, so after a resume an absolute step indexes past its end
+            # -- and a Python slice CLAMPS rather than raising, so the cursor written is
+            # the plan-complete count wearing an as-of-step label. At step 24000 that is
+            # 768,000 rows into a 523,158-row plan, silently (tilerl, 2026-09-01). Correct
+            # below the plan length, wrong above it, which is the shape that survives
+            # testing: stage 1 starts at 0, where absolute and relative are equal.
+            rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
+            if rows_done < 0 or rows_done > len(dom_idx):
+                # Refuse rather than clamp, and record WHY in the checkpoint. A wrong
+                # cursor is not recoverable by a later reader -- it looks exactly like a
+                # right one -- while a missing cursor costs a resume that repeats rows,
+                # which is. No early return: one save at the end of the function, so a
+                # future field added below cannot be skipped by this path.
+                ck["row_cursor_refused"] = (
+                    f"step {step} - origin {_origin} = {step - _origin} steps x "
+                    f"{_batch}x{_accum} = {rows_done} rows against a {len(dom_idx)}-row plan; "
+                    f"the origin is wrong or the plan is not this run's. No cursor written."
+                )
+            else:
+                head = dom_idx[:rows_done]
+                counts = torch.bincount(head.to(torch.int64), minlength=len(names))
+                world = int(os.environ.get("WORLD_SIZE", 1))
+                # x world: every rank walks its own stripe of the same plan at the same
+                # rate, so the whole-run consumption of a domain is this rank's count x world.
+                ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
+                ck["row_cursor_as_of_step"] = step
         else:
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
-        ck["row_cursor_seed"] = _sample_seed()
+        ck["row_cursor_seed"] = _seed if _seed is not None else _sample_seed()
     torch.save(ck, path)
 
 
@@ -1348,6 +1400,33 @@ def vocab_fingerprint(tok):
     for t, i in sorted(tok.get_vocab().items(), key=lambda kv: kv[1]):
         h.update(t.encode())
     return h.hexdigest()[:16]
+
+
+NUM_TOKEN = "[NUM]"
+
+
+def resolve_num_id(tok):
+    """[NUM]'s id, read from the tokenizer rather than trusted from a constant.
+
+    Cfg.num_id was a hardcoded 32772 with a comment saying [NUM] is "always in the
+    vocab". True of the frozen tokenizer and false the moment one is rebuilt: if a
+    rebuild yields a smaller vocabulary, [NUM] moves down and 32772 addresses an
+    ordinary BPE token instead. Nothing raises -- FoNE then masks that token as
+    numeric, computes digit cross-entropy at the wrong positions, and writes values
+    into the wrong slots, all with correct shapes. Three read sites, three silent
+    failures into training that looks fine.
+
+    So this raises rather than warns, and it raises on the ONE input a rebuild
+    actually produces: a tokenizer with no [NUM] at all, or with it somewhere new.
+    """
+    nid = tok.token_to_id(NUM_TOKEN)
+    if nid is None:
+        raise SystemExit(
+            f"REFUSE: {NUM_TOKEN} is absent from the tokenizer (vocab {tok.get_vocab_size()}). "
+            "build_tokenizer.py registers it as a chat special; a vocabulary built without it "
+            "cannot run --fone, and a stale Cfg.num_id would silently address a BPE token."
+        )
+    return nid
 
 
 def build_tokenizer(texts):
@@ -1364,6 +1443,7 @@ def build_tokenizer(texts):
     assert tok.get_vocab_size() == Cfg.vocab_real, (
         f"tokenizer vocab {tok.get_vocab_size()} != Cfg.vocab_real {Cfg.vocab_real}"
     )
+    Cfg.num_id = resolve_num_id(tok)
     assert Cfg.vocab % 8 == 0 and Cfg.vocab >= Cfg.vocab_real, (
         f"Cfg.vocab={Cfg.vocab} must be a multiple of 8 >= vocab_real={Cfg.vocab_real}: "
         "an unaligned head width falls back to the SM75 align-1 cuBLAS kernel on Hopper (-55% step time)"
@@ -1900,6 +1980,13 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
+        # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
+        # argparse prefix matching makes "--d" ambiguous against --duplicate-*-filters
+        # and torchrun exits before train.py is ever reached.
+        "dim": "model width (must be 128*heads: FlashKDA CUTLASS pins head_dim at 128)",
+        "heads": "attention/KDA heads (head_dim = d/heads must be 128)",
+        "layers": "number of blocks",
+        "ffn_hidden": "FFN inner width",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
@@ -1978,6 +2065,8 @@ def main():
     # and Cfg.attn_res defaults to TRUE, so a blanket sweep would silently disable
     # Attention Residuals everywhere. Absence of a switch is not a request to turn it off.
     _switches = {a.dest for a in parser._actions if isinstance(a, argparse._StoreTrueAction)}
+    if args.dim is not None:
+        Cfg.d = args.dim  # --dim -> Cfg.d; the loop below matches on name and "d" has no flag
     for k, v in vars(args).items():
         if not hasattr(Cfg, k):
             continue
@@ -1993,6 +2082,11 @@ def main():
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
+    # --d/--heads off the default pair is a shape experiment; head_dim is not free.
+    # The FlashKDA CUTLASS kernel is compiled for head_dim 128 and a mismatch is an
+    # illegal memory access deep in the kernel, not a shape error at the boundary.
+    if Cfg.d // Cfg.heads != 128 or Cfg.d % Cfg.heads:
+        raise SystemExit(f"head_dim must be 128: d={Cfg.d} heads={Cfg.heads} -> {Cfg.d / Cfg.heads}")
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
@@ -2059,21 +2153,35 @@ def main():
     # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
-    _cursor = _cursor_fp = _cursor_seed = None
+    _cursor = _cursor_fp = _cursor_seed = _pre_written = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
             _cursor_seed = _pre.get("row_cursor_seed")
             del _pre
+            # The file's own mtime, for the message below: whether a missing cursor is
+            # an old format or a live write bug turns on when the file was written, and
+            # nothing inside the checkpoint records that.
+            _pre_written = time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(args.resume)))
         except (OSError, RuntimeError, TypeError) as e:
             if is_main:
                 print(f"resume: could not pre-read the row cursor ({e}); every domain "
                       f"starts at row 0 -- the tail of each pool stays unread", flush=True)
     if args.resume and is_main and not _cursor:
-        # A stage-1 checkpoint predates the field. Say so rather than resuming silently
-        # from row 0, which is the bug this exists to fix wearing a resume's clothes.
-        print("resume: checkpoint carries no row_cursor (predates the field). Every "
+        # Two reasons a checkpoint carries no cursor, and until 2026-09-01 this message
+        # asserted the innocent one. save_checkpoint dropped the cursor on EVERY save
+        # (the :1289 rebind made the write block unreachable), so "predates the field"
+        # was printed for checkpoints written minutes earlier by the current code --
+        # a message that explains away its own symptom, addressed to precisely the
+        # person who would otherwise investigate. Only the write date can tell the two
+        # apart, so say which one this is instead of assuming.
+        _fixed = "2026-09-01"
+        _written = _pre_written or "unknown"
+        _why = ("predates the field" if _written < _fixed else
+                f"written {_written}, AFTER the {_fixed} cursor-save fix -- this is a "
+                f"live defect, not an old format; do not reconstruct over it, report it")
+        print(f"resume: checkpoint carries no row_cursor ({_why}). Every "
               "domain restarts at row 0, leaving each pool's tail unread (92% of "
               "zh_web at stage-1 weights). Reconstruct it with "
               "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
@@ -2130,6 +2238,14 @@ def main():
         if m:
             resume_step = int(m.group(1))
         resume_step = ck.get("step", resume_step)
+        # The cursor's step origin. save_checkpoint indexes _plan_domains, which holds
+        # only THIS plan's rows, with an absolute step -- so after a resume the index
+        # runs past the array and Python's slice clamps to its end, writing the
+        # plan-complete count under a `row_cursor_as_of_step` label. Verified at step
+        # 24000: 768,000 rows indexed into a 523,158-row plan (tilerl, 2026-09-01).
+        # replay_cursor.py:44 states the same rule for its caller; this is the writer's
+        # half of it.
+        Cfg._plan_step_origin = resume_step
         if is_main:
             print(f"Resumed from {args.resume} (step {resume_step})", flush=True)
     fp8 = args.fp8 and amp
@@ -2212,8 +2328,24 @@ def main():
             gradient_as_bucket_view=not args.no_bucket_view, static_graph=not args.no_static_graph
         )
     if Cfg.compile and amp:
-        torch._dynamo.config.cache_size_limit = 64
-        torch._dynamo.config.accumulated_cache_size_limit = 256
+        # Derived from depth, not a literal. AttnRes Full builds one compiled graph per
+        # distinct source count -- 1 + 2*layers -- so the limit that fit at layers=12
+        # (need 25) is one SHORT at layers=32 (need 65), and the assert below refuses
+        # the launch. It refuses rather than degrading, which is right, but a constant
+        # that does not move with the shape it bounds turns a shape flag into a
+        # tripwire. +8 is headroom so a launch does not sit on the boundary; max(64,..)
+        # so nothing shrinks below today's value at the old depth (de, 2026-09-01).
+        #
+        # grad_ckpt does NOT change the count, measured not assumed
+        # (scripts/probe_gradckpt_sources.py): 65 distinct source counts at L=32, the
+        # same sequence with checkpointing off and on. AttnRes sits outside the
+        # checkpoint by construction (see _body: only [B,T] logits on the tape), so
+        # recompute never re-enters it. Recorded here because the alternative is
+        # sizing this constant against the wrong quantity, which is the same defect
+        # one level up from the one it fixes (fb's challenge, 2026-09-01).
+        _cache_need = max(64, 2 * Cfg.layers + 8)
+        torch._dynamo.config.cache_size_limit = _cache_need
+        torch._dynamo.config.accumulated_cache_size_limit = 4 * _cache_need
         if Cfg.attn_res:
             # The AttnRes loop builds one compiled graph per distinct source count: 1 + 2*layers
             # in Full mode (25), 1 + n_blocks in Block mode. Below that, torch.compile silently
@@ -2461,11 +2593,22 @@ def main():
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
                     eta = (total_steps - step) * dt / 10
+                    # Peak memory decides whether a batch fits at a given world, and it
+                    # was not readable from a training run at all -- the 500M shape work
+                    # had to read nvidia-smi, which reports the caching allocator's
+                    # reservation rather than the high-water mark of live tensors. This
+                    # is rank 0 only (the whole log line is is_main); ranks differ by
+                    # their DDP bucket, so rank 0 is a lower bound on the worst rank, not
+                    # the max. Reset each window so a late spike is not hidden by an
+                    # earlier, larger one (2026-09-01).
+                    peak_gib = torch.cuda.max_memory_allocated() / 2**30
+                    torch.cuda.reset_peak_memory_stats()
                     runlog(
                         f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "
                         f"| lr {optimizers[0].param_groups[0]['lr']:.2e} | gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
-                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% | ETA {eta / 3600:.1f}h"
+                        f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
+                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
                 if step >= total_steps:
                     break
