@@ -598,7 +598,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
     # SAME held-out batch. Emit, then verify present/non-empty/fresh (stale rule raises).
     phase = getattr(a, "phase", None)
     if phase:
-        _emit_holdout_slice(out, phase, held_out_keys)
+        _emit_holdout_slice(out, phase, held_out_keys, allow_empty=bool(getattr(a, "allow_empty_slice", False)))
         _check_holdout_slice(out, phase)
 
     # Settle guard (tilerl T7-2, 2026-09-01): refuse a stamp over a dir a writer
@@ -1182,18 +1182,22 @@ def _holdout_rule_fp(set_path=None):
     return h.hexdigest()[:16]
 
 
-def _emit_holdout_slice(out, phase, held_out_keys, set_path=None):
+def _emit_holdout_slice(out, phase, held_out_keys, set_path=None, allow_empty=False):
     """Freeze this phase's held-out doc keys to {out}/holdout_slice_{phase}.jsonl before
     the stamp. Header carries the holdout-rule fingerprint (staleness anchor, code + set)
     + row count; body is one normalized key (12-byte sha1 hex) per line. Refuses an EMPTY
-    slice -- an artifact that exists but holds out nothing is the exact shape that fails."""
-    if not held_out_keys:
+    slice by default -- an artifact that exists but holds out nothing is the shape that
+    fails. allow_empty is for a FRESH first-build of a genuinely non-overlapping source
+    (e.g. a labelled-python corpus with zero eval-holdout overlap): empty there is the
+    truth, and it still freezes the rule_fp so a cross-stage reader can confirm nothing
+    was held out."""
+    rule_fp = _holdout_rule_fp(set_path)
+    keys = sorted(set(held_out_keys))
+    if not keys and not allow_empty:
         raise SystemExit(
             f"REFUSE: {out} phase {phase} held out no documents; an empty holdout slice "
             f"freezes nothing and the gate refuses it (fb 2026-09-01)"
         )
-    rule_fp = _holdout_rule_fp(set_path)
-    keys = sorted(set(held_out_keys))
     with open(_slice_path(out, phase), "w", encoding="utf-8") as f:
         f.write(json.dumps({"phase": phase, "rule_fp": rule_fp, "n": len(keys)}) + "\n")
         for k in keys:
@@ -1216,7 +1220,7 @@ def _check_holdout_slice(out, phase, set_path=None):
             rows = sum(1 for _ in f)
     except (OSError, ValueError) as e:
         raise SystemExit(f"REFUSE: malformed holdout slice {sp}: {e}") from None
-    if rows == 0:
+    if rows == 0 and header.get("n") != 0:
         raise SystemExit(f"REFUSE: holdout slice {sp} is empty (0 held-out docs)")
     cur = _holdout_rule_fp(set_path)
     if header.get("rule_fp") != cur:
