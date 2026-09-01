@@ -187,10 +187,24 @@ def gate_arch_tests(root, mix_path, world):
         r = json.load(open(results, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"runs/launch_tests.json unreadable: {e}"
-    failed = [k for k, v in r.items() if v != "pass"]
+    # THE RECORD MUST NAME THE TESTS THIS GATE REQUIRES (de, fb5b11d). My first
+    # version accepted any key whose value was "pass", so the record {"ok": "pass"}
+    # turned the gate green -- reproduced. A legal, honest, well-formed record plus a
+    # gate that does not read it is a self-certifying GO, which is the day's unifying
+    # shape. Absence of a required key and a failing key are now distinct outcomes:
+    # the first means nobody ran it, the second means it ran and failed.
+    required = {"scripts/test_arch_L32.py", "scripts/test_e2e.py"}
+    absent = sorted(k for k in required if k not in r)
+    if absent:
+        return NOGO, (f"launch_tests.json records no result for {', '.join(absent)} "
+                      f"(it has: {', '.join(sorted(r)[:4]) or 'nothing'}) -- a record "
+                      f"that does not name the required test is not evidence it ran")
+    failed = sorted(k for k in required if r.get(k) != "pass")
     if failed:
-        return NOGO, f"recorded non-pass: {', '.join(failed[:4])}"
-    return GO, f"{len(r)} shape test(s) recorded pass"
+        return NOGO, f"recorded non-pass: {', '.join(f'{k}={r[k]!r}' for k in failed)}"
+    extra = sorted(set(r) - required)
+    note = f" (also recorded, not required: {', '.join(extra[:3])})" if extra else ""
+    return GO, f"both required shape tests recorded pass{note}"
 
 
 def gate_recipe_provenance(root, mix_path, world):
@@ -557,6 +571,26 @@ def selftest():
     st, why = gate_corpora(dnf, os.path.join(dnf, mix_rel), 7)
     assert st != GO, f"a mix with no fingerprints must not report a match: {why}"
     assert "compared" in why or "no fingerprint" in why, f"the reason must name it: {why}"
+
+    # arch_tests gets a SECOND world: the record is present, well-formed and honest,
+    # and simply does not name the required tests -- de's {"ok": "pass"} case. The
+    # file-removed world cannot catch it, because that world fails on absence. Same
+    # lesson as the corpora pair: one broken world per gate is not enough when a gate
+    # can be right about one input and blind on another.
+    def _wrongkeys(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        for f in ("scripts/test_arch_L32.py", "scripts/test_e2e.py"):
+            fp = os.path.join(d, f)
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            if not os.path.exists(fp):
+                open(fp, "w").write("#\n")
+        json.dump({"ok": "pass"},
+                  open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8"))
+    dwk = world(_wrongkeys)
+    st, why = gate_arch_tests(dwk, os.path.join(dwk, mix_rel), 7)
+    assert st != GO, f"a record naming no required test must not pass: {why}"
+    assert "no result for" in why, f"the reason must say what is unrecorded: {why}"
 
     ungated = [n for n, _ in GATES if n not in broken]
     assert not ungated, (
