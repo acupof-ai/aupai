@@ -3051,7 +3051,7 @@ def check_tasks_closed_by_commit(root):
         if not sha:
             bad.append(f"{t['id']}: closed with no commit")
             continue
-        why = _commit_delivers(sha, t.get("evidence") or "", root)
+        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"])
         if why:
             bad.append(f"{t['id']}: {why}")
     if bad:
@@ -4737,7 +4737,19 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def _commit_delivers(sha, evidence, root=None):
+def _commit_named_for(tid, root=None):
+    """A commit on main whose subject names this task id, if one exists.
+
+    Touching a path in evidence does not identify a delivery: two commits touch
+    scripts/launch_gate.py and only one of them is e1-4. Closing by path alone put
+    the wrong sha on two of e1's rows while both passed the check (2026-09-01)."""
+    r = subprocess.run(["git", "-C", root or ROOT, "log", "main", "--format=%H %s",
+                        "--grep", rf"\b{re.escape(tid)}\b", "-E", "-1"],
+                       capture_output=True, text=True)
+    return r.stdout.split(" ", 1)[0] if r.stdout.strip() else ""
+
+
+def _commit_delivers(sha, evidence, root=None, tid=None):
     """Empty string if sha reaches main and its diff touches a path named in evidence.
 
     The register's evidence field was free text: a path that never existed closed a
@@ -4763,6 +4775,10 @@ def _commit_delivers(sha, evidence, root=None):
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
                 "the commit does not deliver what the evidence claims")
+    named = _commit_named_for(tid, root) if tid else ""
+    if named and not named.startswith(sha) and not sha.startswith(named[:len(sha)]):
+        return (f"{named[:8]} names {tid} in its subject and {sha[:8]} does not -- "
+                "a commit that merely touches the same file is not this delivery")
     return ""
 
 
@@ -4846,7 +4862,7 @@ def cmd_task(argv):
         if args.reviewer not in REVIEW_PAIRS:
             print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
-        bad = _commit_delivers(args.commit, args.evidence)
+        bad = _commit_delivers(args.commit, args.evidence, None, args.id)
         if bad:
             print(f"refusing: {bad}", file=sys.stderr)
             return 1
