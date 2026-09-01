@@ -102,6 +102,10 @@ def main():
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--k", type=int, default=8, help="samples for the gold-vs-sampled comparison")
     ap.add_argument("--max_new", type=int, default=192)
+    ap.add_argument("--batch", type=int, default=32,
+                    help="sequence budget per generate call in the gold-vs-sampled arm")
+    ap.add_argument("--gvs_problems", type=int, default=40,
+                    help="problems scored in the gold-vs-sampled arm")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--selftest", action="store_true")
@@ -125,7 +129,8 @@ def main():
     tok = load_tokenizer(a.tokenizer, cfg)
 
     res = {"probe": "t68_free_running", "ckpt": os.path.basename(a.ckpt),
-           "limit": a.limit, "k": a.k, "max_new": a.max_new, "rep_stop": False, "sets": {}}
+           "limit": a.limit, "k": a.k, "max_new": a.max_new, "batch": a.batch,
+           "gvs_problems": a.gvs_problems, "rep_stop": False, "sets": {}}
 
     def seq_logprob(prompt_ids, cont_ids):
         """log P(cont | prompt) under the model -- used for gold vs sampled."""
@@ -165,21 +170,36 @@ def main():
                 "fr_naive_mean": round(statistics.fmean(naive), 4) if naive else None,
             }
 
-        # the CORRECTED row: gold vs SAMPLED sequences (not vs the argmax)
+        # The CORRECTED row: gold vs SAMPLED sequences (not vs the argmax).
+        #
+        # BATCHED. The first version issued one generate call per sample -- 40
+        # problems x k=8 = 320 serial single-sequence generations per set, which
+        # dominated the whole probe while the other two arms were batched. The
+        # cost was self-inflicted, not intrinsic to the measurement, so the
+        # committed version carries the fixed cost rather than mine.
         beats = tot = 0
-        for i in range(min(len(pairs), 40)):  # this loop is one forward per sample
-            gp = seq_logprob(prompts[i], golds[i][:a.max_new])
+        n_probs = min(len(pairs), a.gvs_problems)
+        # a.batch is the SEQUENCE budget per generate call; each problem costs k
+        # sequences, so step problems at a time.
+        step = max(1, a.batch // max(1, a.k))
+        for lo in range(0, n_probs, step):
+            hi = min(lo + step, n_probs)
+            flat = [prompts[i] for i in range(lo, hi) for _ in range(a.k)]
             with torch.no_grad():
-                samp = generate_batch(model, [prompts[i]] * a.k, a.max_new, a.device,
+                samp = generate_batch(model, flat, a.max_new, a.device,
                                       0.8, None, tokenizer=tok, rep_stop=False)
-            for s in samp:
-                if len(s) == 0:
-                    continue
-                sp = seq_logprob(prompts[i], list(s))
-                # length-normalise: comparing raw sums would just say "shorter wins"
-                if gp / max(1, len(golds[i][:a.max_new])) >= sp / max(1, len(s)):
-                    beats += 1
-                tot += 1
+            for j, i in enumerate(range(lo, hi)):
+                gold_ids = golds[i][:a.max_new]
+                gp = seq_logprob(prompts[i], gold_ids)
+                gnorm = gp / max(1, len(gold_ids))
+                for s in samp[j * a.k : (j + 1) * a.k]:
+                    if len(s) == 0:
+                        continue
+                    sp = seq_logprob(prompts[i], list(s))
+                    # length-normalise: raw sums would just report "shorter wins"
+                    if gnorm >= sp / max(1, len(s)):
+                        beats += 1
+                    tot += 1
 
         res["sets"][name] = {
             "teacher_forced_top1_median": round(tf_top1, 4) if tf_top1 else None,

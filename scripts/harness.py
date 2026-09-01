@@ -427,6 +427,14 @@ def check_probe_numbers_unique(root):
     sessions, one number", and git authorship does not either on a shared
     machine. So this reports the shared numbers and leaves the judgement to a
     human, which is the honest limit of what it can know.
+
+    IF YOU ARE HERE TO ADD A SKIP-LIST AND PROMOTE THIS TO FAIL, read this
+    first. That was my first instinct too: keep the FAIL, exempt t57. But every
+    skip-list entry is a claim that reality is wrong, and t57 is not wrong --
+    it is the normal case. **The exception would have been evidence I was
+    measuring the wrong property.** One exemption is a smell; the second is the
+    moment to re-read the check instead of the world. A check that fires on
+    correct practice trains people to ignore it, which is worse than no check.
     """
     import collections
 
