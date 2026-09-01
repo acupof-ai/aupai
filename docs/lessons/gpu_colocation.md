@@ -197,12 +197,42 @@ NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8]
 occupancy-starved — a cap written for H100 that H20 inherits by identifying as
 Hopper, on a part with a very different FLOP:bandwidth ratio.
 
-That is the retune's first move, and it is one line and directly testable. The
-order that follows, from the same evidence: unlock `num_warps=8`, then step
-`num_stages` down (which frees registers *and* shared memory without forcing
-ptxas to spill), and only then consider `maxnreg` — checking `n_spills` at every
-point, because Triton's autotuner ranks purely by wall clock and will silently
-pick a spilling config if it happens to be fastest among bad ones.
+That is the retune's first move: one line, directly testable, and the autotuner
+does the rest.
+
+**Why occupancy is the wrong target and bytes-in-flight is the right one.** Volkov
+(GTC 2010) measured **87% of pin bandwidth at 8% occupancy** — higher than
+`cudaMemcpy`'s 71% — by giving each thread 8–14 in-flight `float4`s. Same occupancy
+as ours, three times our bandwidth. The difference is not warps, it is bytes in
+flight, and ours are locked out by the register file at 254/255. That makes the
+diagnosis *harder*, not softer: the machine demonstrably delivers ~87% at 8%
+occupancy, so our 29% is a register-budget problem, not an occupancy law.
+
+Which is why `maxnreg` is a poor second move and I have withdrawn a worse one:
+
+| lever | verdict |
+|---|---|
+| unlock `num_warps=8` | first; one line; the cap is inherited, not chosen for H20 |
+| move in-flight bytes out of registers (cp.async / TMA staging) | the right direction — it attacks load destinations that should never have been in registers, unlike `maxnreg` which attacks the fp32 state accumulators that must be |
+| ~~step `num_stages` down~~ | **withdrawn.** `num_stages` is also the cp.async multi-buffer depth, so lowering it frees registers *and* reduces in-flight bytes — the exact quantity we are short of. A direct TLP-vs-ILP bet, not a free win |
+| `maxnreg` to force occupancy | high downside. 254→232 does not buy a warp; reaching 2× needs ≤128, which is spill territory |
+
+The measured record is one-sided on that last row. Forcing registers down to raise
+occupancy has **no published win**: Triton layer-norm on B200 went 57–64 µs → 90 µs
+on an occupancy cliff with *zero spills either side*; FA2 varlen measured 19.6×
+slower at 32 registers versus 255-with-no-spill. The one clean gain from `maxnreg`
+(Triton PR #9248, H200, 2290→2640 GB/s, +15%) succeeded specifically because it
+did not induce spilling.
+
+Three numbers to read before changing anything: `kernel.n_spills` at 254 (are we
+already spilling?), whether the occupancy limiter is registers or shared memory,
+and whether stalls are `long_scoreboard` (memory-latency starved, more warps would
+help) or `lg_throttle`/`mio_throttle` (already saturated, they would not).
+
+And a caution against treating the cap as an oversight: `fla` carries **no comment,
+issue or commit explaining why Hopper is capped** — I grepped the installed package.
+It may be an H100 measurement or a workaround for a compiler bug. Measure before
+changing it, and keep the old value as the control.
 
 One honest caveat on the concurrency question:
 `chunk_gated_delta_rule_bwd_kernel_dhu` has grids as low as 32–128 blocks against
