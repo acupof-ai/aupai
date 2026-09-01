@@ -2127,6 +2127,39 @@
    },
    "uncertainty": "The probe's own 11-12% is CONTAMINATED and is an upper bound on damage, not a rate: a queued shape500_b32 job guarded on `while [ -d /proc/1302052 ]` -- a HOST pid evaluated inside the container, where it does not exist -- launched immediately onto cards 4/5/6 while the probe held them, ~39 GiB each at 100% util, overlapping roughly steps 150-230. Killed by cmdline-verified pid. The world=3 b32 measurement does not exist yet; the run that would have produced it was the contending job, and the DDP term must not be fitted from world=1. The 19% attribution converts a bf16-denominator harness number and an fp8-denominator train.py number to TFLOPS, which is right for the ratio but leaves the fp8-vs-bf16 execution difference inside it -- the harness is not running the fp8 path, so it is not the same work. 6ND also undercounts grad_ckpt's recompute (~+33%), which cancels within the ckpt-on pair but depresses both against the no-ckpt 206M run. The AttnRes blocks=8 arm is still running; the blocks=0 side is the 4463.7 ms row above.",
    "status": "measured"
+  },
+  {
+   "id": "eff.w7_peak_memory_b32_fits",
+   "value": "batch 32 FITS at world 7 for the 493.6M shape, with 9.5 GiB to spare, and the tool everyone had been reading could not have told us. Measured on cards 1-7, d1024/L32/h8/ffn3072, grad_ckpt on, compiled, seq 4096, accum 1, fp8: live-tensor peak 69.63 GiB on rank 0, identical at the step-10 and step-20 windows (the counter is reset each window, so those are two independent readings of a shape-stable step). loss 6.54 -> 5.90, gnorm 2.69 -> 1.40, no OOM.\n\nTHE INSTRUMENT WAS THE PROBLEM, NOT THE MARGIN. nvidia-smi reads 74.10 GiB at world=3 and 74.09 at world=7 -- a difference of -0.01 GiB. DDP bucket growth from 3 ranks to 7, the entire quantity this measurement existed to find, is INVISIBLE to it: the caching allocator never returns memory to the driver, so a larger bucket is served from cache and the reservation figure stays pinned. Every fits/does-not-fit judgement in this repo before 661e5ce came from that number. The earlier 'about 6 GiB headroom' was not merely conservative -- it was produced by an instrument with zero resolution on the question being asked. Same shape as the MFU-denominator error the same day: the arithmetic was correct and the quantity was not the one in dispute.\n\nThe allocator's cache is 4.47 GiB of the 74.10 (74.10 live-plus-cache against 69.63 live), so real headroom to a usable ~79.15 GiB is 9.52 GiB, not the 5.05 GiB nvidia-smi implies.",
+   "measured": "2026-09-01",
+   "source": "scripts/w7_peak.sh + scripts/w7_driver.sh, cards 1-7; pod-only log w7_b32a1 (container /work/aupai/runs); train.py:2596 peak field added in 661e5ce",
+   "config": {
+    "d": 1024,
+    "layers": 32,
+    "heads": 8,
+    "ffn": 3072,
+    "params_M": 493.6,
+    "seq": 4096,
+    "batch": 32,
+    "accum": 1,
+    "world": 7,
+    "grad_ckpt": true,
+    "compiled": true,
+    "fp8": true,
+    "attn_res": "Full (blocks=0)",
+    "steps": 30,
+    "cards": "1-7",
+    "peak_live_GiB_rank0": 69.63,
+    "nvidia_smi_GiB": 74.1,
+    "allocator_cache_GiB": 4.47,
+    "headroom_GiB": 9.52,
+    "usable_card_GiB": 79.15,
+    "nvidia_smi_world3": 74.1,
+    "nvidia_smi_world7": 74.09,
+    "tok_per_step": 917504
+   },
+   "uncertainty": "RANK 0 ONLY, so this is a LOWER bound on the worst rank, not an upper one -- the whole log line is is_main and per-rank DDP buckets differ. A lower bound mistaken for an upper bound misleads exactly when headroom is tightest, which is the situation this number will be quoted in. Getting the true max needs every rank to report, which is a further change. Also: 30 steps of this configuration is not the full run -- the real job adds a longer mix, periodic validation batches, and checkpoint-time temporaries, none of which are in this window. 9.52 GiB is the margin for what was measured, not a safety budget for 20B tokens. The step-10 reading spans compilation, so its throughput field is meaningless; its PEAK is still valid, because compile-time allocations are real allocations. The b16+accum2 arm is the control that the field tracks configuration at all: it moves the same 917,504 tokens per step but halves the activation set, so it MUST read materially lower. That prediction is recorded before the arm reported.",
+   "status": "measured"
   }
  ]
 }
