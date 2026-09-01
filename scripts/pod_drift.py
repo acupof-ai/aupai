@@ -33,8 +33,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 
-# Files that execute on the pod (pretrain -> score flow). Mirrors the old
-# pod_sync_check.sh scope; datagen/filters/mathbank/workflows never run there.
+# Files that execute on the pod (pretrain -> score flow), plus the files that DECIDE
+# what the pod runs on: the hooks and the corpus filters. "Never runs there" was the
+# wrong test -- filters/ is read to build the data, and a file nobody executes can still
+# change the result.
 SCOPE = [
     "*.py",
     "*.sh",
@@ -48,7 +50,13 @@ SCOPE = [
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
 ]
-EXCLUDE_DIRS = ("filters", "mathbank", "workflows")
+# workflows/ only: it holds no code the pod runs. filters/ and mathbank/ were excluded
+# with it and should not have been -- datagen reads filters/ to BUILD the corpus, so a
+# filters/ file that differs silently changes the data, and fp_filters hashes the whole
+# directory. Measured 2026-09-01: pod's filters/pass3_garbage.py was 5 CCI3-HQ rules
+# behind main and the corpus was built with it (fb: ~0.25% residue, not rebuilt), while
+# pod_drift read zero drift throughout.
+EXCLUDE_DIRS = ("workflows",)
 
 # git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
 # to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
@@ -274,6 +282,14 @@ def check_pod(root=ROOT, scope=None):
     if extra:
         shown = ", ".join(extra[:5]) + ("..." if len(extra) > 5 else "")
         parts.append(f"{len(extra)} UNREGISTERED .py not in manifest: {shown}")
+    # A leftover in a managed dir is a deletion that never crossed, and it is NOT
+    # covered above: unregistered_py sees only .py, and an extra file drifts nothing
+    # the forward check can detect while still changing fp_filters.
+    stale = unmanaged_extras(root, manifest)
+    if stale:
+        shown = ", ".join(stale[:5]) + ("..." if len(stale) > 5 else "")
+        parts.append(f"{len(stale)} EXTRA file(s) in managed dirs, deleted on main but "
+                     f"still here (pod_push never deletes): {shown}")
     return True, "; ".join(parts)
 
 
@@ -290,6 +306,38 @@ def unregistered_py(root, manifest=None):
             continue
         for fn in filenames:
             if fn.endswith(".py"):
+                p = os.path.relpath(os.path.join(dirpath, fn), root)
+                if p not in manifest:
+                    out.append(p)
+    return sorted(out)
+
+
+#: Directories whose content is decided entirely by main -- every file in them should be
+#: manifested. A file here that main does not have is not a throwaway probe; it is a
+#: deletion that never crossed. pod_push only adds and overwrites, so a file main deleted
+#: (filters/clean_school_math.py, 964101e) lives on the pod forever, and fp_filters
+#: hashes the WHOLE directory: the fingerprint then stays wrong with no line of code
+#: differing anywhere. fb's 60 deletions tonight were all this one mechanism.
+MANAGED_DIRS = ("filters", "scripts/hooks", "datagen")
+
+
+def unmanaged_extras(root, manifest=None):
+    """Files under MANAGED_DIRS that the manifest does not name -- any extension.
+
+    unregistered_py's counterpart for the directories where an extra file is a defect
+    rather than someone's scratch script. Reported, not failed: deleting on the pod is
+    the operator's call, and this says what to consider."""
+    if manifest is None:
+        manifest = read_manifest(os.path.join(root, "data", "pod_head_manifest.txt"))
+    out = []
+    for d in MANAGED_DIRS:
+        base = os.path.join(root, d)
+        for dirpath, dirnames, filenames in os.walk(base):
+            dirnames[:] = [x for x in dirnames
+                           if not x.startswith(".") and x != "__pycache__"]
+            for fn in filenames:
+                if fn.startswith("."):
+                    continue
                 p = os.path.relpath(os.path.join(dirpath, fn), root)
                 if p not in manifest:
                     out.append(p)
@@ -365,11 +413,11 @@ def selftest():
         os.environ.pop(_v, None)
 
     d = tempfile.mkdtemp()
-    for sub in ("scripts", "datagen", "data", "mathbank"):
+    for sub in ("scripts", "datagen", "data", "workflows"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
     open(os.path.join(d, "scripts", "real.py"), "w").write("# registered\n")
     open(os.path.join(d, "probe.py"), "w").write("# throwaway\n")
-    open(os.path.join(d, "mathbank", "gen.py"), "w").write("# excluded dir\n")
+    open(os.path.join(d, "workflows", "gen.py"), "w").write("# excluded dir\n")
     open(os.path.join(d, "data", "tool.py"), "w").write("# data dir\n")
     manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
@@ -378,6 +426,21 @@ def selftest():
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest.items()))
     ok, evidence = check_pod(d)
     assert ok and "UNREGISTERED" in evidence, evidence
+
+    # A file main deleted but the pod still holds: pod_push only adds, so it survives
+    # forever and keeps fp_filters wrong with no line of code differing. Must be named,
+    # and must NOT be confused with the unregistered-probe case above.
+    os.makedirs(os.path.join(d, "filters"), exist_ok=True)
+    open(os.path.join(d, "filters", "clean_school_math.py"), "w").write("# deleted on main\n")
+    ok_x, ev_x = check_pod(d)
+    assert ok_x, ev_x
+    assert "EXTRA" in ev_x and "clean_school_math.py" in ev_x, (
+        f"a leftover in a managed dir was not reported: {ev_x}")
+    # And a non-.py leftover, which unregistered_py cannot see at all.
+    open(os.path.join(d, "filters", "stale_rules.txt"), "w").write("x\n")
+    assert "stale_rules.txt" in check_pod(d)[1], "non-.py leftovers are invisible"
+    os.unlink(os.path.join(d, "filters", "clean_school_math.py"))
+    os.unlink(os.path.join(d, "filters", "stale_rules.txt"))
 
     # Scope: a corpus-scope file that drifts must not fail --scope training.
     corpus_sha = sha_disk(os.path.join(d, "scripts", "real.py"))
