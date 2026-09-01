@@ -106,6 +106,20 @@ def head_texts(path, n):
     return texts
 
 
+def seqs_fp(rows):
+    """sha1 of the exact val SEQUENCES a score was computed over, first 16 hex.
+
+    Same contract as head_fp and the same refusal on the readout side; the input is
+    token ids rather than text because val_seqs returns rows train.py already packed.
+    Hashing ids is if anything stricter -- two texts that tokenize identically are the
+    same input to the model, and a vocabulary change moves the hash, which is correct:
+    a score taken under a different vocabulary is not comparable either.
+    """
+    import hashlib
+
+    return hashlib.sha1(rows.cpu().numpy().tobytes()).hexdigest()[:16]
+
+
 def head_fp(texts):
     """sha1 of the exact text this score was computed over, first 16 hex.
 
@@ -242,13 +256,18 @@ def main():
                 sys.exit("selftest failed -- the numbers below would not be measurements")
         row = {"ckpt": os.path.basename(ck_path), "domains": {}}
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
-        for name, texts in cache.items():
-            loss, ntok = domain_loss(model, tok, texts, seq, device)
+        for name in cache:
+            # val, not the shard head: the head stopped being val when train.py started
+            # shuffling before slicing (0.625% overlap against 0.587% by chance). Both
+            # this CLI and score_matrix's metric go through val_seqs, or the two would
+            # disagree while reporting the same metric name.
+            rows = val_seqs(name, tok)
+            loss, ntok = domain_loss_seqs(model, rows, device) if rows is not None else (None, 0)
             if loss is None:
                 print(f"  {name:10s} too few tokens to score -- SKIPPED", flush=True)
                 continue
             row["domains"][name] = {"loss": round(loss, 4), "tokens": ntok,
-                                    "head_fp": head_fp(texts)}
+                                    "head_fp": seqs_fp(rows), "split": "val"}
             print(f"  {name:10s} {loss:.4f}   ({ntok:,} tok)", flush=True)
         vals = [d["loss"] for d in row["domains"].values()]
         row["unweighted_mean"] = round(sum(vals) / len(vals), 4)

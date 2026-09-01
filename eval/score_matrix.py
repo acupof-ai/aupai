@@ -36,7 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from domain_loss import domain_loss_seqs, val_seqs  # noqa: E402
+from domain_loss import domain_loss_seqs, seqs_fp, val_seqs  # noqa: E402
 
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
@@ -148,7 +148,11 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
         if loss is None:
             skipped.append(name)
             continue
-        out[name] = {"loss": round(loss, 4), "tokens": ntok}
+        # head_fp on the same terms as domain_loss.py's CLI: the readout refuses when
+        # the two sides disagree AND when the field is absent (62/b0, 2026-09-01), so a
+        # record written here without it would be unreadable by the guard rather than
+        # merely unverified.
+        out[name] = {"loss": round(loss, 4), "tokens": ntok, "head_fp": seqs_fp(rows)}
     if not out:
         return None, f"no domain had val rows to score ({len(skipped)} skipped: {skipped[:5]})"
     vals = [d["loss"] for d in out.values()]
