@@ -1,0 +1,38 @@
+=== 30B readout: ckpt_pretrain_30b_s2.pt.step17500 vs ckpt_pretrain_15b_s1.pt.step8500 ===
+  milestone ckpt_pretrain_30b_s2.pt.step17500: params 206.1M (tied head by value; state_dict 239.7M)
+
+code_500
+  n=500  threshold=12.6pt  reachable: moved/floor
+  milestone=0.0000  paired=0.0000  delta=+0.00pt
+  verdict: floor
+  note: flat unreachable at this n (threshold = readability limit)
+  (flat is unreachable for this metric at n=500)
+  degenerate_rate beside: 0.414 (n=500, t=0) -- never a substitute for the accuracy above
+
+math_hard_pass_at_1
+  n=1036  threshold=8.8pt  reachable: moved/floor
+  ABSENT: metric not in both records
+
+rl_gap_pass8_minus_pass1: ABSENT (pass_at_k missing)
+
+ceval
+  n=1300  threshold=5.9pt  reachable: moved/floor
+  milestone=21.6000  paired=22.3000  delta=-0.70pt
+  verdict: floor
+  note: flat unreachable at this n (threshold = readability limit)
+  (flat is unreachable for this metric at n=1300)
+
+per_role_domain_loss  (threshold=0.1176nat, states=moved/floor, flat unreachable)
+  en_c4           REFUSED -- different head (paired-only; the two sides were scored on different text, so a delta measures the corpora)
+  en_c4_stage2    REFUSED -- different head (milestone-only; the two sides were scored on different text, so a delta measures the corpora)
+  math_owm        REFUSED -- different head (paired-only; the two sides were scored on different text, so a delta measures the corpora)
+  math_owm_stage2 REFUSED -- different head (milestone-only; the two sides were scored on different text, so a delta measures the corpora)
+  code_rp1t       milestone=0.7952 paired=0.8435  floor (reweighted, unjudgeable)  w 0.37200 -> 0.29330 (0.79x)
+      note: read within-stage only; the cross-stage delta mixes capability with a 0.79x weight change
+  cot             milestone=0.9601 paired=1.0422 delta=+0.0821  floor
+      note: flat unreachable at this n (threshold = readability limit)
+  textbook_30b    milestone=1.9203 paired=2.0585 delta=+0.1382  moved (improved)
+  wiki_chat       milestone=3.2108 paired=3.3679 delta=+0.1571  moved (improved)
+  zh_web          milestone=3.6040 paired=3.7544 delta=+0.1504  moved (improved)
+
+=== summary: at least one metric moved ===
