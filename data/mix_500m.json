@@ -45,8 +45,8 @@
    "cap_covers": 1290420,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 1,588,494 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/math_owm_stage2/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "1e687e4b5ce37598",
+   "fingerprint_source": "read from data/corpus/math_owm_stage2/build_corpus_stats.json",
    "epoch_cap_note": "epochs 1 = ceil((0+1290420)/1588494). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "en_c4_stage2": {
@@ -64,8 +64,8 @@
    "cap_covers": 794105,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 581,073 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/en_c4_stage2/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "05e0fc6f14704056",
+   "fingerprint_source": "read from data/corpus/en_c4_stage2/build_corpus_stats.json",
    "epoch_cap_note": "epochs 2 = ceil((0+794105)/581073). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "cot": {
@@ -83,8 +83,8 @@
    "cap_covers": 394016,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 98,504 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/cot/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "388496b76ed9bf88",
+   "fingerprint_source": "read from data/corpus/cot/build_corpus_stats.json",
    "epoch_cap_note": "epochs 4 = ceil((0+394016)/98504). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "textbook_30b": {
@@ -102,8 +102,8 @@
    "cap_covers": 496315,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 388,021 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/textbook_30b/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "3f237c5191cb8571",
+   "fingerprint_source": "read from data/corpus/textbook_30b/build_corpus_stats.json",
    "epoch_cap_note": "epochs 2 = ceil((0+496315)/388021). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "chatml": {
@@ -121,8 +121,8 @@
    "cap_covers": 36172,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 9,043 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/chatml/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "52a6b427818c90ff",
+   "fingerprint_source": "read from data/corpus/chatml/build_corpus_stats.json",
    "epoch_cap_note": "epochs 4 = ceil((0+36172)/9043). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "chat_qa": {
@@ -140,8 +140,8 @@
    "cap_covers": 35416,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 8,854 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/chat_qa/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "42a4bedde020ae66",
+   "fingerprint_source": "read from data/corpus/chat_qa/build_corpus_stats.json",
    "epoch_cap_note": "epochs 4 = ceil((0+35416)/8854). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "zh_web": {
@@ -159,47 +159,47 @@
    "cap_covers": 148895,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 5,192,316 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/zh_web/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
+   "fingerprint": "a0d44fc44a289d60",
+   "fingerprint_source": "read from data/corpus/zh_web/build_corpus_stats.json",
    "epoch_cap_note": "epochs 1 = ceil((0+148895)/5192316). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "code_py_starcoder": {
-   "weight": 0.3298061,
+   "weight": 0.3297848,
    "epochs": 1,
-   "anneal": 0.3298061,
+   "anneal": 0.3297848,
    "role": "code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective because the target is code. Split across two corpora in proportion to supply, so both draw the same 0.74 epochs; the split is a supply fact, the 34% is the objective.",
    "weight_decimals": 7,
-   "rows_from_weight_at_runtime": 1610381,
-   "want_tokens": 6596120576,
+   "rows_from_weight_at_runtime": 1610277,
+   "want_tokens": 6595694592,
    "supply_tokens_one_epoch": 8786916332.0,
-   "epochs_fractional": 0.7507,
+   "epochs_fractional": 0.7506,
    "pool_rows_estimated": 2139719,
    "cursor_used_rows": 0,
-   "cap_covers": 1610381,
+   "cap_covers": 1610277,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 2,139,719 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/code_py_starcoder/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
-   "epoch_cap_note": "epochs 1 = ceil((0+1610381)/2139719). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "fingerprint": "e1a14839e11f3e6f",
+   "fingerprint_source": "read from data/corpus/code_py_starcoder/build_corpus_stats.json",
+   "epoch_cap_note": "epochs 1 = ceil((0+1610277)/2139719). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   },
   "code_py_rp1t": {
-   "weight": 0.01578844322,
+   "weight": 0.01580974242,
    "epochs": 1,
-   "anneal": 0.01578844322,
+   "anneal": 0.01580974242,
    "role": "code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective because the target is code. Split across two corpora in proportion to supply, so both draw the same 0.74 epochs; the split is a supply fact, the 34% is the objective.",
    "weight_decimals": 11,
-   "rows_from_weight_at_runtime": 77092,
-   "want_tokens": 315768832,
-   "supply_tokens_one_epoch": 420646182,
-   "epochs_fractional": 0.7507,
+   "rows_from_weight_at_runtime": 77196,
+   "want_tokens": 316194816,
+   "supply_tokens_one_epoch": 421239303,
+   "epochs_fractional": 0.7506,
    "pool_rows_estimated": 97722,
    "cursor_used_rows": 0,
-   "cap_covers": 77092,
+   "cap_covers": 77196,
    "epochs_pool_measured": true,
    "epochs_pool_source": "MEASURED from the token cache: 97,722 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
-   "fingerprint": null,
-   "fingerprint_source": "NOT READ: data/corpus/code_py_rp1t/build_corpus_stats.json is absent on this host. Regenerate the mix WHERE THE CORPUS IS (the pod); gate_corpora refuses a null, which is the intended behaviour",
-   "epoch_cap_note": "epochs 1 = ceil((0+77092)/97722). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
+   "fingerprint": "63c2b3ce0e7dd989",
+   "fingerprint_source": "read from data/corpus/code_py_rp1t/build_corpus_stats.json",
+   "epoch_cap_note": "epochs 1 = ceil((0+77196)/97722). PROVISIONAL: the pool is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token cache. Re-derive against the real cache before launch -- a stamp gives tokens, a pool is packed rows."
   }
  }
 }
