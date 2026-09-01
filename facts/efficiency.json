@@ -1824,6 +1824,100 @@
    "boundary": "METHOD WARNING, and the reason this entry exists in the form it does: the FIRST run of this attribution reported 0% resolved and was one commit away from being published as the finding 'the trace cannot name it'. That was a broken join, not a property of the trace -- kernels carry args.correlation, cpu_ops carry args['External id'], these are DIFFERENT KEYSPACES, and the cuda_runtime launch event carrying both is the required middle hop. A broken join is indistinguishable from a true negative. This is the only defect found today whose wrong answer was a NEGATIVE result, which is the hardest kind to catch because nobody argues with a null: a confident 'nothing here' invites no scrutiny, while a confident wrong positive gets challenged. Any attribution that resolves 0% or 100% should be treated as a suspected tooling failure until the join is verified on a case whose answer is known.",
    "status": "measured",
    "refuted_by": "an attribution on the single-card lane trace showing the elementwise group there is NOT dominated by the same five ops"
+  },
+  {
+   "id": "eff.two_x_not_reachable_by_architecture",
+   "claim": "whether 2x training throughput is reachable at 200M by changing the architecture",
+   "value": "NO on current evidence. Two independent paths, both capped near 1.2x, and they do not add. SOFTWARE: the four non-retired levers, every one idealised and all landing at once, sum to 158.4 ms of a 1676.63 ms span = 9.45% = 1.104x; the two with an established mechanism (fp8 head epilogue 75.5 ms, flash seam 54.9 ms) are 130.4 ms = 7.78% = 1.084x. SHAPE: holding body params L*d^2 fixed and respecting d %% 128 == 0 (hd=128, FlashKDA), the best shape is 2048x3 at 1.20x, because at fixed parameters speed is set by L*d and not L*d^2 -- going shallow-and-wide cuts per-layer bandwidth traffic and pays for it in a head that grows linearly in d. THE FLOOR: fp8 GEMM is 493.1 ms/step and immovable at 98.2% of this pod's measured fp8 peak, so even with head and everything else at ZERO the ceiling is 1676.63/(493.1+76.38) = 2.94x, and 2x requires the non-GEMM 1107 ms to fall to 269 ms, a 76% cut against 158 ms of idealised levers. THE PATHS DO NOT ADD: reshaping changes the same 917.2 ms group that KDA retune and fusion work target -- 2048x3 drops that group to 458.6 ms and halves KDA's absolute headroom -- so summing the two is double counting. WHY THIS REVISES THE EARLIER ~+30-40%% SOFTWARE CEILING: two items collapsed. fp8 GEMM library swap went 2.06% -> 0.53% because the old figure divided by a vendor 296 TFLOPS the silicon does not reach (measured 279.6). The fp8 LM head went +5.67% ideal -> MEASURED -3.91%, because the quantisation tax (135.1 ms) exceeds what fp8 saves on the GEMM itself (75.5 ms). What survives of the head is fusing that tax into an epilogue -- same block of time, different measure.",
+   "measured": "2026-09-01",
+   "source": "docs/lessons/arch_efficiency_2x.md; arithmetic on runs/t57_steady.log (t57 steady trace), runs/t58_quant_tax.json, runs/t59_fp8_peak.json",
+   "config": {
+    "span_ms": 1676.63,
+    "busy_ms": 1600.25,
+    "idle_ms": 76.38,
+    "groups_ms": {
+     "fp8_gemm": 493.1,
+     "bf16_lm_head": 190.0,
+     "rest_fusion_kda_elementwise_flash_flce": 917.2
+    },
+    "scaling_used": {
+     "fp8_gemm": "L*d^2 (params)",
+     "head": "d (vocab fixed 32784)",
+     "rest": "L*d (per-layer per-token bandwidth)"
+    },
+    "shape_constraint": "d %% 128 == 0, hd=128 required by the FlashKDA kernel (train.py Cfg.heads)",
+    "best_shape": {
+     "d": 2048,
+     "L": 3,
+     "busy_ms": 1331.7,
+     "speedup": 1.202,
+     "d_over_L": 682.7
+    },
+    "current_shape": {
+     "d": 1024,
+     "L": 12,
+     "busy_ms": 1600.25,
+     "speedup": 1.0,
+     "d_over_L": 85.3
+    },
+    "levers_ideal_ms": {
+     "fp8_head_epilogue": 75.5,
+     "flash_seam": 54.9,
+     "kda_retune": 15.0,
+     "best_single_fusion": 13.0,
+     "gemm_library_swap_RETIRED": 8.9
+    },
+    "sum_non_retired_ms": 158.4,
+    "sum_non_retired_speedup": 1.104,
+    "sum_with_mechanism_ms": 130.4,
+    "sum_with_mechanism_speedup": 1.084,
+    "zero_non_gemm_ceiling": 2.94,
+    "two_x_requires": "non-GEMM 1107 ms -> 269 ms, a 76% cut"
+   },
+   "uncertainty": "The shape table is DERIVED, not measured: it extrapolates three measured group times by L*d^2 / d / L*d and assumes the group proportions hold as the shape changes. 2048x3 is far from the measurement point (L 12 -> 3) and the `rest` group is where the extrapolation is weakest, since KDA's chunk structure and fusion boundaries both move with layer count. A 20-step trace on any candidate shape is required before the table decides anything. The steady trace itself is one card, profiler window steps 56-76; the 7-card production figure is 77K tok/s/GPU.",
+   "boundary": "Says 2x is not reachable by architecture at 200M on THIS evidence; does not say 2x is impossible. It is silent on what changes the FLOP count itself -- sparsity, MoE, lower precision -- which are architecture changes rather than optimisations, and on any lever not yet identified. It also does not price the quality side of any shape: that is eff.completep_optimal_ratio_is_deeper.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.completep_optimal_ratio_is_deeper",
+   "claim": "which direction the width-to-depth ratio should move at our scale, and what a throughput-motivated reshape would cost in quality",
+   "value": "THE QUALITY EVIDENCE POINTS THE OPPOSITE WAY FROM THE SPEED EVIDENCE, and this is a decision for the user rather than a default. CompleteP (arXiv 2505.01618) measures compute-optimal N:L at 32.0 for 50M non-embedding (N=512, L=16) and 42.7 for 300M (N=1024, L=24), rising with scale and staying under about 60 across the range studied. Our 166M non-embedding sits between those two points, so the indicated optimum is 32-43 and WE ARE AT 85.3. If anything we should go DEEPER for quality and pay throughput. Priced through eff.throughput_quality_exchange_rate at the 0.2b-0.3b slope of 0.91 nat/e-fold: 768x21 (d/L 36.6, toward CompleteP's optimum) runs at 0.874x and must EARN BACK 0.123 nat to break even; 896x15 (d/L 59.7) is 0.975x and -0.023 nat; the fastest shape 2048x3 (d/L 682.7) is 1.202x and buys a +0.167 nat budget. The 1.20x speed ceiling therefore requires moving d/L six times further in the direction the quality evidence argues against.",
+   "measured": "2026-09-01",
+   "source": "arXiv 2505.01618v3 Tables 2-3 (fetched 2026-09-01); throughput column from the derived shape table in docs/lessons/arch_efficiency_2x.md; slope from eff.throughput_quality_exchange_rate",
+   "config": {
+    "completep_50m_optimal": {
+     "N": 512,
+     "L": 16,
+     "ratio": 32.0
+    },
+    "completep_300m_optimal": {
+     "N": 1024,
+     "L": 24,
+     "ratio": 42.7
+    },
+    "completep_1p5b_optimal": {
+     "N": 1984,
+     "L": 32,
+     "ratio": 62.0
+    },
+    "completep_range_statement": "compute-optimal N:L less than about 60 across 50M-1.5B, trending larger with scale",
+    "ours": {
+     "d": 1024,
+     "L": 12,
+     "ratio": 85.3,
+     "non_embedding_params_m": 166
+    },
+    "exchange_slope_nat_per_efold": 0.91,
+    "exchange_slope_segment": "0.2b-0.3b",
+    "quality_budget_nat": {
+     "2048x3": 0.167,
+     "896x15": -0.023,
+     "768x21": -0.123
+    }
+   },
+   "uncertainty": "Two limits on transfer. CompleteP measures dense softmax transformers; we are KDA + gated MLA, and the `rest` bandwidth group whose L*d scaling drives our speed column has no counterpart in their models. And the 0.91 slope is a secant on the 0.2b-0.3b segment that has already fallen 38% by 0.3b-0.4b, so the quality budgets above expire within one budget point and must be recomputed at the budget actually being decided.",
+   "boundary": "Names the direction and prices it; does not establish that a deeper shape would actually earn its 0.123 nat back at our scale on our mix. That requires a run, not a citation.",
+   "status": "recorded"
   }
  ]
 }
