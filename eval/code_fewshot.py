@@ -135,6 +135,16 @@ def main():
     # (0/1/3-shot) scores on the same 497 problems. fb 2026-08-30: a comparison
     # that needs a "N differs slightly" footnote is not the same comparison.
     DEMO_POOL = 3
+    # The eval split is pinned at DEMO_POOL while the prompt is sized by --demos, so
+    # the two agree only while --demos <= DEMO_POOL. `choices` enforces that today and
+    # nothing states the dependency: widening choices to 8 would put rows 3-7 in both
+    # the prompt and the eval set, inflating silently. This is the same shape as the
+    # l1_fewshot --demos defect (de, 2026-09-01) -- correct here, but by a guard three
+    # lines away that does not say what it is protecting.
+    assert args.demos <= DEMO_POOL, (
+        f"--demos {args.demos} exceeds the {DEMO_POOL}-problem demo pool, so rows "
+        f"{DEMO_POOL}..{args.demos - 1} would be shown as demos AND scored as eval; "
+        f"raise DEMO_POOL with it or the arms are not comparable")
     demos = [(r["instruction"], r["reference_code"], r["expected_output"])
              for r in rows[:args.demos]]
     evals = rows[DEMO_POOL:]

@@ -39,7 +39,7 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-N_DEMOS = 3
+N_DEMOS = 3  # the pinned default only; --demos sizes the pool (see split_rows)
 
 # Inlined from eval/math_zh.py: importing that module sets FLA_FLASH_KDA=0,
 # which kills chunk_kda for the new-arch ladder checkpoints.
@@ -64,6 +64,41 @@ def build_prompt(demos, target_q):
     return "\n\n".join(parts)
 
 
+def split_rows(rows, n_demos, eval_from=None):
+    """(demos, evals, err). The demo pool is SIZED by n_demos -- it used to be built
+    from the hardcoded N_DEMOS = 3 and then sliced by args.demos, so --demos 8 ran 3
+    demos while the console printed "8 demos" and the preds landed at preds_l1_d8:
+    both the log and the artifact asserted a configuration that never ran. A 3-vs-8
+    comparison came back byte-identical (md5 e2639d8b) which is the only reason it was
+    caught (de, 2026-09-01).
+
+    It is a function, not four lines in main(), for one reason: main() needs a
+    checkpoint and a GPU, so nothing living there can be tested. The first version of
+    scripts/test_fewshot_demos.py rebuilt the pool itself and asserted against
+    build_prompt -- it passed on the defective code, because the test and the code
+    agreed on everything except the line that was wrong.
+
+    The eval set excludes the demos, so it SHRINKS as n_demos grows -- 497 at 3 demos,
+    492 at 8. Two arms with different demo counts therefore score different problem
+    sets, and comparing their rates compares populations as well as prompts. eval_from
+    pins the first eval index so a sweep holds the set fixed. Stated rather than
+    silently equalised: dropping problems to match would change the denominator of the
+    arm that did not need it.
+    """
+    n_demos = max(0, n_demos)
+    if n_demos >= len(rows):
+        return None, None, (f"--demos {n_demos} but the set holds {len(rows)} problems; "
+                            f"there would be nothing left to evaluate")
+    start = n_demos if eval_from is None else eval_from
+    if start < n_demos:
+        return None, None, (f"--eval-from {start} overlaps the {n_demos} demo problems: "
+                            f"the model would be scored on problems it was shown the "
+                            f"answers to")
+    demos = [(r["instruction"], r["output"]) for r in rows[:n_demos]]
+    assert len(demos) == n_demos, f"asked for {n_demos} demos, built {len(demos)}"
+    return demos, rows[start:], None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
@@ -74,6 +109,11 @@ def main():
                          "0-shot continuation vs 3-shot; pre-registered reading: "
                          "0-shot > 3-shot by >2delta=12.6pt => demos interfere; "
                          "both zero => the zero is not a prompt-format artefact)")
+    ap.add_argument("--eval-from", type=int, default=None,
+                    help="first problem index to evaluate (default: right after the "
+                         "demos). Pin it when sweeping --demos, or each arm scores a "
+                         "different set and the comparison carries a population change "
+                         "as well as a prompt change.")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--tokenizer", default=TOK_PATH)
     ap.add_argument("--temperature", type=float, default=0.0,
@@ -93,9 +133,10 @@ def main():
     num_id = getattr(cfg, "num_id", None)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
-    demos = [(r["instruction"], r["output"]) for r in rows[:N_DEMOS]]
-    evals = rows[N_DEMOS:]
-    print(f"L1 few-shot: {args.demos} demos, {len(evals)} eval problems", flush=True)
+    demos, evals, err = split_rows(rows, args.demos, args.eval_from)
+    if err:
+        sys.exit(err)
+    print(f"L1 few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
     preds_path = os.path.join(ROOT, "data", "eval",
                               f"preds_l1_d{args.demos}"
@@ -108,7 +149,7 @@ def main():
         out_path = fout.name
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
-            texts_in = [build_prompt(demos[:args.demos], r["instruction"]) for r in batch]
+            texts_in = [build_prompt(demos, r["instruction"]) for r in batch]
             if fone_on:
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:
