@@ -6,6 +6,19 @@ source: de-8; live artifacts on the pod (ckpt_pretrain_30b_s2.pt.step21500/22500
 
 # de-8: the guards, and the class behind the day
 
+**The neutered-guard step is not a formality. It is the only thing that distinguishes a
+test from a comment.** It caught two of my own tests today, both of which passed while
+measuring nothing, and neither would have survived review -- they look correct and they go
+green:
+
+| my test | why it passed on the broken code |
+|---|---|
+| `replay_cursor --selftest` case 3 (the refusal) | the guard it asserts did not exist in the copy under test; the assertion never ran against a fall-through |
+| the D6 monitor probe (`no fail row while alive`) | no `exp.py` stub was present, so the OLD monitor's `exp.py done --status fail` no-opped under `capture_output` and "no fail row" was vacuously true in BOTH worlds |
+
+Each was found by deliberately reverting the fix and re-running the test. Nothing else in
+this document is as strong an argument for keeping `broken()` mandatory.
+
 **Verdict: two principle-level defects found and fixed, both in the row-cursor path, both
 of them fixes we believed had already shipped.** The first is dead code: `save_checkpoint`
 has never written a `row_cursor`, so every checkpoint the live run produces has none. The
@@ -37,7 +50,7 @@ defect class, and the fix is one sentence in every instance.
 | 5 | `readout_30b.load_score_record` | returns the FIRST match, shadowing a re-score | fold last-wins, like every other reader |
 | 6 | `readout_30b` head guard (fixed, b0 8215856) | refused a whole metric for one bad role | refuse per role -- **the reference implementation** |
 | 7 | `agents_rules_covered` | asserts the named check EXISTS, not that it enforces the rule | compare the doc's table to the code's map |
-| 8 | `harness launch` monitor | calls a silent-but-working job `fail` on 600 s of no log growth | liveness by process, not by log bytes |
+| 8 | `harness launch` monitor | calls a silent-but-working job `fail` on 600 s of no log growth, with a liveness probe ten lines above that already said otherwise | consult the probe you already ran |
 | 9 | my own D5 draft | read the FIRST ledger row of two and reported it as the state | read the fold, not the first match |
 
 Two sub-shapes, and the split matters because the fixes differ:
@@ -77,9 +90,13 @@ This is not a coincidence of five authors. A test written next to the code inher
 code's assumptions, and the assumption that failed each time was about the CALLER, which
 the test replaced with itself.
 
-### The one check that would have caught the most
+### Four rules, ranked, none of them covering the class
 
-**A broken world must contain TWO offenders, and the check's evidence must name both.**
+No single rule catches all nine, and saying otherwise would be the same mistake the
+document is about. Ranked by what each would actually have caught.
+
+**First: a broken world must contain TWO offenders, and the check's evidence must name
+both.**
 
 Applied to the nine: it catches 3 directly, and 4, 5 and 9 (a ledger with two rows for one
 name IS a two-offender world -- and 9 is me failing exactly that world by hand). It does
@@ -99,6 +116,13 @@ monitor wrote `status=fail, result="log silent"` for two jobs that were running 
 cannot know they were fine -- but it can say the verdict came from log growth rather than
 from the process, so a reader knows which claim to distrust. A row that says `fail` without
 saying how it decided is indistinguishable from one that watched the process die.
+
+**Fourth, cheapest of all, and the only one that is a grep rather than a discipline: does
+a branch ignore a probe that ran ten lines above it?** The monitor computed `alive` and
+then wrote `fail` without consulting it. Find a liveness or validity probe whose result the
+following branch does not read. I swept the harness's other sites and found none -- one
+instance, not a pattern -- and it is listed anyway because looking costs nothing and the
+other three rules all cost something.
 
 ## Findings
 
@@ -278,6 +302,32 @@ Fix: liveness by process, not by log bytes -- the pid is known to the launcher, 
 raise the silence budget for generative profiles specifically and say in the row that the
 verdict came from a proxy. A monitor that reports `fail` on a job that succeeded is worse
 than no monitor, because the row outlives the memory of the incident.
+
+**Fixed, e6a6ee0, and the fix exposed something sharper than the defect: the capability
+was already there and was ignored.** The liveness probe -- `os.kill(pid, 0)` plus the
+`/proc` zombie test -- sits DIRECTLY ABOVE the silence branch, twelve lines up, and breaks
+out of the loop when the process is gone. So reaching the silence branch already proves the
+process is alive. The code knew, and wrote `fail` anyway.
+
+That is a different failure from everything else in this class and it is the cheapest one
+to hunt: not a missing check, not a bad proxy, but a good probe whose answer the next
+branch does not consult. The others need new information; this one needed only to use the
+information it had. I swept the harness's other liveness sites for the same shape and found
+none -- `no_ghost_running` (`harness.py:1646`) consults its `pgrep` result and acts on it,
+and the `_kill` paths resolve by pid file plus group. One instance, not a pattern, but the
+sweep is the point: this shape is greppable in a way "the test's call shape differs from
+production's" is not.
+
+Both halves are verified against the REAL generated monitor source rather than a
+reimplementation -- the probe extracts `monitor_code` from `_arm_monitor` and runs it
+against a live silent child with the window shrunk to 3 s. A live child produces no `fail`
+row and a note naming its pid; a killed child still closes the row `ok`, so the fix does
+not disable the monitor.
+
+The note goes to the run's own log rather than the ledger. `exp.py` has no `note` verb --
+I wrote the call before checking, and it would have no-opped silently -- and inventing a
+third value for a status field every reader folds on would trade this defect for a fold
+defect, which is the trade this whole document argues against.
 
 ## What I verified and found clean
 

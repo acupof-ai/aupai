@@ -401,7 +401,11 @@ def degeneration_rate(path, temperature, greedy=None):
                         break
                     cg_counts[ng] = c
     if n == 0:
-        return None, "no generations with enough words to form the n-gram"
+        # Not "too short to form the n-gram" -- that was the old message, and it read as
+        # a property of the generations when the truth was that there were none. An empty
+        # preds file reported as a benign scoring skip: the vacuous shape, in the scorer
+        # written to catch degeneration (de, 2026-09-01, code_500_v2 on a 0-byte file).
+        return None, f"no rows in {os.path.relpath(path, ROOT)} ({os.path.getsize(path)} bytes)"
     return {
         "rate": round(deg / n, 4),
         "degenerate": deg,
@@ -413,11 +417,38 @@ def degeneration_rate(path, temperature, greedy=None):
     }, None
 
 
-def _add_degeneration(record, key, pred_path, temperature, greedy=None):
+def _add_degeneration(record, key, pred_path, temperature, greedy=None, after=None):
     """Compute the degeneration rate from a generative metric's prediction file
-    and store it beside the metric. Runs after the eval, so the file exists."""
+    and store it beside the metric.
+
+    `after` names the metric that was supposed to WRITE pred_path. When that metric
+    errored, the file on disk is whatever a previous run left there, and scoring it
+    reports a number the current run did not produce. On 2026-09-01 the step15000
+    milestone recorded math_500_degeneration 0.026 and code_500_degeneration 0.518
+    beside math_500 ERROR and code_500 ERROR -- both rates computed from preds files
+    an 03:34 run had written, published in a 04:31 record as that run's result. The
+    numbers happened to describe the same checkpoint, so nothing looked wrong; had
+    the leftovers been another checkpoint's, or a truncated shard merge, the record
+    would have read identically. A derived number must name the run whose bytes it
+    read, and refuse when that run did not write them.
+    """
+    if after and _errored(record, after):
+        record["metrics"][key] = {
+            "error": f"{after} did not produce a prediction file this run "
+                     f"({record['metrics'][after].get('error', '')[:120]}); "
+                     f"whatever is at {os.path.relpath(pred_path, ROOT)} belongs to an earlier run"
+        }
+        print(f"  {key:15s} SKIPPED: {after} errored; refusing to score a previous run's file", flush=True)
+        return
     v, err = degeneration_rate(pred_path, temperature, greedy=greedy)
     record["metrics"][key] = v if v else {"error": err}
+
+
+def _errored(record, name):
+    """True when metric `name` ran and recorded an error. Absent is not errored:
+    a metric outside the profile was never asked to write anything."""
+    m = record["metrics"].get(name)
+    return isinstance(m, dict) and "error" in m
 
 
 def write_records(path, records):
@@ -527,6 +558,37 @@ def selftest():
         assert v2["n"] == 1 and v2["degenerate"] == 0 and v2["temperature"] == 0.8, v2
     finally:
         os.unlink(p2)
+    # An empty preds file is not "generations too short": the old message named a
+    # property of generations that did not exist. It must name the file and its size.
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        p3 = f.name
+    try:
+        v3, err3 = degeneration_rate(p3, 0)
+        assert v3 is None and "0 bytes" in err3 and os.path.basename(p3) in err3, err3
+    finally:
+        os.unlink(p3)
+    # after=: a degeneration rate must not be computed from a file the errored metric
+    # did not write. The red case carries the REAL leftover shape -- a scoreable preds
+    # file on disk beside an ArtifactExists error -- because that is exactly what
+    # published math_500_degeneration 0.026 under a math_500 ERROR (step15000).
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+        f.write(json.dumps({"gen": "a b c d e f g h " * 3, "greedy": True}) + "\n")
+        p_after = f.name
+    try:
+        errored = {"metrics": {"math_500": {"error": "bash produced no score: ArtifactExists"}}}
+        _add_degeneration(errored, "math_500_degeneration", p_after, 0, after="math_500")
+        got = errored["metrics"]["math_500_degeneration"]
+        assert "error" in got and "earlier run" in got["error"], got
+        # green: the same file, the same call, with the metric having succeeded
+        ok_rec = {"metrics": {"math_500": {"math_500": 1.2}}}
+        _add_degeneration(ok_rec, "math_500_degeneration", p_after, 0, after="math_500")
+        assert ok_rec["metrics"]["math_500_degeneration"]["rate"] == 1.0, ok_rec
+        # a metric outside the profile was never asked to write: absent is not errored
+        absent = {"metrics": {}}
+        _add_degeneration(absent, "math_500_degeneration", p_after, 0, after="math_500")
+        assert absent["metrics"]["math_500_degeneration"]["rate"] == 1.0, absent
+    finally:
+        os.unlink(p_after)
     print("selftest OK")
 
 
@@ -600,25 +662,30 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
     if "math_hard" in wanted:
         _metric("math_hard", metric_math_hard, record, ckpt_path, tok_path, ngpu)
         _add_degeneration(record, "math_hard_degeneration",
-                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0)
+                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0,
+                          after="math_hard")
     if "math_500" in wanted:
         _metric("math_500", metric_math_500, record, ckpt_path, tok_path, ngpu)
         _add_degeneration(record, "math_500_degeneration",
-                          os.path.join(ROOT, f"data/eval/preds_{ckpt_name}.jsonl"), 0)
+                          os.path.join(ROOT, f"data/eval/preds_{ckpt_name}.jsonl"), 0,
+                          after="math_500")
     if "code_500" in wanted:
         _metric("code_500", metric_code_500, record, ckpt_path, tok_path, ngpu)
         _add_degeneration(record, "code_500_degeneration",
-                          os.path.join(ROOT, f"data/eval/preds_code_{ckpt_name}.jsonl"), 0)
+                          os.path.join(ROOT, f"data/eval/preds_code_{ckpt_name}.jsonl"), 0,
+                          after="code_500")
     if "code_500_v2" in wanted:
         _metric("code_500_v2", metric_code_500_v2, record, ckpt_path, tok_path, ngpu)
         _add_degeneration(record, "code_500_v2_degeneration",
-                          os.path.join(ROOT, f"data/eval/preds_code_v2_{ckpt_name}.jsonl"), 0)
+                          os.path.join(ROOT, f"data/eval/preds_code_v2_{ckpt_name}.jsonl"), 0,
+                          after="code_500_v2")
     if "pass_at_k" in wanted:
         _metric("pass_at_k", metric_pass_at_k, record, ckpt_path, tok_path, ngpu)
         # The sampled arm (t=0.8): pass_at_k's eval_hard.sh writes greedy + sampled rows
         # to the same hard_<ckpt>.jsonl, so select greedy=False.
         _add_degeneration(record, "pass_at_k_degeneration",
-                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0.8, greedy=False)
+                          os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0.8, greedy=False,
+                          after="pass_at_k")
 
     for m, reason in SKIP_REASON.items():
         if m not in wanted:

@@ -154,6 +154,10 @@ _MANUAL_RULES = {
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
+    "A kill is not finished until nvidia-smi says the card is free":
+        "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
+        "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
+        "but nothing in the repo records whether the reader looked after their own kill",
     "Lanes: a 7-card training block, and one lane card for everything else":
         "the lane/block split is allocation policy; lane_respected checks the instant, not the policy",
     "Small jobs queue on the lane card":
@@ -186,7 +190,14 @@ _MANUAL_RULES = {
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
 #: Raising it needs a message saying which rule became unenforceable and why.
-_MANUAL_BASELINE = 22
+#:
+#: 22 -> 23 on 2026-09-01: "a kill is not finished until nvidia-smi says the card is free".
+#: Manual because the rule is an operator SEQUENCE -- kill, read the card, kill what
+#: remains -- and no artifact records whether the second step happened. lane_respected
+#: catches an orphan that is holding a card at the instant it runs, which is the
+#: consequence, not the discipline. The rule was written because the consequence went
+#: unnoticed for two minutes with nobody looking (eval/run_eval.py pid 313429 on GPU7).
+_MANUAL_BASELINE = 23
 
 
 def _norm_rule(text):

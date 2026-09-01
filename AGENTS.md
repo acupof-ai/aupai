@@ -48,6 +48,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 - **Tokenizer frozen 2026-08-29.** Rebuild only under the three unfreeze conditions (see Tokenizer), and copy the live file to `data/tokenizer_<name>.json` first. A rebuild invalidates every checkpoint trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
 - **GPUs.** All 8 cards belong to this repo (GPU7's tileRL reservation was released 2026-08-30). The controller session allocates them; ask before starting a GPU process. Kill by exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
+- **A kill is not finished until `nvidia-smi` says the card is free.** Killing what you launched does not kill what it launched. 2026-09-01: after the milestone watcher's chain was killed by exact PID, `eval/run_eval.py` (pid 313429) still held GPU7 at 5.7 GB / 95% — a grandchild reparented to init whose pgid still named the dead leader, so `ps` by pgid could not see it as an orphan and only the card showed it. It would have contended with the next job on the lane. After any kill of a GPU job: read `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`, and kill by exact PID whatever still holds memory.
 - **Lanes: a 7-card training block, and one lane card for everything else.** `world` is 7, so 8 cards leave exactly one for evals, probes, and verification runs — there is no arrangement that yields more. The block's card indices are allocation and the controller names them (`cards` in `data/mix_scale_run_config.json`); the lane is whichever card is not in `cards`. Two rules follow, and the second is the one that cost time:
   - **Small jobs queue on the lane card. They never spill into the block, not even onto a card that is idle at that instant.** A 7-card run needs all seven *simultaneously*, so one 10-minute eval on one block card blocks a 55-minute training job completely — contention only slows, occupancy stops. On 2026-08-30 a bf16 A/B waited ~40 minutes for a window, and the window it finally got was closed within seconds by a confirmatory eval landing on a block card.
   - **The lane holds one job at a time.** The round routinely wants two or three concurrent probes; they serialize. The previous version of this rule named a single bench card without saying jobs must queue on it, so three concurrent small jobs spilled into the block *by necessity* — an under-provisioned lane is violated for cause, not by carelessness, and a rule people must break is not a rule.
@@ -256,6 +257,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
 | Vocabulary identity | manual: enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check |
 | GPUs | manual: card ownership is a controller decision, not a file state |
+| A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
 | Small jobs queue on the lane card. They never spill into the block, not even o | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | The lane holds one job at a time | manual: same: lane_respected sees now, not the queue discipline |
@@ -289,7 +291,10 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-35 rules: 14 checked, 21 manual.
+36 rules: 13 checked, 23 manual. The count is regenerated from `harness check`'s
+`agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
+checked, 21 manual" while the code said 36/13/23, which is the same drift the table
+itself had before the check began reading it.
 
 ## Rules kept from before the reset
 
