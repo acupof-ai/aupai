@@ -36,6 +36,32 @@ was measured by `eval/kda_probe.py` at its `--chunk 64` default, while
 it just described a configuration that no longer runs. **Also check that a cited
 number still describes what currently ships.**
 
+## The pair that tells you how to read a moved number
+
+Two broken worlds in `harness.py` changed behaviour in the same commit, when
+`_AGE_HOURS` went from 2 to 6. One was a defect and one was not, and the surface
+was identical — which is the useful part (both from de, 2026-09-01).
+
+- **`_broken_dirty_aged` — a defect.** The world hardcoded 2 hours; the check's
+  threshold moved to 6. The world's age was real and described the world builder's
+  own constant rather than the check's live threshold. A constant and a
+  hand-written copy of it are two sources of truth, and only one moved. It went
+  green **silently** — nothing in the check changed — and only `--selftest`
+  running on every commit turned it red.
+- **`review_present` — not a defect.** Its broken world started reporting WARN
+  instead of FAIL because the FAIL tier had been deliberately removed. The world
+  was still correct; the expectation had legitimately moved.
+
+Same symptom, opposite verdicts. **One number stopped describing the system; the
+other started describing a system that had changed.** The way to tell them apart
+is to ask which source of truth moved: if the code under test moved and the
+instrument did not, it is the first kind.
+
+That is also the argument for running the selftest on every commit rather than
+before a release. Both changes were invisible in the statistic; only the
+mechanism caught them, and it caught them the moment they appeared rather than
+after they had been quoted somewhere.
+
 ## Why #4 is the dangerous one
 
 The three printf cases produce wrong *positive* numbers, and a wrong positive gets
