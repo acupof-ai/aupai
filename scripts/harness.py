@@ -2987,7 +2987,29 @@ def _broken_facts():
     return d
 
 
-ENTRY_SCRIPT_RE = re.compile(r"(?:scripts|eval|datagen|mathbank)/[\w.-]+\.(?:sh|py)|run_ddp\.sh")
+# The POPULATION, not just the predicate. This hand-listed four directories, so the
+# entry-point table's own FIRST row -- train.py sft.py sft_math.py serve.py chat.py
+# infer.py, the repo's actual entry points -- was invisible to a check whose evidence
+# says "every tried entry-point command". Widened to any path ending .sh/.py, which is
+# what a table row citing a script looks like regardless of where it lives. Four more
+# rows come into scope and the cited-file-exists tier stays green on all of them; the
+# citations are bare basenames (exp.py, tokenizer_report.py) in prose rows, so the
+# existence tier is resolved against scripts/ as well as the root (fb's sweep for
+# universals over self-built populations, de 2026-09-01).
+ENTRY_SCRIPT_RE = re.compile(r"(?:[\w.-]+/)?[\w.-]+\.(?:sh|py)")
+# Where a bare basename in a prose row may live. A row saying `exp.py done` cites
+# scripts/exp.py; resolving only against the root would call a real script missing.
+ENTRY_SEARCH_DIRS = ("", "scripts", "eval", "datagen", "probes", "mathbank", "algorithms", "filters")
+
+
+def _entry_exists(root, s):
+    """A cited path with a directory must exist AT that path -- `scripts/foo.py` naming a
+    file that actually lives in eval/ is exactly the doc rot this tier catches. Only a
+    bare basename in a prose row (`exp.py done`) is searched, because prose does not
+    carry a directory to be wrong about."""
+    if "/" in s:
+        return os.path.exists(os.path.join(root, s))
+    return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
 
 
 def check_entrypoints_ran(root):
@@ -3011,14 +3033,16 @@ def check_entrypoints_ran(root):
         # as "never tried", never as PASS.
         return SKIP, "runs/experiments.jsonl has no rows"
     missing, stale = [], []
+    n_rows = 0
     for line in open(agents, encoding="utf-8"):
         if "|" not in line or not ENTRY_SCRIPT_RE.search(line):
             continue
+        n_rows += 1
         # Task-cell tokens catch attempts logged under an inner command (the wrapper is
         # invisible to the log).
         task_tokens = {t for t in re.split(r"[^a-z0-9]+", line.split("|")[1].lower()) if len(t) >= 5}
         for s in sorted(set(re.findall(r"[\w/.-]+\.(?:sh|py)", line))):
-            if not os.path.exists(os.path.join(root, s)):
+            if not _entry_exists(root, s):
                 missing.append(s)
                 continue
             matched = [
@@ -3041,7 +3065,7 @@ def check_entrypoints_ran(root):
         return FAIL, f"entry-point table cites script(s) not in the repo: {missing}"
     if stale:
         return WARN, "; ".join(stale[:4])
-    return PASS, "every tried entry-point command has at least one ok run"
+    return PASS, f"{n_rows} script-citing row(s) in AGENTS.md; every tried entry-point command has an ok run"
 
 
 def check_entrypoints_table_present(root):
@@ -3058,16 +3082,35 @@ def check_entrypoints_table_present(root):
 
 
 def _broken_entrypoint():
-    """The REAL AGENTS.md with one table row added citing a script that does not exist -- the
-    FAIL tier. The WARN tier is live in the real repo (run_ablation.sh), so it needs no
-    synthetic world. The log row is written by the REAL logger with --root d, so the check
-    runs instead of SKIPping on an absent log."""
+    """The REAL AGENTS.md, in a tree holding the REAL scripts it cites, with two rows
+    added citing scripts that do not exist. Two, because the population widened:
+    `scripts/ghost_command.sh` is a pathed citation and `ghost_prose_only.py` is a bare
+    basename in a prose row, which the old four-directory predicate could not see.
+
+    The empty `_tmp_repo()` was not a broken world for this check. Every one of the 38
+    real citations resolved to nothing there, so the world FAILed with or without a
+    ghost -- the selftest was green on 38 false positives and would have stayed green
+    if the ghost detection were deleted outright. Confirmed by running the check on the
+    same world with both ghosts removed: still FAIL. Symlinking the cited directories
+    makes the ghost the only thing wrong, which is what the world has to isolate
+    (de, 2026-09-01).
+
+    The WARN tier is live in the real repo (run_ablation.sh), so it needs no synthetic
+    world. The log row is written by the REAL logger with --root d, so the check runs
+    instead of SKIPping on an absent log."""
     import shutil, subprocess
 
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ENTRY_SEARCH_DIRS:
+        if name and os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     with open(os.path.join(d, "AGENTS.md"), "a") as f:
         f.write("| Ghost | `python scripts/ghost_command.sh` |\n")
+        f.write("| Ghost prose | a rule enforced by `ghost_prose_only.py`, nowhere in the tree |\n")
     subprocess.run(
         [
             sys.executable,
