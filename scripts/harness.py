@@ -470,7 +470,16 @@ def check_selftests_are_gated(root):
                 body = open(os.path.join(d, nm), encoding="utf-8").read()
             except OSError:
                 continue
-            if '"--selftest"' in body and "add_argument" in body:
+            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+            # narrow predicate assumed every selftest is wired through argparse; nine
+            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+            # that cannot see a file cannot report it missing, so its PASS counted only
+            # the files it already understood -- the check encoding an assumption about
+            # where the interesting case lives, which is this repo's named class, in
+            # the check written to catch that class (de, 2026-09-01, on 62's gate).
+            if "--selftest" in body:
                 have.add(rel)
     missing = sorted(have - gated)
     if missing:
@@ -609,21 +618,30 @@ def _broken_selftests_are_gated():
 
     Mutating the live artifact rather than writing a fixture: the reweight gate passed
     every synthetic case and returned None for every real role, because the fixture
-    encoded the author's assumption twice (7.3)."""
+    encoded the author's assumption twice (7.3).
+
+    The dropped file is scripts/eval_artifacts.py SPECIFICALLY, not an argparse-wired
+    one. It dispatches on sys.argv --
+    `sys.exit(_selftest() if "--selftest" in sys.argv else 0)` -- so under the old
+    narrow predicate ('"--selftest"' near add_argument) the check could not see it at
+    all and this world would have gone GREEN with the file unguarded. That is exactly
+    the defect the widening fixes, and using an argparse file here would leave the
+    widening untested (de, 2026-09-01).
+    """
     d = _tmp_repo()
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    ev = os.path.join(ROOT, "eval", "readout_30b.py")
+    ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
     if not (os.path.exists(hook) and os.path.exists(ev)):
         return None
     text = open(hook, encoding="utf-8").read()
-    if '"eval/readout_30b.py"' not in text:
+    if '"scripts/eval_artifacts.py"' not in text:
         return None
     os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
-        text.replace('"eval/readout_30b.py", ', "").replace('"eval/readout_30b.py"', '"x/y.py"'))
+        text.replace('"scripts/eval_artifacts.py", ', "")
+            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
     # the real file, so the check must find its --selftest and miss it in the map
-    open(os.path.join(d, "eval", "readout_30b.py"), "w", encoding="utf-8").write(
+    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
         open(ev, encoding="utf-8").read())
     return d
 
@@ -794,13 +812,19 @@ def _ppid_of(pid):
 
 
 def _pod_ps_rows(timeout=20):
-    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
 
     The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
     fields from the same table. Reading them as one `ps -eo` is one round trip
     regardless of how many training processes are up; the previous shape ran a
     `pod ps -o ppid= -p <pid>` per process, so cost scaled with the size of the
     training job it was watching. Measured 6.3 s at 11 ranks, 0.6 s batched.
+
+    stat is here for the zombie case: a reaped-but-not-waited process keeps its argv
+    in ps as `[run_ddp.sh] <defunct>`, matches any regex over the command line, and
+    has no session of its own -- so a check that judges detachment by session reads
+    it as a foreground trainer. It runs no code and holds no card. Only stat tells
+    them apart (2026-09-01).
 
     Returns (rows, error). A non-empty error means the read failed and the caller
     must SKIP -- never treat an unreadable pod as a clean one.
@@ -813,19 +837,57 @@ def _pod_ps_rows(timeout=20):
         return None, f"pod unreachable: {type(e).__name__}"
     if r.returncode != 0:
         return None, f"pod ps exit {r.returncode}"
-    # stat read and dropped: a zombie holds a pid slot but runs nothing. It holds no card
-    # either, so judging one as "unsupervised training" reports a card as busy when it is
-    # free -- which it did on 2026-09-01, immediately after a correct kill, the third false
-    # positive from this check in one day. Filtered here rather than in the caller so the
-    # 5-tuple every consumer indexes stays the same shape.
+    # stat is kept in the row: a zombie holds a pid slot, runs nothing, and holds no card,
+    # but keeps its argv (`[run_ddp.sh] <defunct>`) so it matches any command regex. Only
+    # stat tells it from a live trainer. judge_pod_ps drops them; the rows carry stat so
+    # it can (2026-09-01).
     rows = []
     for ln in r.stdout.splitlines():
         parts = ln.split(None, 5)
-        if len(parts) == 6 and parts[0].isdigit() and not parts[4].startswith("Z"):
-            rows.append((parts[0], parts[1], parts[2], parts[3], parts[5]))
+        if len(parts) == 6 and parts[0].isdigit():
+            rows.append(tuple(parts))
     if not rows:
         return None, "pod ps returned nothing"
     return rows, None
+
+
+def judge_pod_ps(allrows):
+    """(state, evidence) from a `ps -eo pid,sid,pgid,ppid,stat,args` table.
+
+    A foreground training job is one whose SESSION LEADER is the crictl exec shell,
+    because that shell dies with the tn tunnel and leaves the trainer holding a card.
+    `pod "<cmd>"` runs the command as `bash -lc <cmd>`, so the leader's own argv says
+    which it was: a detached launch names setsid there and the job it spawns lands in
+    a new session; a foreground launch does not, and the job stays in the shell's.
+    That is the whole rule -- read the leader, not the child.
+
+    Four false positives in one day came from inferring detachment from the child
+    instead: a launcher shell matched on its quoted argv, a trainer whose leader had
+    become a zombie read as sessionless, a zombie trainer read as a live one, and a
+    trainer adopted by init read as an orphan. Each refused a commit while the pod was
+    behaving exactly as intended. The evidence those versions wanted -- an intact
+    parent chain -- is reaped in the normal case, so they were reading absence and
+    calling it a violation (de, 2026-09-01).
+
+    Tested by scripts/test_pod_ps_judge.py against captured tables, which the check
+    itself cannot be: it reads the live pod and its broken() raises SelftestSkip.
+    """
+    # Zombies keep their argv (`[run_ddp.sh] <defunct>`) so they match any command
+    # regex, but they run no code and hold no card.
+    live = [x for x in allrows if "Z" not in x[4]]
+    leader = {x[0]: x[5] for x in live if x[0] == x[1]}
+    rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # A leader that IS a training row is a detached launcher, never the exec shell.
+    fg = [x for x in rows
+          if x[0] != x[1]
+          and leader.get(x[1], "").startswith("bash -lc")
+          and "setsid" not in leader.get(x[1], "")]
+    if fg:
+        return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
+                      f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
+    if not rows:
+        return PASS, "no training process on the pod"
+    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -833,44 +895,14 @@ def check_no_foreground_pod_training(root):
 
     'Long jobs detach' is the rule; the failure it prevents is an orphan holding a
     whole card at 100% after the tn tunnel dies, which once contaminated a
-    seven-card profile silently. A detached job's session id differs from its pid's
-    parent shell; a foreground one shares the crictl exec session."""
+    seven-card profile silently."""
     pod = os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod) or pod_drift.is_pod(root):
         return SKIP, "host-side check; needs ~/bin/pod"
     allrows, err = _pod_ps_rows()
     if err:
         return SKIP, err
-    # The training rows, selected from the one read rather than by a second remote grep.
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
-    ppid = {x[0]: x[3] for x in allrows}
-    # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
-    # leaves a bash -lc whose argv contains the whole launch command, so a match on
-    # train.py/run_ddp text catches the launcher's own wrapper -- which is not a
-    # training process and is correctly not a session leader. It names setsid in its
-    # own command line; the job it spawned is the thing to judge (2026-09-01, this
-    # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
-    if not rows:
-        return PASS, "no training process on the pod"
-    # ppid == 1 means init adopted it: the launching shell is gone and the process
-    # survived, which IS what setsid buys. This is the reliable signal; a
-    # leader-presence test is not, because the leader may be a zombie ([bash]
-    # <defunct>) and zombies are filtered out of rows upstream -- so its correctly
-    # detached children read as leaderless. No command-name restriction: run_ddp.sh is
-    # a bash launcher adopted by init and is exactly as detached as its python ranks
-    # (2026-09-01, this check's second and fourth false positives, both this shape).
-    detached = {x[0] for x in rows if ppid.get(x[0]) == "1"}
-    # A rank whose parent is itself detached is under that same setsid session.
-    for _ in range(4):  # ponytail: 4 passes covers launcher->torchrun->rank; deeper trees do not occur here
-        detached |= {x[0] for x in rows if ppid.get(x[0]) in detached}
-    attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
-    # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.
-    leaders = {x[1] for x in rows if x[0] == x[1]}
-    orphans = [x for x in attached if x[1] not in leaders]
-    if orphans:
-        return FAIL, f"{len(orphans)} training process(es) not under a setsid session: pid {orphans[0][0]}"
-    return PASS, f"{len(rows)} training process(es), all under setsid session(s) {sorted(leaders)}"
+    return judge_pod_ps(allrows)
 
 
 def _broken_no_foreground_pod_training():
@@ -894,19 +926,31 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    for ext in ("*.py", "*.sh"):
-        for d in ("scripts", "datagen", "filters", "eval", "algorithms"):
-            for p in glob.glob(os.path.join(root, d, "**", ext), recursive=True):
-                text = open(p, encoding="utf-8", errors="replace").read()
-                # Drop docstrings and comments before looking for invocations.
-                text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-                for n, line in enumerate(text.split("\n"), 1):
-                    s = line.split("#", 1)[0]
-                    if inv.search(s) and not re.search(r"-4\b", s):
-                        bad.append(f"{os.path.relpath(p, root)}:{n}")
+    # The POPULATION, not just the predicate. A hand-listed set of directories was
+    # missing probes/ and the repo root, and the evidence still said "every curl call
+    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
+    # tree and exclude what cannot hold a tracked invocation, so a new directory is
+    # covered by default rather than by someone remembering to add it (fb's sweep,
+    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not (fn.endswith(".py") or fn.endswith(".sh")):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Drop docstrings and comments before looking for invocations.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+            for n, line in enumerate(text.split("\n"), 1):
+                s = line.split("#", 1)[0]
+                if inv.search(s) and not re.search(r"-4\b", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
-    return PASS, "every curl call passes -4"
+    return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
 def _broken_curl_ipv4():
@@ -2903,7 +2947,16 @@ def check_facts_well_formed(root):
         head = "; ".join(errors[:5])
         return FAIL, head + (f" (+{len(errors) - 5} more)" if len(errors) > 5 else "")
     note = f"; {len(set(baselined))} baselined source(s) (debt register, see `harness gaps`)" if baselined else ""
-    return PASS, f"{len(entries)} facts in {len(files)} files, every entry carries its config{note}"
+    # State the population, not just the count. "every entry carries its config" over
+    # 7 files reads identically whether 7 is all of them or 7 of 9 -- and it IS 7 of 9
+    # here, the two baselines being deliberately excluded. A universal quantifier over
+    # a self-constructed population is only as true as the construction, and the
+    # reader cannot audit the construction from a bare N (fb's sweep, 2026-09-01,
+    # after selftests_are_gated reported "27 files, all gated" over a real 36).
+    _all = len(glob.glob(os.path.join(facts_dir, "*.json")))
+    _pop = f"{len(files)} of {_all} facts/*.json" if _all != len(files) else f"all {_all} facts/*.json"
+    return PASS, (f"{len(entries)} facts in {_pop} (baselines excluded), every entry "
+                  f"carries its config{note}")
 
 
 def _broken_facts():

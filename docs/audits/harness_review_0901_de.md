@@ -213,6 +213,54 @@ for. Its selftest therefore asserts the scan **finds** ChatML in a row that has 
 check whose success condition is a zero needs that pair, and this repo now has three such
 checks.
 
+**A check that cannot see a file cannot report it missing.** `selftests_are_gated`
+counted `--selftest` only where it appeared next to `add_argument`. Nine files dispatch on
+`sys.argv` instead, so the gate never counted them and printed *27 selftest-carrying
+files, all gated by the hook* while those nine ran nowhere. Its PASS was over the files it
+already understood. The widened predicate reports 36, and the broken world had to change
+too -- it dropped an argparse-wired file, which fails under both predicates, so the
+widening would have been untested. With the predicate reverted the broken world now says:
+
+    selftests_are_gated reported PASS on its broken world
+      (0 selftest-carrying file(s), all gated by the hook)
+
+Zero files found, and still "all gated". That line is the class in one string, and it
+occurred inside the check written to catch the class.
+
+## A fourth class, fb's generalisation: the guard refuses where the reader is not looking
+
+Three instances in one day, every guard correct, every symptom displaced from its cause.
+
+| guard | what the reader saw | where the message was |
+|---|---|---|
+| `pod_push.sh` refusing a branch-only file | exit 128, **no output at all** | `set -euo pipefail` killed the script before its own refusal printed |
+| the dynamo cache assert at `train.py:2332` | three idle cards | rank logs, at startup, before any progress line |
+| `open_artifact` declining to overwrite | two sampled cells' logs at **zero bytes** for an hour | the wrapper's log, two files away |
+
+The last one cost the most because a zero-byte log is produced identically by a job that
+never started, a job that died at once, and a job whose output went elsewhere. It
+discriminates nothing, and it is the first thing anyone tails.
+
+Two rules, and the second is fb's:
+
+> **Completeness is a property of the output, never of the log.** Count the rows in the
+> artifact. A complete cell holds 500 distinct questions; both 16B cells held 32. The log
+> is narration about the artifact, and this repo already has the general form -- *status
+> comes from artifacts, never from a session's self-report* -- which turns out to apply to
+> a session's own jobs too.
+
+> **A guard that refuses to write an artifact writes its refusal AT the artifact path it
+> protected.** `open_artifact` now leaves `<path>.REFUSED` naming what it protected and
+> why, and a later successful write removes it. The reader who goes looking for the output
+> finds the reason instead of an absence, and absence stops being ambiguous. A stale
+> sidecar is worse than none -- it explains something no longer true -- so both halves are
+> asserted, and both were confirmed by neutering them separately.
+
+This class differs from the second one in what needs fixing. There the guard's default was
+right and the missing piece was a way through. Here the default is right, the way through
+exists, and the missing piece is that **the refusal is invisible from where the work is
+observed**. Nothing about the guard changes; only where it speaks.
+
 ## Findings
 
 ### D1 -- `save_checkpoint` has never written a row cursor (P3, principle) -- FIXED in the next window

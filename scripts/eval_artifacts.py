@@ -30,6 +30,30 @@ def versioned_path(path, run):
     return f"{stem}.{run}{ext}"
 
 
+def _write_refusal(path, msg):
+    """Leave the refusal AT the artifact path it protected: `<path>.REFUSED`.
+
+    A guard that refuses correctly but reports somewhere the reader is not looking
+    produces a symptom of absence, and absence is ambiguous. Three instances in one
+    day, all correct guards (fb, 2026-09-01):
+
+      - pod_push.sh exited 128 with no output at all, because `set -euo pipefail`
+        killed it before its own refusal printed
+      - the dynamo cache assert refused at startup; the observable was idle cards
+      - THIS refusal landed in the wrapper's log while each cell's own log stayed
+        zero bytes, so two 16B sampled cells looked like "still running" for an hour
+
+    So the reader who goes looking for the output finds the reason instead of nothing.
+    Best-effort by construction: a refusal that cannot write its sidecar must still
+    raise, and never mask the ArtifactExists with an IOError from the sidecar.
+    """
+    try:
+        with open(path + ".REFUSED", "w", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{msg}\n")
+    except OSError:
+        pass
+
+
 def open_artifact(path, force=False, run=None, mode="w"):
     """Open an eval artifact for writing. Refuses an existing path unless `force`.
 
@@ -45,15 +69,25 @@ def open_artifact(path, force=False, run=None, mode="w"):
     if run:
         path = versioned_path(path, run)
     if "a" not in mode and not force and os.path.exists(path):
-        raise ArtifactExists(
+        msg = (
             f"{path} exists ({os.path.getsize(path)} bytes). An eval artifact is the only "
             f"copy of what a checkpoint generated -- a 477-row preds file that a fact cited "
             f"was overwritten this way (2026-08-31). Pass --force to replace it, or name the "
             f"run so it versions: {versioned_path(path, '<run>')}"
         )
+        _write_refusal(path, msg)
+        raise ArtifactExists(msg)
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
+    # A successful write clears any refusal left by an earlier attempt. Otherwise the
+    # sidecar outlives the problem and the next reader finds a REFUSED note beside a
+    # complete artifact -- a stale explanation is worse than none, because it explains
+    # something that is no longer true.
+    try:
+        os.remove(path + ".REFUSED")
+    except OSError:
+        pass
     return open(path, mode, encoding="utf-8")
 
 
@@ -144,11 +178,25 @@ def _selftest():
         assert "--force" in str(e) and "preds_x" in str(e), str(e)
     else:
         raise AssertionError("an existing artifact must refuse")
+    # the refusal must be findable AT the artifact, not only in whatever log the
+    # caller happened to be writing. This is the assertion that would have saved an
+    # hour: two sampled cells refused into a wrapper's log while their own logs stayed
+    # zero bytes, and silence reads as "still running".
+    assert os.path.exists(p + ".REFUSED"), (
+        "a refusal must leave a sidecar at the path it protected; without it the "
+        "reader finds an absence, and an absence is ambiguous")
+    note = open(p + ".REFUSED", encoding="utf-8").read()
+    assert "--force" in note and "exists" in note, note
 
     # force replaces; the refusal must not be the only way through
     with open_artifact(p, force=True) as f:
         f.write('{"a":2}\n')
     assert open(p).read().strip() == '{"a":2}'
+    # and a successful write CLEARS the stale refusal: an explanation that outlives
+    # the problem it explains is worse than none.
+    assert not os.path.exists(p + ".REFUSED"), (
+        "a successful write must clear the REFUSED sidecar, or the next reader finds "
+        "a refusal note beside a complete artifact")
 
     # a versioned write never collides with the base path or another run
     v = versioned_path(p, "run1")
