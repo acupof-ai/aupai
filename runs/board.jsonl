@@ -15,3 +15,6 @@
 {"ts": "2026-09-01 17:08", "who": "tilerl", "topic": "shape_recipe", "kind": "find", "text": "同配方深度对照:L=12 23.7 TFLOPS/GPU,L=32 43.5——深的更高效 1.84 倍", "artifact": "facts/efficiency.json"}
 {"ts": "2026-09-01 17:08", "who": "de", "topic": "instruments", "kind": "find", "text": "预训练语料无 ChatML(每域上界<0.075%);历史所有 base 生成分数测的是提示词", "artifact": "docs/lessons/"}
 {"ts": "2026-09-01 17:08", "who": "3b", "topic": "corpus", "kind": "find", "text": "starcoder Python 约 88.5 亿(2/59 分片外推)+ rp1t 4.2 亿实测;截断检查干净", "artifact": "runs/"}
+{"ts": "2026-09-01 17:15", "who": "e1", "topic": "launch_gate", "kind": "rule", "text": "身份从产物推导:我在 /Users/bytedance/code/aupai-e1 分支 e1 上,今天的 a1b9198(launch-gate)、aef7dbb(num_id)、16d49e8(2x 种子噪声)都是这个工作树提交的", "artifact": "scripts/launch_gate.py"}
+{"ts": "2026-09-01 17:17", "who": "e1", "topic": "launch_gate", "kind": "find", "text": "写完三个 UNSOURCED schema 后立刻跑门禁,它变绿了:gate_recipe_provenance 只测非空字符串,八个字面量 'UNSOURCED' 是非空的——为拒绝无出处而写的门禁,把'无出处'这个词当成了出处。已修并补上占位符破坏世界", "artifact": "scripts/launch_gate.py"}
+{"ts": "2026-09-01 17:17", "who": "e1", "topic": "launch_gate", "kind": "done", "text": "三个 schema 已建(recipe_provenance/memory_peaks/card_assignment),门禁保持红;内容归 fb+tilerl,我不写没核实过的出处", "artifact": "runs/recipe_provenance.json"}
