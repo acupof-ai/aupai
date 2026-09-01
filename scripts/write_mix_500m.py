@@ -417,19 +417,46 @@ def _allocation():
 MEASURED = os.path.join(ROOT, "data", "token_cache_pools.json")
 
 
-def _measured_pools():
-    """Pool rows read from the real token caches, by domain. {} if the file is absent.
+def _cache_pool(name):
+    """Pool rows read from the domain's OWN token cache, when it is on this host.
 
-    The launch gate's epochs prerequisite: gate_epochs_measured refuses a domain whose epochs
-    came from a stamp. This is the artifact that clears it -- and it is per-domain, because
-    "measured" is not a property of the mix, it is a property of each domain. The blanket
-    ESTIMATED string this replaces said the same thing about all nine, which was true when
-    nothing had a cache and became a lie the moment five of them did.
+    Preferred over the recorded file below, because the cache is what train.py draws from.
+    The file is a transcription, and tonight a transcription of the mix itself sat stale on
+    the pod for 24 minutes while I reported GO from my laptop -- the same file being two
+    different things in two places is exactly what derivation is meant to end.
+
+    Cheap: torch reads the header under mmap, not the tensor.
     """
-    if not os.path.exists(MEASURED):
-        return {}
-    return {k: v for k, v in json.load(open(MEASURED, encoding="utf-8"))["domains"].items()
-            if v.get("pool_rows")}
+    path = f"/data00/tokens_{name}.pt"
+    if not os.path.exists(path):
+        return None
+    try:
+        import torch
+
+        n = int(torch.load(path, map_location="cpu", mmap=True).numel())
+    except Exception:
+        return None
+    rows = n // (SEQ + 1)
+    return {"tokens": n, "rows": rows, "pool_rows": rows - min(int(rows * 0.05), 5000),
+            "source": "cache"}
+
+
+def _measured_pools():
+    """Pool rows per domain: the live cache where it exists, else data/token_cache_pools.json.
+
+    Per-domain, because "measured" is a property of each domain, not of the mix. The blanket
+    ESTIMATED string this replaced said the same thing about all nine, true when nothing had a
+    cache and a lie the moment five did.
+    """
+    out = {}
+    if os.path.exists(MEASURED):
+        out = {k: v for k, v in json.load(open(MEASURED, encoding="utf-8"))["domains"].items()
+               if v.get("pool_rows")}
+    for name in list(SUPPLY) + ["code_py_starcoder", "code_py_rp1t"]:
+        live = _cache_pool(name)
+        if live:
+            out[name] = live
+    return out
 
 
 def _rp1t_tokens():
@@ -762,16 +789,26 @@ def selftest():
     assert a3["code_py_starcoder"]["weight"] < b3["code_py_starcoder"]["weight"], (
         "starcoder's share of the code objective must rise with its supply"
     )
-    assert a3["code_py_starcoder"]["epochs"] > b3["code_py_starcoder"]["epochs"], (
-        f"epochs must fall as supply rises: {a3['code_py_starcoder']['epochs']} at 3B vs "
-        f"{b3['code_py_starcoder']['epochs']} at 6B"
+    # Rows drawn fall as --code-tokens rises: starcoder takes a larger share of a fixed code
+    # objective, so rp1t draws fewer. NOT epochs -- once a domain has a cache its pool comes
+    # from the cache, so the pool no longer moves with this argument at all. The old assertion
+    # compared epochs and passed only while every pool was stamp-derived; it went red the hour
+    # the caches landed, testing a relationship that had stopped existing.
+    assert a3["code_py_rp1t"]["rows_from_weight_at_runtime"] > b3["code_py_rp1t"]["rows_from_weight_at_runtime"], (
+        "rp1t must draw fewer rows as starcoder's supply rises"
     )
-    # both corpora draw the SAME epochs -- that is what proportional-to-supply buys, and it is
-    # the property that makes the split a supply fact rather than a quality claim.
+    # Both corpora draw the same epochs ONLY while both pools are stamp-derived: proportional
+    # rows over proportional pools. With a measured cache the pools are whatever they are, and
+    # equal epochs is no longer the property -- equal SHARE of supply is.
     for cs in (3.0e9, 3.8e9, 6.0e9):
         m = build(cs)["domains"]
-        e1, e2 = m["code_py_starcoder"]["epochs_fractional"], m["code_py_rp1t"]["epochs_fractional"]
-        assert abs(e1 - e2) < 0.01, f"code corpora draw different epochs at {cs}: {e1} vs {e2}"
+        sc, rp = m["code_py_starcoder"], m["code_py_rp1t"]
+        share_sc = sc["rows_from_weight_at_runtime"] / sc["supply_tokens_one_epoch"]
+        share_rp = rp["rows_from_weight_at_runtime"] / rp["supply_tokens_one_epoch"]
+        assert abs(share_sc / share_rp - 1) < 0.02, (
+            f"code corpora draw unequal shares of their supply at {cs}: {share_sc:.3e} vs "
+            f"{share_rp:.3e} -- the split is meant to be a supply fact, not a quality claim"
+        )
     print(f"  1 code objective pinned at {code_rows_target} rows across supplies; only the split "
           f"moves, and both corpora draw equal epochs")
 
