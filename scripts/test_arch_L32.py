@@ -43,6 +43,7 @@ else:
     sys.exit("fla installed but no CUDA visible; set CUDA_VISIBLE_DEVICES")
 
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
+from launch_tests import record_launch_test  # noqa: E402
 
 # The ruled shape. seq and vocab are cut to keep a CPU run in seconds -- neither is
 # depth-dependent, and the point here is depth.
@@ -314,3 +315,11 @@ if STANDIN:
     print("\n  NOT A PASS OF THE SHAPE: fla is absent, chunk_kda is a stand-in, and no "
           "KDA kernel ran.\n  The gate needs a GPU run: "
           "CUDA_VISIBLE_DEVICES=<free card> python3 scripts/test_arch_L32.py")
+else:
+    # The gate's record, written from the values this run actually used rather than
+    # typed by hand: a hand-written row is a claim about what ran that is not derived
+    # from what ran, which is the shape the gate exists to refuse. A stand-in run
+    # writes nothing at all, so it can never be mistaken for a pass of the shape.
+    record_launch_test(__file__, "pass",
+                       {"d": D, "layers": L, "heads": H, "ffn_hidden": F},
+                       real_kernel=True)
