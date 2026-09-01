@@ -1605,6 +1605,25 @@ def _exp_events(root, folded=True):
     return list(out.values())
 
 
+#: A `running` row older than this is a job that died without exp.py done. Named rather
+#: than inlined so a fixture can derive from it: _selftest_exp_fold hardcoded a date that
+#: was recent when written and aged past 24h as the clock moved, turning the selftest into
+#: a permanent red (e1 found it, 2026-09-01). Same defect as _broken_dirty_aged's, which
+#: was fixed the same day by deriving from _AGE_HOURS -- a constant standing in for a live
+#: threshold is a fixture that expires.
+#:
+#: Swept the other eight hardcoded timestamps in this file after the fix. Only this one
+#: was wrong, and the rule that separates them is the DIRECTION the fixture leans:
+#:   - a fixture that backdates to EXCEED a threshold (_broken_no_stale_running's
+#:     2020-01-01, _broken_no_ghost_running's 2026-08-29) only gets safer as time passes
+#:   - a fixture that must stay UNDER one expires, silently, on a date nobody chose
+#:   - a fixture whose check never reads the clock (_selftest_monitor_settled: settled()
+#:     tests status, not age) cannot expire at all
+#: So the audit question is not "is this date hardcoded" but "which side of the threshold
+#: does it need to be on, and does time carry it across".
+_STALE_RUNNING_H = 24
+
+
 def check_no_stale_running(root):
     evs = _exp_events(root)  # folded: an appended close must clear its start row
     if evs is None:
@@ -1620,7 +1639,7 @@ def check_no_stale_running(root):
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
-        if age_h > 24:
+        if age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
         return FAIL, f"{len(rows)} killed mid-run and never closed: {', '.join(rows[:6])}"
@@ -6049,6 +6068,14 @@ def _selftest_exp_fold():
     try:
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         p = os.path.join(d, "runs", "experiments.jsonl")
+        # Run c's timestamp is RELATIVE to now, derived from the same constant the check
+        # reads. It was a hardcoded 2026-08-31 12:45 -- recent when written, older than
+        # 24h a day later -- so the final assertion (c is open AND recent, therefore
+        # PASS) inverted on its own and the selftest went permanently red. A fixture that
+        # expires. Half the threshold, so it is unambiguously inside the window whatever
+        # _STALE_RUNNING_H becomes.
+        recent = time.strftime("%Y-%m-%d %H:%M",
+                               time.localtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
         ev = [
             {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
             {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
@@ -6056,7 +6083,7 @@ def _selftest_exp_fold():
             {"name": "b", "started": "2026-08-31 03:44", "status": "ok", "ended": "2026-08-31 04:16"},
             {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
             # a genuinely open run must survive the fold
-            {"name": "c", "started": "2026-08-31 12:45", "status": "running", "ended": ""},
+            {"name": "c", "started": recent, "status": "running", "ended": ""},
         ]
         with open(p, "w", encoding="utf-8") as f:
             for r in ev:
@@ -6066,10 +6093,13 @@ def _selftest_exp_fold():
         assert folded[("a", "2026-08-31 05:08")]["status"] == "fail", "an appended close must clear its start"
         assert folded[("b", "2026-08-31 03:44")]["status"] == "ok", \
             "a start appended after a close must NOT reopen the run"
-        assert folded[("c", "2026-08-31 12:45")]["status"] == "running", \
+        assert folded[("c", recent)]["status"] == "running", \
             "a genuinely open run must still read as running"
         assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
 
+        # a and b keep fixed dates on purpose: both are CLOSED, and check_no_stale_running
+        # only looks at rows whose status is still running, so no amount of clock movement
+        # reaches them. Only the open row had to become relative.
         state, evidence = check_no_stale_running(d)
         assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
     finally:
