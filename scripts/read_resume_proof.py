@@ -31,6 +31,12 @@ import re
 import sys
 
 PASS, FAIL, UNCOVERED = "PASS", "FAIL", "UNCOVERED"
+# A condition this test structurally cannot reach, known before the run and named in the
+# verdict. Distinct from UNCOVERED, which means a condition that SHOULD have been readable
+# and was not -- b0: "the regex did not match" and "the resume never ran" look identical
+# from outside, so UNCOVERED blocks the launch exactly like FAIL. OUT_OF_SCOPE does not,
+# because no run of this test could ever turn it green.
+OUT_OF_SCOPE = "N/A-SCOPE"
 
 CURSOR_RE = re.compile(r"cursor discarded")
 # train.py:1907, the line the ADOPT branch prints -- verified against the source, not
@@ -113,7 +119,7 @@ def read_cursors(lines, before):
              f"{len(seen)} domains, every one character-for-character equal")]
 
 
-def read_sum(cursor, step, batch, accum, world):
+def read_sum(cursor, step, batch, accum, world, origin=0):
     """Condition 6 (de): the nine cursors must sum to the GLOBAL rows consumed.
 
     Every other condition compares domains one at a time, so a scale error in the write
@@ -127,8 +133,27 @@ def read_sum(cursor, step, batch, accum, world):
     if not cursor:
         return [(FAIL, "6. cursors sum to the global rows consumed", "no row_cursor to sum")]
     got = sum(cursor.values())
-    top = step * batch * accum * world
+    # step - origin, never the absolute step (de): :1386 counts rows from the resume point,
+    # so a cursor read out of a checkpoint written AFTER a resume is worth (step - origin)
+    # rows, not step. Safe today only because this reads .step40, whose origin is 0.
+    top = (step - origin) * batch * accum * world
+    # UPPER: every rank walks (step-origin)*batch*accum rows of the plan, and :1404 stores
+    # this rank's bincount times world -- so the sum cannot exceed the global row count.
+    # LOWER: each domain's stored count is int()-truncated once and then multiplied by
+    # world, so each of the len(cursor) domains can lose up to (world - 1) rows; one whole
+    # world per domain is the safe bound. de measured 4459 against a 4480 ceiling, a 21-row
+    # gap, inside 9 x 7 = 63.
     floor = top - len(cursor) * world
+    # An absolute-vs-relative mix-up lands the sum near top/k for integer k rather than
+    # inside the band. Say so instead of reporting a bare failure: the number is not wrong,
+    # the denominator is, and the two need different fixes.
+    if got and top and not (floor <= got <= top):
+        for k in (2, 3, 4, 5, 6, 7, 8):
+            if top // k - len(cursor) * world <= got <= top // k:
+                return [(UNCOVERED, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
+                         f"sum {got} is ~1/{k} of the expected {top}, which is the shape of a "
+                         f"denominator error (an origin this reader was not told about, or a "
+                         f"world factor), not of a wrong cursor. Pass the run's origin/world.")]
     if floor <= got <= top:
         return [(PASS, f"6. cursors sum to the global rows consumed [{floor}, {top}]",
                  f"sum {got} over {len(cursor)} domains")]
@@ -152,26 +177,26 @@ def read_opt(opts):
     """
     if not opts:
         return [(FAIL, "5. Muon momentum loaded and nonzero", 'no "opt" key in the checkpoint'),
-                (UNCOVERED, "5b. optimizer ORDER unchanged",
+                (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged",
                  "zip(strict=True) catches a changed count, not a swap (b0); a 60-step run "
                  "cannot build a reordered checkpoint to test it -- debt ledger")]
     state = opts[0].get("state") or {}
     if not state:
         return [(FAIL, "5. Muon momentum loaded and nonzero",
                  "opt[0] state is empty -- Muon never stepped, or the load was skipped"),
-                (UNCOVERED, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
+                (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
     bufs = [v["momentum_buffer"] for v in state.values()
             if isinstance(v, dict) and "momentum_buffer" in v]
     if not bufs:
         return [(FAIL, "5. Muon momentum loaded and nonzero",
                  f"opt[0] has {len(state)} param(s) but no momentum_buffer -- is [0] really "
                  f"Muon? AdamW would carry exp_avg instead"),
-                (UNCOVERED, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
+                (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
     peak = max(float(b.norm()) for b in bufs)
     return [(PASS if peak > 0 else FAIL, "5. Muon momentum loaded and nonzero",
              f"{len(bufs)} momentum_buffer(s), max norm {peak:.4g}"
              + ("" if peak > 0 else " -- ALL ZERO: present in the file, never loaded")),
-            (UNCOVERED, "5b. optimizer ORDER unchanged",
+            (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged",
              "zip(strict=True) catches a changed count, not a swap (b0); a 60-step run "
              "cannot build a reordered checkpoint to test it -- debt ledger")]
 
@@ -179,12 +204,14 @@ def read_opt(opts):
 def report(rows):
     for status, name, detail in rows:
         print(f"  [{status:9}] {name}\n              {detail}")
-    fails = [r for r in rows if r[0] == FAIL]
-    unc = [r for r in rows if r[0] == UNCOVERED]
+    fails = [r for r in rows if r[0] in (FAIL, UNCOVERED)]
+    scope = [r for r in rows if r[0] == OUT_OF_SCOPE]
     print()
     if fails:
-        print(f"NOT PROVEN: {len(fails)} condition(s) failed. Per the user's order, "
-              f"this blocks the launch.")
+        print(f"NOT PROVEN: {len(fails)} condition(s) failed or could not be read. "
+              f"Per the user's order, this blocks the launch. An UNCOVERED blocks like a "
+              f"FAIL: a pattern that did not match and a resume that did not happen look "
+              f"the same from here (b0).")
         return 1
     print("NOT COVERED by this test, and not implied by its green: the startup refusal "
           "logic itself (the six conditions all take the happy path and never reach it); "
@@ -192,8 +219,8 @@ def report(rows):
           "the rows_done > plan refusal at :1387 (only a full 20B run reaches it).")
     print()
     print("PROVEN: every condition that this test can answer, passed."
-          + (f" {len(unc)} reported UNCOVERED above -- they were not tested, which is "
-             f"not the same as passing." if unc else ""))
+          + (f" {len(scope)} item(s) are out of this test's scope, listed above -- not "
+             f"tested, which is not the same as passing." if scope else ""))
     return 0
 
 
@@ -214,12 +241,27 @@ def _selftest():
     assert read_cursors(good, {"cot": 900, "zh_web": 4400, "chatml": 63})[0][0] == FAIL
     # No adopt line at all -- the whole cursor was ignored, which is the bug under test.
     assert read_cursors(["WSD JOIN: resumed at step 40/60"], b4)[0][0] == FAIL
+    # b0's fixture: a log whose wording the pattern does not know must NOT read as PASS.
+    # This is the failure the previous regex had -- it matched nothing and the result
+    # looked like caution rather than a broken instrument.
+    unknown = ["mix: cot picks up from offset 900", "mix: zh_web picks up from offset 4400"]
+    assert read_cursors(unknown, b4)[0][0] == FAIL
 
     # Condition 6: 1280 rows/rank x 7 = 8960, int() truncation can cost 9x7=63.
     nine = {f"d{i}": 995 for i in range(9)}          # sums to 8955, inside [8897, 8960]
     assert read_sum(nine, 40, 32, 1, 7)[0][0] == PASS
-    assert read_sum({f"d{i}": 142 for i in range(9)}, 40, 32, 1, 7)[0][0] == FAIL  # /7: per-rank, world dropped
+    # A dropped world factor lands at top/7 -- the same shape as a wrong denominator, and
+    # it is one: the stored number is per-rank where a global one was expected. UNCOVERED,
+    # which blocks exactly like FAIL but names the cause.
+    assert read_sum({f"d{i}": 142 for i in range(9)}, 40, 32, 1, 7)[0][0] == UNCOVERED
     assert read_sum({}, 40, 32, 1, 7)[0][0] == FAIL
+    # de's fragility, made legible: reading a post-resume checkpoint with the absolute step
+    # puts the sum at ~1/3 of the computed ceiling. Named as a denominator error, not a
+    # cursor failure -- "your reader was told the wrong step" and "the cursor is wrong"
+    # need different fixes and must not print the same.
+    assert read_sum({f"d{i}": 497 for i in range(9)}, 60, 32, 1, 7)[0][0] == UNCOVERED
+    # ...and with the origin supplied it is simply correct.
+    assert read_sum({f"d{i}": 497 for i in range(9)}, 60, 32, 1, 7, origin=40)[0][0] == PASS
 
     # A discarded cursor is the failure the negative condition exists for.
     bad = good + ["mix: zh_web cursor discarded -- written at sample_seed 42, this run uses 7"]
@@ -258,10 +300,10 @@ def _selftest():
     assert read_opt([{"state": {0: {"exp_avg": T(0.3)}}}])[0][0] == FAIL  # [0] is not Muon
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.0)}}}])[0][0] == FAIL  # all zero
     assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[0][0] == PASS
-    assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == UNCOVERED
-    print("read_resume_proof selftest OK: 16 cases "
+    assert read_opt([{"state": {0: {"momentum_buffer": T(0.3)}}}])[1][0] == OUT_OF_SCOPE
+    print("read_resume_proof selftest OK: 20 cases "
           "(clean pass, discard, step 0, inflated total, stage-2 equation, cursor equal/disagree/absent/none, "
-          "sum ok/world-dropped/empty, no-opt/never-stepped/wrong-index/all-zero/loaded)")
+          "sum ok/world-dropped/empty/denominator, unmatched-log, no-opt/never-stepped/wrong-index/all-zero/loaded)")
     return 0
 
 
@@ -293,12 +335,16 @@ def main(argv):
     rows, _ = read_log(lines, 40, 20)
     rows += read_cursors(lines, ck.get("row_cursor") or {})
     cfg = ck.get("cfg") or {}
+    # row_cursor_as_of_step is the step the cursor describes; the origin is what the run
+    # resumed FROM, and a checkpoint written after a resume carries a nonzero one. It is
+    # not stored, so it is inferred: this test resumes from .step40, which run 1 wrote with
+    # origin 0. Reading any later checkpoint here would need the origin passed in.
     rows += read_sum(ck.get("row_cursor") or {}, ck.get("step") or 40,
-                     cfg.get("batch") or 32, cfg.get("accum") or 1, world)
+                     cfg.get("batch") or 32, cfg.get("accum") or 1, world, origin=0)
     if tail is None:
         rows += [(UNCOVERED, "5. Muon momentum loaded and nonzero",
                   "run 2 wrote no later checkpoint to read the buffers from"),
-                 (UNCOVERED, "5b. optimizer ORDER unchanged", "debt ledger")]
+                 (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "debt ledger")]
     else:
         rows += read_opt(d.get("opt") or [])
     print(f"reading {log}")
