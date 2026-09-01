@@ -84,6 +84,39 @@ The one group where launch cost is plausibly material is elementwise-copy at
 58.9 µs mean over 1816 launches — still 30× a 2 µs launch, so even there the
 copies dominate their own dispatch.
 
+### The elementwise group is now attributed, and it is not its own rung
+
+Every figure in the table above is the **single-card lane trace**, and this
+paragraph is the one place another trace is named. `eff.step_remainder_attribution`
+correction (d) recorded the elementwise-copy group's ownership as unverified;
+tilerl-10 has since resolved it by correlation id on the *ddp rank-0* trace
+(`eff.quant_tax_is_the_elementwise_group`, 99.98% of the group named). 66% of
+that trace's version is `aten::div + copy_ + abs + clamp`, which is `_fp8_mm`'s
+signature op for op (`train.py:454`), and the counts corroborate independently:
+343 clamp/step against t58's separately predicted 320 amax reductions for the
+head alone.
+
+**So the group is the fp8 quantisation tax and merges into the fp8-head rung
+rather than standing as its own.** One rung, one ceiling — t58's 75.5 ms, which
+b0's doc restates as **4.50% of t57's own span**.
+
+The two group totals are different measurements of overlapping things and are
+**not reconciled and never added**: 107.0 ms is the lane trace's group,
+250.61 ms is the ddp trace's under the corrected join — 7 cards, allreduce,
+different shapes.
+
+**The method note is the part that generalises.** The first run of that
+attribution resolved ~0% and was nearly published as "the trace cannot name
+this". It was a broken join, not a property of the trace: kernels carry
+`args.correlation`, cpu_ops carry `args["External id"]`, different keyspaces,
+and the `cuda_runtime` launch event holding both is the required middle hop. **A
+broken join is indistinguishable from a true negative, and nobody argues with a
+null** — a confident "nothing here" invites no scrutiny where a confident wrong
+positive gets challenged. Treat any attribution resolving 0% or 100% as
+suspected tooling failure until the join is verified against a known answer.
+That is the general shape: an instrument returning a number that describes the
+instrument rather than the system, with 0%/100% as the tell.
+
 ## The idle is one seam, not many launches
 
 The 186.6 ms of idle is not spread evenly, and that changes what a process-side
@@ -223,7 +256,9 @@ on the pod: `pad_dynamic_shapes False`, `comprehensive_padding True`,
 
 This is the only lever found tonight that aims at memory coalescing rather than
 launch count, and coalescing is what governs the 517.6 ms of fusion plus the
-107 ms of copies — **39% of kernel time**.
+107 ms of copies — **39% of kernel time** (lane-trace base). Note the copies half
+of that surface is now attributed to the fp8 quantisation tax, so `pad_dynamic_shapes`
+and the fp8-head rung overlap there rather than composing.
 
 **The sign is not guaranteed and this must be A/B'd, not assumed.** PyTorch's own
 in-source note records padding swinging AllenaiLongformerBase amp training from a
