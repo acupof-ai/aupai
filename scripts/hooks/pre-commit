@@ -138,6 +138,23 @@ def main():
             pass  # ruff not installed; CI catches it
     print(f"hook: ruff {time.time() - t0:.2f}s", file=sys.stderr)
 
+    # A staged file that carries its own --selftest must pass it. Today a readout
+    # commit landed with its selftest RED: the assertion pinned the old wording of a
+    # refusal message and the message had been reworded in the same commit. Nothing
+    # ran it, so the hook printed five green lines over a broken guard -- the hook
+    # checked what it happened to check, not what the commit changed (b0, 2026-09-01).
+    # Run from the SELFTEST_FILES map rather than probing for the flag: a script that
+    # exits 0 on an unknown argument would otherwise register as a pass.
+    t0 = time.time()
+    SELFTEST_FILES = {"eval/readout_30b.py", "scripts/doc_numbers_check.py"}
+    for f in sorted(SELFTEST_FILES & set(staged("AM"))):
+        r = subprocess.run([sys.executable, f, "--selftest"], capture_output=True, text=True)
+        if r.returncode != 0:
+            tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
+            print(f"REFUSING: {f} --selftest failed:\n" + "\n".join(tail), file=sys.stderr)
+            sys.exit(1)
+    print(f"hook: selftests {time.time() - t0:.2f}s", file=sys.stderr)
+
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP
     # on dev machines. CI is the second line; the commit is the first.
     t0 = time.time()

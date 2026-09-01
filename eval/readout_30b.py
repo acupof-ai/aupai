@@ -983,7 +983,7 @@ def selftest():
     ran.append("5e")
     print("\n--- selftest 5e: a record predating head_fp refuses, it does not pass ---")
     _o2 = _run_fp(lambda k: None, _fp)     # milestone side written before the field existed
-    assert "REFUSING" in _o2 and "predates the field" in _o2, (
+    assert "REFUSING" in _o2 and "predates head_fp" in _o2, (
         f"a record with no head_fp was judged: {_o2[-400:]!r}. Fail-open on a missing "
         "correctness field retroactively certifies every row written before it.")
     print("  absent head_fp refuses (the whole metric, since no head can be verified)")
