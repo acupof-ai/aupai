@@ -96,7 +96,7 @@ def _row(r):
 
 
 def render(rows):
-    now = time.strftime("%H:%M:%S")
+    now = time.strftime("%H:%M:%S", time.gmtime())
     patrol = ""
     if os.path.exists(PATROL):
         with open(PATROL, encoding="utf-8") as fh:
@@ -142,7 +142,7 @@ def main():
         src = sys.argv[-1] if len(sys.argv) >= 4 and sys.argv[-1] in SRC_TAG else None
         text_args = sys.argv[2:-1] if src else sys.argv[2:]
         row = {
-            "at": time.strftime("%H:%M"),
+            "at": time.strftime("%H:%M", time.gmtime()),
             "kind": sys.argv[1],
             "text": " ".join(text_args),
         }

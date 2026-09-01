@@ -52,7 +52,7 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
         "result": result,
         "shape": {k: shape[k] for k in SHAPE_KEYS},
         "real_kernel": bool(real_kernel),
-        "recorded": time.strftime("%Y-%m-%d %H:%M"),
+        "recorded": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "host": os.uname().nodename,
         # The fingerprint of what produced it. Without this the row stays valid after
         # the test changes, which is the failure this repo has bought three times

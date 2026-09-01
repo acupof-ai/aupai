@@ -49,7 +49,7 @@ def _write_refusal(path, msg):
     """
     try:
         with open(path + ".REFUSED", "w", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{msg}\n")
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())}\n{msg}\n")
     except OSError:
         pass
 
@@ -150,7 +150,7 @@ def attest(path, root=None):
         "sha256": h.hexdigest(),
         "bytes": n,
         "rows": rows,
-        "written_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "written_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
     }
     out = os.path.join(root, "runs", "artifact_refs.jsonl")
     os.makedirs(os.path.dirname(out), exist_ok=True)

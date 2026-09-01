@@ -179,7 +179,10 @@ assert all(w is not None for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_C
 # ast.parse, for 420,646,182 tokens. We already paid a full-corpus pass to establish this, and
 # it is the same kind of data as the starcoder fetch -- dropping it would forfeit 10% of the
 # code domain's one-epoch supply for nothing (fb, 2026-09-01).
-RP1T_PYTHON_TOKENS = 420_646_182
+# Fallback only: the real value is read from the corpus stamp when it is present (see
+# _rp1t_tokens). This constant is what a dev box without the corpus falls back to, and it is
+# labelled as the ast.parse pass's own count so nobody reads it as current.
+RP1T_PYTHON_TOKENS_FALLBACK = 420_646_182
 
 
 # One-epoch supply, tokens. Measured stamps for the landed domains; code is a parameter.
@@ -414,19 +417,70 @@ def _allocation():
 MEASURED = os.path.join(ROOT, "data", "token_cache_pools.json")
 
 
-def _measured_pools():
-    """Pool rows read from the real token caches, by domain. {} if the file is absent.
+def _cache_pool(name):
+    """Pool rows read from the domain's OWN token cache, when it is on this host.
 
-    The launch gate's epochs prerequisite: gate_epochs_measured refuses a domain whose epochs
-    came from a stamp. This is the artifact that clears it -- and it is per-domain, because
-    "measured" is not a property of the mix, it is a property of each domain. The blanket
-    ESTIMATED string this replaces said the same thing about all nine, which was true when
-    nothing had a cache and became a lie the moment five of them did.
+    Preferred over the recorded file below, because the cache is what train.py draws from.
+    The file is a transcription, and tonight a transcription of the mix itself sat stale on
+    the pod for 24 minutes while I reported GO from my laptop -- the same file being two
+    different things in two places is exactly what derivation is meant to end.
+
+    Cheap: torch reads the header under mmap, not the tensor.
     """
-    if not os.path.exists(MEASURED):
-        return {}
-    return {k: v for k, v in json.load(open(MEASURED, encoding="utf-8"))["domains"].items()
-            if v.get("pool_rows")}
+    path = f"/data00/tokens_{name}.pt"
+    if not os.path.exists(path):
+        return None
+    try:
+        import torch
+
+        n = int(torch.load(path, map_location="cpu", mmap=True).numel())
+    except Exception:
+        return None
+    rows = n // (SEQ + 1)
+    return {"tokens": n, "rows": rows, "pool_rows": rows - min(int(rows * 0.05), 5000),
+            "source": "cache"}
+
+
+def _measured_pools():
+    """Pool rows per domain: the live cache where it exists, else data/token_cache_pools.json.
+
+    Per-domain, because "measured" is a property of each domain, not of the mix. The blanket
+    ESTIMATED string this replaced said the same thing about all nine, true when nothing had a
+    cache and a lie the moment five did.
+    """
+    out = {}
+    if os.path.exists(MEASURED):
+        out = {k: v for k, v in json.load(open(MEASURED, encoding="utf-8"))["domains"].items()
+               if v.get("pool_rows")}
+    for name in list(SUPPLY) + ["code_py_starcoder", "code_py_rp1t"]:
+        live = _cache_pool(name)
+        if live:
+            out[name] = live
+    return out
+
+
+def _rp1t_tokens():
+    """The ast.parse-surviving Python supply: the stamp when the corpus is here, else the
+    fallback constant. Never both, and the JSON records which one was used."""
+    return _corpus_stamp("code_py_rp1t", "tokens") or RP1T_PYTHON_TOKENS_FALLBACK
+
+
+def _corpus_stamp(name, field):
+    """One field out of a domain's build_corpus_stats.json, or None when the corpus is absent.
+
+    Supplies are READ, not typed, for the same reason fingerprints are (fb, 2026-09-01). Three
+    values for code_py_rp1t were in circulation tonight -- my 420,646,182, fb's 420,841,191 and
+    the stamp's 421,239,303, a 0.14% spread -- and every one of them was somebody's honest
+    transcription of a number that had since moved. A figure copied into source is a claim
+    nothing recomputes; read it and the mix goes red via --check when the corpus changes.
+    """
+    stats = os.path.join(ROOT, "data", "corpus", name, "build_corpus_stats.json")
+    if not os.path.exists(stats):
+        return None
+    try:
+        return json.load(open(stats, encoding="utf-8")).get(field)
+    except (OSError, ValueError):
+        return None
 
 
 def _corpus_fingerprint(name):
@@ -527,21 +581,21 @@ def _code_split(starcoder_tokens, code_rows):
     Splitting in ROWS with the second corpus taking the remainder, rather than splitting a
     weight and letting each half floor, for the reason in _rows_for_weights.
     """
-    total = starcoder_tokens + RP1T_PYTHON_TOKENS
+    total = starcoder_tokens + _rp1t_tokens()
     sc_rows = round(code_rows * starcoder_tokens / total)
     return {
         "code_py_starcoder": (sc_rows, starcoder_tokens),
-        "code_py_rp1t": (code_rows - sc_rows, RP1T_PYTHON_TOKENS),
+        "code_py_rp1t": (code_rows - sc_rows, _rp1t_tokens()),
     }
 
 
 def build(code_tokens):
     """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it."""
-    code_supply = code_tokens + RP1T_PYTHON_TOKENS
+    code_supply = code_tokens + _rp1t_tokens()
     if code_supply < CODE_FLOOR:
         raise SystemExit(
             f"REFUSING: code supply {code_supply / 1e9:.2f}B (starcoder {code_tokens / 1e9:.2f}B "
-            f"+ rp1t python {RP1T_PYTHON_TOKENS / 1e9:.2f}B) is below the {CODE_FLOOR / 1e9:.1f}B "
+            f"+ rp1t python {_rp1t_tokens() / 1e9:.2f}B) is below the {CODE_FLOOR / 1e9:.1f}B "
             f"floor. At {CODE_TOTAL:.0%} of {TOTAL_TOKENS / 1e9:.0f}B the code objective wants "
             f"{CODE_TOTAL * TOTAL_TOKENS / 1e9:.2f}B, which is "
             f"{CODE_TOTAL * TOTAL_TOKENS / code_supply:.1f} epochs. A code-first objective funded "
@@ -735,16 +789,26 @@ def selftest():
     assert a3["code_py_starcoder"]["weight"] < b3["code_py_starcoder"]["weight"], (
         "starcoder's share of the code objective must rise with its supply"
     )
-    assert a3["code_py_starcoder"]["epochs"] > b3["code_py_starcoder"]["epochs"], (
-        f"epochs must fall as supply rises: {a3['code_py_starcoder']['epochs']} at 3B vs "
-        f"{b3['code_py_starcoder']['epochs']} at 6B"
+    # Rows drawn fall as --code-tokens rises: starcoder takes a larger share of a fixed code
+    # objective, so rp1t draws fewer. NOT epochs -- once a domain has a cache its pool comes
+    # from the cache, so the pool no longer moves with this argument at all. The old assertion
+    # compared epochs and passed only while every pool was stamp-derived; it went red the hour
+    # the caches landed, testing a relationship that had stopped existing.
+    assert a3["code_py_rp1t"]["rows_from_weight_at_runtime"] > b3["code_py_rp1t"]["rows_from_weight_at_runtime"], (
+        "rp1t must draw fewer rows as starcoder's supply rises"
     )
-    # both corpora draw the SAME epochs -- that is what proportional-to-supply buys, and it is
-    # the property that makes the split a supply fact rather than a quality claim.
+    # Both corpora draw the same epochs ONLY while both pools are stamp-derived: proportional
+    # rows over proportional pools. With a measured cache the pools are whatever they are, and
+    # equal epochs is no longer the property -- equal SHARE of supply is.
     for cs in (3.0e9, 3.8e9, 6.0e9):
         m = build(cs)["domains"]
-        e1, e2 = m["code_py_starcoder"]["epochs_fractional"], m["code_py_rp1t"]["epochs_fractional"]
-        assert abs(e1 - e2) < 0.01, f"code corpora draw different epochs at {cs}: {e1} vs {e2}"
+        sc, rp = m["code_py_starcoder"], m["code_py_rp1t"]
+        share_sc = sc["rows_from_weight_at_runtime"] / sc["supply_tokens_one_epoch"]
+        share_rp = rp["rows_from_weight_at_runtime"] / rp["supply_tokens_one_epoch"]
+        assert abs(share_sc / share_rp - 1) < 0.02, (
+            f"code corpora draw unequal shares of their supply at {cs}: {share_sc:.3e} vs "
+            f"{share_rp:.3e} -- the split is meant to be a supply fact, not a quality claim"
+        )
     print(f"  1 code objective pinned at {code_rows_target} rows across supplies; only the split "
           f"moves, and both corpora draw equal epochs")
 
@@ -1087,9 +1151,14 @@ def build_probe():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--code-tokens", type=float, default=8.85e9,
-                    help="parse-verified Python tokens that actually landed; the code weight is "
-                         "a function of this, so pass the measured number")
+    # Default is the STAMP when the corpus is on this host, so the common case needs no
+    # transcription at all. 8.85e9 remains the labelled projection for a dev box. fb sent me
+    # 8,744,830,156 to check against, explicitly not to copy -- and checking is what caught
+    # that this figure is a 3/283-shard extrapolation, not the full count its message claimed.
+    ap.add_argument("--code-tokens", type=float,
+                    default=_corpus_stamp("code_py_starcoder", "tokens") or 8.85e9,
+                    help="parse-verified Python tokens that actually landed; defaults to "
+                         "data/corpus/code_py_starcoder's stamp, else the 8.85e9 projection")
     ap.add_argument("--probe", action="store_true",
                     help="write data/mix_probe_lr.json instead: the 500-step lr A/B probe, "
                          "eight domains, ratios renormalised not re-decided")

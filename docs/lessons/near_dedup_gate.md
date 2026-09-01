@@ -1,7 +1,7 @@
 ---
 question: stage-2 重盖章的近重复硬门限怎么定——shingle 大小、Jaccard 阈值、期望移除比例?
 status: recorded
-source: fb tasking 2026-08-31 (44-4); arXiv:2107.06499, 2406.17557, 2402.00159, 2303.09540, 2308.12284; data/corpus/sample/code_rp1t_handread50.jsonl (t24)
+source: fb tasking 2026-08-31 (44-4); arXiv:2107.06499, 2406.17557, 2402.00159, 2303.09540, 2308.12284; data/eval/code_rp1t_handread50.jsonl (t24)
 ---
 
 # Near-duplicate hard gate for the stage-2 re-stamp

@@ -133,10 +133,10 @@ _AGE_HOURS = 6
 REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
-REVIEW_RULE_FROM = "2026-08-31 22:00"
+REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: From when a close must name a commit that reaches main and touches its evidence.
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
-TASK_COMMIT_FROM = "2026-09-01 21:30"
+TASK_COMMIT_FROM = "2026-09-01 13:30"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1110,6 +1110,58 @@ def check_curl_ipv4(root):
     return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
 
 
+def check_timestamps_are_utc(root):
+    """Every timestamp written into the repo is UTC.
+
+    The Mac runs CST and the pod container runs UTC, so the same instant was written
+    as 22:04 and as 14:04 in the same format with nothing to tell them apart. Every
+    runs/*.jsonl ledger mixes both clocks, and no_stale_running, review_present and
+    tasks_closed_by_commit all compare those strings: a pod row reads eight hours old
+    the moment it is written and a Mac row reads eight hours in the future."""
+    bad = []
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Blank the docstring, keep its newlines: dropping it outright shifts every
+            # line number after it, which is how the first run of this check named three
+            # lines that hold no timestamp at all.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
+                          lambda m: "\n" * m.group(0).count("\n"), text)
+            lines = text.split("\n")
+            for n, line in enumerate(lines, 1):
+                # The call's arguments may wrap, so read the continuation too: a first
+                # version named a strftime whose time.gmtime sat on the next line.
+                s = "".join(lines[n - 1:n + 1]).split("#", 1)[0]
+                if re.search(r"""(?<!["'])time\.strftime\(""", s) and "gmtime" not in s:
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+                elif re.search(r"""(?<!["'])time\.localtime\(""", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+    if bad:
+        return FAIL, f"{len(bad)} naive local-clock call(s): {bad[:3]}"
+    return PASS, f"every strftime in {scanned} tracked .py passes time.gmtime()"
+
+
+def _broken_timestamps_are_utc():
+    """The REAL exp.py with its gmtime dropped, which is what it looked like today."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "exp.py")
+    text = open(src, encoding="utf-8").read()
+    if "time.gmtime()" not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "exp.py"), "w", encoding="utf-8").write(
+        text.replace(", time.gmtime()", "", 1)
+    )
+    return d
+
+
 def _broken_curl_ipv4():
     """A REAL fetcher with the -4 removed from its curl invocation."""
     d = _tmp_repo()
@@ -1483,6 +1535,48 @@ def _gpu_present():
     return bool(glob.glob("/dev/nvidia[0-9]*"))
 
 
+def check_non_shard_jsonl_excluded(root):
+    """train.py must classify every .jsonl in a domain dir, and REFUSE the unclassifiable.
+
+    Written when holdout_slice_<phase>.jsonl -- a per-phase family an exact-name list could
+    never cover -- was globbed as a shard and three domains died on KeyError: 'content'. My
+    first fix added a prefix skip. main's (044e5ed) is strictly better and replaced it: a
+    whitelist for shards, a pattern for known non-shards, and a REFUSAL for anything matching
+    neither. The difference matters -- a prefix skip silently drops a real shard someone
+    misnames, which is the expensive failure; refusing costs two minutes at step 0.
+
+    This checks the rule, not today's corpus: a dev box has no domain dirs, and a check that
+    passes on an empty directory is the vacuous shape this file exists to retire."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return SKIP, "no train.py"
+    body = open(src, encoding="utf-8").read()
+    # Match the DEFINITION, not the name. `"SHARD_RE" in body` is satisfied by the comment
+    # above it, so deleting the assignment left the check green on its own broken world --
+    # a substring test passing on prose, which is the same defect as grepping a gate's
+    # message for "ESTIMATED" (b0, 2026-09-01, twice in one day).
+    for name in ("SHARD_RE", "NON_SHARD_RE"):
+        if not re.search(rf"^{name}\s*=\s*re\.compile", body, re.M):
+            return FAIL, (f"train.py does not define {name}: a new artifact written into a "
+                          f"corpus dir will be tokenized as rows")
+    # the refusal branch is the point -- a whitelist that silently skips is only half the fix
+    if "REFUSING" not in body.split("def _domain_seqs")[1][:4000]:
+        return FAIL, ("_domain_seqs classifies shards but does not REFUSE the unknown -- a "
+                      "misnamed shard would be dropped from training in silence")
+    return PASS, "train.py whitelists shards, patterns known non-shards, and refuses the rest"
+
+
+def _broken_non_shard_jsonl_excluded():
+    """train.py with the shard whitelist removed -- the pre-044e5ed world, where an unknown
+    .jsonl in a corpus dir is read as data."""
+    d = _tmp_repo()
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    body = body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', "")
+    with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as f:
+        f.write(body)
+    return d
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -1661,8 +1755,40 @@ def check_spawned_scripts_exist(root):
             f"{len(unlisted)} spawned script(s) in the source but not in _SPAWNED_SCRIPTS: "
             f"{', '.join(unlisted)} -- add them, or this check is green over an unchecked path"
         )
-    return PASS, f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present, and the list covers "\
-                 f"every literal path in harness.py"
+    # EXISTING IS NOT ENOUGH: a script can be at its path and still fail on import. c3a47e8
+    # moved datagen/pretokenize.py out of scripts/, where `sys.path.insert(0, ROOT)` had been
+    # enough to find `import harness` -- from datagen/ it is not, and the file raised
+    # ModuleNotFoundError the first time anyone ran it after the move, which was tonight,
+    # warming caches for the launch gate. Presence and importability are different properties
+    # and the same commit broke both.
+    #
+    # -c "import ..." rather than --help: --help exits before some scripts finish importing,
+    # and a check that passes because it stopped early is the shape this file keeps finding.
+    broken = []
+    for rel, why in _SPAWNED_SCRIPTS:
+        if not rel.endswith(".py"):
+            continue
+        full = os.path.join(root, rel)
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib.util,sys;"
+             f"spec=importlib.util.spec_from_file_location('m',{full!r});"
+             "m=importlib.util.module_from_spec(spec);"
+             "sys.argv=['m','--help'];"
+             "spec.loader.exec_module(m)"],
+            capture_output=True, text=True, cwd=root, timeout=120,
+        )
+        err = (r.stderr or "")
+        if "ModuleNotFoundError" in err or "ImportError" in err:
+            broken.append(f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})")
+    if broken:
+        return FAIL, (
+            f"{len(broken)} spawned script(s) present but not importable: "
+            + "; ".join(broken[:3])
+            + " -- being at the right path is not the same as running"
+        )
+    return PASS, (f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present and importable, and the "
+                  f"list covers every literal path in harness.py")
 
 
 def _broken_spawned_scripts_exist():
@@ -1679,6 +1805,29 @@ def _broken_spawned_scripts_exist():
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
     os.rename(os.path.join(d, "datagen", "pretokenize.py"),
               os.path.join(d, "scripts", "pretokenize.py"))
+    return d
+
+
+def _broken_spawned_scripts_importable():
+    """Every script at its correct path, but pretokenize.py with its scripts/ path entry
+    removed -- the SECOND half of what c3a47e8 broke, and the half that survived the first
+    fix. Reverting one line of the real file rather than writing a stub: a stub would import
+    cleanly and prove nothing."""
+    import shutil
+
+    d = _tmp_repo()
+    for rel, _ in _SPAWNED_SCRIPTS:
+        full = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        src = os.path.join(ROOT, rel)
+        if os.path.exists(src):
+            shutil.copy(src, full)
+        else:
+            open(full, "w").write("# stub\n")
+    pre = os.path.join(d, "datagen", "pretokenize.py")
+    body = open(pre).read().replace(
+        'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
+    open(pre, "w").write(body)
     return d
 
 
@@ -2999,7 +3148,7 @@ def check_tasks_closed_by_commit(root):
         if not sha:
             bad.append(f"{t['id']}: closed with no commit")
             continue
-        why = _commit_delivers(sha, t.get("evidence") or "", root)
+        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"])
         if why:
             bad.append(f"{t['id']}: {why}")
     if bad:
@@ -4138,7 +4287,7 @@ def _broken_ladder_config():
         z.writestr("data.pkl", buf.getvalue())
     # An exp row launched via run_ddp.sh -- the scope filter.
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
-        f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M"),
+        f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
                             "status": "ok", "cmd": "bash run_ddp.sh --name test"}) + "\n")
     return d
 
@@ -4685,7 +4834,19 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def _commit_delivers(sha, evidence, root=None):
+def _commit_named_for(tid, root=None):
+    """A commit on main whose subject names this task id, if one exists.
+
+    Touching a path in evidence does not identify a delivery: two commits touch
+    scripts/launch_gate.py and only one of them is e1-4. Closing by path alone put
+    the wrong sha on two of e1's rows while both passed the check (2026-09-01)."""
+    r = subprocess.run(["git", "-C", root or ROOT, "log", "main", "--format=%H %s",
+                        "--grep", rf"\b{re.escape(tid)}\b", "-E", "-1"],
+                       capture_output=True, text=True)
+    return r.stdout.split(" ", 1)[0] if r.stdout.strip() else ""
+
+
+def _commit_delivers(sha, evidence, root=None, tid=None):
     """Empty string if sha reaches main and its diff touches a path named in evidence.
 
     The register's evidence field was free text: a path that never existed closed a
@@ -4711,6 +4872,10 @@ def _commit_delivers(sha, evidence, root=None):
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
                 "the commit does not deliver what the evidence claims")
+    named = _commit_named_for(tid, root) if tid else ""
+    if named and not named.startswith(sha) and not sha.startswith(named[:len(sha)]):
+        return (f"{named[:8]} names {tid} in its subject and {sha[:8]} does not -- "
+                "a commit that merely touches the same file is not this delivery")
     return ""
 
 
@@ -4753,6 +4918,9 @@ def cmd_task(argv):
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
+    p = sub.add_parser("drop")
+    p.add_argument("id")
+    p.add_argument("--why", required=True, help="why this will not be done; names what superseded it")
     sub.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
     args = ap.parse_args(argv)
     rows = _read_tasks()
@@ -4772,7 +4940,7 @@ def cmd_task(argv):
             "why": args.why,
             "reading": args.reading,
             "blocked_on": args.blocked_on,
-            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
         }
         _append_task(row)
@@ -4791,13 +4959,13 @@ def cmd_task(argv):
         if args.reviewer not in REVIEW_PAIRS:
             print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
-        bad = _commit_delivers(args.commit, args.evidence)
+        bad = _commit_delivers(args.commit, args.evidence, None, args.id)
         if bad:
             print(f"refusing: {bad}", file=sys.stderr)
             return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
-                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M"))
+                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -4814,12 +4982,25 @@ def cmd_task(argv):
             hit[0],
             state="open",
             reopen_reason=args.why,
-            reopened=time.strftime("%Y-%m-%d %H:%M"),
+            reopened=time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             evidence=hit[0].get("evidence", ""),  # keep prior evidence; the check accepts open+evidence
         )
         ev.pop("closed", None)
         _append_task(ev)
         print(f"{args.id} reopened: {args.why[:80]}")
+        return 0
+
+    if args.op == "drop":
+        hit = [r for r in rows if r.get("id") == args.id]
+        if not hit:
+            print(f"no task {args.id}; `harness task list` shows what is open")
+            return 1
+        if hit[0].get("state") != "open":
+            print(f"{args.id} is {hit[0].get('state')}, not open")
+            return 1
+        _append_task(dict(hit[0], state="dropped", drop_reason=args.why,
+                          closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime())))
+        print(f"{args.id} dropped: {args.why[:80]}")
         return 0
 
     show = rows if args.all else [r for r in rows if r.get("state") == "open"]
@@ -4843,7 +5024,7 @@ def _task_open_run(name, hypothesis):
         "why": hypothesis or f"0830v1 budget point {name}",
         "reading": "score_matrix record is the result; the fit interprets",
         "blocked_on": None,
-        "opened": time.strftime("%Y-%m-%d %H:%M"),
+        "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "evidence": None,
     }
     _write_tasks(rows + [row])
@@ -4860,7 +5041,7 @@ def _task_close_run(name, evidence):
             and r.get("owner") == "pipeline"
             and r.get("task") == f"run point {name}"
         ):
-            r.update(state="done", evidence=evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+            r.update(state="done", evidence=evidence, closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
             _write_tasks(rows)
             return r["id"]
     return None
@@ -4976,7 +5157,7 @@ def _broken_tasks_stale():
             "why": "selftest",
             "reading": None,
             "blocked_on": done["id"],
-            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
         }
     )
@@ -5385,6 +5566,15 @@ CHECKS = [
         _broken_blob,
     ),
     (
+        "non_shard_jsonl_excluded",
+        "train.py's shard glob skips holdout_slice_*.jsonl and any other non-shard family",
+        "the holdout slice is one file per PHASE, so an exact-name list could never cover it; "
+        "three domains failed to tokenize with KeyError: 'content' and the launch gate's epochs "
+        "item was blocked until it was found",
+        check_non_shard_jsonl_excluded,
+        _broken_non_shard_jsonl_excluded,
+    ),
+    (
         "spawned_scripts_exist",
         "every script harness.py shells out to is at the path harness.py uses",
         "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
@@ -5666,6 +5856,13 @@ CHECKS = [
         "the register refusal in a worktree pushed a session into the shared tree tonight: a rule that is only prose is one people break for cause",
         check_agents_rules_covered,
         _broken_agents_rules_covered,
+    ),
+    (
+        "timestamps_are_utc",
+        "every timestamp written into the repo is UTC",
+        "the Mac writes CST and the pod container writes UTC in the same format with no marker, so a pod row reads eight hours old the moment it lands and every ledger age comparison is wrong by up to eight hours (2026-09-01)",
+        check_timestamps_are_utc,
+        _broken_timestamps_are_utc,
     ),
     (
         "curl_ipv4",
@@ -6187,7 +6384,7 @@ def _board_event(kind, msg):
     path = os.path.join(ROOT, "runs", "events.jsonl")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M"), "kind": kind, "msg": msg}) + "\n")
+        f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "kind": kind, "msg": msg}) + "\n")
 
 
 def _board_data():
@@ -6242,8 +6439,8 @@ def _board_data():
             newest = max(newest, os.path.getmtime(p))
     ready_30b, gates_30b = _30b_readiness()
     return {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else None,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+        "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.gmtime(newest)) if newest else None,
                       "skip_count": n_skip, "fail_count": n_fail},
         "checks": checks,
         "ladder": ladder,
@@ -7008,7 +7205,7 @@ def _selftest_exp_fold():
         # expires. Half the threshold, so it is unambiguously inside the window whatever
         # _STALE_RUNNING_H becomes.
         recent = time.strftime("%Y-%m-%d %H:%M",
-                               time.localtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
+                               time.gmtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
         ev = [
             {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
             {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
@@ -7330,6 +7527,19 @@ def _demo():
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
+    # spawned_scripts_exist needs a SECOND world. Its registered one is "the file moved", which
+    # FAILs before the importability half ever runs. c3a47e8 broke both properties and the first
+    # fix covered only one: pretokenize.py sat at the right path and still raised
+    # ModuleNotFoundError, which is how tonight's cache warming died (b0, 2026-09-01).
+    _imp = _broken_spawned_scripts_importable()
+    try:
+        _st, _why = check_spawned_scripts_exist(_imp)
+        if _st != FAIL:
+            untested.append(f"spawned_scripts_exist reported {_st} on a present-but-"
+                            f"unimportable script ({_why[:60]})")
+    finally:
+        shutil.rmtree(_imp, ignore_errors=True)
+
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
     # The other half of the selftest: a PASS must have verified something. A check that
@@ -7581,7 +7791,7 @@ def _demo():
         _write_tasks(real_rows, tmp_tasks)
         test_row = dict(real_rows[0])
         test_row.update(id="t_selftest", state="done", evidence="prior evidence",
-                        owner="selftest", why="test", closed=time.strftime("%Y-%m-%d %H:%M"))
+                        owner="selftest", why="test", closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
         rows = _read_tasks(tmp_tasks) + [test_row]
         _write_tasks(rows, tmp_tasks)
         # Reopen: same transition as cmd_task
@@ -7590,7 +7800,7 @@ def _demo():
         assert hit and hit[0]["state"] == "done", "selftest row must start done"
         prior = hit[0].get("evidence", "")
         hit[0].update(state="open", reopen_reason="selftest reopen",
-                      reopened=time.strftime("%Y-%m-%d %H:%M"), evidence=prior)
+                      reopened=time.strftime("%Y-%m-%d %H:%M", time.gmtime()), evidence=prior)
         hit[0].pop("closed", None)
         _write_tasks(rows, tmp_tasks)
         # Verify: state=open, evidence preserved, reopen_reason present, check accepts
@@ -8276,7 +8486,7 @@ def cmd_clean(rest):
         "   if p not in m:\n"
         "    st=os.stat(p)\n"
         "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
-        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.localtime(st.st_mtime))}\\t{prd}')\n"
+        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.gmtime(st.st_mtime))}\\t{prd}')\n"
     )
     for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
         parts = ln.split("\t")
@@ -8492,7 +8702,7 @@ while True:
         try:
             with open(log, "a", encoding="utf-8") as lf:
                 lf.write(
-                    f"\\n[monitor {{time.strftime('%H:%M:%S')}}] no log growth in {{silent_limit}}s, "
+                    f"\\n[monitor {{time.strftime('%H:%M:%S', time.gmtime())}}] no log growth in {{silent_limit}}s, "
                     f"but pid {{pid}} is ALIVE -- stalled_suspected, NOT failed. Liveness here is "
                     f"inferred from LOG BYTES, not from the process; a generative eval is silent "
                     f"by construction. Leaving the row open: the run decides its own verdict.\\n"
@@ -9399,7 +9609,7 @@ def cmd_milestone(argv):
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
             "preds": [os.path.relpath(p, ROOT) for p in preds],
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
-            "measured": time.strftime("%Y-%m-%d"),
+            "measured": time.strftime("%Y-%m-%d", time.gmtime()),
         }
         with open(os.path.join(ROOT, "runs", "milestones.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -9484,7 +9694,7 @@ def cmd_milestone(argv):
                 ckpt = saved[step]
                 prev = [t for t in spec if t in scored]
                 paired = a.paired or (scored[prev[-1]] if prev else "ckpt_p324.pt")
-                print(f"[{time.strftime('%H:%M:%S')}] milestone {tok} @ step {step} "
+                print(f"[{time.strftime('%H:%M:%S', time.gmtime())}] milestone {tok} @ step {step} "
                       f"(target {target}): {ckpt} vs {paired}", flush=True)
                 # Pin BEFORE scoring: run_one may queue behind an occupied lane, and the
                 # rotation does not wait for the queue.
@@ -9600,8 +9810,10 @@ def main():
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
         timed = [n for n, s, *_ in res if s == TIMEOUT]
+        skipped = [n for n, s, *_ in res if s == SKIP]
     else:
         bad, warns, timed = [], [], []
+        skipped = []
     if cmd in ("all", "ledger"):
         print("\nLEDGER  (provenance and score on one line)")
         ledger()
@@ -9623,6 +9835,12 @@ def main():
         # is not a check that passed, and the next consecutive timeout exits 1.
         print(f"\n{len(timed)} check(s) TIMED OUT and did not run: {', '.join(timed)} "
               f"-- a second consecutive timeout FAILs")
+    if skipped:
+        # 0 FAIL means nothing without the denominator. Same sha 2dfe207a: Mac printed
+        # 0 FAIL over 38 checks while the pod FAILed 9 -- the ones that skip here are
+        # where they live, and the last line a reader acts on never said so.
+        print(f"\n{len(bad)} FAIL of {len(res) - len(skipped)} run; {len(skipped)} did "
+              f"NOT run here: {', '.join(skipped)} -- green here is not green on the pod")
     if warns:
         print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
     return 0
