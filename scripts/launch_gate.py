@@ -26,6 +26,7 @@ Usage: python scripts/launch_gate.py [--mix data/mix_500m.json] [--world 7]
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -159,6 +160,16 @@ ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
 LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
 
 
+def _sha256(p):
+    if not os.path.exists(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def gate_arch_tests(root, mix_path, world):
     """4. The shape-specific arch test and the e2e test have PASSED on this shape.
 
@@ -211,6 +222,19 @@ def gate_arch_tests(root, mix_path, world):
         elif not row.get("real_kernel"):
             problems.append(f"{name}: real_kernel is not true -- a stand-in chunk_kda "
                             f"passes every case without touching a KDA kernel")
+        else:
+            # The row must describe the test that is here now. Without this the record
+            # survives an edit to the test, which is the failure this repo has bought
+            # three times over (vocab_id, .srcfp, filters_fp) -- and both of these
+            # files changed three times on the day this format was written.
+            want = row.get("test_sha256")
+            here = _sha256(os.path.join(root, name))
+            if want is None:
+                problems.append(f"{name}: the row carries no test_sha256, so it cannot "
+                                f"be shown to describe the file that is here now")
+            elif here and want != here:
+                problems.append(f"{name}: recorded against {want[:12]}, the file here "
+                                f"is {here[:12]} -- the test changed after it passed")
     if problems:
         return NOGO, "; ".join(problems[:3])
     return GO, (f"{len(ARCH_TESTS)} shape test(s) passed at "
@@ -521,10 +545,23 @@ def selftest():
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         with open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8") as f:
             json.dump({n: {"result": "pass", "shape": dict(LAUNCH_SHAPE),
-                           "real_kernel": True} for n in ARCH_TESTS}, f)
+                           "real_kernel": True,
+                           "test_sha256": _sha256(os.path.join(d, n))}
+                       for n in ARCH_TESTS}, f)
     dg = world(_good)
     st, why = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
     assert st == GO, f"arch_tests refuses the record it is written to accept: {why}"
+
+    # and a row recorded against a different version of the test must not pass
+    def _stale(d):
+        _good(d)
+        p = os.path.join(d, "runs", "launch_tests.json")
+        rows = json.load(open(p, encoding="utf-8"))
+        rows[ARCH_TESTS[0]]["test_sha256"] = "0" * 64
+        json.dump(rows, open(p, "w", encoding="utf-8"))
+    ds = world(_stale)
+    st, why = gate_arch_tests(ds, os.path.join(ds, mix_rel), 7)
+    assert st != GO, f"a row recorded against a different test version passed: {why}"
 
     bad = []
     for name, fn in GATES:

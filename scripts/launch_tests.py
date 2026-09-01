@@ -17,12 +17,21 @@ not "has it ever passed".
 """
 import json
 import os
+import hashlib
 import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "runs", "launch_tests.json")
 SHAPE_KEYS = ("d", "layers", "heads", "ffn_hidden")
+
+
+def _sha256(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=ROOT):
@@ -45,6 +54,13 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
         "real_kernel": bool(real_kernel),
         "recorded": time.strftime("%Y-%m-%d %H:%M"),
         "host": os.uname().nodename,
+        # The fingerprint of what produced it. Without this the row stays valid after
+        # the test changes, which is the failure this repo has bought three times
+        # (vocab_id on checkpoints, .srcfp on token caches, filters_fp on shards). Both
+        # of these files changed three times on the day the record format was written.
+        # Content hash, not a git sha: an uncommitted edit changes what runs and a sha
+        # cannot see it.
+        "test_sha256": _sha256(os.path.abspath(test_file)),
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
