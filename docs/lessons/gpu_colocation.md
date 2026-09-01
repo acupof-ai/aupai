@@ -145,9 +145,71 @@ whatever slack the retune leaves. Doing it the other way builds a dependency on 
 inefficiency we are trying to remove.
 
 A co-tenant also never makes the primary faster. It makes the primary slower by
-whatever it consumes — and on a bandwidth-rich, FLOP-poor part like H20, two
-kernels sharing SMs contend for exactly the resource KDA is already latency-bound
-against.
+whatever it consumes.
+
+### H20's roofline inverts the intuition, and I had it backwards
+
+I have been describing H20 as "bandwidth-rich, FLOP-poor" and drawing the wrong
+inference from it. The specs are right; the conclusion was not.
+
+| part | bf16 dense | HBM | **ridge point** |
+|---|---|---|---|
+| H20 | 148.0 TF | 4.00 TB/s | **37 FLOP/byte** |
+| H100 SXM | 989.5 TF | 3.35 TB/s | 295 |
+| H200 SXM | 989.5 TF | 4.80 TB/s | 206 |
+
+The ridge point is the arithmetic intensity above which a kernel is compute-bound.
+Dropping from 295 to 37 means **more** operations cross that threshold on H20, so
+H20 is *more* compute-bound than H100, not less. The scarce resource here is the
+tensor pipe; bandwidth is the one in surplus — 1.2× H100's bandwidth feeding 0.15×
+its FLOPs.
+
+That sharpens the verdict rather than softening it. The only tenant that could fit
+is FLOP-light and bandwidth-hungry, and **a second training job is the worst
+possible pairing** — it wants exactly the resource H20 has least of. Our own KDA
+is consistent with the surplus: it runs at 1.16 TB/s of 4 TB/s, 29% of peak.
+
+(Use dense-vs-dense figures. H100's 1979 TF is the sparsity number; comparing it
+against H20's dense 148 doubles the apparent gap. NVIDIA publishes no H20
+datasheet, so the 148/4.0/78-SM figures come from on-chip telemetry corroborated
+by independent configs, and sparse bf16 and TDP are not reported.)
+
+## Intra-process concurrency: the one lever that is real is not concurrency
+
+The brief asked whether stream concurrency could fill KDA's idle SMs. It cannot,
+and chasing it would miss a one-line change sitting underneath.
+
+| path | what blocks it |
+|---|---|
+| CUDA streams | the register file is the constraint; a co-resident block cannot be allocated. Physical. |
+| Green contexts | usable today (`torch.cuda.green_contexts`, UMD 12.8+) but Hopper's granularity is 8 SMs and **78 is not a multiple of 8** — any split strands SMs. NVIDIA's own guide says the purpose is latency, not throughput, and that "concurrent execution of independent GPU work is not guaranteed". Measured *regressions* exist on Jetson. |
+| Programmatic Dependent Launch | reachable — Triton has `launch_pdl=True` since PR #6394 — but it hides a fixed per-boundary bubble. Measured end-to-end: +3.0% (TRT-LLM, B200), +2.2–2.9% (GB200), **0.8%** (SGLang), and noise at batch >16. Our grids are 26–840 waves, so the tail is 0.06–1.9%. `fla` has zero `gdc_wait` call sites. |
+
+**The finding, verified on our own install rather than read from the survey:**
+
+```python
+# fla/ops/kda/chunk_bwd.py:27, on the pod
+NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8]
+```
+
+`IS_NVIDIA_HOPPER` is `True` on our H20 (checked: device "NVIDIA H20", capability
+(9,0)). So **the autotuner never tries 8 warps** on the kernels that are
+occupancy-starved — a cap written for H100 that H20 inherits by identifying as
+Hopper, on a part with a very different FLOP:bandwidth ratio.
+
+That is the retune's first move, and it is one line and directly testable. The
+order that follows, from the same evidence: unlock `num_warps=8`, then step
+`num_stages` down (which frees registers *and* shared memory without forcing
+ptxas to spill), and only then consider `maxnreg` — checking `n_spills` at every
+point, because Triton's autotuner ranks purely by wall clock and will silently
+pick a spilling config if it happens to be fastest among bad ones.
+
+One honest caveat on the concurrency question:
+`chunk_gated_delta_rule_bwd_kernel_dhu` has grids as low as 32–128 blocks against
+78 SMs, so it genuinely is under-filled. It is also the kernel holding fp32 state
+accumulators and carrying the most register pressure — both properties come from
+the same design choice, which is why the fix is the register budget and not a
+second stream.
 
 ## A second PROCESS cannot backfill anything
 
@@ -182,6 +244,28 @@ Measured co-location slowdowns, second workload on a busy GPU:
 | Zico, ATC '21 | **8×** | MPS under memory pressure |
 | MIG (measured in TGS) | **23%** | even hardware partitioning is not free |
 | Gandiva, OSDI '18 | **−13%** | the best case, and only for an already 94%-utilized job |
+
+### MIG is disqualified by one line, not by its overhead
+
+MIG does give real isolation — the user guide describes "separate and isolated
+paths through the entire memory system", L2 banks and DRAM busses assigned per
+instance, which is exactly what MPS lacks. And H20 supports it: the supported-GPU
+table lists H20 / GH100 / 96GB / 7 instances, and the driver source gives it the
+same partition geometry as H100 96GB.
+
+None of that matters here, because the same guide says:
+
+> **NCCL is currently not supported with MIG.**
+
+No NCCL means no DDP, no FSDP, no TP or PP. A 7-rank data-parallel job cannot run
+across MIG instances at all. The partitioning overhead — measured at 6–12% on
+Ampere, and *negative* on A30 where slicing recovered utilisation a single job
+could not use — is beside the point.
+
+Two operational notes if MIG is ever considered for single-card work: instances
+cannot be destroyed while a process is using them (`NVML_ERROR_IN_USE`, and a
+monitoring process counts), and on Hopper **MIG mode does not survive a reboot or
+a driver reload**, unlike Ampere where it is sticky.
 
 ## What the frameworks actually do
 
@@ -219,12 +303,13 @@ option returns and to whom:
 
 | # | option | returns | to whom | ship cost |
 |---|---|---|---|---|
-| 1 | **retune the KDA kernel** (registers, block dims, `num_warps`/`num_stages`) | up to 6.8% of the step | the primary | a tuning pass, no numerics change |
-| 2 | **keep evals on the lane card** — what we already do | the full lane, uncontended | evals | none, it is the status quo |
-| 3 | **in-process eval between steps**, if a metric ever needs the training weights live | ~1% at a sane interval on a 200M model | evals | small; this is what every framework does |
+| 1 | **unlock `num_warps=8` for KDA on H20** — `fla/ops/kda/chunk_bwd.py:27` caps it at [2,4] for Hopper, and H20 inherits that | unknown until measured; it is the gate in front of the 6.8% | the primary | one line, autotuner does the rest, no numerics change |
+| 2 | rest of the retune: `num_stages` down, then `maxnreg`, checking `n_spills` each step | up to 6.8% of the step | the primary | a tuning pass |
+| 3 | **keep evals on the lane card** — what we already do | the full lane, uncontended | evals | none, it is the status quo |
+| 4 | **in-process eval between steps**, if a metric ever needs the training weights live | ~1% at a sane interval on a 200M model | evals | small; this is what every framework does |
 | — | second process on a training card, no MPS | **nothing** — different CUDA contexts time-slice the whole GPU | neither | — |
 | — | second process under MPS | a slice of the same 174 ms window | the co-tenant, primary pays | partial fault isolation, no memory partitioning |
-| — | MIG | 23% measured loss even with hardware partitioning; cannot be reconfigured while a job runs | neither | — |
+| — | MIG | **NCCL is not supported with MIG** — no DDP, no FSDP. Ends the option for a 7-rank job outright | neither | — |
 
 The ranking is not close, and three independent lines of evidence agree:
 

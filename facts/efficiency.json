@@ -1753,6 +1753,21 @@
    },
    "uncertainty": "we have not measured our own SM_ACTIVE; the Acme gap is their clusters, and only says our busy figure cannot be read as SM work",
    "status": "recorded"
+  },
+  {
+   "id": "eff.kda_num_warps_capped_on_h20",
+   "value": "flash-linear-attention caps the KDA backward autotuner at num_warps [2,4] on Hopper, and our H20 inherits that cap, so 8 warps is never tried on the kernels that are occupancy-starved. Verified on the pod install, not read from a survey: fla/ops/kda/chunk_bwd.py:27 reads NUM_WARPS = [2, 4] if IS_NVIDIA_HOPPER else [2, 4, 8], and IS_NVIDIA_HOPPER evaluates True on our card (torch reports 'NVIDIA H20', capability (9,0)). The cap was written for H100, whose FLOP:bandwidth ratio is very different -- ridge point 295 FLOP/byte against H20's 37 -- so inheriting it by compute capability is an unexamined default rather than a tuning decision for this part. This is the first move of the KDA retune: one line, the autotuner does the rest, no numerics change. Recommended order after it: step num_stages down (frees registers AND shared memory without forcing ptxas to spill), then consider maxnreg, checking n_spills at each point -- Triton's autotuner ranks purely by wall clock and will silently select a spilling config if it is fastest among a bad set. Calibration from Triton PR #9248: maxnreg gained 15% (2290->2640 GB/s) on H200 precisely because it did NOT induce spills; no published win comes from forcing registers down to raise occupancy.",
+   "measured": "2026-09-01",
+   "source": "pod install /usr/local/lib/python3.12/dist-packages/fla/ops/kda/chunk_bwd.py:27 and a live IS_NVIDIA_HOPPER check; triton PR #6394, PR #9248",
+   "config": {
+    "cap": "[2, 4] on Hopper, [2, 4, 8] otherwise",
+    "our_device": "NVIDIA H20, capability (9,0)",
+    "IS_NVIDIA_HOPPER": true,
+    "kda_occupancy": "6-13%",
+    "registers_per_thread": 254
+   },
+   "uncertainty": "the gain from unlocking 8 warps is unmeasured; it may not help, and it must be measured with n_spills checked",
+   "status": "measured"
   }
  ]
 }
