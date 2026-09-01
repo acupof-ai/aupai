@@ -1199,6 +1199,45 @@ def _tmp_repo(mix_obj=None):
     return d
 
 
+def _tmp_repo_shaped(mix_obj=None):
+    """A throwaway tree that SEES the real code, docs and data directories.
+
+    A world built on the bare `_tmp_repo()` resolves nothing, so any check that reads a
+    path FAILs there whether or not the mutation is present -- three worlds were green
+    for exactly that reason (entrypoints_ran on 38 absent citations, pod_drift on 238,
+    facts_well_formed on absent docs/ and data/eval). Symlinks, so the world costs
+    nothing and the mutation is the only thing wrong with it. Write into a symlinked
+    directory and you write into the repo, so a world that mutates a file under one must
+    copy it in first (de, 2026-09-01)."""
+    import shutil
+    import subprocess
+
+    d = _tmp_repo(mix_obj)
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
+    # A real `git init` plus a COPIED .gitignore. `_is_gitignored` shells out to
+    # `git check-ignore` and only falls back to reading .gitignore itself, and that
+    # fallback is weaker than git -- it missed data/corpus/math/, so every gitignored
+    # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
+    # .gitignore, so this one is copied while everything else is linked.
+    shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
+    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    for sub in os.listdir(os.path.join(ROOT, "data")):
+        src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    for f in os.listdir(os.path.join(ROOT, "runs")):
+        src, dst = os.path.join(ROOT, "runs", f), os.path.join(d, "runs", f)
+        if not os.path.exists(dst):
+            os.symlink(src, dst)
+    return d
+
+
 def _tiny_tokenizer_json(eos_id=1, with_num=True):
     """A minimal WordLevel tokenizer that is VALID but LOSSY, so the round-trip and
     pinned-id checks have something real to reject (an absent file only hits SKIP)."""
@@ -2961,26 +3000,29 @@ def check_facts_well_formed(root):
 
 def _broken_facts():
     """The REAL facts files and REAL AGENTS.md, with one entry's config deleted and
-    one entry's source pointing at a non-existent data/ path. A hand-written file
+    one entry's source pointing at a non-existent scripts/ path. A hand-written file
     would share the check's own assumptions.
 
-    The source mutation uses a bare data/ path with no other prefix substring:
-    the old regex (no data/ in its prefix list) found no match and silently passed
-    it; the new regex matches data/... and FAILs on the missing file. This is the
-    coverage the broken world lacked -- it only exercised the missing-config path,
-    which is why the missing left anchor and missing data/ prefix went unnoticed."""
+    The source mutation uses a path under scripts/: a data/ path would be gitignored by
+    data/*.jsonl and silently SKIPped, so it must be one the three-state check treats
+    as FAIL. That coverage is what the world lacked when the source regex had no left
+    anchor and no data/ prefix.
+
+    The code and docs directories are symlinked in because OTHER entries' sources cite
+    them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
+    exist` for facts nobody mutated -- so the selftest was green on absence, and would
+    have stayed green with both mutations removed. Verified by removing them
+    (de, 2026-09-01)."""
     import shutil
 
-    d = _tmp_repo()
+    d = _tmp_repo_shaped()
     os.makedirs(os.path.join(d, ".git"), exist_ok=True)  # full checkout: the pod skips the path half
+    os.remove(os.path.join(d, "facts"))
     os.makedirs(os.path.join(d, "facts"))
     for f in glob.glob(os.path.join(FACTS_DIR, "*.json")):
         shutil.copy(f, os.path.join(d, "facts"))
     obj = json.load(open(os.path.join(d, "facts", "tokenizer.json"), encoding="utf-8"))
     del obj["facts"][0]["config"]
-    # A source under scripts/ (not gitignored, not in the baseline) that does not
-    # exist. A data/ path would be gitignored by data/*.jsonl and silently SKIPped --
-    # the source-path mutation must use a path the three-state check treats as FAIL.
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
@@ -3431,11 +3473,23 @@ def _read_guard_phrases(root):
 
 
 def _broken_readme_current():
-    """The REAL README with a retired phrase spliced back in -- the FAIL tier."""
+    """The REAL README with a retired phrase spliced back in -- the FAIL tier.
+
+    The world also needs the code directories: tier (c) resolves every path README's
+    command blocks cite, and without them the world FAILed on `./run_ddp.sh`,
+    `eval/score_matrix.py` and the rest whether or not the phrase was spliced. Same
+    defect as entrypoints_ran's world (de, 2026-09-01)."""
     import shutil
     d = _tmp_repo()
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
+                 "filters", "docs", "facts"):
+        if os.path.isdir(os.path.join(ROOT, name)):
+            os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+    for f in os.listdir(ROOT):
+        if f.endswith((".py", ".sh")) and not os.path.exists(os.path.join(d, f)):
+            os.symlink(os.path.join(ROOT, f), os.path.join(d, f))
     p = os.path.join(d, "README.md")
     text = open(p, encoding="utf-8").read()
     with open(p, "w", encoding="utf-8") as f:
@@ -4125,17 +4179,40 @@ def _broken_ghost_running():
 
 
 def _broken_pod_drift():
-    """The REAL manifest plus one REAL scoped file, mutated: the pod gate must see the
-    mismatch. The CI branch cannot be exercised here -- the selftest world has no .git."""
+    """Every file the REAL manifest names, copied in, the manifest REGENERATED over
+    those copies, then one file mutated. Two bugs made the old world green for free:
+
+    It copied the manifest plus one file, so the other 238 named files were absent and
+    the check reported "239 drifted: missing AGENTS.md; missing algorithms/..." with or
+    without the mutation. Verified by restoring the appended file and rerunning: still
+    FAIL, same 239. Selftest green on 238 absences.
+
+    Copying all 239 was not enough either -- the manifest records committed hashes and a
+    dev checkout has uncommitted edits, so the world drifted on whatever the session
+    happened to have open. Regenerating over the copies makes the world self-consistent,
+    and then the appended line is the only difference there is (de, 2026-09-01).
+
+    The CI branch cannot be exercised here -- the selftest world has no .git."""
     import shutil
 
     d = _tmp_repo()
-    os.makedirs(os.path.join(d, "scripts"))
-    shutil.copy(
-        os.path.join(ROOT, "data", "pod_head_manifest.txt"),
-        os.path.join(d, "data", "pod_head_manifest.txt"),
-    )
-    shutil.copy(os.path.join(ROOT, "scripts", "harness.py"), os.path.join(d, "scripts", "harness.py"))
+    man_rel = os.path.join("data", "pod_head_manifest.txt")
+    rels = []
+    for line in open(os.path.join(ROOT, man_rel), encoding="utf-8"):
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rel = parts[1]
+        src = os.path.join(ROOT, rel)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        rels.append((rel, parts[2] if len(parts) > 2 else "docs"))
+    with open(os.path.join(d, man_rel), "w", encoding="utf-8") as f:
+        for rel, tag in rels:
+            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  {tag}\n")
     with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
         f.write("\n# broken world drift\n")
     return d
