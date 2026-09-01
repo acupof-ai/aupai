@@ -14,6 +14,12 @@
 #
 # Cards come from the caller. Card 7 is another session's eval, so this is world=6 --
 # what matters is that both arms see the same world, not which world.
+#
+# --allow_pod_drift is passed for ONE known divergence: datagen/build_corpus.py on the pod
+# carries 3b's uncommitted allow_empty work and main does not, so pushing main over it
+# would break a corpus build in progress. train.py does not import build_corpus (checked),
+# so the drift cannot reach this measurement. The flag is for exactly this -- a known
+# hotfix -- and both arms run under the identical drift, so it cancels within the A/B.
 set -u
 cd /work/aupai
 
@@ -37,6 +43,7 @@ for ar in 0 8; do
     --dim 1024 --layers 32 --heads 8 --ffn_hidden 3072 \
     --batch 32 --accum 1 --grad_ckpt --lr_scale 0.85 \
     --attn_res_blocks "$ar" \
+    --allow_pod_drift \
     --max_steps 40 --save_every 100000 --val_every 0 \
     > "runs/ab_ar${ar}.log" 2>&1
   echo "=== ARM ar${ar} exit=$? $(date -u +%H:%M:%S)"
