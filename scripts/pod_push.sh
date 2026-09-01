@@ -57,6 +57,16 @@ find_emptydir() {
 
 # Push one committed, main-reachable file. Large files (>100KB gzip+base64) bypass
 # podput's argv limit via the container's emptyDir host path.
+# True when a script of this name is executing on the pod. ps with STAT Z filtered,
+# not pgrep -f: a ZOMBIE keeps its argv, and run_ddp.sh had three of them beside the
+# one live process, so pgrep would match the dead ones forever and make the guard a
+# permanent refusal -- the trap _drop_zombies exists for.
+running_on_pod() {
+  [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] || return 1
+  ~/bin/pod "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -q '$(basename "$1")'" \
+    >/dev/null 2>&1
+}
+
 push_one() {
   local f="$1"
   if [ -n "$(git status --porcelain -- "$f")" ]; then
@@ -84,16 +94,10 @@ push_one() {
   # executes whatever now sits there. Demonstrated, not assumed: replacing a sleeping
   # script mid-run made it print the REPLACEMENT's lines. Nearly overwrote run_ddp.sh
   # while it was driving the lr probe's second arm, 40 minutes into a 7-card run
-  # (2026-09-02). Refuses rather than skips: a silent skip means the pod keeps old
-  # code while the push reports success, which is the drift this script exists to stop.
+  # (2026-09-02). --all pre-checks the whole batch; this covers a named-file push.
   case "$f" in
     *.sh)
-      # ps, not pgrep: a ZOMBIE keeps its argv, and run_ddp.sh had three of them beside
-      # the one live process. pgrep -f matches the dead ones forever, which would turn
-      # this guard into a permanent refusal -- the same trap _drop_zombies exists for.
-      if [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] && ~/bin/pod \
-           "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -q '$(basename "$f")'" \
-           >/dev/null 2>&1; then
+      if running_on_pod "$f"; then
         echo "REFUSING: $f is executing on the pod right now. podput truncates in place and" >&2
         echo "  bash reads scripts by byte offset, so overwriting it can make the running" >&2
         echo "  shell execute a corrupted position. Wait for it to finish, or override with" >&2
@@ -132,12 +136,29 @@ if [ $ALL -eq 1 ]; then
   # separator in the pod's bash -lc, so only the first path would reach sha256sum.
   paths=$(awk '{print $2}' data/pod_head_manifest.txt | grep -v '^runs/' | tr '\n' ' ')
   ~/bin/pod "cd /work/aupai && sha256sum $paths 2>/dev/null" > "$tmp/pod" || true
-  pushes=(); dels=()
+  pushes=(); dels=(); blocked=()
   while read -r op p; do
     [ -n "$op" ] || continue
     if [ "$op" = push ]; then pushes+=("$p"); else dels+=("$p"); fi
   done < <(python3 scripts/pod_drift.py --plan-sync "$tmp/old" "$tmp/pod")
   echo "pod_push --all: ${#pushes[@]} push, ${#dels[@]} delete"
+  # CHECK THE WHOLE BATCH BEFORE PUSHING ANY OF IT. push_one refuses a .sh that is
+  # executing, and refusing mid-loop leaves the pod HALF UPDATED with a stale sync
+  # stamp -- measured: the first attempt pushed 3 files, then refused on run_ddp.sh,
+  # and the pod sat at 3 drifted files. The drift check and run_ddp's own stamp gate
+  # both caught it, so nothing unsafe shipped, but a partial push is a worse state
+  # than either pushing or not pushing. All-or-nothing.
+  for p in ${pushes[@]+"${pushes[@]}"}; do
+    case "$p" in *.sh) running_on_pod "$p" && blocked+=("$p") ;; esac
+  done
+  if [ ${#blocked[@]} -gt 0 ]; then
+    echo "REFUSING the whole push: ${#blocked[@]} script(s) executing on the pod: ${blocked[*]}" >&2
+    echo "  A running .sh is a cursor into a file, not a file: podput truncates in place" >&2
+    echo "  and bash reads by byte offset, so the live shell would resume inside new bytes." >&2
+    echo "  Nothing was pushed -- a partial sync is worse than none. Wait, or set" >&2
+    echo "  POD_PUSH_ALLOW_RUNNING_SH=1." >&2
+    exit 1
+  fi
   for p in ${pushes[@]+"${pushes[@]}"}; do push_one "$p"; done
   if [ ${#dels[@]} -gt 0 ]; then
     ~/bin/pod "cd /work/aupai && rm -f -- ${dels[*]}"
