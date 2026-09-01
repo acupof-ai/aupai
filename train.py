@@ -102,7 +102,6 @@ NON_SHARD_JSONL = {
     "cci3_iaa_50.jsonl",
     "web_labels.jsonl",
 }
-
 # A shard is NAMED like one: ShardWriter emits <prefix>_<NNN>.jsonl and nothing else does.
 # This is a whitelist because the blacklist above only knows the non-shards that existed
 # when someone wrote it down -- on 2026-09-01 datagen started writing

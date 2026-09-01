@@ -87,8 +87,8 @@
    "rows_from_weight_at_runtime": 1238,
    "pool_rows_estimated": 9043,
    "epochs_fractional": 0.1369,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 9,043 rows. no cache yet; awaiting pretokenize of data/corpus/chatml/",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 9,043 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null
   },
   "chat_qa": {
@@ -100,8 +100,8 @@
    "rows_from_weight_at_runtime": 1212,
    "pool_rows_estimated": 8854,
    "epochs_fractional": 0.1369,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 8,854 rows. chat/'s cache measures exactly 38,187,650 tokens and 9,320 rows for the same 160,414 documents; chat_qa is a re-render into its own directory and has no cache yet",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 8,854 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null
   },
   "zh_web": {
@@ -124,10 +124,10 @@
    "role": "PROBE ONLY. code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one language, 6B curated Python, HumanEval 5",
    "weight_decimals": 6,
    "rows_from_weight_at_runtime": 2621,
-   "pool_rows_estimated": 97671,
+   "pool_rows_estimated": 97722,
    "epochs_fractional": 0.0268,
-   "epochs_pool_measured": false,
-   "epochs_pool_source": "NOT MEASURED -- estimated from the stamp at 97,671 rows. the ast.parse-surviving Python subset; /data00/tokens_code_rp1t.pt holds the FULL 7.57B multi-language corpus (1,847,469 rows), not this subset, so its cache cannot be read for this domain",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "MEASURED from the token cache: 97,722 drawable rows (rows = cache.numel()//(seq+1), minus n_val), read 2026-09-01",
    "fingerprint": null
   }
  },

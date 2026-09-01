@@ -1535,6 +1535,48 @@ def _gpu_present():
     return bool(glob.glob("/dev/nvidia[0-9]*"))
 
 
+def check_non_shard_jsonl_excluded(root):
+    """train.py must classify every .jsonl in a domain dir, and REFUSE the unclassifiable.
+
+    Written when holdout_slice_<phase>.jsonl -- a per-phase family an exact-name list could
+    never cover -- was globbed as a shard and three domains died on KeyError: 'content'. My
+    first fix added a prefix skip. main's (044e5ed) is strictly better and replaced it: a
+    whitelist for shards, a pattern for known non-shards, and a REFUSAL for anything matching
+    neither. The difference matters -- a prefix skip silently drops a real shard someone
+    misnames, which is the expensive failure; refusing costs two minutes at step 0.
+
+    This checks the rule, not today's corpus: a dev box has no domain dirs, and a check that
+    passes on an empty directory is the vacuous shape this file exists to retire."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return SKIP, "no train.py"
+    body = open(src, encoding="utf-8").read()
+    # Match the DEFINITION, not the name. `"SHARD_RE" in body` is satisfied by the comment
+    # above it, so deleting the assignment left the check green on its own broken world --
+    # a substring test passing on prose, which is the same defect as grepping a gate's
+    # message for "ESTIMATED" (b0, 2026-09-01, twice in one day).
+    for name in ("SHARD_RE", "NON_SHARD_RE"):
+        if not re.search(rf"^{name}\s*=\s*re\.compile", body, re.M):
+            return FAIL, (f"train.py does not define {name}: a new artifact written into a "
+                          f"corpus dir will be tokenized as rows")
+    # the refusal branch is the point -- a whitelist that silently skips is only half the fix
+    if "REFUSING" not in body.split("def _domain_seqs")[1][:4000]:
+        return FAIL, ("_domain_seqs classifies shards but does not REFUSE the unknown -- a "
+                      "misnamed shard would be dropped from training in silence")
+    return PASS, "train.py whitelists shards, patterns known non-shards, and refuses the rest"
+
+
+def _broken_non_shard_jsonl_excluded():
+    """train.py with the shard whitelist removed -- the pre-044e5ed world, where an unknown
+    .jsonl in a corpus dir is read as data."""
+    d = _tmp_repo()
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    body = body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', "")
+    with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as f:
+        f.write(body)
+    return d
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -1713,8 +1755,40 @@ def check_spawned_scripts_exist(root):
             f"{len(unlisted)} spawned script(s) in the source but not in _SPAWNED_SCRIPTS: "
             f"{', '.join(unlisted)} -- add them, or this check is green over an unchecked path"
         )
-    return PASS, f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present, and the list covers "\
-                 f"every literal path in harness.py"
+    # EXISTING IS NOT ENOUGH: a script can be at its path and still fail on import. c3a47e8
+    # moved datagen/pretokenize.py out of scripts/, where `sys.path.insert(0, ROOT)` had been
+    # enough to find `import harness` -- from datagen/ it is not, and the file raised
+    # ModuleNotFoundError the first time anyone ran it after the move, which was tonight,
+    # warming caches for the launch gate. Presence and importability are different properties
+    # and the same commit broke both.
+    #
+    # -c "import ..." rather than --help: --help exits before some scripts finish importing,
+    # and a check that passes because it stopped early is the shape this file keeps finding.
+    broken = []
+    for rel, why in _SPAWNED_SCRIPTS:
+        if not rel.endswith(".py"):
+            continue
+        full = os.path.join(root, rel)
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import importlib.util,sys;"
+             f"spec=importlib.util.spec_from_file_location('m',{full!r});"
+             "m=importlib.util.module_from_spec(spec);"
+             "sys.argv=['m','--help'];"
+             "spec.loader.exec_module(m)"],
+            capture_output=True, text=True, cwd=root, timeout=120,
+        )
+        err = (r.stderr or "")
+        if "ModuleNotFoundError" in err or "ImportError" in err:
+            broken.append(f"{rel}: {err.strip().splitlines()[-1][:70]} ({why})")
+    if broken:
+        return FAIL, (
+            f"{len(broken)} spawned script(s) present but not importable: "
+            + "; ".join(broken[:3])
+            + " -- being at the right path is not the same as running"
+        )
+    return PASS, (f"all {len(_SPAWNED_SCRIPTS)} spawned scripts present and importable, and the "
+                  f"list covers every literal path in harness.py")
 
 
 def _broken_spawned_scripts_exist():
@@ -1731,6 +1805,29 @@ def _broken_spawned_scripts_exist():
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
     os.rename(os.path.join(d, "datagen", "pretokenize.py"),
               os.path.join(d, "scripts", "pretokenize.py"))
+    return d
+
+
+def _broken_spawned_scripts_importable():
+    """Every script at its correct path, but pretokenize.py with its scripts/ path entry
+    removed -- the SECOND half of what c3a47e8 broke, and the half that survived the first
+    fix. Reverting one line of the real file rather than writing a stub: a stub would import
+    cleanly and prove nothing."""
+    import shutil
+
+    d = _tmp_repo()
+    for rel, _ in _SPAWNED_SCRIPTS:
+        full = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        src = os.path.join(ROOT, rel)
+        if os.path.exists(src):
+            shutil.copy(src, full)
+        else:
+            open(full, "w").write("# stub\n")
+    pre = os.path.join(d, "datagen", "pretokenize.py")
+    body = open(pre).read().replace(
+        'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
+    open(pre, "w").write(body)
     return d
 
 
@@ -5469,6 +5566,15 @@ CHECKS = [
         _broken_blob,
     ),
     (
+        "non_shard_jsonl_excluded",
+        "train.py's shard glob skips holdout_slice_*.jsonl and any other non-shard family",
+        "the holdout slice is one file per PHASE, so an exact-name list could never cover it; "
+        "three domains failed to tokenize with KeyError: 'content' and the launch gate's epochs "
+        "item was blocked until it was found",
+        check_non_shard_jsonl_excluded,
+        _broken_non_shard_jsonl_excluded,
+    ),
+    (
         "spawned_scripts_exist",
         "every script harness.py shells out to is at the path harness.py uses",
         "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
@@ -7421,6 +7527,19 @@ def _demo():
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
+    # spawned_scripts_exist needs a SECOND world. Its registered one is "the file moved", which
+    # FAILs before the importability half ever runs. c3a47e8 broke both properties and the first
+    # fix covered only one: pretokenize.py sat at the right path and still raised
+    # ModuleNotFoundError, which is how tonight's cache warming died (b0, 2026-09-01).
+    _imp = _broken_spawned_scripts_importable()
+    try:
+        _st, _why = check_spawned_scripts_exist(_imp)
+        if _st != FAIL:
+            untested.append(f"spawned_scripts_exist reported {_st} on a present-but-"
+                            f"unimportable script ({_why[:60]})")
+    finally:
+        shutil.rmtree(_imp, ignore_errors=True)
+
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
     # The other half of the selftest: a PASS must have verified something. A check that
