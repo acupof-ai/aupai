@@ -85,6 +85,18 @@ that never ran is more dangerous than a message, **because it will be cited**.
 anyway: 12 of 13 mixes, including the launch mix, were certified by a comparison that
 never happened.
 
+**Read a blob by its id, not by `<sha>:path`.** `git show <sha>:path` and
+`git cat-file -p <sha>:path` will silently return a diff instead of the file. The
+same 780-line file read as 29, 23, 25 and 594 lines across four attempts — **every
+number plausible**, which is the danger: a 0 or an error would have stopped the
+reader at the first attempt. Two people were nearly reported as having dropped
+work they had not touched. Resolve first, then read:
+
+```
+git rev-parse <sha>:path        # -> blob id
+git cat-file -p <blob-id>       # -> the file
+```
+
 **Every number carries its configuration, and that includes its resolution and its
 extraction rule.** Six numbers were misused that day and every caveat was known at the
 time — none was printed beside the number. A throughput field quantised to 1K was
@@ -113,6 +125,14 @@ names. The guard was not broken.
 **A guard only guarantees the one thing it checks.** An A/B guard that refuses
 identical arms knows nothing about time windows; "the guard passed" was read as "this
 A/B is clean".
+
+**One red light per reason.** A permanent red is no signal — and a red with several
+independent causes is worse, because it cannot be read at all. `restartability` was
+red for three unrelated reasons at once: a 5s timeout, a phantom `.py` another
+session's hook had just written into the directory it scans, and one genuinely
+unlisted script. Any single fix left it red, so each looked ineffective and none was
+finished. Split the causes before judging the light; a check that can fail three ways
+should say which.
 
 **A universal over a self-built population is only as true as the construction.**
 "27 selftest-carrying files, all gated" while the real population was 36. Narrow the
