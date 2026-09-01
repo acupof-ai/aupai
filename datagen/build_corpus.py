@@ -427,6 +427,7 @@ def _global_pass(a):
     # Worker-kept counts are pre-global; the pass below reclassifies some as
     # holdout/exact_dup/near_dup, so recount "kept" from its verdict.
     reasons["kept"] = 0
+    held_out = []
     w = ShardWriter(a.out, a.domain)
     for p in paths:
         print(f"global pass: {os.path.basename(p)}", flush=True)
@@ -445,6 +446,7 @@ def _global_pass(a):
                 # doc only, as the last gate before the stamp. The per-line scan is
                 # O(lines) sha1s per doc and dominated this serial pass on code.
                 if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                    held_out.append(exact_key(t))
                     reasons["holdout"] += 1
                     continue
                 k = exact_key(t)
@@ -469,7 +471,7 @@ def _global_pass(a):
     for why, n in reasons.most_common():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n/total:.1%}")
-    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards, held_out)
     return 0
 
 
@@ -544,12 +546,16 @@ def _settle_dir(out, domain, settle_s):
             f"REFUSE: {out} is locked by live pid {who} (not ours) -- stamp over unsettled bytes"
         )
     lock = os.path.join(out, ".build.lock")
-    self_hold = os.path.exists(lock)
-    if self_hold:
+    # N5 (e1): self_hold means WE HOLD THE FLOCK on this dir (the live module global
+    # _LOCK_FD held by the build), NOT that the lock file records our pid. A lock file
+    # with our pid but no held flock (an ad-hoc re-stamp, or a recycled pid) is still
+    # unsettled-bytes risk and must fall to the mtime-settle window below. The fd the
+    # call sites bind is the thing that makes a build's own fresh mtimes legal.
+    self_hold = False
+    if _LOCK_FD is not None and not _LOCK_FD.closed:
         try:
-            with open(lock, encoding="utf-8") as fh:
-                self_hold = int(fh.read().strip()) == os.getpid()
-        except (OSError, ValueError):
+            self_hold = os.path.realpath(_LOCK_FD.name) == os.path.realpath(lock)
+        except (AttributeError, OSError, ValueError):
             self_hold = False
 
     def _mtime_below(path):
@@ -579,12 +585,21 @@ def _settle_dir(out, domain, settle_s):
 SETTLE_S = 60
 
 
-def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
+def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
 
     _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
     from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
     from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    # Holdout-slice gate (fb ruling 2026-09-01): a build that carries --phase must freeze
+    # this phase's held-out slice BEFORE the dir is settled and fingerprinted, so the
+    # slice is part of the stamped domain and cross-stage attribution can re-probe the
+    # SAME held-out batch. Emit, then verify present/non-empty/fresh (stale rule raises).
+    phase = getattr(a, "phase", None)
+    if phase:
+        _emit_holdout_slice(out, phase, held_out_keys)
+        _check_holdout_slice(out, phase)
 
     # Settle guard (tilerl T7-2, 2026-09-01): refuse a stamp over a dir a writer
     # is still touching. Tonight's mid-write stamp (the U+2028 repair wrote tail
@@ -725,6 +740,7 @@ def _parallel_exact_pass(a):
     w = ShardWriter(a.out, a.domain)
     kept = kept_chars = 0
     reasons = Counter()
+    held_out = []
     for i, p in enumerate(paths):
         ords = 0
         with open(p, encoding="utf-8") as f:
@@ -737,6 +753,7 @@ def _parallel_exact_pass(a):
                 if not t:
                     continue
                 if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                    held_out.append(exact_key(t))  # captured for the frozen holdout slice
                     continue  # holdout counted in A; skip in rewrite
                 if (bases[i] + ords) in survivor:
                     kept += 1
@@ -750,7 +767,333 @@ def _parallel_exact_pass(a):
     nshards = len(_g.glob(f"{a.out}/{a.domain}_*.jsonl"))
     reasons["holdout"] = holdout_total
     reasons["exact_dup"] = exact_dups
-    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards, held_out)
+    return 0
+
+
+def _word_shingle_hashes(normalised_text, shingle=3):
+    """Word-n-gram hashes of a normalised doc, distinct and order-stable. blake2b is
+    fixed-reproducible (independent of PYTHONHASHSEED), so serial and parallel workers
+    emit identical shingle sets and the rewrite is byte-identical. The near-dup
+    DECISION is exact Jaccard over THIS set (normalized word-3-gram, near_dedup_gate.md);
+    MinHash only generates candidates. () for docs under `shingle` words: nothing to dedup."""
+    words = normalised_text.split()
+    if len(words) < shingle:
+        return ()
+    seen, out = set(), []
+    for i in range(len(words) - shingle + 1):
+        h = int.from_bytes(
+            hashlib.blake2b(" ".join(words[i : i + shingle]).encode("utf-8"), digest_size=8).digest(), "little"
+        )
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return tuple(out)
+
+
+def _near_coeffs(perms, seed):
+    """(ab, mask): `perms` deterministic permutation coefficients (seed), the same
+    construction MinHashLSH uses. Fixed seed => identical signatures serial vs parallel."""
+    import random as _r  # noqa
+
+    rng = _r.Random(seed)
+    mask = (1 << 61) - 1
+    return [(rng.randrange(1, mask), rng.randrange(0, mask)) for _ in range(perms)], mask
+
+
+def _minhash(shingle_hashes, ab, mask):
+    """MinHash signature (MIN over each permutation of the shingle-hash set), packed
+    to len(ab)*8 bytes (uint64 each). Boxed Python ints would cost ~7x the memory
+    (e1 N3: 7215 B/doc boxed vs 1024 B packed); packing is what keeps ~8M doc
+    signatures at ~8GB instead of ~30GB. A candidate generator only; a signature
+    asserts nothing about near-ness by itself."""
+    return struct.pack(
+        f"{len(ab)}Q",
+        *(min(((a * h + b) & mask) for h in shingle_hashes) for a, b in ab),
+    )
+
+
+def _norm_skeleton(t):
+    """Default post-pass normaliser: lowercase + collapse whitespace. The real
+    per-domain code/en_c4/math_owm normalisers (with 44's calibrated keyword stoplist
+    and LaTeX mapping) are injected per domain at run time; this keeps the core
+    engine testable and normaliser-agnostic while the domain constants are
+    calibration artifacts (bake the gate's margins)."""
+    return " ".join(t.lower().split())
+
+
+def _lsh_candidates(sigs, bands, rows):
+    """Candidate ordinal pairs from MinHash LSH: two docs sharing any band's full
+    row-tuple are candidates. False candidates cost compute only -- the exact-J
+    decision below filters them and never errs upward. sigs are packed uint64 bytes
+    (8 B/row), so a band key is a bytes slice (hashable)."""
+    rivals = set()
+    for b in range(bands):
+        table = {}
+        for o, sig in sigs.items():
+            table.setdefault(sig[b * rows * 8 : (b + 1) * rows * 8], []).append(o)
+        for members in table.values():
+            if len(members) > 1:
+                members.sort()
+                for i in range(len(members)):
+                    for j in range(i + 1, len(members)):
+                        rivals.add((members[i], members[j]))
+    return rivals
+
+
+def _lsh_recall_bound(bands, rows, jac):
+    """MinHash LSH collision probability at Jaccard `jac`: 1-(1-jac**rows)**bands. The
+    THEORETICAL recall -- the acceptance basis at 8M-doc scale, where the 50-doc
+    hand-read (1225 pairs) cannot empirically cover recall (44 condition 1). epsilon =
+    1 - bound at the gate threshold is a second error term of the removed-fraction fact,
+    beside the Wilson CI (44 condition 1; a missed pair here survives as a near-dup)."""
+    return 1.0 - (1.0 - jac**rows) ** bands
+
+
+def _union_find(n):
+    """Disjoint-set over 0..n-1 with path-halving + rank union. Deterministic: cluster
+    assignment depends only on the unordered set of union() calls, so serial and
+    parallel runs compute identical survivors (kept = min ordinal per cluster)."""
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra == rb:
+            return
+        if rank[ra] < rank[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        if rank[ra] == rank[rb]:
+            rank[ra] += 1
+
+    return find, union
+
+
+def _near_emit_slice(args):
+    """Phase A worker: (path, base, ab, mask, normaliser) -> list[(ordinal, sig)].
+    Ordinal = position among non-empty content lines in global shard order (identical
+    walk in the rewrite); sig = MinHash or None for docs too short to shingle (always
+    survive). The stamped input is already holdout- and exact-deduped, so near-dup is
+    the only axis. Module-level for mp.Pool pickling."""
+    path, base, ab, mask, norm = args
+    emit, ords = [], 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+            if not t:
+                continue
+            sh = _word_shingle_hashes(norm(t))
+            emit.append((base + ords, _minhash(sh, ab, mask) if sh else None))
+            ords += 1
+    return emit
+
+
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg):
+    """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
+    carry the near-dedup configuration and result: they are part of the artifact's
+    meaning, and the removed-fraction fact reads them off the stamp."""
+    import sys as _sys
+
+    _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+    from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
+    from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    _settle_dir(out, domain, SETTLE_S)
+    stats = {
+        "domain": domain, "reasons": dict(reasons), "kept": kept,
+        "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
+        "filters": "near-dedup-postpass", "n_shards": nshards,
+        "filters_fp": _fp_filters(),
+        "fingerprint": _fp_dir(out),
+        "near_dedup": True,
+        "removed_fraction": (removed_n / total_docs) if total_docs else 0.0,
+        "recall_bound": recall,
+        "recall_epsilon": 1.0 - recall,
+        "config": cfg,
+    }
+    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    if os.path.exists(tok_path):
+        try:
+            from tokenizers import Tokenizer  # noqa: I001 -- same nested-import shape as _write_stats:622
+
+            from count_tokens import CONVENTION, count_shards
+
+            shards = sorted(glob.glob(os.path.join(out, f"{domain}_*.jsonl")))
+            if shards:
+                n_sample = min(3, len(shards))
+                tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
+                stats["tokens"] = tokens
+                stats["tokens_status"] = "measured"
+                stats["tokens_config"] = f"{n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
+        except Exception as e:
+            stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+    else:
+        stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+    with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=1)
+
+
+def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccard=0.5, seed=17):
+    """Calibrated near-dedup post-pass (fb ruling 2026-08-31; 44 conditions 2026-09-01).
+    Runs AFTER the stage-2 run finished (never launch-parallel); rewrites the stamped
+    {domain}_*.jsonl in place (new corpus_fp, forces retokenize). Byte-identical to a
+    single-worker run of the same pipeline.
+
+    Fork C (memory-bounded): Phase A keeps each doc's MinHash signature in memory --
+    packed to len(ab)*8 bytes/doc (e1 N3), ~8GB at 8M docs, NOT the boxed-int ~30GB or
+    the ~100GB of full shingle sets -- LSH yields candidate pairs, and the exact
+    normalized word-3-gram Jaccard DECISION is made by re-reading only the candidate
+    docs' source lines. Exact-J >= jaccard keeps the removed-fraction fact on 44's
+    calibrated measure: MinHash/LSH is a candidate generator, never a decider.
+
+    Default banding bands=64 rows=2 (N2, e1): recall at jaccard 0.5 is
+    1-(1-0.5^2)^64 ~= 1.0, so recall_epsilon ~ 1e-8 -- the old default (8,16) had
+    recall 1.2e-4 (epsilon 0.999878), making epsilon the removed-fraction fact's
+    dominant error term ~100x the fact. 44 recalibrates bands/rows against the 50-doc
+    hand-read (recall-eps AND candidate-set-size are both 44's acceptance), but a
+    default this side of absurd keeps the stamp honest if it ships un-tuned."""
+    import multiprocessing as mp
+
+    if bands * rows != perms:
+        raise ValueError(f"bands*rows ({bands}x{rows}) != perms ({perms})")
+    global _LOCK_FD
+    _LOCK_FD = _build_lock(a.out)
+    normaliser = normaliser or _norm_skeleton
+    ab, mask = _near_coeffs(perms, seed)
+
+    paths = sorted(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    if not paths:
+        raise SystemExit(f"REFUSE: no {a.domain}_*.jsonl shards to near-dedup in {a.out}")
+    # Invariant pin (tilerl-44, 2026-09-01): the frozen holdout slice
+    # (holdout_slice_{phase}.jsonl, holdout-slice gate) is NOT a {domain}_*.jsonl row,
+    # and the in-place rewrite below must never touch it -- a glob change that pulled a
+    # slice into the rewrite set would void the gate silently (it passes while the key
+    # it froze moved underneath it). Assert it loud instead of trusting the filename.
+    assert not [p for p in paths if os.path.basename(p).startswith("holdout_slice_")], (
+        f"REFUSE: a holdout_slice file entered the near-dedup rewrite set in {a.out}; "
+        f"rewriting it would void the frozen slice"
+    )
+
+    doc_counts = []
+    for p in paths:
+        n = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    n += 1
+        doc_counts.append(n)
+    bases, acc = [], 0
+    for n in doc_counts:
+        bases.append(acc)
+        acc += n
+    total_docs = acc
+
+    with mp.Pool(a.workers) as pool:
+        phase_a = pool.map(_near_emit_slice, [(p, bases[i], ab, mask, normaliser) for i, p in enumerate(paths)])
+    sigs = {}
+    for emit in phase_a:
+        for o, sig in emit:
+            if sig is not None:
+                sigs[o] = sig
+
+    removed = set()
+    rivals = _lsh_candidates(sigs, bands, rows)
+    if rivals:
+        wanted = set()
+        for lo, hi in rivals:
+            wanted.add(lo)
+            wanted.add(hi)
+        import bisect
+
+        by_shard = {}
+        for o in wanted:
+            by_shard.setdefault(bisect.bisect_right(bases, o) - 1, set()).add(o)
+        shingle = {}
+        for i, p in enumerate(paths):
+            cur = by_shard.get(i)
+            if not cur:
+                continue
+            off = 0
+            with open(p, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                    if bases[i] + off in cur and t:
+                        shingle[bases[i] + off] = _word_shingle_hashes(normaliser(t))
+                    if t:
+                        off += 1
+        find, union = _union_find(total_docs)
+        for lo, hi in rivals:
+            A = shingle.get(lo)
+            B = shingle.get(hi)
+            if not A or not B:
+                continue
+            sa, sb = set(A), set(B)
+            j = len(sa & sb) / len(sa | sb) if (sa | sb) else 0.0
+            if j >= jaccard:
+                union(lo, hi)
+        roots = {}
+        for o in sigs:
+            roots.setdefault(find(o), []).append(o)
+        for members in roots.values():
+            if len(members) > 1:
+                removed |= set(members) - {min(members)}
+
+    kept_flags = bytearray(b"\x01") * total_docs  # 8M flags ~8MB, not a set
+    for o in removed:
+        kept_flags[o] = 0
+
+    # rewrite survivors in global order into a staging dir, then move over originals.
+    nd = os.path.join(a.out, f".near_{a.domain}")
+    os.makedirs(nd, exist_ok=True)
+    w = ShardWriter(nd, a.domain)
+    kept = kept_chars = 0
+    for i, p in enumerate(paths):
+        ords = 0
+        with open(p, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                t = SPECIAL_TOKEN.sub("", json.loads(line).get("content") or "").strip()
+                if not t:
+                    continue
+                if kept_flags[bases[i] + ords]:
+                    kept += 1
+                    kept_chars += len(t)
+                    w.write(json.loads(line))
+                ords += 1
+    w.close()
+    for p in paths:
+        os.remove(p)
+    for sp in sorted(glob.glob(f"{nd}/{a.domain}_*.jsonl")):
+        os.replace(sp, os.path.join(a.out, os.path.basename(sp)))
+    os.rmdir(nd)
+
+    # N4 (e1): count only docs the pass actually decided on. `total_docs - kept` would book
+    # every empty-content doc (skipped by both ordinal walks, present in neither set) as
+    # a near-dup -- a 4-line/2-empty/no-dup fixture would stamp removed_fraction 0.5.
+    # `removed` is the survivor-set complement we built; its size is the honest count.
+    removed_n = len(removed)
+    recall = _lsh_recall_bound(bands, rows, jaccard)
+    nshards = len(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
+    reasons = Counter({"kept": kept, "near_dup": removed_n})
+    _near_write_stats(
+        a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
+        {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
+    )
     return 0
 
 
@@ -768,6 +1111,125 @@ def _ladder_frozen_domains():
     return frozen
 
 
+def _mix_named_domains():
+    """Domains named by any data/mix_*.json. A domain in a mix carries cross-stage
+    attribution, so a rebuild of it must freeze its held-out slice (fb 2026-09-01)."""
+    names = set()
+    for p in glob.glob(os.path.join(ROOT, "data", "mix_*.json")):
+        try:
+            with open(p, encoding="utf-8") as _fh:
+                names |= set(json.load(_fh).get("domains", {}).keys())
+        except (OSError, ValueError):
+            continue
+    return names
+
+
+def _existing_corpus_dirs():
+    cd = os.path.join(ROOT, "data", "corpus")
+    if not os.path.isdir(cd):
+        return []
+    return [d for d in os.listdir(cd) if os.path.isdir(os.path.join(cd, d))]
+
+
+def _holdout_slice_required(domain):
+    """A build must carry --phase and freeze its held-out slice when it writes into a
+    dir a mix names, or a dir that is an existing domain plus a suffix (en_c4_stage2 is
+    en_c4 + _stage2). The suffix rule catches the rename-with-suffix replacement without
+    anyone declaring it -- fb: it is the declared case that fails when forgotten, the
+    cost of not freezing it was 3.340B unattributable."""
+    if domain in _mix_named_domains():
+        return True
+    return any(domain.startswith(base + "_") for base in _existing_corpus_dirs() if base != domain)
+
+
+def _slice_path(out, phase):
+    return os.path.join(out, f"holdout_slice_{phase}.jsonl")
+
+
+def _existing_phases(out):
+    if not os.path.isdir(out):
+        return []
+    out_phases = []
+    for name in os.listdir(out):
+        m = re.match(r"holdout_slice_(.+)\.jsonl$", name)
+        if m:
+            out_phases.append(m.group(1))
+    return sorted(out_phases)
+
+
+def _holdout_rule_fp(set_path=None):
+    """Content fingerprint of the holdout RULE: the CODE (datagen/holdout.py) AND the
+    held-out SET (data/eval/holdout_hashes.txt) that code reads (e1 H1). A slice certifies
+    'these docs are held out'; hashing only the code let an emptied set still certify
+    fresh -- the 19/20-leak shape this repo already paid for once. Both content-hashed
+    (not mtime), so an uncommitted edit to either half refutes every slice frozen under
+    it. set_path is the test seam; production passes None -> the real holdout_hashes.txt."""
+    import hashlib as _h
+
+    h = _h.sha256()
+    code = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdout.py")
+    try:
+        with open(code, "rb") as f:
+            h.update(b"code:" + f.read())
+    except OSError:
+        return "holdout-missing"
+    sp = set_path or os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
+    try:
+        with open(sp, "rb") as f:
+            h.update(b"set:" + f.read())
+    except OSError:
+        h.update(b"set:missing")
+    return h.hexdigest()[:16]
+
+
+def _emit_holdout_slice(out, phase, held_out_keys, set_path=None):
+    """Freeze this phase's held-out doc keys to {out}/holdout_slice_{phase}.jsonl before
+    the stamp. Header carries the holdout-rule fingerprint (staleness anchor, code + set)
+    + row count; body is one normalized key (12-byte sha1 hex) per line. Refuses an EMPTY
+    slice -- an artifact that exists but holds out nothing is the exact shape that fails."""
+    if not held_out_keys:
+        raise SystemExit(
+            f"REFUSE: {out} phase {phase} held out no documents; an empty holdout slice "
+            f"freezes nothing and the gate refuses it (fb 2026-09-01)"
+        )
+    rule_fp = _holdout_rule_fp(set_path)
+    keys = sorted(set(held_out_keys))
+    with open(_slice_path(out, phase), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"phase": phase, "rule_fp": rule_fp, "n": len(keys)}) + "\n")
+        for k in keys:
+            f.write(k.hex() + "\n")
+    print(f"holdout slice frozen: {_slice_path(out, phase)} ({len(keys)} held-out docs, "
+          f"rule_fp {rule_fp})", flush=True)
+
+
+def _check_holdout_slice(out, phase, set_path=None):
+    """Read back the frozen slice and verify present, non-empty, and fresh under the
+    CURRENT holdout rule (code + set). Stale (code or set changed since freeze), empty,
+    or missing -> raise. This is the 'stale raises' half: a downstream reader cannot trust
+    a slice frozen under a rule no longer in effect."""
+    sp = _slice_path(out, phase)
+    if not os.path.exists(sp):
+        raise SystemExit(f"REFUSE: expected frozen holdout slice {sp} (phase {phase}) is missing")
+    try:
+        with open(sp, encoding="utf-8") as f:
+            header = json.loads(f.readline())
+            rows = sum(1 for _ in f)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"REFUSE: malformed holdout slice {sp}: {e}") from None
+    if rows == 0:
+        raise SystemExit(f"REFUSE: holdout slice {sp} is empty (0 held-out docs)")
+    cur = _holdout_rule_fp(set_path)
+    if header.get("rule_fp") != cur:
+        raise SystemExit(
+            f"REFUSE: holdout slice {sp} frozen under a different rule "
+            f"(header {header.get('rule_fp')} != current {cur}); the held-out basis "
+            f"changed, re-freeze this phase"
+        )
+    if header.get("n") != rows:
+        raise SystemExit(f"REFUSE: holdout slice {sp} header n {header.get('n')} != {rows} rows")
+    return rows
+
+
 def _preflight(a):
     """Refuse a clean that will waste the run (fb order 2026-08-31). Four gates,
     each independent and each with a failing-case --selftest:
@@ -778,6 +1240,16 @@ def _preflight(a):
     SystemExit on the first refusal. Run once, at start, before any fetch or clean."""
     out = os.path.normpath(os.path.join(OUT_DIR, a.domain) if a.out is None else a.out)
     base = os.path.basename(out)
+    # (e) holdout-slice hard gate (fb ruling 2026-09-01): a build into a dir a mix names,
+    # or a dir that is an existing domain plus a suffix, MUST carry --phase so it freezes
+    # this phase's held-out slice before stamp or refuses. Non-opt-in: the path itself
+    # tells us -- an operator forgetting the flag is the exact failure being retired.
+    if not a.dry and _holdout_slice_required(a.domain) and not getattr(a, "phase", None):
+        raise SystemExit(
+            f"REFUSE: {a.domain} is mix-named or replaces an existing domain; --phase <name> "
+            f"is required to freeze this phase's held-out slice before stamping. "
+            f"Existing phase slices here: {_existing_phases(out) or 'none'}"
+        )
     # (b) not a ladder-frozen name, and the dir exists
     if base in _ladder_frozen_domains():
         raise SystemExit(
@@ -928,11 +1400,23 @@ def _selftest_preflight():
         except SystemExit:
             ok += 1
         # (1) our OWN held build lock -> settle must PASS: production stamps its own
-        #     fresh bytes, and the mtime window is skipped when the lock is ours.
+        #     fresh bytes, and the mtime window is skipped when WE HOLD THE FLOCK.
+        #     N5 (e1): self_hold is decided by the live module _LOCK_FD, so the selftest
+        #     must bind it -- a local `own` would leave _LOCK_FD None and fail the PASS.
         os.remove(os.path.join(marker, ".build.lock"))
-        own = _build_lock(marker)  # we are the writer
-        _settle_dir(marker, "x", SETTLE_S)  # self lock must NOT refuse (PASS, case 1)
-        own.close()
+        global _LOCK_FD
+        _LOCK_FD = _build_lock(marker)  # we hold the flock; production stamps its fresh output
+        _settle_dir(marker, "x", SETTLE_S)  # must NOT refuse (PASS, case 1)
+        _LOCK_FD.close()
+        _LOCK_FD = None
+        # (5) N5 (e1): lockfile records OUR pid but we hold NO flock (ad-hoc re-stamp,
+        #     recycled pid) + fresh shard -> REFUSE. _other_writer_pid treats our pid as
+        #     "self" (None), so the PID probe cannot catch it; self_hold must NOT read
+        #     the file's pid (old behaviour) -- with the flock absent, _LOCK_FD is None
+        #     and the mtime window must refuse the fresh shard.
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(os.getpid()))
+        ok += _refuses(marker, "(5) own pid in lock, flock NOT held")
         # (2) foreign live pid in the lock -> settle refuses via the PID probe
         with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
             fh.write(str(sleeper.pid))
@@ -967,8 +1451,73 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
+    # (e) holdout-slice hard gate (fb 2026-09-01). Failing worlds: a mix-named domain with
+    # no --phase refuses; a suffix-of-existing domain with no --phase refuses; an empty
+    # slice refuses; a stale slice (code changed) refuses; a stale slice (SET changed,
+    # e1 H1) refuses. The with-phase non-empty path is the absence of a raise.
+    mx = _mix_named_domains()
+    assert mx, "selftest needs a mix-named domain"
+    dom = sorted(mx)[0]
+    try:
+        _preflight(A(domain=dom, out=None, filters="light", dry=False,
+                     source=["jsonl:/dev/null"], global_only=False))
+        raise AssertionError("(e) mix-named domain without --phase did not REFUSE")
+    except SystemExit:
+        ok += 1
+    # H2 (e1): build the suffix world instead of detecting it -- a fresh checkout's
+    # data/corpus only holds 'sample', so gating on en_c4 skips silently and the gate
+    # count drops without a SKIP line. mkdir the base, probe base+_stage2, clean up.
+    cd = os.path.join(ROOT, "data", "corpus")
+    os.makedirs(os.path.join(cd, "zz_base"), exist_ok=True)
+    try:
+        try:
+            _preflight(A(domain="zz_base_stage2", out=None, filters="light", dry=False,
+                         source=["jsonl:/dev/null"], global_only=False))
+            raise AssertionError("(e) suffix-of-existing domain without --phase did not REFUSE")
+        except SystemExit:
+            ok += 1
+    finally:
+        os.rmdir(os.path.join(cd, "zz_base"))
+    hp = tempfile.mkdtemp()
+    try:
+        try:
+            _emit_holdout_slice(hp, "p", [])  # empty held-out set -> must refuse
+            raise AssertionError("(e) empty holdout slice did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # stale slice: frozen under a DIFFERENT rule_fp -> must refuse
+        with open(_slice_path(hp, "p"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"phase": "p", "rule_fp": "0" * 16, "n": 1}) + "\n" + "ab" * 12 + "\n")
+        try:
+            _check_holdout_slice(hp, "p")
+            raise AssertionError("(e) stale-rule holdout slice did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # H1 (e1, blocking): the fp must move when the derived artifact's SOURCE SET
+        # changes -- freezing under one holdout set, growing the set, must refuse (the
+        # emptied-set certification is the 19/20-leak shape). Uses the set_path seam so
+        # the real data/eval/holdout_hashes.txt is untouched.
+        tset = os.path.join(hp, "tset.txt")
+        with open(tset, "w", encoding="utf-8") as fh:
+            fh.write("hash_line_1\n")
+        _emit_holdout_slice(hp, "ph", [b"\x01\x02\x03"], set_path=tset)
+        with open(tset, "a", encoding="utf-8") as fh:
+            fh.write("hash_line_2\n")  # the held-out set grew since the freeze
+        try:
+            _check_holdout_slice(hp, "ph", set_path=tset)
+            raise AssertionError("(e/H1) changed holdout SET did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # the happy path: emit non-empty then check -> NO raise (a regression on the
+        # pass path crashes loud instead of silently greening)
+        _emit_holdout_slice(hp, "p", [b"\xdead\xbeef", b"\x12\x34\x56\x78", b"\xdead\xbeef"])
+        _check_holdout_slice(hp, "p")
+    finally:
+        import shutil
+
+        shutil.rmtree(hp, ignore_errors=True)
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
-    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle 2/3/4 + self-hold PASS)")
+    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
 
 
@@ -1022,6 +1571,7 @@ def main():
     )
     ap.add_argument("--workers", type=int, default=1, help="parallel clean: N workers over disjoint source-file slices; worker id in the shard prefix; global near-dup+holdout+stamp at the end")
     ap.add_argument("--global-only", action="store_true", help="skip the worker phase; re-run the global pass over existing w*_*.jsonl shards (a killed serial pass leaves them)")
+    ap.add_argument("--phase", default=None, help="phase name for a domain-replacing rebuild; REQUIRED if the output dir is mix-named or a suffix of an existing domain (fb 2026-09-01), so this phase's held-out slice is frozen before stamp")
     ap.add_argument("--selftest", action="store_true", help="run the pre-flight failing-case worlds and exit")
     a = ap.parse_args()
     if a.selftest:

@@ -1,0 +1,50 @@
+{
+ "probe": "t64_external_loss",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "seq": 1024,
+ "unseen_source": "this repo's docs/ prose, authored 2026-08-30..09-01",
+ "unseen_why_unseen": "postdates every snapshot in fetch_corpus.SOURCES and was never published; not 'probably uncrawled' but 'did not exist when the crawls were taken'",
+ "unseen_docs": 23,
+ "unseen_docs_dropped_by_dedup": 0,
+ "seen_docs": 399,
+ "seen_source": "training-mix domains from mix_30b_stage2.json",
+ "unseen_loss": 4.328,
+ "unseen_tokens": 65536,
+ "seen_per_domain": {
+  "code_rp1t": {
+   "loss": 0.7185,
+   "tokens": 65536
+  },
+  "math_owm_stage2": {
+   "loss": 1.907,
+   "tokens": 65536
+  },
+  "cot": {
+   "loss": 0.8861,
+   "tokens": 28672
+  },
+  "en_c4_stage2": {
+   "loss": 2.8603,
+   "tokens": 39936
+  },
+  "zh_web": {
+   "loss": 3.701,
+   "tokens": 65536
+  },
+  "textbook_30b": {
+   "loss": 1.9833,
+   "tokens": 65536
+  },
+  "wiki_chat": {
+   "loss": 3.1224,
+   "tokens": 15360
+  }
+ },
+ "seen_loss_mean": 2.1684,
+ "seen_loss_min": 0.7185,
+ "seen_loss_max": 3.701,
+ "seen_domain_spread": 2.9825,
+ "gap_unseen_minus_seen_mean": 2.1596,
+ "gap_vs_worst_seen_domain": 0.627,
+ "confound": "the gap mixes UNSEENNESS with DOMAIN SHIFT -- docs/ prose is a register the corpus barely contains. A large gap is not sufficient evidence of memorisation by itself."
+}

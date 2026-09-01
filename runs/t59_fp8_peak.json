@@ -1,0 +1,13 @@
+{
+ "probe": "t59_fp8_peak",
+ "n": 8192,
+ "iters": 30,
+ "bf16_tflops": 136.7,
+ "bf16_pct_of_vendor": 92.4,
+ "fp8_tflops": 279.6,
+ "fp8_pct_of_vendor": 94.5,
+ "vendor_bf16": 148.0,
+ "vendor_fp8": 296.0,
+ "fp8_linears_achieved_tflops": 274.5,
+ "fp8_linears_pct_of_measured_peak": 98.2
+}
