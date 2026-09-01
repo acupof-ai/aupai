@@ -265,6 +265,85 @@ def _agents_rule_bullets(root):
     return out, None
 
 
+def check_reported_path_is_written(root):
+    """A runner that reports a preds path reports the one it WROTE.
+
+    open_artifact(path, run=...) versions the path -- it writes preds_x.<run>.jsonl and
+    hands the real name back as fout.name. Four runners captured that into out_path,
+    attested out_path correctly, and then printed and recorded the UNVERSIONED
+    preds_path. The log's last line named a file that does not exist, and
+    l1_fewshot's --out JSON carried it in a machine-readable field.
+
+    It cost an hour on 2026-09-01: the 16B code cell finished, the log said
+    `preds saved: ...k8.jsonl`, that file was absent, and the result read as a dead run
+    until the versioned file turned up in a directory listing. The attest call was right
+    the whole time, which is why nothing caught it -- the correct value was computed and
+    then not used.
+
+    Source-level, because it is a wiring defect: in a function that binds out_path from
+    an open_artifact handle, a later `preds_path` in a print or a dict value is the
+    stale name. Only the same function is examined, so a runner that never versions is
+    not implicated."""
+    bad = []
+    files = 0
+    for fp in sorted(glob.glob(os.path.join(root, "eval", "*.py"))
+                     + glob.glob(os.path.join(root, "probes", "*.py"))):
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                src = fh.read()
+            tree = ast.parse(src)
+        except (OSError, SyntaxError):
+            continue
+        if "open_artifact" not in src:
+            continue
+        files += 1
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            body = ast.dump(fn)
+            if "open_artifact" not in body or "out_path" not in body:
+                continue
+            for node in ast.walk(fn):
+                # print(f"... {preds_path}") and {"preds_path": preds_path}
+                if isinstance(node, ast.Name) and node.id == "preds_path":
+                    if isinstance(getattr(node, "ctx", None), ast.Store):
+                        continue
+                    parent_is_call = False
+                    for anc in ast.walk(fn):
+                        if isinstance(anc, ast.Call) and anc.func.__class__ is ast.Name \
+                                and getattr(anc.func, "id", "") == "open_artifact" \
+                                and any(a is node for a in anc.args):
+                            parent_is_call = True
+                    if not parent_is_call:
+                        bad.append(f"{os.path.relpath(fp, root)}:{node.lineno} in "
+                                   f"{fn.name}() reports preds_path, not out_path")
+    if bad:
+        return FAIL, "; ".join(sorted(set(bad))[:4])
+    return PASS, f"{files} runner(s) using open_artifact report the path they wrote"
+
+
+def _broken_reported_path():
+    """The REAL eval/l1_fewshot.py with the defect put back: the print reverted from
+    out_path to preds_path. That exact edit is the historical bug, applied to the
+    historical file, not a synthetic runner -- and it was run against the fix before
+    this world existed: FAIL naming l1_fewshot.py:208, then PASS restored."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    os.remove(os.path.join(d, "eval"))
+    os.makedirs(os.path.join(d, "eval"))
+    for f in glob.glob(os.path.join(ROOT, "eval", "*.py")):
+        shutil.copy(f, os.path.join(d, "eval", os.path.basename(f)))
+    p = os.path.join(d, "eval", "l1_fewshot.py")
+    with open(p, encoding="utf-8") as f:
+        src = f.read()
+    fixed = 'print(f"preds saved: {out_path}")'
+    assert fixed in src, "the fix is gone; this world no longer reinstates anything"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(src.replace(fixed, 'print(f"preds saved: {preds_path}")'))
+    return d
+
+
 def check_cited_artifacts_attested(root):
     """A fact citing a gitignored artifact carries a sha256 some attestation matches.
 
@@ -5271,6 +5350,13 @@ CHECKS = [
         "a mix that wants more rows than its pool allows trains on repeated data with nothing raising",
         check_mix_supply,
         _broken_mix_supply,
+    ),
+    (
+        "reported_path_is_written",
+        "a runner that versions its output reports the path it actually wrote",
+        "the 16B code cell's log said `preds saved: ...k8.jsonl`, that file did not exist, and the result read as a dead run for an hour -- attest() had the right path all along, the print and the --out JSON used the pre-versioning one",
+        check_reported_path_is_written,
+        _broken_reported_path,
     ),
     (
         "cited_artifacts_attested",
