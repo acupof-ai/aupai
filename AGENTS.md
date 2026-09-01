@@ -268,7 +268,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
 | `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
-| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `gemm_dims_aligned` |
+| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
 | File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
 | Outbound network: `curl -4`, always | `curl_ipv4` |

@@ -174,6 +174,14 @@ def main():
             print("  if this passes when rerun by hand, a concurrent write raced a "
                   "ledger read -- report it, do not --no-verify", file=sys.stderr)
             sys.exit(1)
+        # TIMEOUT lines print on a PASSING run too. A check that hit its deadline did
+        # not run, and the hook is where anyone would notice: while a timeout reported
+        # SKIP, the hook printed nothing and `check` exited 0, so a check that timed out
+        # on every run was a permanent silent pass (44, D5). The commit still proceeds --
+        # one slow run is not a defect -- but the reader is told which check went unrun.
+        for ln in r.stdout.splitlines():
+            if "[TIME]" in ln:
+                print(f"  TIMED OUT (did not run): {ln.strip()}", file=sys.stderr)
     print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Regenerate pod manifest from staged content so it matches HEAD after commit.
