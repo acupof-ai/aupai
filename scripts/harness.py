@@ -456,7 +456,16 @@ def check_selftests_are_gated(root):
                 body = open(os.path.join(d, nm), encoding="utf-8").read()
             except OSError:
                 continue
-            if '"--selftest"' in body and "add_argument" in body:
+            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+            # narrow predicate assumed every selftest is wired through argparse; nine
+            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+            # that cannot see a file cannot report it missing, so its PASS counted only
+            # the files it already understood -- the check encoding an assumption about
+            # where the interesting case lives, which is this repo's named class, in
+            # the check written to catch that class (de, 2026-09-01, on 62's gate).
+            if "--selftest" in body:
                 have.add(rel)
     missing = sorted(have - gated)
     if missing:
@@ -595,21 +604,30 @@ def _broken_selftests_are_gated():
 
     Mutating the live artifact rather than writing a fixture: the reweight gate passed
     every synthetic case and returned None for every real role, because the fixture
-    encoded the author's assumption twice (7.3)."""
+    encoded the author's assumption twice (7.3).
+
+    The dropped file is scripts/eval_artifacts.py SPECIFICALLY, not an argparse-wired
+    one. It dispatches on sys.argv --
+    `sys.exit(_selftest() if "--selftest" in sys.argv else 0)` -- so under the old
+    narrow predicate ('"--selftest"' near add_argument) the check could not see it at
+    all and this world would have gone GREEN with the file unguarded. That is exactly
+    the defect the widening fixes, and using an argparse file here would leave the
+    widening untested (de, 2026-09-01).
+    """
     d = _tmp_repo()
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
-    ev = os.path.join(ROOT, "eval", "readout_30b.py")
+    ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
     if not (os.path.exists(hook) and os.path.exists(ev)):
         return None
     text = open(hook, encoding="utf-8").read()
-    if '"eval/readout_30b.py"' not in text:
+    if '"scripts/eval_artifacts.py"' not in text:
         return None
     os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
-        text.replace('"eval/readout_30b.py", ', "").replace('"eval/readout_30b.py"', '"x/y.py"'))
+        text.replace('"scripts/eval_artifacts.py", ', "")
+            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
     # the real file, so the check must find its --selftest and miss it in the map
-    open(os.path.join(d, "eval", "readout_30b.py"), "w", encoding="utf-8").write(
+    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
         open(ev, encoding="utf-8").read())
     return d
 
