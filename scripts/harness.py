@@ -6191,6 +6191,40 @@ CHECKS = [
     ),
 ]
 
+# Where each check's evidence lives (fb, 2026-09-01). "pod" = gitignored data or
+# machine state that exists only on the pod (corpus, caches, checkpoints, GPUs,
+# process table); "repo" = files or history in git. The launch gate partitions
+# FAILs on this: a repo check answers on main and its pod FAIL does not gate (the
+# pod holds 168 one-off files main never saw, so repo scans can never be clean
+# there); a pod check answers on the pod. Declared in code, not observed at
+# runtime -- both machines must read the same answer, and "does it SKIP here?"
+# is a property of the machine, not the check. Every check declares; the selftest
+# fails on a check added without a declaration or a stale name.
+EVIDENCE = {
+    # pod: evidence exists only on the training box
+    "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
+    "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
+    "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
+    "eval_sft_template_contamination": "pod", "corpus_fp_matches": "pod", "pod_drift": "pod",
+    "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
+    "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
+    "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
+    # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
+    "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
+    "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
+    "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
+    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo",
+    "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
+    "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
+    "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
+    "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
+    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
+    "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
+    "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
+}
+
 
 # -------------------------------------------------------------------------- stages
 #
@@ -8120,6 +8154,14 @@ def _demo():
     for name, _a, _i, fn, _broken in CHECKS:
         state, _evidence = fn(ROOT)
         assert state != FAIL, f"{name} FAILs on the real tree -- fix the check or the artifact before landing"
+
+    # Every check declares where its evidence lives (EVIDENCE); a check added
+    # without a declaration would be classified by nobody, and a stale name is
+    # noise. Equality, not subset: both directions fail loudly.
+    check_names = {n for n, *_ in CHECKS}
+    assert set(EVIDENCE) == check_names, (
+        f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
+        f"undeclared: {sorted(check_names - set(EVIDENCE))}")
 
     print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
           f"every PASS verified a non-zero count)")

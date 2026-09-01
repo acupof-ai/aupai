@@ -35,6 +35,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from harness import EVIDENCE  # noqa: E402 -- per-check evidence location (fb, 2026-09-01)
 
 
 def _launch_root(root):
@@ -409,22 +410,12 @@ AUTHORITY = {
     "checks_and_drift": "both",
 }
 
-# Env-state checks: their evidence lives only on the pod (GPU, corpus, caches,
-# checkpoints, running processes). Objectively derived -- this is exactly the set
-# that does not run on a CLEAN CHECKOUT (their evidence is gitignored data, not
-# code). A machine that happens to hold some of it (this Mac has tokenizer.json)
-# runs a few of them, which is fine: the set is defined by where the evidence
-# lives, not by what this dev box cached. Everything else is repo-scan: it
-# answers on main, where the pod's 168 one-off files do not exist. A repo-scan
-# check can never be clean on the pod by construction, so its pod FAILs do not
-# gate the launch -- they read as UNKNOWN, authority=main (fb, 2026-09-01).
-ENV_STATE_CHECKS = frozenset({
-    "env_importable", "mix_shards_present", "tokenizer_roundtrip", "pinned_ids",
-    "no_ghost_running", "corpus_filters_fp", "score_input_fresh", "sft_pack_holdout",
-    "sft_pack_uncontaminated", "eval_sft_template_contamination", "corpus_fp_matches",
-    "pod_drift", "ladder_config_frozen", "ladder_cfg_consistent", "mix_supply",
-    "milestone_ckpt_pinned", "env_fp_present", "opt_state_present", "lane_respected",
-})
+# FAILs partition on the per-check EVIDENCE declaration in harness.py (fb,
+# 2026-09-01): pod-evidence FAILs gate on every machine; repo-evidence FAILs
+# gate only on main, their authority. On the pod they are UNKNOWN -- not GO
+# (the evidence is not here) and not NO-GO (the tree they scanned is not
+# main's). The declaration is code both machines read identically; a runtime
+# "does it SKIP here?" observation is machine state, not the check's identity.
 
 
 def _fail_name(line):
@@ -436,8 +427,8 @@ def _partition_fails(fails, here, n_ran):
     """Env-state FAILs gate on every machine; repo-scan FAILs gate only on main,
     their authority. On the pod they are UNKNOWN -- not GO (the evidence is not
     here) and not NO-GO (the tree they scanned is not main's)."""
-    env = [f for f in fails if _fail_name(f) in ENV_STATE_CHECKS]
-    scan = [f for f in fails if _fail_name(f) not in ENV_STATE_CHECKS]
+    env = [f for f in fails if EVIDENCE.get(_fail_name(f)) == "pod"]
+    scan = [f for f in fails if EVIDENCE.get(_fail_name(f)) != "pod"]
     if env:
         return NOGO, (f"{len(env)} env-state FAIL of {n_ran} checks "
                       f"(authority=pod): {env[0][:80]}")
@@ -897,24 +888,8 @@ def selftest():
     s, _ = _partition_fails([fl("mix_supply"), fl("entrypoint_help")], "pod", 40)
     if s != NOGO:
         bad.append(f"mixed FAILs on pod did not NO-GO on the env-state one ({s})")
-    # The env-state set must not rot. A check that SKIPs live has its evidence
-    # elsewhere, so an unclassified one is a pod FAIL that would not gate -- the
-    # false-GO direction. A classified name that no longer exists is a stale
-    # entry. SUBSET, not equality: a machine holding some gitignored evidence
-    # (this Mac has tokenizer.json) runs a few env-state checks live, and the
-    # guard must not call that drift (tilerl's merge catch, 2026-09-01).
-    if _here() == "main":
-        out = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "harness.py"),
-                              "check"], capture_output=True, text=True, timeout=600, cwd=ROOT)
-        lines = out.stdout.splitlines()
-        skipped = {ln.split("]")[1].split()[0] for ln in lines if "[SKIP]" in ln}
-        ran = {ln.split("]")[1].split()[0] for ln in lines
-               if re.search(r"\[\s*(PASS|FAIL|WARN)\s*\]", ln)}
-        unclassified = skipped - ENV_STATE_CHECKS
-        stale = ENV_STATE_CHECKS - (ran | skipped)
-        if unclassified or stale:
-            bad.append(f"ENV_STATE_CHECKS drifted: unclassified {sorted(unclassified)}, "
-                       f"stale {sorted(stale)}")
+    # Declaration completeness lives next to the declarations: harness's own
+    # selftest asserts every CHECKS entry is in EVIDENCE and vice versa.
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
