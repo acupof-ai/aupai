@@ -126,6 +126,16 @@ def main():
         sys.exit(1 if selfcheck() else 0)
     if not args.ckpt:
         parser.error("--ckpt required (unless --selfcheck)")
+    # Argument errors before the 959MB load, not after it. The assert below at :144 is
+    # the same check and stays as the invariant next to the code that depends on it;
+    # this one is so the operator hears about a bad flag in a second rather than a
+    # minute, without a card held in the meantime (de, 2026-09-01).
+    if args.k > 1 and args.temperature <= 0:
+        parser.error(
+            f"--k {args.k} at temperature 0: the k samples would be identical to the greedy "
+            "answer and pass@k would equal pass@1 by construction. Pass --temperature "
+            "(0.8 is the project's pass@k setting)."
+        )
 
     import torch
     from eval.gsm8k import generate_batch

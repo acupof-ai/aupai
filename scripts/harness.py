@@ -4395,6 +4395,12 @@ def _broken_lane_respected():
 # expansion -- is a physical index that REPLACES the caller's restriction.
 _CVD_SAFE = re.compile(r"^\$\{_DEVS\[|^\$\{CUDA_VISIBLE_DEVICES:-")
 _CVD_ASSIGN = re.compile(r"(?:^|\s)(?:export\s+)?CUDA_VISIBLE_DEVICES=(\S+)")
+# Known false positive, left in on purpose: this matches the TEXT, so a script that
+# names the variable inside an error message ("set CUDA_VISIBLE_DEVICES=<n> first")
+# reads as an assignment. Hit once, 2026-09-01, on run_sampled_arm.sh's usage string.
+# Teaching it to parse shell quoting is more surface than the false positive costs, and
+# the failure direction is right -- it over-reports rather than missing an escape. The
+# fix at the call site is to reword the message, not to exempt the file.
 # A script that reads _DEVS must have sourced eval/_devs.sh, which is what refuses a
 # shard with no device to land on. Reconstructing the array with a bare `read -ra`
 # reintroduces the :-$i fallback the helper exists to remove.
