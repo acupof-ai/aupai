@@ -66,12 +66,42 @@ def now():
 
 
 def git_commit():
+    """WHICH CODE this run executed. Never "" -- see below.
+
+    NOT who ran it. The pod's sha comes from data/pod_synced_head, whose author is
+    whoever PUSHED the code, not whoever started the run. Usually the same person and
+    not guaranteed to be. If you need the operator, this field does not carry it.
+
+    The old version returned "" on the pod, which has no .git -- so it failed in the
+    one environment where runs actually happen, and 273 of 290 rows carried a blank
+    that is indistinguishable from "nobody filled this in". The comment said it was
+    "filled in when the log is synced back"; that never happened once. A value that
+    reads like an omission hides the fact that a function is broken.
+
+    Three sources, in order, and the third is explicit rather than empty:
+      HEAD              a git checkout (Mac, CI)
+      pod_synced_head   pod_push.sh stamps <sha> <dirty> <utc> after a full push
+      "unknown"         no git and no stamp
+    A PARTIAL push deletes the stamp (pod_push.sh:40), so a run started after one
+    records "unknown" -- which is correct: the pod is then one tree's sha plus another
+    tree's file, and the honest answer is that no single sha describes it.
+    """
     try:
         return subprocess.check_output(
             ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""  # pod checkout is not a git repo; filled in when the log is synced back
+        pass
+    try:
+        with open(os.path.join(ROOT, "data", "pod_synced_head"), encoding="utf-8") as f:
+            parts = f.read().split()
+        if parts:
+            # dirty>0 means the push carried uncommitted files: the sha is where the
+            # tree was, not what it held. Say so rather than implying a clean match.
+            return parts[0] if len(parts) < 2 or parts[1] == "0" else f"{parts[0]}+dirty{parts[1]}"
+    except (OSError, ValueError):
+        pass
+    return "unknown"
 
 
 def render():
