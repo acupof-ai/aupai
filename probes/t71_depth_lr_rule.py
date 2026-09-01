@@ -28,6 +28,9 @@ check 1  convexity is structural, not an init artifact (holds at every q scale, 
 check 2  a convex combination is bounded by its largest source, at any source count
 check 3  the measured depth exponent, from a fixed relative weight perturbation on every layer
 check 4  Muon's update magnitude does not depend on the gradient's
+check 5  Full AttnRes source reads are O(L^2), which is what sets the memory ceiling at L=32
+check 6  Muon's update magnitude does not depend on gradient NOISE either, i.e. on batch
+check 7  the exponent is stable across seeds, and exactly invariant to perturbation scale
 
 WHAT THIS IS NOT. Check 3 perturbs weights at INIT and reads the forward response. That is the
 quantity the muP derivation is about, and it is the honest scope of this probe: it measures the
@@ -35,6 +38,13 @@ architecture's depth sensitivity, NOT the optimal learning rate. An lr is set by
 dynamics over thousands of steps; a forward-sensitivity exponent bounds what the rule should be,
 it does not replace a sweep. Read it as "sqrt is the wrong exponent for this architecture", never
 as "the optimal lr_scale is exactly X".
+
+Checks 4 and 6 are two different questions that look like one. Check 4 varies gradient SCALE;
+check 6 varies gradient NOISE at fixed scale, which is what changing the batch actually does.
+Scale-invariance does not imply noise-invariance, so answering "does the depth rule interact with
+the batch decision" required measuring the second rather than citing the first. It does not, FOR
+MUON. The AdamW groups (embed_lr, scalar_lr) are batch-scaled per nanochat at a batch this probe
+never varies, so nothing here speaks to them -- that is a hole, not a clean bill.
 
 The KDA mixer needs the fla CUTLASS kernel, absent on a dev box, so it is replaced by its own
 output projection. That changes the RMS magnitudes and does NOT change the control flow, the
@@ -131,6 +141,13 @@ def source_reads(L, blocks=0):
     return tot + done + partial
 
 
+def _exponent(m, d, rel, seed, lo=12, hi=32):
+    """Depth exponent between two depths: log(sens_hi/sens_lo) / log(hi/lo)."""
+    s_lo = depth_sensitivity(m, d, lo, True, rel, seed)
+    s_hi = depth_sensitivity(m, d, hi, True, rel, seed)
+    return math.log(s_hi / s_lo) / math.log(hi / lo)
+
+
 def measure(d=1024, depths=(12, 16, 24, 32, 48)):
     m = _train()
     sens = {L: depth_sensitivity(m, d, L, True) for L in depths}
@@ -189,11 +206,24 @@ def selftest():
         assert out.pow(2).mean().sqrt().item() <= mx * 1.01, f"not bounded by max source at n={n}"
     print("  2 output bounded by the largest source at n=1..121: no growth for 1/sqrt(L) to cancel")
 
-    # 3. the measured exponent is far below sqrt. This is the finding; assert it is not 0.5.
-    r = measure(d, (12, 32))
-    e32 = r["exponents_vs_L12"][32]
-    assert e32 < 0.25, f"exponent {e32:.3f} is not well below the sqrt rule's 0.5"
-    print(f"  3 depth exponent 12->32 is {e32:+.3f}, not the sqrt rule's +0.500")
+    # 3+7. the exponent, its seed spread, and its scale-invariance. One block, because check 3
+    #    used to call measure(d, (12,32)) at seed 0 and check 7 then recomputed that same pair --
+    #    two model builds spent re-deriving a number already in hand. Merged, the selftest went
+    #    103s -> ~55s, and this file runs on every commit in the repo.
+    e_lo_scale = _exponent(m, d, 1e-4, 0)
+    e_hi_scale = _exponent(m, d, 1e-2, 0)
+    assert abs(e_lo_scale - e_hi_scale) < 1e-3, (
+        f"exponent moved with perturbation scale ({e_lo_scale:.4f} vs {e_hi_scale:.4f}): the "
+        f"probe has left the linear regime and the seeds below are no longer the only variance"
+    )
+    exps = [e_lo_scale] + [_exponent(m, d, 1e-3, s) for s in (1, 2)]
+    lo, hi = min(exps), max(exps)
+    assert hi < 0.25, f"exponent {hi:.3f} reaches the sqrt regime on some seed"
+    assert hi - lo < 0.05, f"exponent spread {hi - lo:.3f} is too wide to quote"
+    print(f"  3 depth exponent 12->32 is {e_lo_scale:+.3f}, not the sqrt rule's +0.500")
+    print(f"  7 over 3 seeds: {lo:+.3f}..{hi:+.3f} "
+          f"(implied lr_scale {(32 / 12) ** -hi:.3f}..{(32 / 12) ** -lo:.3f}, sqrt rule 0.612)")
+    print(f"    scale-invariant within a seed: {e_lo_scale:+.4f} at rel=1e-4 == {e_hi_scale:+.4f} at 1e-2")
 
     # 4. Muon's update does not scale with the gradient -- so an Adam-derived depth exponent
     #    is not inherited. Wrong direction here would mean Muon behaves like Adam and the
@@ -224,7 +254,31 @@ def selftest():
     print(f"  5 Full AttnRes source reads {r12} (L=12) -> {r32} (L=32) = {r32 / r12:.1f}x, quadratic")
     print(f"    blocks=8 at L=32 reads {source_reads(32, 8)}, ~parity with Full at L=12 ({r12})")
 
-    print("selftest: 6/6")
+    # 6. Muon is invariant to gradient NOISE, not merely to gradient SCALE. Batch changes the
+    #    former; check 4 only ruled out the latter. Without this, "the depth rule does not
+    #    interact with the batch decision" would be a scale result answering a noise question.
+    torch.manual_seed(0)
+    n = 256
+    signal = torch.randn(n, n) * 0.1
+    norms, coss = [], []
+    clean = torch.zeros(n, n)
+    oc = m.Muon([clean], lr=1.0, momentum=0.0, ns_steps=5, weight_decay=0.0)
+    clean.grad = signal.clone()
+    oc.step()
+    for k in (1, 4, 28, 196):  # 4 = tilerl's max per card; 28 = world 7 at accum 1
+        g = torch.Generator().manual_seed(k)
+        w = torch.zeros(n, n)
+        opt = m.Muon([w], lr=1.0, momentum=0.0, ns_steps=5, weight_decay=0.0)
+        w.grad = signal + torch.randn(n, n, generator=g) / (k**0.5)
+        opt.step()
+        norms.append(w.norm().item())
+        coss.append(((w.flatten() @ clean.flatten()) / (w.norm() * clean.norm())).item())
+    assert max(norms) / min(norms) < 1.05, f"Muon update magnitude tracks batch noise: {norms}"
+    assert coss[-1] > coss[0] * 3, f"more batch must improve direction, got {coss}"
+    print(f"  6 Muon update norm flat over batch 1..196 ({min(norms):.2f}..{max(norms):.2f}); "
+          f"only direction improves (cos {coss[0]:.2f}->{coss[-1]:.2f})")
+
+    print("selftest: 8/8")
     return 0
 
 
