@@ -177,6 +177,7 @@ def main():
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "probes/t65_near_dup_sweep.py": "imports build_corpus off sys.path; runner-only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
