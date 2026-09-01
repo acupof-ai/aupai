@@ -3867,6 +3867,20 @@ def check_ladder_config(root):
     if not os.path.exists(fpath):
         return SKIP, "data/mix_scale_run_config.json not present"
     frozen = json.load(open(fpath, encoding="utf-8"))
+    # A key declared frozen but absent from the config freezes nothing: `frozen[k]`
+    # raised KeyError on 'warmdown' and the whole check died, so the other twenty keys
+    # stopped being verified too. warmdown and anneal_frac were added to _FROZEN_KEYS
+    # when the WSD schedule landed and never added to the JSON. A crash is better than a
+    # silent skip and worse than a finding: report it as one, and keep checking the keys
+    # that do have a frozen value (de, 2026-09-01).
+    absent = [k for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS) if k not in frozen]
+    if absent:
+        # BEFORE the no-checkpoints SKIP: an unfrozen frozen key is a defect in the
+        # config, true on a machine holding no checkpoints at all. Behind the SKIP it
+        # would be invisible on every dev box and only visible on the pod.
+        return FAIL, (f"{len(absent)} key(s) declared frozen but absent from "
+                      f"data/mix_scale_run_config.json, so nothing freezes them: "
+                      f"{', '.join(absent)} -- add the value or drop the key")
     ckpts = sorted(glob.glob(os.path.join(root, "ckpt_*.pt")))
     if not ckpts:
         return SKIP, "no checkpoints"
@@ -3901,6 +3915,8 @@ def check_ladder_config(root):
             continue
         checked += 1
         for k in (*_FROZEN_KEYS, *_CODE_FROZEN_KEYS):
+            if k not in frozen:
+                continue  # reported once, as `absent`, not per checkpoint
             v = cfg.get(k)
             if v is None:
                 unknown.append(f"{os.path.basename(p)}:{k}")
