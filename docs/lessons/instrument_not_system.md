@@ -214,8 +214,9 @@ if the answer is unknown, the clean result is not yet evidence of soundness
 Different enough from the printf and join tells to name separately, and it is the
 one that survives careful measurement — because the measurement itself is fine.
 
-`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms**.
-Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16 write plus an fp32 cast — while
+`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms,
+the pre-correction figure**. Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16
+write plus an fp32 cast — while
 **both** fp8 arms passed `out_dtype=torch.float32` and never paid it. About
 12.9 GB/step, ≈10.4 ms at the probe's own fitted bandwidth. The baseline was
 penalised by work the candidate does not do, so the gap between them was not the
@@ -238,6 +239,59 @@ Note what did *not* go wrong: the timing was tight (spread 0.003–0.006 ms/chun
 the statistic was pre-declared, the arms were interleaved. **A well-run
 measurement of the wrong contrast is still the wrong answer**, and none of the
 usual rigour markers detect it.
+
+### A fifth tell: assert presence before asserting properties
+
+The one that hides inside a check written to catch exactly this class.
+
+db's 22B pre-registration returned **zero refused roles and zero ABSENT
+metrics** — a clean sheet. The readout had printed nothing at all. Every
+assertion was of the form "no row violates the gate", and a file with no rows
+satisfies all of them vacuously. The monitor read the absence of bad lines as
+good news.
+
+**A property asserted over an empty set is true.** So a probe must first assert
+that the artifact *has* the section it is judging, and only then judge it. The
+order is not stylistic: presence is a precondition of every property claim after
+it, and a probe that skips it reports the cleanest possible result on the most
+broken possible input.
+
+The same shape, elsewhere on this page and in the repo, which is why it is a tell
+and not an anecdote:
+
+- The `holdout_hashes` empty-set incident — an empty holdout set let 19 of 20
+  questions into SFT, because "no question is in the holdout set" is trivially
+  true of an empty set.
+- de's monitor closing a row `fail` on log silence — the inverse reading of the
+  same ambiguity. **Silence is not evidence.** It is equally consistent with
+  nothing-bad-happened and with nothing-happened, and only a presence assertion
+  separates them.
+
+The enforceable version: **a check reports `SKIP`, never `PASS`, when the thing
+it examines is absent.** A pass claims evidence; the absence of input is not
+evidence.
+
+### Six tells, and who caught them
+
+The section headings number the last two "fourth" and "fifth" because they were
+found in that order; counted as distinct questions to ask a measurement, there
+are six:
+
+1. Is this code path reached in the live configuration?
+2. Read the format string — what is the resolution of the input?
+3. Is a 0% or 100% result a finding, or a broken join?
+4. Does the cited number still describe what currently ships?
+5. Does the baseline pay work the candidate does not pay?
+6. Does the artifact contain the section being judged at all?
+
+Four of the six were caught by the author of the measurement, before anyone else
+challenged it — the byte cache's dead code path, t58's asymmetric baseline, the
+broken join, and the config drift. That is worth stating plainly, because it is
+the behaviour this page is trying to produce. **The purpose is not to review each
+other harder; it is to make the author's own second look find the thing first.**
+A reviewer who catches a wrong number saves one decision. An author who catches
+their own saves the decision and the review cycle, and does it while the context
+needed to see the defect is still loaded.
 
 ## When a qualifier has to be a restriction
 
