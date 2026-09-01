@@ -544,12 +544,16 @@ def _settle_dir(out, domain, settle_s):
             f"REFUSE: {out} is locked by live pid {who} (not ours) -- stamp over unsettled bytes"
         )
     lock = os.path.join(out, ".build.lock")
-    self_hold = os.path.exists(lock)
-    if self_hold:
+    # N5 (e1): self_hold means WE HOLD THE FLOCK on this dir (the live module global
+    # _LOCK_FD held by the build), NOT that the lock file records our pid. A lock file
+    # with our pid but no held flock (an ad-hoc re-stamp, or a recycled pid) is still
+    # unsettled-bytes risk and must fall to the mtime-settle window below. The fd the
+    # call sites bind is the thing that makes a build's own fresh mtimes legal.
+    self_hold = False
+    if _LOCK_FD is not None and not _LOCK_FD.closed:
         try:
-            with open(lock, encoding="utf-8") as fh:
-                self_hold = int(fh.read().strip()) == os.getpid()
-        except (OSError, ValueError):
+            self_hold = os.path.realpath(_LOCK_FD.name) == os.path.realpath(lock)
+        except (AttributeError, OSError, ValueError):
             self_hold = False
 
     def _mtime_below(path):
@@ -785,9 +789,15 @@ def _near_coeffs(perms, seed):
 
 
 def _minhash(shingle_hashes, ab, mask):
-    """MinHash signature (MIN over each permutation of the shingle-hash set). Candidate
-    generator only; a signature asserts nothing about near-ness by itself."""
-    return tuple(min(((a * h + b) & mask) for h in shingle_hashes) for a, b in ab)
+    """MinHash signature (MIN over each permutation of the shingle-hash set), packed
+    to len(ab)*8 bytes (uint64 each). Boxed Python ints would cost ~7x the memory
+    (e1 N3: 7215 B/doc boxed vs 1024 B packed); packing is what keeps ~8M doc
+    signatures at ~8GB instead of ~30GB. A candidate generator only; a signature
+    asserts nothing about near-ness by itself."""
+    return struct.pack(
+        f"{len(ab)}Q",
+        *(min(((a * h + b) & mask) for h in shingle_hashes) for a, b in ab),
+    )
 
 
 def _norm_skeleton(t):
@@ -802,12 +812,13 @@ def _norm_skeleton(t):
 def _lsh_candidates(sigs, bands, rows):
     """Candidate ordinal pairs from MinHash LSH: two docs sharing any band's full
     row-tuple are candidates. False candidates cost compute only -- the exact-J
-    decision below filters them and never errs upward."""
+    decision below filters them and never errs upward. sigs are packed uint64 bytes
+    (8 B/row), so a band key is a bytes slice (hashable)."""
     rivals = set()
     for b in range(bands):
         table = {}
         for o, sig in sigs.items():
-            table.setdefault(sig[b * rows : (b + 1) * rows], []).append(o)
+            table.setdefault(sig[b * rows * 8 : (b + 1) * rows * 8], []).append(o)
         for members in table.values():
             if len(members) > 1:
                 members.sort()
@@ -919,17 +930,25 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
         json.dump(stats, f, ensure_ascii=False, indent=1)
 
 
-def _near_dedup_postpass(a, normaliser=None, perms=128, bands=8, rows=16, jaccard=0.5, seed=17):
+def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccard=0.5, seed=17):
     """Calibrated near-dedup post-pass (fb ruling 2026-08-31; 44 conditions 2026-09-01).
     Runs AFTER the stage-2 run finished (never launch-parallel); rewrites the stamped
     {domain}_*.jsonl in place (new corpus_fp, forces retokenize). Byte-identical to a
     single-worker run of the same pipeline.
 
-    Fork C (memory-bounded): Phase A keeps only each doc's MinHash signature in memory
-    (1GB at 8M docs -- NOT the ~40GB of shingle sets), LSH yields candidate pairs, and
-    the exact normalized word-3-gram Jaccard DECISION is made by re-reading only the
-    candidate docs' source lines. Exact-J >= jaccard keeps the removed-fraction fact on
-    44's calibrated measure: MinHash/LSH is a candidate generator, never a decider."""
+    Fork C (memory-bounded): Phase A keeps each doc's MinHash signature in memory --
+    packed to len(ab)*8 bytes/doc (e1 N3), ~8GB at 8M docs, NOT the boxed-int ~30GB or
+    the ~100GB of full shingle sets -- LSH yields candidate pairs, and the exact
+    normalized word-3-gram Jaccard DECISION is made by re-reading only the candidate
+    docs' source lines. Exact-J >= jaccard keeps the removed-fraction fact on 44's
+    calibrated measure: MinHash/LSH is a candidate generator, never a decider.
+
+    Default banding bands=64 rows=2 (N2, e1): recall at jaccard 0.5 is
+    1-(1-0.5^2)^64 ~= 1.0, so recall_epsilon ~ 1e-8 -- the old default (8,16) had
+    recall 1.2e-4 (epsilon 0.999878), making epsilon the removed-fraction fact's
+    dominant error term ~100x the fact. 44 recalibrates bands/rows against the 50-doc
+    hand-read (recall-eps AND candidate-set-size are both 44's acceptance), but a
+    default this side of absurd keeps the stamp honest if it ships un-tuned."""
     import multiprocessing as mp
 
     if bands * rows != perms:
@@ -1041,7 +1060,11 @@ def _near_dedup_postpass(a, normaliser=None, perms=128, bands=8, rows=16, jaccar
         os.replace(sp, os.path.join(a.out, os.path.basename(sp)))
     os.rmdir(nd)
 
-    removed_n = total_docs - kept
+    # N4 (e1): count only docs the pass actually decided on. `total_docs - kept` would book
+    # every empty-content doc (skipped by both ordinal walks, present in neither set) as
+    # a near-dup -- a 4-line/2-empty/no-dup fixture would stamp removed_fraction 0.5.
+    # `removed` is the survivor-set complement we built; its size is the honest count.
+    removed_n = len(removed)
     recall = _lsh_recall_bound(bands, rows, jaccard)
     nshards = len(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
     reasons = Counter({"kept": kept, "near_dup": removed_n})
@@ -1226,11 +1249,23 @@ def _selftest_preflight():
         except SystemExit:
             ok += 1
         # (1) our OWN held build lock -> settle must PASS: production stamps its own
-        #     fresh bytes, and the mtime window is skipped when the lock is ours.
+        #     fresh bytes, and the mtime window is skipped when WE HOLD THE FLOCK.
+        #     N5 (e1): self_hold is decided by the live module _LOCK_FD, so the selftest
+        #     must bind it -- a local `own` would leave _LOCK_FD None and fail the PASS.
         os.remove(os.path.join(marker, ".build.lock"))
-        own = _build_lock(marker)  # we are the writer
-        _settle_dir(marker, "x", SETTLE_S)  # self lock must NOT refuse (PASS, case 1)
-        own.close()
+        global _LOCK_FD
+        _LOCK_FD = _build_lock(marker)  # we hold the flock; production stamps its fresh output
+        _settle_dir(marker, "x", SETTLE_S)  # must NOT refuse (PASS, case 1)
+        _LOCK_FD.close()
+        _LOCK_FD = None
+        # (5) N5 (e1): lockfile records OUR pid but we hold NO flock (ad-hoc re-stamp,
+        #     recycled pid) + fresh shard -> REFUSE. _other_writer_pid treats our pid as
+        #     "self" (None), so the PID probe cannot catch it; self_hold must NOT read
+        #     the file's pid (old behaviour) -- with the flock absent, _LOCK_FD is None
+        #     and the mtime window must refuse the fresh shard.
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(os.getpid()))
+        ok += _refuses(marker, "(5) own pid in lock, flock NOT held")
         # (2) foreign live pid in the lock -> settle refuses via the PID probe
         with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
             fh.write(str(sleeper.pid))
