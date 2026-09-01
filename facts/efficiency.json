@@ -830,7 +830,7 @@
    "boundary": "says attn_every 1 is broken under NoPE and why; says nothing about how KDA compares to attention when both have position information"
   },
   {
-   "id": "eff.fp8_transpose_cast_no_config_lever",
+   "id": "eff.fp8_transpose_cast_rowwise_gw_hp",
    "claim": "the fp8 quantize overhead is a second, transposed cast per tensor, and no torchao config removes it at a profit",
    "value": "torchao 0.17.0 casts input, weight and grad_output TWICE per step -- once per GEMM, in two different layouts. The second is the transposed one, and it is 59% of the fp8 overhead (71.08 of 120.12 ms at batch 32; the four largest kernels in the group all carry _t_ in their inductor names). Float8LinearConfig exposes six cast configs for exactly this, and ROWWISE_WITH_GW_HP is the one recipe that removes two of them: it sets cast_config_input_for_grad_weight and cast_config_grad_output_for_grad_weight to ScalingType.DISABLED, so grad_weight runs in bf16 and its transposed fp8 casts never happen. REJECTED on arithmetic: the three GEMMs have identical FLOPs (all MKN), so moving grad_weight from fp8 to bf16 costs about a third of the 247.25 ms fp8 GEMM row at half throughput, roughly +82 ms, while the entire fp8 quantize row is only 60.93 ms. Even removing ALL of the quantize overhead loses. Separately it scales AXISWISE, which is what makes stock `rowwise` raise 'aten.clone.default with axiswise scaling is not supported yet' under compile on the AttnRes .chunk() path, so it is very likely unrunnable here as well.",
    "measured": "2026-08-30",
