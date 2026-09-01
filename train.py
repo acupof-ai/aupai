@@ -241,7 +241,7 @@ class Cfg:
     # ~10 docs packed into each 4K row.
     doc_mask = True
     # Must name a live mix: a retired one here trains the retired recipe in silence.
-    mix = "data/mix_scale_3.24b.json"  # domain mix (weights / epoch caps / anneal)
+    mix = "data/mix_500m.json"  # domain mix (weights / epoch caps / anneal)
     # Symlinked shards, or a domain whose live bytes mismatch its build_corpus_stats.json
     # fingerprint, refuse to start: a swapped-in corpus trains under another domain's name
     # (the voided 0.2b run: CCI3 shards under web_hq's name). The flag pardons known,
