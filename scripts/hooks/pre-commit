@@ -19,6 +19,7 @@ stale" CI red that required a separate "regenerate pod manifest" commit.
 """
 import fnmatch
 import os
+import shutil
 import subprocess
 import sys
 
@@ -42,6 +43,25 @@ ALLOWED = [
     "data/rl/*",
     "data/sft_contamination_baseline.json",
 ]
+
+
+def repo_root():
+    return subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _behind_main():
+    """How many commits main has that this tree does not. 0 on main itself, and 0
+    when the count cannot be taken -- a tree with no main (a fresh temp repo, a
+    clone of one branch) must not be refused for a question that has no answer."""
+    r = subprocess.run(["git", "rev-list", "--count", "HEAD..main"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return 0
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
 
 
 def staged(diff_filter):
@@ -98,6 +118,38 @@ def main():
             )
             sys.exit(1)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
+
+    # Behind main. A conclusion drawn from a check has two inputs -- the check's code
+    # and the tree it ran on -- and we have only ever reported the first. On
+    # 2026-09-01 no_foreground_pod_training was fixed four times; 3b hit the version
+    # before the first fix, and two sessions each saw the other's item red in their
+    # own tree while both were done. "This check has a bug" and "this check has a bug
+    # in my tree" are different sentences, and nothing in the output told them apart.
+    #
+    # Refuse, never merge. An automatic merge can conflict, and a hook that drops your
+    # tree into a conflict you did not ask for is worse than one that stops you; an
+    # automatic rebase would rewrite history other sessions have already merged
+    # (AGENTS.md). Refusal is the only shape that holds: every rule today that
+    # depended on remembering broke, and every rule that refused at the point of use
+    # held (fb ruling, user order, 2026-09-01).
+    t0 = time.time()
+    behind = _behind_main()
+    merging = os.path.exists(os.path.join(os.path.realpath(
+        subprocess.run(["git", "rev-parse", "--git-common-dir"], capture_output=True,
+                       text=True).stdout.strip() or "."), "MERGE_HEAD"))
+    if behind and not merging and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        print(
+            f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
+            f"  git merge --no-edit main\n"
+            f"Committing here writes on top of code main has already moved past, and "
+            f"any check you ran said nothing about which version it tested.\n"
+            f"Deliberate exception (reproducing something that only fails on the older "
+            f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
+            f"commit and every check behind it describe a tree nobody else has.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
 
     t0 = time.time()
     fail = False
@@ -185,14 +237,64 @@ def main():
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
-        "scripts/harness.py": "the hook already runs `harness check`, which is its selftest",
+        # NOT "harness check is its selftest" -- that was false. `check` runs
+        # run_checks(); `--selftest` is what verifies every check FAILs on its broken
+        # world, and the two share no code path. The real reason is cost: measured
+        # 68s wall on this machine, against ~9s for the whole rest of the hook, and
+        # harness.py is touched by most commits that touch anything. A hook people
+        # wait a minute for is a hook they --no-verify, which is the 4a7dd56
+        # precedent this file already cites. It runs in CI, every push, where a
+        # minute is free (de, 2026-09-01).
+        "scripts/harness.py": "--selftest is 68s measured (rest of the hook is 9s); CI runs it every push",
     }
+    # The STAGED blob, never the working tree. The gate's whole claim is "the version
+    # being committed passes its own selftest", and running the working-tree copy tests
+    # a version that may not be the one entering history. Constructed and confirmed:
+    # stage a broken version, revert the working tree without staging, and the hook is
+    # green while the broken version lands (Codex found it, de reproduced it,
+    # 2026-09-01). The manifest half of this same hook already argues exactly this at
+    # the `git show :scripts/pod_drift.py` below -- the rule was stated and then not
+    # applied twelve lines above it.
+    #
+    # scripts/harness.py used to be exempt here, on the grounds that `harness check` is
+    # its selftest. It is not: `check` runs run_checks(), while `--selftest` is what
+    # verifies every check FAILs on its broken world. The core proof of the whole
+    # harness has never run at commit time. It runs now, and it is slower than the rest
+    # of this gate combined, which is the honest cost of actually checking.
+    # `git rev-parse --git-path`, not repo_root()/.git: in a linked worktree .git is a
+    # 60-byte FILE pointing at the real gitdir, so joining "hook-staged" onto it raises
+    # NotADirectoryError. That held on main and failed in all five other worktrees --
+    # every session but the integration tree was blocked from committing (e1, 2026-09-01).
+    staged_dir = subprocess.run(["git", "rev-parse", "--git-path", "hook-staged"],
+                                capture_output=True, text=True).stdout.strip()
     for f in sorted(SELFTEST_FILES & set(staged("AM"))):
-        r = subprocess.run([sys.executable, f, "--selftest"], capture_output=True, text=True)
+        blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
+        if blob.returncode != 0:
+            print(f"REFUSING: cannot read staged {f}", file=sys.stderr)
+            sys.exit(1)
+        # Written inside the repo so a __file__-relative ROOT still resolves, at the
+        # file's own path depth so `../..` lands on the repo root as it does normally.
+        dst = os.path.join(staged_dir, f)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "wb") as fh:
+            fh.write(blob.stdout)
+        # The staged copy is alone in its directory, so a script that inserts its OWN
+        # dir on sys.path (eval/score_matrix.py: sys.path.insert(0, HERE)) resolves
+        # HERE to .git/hook-staged/eval/ and cannot import its siblings. The real
+        # sibling dir goes on PYTHONPATH so the staged file under test is the only
+        # thing that differs from a normal run.
+        env = dict(os.environ)
+        sibling = os.path.join(repo_root(), os.path.dirname(f))
+        env["PYTHONPATH"] = os.pathsep.join(
+            p for p in (sibling, repo_root(), env.get("PYTHONPATH")) if p)
+        r = subprocess.run([sys.executable, dst, "--selftest"], capture_output=True,
+                           text=True, cwd=repo_root(), env=env)
         if r.returncode != 0:
             tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
-            print(f"REFUSING: {f} --selftest failed:\n" + "\n".join(tail), file=sys.stderr)
+            print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
+                  file=sys.stderr)
             sys.exit(1)
+    shutil.rmtree(staged_dir, ignore_errors=True)
     print(f"hook: selftests {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP

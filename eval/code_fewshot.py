@@ -192,7 +192,7 @@ def main():
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
           f"instrument exists iff acc > {2 * delta:.1%}")
     print(f"empty-continuation rate {no_fence / total:.1%}")
-    print(f"preds saved: {preds_path}")
+    print(f"preds saved: {out_path}")
 
 
 if __name__ == "__main__":
