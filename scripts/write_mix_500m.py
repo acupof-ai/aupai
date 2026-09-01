@@ -970,8 +970,119 @@ def selftest():
     print("  10 every supply declares its units; an undeclared or bare-ids supply is refused, "
           "and the shipped pair differs by markup rather than by n_docs")
 
-    print("selftest: 10/10")
+    # 11. the probe mix is a RENORMALISATION, not a second composition decision. The risk it
+    #     guards is specific: dropping the largest domain and re-arguing the rest would make
+    #     the A/B's mix a fresh judgement taken under time pressure, and nobody would notice
+    #     because both arms would still be identical to each other.
+    pm = build_probe()
+    ref = {k: v["weight"] for k, v in build(8.85e9)["domains"].items()
+           if k != "code_py_starcoder"}
+    scale = sum(ref.values())
+    for k, w in ref.items():
+        got = pm["domains"][k]["weight"]
+        assert abs(w / scale - got) < 2e-5, (
+            f"{k}: probe weight {got} is not the shipped ratio {w / scale} renormalised -- "
+            f"the probe re-decided a weight instead of rescaling it"
+        )
+    assert "code_py_starcoder" not in pm["domains"], "the probe must not name an unbuilt domain"
+    assert sum(d["rows_from_weight_at_runtime"] for d in pm["domains"].values()) == pm["total_rows"]
+    assert pm["total_tokens"] == PROBE_STEPS * PROBE_TOK_PER_STEP, (
+        "the probe budget must be steps x the MEASURED tok_per_step, not a round number"
+    )
+    # and no domain is anywhere near the ceiling, which is why no bypass was needed
+    assert not pm["_warnings"], pm["_warnings"]
+    worst = max(d["epochs_fractional"] for d in pm["domains"].values())
+    assert worst < 1.0, f"a 500-step probe should draw under one epoch everywhere, worst {worst}"
+    print("  11 the probe mix renormalises the shipped ratios (no weight re-decided), omits "
+          "the unbuilt domain, sums to its row budget, and draws under one epoch everywhere")
+
+    print("selftest: 11/11")
     return 0
+
+
+PROBE_OUT = os.path.join(ROOT, "data", "mix_probe_lr.json")
+PROBE_STEPS = 500
+PROBE_TOK_PER_STEP = 917_504     # runs/memory_peaks.json world=7, b32 accum1 seq4096 -- measured
+
+
+def build_probe():
+    """A throwaway mix for the 500-step lr_scale A/B (fb 2026-09-01). NOT a composition.
+
+    The eight domains that exist today -- everything but code_py_starcoder, which 3b is still
+    building -- at the shipped mix's ratios RENORMALISED, not re-decided. That distinction is
+    the whole point: dropping the largest domain and then re-arguing the remaining weights
+    would make this a second composition decision taken under time pressure, and the arm
+    comparison does not need one. Both arms see the identical mix; only lr_scale differs.
+
+    Budget is 500 steps x 917,504 tokens/step, the MEASURED step size from
+    runs/memory_peaks.json at world=7 -- not a round number, because a round number here would
+    silently change how many rows each domain contributes and nobody would know which.
+
+    No epoch ceiling applies: at 0.459B every domain draws well under one epoch (the largest is
+    cot at 0.137). The guard is left ON rather than bypassed -- it simply has nothing to say,
+    which is a better state than a disabled guard that would stay disabled if this file were
+    ever copied.
+    """
+    total_tokens = PROBE_STEPS * PROBE_TOK_PER_STEP
+    rows = total_tokens // SEQ
+    full = build(8.85e9)["domains"]
+    keep = {k: v for k, v in full.items() if k != "code_py_starcoder"}
+    scale = sum(v["weight"] for v in keep.values())
+    weights = {k: v["weight"] / scale for k, v in keep.items()}
+    alloc = _rows_for_weights(weights, rows)
+    domains, warn = {}, []
+    for name, r in alloc.items():
+        pool = keep[name]["pool_rows_estimated"]
+        w, places = _weight_for_rows(r, rows)
+        drawn = r / pool
+        if drawn > EPOCH_SOFT_CEILING:
+            warn.append(f"{name}: {drawn:.2f} epochs -- unexpected in a 500-step probe")
+        domains[name] = {
+            "weight": w,
+            "epochs": max(1, math.ceil(r / pool)),
+            "anneal": w,
+            "role": f"PROBE ONLY. {keep[name]['role'][:120]}",
+            "weight_decimals": places,
+            "rows_from_weight_at_runtime": r,
+            "pool_rows_estimated": pool,
+            "epochs_fractional": round(drawn, 4),
+            "epochs_pool_measured": keep[name]["epochs_pool_measured"],
+            "epochs_pool_source": keep[name]["epochs_pool_source"],
+            "fingerprint": keep[name]["fingerprint"],
+        }
+    assert sum(d["rows_from_weight_at_runtime"] for d in domains.values()) == rows
+    return {
+        "_comment": [
+            "THROWAWAY. The 500-step lr_scale A/B probe (0.85 vs 1.2), fb 2026-09-01.",
+            "NOT the 500M run's composition -- that is data/mix_500m.json.",
+            "",
+            "Eight domains: everything in mix_500m.json except code_py_starcoder, which does",
+            "not exist yet. Their weights are the shipped ratios RENORMALISED to sum to 1,",
+            "deliberately not re-decided: an arm comparison needs both arms identical, not a",
+            "second composition argument made in a hurry.",
+            "",
+            "WHAT THIS MIX CAN AND CANNOT ANSWER. It can show that one lr_scale diverges,",
+            "spikes, or stalls in the first 500 steps -- the failure that is loud early. It",
+            "cannot show which lr_scale ends lower at 20B, and a 500-step loss gap must not be",
+            "read that way: the arms differ by lr, so their loss curves are not comparable in",
+            "level until both have left the warmup transient.",
+            "",
+            "It also carries NO code_py_starcoder, so nothing measured here says anything",
+            "about the code-first objective the real mix is built around.",
+        ],
+        "total_tokens": rows * SEQ,
+        "total_rows": rows,
+        "seq": SEQ,
+        "steps": PROBE_STEPS,
+        "tok_per_step": PROBE_TOK_PER_STEP,
+        "tok_per_step_source": "runs/memory_peaks.json world=7 (measured, b32 accum1 seq4096)",
+        "anneal_frac": 0.0,
+        "warmdown": 0.0,
+        "domains": domains,
+        "_probe": True,
+        "_warnings": warn,
+        "_blocked": {},
+    }
 
 
 def main():
@@ -979,30 +1090,34 @@ def main():
     ap.add_argument("--code-tokens", type=float, default=8.85e9,
                     help="parse-verified Python tokens that actually landed; the code weight is "
                          "a function of this, so pass the measured number")
+    ap.add_argument("--probe", action="store_true",
+                    help="write data/mix_probe_lr.json instead: the 500-step lr A/B probe, "
+                         "eight domains, ratios renormalised not re-decided")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
-    m = build(a.code_tokens)
+    m = build_probe() if a.probe else build(a.code_tokens)
+    out = PROBE_OUT if a.probe else OUT
     text = json.dumps(m, indent=1, ensure_ascii=False) + "\n"
     if a.check:
-        if not os.path.exists(OUT):
-            print(f"{OUT} does not exist", file=sys.stderr)
+        if not os.path.exists(out):
+            print(f"{out} does not exist", file=sys.stderr)
             return 1
-        if open(OUT, encoding="utf-8").read() != text:
-            print(f"REFUSING: {OUT} does not match its inputs -- regenerate", file=sys.stderr)
+        if open(out, encoding="utf-8").read() != text:
+            print(f"REFUSING: {out} does not match its inputs -- regenerate", file=sys.stderr)
             return 1
-        print(f"{OUT} matches its inputs")
+        print(f"{out} matches its inputs")
         return 0
-    with open(OUT, "w", encoding="utf-8") as f:
+    with open(out, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"wrote {OUT}: {len(m['domains'])} domains, {m['total_tokens'] / 1e9:.1f}B tokens")
+    print(f"wrote {out}: {len(m['domains'])} domains, {m['total_tokens'] / 1e9:.3f}B tokens")
     for w in m["_warnings"]:
         print(f"  WARNING {w}")
-    for n in m["_launch_blocked"]:
+    for n in m.get("_launch_blocked", []):
         print(f"  LAUNCH BLOCKED {n}: {m['_untrusted_supply'][n]}")
-    if m["_launch_blocked"]:
+    if m.get("_launch_blocked"):
         print("  -> this mix must not start a run until every blocked supply is measured")
     return 0
 
