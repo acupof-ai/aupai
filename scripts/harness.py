@@ -139,6 +139,10 @@ REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
 TASK_COMMIT_FROM = "2026-09-01 13:30"
 PAIR_PRIOR_FROM = "2026-09-02 00:00"
+_TASK_STOPWORDS = {"which", "there", "these", "those", "their", "would", "could", "should",
+                   "every", "after", "before", "because", "instead", "rather", "without",
+                   "against", "already", "still", "cannot", "names", "naming", "state",
+                   "write", "writes", "written", "read", "reads", "check", "checks"}
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -4985,6 +4989,8 @@ def cmd_task(argv):
     a.add_argument("--prior", required=True,
                    help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
                         "'defect-fix' when the task repairs our own code and no prior art applies")
+    a.add_argument("--dup-ok", dest="dup_ok", action="store_true",
+                   help="proceed past the overlap refusal; say in --why how this differs")
     a.add_argument("--blocked-on", dest="blocked_on", default=None)
     d = sub.add_parser("done")
     d.add_argument("id")
@@ -5015,6 +5021,22 @@ def cmd_task(argv):
         if args.pair not in REVIEW_PAIRS:
             print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
             return 1
+        # The same cache task went to two people nine minutes apart and both stayed open
+        # all night; --pair cannot see it, because each row had one. Nothing compared the
+        # rows to each other. Distinctive words, so two rows about different subjects that
+        # share "the token cache" do not collide but two about the same one do.
+        def _words(s):
+            return {w for w in re.findall(r"[a-z_]{5,}", (s or "").lower())} - _TASK_STOPWORDS
+        new = _words(args.task)
+        for t in rows:
+            if t.get("state") != "open" or not new:
+                continue
+            old = _words(t.get("task"))
+            if old and len(new & old) / min(len(new), len(old)) >= 0.5 and not args.dup_ok:
+                print(f"refusing: {t['id']} ({t.get('owner')}) overlaps this task -- "
+                      f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
+                      "they are different", file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
