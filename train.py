@@ -2283,6 +2283,21 @@ def main():
         if m:
             resume_step = int(m.group(1))
         resume_step = ck.get("step", resume_step)
+        # fb, 2026-09-02 / b0 / tilerl: the end-of-run save (save_checkpoint without
+        # opt/step, end of main) has neither field -- resuming from it silently restarts
+        # at step 0 with a cold optimizer, both invisible in the logs. Refuse at the
+        # point of use. Fields are the fact, the filename is convention: milestone
+        # hardlinks (ckpt_<name>.milestone_<tok>.pt) are valid resume targets without
+        # stepN in the name, and a save_every checkpoint carries both fields. SFT is the
+        # legitimate step-0 case and has its own loader in sft_math.py.
+        missing = [k for k in ("step", "opt") if k not in ck]
+        if missing:
+            raise RuntimeError(
+                f"refusing to resume from {args.resume}: checkpoint is missing {missing} "
+                f"-- a train.py resume needs step and opt (a save_every checkpoint, "
+                f"ckpt_<name>.pt.step<N>.pt, or a milestone hardlink of one). Resuming "
+                f"from anything else silently restarts at step 0 with a cold optimizer."
+            )
         # The cursor's step origin. save_checkpoint indexes _plan_domains, which holds
         # only THIS plan's rows, with an absolute step -- so after a resume the index
         # runs past the array and Python's slice clamps to its end, writing the

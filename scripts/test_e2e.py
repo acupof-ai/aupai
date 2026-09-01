@@ -272,6 +272,41 @@ def main():
                            real_kernel=True)
         return 0
     finally:
+        stage(11, "resume from the step-less final save refuses (fb 2026-09-02)")
+        # The end-of-run save writes neither step nor opt, so a resume from it would
+        # silently restart at step 0 with a cold optimizer. The guard is field-based,
+        # not filename-based: milestone hardlinks without stepN in the name pass.
+        p = subprocess.run(
+            [
+                sys.executable,
+                "train.py",
+                "--name",
+                name + "_resume",
+                "--mix",
+                MIX,
+                "--resume",
+                ckpt,
+                "--max_steps",
+                "1",
+                "--batch",
+                "1",
+                "--seq",
+                "512",
+                "--warmup",
+                "2",
+                *E2E_SHAPE,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        assert p.returncode != 0 and "refusing to resume" in (p.stdout + p.stderr), (
+            f"resume from step-less {ckpt} did not refuse (rc={p.returncode})\n"
+            f"{p.stdout[-1200:]}\n{p.stderr[-1200:]}"
+        )
+        print("    refused as designed")
+
         # Always clean up the temp checkpoints; the .ep1 carries optimizer state and is the
         # bigger file.
         rm(os.path.join(ROOT, "ckpt_e2e_tmp.pt"), os.path.join(ROOT, "ckpt_e2e_tmp_sft.pt"))

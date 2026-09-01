@@ -157,6 +157,11 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
     return _ce(model, x, y, bs)
 
 
+# The pair above has one and this did not, and this is the one score_matrix calls
+# (score_matrix.py:147). Scoring lrprobe_0.85 then built a backward graph it never used
+# and asked for 94.65 GiB on a card someone else was holding -- read at the time as the
+# training run exhausting memory, which it was not (fb, 2026-09-02).
+@torch.no_grad()
 def domain_loss_seqs(model, rows, device, bs=4):
     """Mean next-token CE over rows train.py actually held out (from val_seqs).
 

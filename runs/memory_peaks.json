@@ -17,6 +17,22 @@
   "log": "runs/w7_b32a1.log",
   "measured": "2026-09-01"
  },
+ "8": {
+  "peak_GiB": 69.63,
+  "config": "b32 accum1 d1024 L32 h8 ffn3072 seq4096 grad_ckpt compiled fp8 attn_res-Full",
+  "params_M": 493.6,
+  "tok_per_step": 1048576,
+  "card_usable_GiB": 95.22,
+  "headroom_GiB": 25.59,
+  "steps": 40,
+  "stable_across_windows": [10, 20, 30, 40],
+  "cards": "0-7",
+  "log": "runs/proberesume_run1.log",
+  "ops_exercised": "init + compile + fwd/bwd/step + save",
+  "ops_not_exercised": "eval, scoring",
+  "note": "A BY-PRODUCT of the crash-recovery gate test, not a measurement run: that test trains 60 steps and is killed at 40, so this reading comes from a job that was deliberately terminated. The kill is unrelated to the peak -- it happened after step 40 reported, and the figure had already been flat across four windows by then, one more than the world=7 entry. Recorded because the shape is the launch recipe exactly (mix_500m, all nine domains, same batch/accum/depth/precision) and re-running a dedicated 30-step probe would measure the same thing twice. Identical to world=7's 69.63: per-card activations do not move when a rank is added, which is what DDP predicts and what this now shows rather than assumes.",
+  "measured": "2026-09-02"
+ },
  "7_alt_b16a2": {
   "peak_GiB": 36.29,
   "config": "b16 accum2 -- same 917,504 tok/step as b32 accum1, half the activation set",

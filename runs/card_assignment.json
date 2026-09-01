@@ -3,34 +3,18 @@
     "Card ownership, granted by the controller. launch_gate reads launch_block_granted",
     "and note; a false grant with no note reads as a stub, not as a decision.",
     "Idle is not free: a card's owner is the job still running or the one the controller",
-    "has queued, never the instantaneous nvidia-smi row. Three collisions on 2026-09-01",
-    "came from reading an idle card as an available one."
+    "has queued, never the instantaneous nvidia-smi row."
   ],
   "granted_by": "fb",
-  "granted": "2026-09-01",
-  "launch_block_granted": false,
-  "block_cards": null,
+  "granted": "2026-09-02",
+  "launch_block_granted": true,
+  "block_cards": "0-7",
   "lane_card": null,
-  "note": "Refused for the 20B run: corpora and epochs_measured are not GO. Cards 1-7 ARE lent to tilerl right now for a 500-step two-arm LR probe (lr_scale 0.85 vs 1.2) at the real shape -- see probe_grant. That lend is NOT this flag: fb set this flag true for the probe at 21:0x and the gate read it as the run being cleared, printing GO. The flag answers one question -- may the 20B run start -- and a lend for a bounded probe is a different one.",
-  "verified": "2026-09-01 21:0x by nvidia-smi on the pod: all 8 cards at 0 MiB after de's e2e exited 0",
-  "current_holders": [
-    {
-      "cards": "1-7",
-      "who": "tilerl",
-      "job": "500-step two-arm LR probe at d1024/L32 on mix_probe_lr.json",
-      "until": "self-terminating, ~2x8min"
-    }
-  ],
+  "note": "Granted for the 500M/20B run on ALL EIGHT cards, user ruling 2026-09-02. The lane is gone by that ruling and the cost was stated before it was taken: in-run milestone generation sweeps cannot run, because the scorer needs a whole 95 GiB card and not a gap -- observed, not derived, when the probe's scorer took card 7 alone after training exited. End-of-run scoring is unaffected: run_ddp.sh scores after torchrun exits, when all eight are free. Second cost: the 200M comparison axis loses its free pin at step 17,500 and needs 15,313 plus conversion. Both were on the table before the decision. Resume was PROVEN before this grant, per the user's order of 2026-09-02: six conditions, nine domains character-for-character, plus a reverse test that made the guard fire. --auto-resume is 1 and not more: the cursor is per-segment, so a second resume re-reads 10,240 rows and nothing has ever tested it.",
+  "verified": "2026-09-02: memory_measured at world=8 is a real measurement, not an extrapolation -- 69.63 GiB stable across steps 10/20/30/40 in runs/proberesume_run1.log, the launch recipe on eight cards",
   "next_grant": {
-    "to": "the 500M run",
-    "for": "the 7-card block",
-    "blocked_on": "corpora (3b's starcoder) and epochs_measured (b0, 5/9 done)"
-  },
-  "probe_grant": {
-    "cards": "1-7",
-    "who": "tilerl",
-    "job": "500-step two-arm LR probe at d1024/L32",
-    "until": "self-terminating, ~30-35min per tilerl's measured compile time",
-    "not_the_run": true
+    "to": "nothing",
+    "for": "the block is committed to the 20B run",
+    "blocked_on": "the run itself"
   }
 }

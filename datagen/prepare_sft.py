@@ -246,7 +246,7 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
         "input_ids": input_ids,
         "labels": labels,
         "vocab_id": _vocab_fingerprint(tok),
-        "packer_fp": _fp_file(os.path.join(ROOT, "scripts", "prepare_sft.py")),
+        "packer_fp": _fp_file(os.path.abspath(__file__)),
         "sources_fp": _fp_sources(),
         "holdout_fp": _fp_file(os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")),
     }

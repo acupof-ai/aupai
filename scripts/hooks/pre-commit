@@ -236,6 +236,8 @@ def main():
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
+        "scripts/read_lr_probe.py",
+        "scripts/read_resume_proof.py",
         # Nine files the gate could not see until its predicate widened from
         # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
         # sys.argv instead of argparse. Five run clean at commit time and are gated
