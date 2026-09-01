@@ -133,10 +133,10 @@ _AGE_HOURS = 6
 REVIEW_GRACE_MIN = 30
 #: The rule starts here. 41 tasks closed before it existed and cannot grow a reviewer;
 #: failing them would be a permanent red nobody can act on, which is the same as no signal.
-REVIEW_RULE_FROM = "2026-08-31 22:00"
+REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: From when a close must name a commit that reaches main and touches its evidence.
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
-TASK_COMMIT_FROM = "2026-09-01 21:30"
+TASK_COMMIT_FROM = "2026-09-01 13:30"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -1108,6 +1108,58 @@ def check_curl_ipv4(root):
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
     return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
+
+
+def check_timestamps_are_utc(root):
+    """Every timestamp written into the repo is UTC.
+
+    The Mac runs CST and the pod container runs UTC, so the same instant was written
+    as 22:04 and as 14:04 in the same format with nothing to tell them apart. Every
+    runs/*.jsonl ledger mixes both clocks, and no_stale_running, review_present and
+    tasks_closed_by_commit all compare those strings: a pod row reads eight hours old
+    the moment it is written and a Mac row reads eight hours in the future."""
+    bad = []
+    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in filenames:
+            if not fn.endswith(".py"):
+                continue
+            p = os.path.join(dirpath, fn)
+            scanned += 1
+            text = open(p, encoding="utf-8", errors="replace").read()
+            # Blank the docstring, keep its newlines: dropping it outright shifts every
+            # line number after it, which is how the first run of this check named three
+            # lines that hold no timestamp at all.
+            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
+                          lambda m: "\n" * m.group(0).count("\n"), text)
+            lines = text.split("\n")
+            for n, line in enumerate(lines, 1):
+                # The call's arguments may wrap, so read the continuation too: a first
+                # version named a strftime whose time.gmtime sat on the next line.
+                s = "".join(lines[n - 1:n + 1]).split("#", 1)[0]
+                if re.search(r"""(?<!["'])time\.strftime\(""", s) and "gmtime" not in s:
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+                elif re.search(r"""(?<!["'])time\.localtime\(""", s):
+                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+    if bad:
+        return FAIL, f"{len(bad)} naive local-clock call(s): {bad[:3]}"
+    return PASS, f"every strftime in {scanned} tracked .py passes time.gmtime()"
+
+
+def _broken_timestamps_are_utc():
+    """The REAL exp.py with its gmtime dropped, which is what it looked like today."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "exp.py")
+    text = open(src, encoding="utf-8").read()
+    if "time.gmtime()" not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "exp.py"), "w", encoding="utf-8").write(
+        text.replace(", time.gmtime()", "", 1)
+    )
+    return d
 
 
 def _broken_curl_ipv4():
@@ -4138,7 +4190,7 @@ def _broken_ladder_config():
         z.writestr("data.pkl", buf.getvalue())
     # An exp row launched via run_ddp.sh -- the scope filter.
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
-        f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M"),
+        f.write(json.dumps({"name": "test", "started": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
                             "status": "ok", "cmd": "bash run_ddp.sh --name test"}) + "\n")
     return d
 
@@ -4753,6 +4805,9 @@ def cmd_task(argv):
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
+    p = sub.add_parser("drop")
+    p.add_argument("id")
+    p.add_argument("--why", required=True, help="why this will not be done; names what superseded it")
     sub.add_parser("list").add_argument("--all", action="store_true", help="include closed tasks")
     args = ap.parse_args(argv)
     rows = _read_tasks()
@@ -4772,7 +4827,7 @@ def cmd_task(argv):
             "why": args.why,
             "reading": args.reading,
             "blocked_on": args.blocked_on,
-            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
         }
         _append_task(row)
@@ -4797,7 +4852,7 @@ def cmd_task(argv):
             return 1
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
-                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M"))
+                  commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -4814,12 +4869,25 @@ def cmd_task(argv):
             hit[0],
             state="open",
             reopen_reason=args.why,
-            reopened=time.strftime("%Y-%m-%d %H:%M"),
+            reopened=time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             evidence=hit[0].get("evidence", ""),  # keep prior evidence; the check accepts open+evidence
         )
         ev.pop("closed", None)
         _append_task(ev)
         print(f"{args.id} reopened: {args.why[:80]}")
+        return 0
+
+    if args.op == "drop":
+        hit = [r for r in rows if r.get("id") == args.id]
+        if not hit:
+            print(f"no task {args.id}; `harness task list` shows what is open")
+            return 1
+        if hit[0].get("state") != "open":
+            print(f"{args.id} is {hit[0].get('state')}, not open")
+            return 1
+        _append_task(dict(hit[0], state="dropped", drop_reason=args.why,
+                          closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime())))
+        print(f"{args.id} dropped: {args.why[:80]}")
         return 0
 
     show = rows if args.all else [r for r in rows if r.get("state") == "open"]
@@ -4843,7 +4911,7 @@ def _task_open_run(name, hypothesis):
         "why": hypothesis or f"0830v1 budget point {name}",
         "reading": "score_matrix record is the result; the fit interprets",
         "blocked_on": None,
-        "opened": time.strftime("%Y-%m-%d %H:%M"),
+        "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "evidence": None,
     }
     _write_tasks(rows + [row])
@@ -4860,7 +4928,7 @@ def _task_close_run(name, evidence):
             and r.get("owner") == "pipeline"
             and r.get("task") == f"run point {name}"
         ):
-            r.update(state="done", evidence=evidence, closed=time.strftime("%Y-%m-%d %H:%M"))
+            r.update(state="done", evidence=evidence, closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
             _write_tasks(rows)
             return r["id"]
     return None
@@ -4976,7 +5044,7 @@ def _broken_tasks_stale():
             "why": "selftest",
             "reading": None,
             "blocked_on": done["id"],
-            "opened": time.strftime("%Y-%m-%d %H:%M"),
+            "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
         }
     )
@@ -5668,6 +5736,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "timestamps_are_utc",
+        "every timestamp written into the repo is UTC",
+        "the Mac writes CST and the pod container writes UTC in the same format with no marker, so a pod row reads eight hours old the moment it lands and every ledger age comparison is wrong by up to eight hours (2026-09-01)",
+        check_timestamps_are_utc,
+        _broken_timestamps_are_utc,
+    ),
+    (
         "curl_ipv4",
         "every curl call in tracked code passes -4",
         "the pod's IPv6 egress is broken; without -4 the failure reads as 'host unreachable' and produced a whole reachability matrix of false negatives (2026-08-30)",
@@ -6187,7 +6262,7 @@ def _board_event(kind, msg):
     path = os.path.join(ROOT, "runs", "events.jsonl")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M"), "kind": kind, "msg": msg}) + "\n")
+        f.write(json.dumps({"ts": time.strftime("%Y-%m-%d %H:%M", time.gmtime()), "kind": kind, "msg": msg}) + "\n")
 
 
 def _board_data():
@@ -6242,8 +6317,8 @@ def _board_data():
             newest = max(newest, os.path.getmtime(p))
     ready_30b, gates_30b = _30b_readiness()
     return {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.localtime(newest)) if newest else None,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+        "staleness": {"newest_artifact": time.strftime("%Y-%m-%d %H:%M", time.gmtime(newest)) if newest else None,
                       "skip_count": n_skip, "fail_count": n_fail},
         "checks": checks,
         "ladder": ladder,
@@ -7008,7 +7083,7 @@ def _selftest_exp_fold():
         # expires. Half the threshold, so it is unambiguously inside the window whatever
         # _STALE_RUNNING_H becomes.
         recent = time.strftime("%Y-%m-%d %H:%M",
-                               time.localtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
+                               time.gmtime(time.time() - _STALE_RUNNING_H * 3600 / 2))
         ev = [
             {"name": "a", "started": "2026-08-31 05:08", "status": "running", "ended": ""},
             {"name": "a", "started": "2026-08-31 05:08", "status": "fail", "ended": "2026-09-01 05:29"},
@@ -7581,7 +7656,7 @@ def _demo():
         _write_tasks(real_rows, tmp_tasks)
         test_row = dict(real_rows[0])
         test_row.update(id="t_selftest", state="done", evidence="prior evidence",
-                        owner="selftest", why="test", closed=time.strftime("%Y-%m-%d %H:%M"))
+                        owner="selftest", why="test", closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
         rows = _read_tasks(tmp_tasks) + [test_row]
         _write_tasks(rows, tmp_tasks)
         # Reopen: same transition as cmd_task
@@ -7590,7 +7665,7 @@ def _demo():
         assert hit and hit[0]["state"] == "done", "selftest row must start done"
         prior = hit[0].get("evidence", "")
         hit[0].update(state="open", reopen_reason="selftest reopen",
-                      reopened=time.strftime("%Y-%m-%d %H:%M"), evidence=prior)
+                      reopened=time.strftime("%Y-%m-%d %H:%M", time.gmtime()), evidence=prior)
         hit[0].pop("closed", None)
         _write_tasks(rows, tmp_tasks)
         # Verify: state=open, evidence preserved, reopen_reason present, check accepts
@@ -8276,7 +8351,7 @@ def cmd_clean(rest):
         "   if p not in m:\n"
         "    st=os.stat(p)\n"
         "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
-        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.localtime(st.st_mtime))}\\t{prd}')\n"
+        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.gmtime(st.st_mtime))}\\t{prd}')\n"
     )
     for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
         parts = ln.split("\t")
@@ -8492,7 +8567,7 @@ while True:
         try:
             with open(log, "a", encoding="utf-8") as lf:
                 lf.write(
-                    f"\\n[monitor {{time.strftime('%H:%M:%S')}}] no log growth in {{silent_limit}}s, "
+                    f"\\n[monitor {{time.strftime('%H:%M:%S', time.gmtime())}}] no log growth in {{silent_limit}}s, "
                     f"but pid {{pid}} is ALIVE -- stalled_suspected, NOT failed. Liveness here is "
                     f"inferred from LOG BYTES, not from the process; a generative eval is silent "
                     f"by construction. Leaving the row open: the run decides its own verdict.\\n"
@@ -9399,7 +9474,7 @@ def cmd_milestone(argv):
             "milestone": milestone, "launcher": "harness", "score_matrix": "runs/score_matrix.jsonl",
             "preds": [os.path.relpath(p, ROOT) for p in preds],
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
-            "measured": time.strftime("%Y-%m-%d"),
+            "measured": time.strftime("%Y-%m-%d", time.gmtime()),
         }
         with open(os.path.join(ROOT, "runs", "milestones.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -9484,7 +9559,7 @@ def cmd_milestone(argv):
                 ckpt = saved[step]
                 prev = [t for t in spec if t in scored]
                 paired = a.paired or (scored[prev[-1]] if prev else "ckpt_p324.pt")
-                print(f"[{time.strftime('%H:%M:%S')}] milestone {tok} @ step {step} "
+                print(f"[{time.strftime('%H:%M:%S', time.gmtime())}] milestone {tok} @ step {step} "
                       f"(target {target}): {ckpt} vs {paired}", flush=True)
                 # Pin BEFORE scoring: run_one may queue behind an occupied lane, and the
                 # rotation does not wait for the queue.
