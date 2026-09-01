@@ -64,16 +64,23 @@ def main():
     torch.manual_seed(0)
     # The three head GEMMs, same shapes Liger FLCE emits per chunk.
     A = torch.empty(M, K, device=dev, dtype=torch.bfloat16).normal_(0, 0.5)
-    W = torch.empty(K, N, device=dev, dtype=torch.bfloat16).normal_(0, 0.02)
     G = torch.empty(M, N, device=dev, dtype=torch.bfloat16).normal_(0, 0.02)
 
-    Wt = W.t().contiguous()
+    # Liger's three sites, verbatim from patch_liger_flce_fp8's substitutions:
+    #   logits      = _fp8_mm(_input_chunk, weight.t(), ...)   A  @ Wt   [M,K]x[K,N]
+    #   grad_input  = _fp8_mm(grad_logits, weight, ...)        G  @ W ... but Liger's `weight`
+    #                                                          is [N,K], so W here is Wn
+    #   grad_weight = _fp8_mm(grad_logits.t(), _input_chunk)   Gt @ A    [N,M]x[M,K]
+    # `weight` in Liger is [vocab, hidden] = [N, K]; weight.t() is [K, N].
+    Wn = torch.empty(N, K, device=dev, dtype=torch.bfloat16).normal_(0, 0.02)
+    Wt = Wn.t().contiguous()  # [K, N], the forward's b operand
+    Gt = G.t().contiguous()  # [N, M], the grad_weight site's a operand
+
     qA, sA = _q(A)
-    qW, sW = _q(W)
     qWt, sWt = _q(Wt)
+    qWn, sWn = _q(Wn)
     qG, sG = _q(G)
-    qGt, sGt = _q(G.t().contiguous())
-    qAt, sAt = _q(A.t().contiguous())
+    qGt, sGt = _q(Gt)
 
     def sm(a, sa, b, sb, out):
         return torch._scaled_mm(a, b.t().contiguous().t(), scale_a=sa, scale_b=sb, out_dtype=out)
@@ -82,20 +89,20 @@ def main():
         # production shape: train.py:_fp8_mm, quantisation inside the timed window
         "quant": lambda: (
             train._fp8_mm(A, Wt, A.dtype, cache_b=True),
-            train._fp8_mm(G, W, torch.bfloat16),
-            train._fp8_mm(G.t(), A, torch.float32),
+            train._fp8_mm(G, Wn, torch.bfloat16),
+            train._fp8_mm(Gt, A, torch.float32),
         ),
         # same GEMMs, operands already fp8: the quantisation is outside the window
         "pre": lambda: (
             sm(qA, sA, qWt, sWt, torch.bfloat16),
-            sm(qG, sG, qW, sW, torch.bfloat16),
+            sm(qG, sG, qWn, sWn, torch.bfloat16),
             sm(qGt, sGt, qA, sA, torch.float32),
         ),
         # the baseline the fp8 path replaced
         "bf16": lambda: (
-            A @ Wt.t(),
-            G @ W,
-            torch.mm(G.t(), A).float(),
+            A @ Wt,
+            G @ Wn,
+            torch.mm(Gt, A).float(),
         ),
     }
 
