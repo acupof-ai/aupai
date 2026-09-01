@@ -130,18 +130,29 @@ def score_pairs(model, tok, pairs, device, batch=8):
         for side in ("ref", "mutant"):
             seqs = [p["prompt"] + p[side] for p in chunk]
             enc = tok.encode_batch(seqs)
-            ids = torch.tensor([e.ids for e in enc], device=device)
+            id_lists = [e.ids for e in enc]
+            max_len = max(len(ids) for ids in id_lists)
+            ids = torch.zeros((len(chunk), max_len), dtype=torch.long, device=device)
+            real = torch.zeros((len(chunk), max_len), dtype=torch.bool, device=device)
+            plens = []
+            for j, p in enumerate(chunk):
+                ids[j, : len(id_lists[j])] = torch.tensor(id_lists[j], device=device)
+                real[j, : len(id_lists[j])] = True
+                plens.append(len(tok.encode(p["prompt"]).ids))
             logits = model(ids, num_vals=None)[0][:, :-1, :]
             tgt = ids[:, 1:]
             logp = torch.log_softmax(logits.float(), dim=-1)
             tok_lp = logp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1)
-            plen = torch.tensor([len(tok.encode(p["prompt"]).ids) - 1 for p in chunk],
-                                device=device)
-            mask = torch.arange(tgt.shape[1], device=device)[None, :] >= plen[:, None]
-            mean_lp = (tok_lp * mask).sum(1) / mask.sum(1).clamp(min=1)
+            plen_t = torch.tensor(plens, device=device)
+            ar = torch.arange(max_len - 1, device=device)[None, :]
+            # solution tokens start at ids-index plen -> shifted index plen-1;
+            # padding is beyond real length, excluded by `real` (causal attention
+            # never looks right, so right-padding leaves real-position logits intact)
+            sol = (ar >= plen_t[:, None] - 1) & real[:, 1:]
+            mean_lp = (tok_lp * sol).sum(1) / sol.sum(1).clamp(min=1)
             for j, p in enumerate(chunk):
                 p[f"_{side}_nll"] = -mean_lp[j].item()
-                p[f"_{side}_ntok"] = int(mask[j].sum().item())
+                p[f"_{side}_ntok"] = int(sol[j].sum().item())
         for p in chunk:
             win = p["_ref_nll"] < p["_mutant_nll"]
             wins += win
