@@ -407,6 +407,74 @@ def _broken_milestone_ckpt_pinned():
     return d
 
 
+def check_probe_numbers_unique(root):
+    """Surface tNN numbers claimed by more than one probe. WARN, not FAIL.
+
+    Three collisions in one afternoon (2026-09-01): t62, t63 and t64 each named
+    two unrelated probes from two sessions, because a probe number is allocated
+    by guessing the next free integer against a tree other sessions are writing
+    to concurrently. Nothing fails loudly -- both files exist, both run -- but a
+    fact citing "t63" then resolves to whichever the reader finds first.
+
+    WHY THIS IS A WARN AND NOT A FAIL, which my first version got wrong: sharing
+    a number is LEGITIMATE when the files are one task's sub-probes. t57 is
+    t57_absmax / t57_outlier / t57_seam, three angles on one fp8-head question,
+    cited by full filename and unambiguous. My FAIL version reddened the board on
+    that convention -- a check that fires on correct practice trains people to
+    ignore it, which is worse than no check.
+
+    Nothing in the filenames distinguishes "one task, three probes" from "two
+    sessions, one number", and git authorship does not either on a shared
+    machine. So this reports the shared numbers and leaves the judgement to a
+    human, which is the honest limit of what it can know.
+    """
+    import collections
+
+    d = os.path.join(root, "probes")
+    if not os.path.isdir(d):
+        return SKIP, "no probes/ directory"
+    seen = collections.defaultdict(list)
+    for f in sorted(os.listdir(d)):
+        m = re.match(r"^(t\d+)_.*\.py$", f)
+        if m:
+            seen[m.group(1)].append(f)
+    if not seen:
+        return SKIP, "probes/ holds no tNN_*.py files"
+    dupes = {k: v for k, v in seen.items() if len(v) > 1}
+    if dupes:
+        detail = "; ".join(f"{k}: {', '.join(v)}" for k, v in sorted(dupes.items()))
+        return WARN, (f"{len(dupes)} probe number(s) claimed by >1 file -- fine if they are one "
+                      f"task's sub-probes, a collision if two sessions picked the same integer: {detail}")
+    return PASS, f"{len(seen)} probe numbers, all unique"
+
+
+def _broken_probe_numbers_unique():
+    """A REAL probe plus a second file claiming its number -- the exact shape of
+    today's t62/t63/t64 collisions. Built from a real repo path rather than two
+    invented names, because the meta-check requires the broken world to mirror
+    the tree it stands in, and it is right to: a world of invented paths tests
+    the check against a repo that does not exist.
+
+    WARN, not FAIL: the check cannot tell a collision from one task's sub-probes
+    (t57_absmax / t57_outlier / t57_seam are legitimately one number)."""
+    import shutil as _sh
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "probes"), exist_ok=True)
+    real = None
+    for f in sorted(os.listdir(os.path.join(ROOT, "probes"))):
+        if re.match(r"^t\d+_.*\.py$", f):
+            real = f
+            break
+    if real is None:
+        raise SelftestSkip("no tNN_*.py probe in the repo to build a collision from")
+    _sh.copy(os.path.join(ROOT, "probes", real), os.path.join(d, "probes", real))
+    num = re.match(r"^(t\d+)_", real).group(1)
+    with open(os.path.join(d, "probes", f"{num}_collision.py"), "w", encoding="utf-8") as f:
+        f.write("# a second probe claiming the same number\n")
+    return d
+
+
 def check_no_duplicate_defs(root):
     """No module defines the same top-level name twice.
 
@@ -4887,6 +4955,13 @@ CHECKS = [
         _broken_milestone_ckpt_pinned,
     ),
     (
+        "probe_numbers_unique",
+        "tNN numbers claimed by more than one probe are surfaced for a human to judge",
+        "three collisions in one afternoon: t62/t63/t64 each named two probes from two sessions, so a fact citing a number resolves to whichever file the reader finds",
+        check_probe_numbers_unique,
+        _broken_probe_numbers_unique,
+    ),
+    (
         "no_duplicate_defs",
         "no module defines the same top-level name twice",
         "two sessions restored one dropped selftest from different commits and harness.py carried it twice; Python binds the second, so the first is dead code that drifts, and ruff F811 does not fire across intervening defs",
@@ -6333,7 +6408,7 @@ def _demo():
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
     # force the tier back. What its world must still prove is that removing a review row
     # is VISIBLE -- WARN is the signal, silence is the defect.
-    warn_only = {"untracked_aged", "dirty_aged", "review_present"}
+    warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
