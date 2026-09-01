@@ -25,9 +25,18 @@ Known-answer (instrument validation): a working instrument prefers the
 reference on >90% of problems — same code, one operator apart. Below that the
 instrument is broken, not the model weak.
 
+Hard layer (--freeze-hard / --hard): distractors = the model's OWN failing
+solutions, sampled at T=0.8, execution-filtered, frozen from one checkpoint
+(reasoning_panel §6 freeze discipline: the opponent must not move between
+checkpoints). Pre-registered branches on the 200M baseline: coverage <30%
+(model can't produce code-like failures) or win rate >90% (saturated) -> the
+L0' path closes; 60-90% -> fast primary candidate.
+
 Usage:
     python eval/code_l0prime.py --selftest
     python eval/code_l0prime.py --ckpt <ckpt> --out runs/l0prime_<tag>.json
+    python eval/code_l0prime.py --ckpt <ckpt> --freeze-hard data/eval/l0prime_hard_<tag>.jsonl
+    python eval/code_l0prime.py --ckpt <ckpt> --hard data/eval/l0prime_hard_<tag>.jsonl --out ...
 """
 
 import argparse
@@ -187,6 +196,42 @@ def _selftest():
           " first %d tries; low coverage = instrument blind spot, report it." % MAX_MUTANTS_PER_PROBLEM)
 
 
+def freeze_hard(model, tok, rows, device, k=8, temperature=0.8, max_new=512):
+    """Sample k solutions per problem at T=0.8; keep the first failing non-empty one.
+
+    Frozen by construction: torch.manual_seed(42) at entry makes the freeze
+    reproducible, and the written file is the artifact every later checkpoint
+    is scored against (§6 freeze discipline — the opponent must not move)."""
+    from eval.gsm8k import generate_batch
+    torch.manual_seed(42)
+    frozen, n_empty, n_fail = [], 0, 0
+    for d in rows:
+        q, expected = d["instruction"], d["expected_output"]
+        prompt = f"题目：{q}\n```python\n"
+        ids = tok.encode(prompt).ids
+        distractor = None
+        with torch.no_grad():
+            out = generate_batch(model, [ids] * k, max_new, device,
+                                 temperature, rep_stop=False)
+        for gen_ids in out:
+            cont = tok.decode(gen_ids[len(ids):])
+            end = cont.find("```")
+            code = cont[:end] if end >= 0 else cont
+            if not code.strip():
+                continue
+            if not passes(code, expected):
+                distractor = code
+                break
+        if distractor is None:
+            n_empty += 1
+            continue
+        n_fail += 1
+        frozen.append({"q": q, "ref": d["reference_code"], "distractor": distractor,
+                       "expected": expected, "source": d.get("source", "unknown"),
+                       "frozen_from": "step24000"})
+    return frozen, {"no_failing_sample": n_empty, "frozen": n_fail, "n": len(rows)}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt")
@@ -194,15 +239,35 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--freeze-hard", metavar="PATH",
+                    help="sample failing solutions from this checkpoint, freeze to PATH, exit")
+    ap.add_argument("--hard", metavar="PATH",
+                    help="score against frozen hard-layer distractors instead of mutants")
     args = ap.parse_args()
     if args.selftest:
         _selftest()
         return
     assert args.ckpt, "--ckpt required (or --selftest)"
-    rows = [json.loads(l) for l in open(args.data, encoding="utf-8")]
-    pairs, stats = build_pairs(rows)
     model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
     tok = load_tokenizer(os.path.join(ROOT, "data", "tokenizer.json"), cfg)
+    if args.freeze_hard:
+        rows = [json.loads(l) for l in open(args.data, encoding="utf-8")]
+        frozen, stats = freeze_hard(model, tok, rows, args.device)
+        with open(args.freeze_hard, "w", encoding="utf-8") as f:
+            for r in frozen:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(json.dumps({"frozen": len(frozen), "stats": stats,
+                          "coverage": round(len(frozen) / len(rows), 3)}, ensure_ascii=False))
+        return
+    if args.hard:
+        frozen = [json.loads(l) for l in open(args.hard, encoding="utf-8")]
+        pairs = [{"prompt": f"题目：{r['q']}\n```python\n", "ref": r["ref"],
+                  "mutant": r["distractor"], "expected": r["expected"],
+                  "source": r["source"]} for r in frozen]
+        stats = {"hard_layer": args.hard, "n_frozen": len(frozen)}
+    else:
+        rows = [json.loads(l) for l in open(args.data, encoding="utf-8")]
+        pairs, stats = build_pairs(rows)
     result = score_pairs(model, tok, pairs, args.device)
     result["stats"] = stats
     result["ckpt"] = args.ckpt
