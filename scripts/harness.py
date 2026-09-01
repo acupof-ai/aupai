@@ -8278,6 +8278,32 @@ def _ckpt_env_fp(path):
         return None
 
 
+def _drop_zombies(host_pids):
+    """Keep only pids that are actually running.
+
+    `pgrep -f X` matches on argv, and a zombie KEEPS its argv (`[run_ddp.sh] <defunct>`)
+    while running nothing and holding no card. So a name match is not evidence of a live
+    process -- on 2026-09-01 `pgrep -f compile_worker | wc -l` returned 1577 where 1570
+    were zombies and 38 were live, and the miscount was read as CPU saturation on an idle
+    machine. On a kill path the same substitution is worse than a miscount: it makes the
+    caller act on processes that already exited.
+
+    Filtered here rather than remembered at each call site, because knowing the trap
+    exists and recalling it at the moment of use are different things -- the miscount
+    above was made 15 minutes after merging the fix whose docstring states it.
+    """
+    if not host_pids:
+        return []
+    r = subprocess.run(["tn", "exec", f"ps -o pid=,stat= -p {','.join(host_pids)}"],
+                       capture_output=True, text=True)
+    live = set()
+    for ln in r.stdout.splitlines():
+        f = ln.split()
+        if len(f) >= 2 and not f[1].startswith("Z"):
+            live.add(f[0])
+    return [p for p in host_pids if p in live]
+
+
 def _gpu_descendants(root_host_pid):
     """Host pids holding GPU memory that descend from root_host_pid.
 
@@ -8351,7 +8377,7 @@ def cmd_kill(argv):
         return 1
     pattern = re.escape(cmdline)
     r = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    host_pids = [p for p in r.stdout.split() if p.strip()]
+    host_pids = _drop_zombies([p for p in r.stdout.split() if p.strip()])
     parent, children = None, []
     for hp in host_pids:
         s = subprocess.run(["tn", "exec", f"grep -h NSpid /proc/{hp}/status"], capture_output=True, text=True)
@@ -8363,7 +8389,7 @@ def cmd_kill(argv):
             children.append(hp)
     # The monitor's embedded code names the container pid; it is the only other match.
     r = subprocess.run(["tn", "exec", f"pgrep -f '{cpid}'"], capture_output=True, text=True)
-    monitor_pids = [p for p in r.stdout.split() if p.strip() and p not in host_pids]
+    monitor_pids = _drop_zombies([p for p in r.stdout.split() if p.strip() and p not in host_pids])
     # Differently-named children holding GPU memory (score_matrix -> math_zh.py etc).
     gpu_kids = [p for p in _gpu_descendants(parent) if p not in host_pids] if parent else []
     print(f"container pid {cpid} -> parent {parent or '?'}, workers {children or 'none'}, "
