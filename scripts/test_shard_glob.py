@@ -151,6 +151,24 @@ def main():
     assert "some_future_sidecar.jsonl" in run["raised"], \
         f"the refusal does not name the offending file: {run['raised']}"
 
+    # THE SAME COMMIT MUST DECIDE THE SAME WAY ON EVERY MACHINE. Every tracked .jsonj
+    # under data/corpus/ is checked against the live rule: one that is neither a shard
+    # nor a known non-shard stops the run HERE and not on the pod (or the reverse) the
+    # moment the two filesystems differ. data/corpus/sample/code_rp1t_handread50.jsonl
+    # was exactly that -- tracked, present on the Mac, absent from the pod, so e2e
+    # passed there and raised SystemExit here from one commit (e1, 2026-09-01). It is
+    # audit evidence, so it moved to data/eval/ rather than joining the blacklist:
+    # every name added there makes it harder to see what is real corpus.
+    tracked = subprocess.run(["git", "ls-files", "data/corpus"], capture_output=True,
+                             text=True, cwd=ROOT).stdout.split()
+    names = sorted({os.path.basename(t) for t in tracked if t.endswith(".jsonl")})
+    if names:
+        _, unknown_tracked = _selection(train_py, names)
+        assert not unknown_tracked, (
+            f"tracked .jsonl file(s) under data/corpus/ are neither shards nor known "
+            f"non-shards: {unknown_tracked}. _domain_seqs stops the run on these, so "
+            f"this commit behaves differently on a machine that has them.")
+
     print(f"selftest OK ({len(shards)} shards kept, {len(not_shards)} non-shards refused, "
           f"unknown files refused by _domain_seqs)")
     return 0
