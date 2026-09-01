@@ -38,6 +38,7 @@ MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 SCOPE = [
     "*.py",
     "*.sh",
+    "scripts/hooks/*",
     "data/mix_*.json",
     "data/tokenizer.json",
     "facts/*.json",
@@ -48,6 +49,19 @@ SCOPE = [
     ":!scripts/pod_sync_check.sh",
 ]
 EXCLUDE_DIRS = ("filters", "mathbank", "workflows")
+
+# git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
+# to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
+# init` in a throwaway directory reconfigures the REAL repo instead: with GIT_DIR
+# pointing at a worktree gitdir it sets core.bare=true on the shared repo, which breaks
+# every git command for every session until someone unsets it. A selftest must build its
+# world from nothing the caller is holding.
+_GIT_ENV_VARS = ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+                 "GIT_OBJECT_DIRECTORY", "GIT_CONFIG", "GIT_CONFIG_GLOBAL")
+
+
+def _clean_git_env():
+    return {k: v for k, v in os.environ.items() if k not in _GIT_ENV_VARS}
 
 # Job-class entry points: BFS from these through imports derives the class of
 # every manifest file. Priority: training > eval > corpus > docs.
@@ -342,6 +356,14 @@ def selftest():
     and a drifted training-scope file must."""
     import tempfile
 
+    # Drop the caller's git env for the whole selftest, not per-subprocess: the helpers
+    # below call write_manifest_index(), which runs its own git commands, and under an
+    # inherited GIT_DIR those read MAIN's repo instead of the temp world -- both branches
+    # then produce the same manifest and the merge case asserts "expected a conflict, got
+    # a clean merge". Stripping at the entry covers every nested call.
+    for _v in _GIT_ENV_VARS:
+        os.environ.pop(_v, None)
+
     d = tempfile.mkdtemp()
     for sub in ("scripts", "datagen", "data", "mathbank"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
@@ -385,16 +407,24 @@ def selftest():
     # the shared index and swept another session's staged paths into the manifest.)
     import tempfile
     g = tempfile.mkdtemp()
-    subprocess.run(["git", "init"], cwd=g, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=g, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=g, capture_output=True)
+    # GIT_INDEX_FILE is INHERITED by every git here, and the hook runs this selftest with
+    # it already set to the real commit's temp index. Without stripping it, `git add`
+    # below stages a.py/b.py into the REPO BEING COMMITTED and `git commit` here finds
+    # nothing to commit, so read-tree HEAD dies on a repo with no HEAD. The selftest was
+    # writing to the tree it was meant to be independent of.
+    genv = _clean_git_env()
+    def _g(*a):
+        return subprocess.run(["git", *a], cwd=g, env=genv, capture_output=True)
+    _g("init")
+    _g("config", "user.email", "t@t")
+    _g("config", "user.name", "t")
     open(os.path.join(g, "b.py"), "w").write("# b\n")
-    subprocess.run(["git", "add", "b.py"], cwd=g, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "base"], cwd=g, capture_output=True)
+    _g("add", "b.py")
+    _g("commit", "-m", "base")
     open(os.path.join(g, "a.py"), "w").write("# a: staged in shared index, not in this commit\n")
-    subprocess.run(["git", "add", "a.py"], cwd=g, capture_output=True)
+    _g("add", "a.py")
     tmp_index = os.path.join(g, ".git", "commit-index")
-    env = dict(os.environ, GIT_INDEX_FILE=tmp_index)
+    env = dict(genv, GIT_INDEX_FILE=tmp_index)
     subprocess.run(["git", "read-tree", "HEAD"], cwd=g, env=env, capture_output=True, check=True)
     # git runs the hook with GIT_INDEX_FILE set in the environment, not as a flag.
     os.environ["GIT_INDEX_FILE"] = tmp_index
@@ -415,8 +445,11 @@ def selftest():
     import tempfile
     h = tempfile.mkdtemp()
 
+    henv = _clean_git_env()
+
     def g(*args, check=True):
-        return subprocess.run(["git", *args], cwd=h, capture_output=True, text=True, check=check)
+        return subprocess.run(["git", *args], cwd=h, env=henv, capture_output=True,
+                              text=True, check=check)
 
     g("init")
     g("checkout", "-b", "main")
