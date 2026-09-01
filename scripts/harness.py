@@ -43,7 +43,12 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
-_CHECK_TIMEOUTS = {"eval_sft_template_contamination": 90}
+_CHECK_TIMEOUTS = {
+    "eval_sft_template_contamination": 90,
+    # measured 6.1 s on 2026-09-01 (one remote ps per training process); stopgap until the
+    # read is batched -- the 5 s default killed the whole run because no SIGALRM handler existed
+    "no_foreground_pod_training": 15,
+}
 
 
 class SelftestSkip(Exception):
@@ -4819,8 +4824,17 @@ STAGES = [
 # ------------------------------------------------------------------------- reports
 
 
+def _check_deadline(signum, frame):
+    # The per-check deadline below arms signal.alarm; without this handler SIGALRM's default
+    # disposition killed the whole harness run (exit 142, no output, no check named) --
+    # found 2026-09-01 when no_foreground_pod_training first exceeded 5 s. The handler turns
+    # the alarm into the TimeoutError that run_checks already catches as a named SKIP.
+    raise TimeoutError("check deadline")
+
+
 def run_checks(root=ROOT, quiet=False):
     results = []
+    _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
         try:
@@ -4840,6 +4854,7 @@ def run_checks(root=ROOT, quiet=False):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
                 print(f"         prevents: {incident}")
+    signal.signal(signal.SIGALRM, _prev_alarm_handler)
     return results
 
 
