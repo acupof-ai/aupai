@@ -137,6 +137,7 @@ REVIEW_RULE_FROM = "2026-08-31 14:00"
 #: From when a close must name a commit that reaches main and touches its evidence.
 #: Rows closed before this keep their prose evidence; the rule is not retroactive.
 TASK_COMMIT_FROM = "2026-09-01 13:30"
+PAIR_PRIOR_FROM = "2026-09-02 00:00"
 
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
@@ -3130,6 +3131,52 @@ def _union_ledgers(root):
     return tuple(out)
 
 
+def check_tasks_paired_and_prior(root):
+    """Every task opened since the rule names a second session who agreed it and what
+    was already known before it started.
+
+    Three sessions took AUTHORITY at once and two of them duplicated a merge; separately
+    a throughput number had no reference point in the literature at all, so "is this
+    good" could not be answered. Both are the same absence: nobody stated, before
+    starting, who agreed and what was already known (user order 2026-09-01)."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    # Two scopes unioned, because a timestamp alone cannot separate them today: rows
+    # written before the UTC fix carry CST, and 21:27 CST sorts after a 14:40 UTC
+    # threshold. Every row the new `add` writes carries the prior key, so those are in
+    # scope whatever their clock; the date takes over once every row is UTC.
+    scope = [t for t in rows
+             if "prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM]
+    if not scope:
+        return SKIP, f"no task opened since the rule took effect ({PAIR_PRIOR_FROM})"
+    bad = []
+    for t in scope:
+        pair, prior = t.get("pair"), (t.get("prior") or "")
+        if not pair:
+            bad.append(f"{t['id']}: no second session agreed it")
+        elif pair == t.get("owner"):
+            bad.append(f"{t['id']}: paired with its own owner")
+        if not prior:
+            bad.append(f"{t['id']}: does not say what was already known")
+        elif prior != "defect-fix" and not re.search(r"\d{4}\.\d{4,5}|facts/\S+#\S+|https?://", prior):
+            bad.append(f"{t['id']}: prior '{prior[:40]}' is neither a citation nor defect-fix")
+    if bad:
+        return FAIL, f"{len(bad)} of {len(scope)} task(s): {'; '.join(bad[:3])}"
+    return PASS, f"{len(scope)} task(s), each agreed by a second session with its prior art named"
+
+
+def _broken_tasks_paired_and_prior():
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "tasks.jsonl")
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    _sh.copy(src, dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"id": "x-1", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+    return d
+
+
 def check_tasks_closed_by_commit(root):
     """Every task closed since the rule carries a commit that reaches main and touches
     its evidence.
@@ -4907,6 +4954,11 @@ def cmd_task(argv):
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--pair", required=True,
+                   help="the second session who agreed this task before it started; not the owner")
+    a.add_argument("--prior", required=True,
+                   help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
+                        "'defect-fix' when the task repairs our own code and no prior art applies")
     a.add_argument("--blocked-on", dest="blocked_on", default=None)
     d = sub.add_parser("done")
     d.add_argument("id")
@@ -4931,10 +4983,18 @@ def cmd_task(argv):
         # <owner>-<n> is collision-free across branches; existing t-ids stay.
         n = max([int(r["id"].split("-", 1)[1]) for r in rows
                  if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))] or [0]) + 1
+        if args.pair == args.owner:
+            print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
+            return 1
+        if args.pair not in REVIEW_PAIRS:
+            print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+            return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
             "socket": args.socket,
+            "pair": args.pair,
+            "prior": args.prior,
             "state": "open",
             "task": args.task,
             "why": args.why,
@@ -5680,6 +5740,13 @@ CHECKS = [
         "the guard lived in a wrapper while the documented entry point bypassed it",
         check_guard_on_path,
         _broken_guard,
+    ),
+    (
+        "tasks_paired_and_prior",
+        "every task opened since the rule names a second session and its prior art",
+        "three sessions took the same work at once and a throughput number had no reference point in the literature; both are the same absence, stated before starting (user order 2026-09-01)",
+        check_tasks_paired_and_prior,
+        _broken_tasks_paired_and_prior,
     ),
     (
         "tasks_closed_by_commit",
