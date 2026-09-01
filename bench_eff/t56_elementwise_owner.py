@@ -44,23 +44,48 @@ members = [e for e in gpu
 
 group_ms = sum(e["dur"] for e in members) / n_active / 1000.0
 print(f"trace {path}")
-print(f"elementwise/copy group: {len(members)} kernels, {group_ms:.1f} ms/step over {n_active} steps\n")
+print(f"elementwise/copy group: {len(members)} kernels, {group_ms:.1f} ms/step over {n_active} steps")
+# t56 reported 107.0 ms/step for this group from the SINGLE-CARD lane trace. A ddp rank0
+# trace is a different run (7 cards, allreduce, different shapes), so a different total here
+# is expected and is not a discrepancy to reconcile -- but the OWNERSHIP question the group
+# poses is the same one, and this is the trace that exists.
+print("  (t56's 107.0 ms is the single-card lane trace; a ddp rank0 total differs by construction)\n")
 
-# correlation id -> the cpu_op that launched it. Torch puts it in args.correlation on both sides.
-def corr(e):
-    a = e.get("args") or {}
-    return a.get("correlation", a.get("External id"))
+# The link is two hops, not one: a kernel carries args.correlation, a cpu_op carries
+# args["External id"], and they are DIFFERENT keyspaces. The cuda_runtime launch event holds
+# both -- correlation matching the kernel, External id matching the launching cpu_op. Joining
+# kernel->cpu_op directly on "correlation or External id" resolves 0% (measured), which reads
+# as "the trace cannot name it" when in fact the join was wrong.
+runtime = [e for e in ev if e.get("cat") == "cuda_runtime" and (e.get("args") or {})]
 
+corr_to_ext = {}
+for e in runtime:
+    a = e["args"]
+    c, x = a.get("correlation"), a.get("External id")
+    if c is not None and x is not None:
+        corr_to_ext[c] = x
 
-cpu_by_corr = {}
+# External id -> the innermost cpu_op carrying it. Deepest (shortest) op issued the kernel.
+ext_to_op = {}
 for e in cpu:
-    c = corr(e)
-    if c is None:
+    x = (e.get("args") or {}).get("External id")
+    if x is None:
         continue
-    # Innermost op wins: the deepest cpu_op is the one that actually issued the kernel.
-    prev = cpu_by_corr.get(c)
+    prev = ext_to_op.get(x)
     if prev is None or e["dur"] < prev["dur"]:
-        cpu_by_corr[c] = e
+        ext_to_op[x] = e
+
+
+def owner_of(k):
+    c = (k.get("args") or {}).get("correlation")
+    if c is None:
+        return None
+    x = corr_to_ext.get(c)
+    if x is None:
+        return None
+    op = ext_to_op.get(x)
+    return op["name"] if op else None
+
 
 by_owner = defaultdict(float)
 by_owner_n = defaultdict(int)
@@ -68,8 +93,7 @@ by_kernel = defaultdict(float)
 unresolved = defaultdict(float)
 for e in members:
     by_kernel[e["name"].split("(")[0][:60]] += e["dur"]
-    c = corr(e)
-    owner = cpu_by_corr.get(c, {}).get("name") if c is not None else None
+    owner = owner_of(e)
     if owner is None:
         unresolved[e["name"].split("(")[0][:60]] += e["dur"]
     else:
