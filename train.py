@@ -2322,6 +2322,14 @@ def main():
         # that does not move with the shape it bounds turns a shape flag into a
         # tripwire. +8 is headroom so a launch does not sit on the boundary; max(64,..)
         # so nothing shrinks below today's value at the old depth (de, 2026-09-01).
+        #
+        # grad_ckpt does NOT change the count, measured not assumed
+        # (scripts/probe_gradckpt_sources.py): 65 distinct source counts at L=32, the
+        # same sequence with checkpointing off and on. AttnRes sits outside the
+        # checkpoint by construction (see _body: only [B,T] logits on the tape), so
+        # recompute never re-enters it. Recorded here because the alternative is
+        # sizing this constant against the wrong quantity, which is the same defect
+        # one level up from the one it fixes (fb's challenge, 2026-09-01).
         _cache_need = max(64, 2 * Cfg.layers + 8)
         torch._dynamo.config.cache_size_limit = _cache_need
         torch._dynamo.config.accumulated_cache_size_limit = 4 * _cache_need
