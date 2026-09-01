@@ -144,12 +144,13 @@ def score_file(path, oracles, demo_codes=(), seed=0, timeout=10, limit=None):
     if not os.path.exists(path):
         return None, f"no such preds file: {path}"
     rows = []
-    for line in open(path, encoding="utf-8"):
-        if line.strip():
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip():
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     if not rows:
         return None, f"{path} holds no rows"
     if limit:
@@ -185,13 +186,13 @@ def score_file(path, oracles, demo_codes=(), seed=0, timeout=10, limit=None):
     except RuntimeError as e:
         return None, f"sandbox unavailable ({e}); run this on the pod, do not score 0"
 
-    hits = [runs_to(s, e, timeout) for s, e in zip(spans, exps)]
+    hits = [runs_to(s, e, timeout) for s, e in zip(spans, exps, strict=True)]
     rec["pass_rate"] = {"rate": round(sum(hits) / n, 4), "n": n}
 
     # control 1: each span against another problem's oracle, same aggregation
     sh = [e for e in exps]
     random.Random(seed).shuffle(sh)
-    ctrl = sum(runs_to(s, e, timeout) for s, e in zip(spans, sh))
+    ctrl = sum(runs_to(s, e, timeout) for s, e in zip(spans, sh, strict=True))
     rec["shuffled_control"] = {"rate": round(ctrl / n, 4), "n": n}
 
     # control 2: what pure demo-copying scores. Not covered by control 1 -- a copied
@@ -293,7 +294,8 @@ def main():
     if not a.preds:
         ap.error("--preds required (or --selftest)")
 
-    rows = [json.loads(x) for x in open(a.data, encoding="utf-8") if x.strip()]
+    with open(a.data, encoding="utf-8") as fh:
+        rows = [json.loads(x) for x in fh if x.strip()]
     oracles = {r["instruction"]: r.get("expected_output") for r in rows}
     demo_codes = [r["reference_code"] for r in rows[: max(0, a.demos)] if r.get("reference_code")]
 
