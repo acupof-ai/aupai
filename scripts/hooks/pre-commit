@@ -219,6 +219,7 @@ def main():
         "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
         "probes/t66_depth_shape.py", "scripts/stale_claims.py",
         "scripts/test_drop_zombies.py",
+        "scripts/test_pod_sync_stamp.py",
         # Nine files the gate could not see until its predicate widened from
         # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
         # sys.argv instead of argparse. Five run clean at commit time and are gated
