@@ -899,9 +899,26 @@ def _selftest_preflight():
     os.makedirs(marker)
     with open(os.path.join(marker, "x_000.jsonl"), "w") as fh:
         fh.write(json.dumps({"content": "x" * 500, "url": "u"}) + "\n")
+    # A live process (+ a second we kill) for the writer states. tilerl-0a's
+    # call-shape-fidelity catch (2026-09-01): the previous selftest passed
+    # `settle_s=0`, which short-circuits the mtime-window branch (`settle_s > 0`)
+    # that this guard exists for. Production stamps with SETTLE_S=60, so every
+    # settle case here uses SETTLE_S; cases 3 and 4 (stale lock + fresh shard,
+    # no lock + fresh shard) are the two real shapes nothing covered before.
+    def _refuses(marker, tag):
+        try:
+            _settle_dir(marker, "x", SETTLE_S)
+            raise AssertionError(f"{tag}: did not REFUSE")
+        except SystemExit:
+            return 1
+
     sleeper = _sp.Popen(["sleep", "300"])  # a live process with a foreign pid
+    dead = _sp.Popen(["sleep", "300"])  # killed below: a stale pid, not foreign-live
+    dead_pid = str(dead.pid)
+    dead.kill()
+    dead.wait()
     try:
-        # foreign live pid in the lock -> preflight refuses (duplicate writer)
+        # (a) foreign live pid in the lock -> preflight refuses (duplicate writer)
         with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
             fh.write(str(sleeper.pid))
         try:
@@ -910,19 +927,28 @@ def _selftest_preflight():
             raise AssertionError("(a) duplicate writer did not REFUSE")
         except SystemExit:
             ok += 1
-        # our OWN held build lock -> settle must PASS, not refuse (production stamps its own output)
+        # (1) our OWN held build lock -> settle must PASS: production stamps its own
+        #     fresh bytes, and the mtime window is skipped when the lock is ours.
         os.remove(os.path.join(marker, ".build.lock"))
         own = _build_lock(marker)  # we are the writer
-        _settle_dir(marker, "x", 0)  # self lock must NOT refuse: production stamps its own output
+        _settle_dir(marker, "x", SETTLE_S)  # self lock must NOT refuse (PASS, case 1)
         own.close()
-        # foreign live pid in the lock -> settle refuses
+        # (2) foreign live pid in the lock -> settle refuses via the PID probe
         with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
             fh.write(str(sleeper.pid))
-        try:
-            _settle_dir(marker, "x", 0)
-            raise AssertionError("T7-2: a foreign writer's lock did not REFUSE the stamp")
-        except SystemExit:
-            ok += 1
+        ok += _refuses(marker, "(2) foreign live writer")
+        # (3) stale lock (dead pid) + fresh shard -> settle REFUSES: the PID probe
+        #     sees no live writer, but the shard is fresh and no live build holds
+        #     the lock, so the mtime window must catch it (a crashed build).
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(dead_pid)
+        ok += _refuses(marker, "(3) stale lock over fresh shard")
+        # (4) NO lock + fresh shard -> settle REFUSES: the U+2028 repair's exact
+        #     shape -- a non-locking appender wrote shards 19 min after the stamp.
+        #     Settle must catch it via the mtime window; this is the guard's reason
+        #     to exist and needs settle_s > 0 to fire.
+        os.remove(os.path.join(marker, ".build.lock"))
+        ok += _refuses(marker, "(4) lockless writer over fresh shard")
     finally:
         sleeper.kill()
         sleeper.wait()
@@ -941,8 +967,8 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
-    # (the foreign-live-pid refuse + self-pass cases live with gate (a) above)
-    print(f"build_corpus selftest OK: {ok}/5 gates refuse on their failing world (incl. T7-2 settle)")
+    # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
+    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle 2/3/4 + self-hold PASS)")
     return 0
 
 
