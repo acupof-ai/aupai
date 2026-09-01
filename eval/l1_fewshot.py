@@ -46,10 +46,37 @@ N_DEMOS = 3  # the pinned default only; --demos sizes the pool (see split_rows)
 ANS_RE = re.compile(r"答案是[:：]\s*(.+?)(?:[。\n]|$)")
 
 
+EX_OPEN = "题目："  # build_prompt's example opener == the stop sequence, derived not restated
+
+
+def model_turn(gen):
+    """The model's answer to the question it was ASKED, i.e. everything before it
+    opens a new few-shot example of its own.
+
+    Continuation prompting has no turn terminator, so generation runs to max_new and
+    a 512-token budget buys three or four more problems after the answer. The model
+    invents them: 43.5% of the 3-demo generations open a new 题目 and solve it. Nothing
+    in the harness passed EX_OPEN as a stop sequence, so `score` read the whole buffer
+    and `extract_boxed`'s last-box rule -- correct for a single-answer SFT output --
+    graded the answer to a question nobody asked. The measured case: gold 8, the model
+    answers \\boxed{8}, then writes "小明有10个苹果，他给了小李3个" and answers \\boxed{7};
+    last-box scored it wrong. 45 first-box vs 25 last-box on the same file was the
+    disagreement that surfaced this (de, 2026-09-01).
+
+    Truncating is not the same as taking the first box. Within a turn the last box is
+    still right -- a solution that boxes an intermediate result and then the answer is
+    graded on the answer -- and 62 of 497 turns hold more than one box. First-box beats
+    last-box only by accident, because it happens to stop before the fabrications.
+    """
+    i = gen.find(EX_OPEN)
+    return gen if i < 0 else gen[:i]
+
+
 def score(gen, gold):
     gold_ans = extract_boxed(gold)
     if gold_ans is None:
         return 0.0
+    gen = model_turn(gen)
     if extract_boxed(gen) is not None:
         return reward_fn(gen, gold_ans)
     m = ANS_RE.search(gen)
@@ -59,8 +86,8 @@ def score(gen, gold):
 
 
 def build_prompt(demos, target_q):
-    parts = [f"题目：{q}\n解答：{a}" for q, a in demos]
-    parts.append(f"题目：{target_q}\n解答：")
+    parts = [f"{EX_OPEN}{q}\n解答：{a}" for q, a in demos]
+    parts.append(f"{EX_OPEN}{target_q}\n解答：")
     return "\n\n".join(parts)
 
 
@@ -162,7 +189,8 @@ def main():
                 ok = score(gen, r["output"])
                 correct += int(ok)
                 total += 1
-                n_box += int("\\boxed" in gen or "答案是" in gen)
+                turn = model_turn(gen)
+                n_box += int("\\boxed" in turn or "答案是" in turn)
                 fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
             if total % 64 < args.batch or total == len(evals):

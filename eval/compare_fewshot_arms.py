@@ -37,6 +37,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 _BOX = re.compile(r"\\boxed\{([^}]*)\}")
+EX_OPEN = "题目："
+
+
+def boxed(text):
+    """The LAST box in the model's own turn.
+
+    Two rules were in play and both were wrong. `l1_fewshot`'s stored `ok` graded the
+    last box of the whole buffer, which in a continuation is the model's answer to a
+    problem it invented after finishing (43.5% of generations open a new 题目). This
+    file's first version took the first box of the whole buffer, which is right only
+    because it stops before the fabrications -- it misgrades the 62/497 turns that box
+    an intermediate result before the answer. Truncate at EX_OPEN, then take the last.
+    Same rule as eval/l1_fewshot.model_turn; duplicated rather than imported because
+    importing that module loads torch and a checkpoint path.
+    """
+    t = text or ""
+    i = t.find(EX_OPEN)
+    if i >= 0:
+        t = t[:i]
+    a = _BOX.findall(t)
+    return a[-1].strip() if a else None
 
 
 def rows_of(path):
@@ -54,11 +75,6 @@ def rows_of(path):
             if r.get("q") is not None:
                 out[r["q"]] = r
     return out
-
-
-def boxed(text):
-    m = _BOX.search(text or "")
-    return m.group(1).strip() if m else None
 
 
 def _eq(a, b):
@@ -88,6 +104,12 @@ def arm_stats(rows, qs, golds, seed=0, n_perm=200):
 def selftest():
     assert boxed(r"所以 \boxed{7}") == "7"
     assert boxed("没有") is None
+    # the real failure this scorer was built around: answer, then a fabricated problem
+    assert boxed("答案 \\boxed{8}。\n\n题目：另一题\n解答：\\boxed{7}") == "8", (
+        "a box after the model opens a new 题目 answers a question nobody asked")
+    # ...and truncation must not degenerate into first-box
+    assert boxed("买 \\boxed{5} 辆，剩 \\boxed{10} 元。") == "10", (
+        "within one turn the last box is the answer; the first is an intermediate")
     assert _eq("7", "7.0") and not _eq("7", "9")
     assert _eq("1,234", "1234"), "thousands separators must not create a mismatch"
     # the pairing: two arms, 4 problems, disagreeing on exactly 2 in opposite
