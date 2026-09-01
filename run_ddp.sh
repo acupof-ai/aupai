@@ -56,11 +56,22 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
   # card 0 was doing -- on 2026-09-01 a process holding 14.37 GiB, and the scorer
   # died asking for 96 MiB. Measure a free lane card, and queue rather than force.
   CARD=$(python scripts/harness.py free-card --wait 1800)
+  SCORING_RC=0
   if [ -n "$CARD" ]; then
     CUDA_VISIBLE_DEVICES="$CARD" python eval/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl \
-      || echo "WARN: score_matrix failed for ckpt_${NAME}.pt -- the harness check will flag the missing record" >&2
+      || SCORING_RC=$?
   else
-    echo "WARN: no free lane card in 30min; ckpt_${NAME}.pt unscored. Run: python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
+    echo "FATAL: no free lane card in 30min -- ckpt_${NAME}.pt unscored, training succeeded but this run produced NO metrics. Re-score: CUDA_VISIBLE_DEVICES=<lane> python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
+    SCORING_RC=1
+  fi
+  # fb, 2026-09-02: a scoring failure must make the run's exit code nonzero. The
+  # old `|| echo WARN` swallowed it: a 66h run's ~28 milestones would each fail
+  # silently while the run exited 0, and a red nobody can act on is no signal.
+  # The checkpoint is fine -- re-score with the command above -- but a run that
+  # produced no metrics must not read as a success.
+  if [ "$SCORING_RC" -ne 0 ]; then
+    echo "FATAL: scoring failed for ckpt_${NAME}.pt (rc=$SCORING_RC) -- exiting nonzero" >&2
+    exit 1
   fi
 fi
 exit $rc
