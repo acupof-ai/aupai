@@ -974,6 +974,15 @@ def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccar
     paths = sorted(glob.glob(f"{a.out}/{a.domain}_*.jsonl"))
     if not paths:
         raise SystemExit(f"REFUSE: no {a.domain}_*.jsonl shards to near-dedup in {a.out}")
+    # Invariant pin (tilerl-44, 2026-09-01): the frozen holdout slice
+    # (holdout_slice_{phase}.jsonl, holdout-slice gate) is NOT a {domain}_*.jsonl row,
+    # and the in-place rewrite below must never touch it -- a glob change that pulled a
+    # slice into the rewrite set would void the gate silently (it passes while the key
+    # it froze moved underneath it). Assert it loud instead of trusting the filename.
+    assert not [p for p in paths if os.path.basename(p).startswith("holdout_slice_")], (
+        f"REFUSE: a holdout_slice file entered the near-dedup rewrite set in {a.out}; "
+        f"rewriting it would void the frozen slice"
+    )
 
     doc_counts = []
     for p in paths:
@@ -1148,31 +1157,42 @@ def _existing_phases(out):
     return sorted(out_phases)
 
 
-def _holdout_rule_fp():
-    """Content fingerprint of the holdout rule (datagen/holdout.py) -- the code the slice
-    is frozen against. Content-hashed (not mtime), so an uncommitted rule edit still
-    changes the fingerprint and refutes every slice frozen under the old rule."""
+def _holdout_rule_fp(set_path=None):
+    """Content fingerprint of the holdout RULE: the CODE (datagen/holdout.py) AND the
+    held-out SET (data/eval/holdout_hashes.txt) that code reads (e1 H1). A slice certifies
+    'these docs are held out'; hashing only the code let an emptied set still certify
+    fresh -- the 19/20-leak shape this repo already paid for once. Both content-hashed
+    (not mtime), so an uncommitted edit to either half refutes every slice frozen under
+    it. set_path is the test seam; production passes None -> the real holdout_hashes.txt."""
     import hashlib as _h
 
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdout.py")
+    h = _h.sha256()
+    code = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdout.py")
     try:
-        with open(path, "rb") as f:
-            return _h.sha256(f.read()).hexdigest()[:16]
+        with open(code, "rb") as f:
+            h.update(b"code:" + f.read())
     except OSError:
         return "holdout-missing"
+    sp = set_path or os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
+    try:
+        with open(sp, "rb") as f:
+            h.update(b"set:" + f.read())
+    except OSError:
+        h.update(b"set:missing")
+    return h.hexdigest()[:16]
 
 
-def _emit_holdout_slice(out, phase, held_out_keys):
+def _emit_holdout_slice(out, phase, held_out_keys, set_path=None):
     """Freeze this phase's held-out doc keys to {out}/holdout_slice_{phase}.jsonl before
-    the stamp. Header carries the holdout-rule fingerprint (staleness anchor) + row count;
-    body is one normalized key (8-byte hex) per line. Refuses an EMPTY slice -- an
-    artifact that exists but holds out nothing is the exact shape this class fails in."""
+    the stamp. Header carries the holdout-rule fingerprint (staleness anchor, code + set)
+    + row count; body is one normalized key (12-byte sha1 hex) per line. Refuses an EMPTY
+    slice -- an artifact that exists but holds out nothing is the exact shape that fails."""
     if not held_out_keys:
         raise SystemExit(
             f"REFUSE: {out} phase {phase} held out no documents; an empty holdout slice "
             f"freezes nothing and the gate refuses it (fb 2026-09-01)"
         )
-    rule_fp = _holdout_rule_fp()
+    rule_fp = _holdout_rule_fp(set_path)
     keys = sorted(set(held_out_keys))
     with open(_slice_path(out, phase), "w", encoding="utf-8") as f:
         f.write(json.dumps({"phase": phase, "rule_fp": rule_fp, "n": len(keys)}) + "\n")
@@ -1182,11 +1202,11 @@ def _emit_holdout_slice(out, phase, held_out_keys):
           f"rule_fp {rule_fp})", flush=True)
 
 
-def _check_holdout_slice(out, phase):
+def _check_holdout_slice(out, phase, set_path=None):
     """Read back the frozen slice and verify present, non-empty, and fresh under the
-    CURRENT holdout rule. Stale (rule changed since freeze), empty, or missing -> raise.
-    This is the 'stale raises' half: a downstream reader cannot trust a slice frozen
-    under a rule no longer in effect."""
+    CURRENT holdout rule (code + set). Stale (code or set changed since freeze), empty,
+    or missing -> raise. This is the 'stale raises' half: a downstream reader cannot trust
+    a slice frozen under a rule no longer in effect."""
     sp = _slice_path(out, phase)
     if not os.path.exists(sp):
         raise SystemExit(f"REFUSE: expected frozen holdout slice {sp} (phase {phase}) is missing")
@@ -1198,7 +1218,7 @@ def _check_holdout_slice(out, phase):
         raise SystemExit(f"REFUSE: malformed holdout slice {sp}: {e}") from None
     if rows == 0:
         raise SystemExit(f"REFUSE: holdout slice {sp} is empty (0 held-out docs)")
-    cur = _holdout_rule_fp()
+    cur = _holdout_rule_fp(set_path)
     if header.get("rule_fp") != cur:
         raise SystemExit(
             f"REFUSE: holdout slice {sp} frozen under a different rule "
@@ -1431,10 +1451,10 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
-    # (e) holdout-slice hard gate (fb 2026-09-01). Three failing worlds + one pass:
-    # a mix-named domain with no --phase refuses; a suffix-of-existing domain with no
-    # --phase refuses; an empty slice refuses; a stale slice refuses. The with-phase
-    # non-empty path is the absence of a raise (a regression crashes, not silent-green).
+    # (e) holdout-slice hard gate (fb 2026-09-01). Failing worlds: a mix-named domain with
+    # no --phase refuses; a suffix-of-existing domain with no --phase refuses; an empty
+    # slice refuses; a stale slice (code changed) refuses; a stale slice (SET changed,
+    # e1 H1) refuses. The with-phase non-empty path is the absence of a raise.
     mx = _mix_named_domains()
     assert mx, "selftest needs a mix-named domain"
     dom = sorted(mx)[0]
@@ -1444,14 +1464,20 @@ def _selftest_preflight():
         raise AssertionError("(e) mix-named domain without --phase did not REFUSE")
     except SystemExit:
         ok += 1
-    suffix = "en_c4_stage2" if "en_c4" in _existing_corpus_dirs() else None
-    if suffix:
+    # H2 (e1): build the suffix world instead of detecting it -- a fresh checkout's
+    # data/corpus only holds 'sample', so gating on en_c4 skips silently and the gate
+    # count drops without a SKIP line. mkdir the base, probe base+_stage2, clean up.
+    cd = os.path.join(ROOT, "data", "corpus")
+    os.makedirs(os.path.join(cd, "zz_base"), exist_ok=True)
+    try:
         try:
-            _preflight(A(domain=suffix, out=None, filters="light", dry=False,
+            _preflight(A(domain="zz_base_stage2", out=None, filters="light", dry=False,
                          source=["jsonl:/dev/null"], global_only=False))
             raise AssertionError("(e) suffix-of-existing domain without --phase did not REFUSE")
         except SystemExit:
             ok += 1
+    finally:
+        os.rmdir(os.path.join(cd, "zz_base"))
     hp = tempfile.mkdtemp()
     try:
         try:
@@ -1465,6 +1491,21 @@ def _selftest_preflight():
         try:
             _check_holdout_slice(hp, "p")
             raise AssertionError("(e) stale-rule holdout slice did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # H1 (e1, blocking): the fp must move when the derived artifact's SOURCE SET
+        # changes -- freezing under one holdout set, growing the set, must refuse (the
+        # emptied-set certification is the 19/20-leak shape). Uses the set_path seam so
+        # the real data/eval/holdout_hashes.txt is untouched.
+        tset = os.path.join(hp, "tset.txt")
+        with open(tset, "w", encoding="utf-8") as fh:
+            fh.write("hash_line_1\n")
+        _emit_holdout_slice(hp, "ph", [b"\x01\x02\x03"], set_path=tset)
+        with open(tset, "a", encoding="utf-8") as fh:
+            fh.write("hash_line_2\n")  # the held-out set grew since the freeze
+        try:
+            _check_holdout_slice(hp, "ph", set_path=tset)
+            raise AssertionError("(e/H1) changed holdout SET did not REFUSE")
         except SystemExit:
             ok += 1
         # the happy path: emit non-empty then check -> NO raise (a regression on the
