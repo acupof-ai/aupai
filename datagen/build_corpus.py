@@ -427,6 +427,7 @@ def _global_pass(a):
     # Worker-kept counts are pre-global; the pass below reclassifies some as
     # holdout/exact_dup/near_dup, so recount "kept" from its verdict.
     reasons["kept"] = 0
+    held_out = []
     w = ShardWriter(a.out, a.domain)
     for p in paths:
         print(f"global pass: {os.path.basename(p)}", flush=True)
@@ -445,6 +446,7 @@ def _global_pass(a):
                 # doc only, as the last gate before the stamp. The per-line scan is
                 # O(lines) sha1s per doc and dominated this serial pass on code.
                 if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                    held_out.append(exact_key(t))
                     reasons["holdout"] += 1
                     continue
                 k = exact_key(t)
@@ -469,7 +471,7 @@ def _global_pass(a):
     for why, n in reasons.most_common():
         if why != "kept":
             print(f"  {why:18s} {n:9d}  {n/total:.1%}")
-    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards, held_out)
     return 0
 
 
@@ -583,12 +585,21 @@ def _settle_dir(out, domain, settle_s):
 SETTLE_S = 60
 
 
-def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards):
+def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
 
     _sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
     from corpus_fingerprint import fp_dir as _fp_dir  # noqa: E402
     from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
+
+    # Holdout-slice gate (fb ruling 2026-09-01): a build that carries --phase must freeze
+    # this phase's held-out slice BEFORE the dir is settled and fingerprinted, so the
+    # slice is part of the stamped domain and cross-stage attribution can re-probe the
+    # SAME held-out batch. Emit, then verify present/non-empty/fresh (stale rule raises).
+    phase = getattr(a, "phase", None)
+    if phase:
+        _emit_holdout_slice(out, phase, held_out_keys)
+        _check_holdout_slice(out, phase)
 
     # Settle guard (tilerl T7-2, 2026-09-01): refuse a stamp over a dir a writer
     # is still touching. Tonight's mid-write stamp (the U+2028 repair wrote tail
@@ -729,6 +740,7 @@ def _parallel_exact_pass(a):
     w = ShardWriter(a.out, a.domain)
     kept = kept_chars = 0
     reasons = Counter()
+    held_out = []
     for i, p in enumerate(paths):
         ords = 0
         with open(p, encoding="utf-8") as f:
@@ -741,6 +753,7 @@ def _parallel_exact_pass(a):
                 if not t:
                     continue
                 if is_holdout(t) or is_holdout(QA_PREFIX.sub("", ANSWER_TAIL.split(t, 1)[0]).strip()):
+                    held_out.append(exact_key(t))  # captured for the frozen holdout slice
                     continue  # holdout counted in A; skip in rewrite
                 if (bases[i] + ords) in survivor:
                     kept += 1
@@ -754,7 +767,7 @@ def _parallel_exact_pass(a):
     nshards = len(_g.glob(f"{a.out}/{a.domain}_*.jsonl"))
     reasons["holdout"] = holdout_total
     reasons["exact_dup"] = exact_dups
-    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards)
+    _write_stats(a.out, a.domain, a, reasons, kept, kept_chars, nshards, held_out)
     return 0
 
 
@@ -1089,6 +1102,114 @@ def _ladder_frozen_domains():
     return frozen
 
 
+def _mix_named_domains():
+    """Domains named by any data/mix_*.json. A domain in a mix carries cross-stage
+    attribution, so a rebuild of it must freeze its held-out slice (fb 2026-09-01)."""
+    names = set()
+    for p in glob.glob(os.path.join(ROOT, "data", "mix_*.json")):
+        try:
+            with open(p, encoding="utf-8") as _fh:
+                names |= set(json.load(_fh).get("domains", {}).keys())
+        except (OSError, ValueError):
+            continue
+    return names
+
+
+def _existing_corpus_dirs():
+    cd = os.path.join(ROOT, "data", "corpus")
+    if not os.path.isdir(cd):
+        return []
+    return [d for d in os.listdir(cd) if os.path.isdir(os.path.join(cd, d))]
+
+
+def _holdout_slice_required(domain):
+    """A build must carry --phase and freeze its held-out slice when it writes into a
+    dir a mix names, or a dir that is an existing domain plus a suffix (en_c4_stage2 is
+    en_c4 + _stage2). The suffix rule catches the rename-with-suffix replacement without
+    anyone declaring it -- fb: it is the declared case that fails when forgotten, the
+    cost of not freezing it was 3.340B unattributable."""
+    if domain in _mix_named_domains():
+        return True
+    return any(domain.startswith(base + "_") for base in _existing_corpus_dirs() if base != domain)
+
+
+def _slice_path(out, phase):
+    return os.path.join(out, f"holdout_slice_{phase}.jsonl")
+
+
+def _existing_phases(out):
+    if not os.path.isdir(out):
+        return []
+    out_phases = []
+    for name in os.listdir(out):
+        m = re.match(r"holdout_slice_(.+)\.jsonl$", name)
+        if m:
+            out_phases.append(m.group(1))
+    return sorted(out_phases)
+
+
+def _holdout_rule_fp():
+    """Content fingerprint of the holdout rule (datagen/holdout.py) -- the code the slice
+    is frozen against. Content-hashed (not mtime), so an uncommitted rule edit still
+    changes the fingerprint and refutes every slice frozen under the old rule."""
+    import hashlib as _h
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdout.py")
+    try:
+        with open(path, "rb") as f:
+            return _h.sha256(f.read()).hexdigest()[:16]
+    except OSError:
+        return "holdout-missing"
+
+
+def _emit_holdout_slice(out, phase, held_out_keys):
+    """Freeze this phase's held-out doc keys to {out}/holdout_slice_{phase}.jsonl before
+    the stamp. Header carries the holdout-rule fingerprint (staleness anchor) + row count;
+    body is one normalized key (8-byte hex) per line. Refuses an EMPTY slice -- an
+    artifact that exists but holds out nothing is the exact shape this class fails in."""
+    if not held_out_keys:
+        raise SystemExit(
+            f"REFUSE: {out} phase {phase} held out no documents; an empty holdout slice "
+            f"freezes nothing and the gate refuses it (fb 2026-09-01)"
+        )
+    rule_fp = _holdout_rule_fp()
+    keys = sorted(set(held_out_keys))
+    with open(_slice_path(out, phase), "w", encoding="utf-8") as f:
+        f.write(json.dumps({"phase": phase, "rule_fp": rule_fp, "n": len(keys)}) + "\n")
+        for k in keys:
+            f.write(k.hex() + "\n")
+    print(f"holdout slice frozen: {_slice_path(out, phase)} ({len(keys)} held-out docs, "
+          f"rule_fp {rule_fp})", flush=True)
+
+
+def _check_holdout_slice(out, phase):
+    """Read back the frozen slice and verify present, non-empty, and fresh under the
+    CURRENT holdout rule. Stale (rule changed since freeze), empty, or missing -> raise.
+    This is the 'stale raises' half: a downstream reader cannot trust a slice frozen
+    under a rule no longer in effect."""
+    sp = _slice_path(out, phase)
+    if not os.path.exists(sp):
+        raise SystemExit(f"REFUSE: expected frozen holdout slice {sp} (phase {phase}) is missing")
+    try:
+        with open(sp, encoding="utf-8") as f:
+            header = json.loads(f.readline())
+            rows = sum(1 for _ in f)
+    except (OSError, ValueError) as e:
+        raise SystemExit(f"REFUSE: malformed holdout slice {sp}: {e}") from None
+    if rows == 0:
+        raise SystemExit(f"REFUSE: holdout slice {sp} is empty (0 held-out docs)")
+    cur = _holdout_rule_fp()
+    if header.get("rule_fp") != cur:
+        raise SystemExit(
+            f"REFUSE: holdout slice {sp} frozen under a different rule "
+            f"(header {header.get('rule_fp')} != current {cur}); the held-out basis "
+            f"changed, re-freeze this phase"
+        )
+    if header.get("n") != rows:
+        raise SystemExit(f"REFUSE: holdout slice {sp} header n {header.get('n')} != {rows} rows")
+    return rows
+
+
 def _preflight(a):
     """Refuse a clean that will waste the run (fb order 2026-08-31). Four gates,
     each independent and each with a failing-case --selftest:
@@ -1099,6 +1220,16 @@ def _preflight(a):
     SystemExit on the first refusal. Run once, at start, before any fetch or clean."""
     out = os.path.normpath(os.path.join(OUT_DIR, a.domain) if a.out is None else a.out)
     base = os.path.basename(out)
+    # (e) holdout-slice hard gate (fb ruling 2026-09-01): a build into a dir a mix names,
+    # or a dir that is an existing domain plus a suffix, MUST carry --phase so it freezes
+    # this phase's held-out slice before stamp or refuses. Non-opt-in: the path itself
+    # tells us -- an operator forgetting the flag is the exact failure being retired.
+    if not a.dry and _holdout_slice_required(a.domain) and not getattr(a, "phase", None):
+        raise SystemExit(
+            f"REFUSE: {a.domain} is mix-named or replaces an existing domain; --phase <name> "
+            f"is required to freeze this phase's held-out slice before stamping. "
+            f"Existing phase slices here: {_existing_phases(out) or 'none'}"
+        )
     # (b) not a ladder-frozen name, and the dir exists
     if base in _ladder_frozen_domains():
         raise SystemExit(
@@ -1300,8 +1431,52 @@ def _selftest_preflight():
     except SystemExit:
         ok += 1
     shutil.rmtree(bad, ignore_errors=True)
+    # (e) holdout-slice hard gate (fb 2026-09-01). Three failing worlds + one pass:
+    # a mix-named domain with no --phase refuses; a suffix-of-existing domain with no
+    # --phase refuses; an empty slice refuses; a stale slice refuses. The with-phase
+    # non-empty path is the absence of a raise (a regression crashes, not silent-green).
+    mx = _mix_named_domains()
+    assert mx, "selftest needs a mix-named domain"
+    dom = sorted(mx)[0]
+    try:
+        _preflight(A(domain=dom, out=None, filters="light", dry=False,
+                     source=["jsonl:/dev/null"], global_only=False))
+        raise AssertionError("(e) mix-named domain without --phase did not REFUSE")
+    except SystemExit:
+        ok += 1
+    suffix = "en_c4_stage2" if "en_c4" in _existing_corpus_dirs() else None
+    if suffix:
+        try:
+            _preflight(A(domain=suffix, out=None, filters="light", dry=False,
+                         source=["jsonl:/dev/null"], global_only=False))
+            raise AssertionError("(e) suffix-of-existing domain without --phase did not REFUSE")
+        except SystemExit:
+            ok += 1
+    hp = tempfile.mkdtemp()
+    try:
+        try:
+            _emit_holdout_slice(hp, "p", [])  # empty held-out set -> must refuse
+            raise AssertionError("(e) empty holdout slice did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # stale slice: frozen under a DIFFERENT rule_fp -> must refuse
+        with open(_slice_path(hp, "p"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"phase": "p", "rule_fp": "0" * 16, "n": 1}) + "\n" + "ab" * 12 + "\n")
+        try:
+            _check_holdout_slice(hp, "p")
+            raise AssertionError("(e) stale-rule holdout slice did not REFUSE")
+        except SystemExit:
+            ok += 1
+        # the happy path: emit non-empty then check -> NO raise (a regression on the
+        # pass path crashes loud instead of silently greening)
+        _emit_holdout_slice(hp, "p", [b"\xdead\xbeef", b"\x12\x34\x56\x78", b"\xdead\xbeef"])
+        _check_holdout_slice(hp, "p")
+    finally:
+        import shutil
+
+        shutil.rmtree(hp, ignore_errors=True)
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
-    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle 2/3/4 + self-hold PASS)")
+    print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
 
 
@@ -1355,6 +1530,7 @@ def main():
     )
     ap.add_argument("--workers", type=int, default=1, help="parallel clean: N workers over disjoint source-file slices; worker id in the shard prefix; global near-dup+holdout+stamp at the end")
     ap.add_argument("--global-only", action="store_true", help="skip the worker phase; re-run the global pass over existing w*_*.jsonl shards (a killed serial pass leaves them)")
+    ap.add_argument("--phase", default=None, help="phase name for a domain-replacing rebuild; REQUIRED if the output dir is mix-named or a suffix of an existing domain (fb 2026-09-01), so this phase's held-out slice is frozen before stamp")
     ap.add_argument("--selftest", action="store_true", help="run the pre-flight failing-case worlds and exit")
     a = ap.parse_args()
     if a.selftest:
