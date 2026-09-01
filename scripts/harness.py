@@ -2363,24 +2363,33 @@ def check_no_ghost_running(root):
         return SKIP, "runs/experiments.jsonl not present"
     import subprocess
 
-    ghosts = []
+    # FOLD FIRST. experiments.jsonl is append-only: one run emits many rows and the
+    # readers fold by (name, started), last wins. Reading raw lines asked pgrep 54
+    # times where 13 were needed (measured on the pod, 0.083s each = the whole 4.1s),
+    # and reported the same run as several ghosts because its history has several
+    # rows. So the count was wrong as well as slow, and raising the deadline would
+    # have preserved both.
+    folded = {}
     with open(p, encoding="utf-8") as f:
         for line in f:
             try:
                 r = json.loads(line)
             except Exception:
                 continue
-            if r.get("status") != "running":
-                continue
-            try:
-                t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
-            except Exception:
-                return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
-            if (time.time() - t) / 3600 < 2:
-                continue  # grace: a launched run takes time to appear in ps
-            name = r.get("name", "")
-            if name and not subprocess.run(["pgrep", "-f", name], capture_output=True, text=True).stdout.strip():
-                ghosts.append(f"{name} (started {r.get('started')})")
+            folded[(r.get("name"), r.get("started"))] = r
+    ghosts = []
+    for r in folded.values():
+        if r.get("status") != "running":
+            continue
+        try:
+            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+        except Exception:
+            return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
+        if (time.time() - t) / 3600 < 2:
+            continue  # grace: a launched run takes time to appear in ps
+        name = r.get("name", "")
+        if name and not subprocess.run(["pgrep", "-f", name], capture_output=True, text=True).stdout.strip():
+            ghosts.append(f"{name} (started {r.get('started')})")
     if ghosts:
         return FAIL, f"running rows with no live process: {', '.join(ghosts[:6])}; close with exp.py done"
     return PASS, "every running row has a live process"
