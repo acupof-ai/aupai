@@ -442,8 +442,12 @@ guess answers it wrongly with no marker.
 ### math_owm_stage2
 
 - Result: fingerprint 1e687e4b5ce37598, 4,135,793 docs, 21,553,841,930 bytes, 6,513,304,690 tokens
-- Source: OpenWebMath (stage-2 rebuild; stats stamp records domain "math_owm")
-- Build: not recorded. filters `light`, workers 32, near_dedup False, 206 shards
+- Source: OpenWebMath + finemath-4plus; finemath fetched 2026-08-31 via ModelScope
+  `AI-ModelScope/finemath`. (The stats stamp records only domain "math_owm".)
+  [RECONSTRUCTED, 3b -- finer than the stamp, and not read off it]
+- Build: staged math_owm -> math_owm_stage2, then a parallel exact+holdout global pass
+  (`build_corpus --global-only`). filters `light`, workers 32, near_dedup False,
+  206 shards. [RECONSTRUCTED, 3b]
 - Fetched: not recorded
 
 ### en_c4_stage2
@@ -471,8 +475,9 @@ guess answers it wrongly with no marker.
 ### zh_web
 
 - Result: fingerprint a0d44fc44a289d60, 89,846,923,588 bytes, 21,293,403,945 tokens
-- Source: not recorded
-- Build: not recorded. filters `light`, 909 shards
+- Source: CCI3 (`web_cci3_p*`) / wanjuan Chinese web, role "Chinese web". [FIRSTHAND, 3b]
+- Build: clean pass1/2/3 + holdout carve; pre-0830v1 stage clean, restamped at 30b.
+  filters `light`, 909 shards. [FIRSTHAND, 3b]
 - Fetched: not recorded
 
 ### chatml — built 2026-09-01 (3b, fb ruling)
