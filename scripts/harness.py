@@ -6215,6 +6215,68 @@ def _selftest_cold_cache_refuses():
     print("  gate: a training launch with cold caches refuses rather than taking 120s")
 
 
+def _selftest_provenance_states_the_tree():
+    """Every `check` run must say which tree it describes, and say BEHIND when behind.
+
+    Built on real git repositories, because the whole claim is about what git reports:
+    a hand-written world would share this function's own assumptions about rev-list.
+    The three cases are the three a reader acts on differently -- up to date, behind,
+    and no main at all (a temp repo, a single-branch clone), where the honest answer is
+    that the question has no answer rather than zero."""
+    import shutil
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    try:
+        def git(*a, cwd=d):
+            return sp.run(["git", "-C", cwd, *a], capture_output=True, text=True)
+
+        git("init", "-q", ".")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        open(os.path.join(d, "f"), "w").write("a")
+        git("add", "f")
+        git("commit", "-qm", "base")
+        # a repo with no `main` ref at all: the count cannot be taken
+        head_branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if head_branch != "main":
+            line = tree_provenance(d)
+            assert "unknown (no main ref)" in line, (
+                f"a repo without main must say the question has no answer: {line}")
+            git("branch", "-m", "main")
+
+        line = tree_provenance(d)
+        assert "up to date with main" in line, f"on main, at main: {line}"
+        assert "BEHIND" not in line, line
+
+        git("checkout", "-qb", "side")
+        git("checkout", "-q", "main")
+        open(os.path.join(d, "f"), "w").write("b")
+        git("add", "f")
+        git("commit", "-qm", "ahead")
+        git("checkout", "-q", "side")
+        line = tree_provenance(d)
+        assert "BEHIND main by 1" in line, f"one commit behind must say so: {line}"
+        assert "branch side" in line, f"the branch must be named: {line}"
+        assert "git merge" in line, f"it must say what to do about it: {line}"
+
+        open(os.path.join(d, "g"), "w").write("c")
+        git("add", "g")
+        assert "1 uncommitted file(s)" in tree_provenance(d), tree_provenance(d)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # and it must actually reach the output of every check run
+    import inspect
+
+    src = inspect.getsource(run_checks)
+    assert "tree_provenance" in src, (
+        "run_checks no longer prints the tree: a red is then indistinguishable from a "
+        "red in a stale tree, which is the confusion this exists to end")
+    print("  provenance: check names its tree; behind-main is stated, no-main is not 0")
+
+
 def _selftest_refusal_writes_no_row():
     """A refused launch leaves the ledger untouched.
 
@@ -7363,6 +7425,7 @@ def _demo():
     _selftest_milestone_reachable()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
+    _selftest_provenance_states_the_tree()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
