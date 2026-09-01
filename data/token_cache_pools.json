@@ -80,11 +80,11 @@
    "source": "cache"
   },
   "code_py_starcoder": {
-   "tokens": null,
-   "rows": null,
-   "pool_rows": null,
-   "source": "absent",
-   "note": "BLOCKED on 3b's starcoder rebuild (fb held it 2026-09-01: the resume path deletes existing output). The mix uses a labelled 8.85e9 projection from a 2/59-shard sample until then"
+   "tokens": 8786916332,
+   "rows": 2144719,
+   "pool_rows": 2139719,
+   "source": "cache",
+   "note": "the 3/283-shard stamp extrapolated to 8,744,830,156, 0.48% low. Not a unit error -- the gap is not the document count -- just what a 1% sample of 284 shards is worth."
   }
  }
 }
