@@ -498,17 +498,17 @@ guess answers it wrongly with no marker.
 ### code_py_starcoder — built 2026-09-01 (3b)
 
 - Result: fingerprint e1a14839e11f3e6f, 6,180,174 docs, 29,576,274,579 bytes,
-  8,786,916,332 tokens MEASURED from the token cache
+  8,744,830,156 tokens (stamp, 3/283-shard extrapolation); cache measures 8,786,916,332; mix_500m uses the cache
 - Source: AI-ModelScope/starcoderdata python split (59 parquet), fetched 2026-09-01 via ModelScope resolve (hf-mirror/HF dark)【亲历】
 - Build: `python3 datagen/build_starcoder_py.py`, filters `starcoder-python-ast`,
   283 shards, near_dedup False
-- Note: the stats stamp's `tokens` is 8,744,830,156, a 3/283-shard extrapolation and 0.48%
+- Note: the stats stamp's `tokens` is 8,786,916,332 (来源:token cache; mix epochs use this, not the pre-cache extrapolation), a 3/283-shard extrapolation and 0.48%
   low against the cache. The cache figure is the one the mix uses
 
 ### code_py_rp1t — built 2026-09-01 (e1)
 
 - Result: fingerprint 63c2b3ce0e7dd989, 209,668 docs, 1,514,852,051 bytes,
-  420,855,850 tokens MEASURED from the token cache
+  421,239,303 tokens (stamp extrapolation); cache measures 420,855,850; mix_500m uses the cache
 - Source: `data/corpus/code_rp1t/` filtered by ast.parse -- 209,668 of 3,747,157 rows are
   parseable Python. NOT a fetch
 - Build: `python3 datagen/build_code_py_rp1t.py` (SRC /work/aupai/data/corpus/code_rp1t),
