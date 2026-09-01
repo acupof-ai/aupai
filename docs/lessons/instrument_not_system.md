@@ -7,6 +7,104 @@ span_ms: 1676.63  # t57's own span; the percentages quoted here are against it
 
 # The instrument, not the system
 
+## The closing lesson: naming a confound is not sizing the instrument for it
+
+Above the others because it is the failure that survives every practice on this
+page. You can pre-register, name the exact confound, commit the falsification
+bands in advance — and still ship a number that is wrong in the direction you
+expected, because the instrument was not built large enough to see the thing you
+named.
+
+Free-running agreement, 2026-09-01. The pre-registration said, in advance:
+
+> *"Prefix-aligned comparison punishes a correct answer phrased differently. If
+> the model emits one extra token early, every later position is compared
+> against the wrong gold index... I will report the best alignment over small
+> shifts (±4 tokens) alongside the naive one."*
+
+The confound is named correctly. The window is ±4. **The model's generations open
+with a preamble of forty to eighty tokens.** So the shift-tolerant variant was
+almost as desynchronised as the naive one, and both read near zero:
+
+| instrument | reading |
+|---|---|
+| naive, prefix-aligned | 0.0000 |
+| ±4 shift (the pre-registered variant) | 0.0483 |
+| ±16 | 0.1026 |
+| ±64 | 0.1883 |
+| ±150 | 0.2059 |
+| alignment-free (LCS ratio) | **0.2317** |
+
+**The pre-registered instrument reported one fifth of the truth**, in the
+direction that made the headline stronger.
+
+Three things make this the worst shape on the page:
+
+1. **Every rigour marker was present.** Pre-registered, bands fixed before the
+   run, confound named in writing. None of them sizes an instrument.
+2. **It errs toward the author's hypothesis.** A too-small window can only
+   *lower* agreement, and low agreement was the interesting result. A confound
+   named but under-provisioned is not neutral noise; it is a thumb on the scale
+   pointing where the author was already looking.
+3. **The check is not "did I think of it" but "can the instrument see it".**
+   Those feel identical while writing the pre-registration and are not.
+
+It was caught by the oldest tell on this page — **a number too clean for the
+thing it claims to measure.** 0.0000 median from a model scoring 72.7%
+teacher-forced is not a low score, it is a broken ruler.
+
+The operational form: **for every confound you name, state the magnitude it can
+reach and show the instrument covers it.** "I will report a shift-tolerant
+variant" is a plan. "Preambles here run 40–80 tokens, so the search must span at
+least 150" is an instrument. Where the magnitude is unknown, sweep the parameter
+and report the curve rather than picking a value — the sweep above is what
+produced the real number, and it cost one extra run.
+
+## Four instruments of mine were the limit, and how each was caught
+
+The empirical case for this page, made by one author against himself in one
+afternoon. Not four measurement errors — four occasions where **the tool
+reported a property of itself and I read it as a property of the model.**
+
+| # | the instrument | it reported | the truth | caught by |
+|---|---|---|---|---|
+| 1 | ±4 shift window | agreement 0.0000 | 0.2317 | a number too clean for a model at 72.7% TF |
+| 2 | anchor regex | 19/100 reached code | 69/100 | pre-registered expectation falsified |
+| 3 | gold-vs-greedy row | 0.0 "never prefers gold" | an identity; can only read 0.0 | deriving what the row could return |
+| 4 | bin-1 population split | "loops score ~0, so 69 ≈ 0.36" | loops score 0.25 too | pre-registered arithmetic falsified |
+
+**Start with #3, because it is the only one that needs no run at all.** It was
+caught by asking what the test *could* return, not what it did: `greedy_logprob`
+sums per-position maxima and `gold_logprob` sums per-position gold values, so
+max ≥ gold holds at every position by construction and the row can only ever
+read 0.0. **An output space containing one value is an identity in a test's
+costume, and that is checkable before any data exists.** Cheapest check on this
+page — derive the range of your statistic before you compute it.
+
+**The other three needed a number.** None was caught by reading the code. Every
+one was caught by a value that did not fit something already known — and in two
+of those three, the thing it did not fit had been written down in advance.
+
+**The ratio is the argument.** Two of four were caught *only* because a
+pre-registration made the expectation explicit enough to be falsified. #2 said
+"I expect coverage under 30%, which would mean my anchored line of work was a
+side quest"; coverage came back 69% and the prediction failed in the direction
+that would have demoted my own work. #4 wrote the arithmetic "0.250 over 100
+with 31 near-zero loops implies ~0.36 over the remaining 69"; it came back 0.25,
+which falsified **the assumption inside the prediction** rather than the
+conclusion the prediction was defending — the loops do not score near zero,
+because a loop echoing the prompt matches the gold's opening tokens by
+coincidence.
+
+Without those two sentences on paper, both results read as bland confirmation.
+0.25 is exactly what you would expect if nothing interesting happened; it took a
+written prediction of 0.36 to make it a finding.
+
+**That is the case for pre-registration that does not rest on principle.** Not
+"it keeps you honest" — it converts an unremarkable number into a detectable
+anomaly. A prediction you did not write down cannot fail, and a result that
+cannot fail teaches nothing.
+
 ## Before anything else: is this code path reached in the live configuration?
 
 One line, and it precedes every other check on this page. It is last here only

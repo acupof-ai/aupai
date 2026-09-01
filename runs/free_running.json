@@ -1,0 +1,50 @@
+{
+ "probe": "t68_free_running",
+ "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+ "limit": 100,
+ "k": 8,
+ "max_new": 192,
+ "rep_stop": false,
+ "sets": {
+  "code_500": {
+   "teacher_forced_top1_median": 0.7273,
+   "free_running": {
+    "greedy": {
+     "n": 100,
+     "fr_naive_median": 0.0,
+     "fr_shift_median": 0.05,
+     "fr_naive_mean": 0.0276
+    },
+    "sampled_t0.8": {
+     "n": 100,
+     "fr_naive_median": 0.0,
+     "fr_shift_median": 0.0476,
+     "fr_naive_mean": 0.0226
+    }
+   },
+   "gold_beats_sampled_frac": 0.45,
+   "gold_vs_sampled_n": 320,
+   "ratio_fr_over_tf": 0.0
+  },
+  "math_500": {
+   "teacher_forced_top1_median": 0.6875,
+   "free_running": {
+    "greedy": {
+     "n": 100,
+     "fr_naive_median": 0.0208,
+     "fr_shift_median": 0.0507,
+     "fr_naive_mean": 0.0242
+    },
+    "sampled_t0.8": {
+     "n": 100,
+     "fr_naive_median": 0.0148,
+     "fr_shift_median": 0.0373,
+     "fr_naive_mean": 0.021
+    }
+   },
+   "gold_beats_sampled_frac": 0.5281,
+   "gold_vs_sampled_n": 320,
+   "ratio_fr_over_tf": 0.0303
+  }
+ }
+}

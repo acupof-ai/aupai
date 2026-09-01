@@ -896,6 +896,178 @@
    "boundary": "ONE OF MY OWN PRE-REGISTERED ROWS WAS VACUOUS AND I AM RECORDING IT RATHER THAN DROPPING IT. I committed 'gold sequence probability >= greedy's on >=30% of problems -> decoding failure by definition'. It measured 0.0 on both sets, and it can only ever measure 0.0: greedy_logprob is the sum of per-position MAXIMA and gold_logprob the sum of per-position gold values, so max >= gold holds at every position by construction and the row can fire only when top-1 == 1.0 exactly. It is an identity, not a measurement, and its 0.0 is not evidence of anything. Same class as the four vacuous tests in the 08-31 retro, committed inside a pre-registration written to prevent exactly that. What would have made it a real test: compare gold against the model's SAMPLED sequences, not against its argmax.",
    "status": "measured",
    "refuted_by": "a free-running measurement showing per-token top-1 agreement far below 0.727, which would mean teacher forcing carried the result; or a best-of-n / beam decode that still cannot reach gold, which would move the deficit back toward knowledge"
+  },
+  {
+   "id": "be.free_running_agreement_collapses_below_teacher_forced",
+   "claim": "how far per-token gold agreement falls when the model conditions on its own prefix",
+   "value": "IT COLLAPSES: teacher-forced 72.7% (code) / 68.8% (math) against free-running ~0.23 alignment-free. That lands in the pre-registered <=0.30 band, whose reading is that 'DECODING AND SEARCH' UNDERSTATES THE PROBLEM -- the model's own prefixes destroy the distribution, so compounding is self-reinforcing rather than merely multiplicative. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, rep_stop=False. THE HEADLINE NUMBER NEEDS ITS METHOD ATTACHED, because the first version of it was an artifact of my own alignment window: prefix-aligned agreement reads 0.0000 median (code greedy) and 0.0208 (math greedy), and a +-4 shift search barely moves it to 0.05. Widening the search shows why -- max_shift 4: 0.048, 16: 0.103, 64: 0.188, 150: 0.206, and alignment-free longest-common-subsequence ratio 0.2317 median / 0.2626 mean. So the true free-running agreement is ~0.23, not ~0.0, and the +-4 window I pre-registered was measuring desynchronisation for most of its range. THE CONCLUSION IS UNCHANGED because 0.23 is still deep inside the <=0.30 collapse band, but the 0.0 would have overstated it by an order of magnitude. FR/TF ratio is 0.23/0.727 = 0.32, i.e. free-running retains about a third of the teacher-forced per-token agreement. GOLD VS SAMPLED, the corrected form of the vacuous row: length-normalised gold log-prob beats 45.0% of sampled sequences on code and 52.8% on math, over 320 comparisons each. Against the pre-registered >=25% line that IS a real search failure -- the model assigns higher per-token probability to the gold than to roughly half of what it actually samples, yet does not produce it.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/free_running_prereg.md (caa10c7) before runs/free_running.json existed; probes/t68_free_running.py on GPU6; the shift-window sweep and LCS check run separately on GPU7 after the collapse looked too clean",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "prompts_per_set": 100,
+    "k": 8,
+    "max_new": 192,
+    "rep_stop": false,
+    "code_tf_top1": 0.7273,
+    "code_fr_naive_median": 0.0,
+    "code_fr_shift4_median": 0.05,
+    "math_tf_top1": 0.6875,
+    "math_fr_naive_median": 0.0208,
+    "math_fr_shift4_median": 0.0507,
+    "shift_sweep_code_greedy": {
+     "0": 0.0,
+     "4": 0.0483,
+     "16": 0.1026,
+     "64": 0.1883,
+     "150": 0.2059
+    },
+    "lcs_ratio_median": 0.2317,
+    "lcs_ratio_mean": 0.2626,
+    "fr_over_tf_using_lcs": 0.32,
+    "gold_beats_sampled_code": 0.45,
+    "gold_beats_sampled_math": 0.5281,
+    "gold_vs_sampled_n": 320,
+    "prereg_collapse_band": "<=0.30",
+    "prereg_holds_band": ">=0.60",
+    "prereg_search_failure_line": 0.25
+   },
+   "uncertainty": "The LCS ratio is capped at 120 tokens per side for cost and is a different statistic from per-token top-1, so 0.23-vs-0.727 is not a strict like-for-like ratio -- it is the closest alignment-free comparison available and it brackets the answer rather than pinning it. The shift sweep is on 40 code prompts, greedy only. The gold-vs-sampled fractions are length-normalised; without normalisation the comparison degenerates to 'shorter sequences win'.",
+   "boundary": "MY OWN PRE-REGISTERED SHIFT WINDOW WAS THE DEFECT, and I am recording it because the pre-registration named this exact confound and then under-provisioned for it. I wrote that a low naive number is ambiguous between wrong tokens and shifted tokens, and committed to reporting a shift-tolerant variant -- at +-4 tokens. The generations open with a preamble far longer than 4 tokens, so the shift-tolerant variant was almost as desynchronised as the naive one. Naming a confound in advance is not the same as sizing the instrument for it. The fix was to sweep the window and add an alignment-free statistic, which is what produced 0.23.",
+   "status": "measured",
+   "refuted_by": "a free-running measurement on aligned continuations -- prompts whose gold begins immediately with no preamble -- showing agreement near 0.6, which would mean the collapse is preamble structure rather than distribution drift"
+  },
+  {
+   "id": "be.preamble_is_not_the_cause_of_the_collapse",
+   "claim": "whether the free-running collapse is the model's preamble or genuine distribution drift",
+   "value": "DISTRIBUTION DRIFT STANDS; the preamble is not the cause. My own refutation of be.free_running_agreement_collapses_below_teacher_forced, pre-registered before it ran. Anchoring each generation at its first code-looking token (a ```python fence, or a line opening def/class/an assignment) and scoring from there: anchored naive agreement median 0.0423, best-shift-to-+-150 median 0.2609, alignment-free LCS ratio median 0.4524. Against the pre-registered bands (>=0.60 overturns, <=0.30 leaves drift standing) the shift-aligned figure 0.26 is in the DRIFT band and even the most generous statistic, LCS at 0.45, is short of overturning. FIRST, A FRAMING ERROR I FIXED BEFORE RUNNING: I had named this refutation as 'prompts whose gold begins with no preamble'. The golds ALREADY have no preamble -- code_holdout_500 references start at 'def is_prime(x):' in column one. The preamble is the MODEL's, so there was no aligned subset to select and the measurement had to be 'strip the model's own preamble', not 'pick better prompts'. AND THE LIMIT THAT ACTUALLY DECIDES THIS, written into the pre-registration before the number existed: only 19 of 100 generations contain a code anchor at all. The anchored score is computed on a fifth of the set, and that fifth is SELECTED FOR HAVING PRODUCED CODE -- the best-behaved generations. So 0.26 is an upper bound on a favourable subsample, and the collapse is unmeasured for the other 81%. The honest statement is: even among the generations that reach code, agreement stays in the drift band.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/preamble_refutation_prereg.md (bb22666) before runs/preamble_refutation.json existed; GPU7, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "coverage": 19,
+    "anchored_naive_median": 0.0423,
+    "anchored_shift150_median": 0.2609,
+    "anchored_lcs_median": 0.4524,
+    "unanchored_lcs_median": 0.2317,
+    "prereg_overturn_band": ">=0.60",
+    "prereg_drift_band": "<=0.30"
+   },
+   "uncertainty": "19% coverage is the dominant limitation and it is a SELECTED 19%. The anchor regex is a heuristic -- a generation that produces correct code without a fence and without a def/class/assignment opening is missed, so coverage is a lower bound on 'reached code'. LCS is capped at 120 tokens per side.",
+   "boundary": "The refutation improved the estimate without changing the verdict: anchoring lifts LCS from 0.2317 to 0.4524, so the preamble WAS costing roughly half the measured agreement -- it is a real effect and not the cause. A refutation that fails can still move a number, and reporting only 'refutation failed' would have hidden that the unanchored 0.23 understates within-code agreement.",
+   "status": "measured",
+   "refuted_by": "an anchoring method with materially higher coverage -- if 80% of generations can be anchored and still score in the drift band, this conclusion strengthens; if the currently-unanchored 81% would score high under a better anchor, it weakens"
+  },
+  {
+   "id": "be.the_loss_is_immediate_not_gradual",
+   "claim": "whether free-running agreement is lost at the first step off a gold prefix or accumulates over the horizon",
+   "value": "IMMEDIATE, and this REFUTES my own compounding story. Measured on ckpt_pretrain_30b_s2.pt.step24000, 100 prompts per set, greedy, rep_stop=False, agreement binned by distance from the prompt on the SHIFT-ALIGNED sequence. CODE-500 median agreement by bin: 1-8 0.250, 9-16 0.125, 17-32 0.000, 33-64 0.000, 65-128 0.000. MATH-500: 1-8 0.125, 9-16 0.125, 17-32 0.0625, 33-64 0.0408, 65-128 0.0946, 129-192 0.0469. Against the pre-registered test, which required BOTH clauses: bin1 <= 0.40 (code 0.250, math 0.125, both pass) AND the teacher-forced-to-bin1 drop exceeding the bin1-to-last-bin decay -- code 0.477 vs 0.250, math 0.562 vs 0.078. Both sets satisfy both clauses, math overwhelmingly. SO THE FIRST EIGHT TOKENS OFF A GOLD PREFIX COST MORE THAN THE ENTIRE REMAINING 184: the model's conditional distribution is calibrated on gold prefixes and is already off-distribution at step one. Compounding then makes a bad start worse, but compounding is not the mechanism. WHAT THIS CHANGES: search and better sampling operate on the trajectory, and the trajectory is wrong from its first token, so neither addresses the mechanism. It also reconciles the two earlier results -- gold beats 45-53% of sampled sequences on length-normalised log-prob (local preference is correct) while free-running agreement is ~0.23 (the trajectory leaves immediately). Local calibration and trajectory calibration are different properties and this model has the first without the second.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_profile_prereg.md (aaed72a) before runs/positional_profile.json existed; GPU5",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts_per_set": 100,
+    "greedy": true,
+    "rep_stop": false,
+    "shift_aligned_to": 150,
+    "code_bins": {
+     "1-8": 0.25,
+     "9-16": 0.125,
+     "17-32": 0.0,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "math_bins": {
+     "1-8": 0.125,
+     "9-16": 0.125,
+     "17-32": 0.0625,
+     "33-64": 0.0408,
+     "65-128": 0.0946,
+     "129-192": 0.0469
+    },
+    "code_tf_top1": 0.7273,
+    "math_tf_top1": 0.6875,
+    "code_tf_to_bin1_drop": 0.477,
+    "code_bin1_to_last_drop": 0.25,
+    "math_tf_to_bin1_drop": 0.562,
+    "math_bin1_to_last_drop": 0.078
+   },
+   "uncertainty": "POSITIONAL BINS ARE NOT INDEPENDENT PER-POSITION ACCURACY and the pre-registration said so before the run: once a generation diverges, every later bin is scored on a trajectory already off the gold, so late-bin agreement means 'accuracy given N tokens of prior divergence', not 'accuracy at position N'. The profile shows WHERE THE LOSS BEGINS, nothing more. Bin 1 is the only bin conditioned on a mostly-correct prefix and therefore the only one comparable to the teacher-forced figure; later bins are not compared to it. Math's non-monotone tail (0.0408 -> 0.0946 -> 0.0469) is consistent with noise on a low base and is not read as recovery.",
+   "boundary": "PROVENANCE. A ruling reached me citing a positional profile of 0.343 in the first eight tokens decaying to 0.078, attributed to me, alongside commits c3d1b3f and 72d70bd. I did not produce it; neither commit exists on any branch and no artifact backs it. fb verified independently and retracted. The bands above were fixed WITHOUT reference to those numbers so this is an independent measurement rather than a replication of an unbacked one -- and the shape agrees while the values do not, which is the outcome that makes the independence worth having.",
+   "status": "measured",
+   "refuted_by": "a bin-1 agreement above 0.55 on a larger sample, or a TF-to-bin1 drop smaller than the bin1-to-last decay on either set"
+  },
+  {
+   "id": "be.the_anchored_subsample_was_flattering_and_the_anchor_was_blind",
+   "claim": "whether anchored agreement on 19/100 generalises, and how much of the unanchored remainder was regex-invisible rather than code-free",
+   "value": "TWO ANSWERS, AND THE FIRST IS A DEFECT IN MY OWN INSTRUMENT. (1) THE 19% COVERAGE WAS A REGEX ARTIFACT, NOT A PROPERTY OF THE MODEL. My original anchor matched only a ```python fence or a line opening def/class/assignment. Widening it (indented continuations, import/from/return/print(, for/while/if, bare `=` lines, any fence) takes coverage from 19/100 to 69/100 -- FIFTY generations were producing code-shaped output my anchor could not see. Every statement I made about 'the 81% that did not reach code' was wrong about 50 of them. (2) THE SUBSAMPLE WAS FLATTERING, AS PRE-REGISTERED. Scoring the newly-anchored 50 SEPARATELY, never pooled: shift-aligned 0.2029 and LCS 0.2175, against the original 19's 0.2609 and 0.4524. Both land in the pre-registered 0.20-0.40 'roughly representative, drift stands' band on the shift statistic, but the LCS gap is large -- 0.4524 vs 0.2175, a factor of 2.1 -- so the original 19 were materially better-behaved and the 0.4524 I reported earlier does NOT generalise. Drift stands and is if anything understated. (3) THE REMAINING 31 ARE GENUINELY CODE-FREE, established by READING them rather than inferring: they are degenerate Chinese loops -- '求列表 [15, 3, 4, 23, 16] 中所有偶数的和为15, 所以,' repeated to the token limit, or '示例 1: 输入:a=50,b=11...' cycling. No code, not invisible code.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/coverage_anchor_prereg.md (f764839) before runs/coverage_anchor.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "n_prompts": 100,
+    "old_coverage": 19,
+    "widened_coverage": 69,
+    "newly_caught": 50,
+    "still_missed": 31,
+    "orig19_shift": 0.2609,
+    "orig19_lcs": 0.4524,
+    "new50_shift": 0.2029,
+    "new50_lcs": 0.2175,
+    "prereg_weakens_band": ">=0.40",
+    "prereg_understated_band": "<=0.20",
+    "prereg_representative_band": "0.20-0.40"
+   },
+   "uncertainty": "The widened anchor is still a regex and could still be blind, though the 31 misses were read and are degenerate loops rather than unmatched code. LCS is capped at 120 tokens. The newly-anchored 50 and original 19 are reported separately and must not be averaged -- pooling would let the better-behaved fifth carry the mean, which is the defect this measurement exists to test.",
+   "boundary": "I PRE-REGISTERED THE WRONG EXPECTATION AND SAID SO IN ADVANCE, WHICH IS THE ONLY REASON IT IS LEGIBLE NOW. I wrote that I EXPECTED coverage to stay below 30% even widened, and that this would mean 'the model mostly does not emit code and the whole anchored line of work was a side quest'. Coverage went to 69%. So the expectation was wrong in the direction that would have demoted my own work -- and the real finding is the opposite: the model emits code-shaped output far more often than my instrument could see, and my instrument was the limit. A prediction recorded and then falsified is worth more than one never written down.",
+   "status": "measured",
+   "refuted_by": "an anchor wider still that lifts coverage materially above 69% and scores the newly caught above 0.40, which would mean the remainder is also regex-invisible rather than degenerate"
+  },
+  {
+   "id": "be.bin1_cannot_separate_loops_from_attempts",
+   "claim": "whether the immediate-loss finding survives restricting to generations that actually reach code",
+   "value": "THE CONCLUSION SURVIVES AND MY STATED PREMISE FOR IT WAS WRONG. Bin-1 agreement, shift-aligned, three populations scored separately and never pooled: anchored 69 -> 0.25, newly caught 50 -> 0.25, UNANCHORED 31 (the degenerate loops) -> 0.25, original 19 -> 0.125. I pre-registered the arithmetic that 0.250 over all 100 with 31 near-zero loop contributors implies ~0.36 over the remaining 69. Measured: 0.25, not 0.36 -- because THE LOOPS DO NOT SCORE NEAR ZERO AT BIN 1. They score 0.25, identically. MECHANISM FOR THAT, which is the finding: a degenerate loop repeats phrasing lifted from the prompt, and the gold's opening tokens overlap that phrasing, so a loop matches gold early BY COINCIDENCE and then diverges. Bin 1 therefore cannot distinguish 'model tracking gold' from 'model echoing the prompt', and no bin-1 comparison between these populations carries information. THE IMMEDIATE-LOSS CLAIM ITSELF STILL HOLDS on real attempts: on the anchored 69, TF 0.727 -> bin1 0.25 is a drop of 0.477 against a bin1-to-last decay of 0.250, satisfying the pre-registered clause that the initial drop exceed the subsequent decay. The original 19 show a non-monotone 0.125 -> 0.4375 -> 0.101 that on n=19 is not read as structure.",
+   "measured": "2026-09-01",
+   "source": "e1, pre-registered in docs/lessons/positional_anchored_prereg.md (a083205) before runs/positional_anchored.json existed; GPU5, 100 code prompts, greedy, rep_stop=False",
+   "config": {
+    "ckpt": "ckpt_pretrain_30b_s2.pt.step24000",
+    "shift_aligned_to": 150,
+    "anchored69_bins": {
+     "1-8": 0.25,
+     "9-16": 0.25,
+     "17-32": 0.0625,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "new50_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "unanchored31_bins": {
+     "1-8": 0.25,
+     "9-16": 0.0,
+     "17-32": 0.0,
+     "33-64": 0.0
+    },
+    "orig19_bins": {
+     "1-8": 0.125,
+     "9-16": 0.4375,
+     "17-32": 0.101,
+     "33-64": 0.0,
+     "65-128": 0.0
+    },
+    "tf_top1": 0.7273,
+    "anchored69_tf_to_bin1": 0.477,
+    "anchored69_bin1_to_last": 0.25,
+    "prereg_predicted_bin1_if_loops_were_zero": 0.36
+   },
+   "uncertainty": "Populations are 69/50/31/19, so the smaller ones carry wide intervals and the original 19's non-monotone shape is not interpreted. Bins remain non-independent: after divergence every later bin is scored on an already-off trajectory, so only bin 1 is comparable to the teacher-forced figure. The coincidental-overlap mechanism is inferred from the loop text read earlier plus the identical bin-1 values; it is not separately measured.",
+   "boundary": "A PRE-REGISTERED PREDICTION FAILED AND THE FAILURE IS THE RESULT. I wrote the ~0.36 arithmetic in advance specifically so no measured value could be presented as unsurprising. It came back 0.25, which falsified the assumption inside the prediction -- that degenerate loops score near zero -- rather than the conclusion the prediction was defending. Without the arithmetic written down, 0.25 would have read as bland confirmation and the loop-echo mechanism would not have been noticed at all. This is the third instrument of mine to be the limit today, after the +-4 shift window and the anchor regex.",
+   "status": "measured",
+   "refuted_by": "a bin-1 measurement on prompts whose gold shares no opening tokens with the prompt text, where loops and attempts should separate if the coincidental-overlap mechanism is right"
   }
  ]
 }
