@@ -1768,6 +1768,31 @@
    },
    "uncertainty": "the gain from unlocking 8 warps is unmeasured and may be zero or negative; the cap's rationale is undocumented upstream, so it may exist for a reason we would rediscover the hard way",
    "status": "measured"
+  },
+  {
+   "id": "eff.fp8_gemm_at_realizable_peak",
+   "claim": "how much headroom a faster fp8 GEMM library could buy",
+   "value": "ZERO, not 2%: the fp8 GEMMs are already at ~100% of what this pod realizes, and the familiar '93% of peak' figure is measured against a VENDOR number the hardware does not reach. Two steps. (1) The 93% is arithmetic, not a kernel-efficiency measurement: eff.roofline_per_operator_prepad divides 67.8 TFLOP of GEMM work by 0.247 s to get 274.5 TFLOPS, then by the 296 TFLOPS of eff.h20_specs -- a vendor SXM spec sheet number, whose own uncertainty field already says 'realized peak is lower'. (2) This pod's realizable peak was MEASURED: eff.gpu4_peak_flops ran an 8192^3 bf16 GEMM and got 137.0 and 137.3 TFLOPS on two cards, against the same sheet's 148 bf16 -- 92.6% of vendor. Applying that same 92.6% to the fp8 line gives a realizable 274.0 TFLOPS, and the measured 274.5 sits AT it. So the 'library swaps cap at 2%' arithmetic (493.1 x (1 - 0.929) = 35.0 ms = 2.06% of a 1702 ms step) is computing headroom against a peak that does not exist on this silicon. The correct statement is that cuBLASLt is already extracting essentially all of the fp8 throughput this pod has. RETIRES THE LEVER BY NAME: swapping in a faster GEMM library -- CUTLASS, DeepGEMM, or any other -- buys ~0 on the GEMM itself. Note precisely what this does NOT retire: an epilogue that removes work AROUND the GEMM is a different lever and remains open (probes/t58_quant_tax.py measures 135.1 ms/step of quantisation traffic outside the GEMM). The two are easy to conflate because both are named 'CUTLASS'. The 92.6% ratio is bf16-measured and applied to fp8 by assumption; an fp8 peak probe would settle whether fp8 realizes the same fraction, and is the one measurement that could move this entry.",
+   "measured": "2026-09-01",
+   "source": "facts/efficiency.json#eff.roofline_per_operator_prepad, #eff.gpu4_peak_flops, #eff.h20_specs; arithmetic reproduced this session",
+   "config": {
+    "task": "tilerl-10",
+    "gemm_tflop": 67.8,
+    "gemm_seconds": 0.247,
+    "achieved_tflops": 274.5,
+    "vendor_fp8_tflops": 296,
+    "pct_of_vendor_fp8": 92.7,
+    "measured_bf16_tflops": 137.0,
+    "vendor_bf16_tflops": 148,
+    "pct_of_vendor_bf16": 92.6,
+    "realizable_fp8_tflops_implied": 274.0,
+    "pct_of_realizable": 100.2,
+    "library_swap_headroom_ms": 0.0,
+    "previously_claimed_headroom_ms": 35.0
+   },
+   "uncertainty": "The 92.6% realizable fraction is measured in bf16 on an 8192^3 GEMM and carried to fp8 by assumption -- fp8 could realize a different fraction of its vendor number, and no fp8 peak probe has been run. The 274.5 TFLOPS is itself from an older trace (prepad) than the 493.1 ms group figure, so the two are not the same run. Both point the same way, but a single 8192^3 fp8 GEMM on the lane card would replace the assumption with a measurement, cheaply.",
+   "boundary": "GEMM throughput only; says nothing about work around the GEMM (quantisation, epilogue) or about any non-GEMM lever",
+   "status": "measured"
   }
  ]
 }
