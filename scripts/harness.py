@@ -610,7 +610,7 @@ def _ppid_of(pid):
 
 
 def _pod_ps_rows(timeout=20):
-    """Every process on the pod as (pid, sid, pgid, ppid, args), in ONE remote read.
+    """Every process on the pod as (pid, sid, pgid, ppid, stat, args), in ONE remote read.
 
     The check needs pid/sid/pgid for the training rows AND the ppid of each -- two
     fields from the same table. Reading them as one `ps -eo` is one round trip
@@ -623,7 +623,7 @@ def _pod_ps_rows(timeout=20):
     """
     pod = os.path.expanduser("~/bin/pod")
     try:
-        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,args --no-headers"],
+        r = subprocess.run([pod, "ps -eo pid,sid,pgid,ppid,stat,args --no-headers"],
                            capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError) as e:
         return None, f"pod unreachable: {type(e).__name__}"
@@ -631,8 +631,8 @@ def _pod_ps_rows(timeout=20):
         return None, f"pod ps exit {r.returncode}"
     rows = []
     for ln in r.stdout.splitlines():
-        parts = ln.split(None, 4)
-        if len(parts) == 5 and parts[0].isdigit():
+        parts = ln.split(None, 5)
+        if len(parts) == 6 and parts[0].isdigit():
             rows.append(tuple(parts))
     if not rows:
         return None, "pod ps returned nothing"
@@ -653,7 +653,12 @@ def check_no_foreground_pod_training(root):
     if err:
         return SKIP, err
     # The training rows, selected from the one read rather than by a second remote grep.
-    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[4])]
+    rows = [x for x in allrows if re.search(r"train\.py|run_ddp", x[5])]
+    # A zombie is not a running process -- it holds no GPU and executes nothing; it is a
+    # reaped-but-unwaited exit status whose parent died. Judging one as "unsupervised
+    # training" reports a card as busy when it is free (2026-09-01, third false positive
+    # from this check in one day, this time after a correct kill).
+    rows = [x for x in rows if not x[4].startswith("Z")]
     ppid = {x[0]: x[3] for x in allrows}
     # Drop the INVOKING shell. `pod "... setsid nohup python3 harness.py launch ..."`
     # leaves a bash -lc whose argv contains the whole launch command, so a match on
@@ -661,7 +666,7 @@ def check_no_foreground_pod_training(root):
     # training process and is correctly not a session leader. It names setsid in its
     # own command line; the job it spawned is the thing to judge (2026-09-01, this
     # check refused a commit while tilerl's A/B was launching correctly).
-    rows = [x for x in rows if not ("setsid" in x[4] and x[4].startswith("bash -lc"))]
+    rows = [x for x in rows if not ("setsid" in x[5] and x[5].startswith("bash -lc"))]
     if not rows:
         return PASS, "no training process on the pod"
     # ppid == 1 means init adopted it: the launching shell is gone and the process
@@ -670,7 +675,7 @@ def check_no_foreground_pod_training(root):
     # a correctly detached trainer as unsupervised -- this refused a commit while
     # tilerl's A/B arm ran exactly as intended (2026-09-01, second false positive from
     # this check).
-    detached = {x[0] for x in rows if x[4].startswith(("/usr/bin/python3", "python3"))
+    detached = {x[0] for x in rows if x[5].startswith(("/usr/bin/python3", "python3"))
                 and ppid.get(x[0]) == "1"}
     attached = [x for x in rows if x[0] != x[1] and x[0] not in detached]
     # A setsid'd launcher IS its session leader; its ranks are children sharing that sid.

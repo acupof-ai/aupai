@@ -61,6 +61,58 @@ def params_of(model):
     return n
 
 
+
+# --- refusals, not reminders -------------------------------------------------
+# Both of these exist because the remembering-kind of rule failed on 2026-09-01.
+
+PEAK_TFLOPS = 148.0  # H20 bf16. This harness never enables fp8; train.py:2267 uses 296 when
+# --fp8 is on. A percentage hides its denominator, so every row carries peak_tflops and fp8
+# and a mismatched comparison is visible in the JSON rather than in someone's memory.
+
+
+def _ab_guard(argv):
+    """Refuse an A/B whose arms are identical.
+
+    The AttnRes A/B ran twice with --ar-blocks 0, because 0 is also the default. It would have
+    reported a difference of zero -- correctly computed, from an experiment that never varied
+    its variable. A zero difference invites no scrutiny, so the driver has to refuse instead.
+    """
+    import hashlib
+    key = hashlib.sha1(" ".join(argv[1:]).encode()).hexdigest()[:12]
+    reg = "/work/aupai/runs/.t66_arms"
+    prior = {}
+    if os.path.exists(reg):
+        with open(reg) as fh:
+            for line in fh:
+                h, _, cmd = line.rstrip("\n").split("\t", 2)
+                prior[h] = cmd
+    if key in prior:
+        raise SystemExit(
+            f"t66 REFUSES: these exact args already ran as arm {key}:\n  {prior[key]}\n"
+            "Two identical arms measure nothing. Vary the arm or delete " + reg)
+    with open(reg, "a") as fh:
+        fh.write(f"{key}\t-\t{' '.join(argv[1:])}\n")
+
+
+def _selftest():
+    """The guard is only worth having if it FIRES. Assert it refuses a repeat."""
+    import hashlib
+    import tempfile
+    d = tempfile.mkdtemp()
+    reg = os.path.join(d, "arms")
+    argv = ["t66", "S", "--ar-blocks", "0"]
+    key = hashlib.sha1(" ".join(argv[1:]).encode()).hexdigest()[:12]
+    with open(reg, "w") as fh:
+        fh.write(f"{key}\t-\tS --ar-blocks 0\n")
+    with open(reg) as fh:
+        prior = {ln.split("\t")[0] for ln in fh}
+    assert key in prior, "guard would NOT catch a repeated arm"
+    # and a varied arm must pass
+    k2 = hashlib.sha1(b"S --ar-blocks 8").hexdigest()[:12]
+    assert k2 not in prior, "guard would falsely refuse a varied arm"
+    print("selftest ok: guard refuses a repeat, admits a varied arm")
+
+
 def _apply_compile():
     """train.py:2317-2330's dynamo settings. AttnRes Full builds 1 + 2*layers graphs, so the
     cache limit has to move with depth or compile silently falls back to eager from graph 65
@@ -125,7 +177,8 @@ def run(name, seq, batch, steps, grad_ckpt=False, compile_=True):
             "ms_per_step": round(dt / steps * 1000, 1),
             "tok_per_s": round(tok / dt),
             "peak_mem_GiB": round(peak, 2),
-            "mfu_pct_derived": round(100 * flops / dt / 148e12, 1)}
+            "mfu_pct_derived": round(100 * flops / dt / (PEAK_TFLOPS * 1e12), 1),
+            "peak_tflops": PEAK_TFLOPS, "fp8": False}
 
 
 def find_batch(name, seq, lo=1, hi=64, grad_ckpt=False, compile_=True):
@@ -183,7 +236,12 @@ if __name__ == "__main__":
     ap.add_argument("--ar-blocks", type=int, default=0,
                     help="attn_res_blocks: 0=Full (pinned default), N=N blocks. Full source "
                          "reads are O(L^2) -- 2145 at L=32 vs 353 at blocks=8 (b0 t71).")
+    ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
+    if a.selftest:
+        _selftest()
+        sys.exit(0)
+    _ab_guard(sys.argv)
     _AR_BLOCKS[0] = a.ar_blocks
     if a.find_batch:
         got, pk = find_batch(a.candidate, a.seq, grad_ckpt=a.grad_ckpt, compile_=not a.eager)

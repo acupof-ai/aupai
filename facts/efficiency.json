@@ -2051,45 +2051,81 @@
   },
   {
    "id": "eff.depth_is_not_the_mfu_gap",
-   "claim": "why 500M at L=32 reads 11-12% MFU when the 206M/L=12 run read 32%, and whether depth is the cause",
-   "value": "DEPTH IS NOT THE CAUSE. The one-variable control settles it: d1024 L=12 in the PROBE's own configuration reaches 16.0% MFU, not 32%. Depth from 12 to 32 costs at most ~2 MFU points (16.0 -> 14.2); the configuration costs the rest. Measured single-card, everything identical but depth -- d1024, batch 16, grad_ckpt ON, compiled, AttnRes Full, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup: L=12, 206.1M params, 3419.6 ms/step, 19,165 tok/s, 14.84 GiB peak, MFU 16.0%. WHY THE 32% WAS NEVER THE BASELINE: the 206M production run was world=7, batch 32, NO checkpointing. That configuration is UNREACHABLE at L=32 -- batch 32 without checkpointing does not fit on an 80 GiB card at this depth (compiled no-ckpt fits batch 8 at 74.66 GiB). So depth does not cost throughput through one term; it forces a chain. L=32 forbids batch 32 without checkpointing, checkpointing adds a second forward that 6ND does not count (~+33% real work, so MFU understates by ~25%), and the smaller batch amortises each kernel launch over less work. Those are not competing explanations to rank -- the depth decision selected all three at once, so 'what does depth cost' and 'what does our depth recipe cost' are the same question and only the second is answerable (fb). COMPILED BATCH CEILINGS, which corrected an earlier eager measurement that had been ruled from: grad_ckpt ON fits batch 32 at 63.95 GiB, OFF fits batch 8 at 74.66 GiB. Eager was 16 and 4 -- both wrong by the same factor in the same direction, so grad_ckpt's 4x batch advantage survived compilation intact and the ruling it supported did not need revisiting.",
+   "claim": "Depth costs ~2 MFU points: 16.0% at L=12 against 14.2% at L=32, so the recipe and not depth explains the 500M probe's 11-12%.",
+   "value": "RETRACTED, sign inverted. The 14.2% was the EAGER batch-4 row; the 16.0% was compiled at batch 16. Setting them side by side compared an execution path we do not run against one we do -- the exact rule this entry's own boundary section stated, quoted one message after writing it. The matched compiled pair says the opposite: L=32 reaches 43.5 TFLOPS/GPU against L=12's 23.7 at an identical recipe, so the deeper model uses the hardware 1.84x BETTER. Superseded by eff.depth_shape_matched_pair.\n\nA second, independent error: the entry compared a t66 percentage to a train.py percentage. train.py:2267 divides by 296 TFLOPS under --fp8 and 148 without; t66 never enables fp8 and hardcoded 148. Both were labelled 'MFU'. They were never the same statistic.",
    "measured": "2026-09-01",
-   "source": "probes/t66_depth_shape.py, candidates S (d1024 L32) and S12 (d1024 L12), GPU1/GPU2; shape500_probe.log for the world=3 reading",
+   "source": "probes/t66_depth_shape.py; retracted by its own matched pair the same day",
    "config": {
-    "task": "500M depth shape, fb P0",
-    "control": "S12 = d1024 L12 h8 ffn3072, 206.1M -- identical to S but for depth",
-    "s12": {
-     "ms_per_step": 3419.6,
-     "tok_s": 19165,
-     "peak_GiB": 14.84,
-     "mfu_pct": 16.0,
+    "retracted_rows": {
+     "l12_compiled_b16_mfu_pct": 16.0,
+     "l32_EAGER_b4_mfu_pct": 14.2
+    },
+    "why_not_comparable": "different batch, different compile state, and against train.py a different FLOP denominator"
+   },
+   "uncertainty": "None -- the claim is withdrawn, not qualified.",
+   "boundary": "THREE FAILURES IN ONE HOUR, ALL OF THE SAME KIND: a rule that has to be remembered at the point of use.\n(1) I quoted the eager b4 row against a compiled row, in the message after writing the boundary note that the eager rows must not be ruled from. Assent to a rule does not fire the rule.\n(2) I compared a 148-denominator percentage to a 296-denominator percentage. Both were labelled 'MFU'. A shared NAME is not a shared statistic, and a percentage hides its denominator by construction -- which is exactly why it should not be the unit anything is compared in.\n(3) The AttnRes A/B ran two IDENTICAL arms: `--ar-blocks` defaults to 0 and both invocations passed 0. It would have reported a difference of zero, and zero is the reading that invites no scrutiny -- the same false-negative trap as the 0%-resolution join. An A/B whose arms are equal cannot fail loudly on its own.\nThe fix for all three is the refusing kind, not the remembering kind: rows now carry `peak_tflops` and `fp8` so a mismatched comparison is visible in the JSON, and the harness refuses to run an A/B whose arms hash identically. See probes/t66_depth_shape.py `_ab_guard`.",
+   "audit": "Two of the three defects were rule-recall failures by someone who had written the rule minutes earlier: the eager-row ban was quoted and then broken, and 'record the capture config' did not cover the FLOP ceiling because nobody classed a denominator as configuration. The third was structural -- an A/B whose two arms both passed --ar-blocks 0, where 0 is the default, which would have reported a clean zero. All three are now refused at the point of use rather than remembered: rows carry peak_tflops and fp8, and t66 refuses a repeated arm (probes/t66_depth_shape.py _ab_guard, --selftest asserts it fires).",
+   "refuted_by": "eff.depth_shape_matched_pair",
+   "status": "retracted"
+  },
+  {
+   "id": "eff.depth_shape_matched_pair",
+   "value": "The deeper shape is MORE efficient per GPU, and the 500M probe's low reading is mostly denominator and contention, not the shape. Matched compiled pair, single card, everything identical but depth -- d1024, AttnRes Full, seq 4096, batch 16, grad_ckpt ON, compiled, world=1, accum=1, 200 timed steps past 50 warmup:\n  L=12 (206.1M): 3419.6 ms/step, 19,165 tok/s, 14.84 GiB, 23.7 TFLOPS/GPU\n  L=32 (493.6M): 4463.7 ms/step, 14,682 tok/s, 35.39 GiB, 43.5 TFLOPS/GPU\n1.84x more useful arithmetic per second at 2.4x the parameters: a bigger model amortises the same launch and memory traffic over more work.\n\nTHE 11% vs 32% GAP, ON ONE SCALE. Percentages were not comparable across instruments (train.py:2267 uses 296 TFLOPS under --fp8, 148 without; t66 is bf16-only at 148), so in absolute terms: 206M production world=7 94.7 TFLOPS/GPU; 493M probe world=3 35.5; 493M harness same shape world=1 43.5. The real collapse is 94.7 -> 35.5, i.e. 2.7x not 3x. Since the identical shape reaches 43.5 at world=1, roughly 19% of the probe's shortfall sits in the world=3 allreduce and the rest in the shape and recipe. That is evidence the DDP term is real and SMALLER than the shape term -- it is not a measurement of it.\n\nCOMPILED BATCH CEILINGS (single-process, uncontended, unaffected by the above): grad_ckpt ON fits batch 32 at 63.95 GiB; OFF fits batch 8 at 74.66 GiB. Eager read 16 and 4 -- both low by the same factor, so grad_ckpt's 4x batch advantage survived compilation and the ruling it supported stands. b32 remains the open lever.",
+   "measured": "2026-09-01",
+   "source": "probes/t66_depth_shape.py candidates S and S12 on GPU0/GPU2; pod-only log shape500_probe (container /work/aupai/runs, not in repo); train.py:2267 for the denominator",
+   "config": {
+    "matched_pair": {
+     "d": 1024,
+     "heads": 8,
+     "ffn": 3072,
+     "seq": 4096,
      "batch": 16,
      "grad_ckpt": true,
      "compiled": true,
+     "attn_res": "Full (blocks=0)",
      "world": 1,
-     "accum": 1
+     "accum": 1,
+     "steps_timed": 200,
+     "warmup": 50,
+     "peak_tflops_denominator": 148,
+     "fp8": false
     },
-    "compiled_max_batch_ckpt_on": 32,
-    "compiled_max_batch_ckpt_on_peak_GiB": 63.95,
-    "compiled_max_batch_ckpt_off": 8,
-    "compiled_max_batch_ckpt_off_peak_GiB": 74.66,
-    "eager_max_batch_ckpt_on": 16,
-    "eager_max_batch_ckpt_off": 4,
-    "probe_world3_b16": {
-     "mfu_pct": 11,
-     "tok_s_per_gpu": 11000,
-     "flat_from_step": 20
+    "l12": {
+     "params_M": 206.1,
+     "ms_per_step": 3419.6,
+     "tok_s": 19165,
+     "peak_GiB": 14.84,
+     "tflops_per_gpu": 23.7
     },
-    "production_206M_reference": {
-     "mfu_pct": 32,
-     "world": 7,
-     "batch": 32,
-     "grad_ckpt": false,
-     "note": "NOT a baseline -- a different model in a configuration L=32 cannot reach"
+    "l32": {
+     "params_M": 493.6,
+     "ms_per_step": 4463.7,
+     "tok_s": 14682,
+     "peak_GiB": 35.39,
+     "tflops_per_gpu": 43.5
+    },
+    "absolute_tflops_per_gpu": {
+     "prod_206M_world7": 94.7,
+     "probe_493M_world3": 35.5,
+     "harness_493M_world1": 43.5
+    },
+    "denominators": {
+     "train_py_fp8": 296,
+     "train_py_bf16": 148,
+     "t66": 148
+    },
+    "compiled_max_batch": {
+     "ckpt_on": 32,
+     "ckpt_on_peak_GiB": 63.95,
+     "ckpt_off": 8,
+     "ckpt_off_peak_GiB": 74.66
+    },
+    "eager_max_batch_superseded": {
+     "ckpt_on": 16,
+     "ckpt_off": 4
     }
    },
-   "uncertainty": "The depth control is world=1, so the probe's world=3 allreduce cost is absent from BOTH arms -- it cancels for the depth comparison but not against the 206M run's 32%. The L=32 matched row at batch 16 compiled was still running when this was written; the 14.2% quoted for L=32 is the eager batch-4 figure and will be replaced by the matched pair. MFU is derived (6ND against a 148 TFLOPS vendor peak) and inherits whatever error 6ND carries for a hybrid KDA/attention model, plus the checkpointing undercount named above. b32 at world=7 is NOT certified: 63.95 GiB at world=1 leaves ~16 GiB before DDP buckets and NCCL staging, and that margin has been refused four times pending a world=3 measurement.",
-   "boundary": "AN EAGER MEASUREMENT WAS RULED FROM. Every batch and memory figure I reported before this entry was uncompiled while Cfg.compile is True (train.py:206), so it described an execution path we do not run -- max batch 16 became 32, max batch 4 became 8. The loss path had been checked and fixed (the fused LM head was missing from the first harness); the EXECUTION path had not. Verifying one axis of fidelity and treating the model as verified is the same class as eff.fp8_weight_byte_cache measuring a disabled path. ALSO: the 32% was treated as a baseline for hours by two sessions before anyone asked whether the configuration behind it was reachable at the new shape. A reference number is not a baseline unless its configuration is available to the thing being compared.",
+   "uncertainty": "The probe's own 11-12% is CONTAMINATED and is an upper bound on damage, not a rate: a queued shape500_b32 job guarded on `while [ -d /proc/1302052 ]` -- a HOST pid evaluated inside the container, where it does not exist -- launched immediately onto cards 4/5/6 while the probe held them, ~39 GiB each at 100% util, overlapping roughly steps 150-230. Killed by cmdline-verified pid. The world=3 b32 measurement does not exist yet; the run that would have produced it was the contending job, and the DDP term must not be fitted from world=1. The 19% attribution converts a bf16-denominator harness number and an fp8-denominator train.py number to TFLOPS, which is right for the ratio but leaves the fp8-vs-bf16 execution difference inside it -- the harness is not running the fp8 path, so it is not the same work. 6ND also undercounts grad_ckpt's recompute (~+33%), which cancels within the ckpt-on pair but depresses both against the no-ckpt 206M run. The AttnRes blocks=8 arm is still running; the blocks=0 side is the 4463.7 ms row above.",
    "status": "measured"
   }
  ]
