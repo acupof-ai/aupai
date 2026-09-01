@@ -32,6 +32,7 @@ import random
 import re
 import statistics
 import sys
+from collections import Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -77,6 +78,31 @@ def rows_of(path):
     return out
 
 
+def constant_baseline(golds):
+    """(rate, value, n) for the best always-answer-X strategy.
+
+    The permutation control answers "how often does this answer satisfy ANOTHER
+    problem's gold", which rules out an extractor matching at random. It does not rule
+    out the thing that actually happens: math answers are small integers, the model
+    emits small integers, and a model that learned only the output DISTRIBUTION scores
+    well above a shuffle.
+
+    Measured on math_test_500: 491 rows, 169 distinct gold values, 72.9% of rows share
+    their gold with another row. Always answering "2" scores 9.78%. The 3-demo arm
+    scored 8.15% against a 2.52% permutation control -- clear of the shuffle by z=8.42
+    and BELOW the constant guess. Reported as a first real signal before this was
+    computed; that reading did not survive (de, 2026-09-01).
+
+    Both controls belong in the output. They answer different questions and the weaker
+    one is not wrong, it is just not the binding one.
+    """
+    c = Counter(g for g in golds if g is not None)
+    if not c:
+        return None, None, 0
+    val, k = c.most_common(1)[0]
+    return k / len(golds), val, len(golds)
+
+
 def _eq(a, b):
     if a is None or b is None:
         return False
@@ -112,6 +138,14 @@ def selftest():
         "within one turn the last box is the answer; the first is an intermediate")
     assert _eq("7", "7.0") and not _eq("7", "9")
     assert _eq("1,234", "1234"), "thousands separators must not create a mismatch"
+    # the binding control. A shuffle asks "does this answer fit another problem"; the
+    # constant guess asks "what does answering the modal value always get you". On
+    # duplicate-heavy golds the second is far higher, and it is the one a capability
+    # claim must clear.
+    r, v, n = constant_baseline(["2", "2", "2", "3", "5"])
+    assert (r, v, n) == (0.6, "2", 5), (r, v, n)
+    assert constant_baseline([])[0] is None, "no golds is not a 0% baseline"
+    assert constant_baseline([None, None])[0] is None, "all-None is not a 0% baseline"
     # the pairing: two arms, 4 problems, disagreeing on exactly 2 in opposite
     # directions. A raw rate difference is 0 and hides that anything moved; the
     # discordant counts are 1 and 1, which is the honest description.
@@ -176,12 +210,22 @@ def main():
               "manipulation did not take, and the accuracies below are not "
               "interpretable as capability.")
 
+    # The BINDING control, printed before the permutation one because it is the higher
+    # floor: a rate below it is not evidence of capability no matter what the shuffle says.
+    crate, cval, _ = constant_baseline([golds.get(q) for q in qs])
+    if crate is not None:
+        print(f"\nconstant-guess baseline: always answer {cval!r} scores "
+              f"{crate:.2%} on these {n} problems")
+
     print(f"\naccuracy on the {n} shared problems, against a 200-permutation control")
     for nm, h, c, s in ((args.a_name, ha, ca, sa), (args.b_name, hb, cb, sb)):
         k = sum(h)
         z = (k - c) / s if s else float("nan")
+        flag = ""
+        if crate is not None and k / n <= crate:
+            flag = f"  <-- AT OR BELOW the {crate:.2%} constant guess"
         print(f"  {nm:14s} {k}/{n} = {k / n:.2%}   control {c / n:.2%} "
-              f"(sd {s / n:.2%})   {(k - c) / n * 100:+.2f}pt, z={z:.2f}")
+              f"(sd {s / n:.2%})   {(k - c) / n * 100:+.2f}pt, z={z:.2f}{flag}")
 
     # 4. paired comparison. Same problems, so the pairing is free information.
     both = sum(1 for x, y in zip(ha, hb, strict=True) if x and y)

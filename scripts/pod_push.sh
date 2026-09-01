@@ -20,6 +20,28 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Stamp WHAT is on the pod and from WHERE. The pod has no git and no route back to
+# this machine, so it cannot ask whether main has moved -- run_ddp.sh can only read a
+# stamp somebody left. Called after --check, so a stamp means the manifest gate agreed.
+#
+# Only a whole-manifest push may claim a sha. A named-file push leaves every other file
+# at whatever it was, so it CLEARS the stamp instead: the pod is then a mix of one sha's
+# tree and one file from another, and the honest state is "unknown". The failure this
+# guards is a three-day run on code somebody pushed one file into.
+stamp_sync() {
+  if [ "$1" = all ]; then
+    local head_sha dirty
+    head_sha=$(git rev-parse HEAD)
+    dirty=$(git status --porcelain -- $(awk '{print $2}' data/pod_head_manifest.txt \
+            | grep -v '^runs/') 2>/dev/null | wc -l | tr -d ' ')
+    ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $head_sha $dirty $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
+    echo "pod sync stamp: $head_sha (dirty=$dirty)"
+  else
+    ~/bin/pod "cd /work/aupai && rm -f data/pod_synced_head" < /dev/null
+    echo "pod sync stamp CLEARED (partial push) -- run '$0 --all' before a training launch"
+  fi
+}
+
 ALL=0
 if [ "${1:-}" = "--all" ]; then ALL=1; shift; fi
 [ $# -ge 1 ] || [ $ALL -eq 1 ] || { echo "usage: $0 [--all] <file>..."; echo "       $0 --all   (sync the whole manifest: push changed, delete manifest-left)"; exit 2; }
@@ -100,6 +122,7 @@ if [ $ALL -eq 1 ]; then
   # The manifest last: it must describe exactly what landed.
   ~/bin/podput data/pod_head_manifest.txt /work/aupai/data/pod_head_manifest.txt
   ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
+  stamp_sync all
   exit 0
 fi
 
@@ -131,3 +154,4 @@ else
 fi
 
 ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
+stamp_sync partial

@@ -26,6 +26,7 @@ Usage: python scripts/launch_gate.py [--mix data/mix_500m.json] [--world 7]
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
@@ -34,6 +35,40 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+
+
+def _launch_root(root):
+    """The tree launch state is read from: MAIN's, not whichever worktree ran this.
+
+    Controller rule 2026-09-01: gate state is read off main. A worktree can be ahead
+    of main (a fix committed but unmerged) or behind it (a peer's fix not pulled), and
+    both directions give an answer about a tree nothing will launch from. The launch
+    happens from main, so main is the only tree whose state is the launch's state.
+
+    Returns (root_to_read, note). A worktree whose HEAD differs from main is REPORTED
+    rather than silently redirected -- a gate that quietly reads somewhere other than
+    where it was pointed is its own defect.
+    """
+    try:
+        import subprocess as _sp
+        here = _sp.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True,
+                       text=True, timeout=20).stdout.strip()
+        main = _sp.run(["git", "rev-parse", "main"], cwd=root, capture_output=True,
+                       text=True, timeout=20).stdout.strip()
+    except (OSError, ValueError):
+        return root, "could not read git HEAD/main; gate state is this tree's"
+    if not here or not main:
+        return root, "not a git tree; gate state is this tree's"
+    if here == main:
+        return root, f"tree is at main ({here[:8]})"
+    try:
+        behind = _sp.run(["git", "merge-base", "--is-ancestor", "HEAD", "main"],
+                         cwd=root, capture_output=True, timeout=20).returncode == 0
+    except (OSError, ValueError):
+        behind = False
+    where = "behind" if behind else "ahead of or diverged from"
+    return root, (f"WARNING: this tree ({here[:8]}) is {where} main ({main[:8]}). "
+                  f"Launch state is main's. Merge main and re-run before trusting a GO")
 
 GO, NOGO, UNKNOWN = "GO", "NO-GO", "UNKNOWN"
 
@@ -76,10 +111,22 @@ def gate_epochs_measured(root, mix_path, world):
     missing = []
     for name, spec in m["domains"].items():
         src = spec.get("epochs_pool_source")
-        if src is None:
+        flag = spec.get("epochs_pool_measured")
+        if src is None and flag is None:
             missing.append(name)
+        elif flag is not None:
+            # A structured field, checked first. Grepping the prose for "ESTIMATED" tested a
+            # WORD, not the property: writing "DERIVED from the stamp" for four domains with
+            # no cache flipped this gate from NO-GO to GO with nothing measured (b0,
+            # 2026-09-01, caught in my own change). A mix that carries the boolean is judged
+            # on the boolean; the string stays for the reader, not the gate.
+            if not flag:
+                est.append(name)
         elif "ESTIMATED" in str(src).upper():
             est.append(name)
+        else:
+            # Neither a boolean nor the legacy marker: unreadable provenance is not a pass.
+            missing.append(name)
     if missing:
         return NOGO, (f"{len(missing)} domain(s) carry no epochs_pool_source at all: "
                       f"{', '.join(missing[:4])} -- provenance absent, not merely estimated")
@@ -112,13 +159,45 @@ def gate_corpora(root, mix_path, world):
         except (OSError, ValueError) as e:
             bad.append(f"{name}: stats unreadable ({e})")
             continue
-        if want and got != want:
+        # A COMPARISON THAT DID NOT RUN IS NOT A COMPARISON THAT PASSED. `if want and
+        # got != want` skips the check when the mix carries no fingerprint, and the
+        # gate then prints GO having compared nothing. b0 measured the blast radius:
+        # 12 of 13 mixes have at least one such domain, and mix_500m -- the launch mix
+        # -- has NINE OF NINE. The gate would have certified "fingerprints match" for a
+        # mix in which no fingerprint exists. Same sentence as "0 files, all
+        # compliant": a universal claim over an empty set.
+        #
+        # Restored from da99cda for the SECOND time (de, 2026-09-01). It was lost once
+        # to a merge that took one side whole, and again to a later merge that raised
+        # no conflict at all -- which is why the count below says how many were
+        # compared rather than how many domains exist: a number that has to move is
+        # harder to lose quietly than a branch that has to run.
+        if not want:
+            bad.append(f"{name}: mix carries no fingerprint, so nothing was compared")
+        elif not got:
+            bad.append(f"{name}: build_corpus_stats.json carries no fingerprint")
+        elif got != want:
             bad.append(f"{name}: fingerprint {got} != mix's {want}")
         if re.search(r"mix_scale_[\d.]+b", str(spec.get("role", "")) + name):
             bad.append(f"{name}: points at a frozen mix_scale_* pool")
     if bad:
         return NOGO, f"{len(bad)} domain(s) failed: {'; '.join(bad[:3])}"
-    return GO, f"all {len(m['domains'])} corpora present, sharded, fingerprints match"
+    n = len(m["domains"])
+    return GO, f"all {n} corpora present, sharded, {n} fingerprints compared and match"
+
+
+ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
+LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+
+
+def _sha256(p):
+    if not os.path.exists(p):
+        return None
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def gate_arch_tests(root, mix_path, world):
@@ -126,11 +205,22 @@ def gate_arch_tests(root, mix_path, world):
 
     Passing is read from a recorded result, not from the file existing: a test
     that exists and was never run is the coverage-shaped nothing this gate is for.
+
+    Three things the first version could not see, each of which produces a GO that
+    means nothing (de, 2026-09-01):
+
+    1. It accepted ANY key valued "pass". `{"ok": "pass"}` cleared it without either
+       named test having run. The record must carry a row per test in ARCH_TESTS.
+    2. It said "on this shape" and read no shape. Both tests run at whatever their
+       config says, and test_e2e ran at Cfg.layers=12 until today -- a genuine pass of
+       a different model. Each row states the shape it ran, and it must be the shape
+       being launched.
+    3. It could not tell a real kernel from a stand-in. test_arch_L32 prints 10/10 on a
+       machine without fla, having replaced chunk_kda with a lambda; that green is the
+       most misleading artifact in this directory, because it is all-clear on exactly
+       the question the gate is asking. A row must say a real kernel ran.
     """
-    missing = []
-    for name in ("scripts/test_arch_L32.py", "scripts/test_e2e.py"):
-        if not os.path.exists(os.path.join(root, name)):
-            missing.append(name)
+    missing = [n for n in ARCH_TESTS if not os.path.exists(os.path.join(root, n))]
     if missing:
         return NOGO, f"absent: {', '.join(missing)}"
     results = os.path.join(root, "runs", "launch_tests.json")
@@ -141,10 +231,48 @@ def gate_arch_tests(root, mix_path, world):
         r = json.load(open(results, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"runs/launch_tests.json unreadable: {e}"
-    failed = [k for k, v in r.items() if v != "pass"]
-    if failed:
-        return NOGO, f"recorded non-pass: {', '.join(failed[:4])}"
-    return GO, f"{len(r)} shape test(s) recorded pass"
+    # Absence and failure are distinct outcomes (main, taken in the merge): absent
+    # means nobody ran it, a failing row means it ran and failed. The first is UNKNOWN,
+    # the second NO-GO, and collapsing them loses the only fact that says what to do.
+    unrecorded = [n for n in ARCH_TESTS if n not in r]
+    if unrecorded:
+        return UNKNOWN, (f"launch_tests.json records no result for {', '.join(unrecorded)} "
+                         f"(it has: {', '.join(sorted(r)[:4]) or 'nothing'}) -- a record "
+                         f"that does not name the required test is not evidence it ran")
+    problems = []
+    for name in ARCH_TESTS:
+        row = r[name]
+        if not isinstance(row, dict):
+            problems.append(f"{name}: bare {row!r}, which names no shape and no kernel")
+            continue
+        if row.get("result") != "pass":
+            problems.append(f"{name}: {row.get('result')!r}")
+            continue
+        shape = row.get("shape") or {}
+        differs = {k: (v, shape.get(k)) for k, v in LAUNCH_SHAPE.items() if shape.get(k) != v}
+        if differs:
+            problems.append(f"{name}: ran at {shape or 'an unstated shape'}, "
+                            f"launch is {LAUNCH_SHAPE} (differs: {sorted(differs)})")
+        elif not row.get("real_kernel"):
+            problems.append(f"{name}: real_kernel is not true -- a stand-in chunk_kda "
+                            f"passes every case without touching a KDA kernel")
+        else:
+            # The row must describe the test that is here now. Without this the record
+            # survives an edit to the test, which is the failure this repo has bought
+            # three times over (vocab_id, .srcfp, filters_fp) -- and both of these
+            # files changed three times on the day this format was written.
+            want = row.get("test_sha256")
+            here = _sha256(os.path.join(root, name))
+            if want is None:
+                problems.append(f"{name}: the row carries no test_sha256, so it cannot "
+                                f"be shown to describe the file that is here now")
+            elif here and want != here:
+                problems.append(f"{name}: recorded against {want[:12]}, the file here "
+                                f"is {here[:12]} -- the test changed after it passed")
+    if problems:
+        return NOGO, "; ".join(problems[:3])
+    return GO, (f"{len(ARCH_TESTS)} shape test(s) passed at "
+                f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel")
 
 
 def gate_recipe_provenance(root, mix_path, world):
@@ -289,8 +417,10 @@ def main():
     if a.selftest:
         sys.exit(selftest())
 
-    rows = run(ROOT, a.mix, a.world)
-    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}\n")
+    root, note = _launch_root(ROOT)
+    rows = run(root, a.mix, a.world)
+    print(f"launch-gate  mix={os.path.relpath(a.mix, ROOT)}  world={a.world}")
+    print(f"             {note}\n")
     for name, state, why in rows:
         print(f"  [{state:^7}] {name:<20} {why}")
     blocking = [r for r in rows if r[1] != GO]
@@ -299,6 +429,9 @@ def main():
         print(f"NO-GO: {len(blocking)} of {len(rows)} gate(s) not GO")
         for name, state, why in blocking:
             print(f"  {state}: {name} -- {why}")
+        return 1
+    if note.startswith("WARNING"):
+        print("REFUSING to print GO: " + note)
         return 1
     print(f"GO: all {len(rows)} gates computed GO from artifacts.")
     print("     This is not a proof the run is safe -- it is a proof that these nine")
@@ -318,17 +451,33 @@ def selftest():
     structural defence against this file becoming the thing it was written to
     replace -- see WHO_CHECKS_THE_GATE in docs.
     """
+    import atexit
     import shutil
+    import subprocess
     import tempfile
 
+    tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "data", "runs", "scripts"],
+                             capture_output=True, text=True).stdout.split("\n")
+    tracked = [p for p in tracked if p.strip()]
+    if not tracked:
+        print("SKIP: git ls-files returned nothing, so a world would be empty")
+        return 0
+
+    worlds = []
+    atexit.register(lambda: [shutil.rmtree(w, ignore_errors=True) for w in worlds])
+
     def world(mutate):
-        d = tempfile.mkdtemp()
-        for sub in ("data", "runs", "scripts"):
-            src = os.path.join(ROOT, sub)
-            if os.path.isdir(src):
-                shutil.copytree(src, os.path.join(d, sub),
-                                ignore=shutil.ignore_patterns("corpus", "*.pt", "raw", "_*"),
-                                dirs_exist_ok=True)
+        # Tracked files only: 12 MB against 1.5 GB for the whole of data/, and every
+        # artifact a gate reads is committed. The pattern-based copytree that stood here
+        # excluded corpus/ and _* but not data/*.jsonl, so each world carried 1.5 GB of
+        # SFT corpora no gate opens; 7886 undeleted worlds filled the disk to 2 GB free
+        # and broke two sessions' selftests (2026-09-01).
+        d = tempfile.mkdtemp(prefix="gate_world_")
+        worlds.append(d)
+        for rel in tracked:
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
         os.makedirs(os.path.join(d, "data", "corpus"), exist_ok=True)
         mutate(d)
         return d
@@ -390,9 +539,17 @@ def selftest():
     # 8: two vocab_ids in the ledger
     def _two(d):
         write_mix(d, lambda m: None)
+        # The tokenizer first, or the gate returns "tokenizer.json is absent" at its
+        # first line and never reaches the two ids. data/tokenizer.json is gitignored,
+        # so it is missing from every copied world -- this world was failing on absence
+        # and certifying nothing, which the reason check caught the moment it came back
+        # (de, 2026-09-01). Contents are irrelevant: the gate only tests existence.
+        with open(os.path.join(d, "data", "tokenizer.json"), "w", encoding="utf-8") as f:
+            f.write('{"model":{"vocab":{}}}')
         p = os.path.join(d, "runs", "score_matrix.jsonl")
         with open(p, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ckpt": "x.pt", "vocab_id": "0" * 16}) + "\n")
+            f.write(json.dumps({"ckpt": "y.pt", "vocab_id": "1" * 16}) + "\n")
     d = world(_two)
     broken["vocab_id"] = (d, os.path.join(d, mix_rel))
     # 9: harness.py removed, so the check cannot report 0 FAIL
@@ -409,6 +566,80 @@ def selftest():
         "gate(s) with no broken world: " + ", ".join(ungated) +
         " -- a gate nobody can make fail is the shape this file exists to retire")
 
+    # arch_tests: three worlds the missing-file world cannot reach. Each one CLEARED the
+    # gate before 2026-09-01, and each is a GO that means nothing rather than a crash --
+    # which is why the file-absent world was not enough to find them. Written as records
+    # because a record is the artifact the gate reads; there is nothing else to damage.
+    for label, record in (
+        ("a key that is neither named test",
+         {"ok": "pass", "shape": LAUNCH_SHAPE}),
+        ("both tests passing at the WRONG shape",
+         {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE, layers=12), "real_kernel": True}
+          for n in ARCH_TESTS}),
+        ("both tests passing against a STAND-IN kernel",
+         {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE), "real_kernel": False}
+          for n in ARCH_TESTS}),
+        # The record the old gate actually accepted. The two dict worlds above fail the
+        # old gate too, but for the wrong reason -- it could not parse a dict row at all,
+        # so its NO-GO said nothing about shape or kernel. This one is the honest
+        # discriminator: {name: "pass"} cleared the old gate (GO, "2 shape test(s)
+        # recorded pass") while naming neither the shape nor whether a kernel ran.
+        ("a flat record naming no shape and no kernel",
+         {n: "pass" for n in ARCH_TESTS}),
+    ):
+        def _rec(d, record=record):
+            write_mix(d, lambda m: None)
+            os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+            with open(os.path.join(d, "runs", "launch_tests.json"), "w",
+                      encoding="utf-8") as f:
+                json.dump(record, f)
+        dw = world(_rec)
+        st, why = gate_arch_tests(dw, os.path.join(dw, mix_rel), 7)
+        assert st != GO, f"arch_tests passed on {label}: {why}"
+    # and the record it is meant to accept must actually pass, or the gate is just
+    # a refusal wearing three reasons
+    def _good(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        with open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8") as f:
+            json.dump({n: {"result": "pass", "shape": dict(LAUNCH_SHAPE),
+                           "real_kernel": True,
+                           "test_sha256": _sha256(os.path.join(d, n))}
+                       for n in ARCH_TESTS}, f)
+    dg = world(_good)
+    st, why = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
+    assert st == GO, f"arch_tests refuses the record it is written to accept: {why}"
+
+    # and a row recorded against a different version of the test must not pass
+    def _stale(d):
+        _good(d)
+        p = os.path.join(d, "runs", "launch_tests.json")
+        rows = json.load(open(p, encoding="utf-8"))
+        rows[ARCH_TESTS[0]]["test_sha256"] = "0" * 64
+        json.dump(rows, open(p, "w", encoding="utf-8"))
+    ds = world(_stale)
+    st, why = gate_arch_tests(ds, os.path.join(ds, mix_rel), 7)
+    assert st != GO, f"a row recorded against a different test version passed: {why}"
+
+
+    # WHY THE REASON IS CHECKED AND NOT ONLY THE STATE (de's rule, 2026-09-01):
+    # four broken worlds elsewhere were empty trees, so the gate failed for the
+    # ABSENCE of everything rather than for the planted defect -- undo the mutation
+    # and they still FAIL, which means the selftest proved nothing. A world that
+    # fails for the wrong reason is a world that cannot detect a regression in the
+    # thing it claims to test. So each world declares the phrase its intended defect
+    # must produce.
+    expect = {
+        "mix_file": "_blocked",
+        "epochs_measured": "ESTIMATED",
+        "corpora": "data/corpus",          # dirs excluded from the copy on purpose
+        "arch_tests": "launch_tests.json",
+        "recipe_provenance": "recipe_provenance.json",
+        "memory_measured": "world=7",
+        "cards": "card_assignment.json",
+        "vocab_id": "distinct vocab_id",
+        "checks_and_drift": "no check lines",
+    }
     bad = []
     for name, fn in GATES:
         d, mixp = broken[name]
@@ -418,6 +649,46 @@ def selftest():
             state, why = NOGO, f"raised {type(e).__name__}"
         if state == GO:
             bad.append(f"{name} reported GO on its broken world ({why[:60]})")
+            continue
+        want = expect.get(name)
+        if want and want.lower() not in why.lower():
+            bad.append(f"{name} failed for the WRONG REASON: expected a message naming "
+                       f"{want!r}, got {why[:70]!r} -- the world may be failing on "
+                       f"absence rather than on the planted defect")
+    # DE'S TEST, and it is stronger than the reason check above: undo the mutation
+    # and the world must go GREEN. A world that still fails with the defect removed
+    # was failing on something else all along, and no wording assertion catches that.
+    # Only the gates whose defect is reversible in-place are checked here; the ones
+    # whose world is "the artifact is absent" are reversed by writing it back.
+    def _undo_check(name, fn, d, mixp, restore):
+        restore(d)
+        st, why = fn(d, mixp, 7)
+        return st, why
+
+    reversible = {}
+    # recipe_provenance: write a real source back
+    dr, mr = broken["recipe_provenance"]
+    reversible["recipe_provenance"] = (dr, mr, lambda d: json.dump(
+        {f: "experiments.jsonl:pretrain_30b_s2" for f in RECIPE_FLAGS},
+        open(os.path.join(d, "runs", "recipe_provenance.json"), "w", encoding="utf-8")))
+    # memory_measured: write a peak at world 7
+    dm, mm = broken["memory_measured"]
+    reversible["memory_measured"] = (dm, mm, lambda d: json.dump(
+        {"7": {"peak_GiB": 1.0}},
+        open(os.path.join(d, "runs", "memory_peaks.json"), "w", encoding="utf-8")))
+    # cards: grant the block
+    dc, mc = broken["cards"]
+    reversible["cards"] = (dc, mc, lambda d: json.dump(
+        {"launch_block_granted": True, "note": "granted for the selftest"},
+        open(os.path.join(d, "runs", "card_assignment.json"), "w", encoding="utf-8")))
+
+    for name, (d, mixp, restore) in reversible.items():
+        fn = dict(GATES)[name]
+        st, why = _undo_check(name, fn, d, mixp, restore)
+        if st != GO:
+            bad.append(f"{name} still {st} after the defect was UNDONE ({why[:70]}) -- "
+                       f"the world was failing on something other than its planted defect")
+
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
     print(f"launch_gate selftest OK: {len(GATES)} gates, each FAILs on a damaged real artifact")

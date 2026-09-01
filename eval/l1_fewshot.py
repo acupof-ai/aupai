@@ -205,14 +205,14 @@ def main():
     print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
           f"instrument exists iff acc > {2 * delta:.1%}")
     print(f"answer-present rate {n_box / total:.1%}")
-    print(f"preds saved: {preds_path}")
+    print(f"preds saved: {out_path}")
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump({"correct": correct, "total": total, "acc": acc,
                         "binomial_delta": delta, "answer_present_rate": n_box / total,
                         "demos": args.demos, "temperature": args.temperature,
-                        "preds_path": preds_path}, f, ensure_ascii=False)
+                        "preds_path": out_path}, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":

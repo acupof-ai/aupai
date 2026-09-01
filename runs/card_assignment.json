@@ -1,7 +1,25 @@
 {
- "_schema": "card_assignment: launch_block_granted must be true AND note must say who granted it and when. This is the one gate that cannot be derived from a measurement -- card ownership is a decision, so it is recorded as one rather than inferred from nvidia-smi being idle.",
- "_filled_by": "the controller",
- "_created": "2026-09-01 by e1 (schema only)",
- "launch_block_granted": false,
- "note": "UNSOURCED -- no grant recorded"
+  "_comment": [
+    "Card ownership, granted by the controller. launch_gate reads launch_block_granted",
+    "and note; a false grant with no note reads as a stub, not as a decision.",
+    "Idle is not free: a card's owner is the job still running or the one the controller",
+    "has queued, never the instantaneous nvidia-smi row. Three collisions on 2026-09-01",
+    "came from reading an idle card as an available one."
+  ],
+  "granted_by": "fb",
+  "granted": "2026-09-01",
+  "launch_block_granted": false,
+  "block_cards": null,
+  "lane_card": null,
+  "note": "Refused on purpose, not unanswered. The block is not granted because the launch is not ready: code_py_starcoder holds 3 files against a projected 8.85B tokens, all nine domains carry epochs marked ESTIMATED rather than derived from a token cache, and no domain carries a stamp the corpora gate can compare. Granting seven cards now idles them behind a NO-GO. Lifted when corpora and epochs_measured both read GO.",
+  "verified": "2026-09-01 20:30 by nvidia-smi on the pod: cards 1-7 at 0 MiB, card 0 at 5795 MiB",
+  "current_holders": [
+    {"cards": "0", "who": "de", "job": "E2E_GPU=0 E2E_LAYERS=32 scripts/.test_e2e_staged.py", "until": "self-terminating", "verified": "container pid 1701559, 12m elapsed"}
+  ],
+  "next_grant": {
+    "to": "the 500M run",
+    "for": "the 7-card block",
+    "blocked_on": "corpora and epochs_measured reaching GO",
+    "note": "no 6-card substitute for the memory question: the DDP bucket grows with world, so a 6-card peak cannot answer whether b32 fits at 7. That question is now answered (69.63 GiB at world=7, runs/w7_b32a1.log); the block is held for the corpus, not the memory."
+  }
 }

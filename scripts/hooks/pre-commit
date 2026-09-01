@@ -26,6 +26,7 @@ MAX = 5 * 1024 * 1024
 
 ALLOWED = [
     "data/mix_*.json",
+    "data/token_cache_pools.json",
     "data/eval/*",
     "data/synthetic/*",
     "data/corpus/sample/*",
@@ -42,6 +43,25 @@ ALLOWED = [
     "data/rl/*",
     "data/sft_contamination_baseline.json",
 ]
+
+
+def repo_root():
+    return subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _behind_main():
+    """How many commits main has that this tree does not. 0 on main itself, and 0
+    when the count cannot be taken -- a tree with no main (a fresh temp repo, a
+    clone of one branch) must not be refused for a question that has no answer."""
+    r = subprocess.run(["git", "rev-list", "--count", "HEAD..main"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return 0
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return 0
 
 
 def staged(diff_filter):
@@ -98,6 +118,50 @@ def main():
             )
             sys.exit(1)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
+
+    # Behind main. A conclusion drawn from a check has two inputs -- the check's code
+    # and the tree it ran on -- and we have only ever reported the first. On
+    # 2026-09-01 no_foreground_pod_training was fixed four times; 3b hit the version
+    # before the first fix, and two sessions each saw the other's item red in their
+    # own tree while both were done. "This check has a bug" and "this check has a bug
+    # in my tree" are different sentences, and nothing in the output told them apart.
+    #
+    # Refuse, never merge. An automatic merge can conflict, and a hook that drops your
+    # tree into a conflict you did not ask for is worse than one that stops you; an
+    # automatic rebase would rewrite history other sessions have already merged
+    # (AGENTS.md). Refusal is the only shape that holds: every rule today that
+    # depended on remembering broke, and every rule that refused at the point of use
+    # held (fb ruling, user order, 2026-09-01).
+    t0 = time.time()
+    behind = _behind_main()
+    # --git-path, not --git-common-dir: in a linked worktree the common dir is the
+    # SHARED .git, where MERGE_HEAD never appears -- a worktree's lives in
+    # .git/worktrees/<name>/. So the merging exemption was always false here, and this
+    # gate refused the merge commit that resolves being behind, which is the one commit
+    # it must never block (de, 2026-09-01).
+    #
+    # The tree check twenty lines above reads MERGE_HEAD the old way and is CORRECT
+    # there, which an earlier version of this comment got wrong: its read only runs
+    # under `if main_tree`, and in the integration tree the common dir IS .git, so
+    # MERGE_HEAD is exactly where it looks. The bug was never the expression -- it was
+    # the expression in a context nobody had evaluated it in (e1 caught the
+    # overcorrection).
+    merge_head = subprocess.run(["git", "rev-parse", "--git-path", "MERGE_HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+    merging = bool(merge_head) and os.path.exists(merge_head)
+    if behind and not merging and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        print(
+            f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
+            f"  git merge --no-edit main\n"
+            f"Committing here writes on top of code main has already moved past, and "
+            f"any check you ran said nothing about which version it tested.\n"
+            f"Deliberate exception (reproducing something that only fails on the older "
+            f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
+            f"commit and every check behind it describe a tree nobody else has.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
 
     t0 = time.time()
     fail = False
@@ -160,6 +224,7 @@ def main():
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
+        "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
@@ -167,6 +232,8 @@ def main():
         "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
         "probes/t66_depth_shape.py", "scripts/stale_claims.py",
         "scripts/test_drop_zombies.py",
+        "scripts/test_pod_sync_stamp.py",
+        "scripts/test_shard_glob.py",
         # Nine files the gate could not see until its predicate widened from
         # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
         # sys.argv instead of argparse. Five run clean at commit time and are gated
@@ -185,14 +252,68 @@ def main():
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
-        "scripts/harness.py": "the hook already runs `harness check`, which is its selftest",
+        # NOT "harness check is its selftest" -- that was false. `check` runs
+        # run_checks(); `--selftest` is what verifies every check FAILs on its broken
+        # world, and the two share no code path. The real reason is cost: measured
+        # 68s wall on this machine, against ~9s for the whole rest of the hook, and
+        # harness.py is touched by most commits that touch anything. A hook people
+        # wait a minute for is a hook they --no-verify, which is the 4a7dd56
+        # precedent this file already cites. It runs in CI, every push, where a
+        # minute is free (de, 2026-09-01).
+        "scripts/harness.py": "--selftest is 68s measured (rest of the hook is 9s); CI runs it every push",
     }
-    for f in sorted(SELFTEST_FILES & set(staged("AM"))):
-        r = subprocess.run([sys.executable, f, "--selftest"], capture_output=True, text=True)
-        if r.returncode != 0:
-            tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
-            print(f"REFUSING: {f} --selftest failed:\n" + "\n".join(tail), file=sys.stderr)
-            sys.exit(1)
+    # The STAGED blob, never the working tree. The gate's whole claim is "the version
+    # being committed passes its own selftest", and running the working-tree copy tests
+    # a version that may not be the one entering history. Constructed and confirmed:
+    # stage a broken version, revert the working tree without staging, and the hook is
+    # green while the broken version lands (Codex found it, de reproduced it,
+    # 2026-09-01). The manifest half of this same hook already argues exactly this at
+    # the `git show :scripts/pod_drift.py` below -- the rule was stated and then not
+    # applied twelve lines above it.
+    #
+    # scripts/harness.py used to be exempt here, on the grounds that `harness check` is
+    # its selftest. It is not: `check` runs run_checks(), while `--selftest` is what
+    # verifies every check FAILs on its broken world. The core proof of the whole
+    # harness has never run at commit time. It runs now, and it is slower than the rest
+    # of this gate combined, which is the honest cost of actually checking.
+    # The staged blob runs from a sibling path NEXT TO the real file. Two earlier
+    # placements failed, and both for the same reason: a file's ROOT is
+    # __file__-relative, so wherever the copy sits is what ROOT means to it.
+    # repo_root()/.git raised NotADirectoryError in every linked worktree (.git is a
+    # 60-byte file there) and blocked five sessions from committing; the
+    # `git rev-parse --git-path hook-staged` tree that replaced it resolved, but every
+    # path the file derived -- imports AND data -- then pointed into that empty tree.
+    # PYTHONPATH can patch the imports; it cannot patch a data path, and
+    # datagen/build_corpus.py resolves filters/pass1_garbage.py from ROOT and died on
+    # FileNotFoundError. A red that says nothing about the commit is the same
+    # false-alarm class as a green that says nothing: both make the gate unreadable.
+    # Beside the real file, ROOT is the repo, and only the file under test differs.
+    # try/finally, not a line after the loop: these copies now live in the WORKING TREE,
+    # so a refusal that returns early would leave a .hookstaged_* file behind for the
+    # next session to find dirty. The parallel tree could be left to rot; this cannot.
+    staged_copies = []
+    try:
+        for f in sorted(SELFTEST_FILES & set(staged("AM"))):
+            blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
+            if blob.returncode != 0:
+                print(f"REFUSING: cannot read staged {f}", file=sys.stderr)
+                sys.exit(1)
+            d, base = os.path.split(os.path.join(repo_root(), f))
+            dst = os.path.join(d, f".hookstaged_{base}")
+            staged_copies.append(dst)
+            with open(dst, "wb") as fh:
+                fh.write(blob.stdout)
+            r = subprocess.run([sys.executable, dst, "--selftest"], capture_output=True,
+                               text=True, cwd=repo_root())
+            if r.returncode != 0:
+                tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
+                print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
+                      file=sys.stderr)
+                sys.exit(1)
+    finally:
+        for p in staged_copies:
+            if os.path.exists(p):
+                os.unlink(p)
     print(f"hook: selftests {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP

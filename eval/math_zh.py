@@ -183,7 +183,7 @@ def main():
           f"avg gen tokens {tot_len / total:.0f} | step-eq wrong {n_bad}/{n_eq} = {n_bad / max(n_eq, 1):.1%}")
     print("acc by gold steps: " + ", ".join(
         f"{b}{'+' if b == 3 else ''}: {c}/{n}={c / n:.0%}" for b, (c, n) in sorted(by_steps.items())))
-    print(f"preds saved: {preds_path}")
+    print(f"preds saved: {out_path}")
 
 
 if __name__ == "__main__":

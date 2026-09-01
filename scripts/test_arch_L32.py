@@ -23,6 +23,7 @@ suggests a wider search than the diff supports.
 
 import os
 import sys
+import contextlib
 
 import torch
 
@@ -32,7 +33,8 @@ sys.path.insert(0, os.path.join(ROOT, "datagen"))
 
 import train  # noqa: E402
 
-if train.chunk_kda is None:
+STANDIN = train.chunk_kda is None
+if STANDIN:
     train.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)
     DEV = "cpu"
 elif torch.cuda.is_available():
@@ -41,6 +43,7 @@ else:
     sys.exit("fla installed but no CUDA visible; set CUDA_VISIBLE_DEVICES")
 
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
+from launch_tests import record_launch_test  # noqa: E402
 
 # The ruled shape. seq and vocab are cut to keep a CPU run in seconds -- neither is
 # depth-dependent, and the point here is depth.
@@ -51,6 +54,29 @@ Cfg.attn_res, Cfg.attn_res_blocks, Cfg.grad_ckpt, Cfg.attn_res_dyn_q = True, 0, 
 Cfg.fone = False
 
 fails = []
+KERNEL = "STAND-IN kernel (fla absent)" if STANDIN else "real fla kernel, bf16 autocast"
+
+
+def amp():
+    """Every real path runs the KDA kernel under bf16: train.py wraps the step in
+    torch.autocast(bfloat16), and loader.load_checkpoint builds eval models with
+    dtype=torch.bfloat16. Nothing in this repo runs it in fp32.
+
+    Measured on the pod, 2026-09-01, one process per cell so a poisoned CUDA context
+    cannot be mistaken for a second failure:
+
+        L=32 fp32      FAIL CUDA error: misaligned address
+        L=32 autocast  OK
+        L=32 bf16      OK
+
+    The first version of this file ran fp32 and reported four FAILs at L=32, which
+    reads as "the new shape is broken". It is not the shape: L=12 fails identically in
+    fp32, and so does every seq from 16 to 4096 and both attn_res settings. The
+    variable was the dtype, and fp32 is a dtype no path here uses. A test that runs a
+    configuration nothing runs answers a question nobody asked, and its red is a false
+    alarm about the shape it was written to clear."""
+    return (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if DEV == "cuda" else contextlib.nullcontext())
 
 
 def check(name, fn):
@@ -80,9 +106,10 @@ def fwd_bwd():
     m = HybridLM(Cfg).to(DEV)
     x = torch.randint(0, Cfg.vocab, (2, Cfg.seq), device=DEV)
     y = torch.randint(0, Cfg.vocab, (2, Cfg.seq), device=DEV)
-    h, _ = m(x, y)
+    with amp():
+        h, _ = m(x, y)
     assert torch.isfinite(h).all(), f"non-finite hidden at L={L}"
-    h.sum().backward()
+    h.float().sum().backward()
     assert m.final_ar.q.grad is not None, "the final AttnRes query got no gradient"
     grads = [p.grad for p in m.parameters() if p.grad is not None]
     assert len(grads) > 0, "no gradients"
@@ -112,7 +139,8 @@ def block_mode():
             f"last block end at {max(m.ar_block_ends)}, must be the final sublayer {2 * L} "
             f"or the tail sublayers never join a completed source")
         x = torch.randint(0, Cfg.vocab, (2, Cfg.seq), device=DEV)
-        loss, _ = m.to(DEV)(x, x)
+        with amp():
+            loss, _ = m.to(DEV)(x, x)
         assert torch.isfinite(loss).all()
     finally:
         Cfg.attn_res_blocks = 0
@@ -209,14 +237,14 @@ def roundtrip_32():
 
     m = HybridLM(Cfg).to(DEV).eval()
     x = torch.randint(0, Cfg.vocab, (2, Cfg.seq), device=DEV)
-    with torch.no_grad():
+    with torch.no_grad(), amp():
         a = m.lm_logits(m._body(m.tok(x)))
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "c.pt")
         torch.save(m.state_dict(), p)
         m2 = HybridLM(Cfg).to(DEV).eval()
         m2.load_state_dict(torch.load(p, map_location=DEV))
-    with torch.no_grad():
+    with torch.no_grad(), amp():
         b = m2.lm_logits(m2._body(m2.tok(x)))
     assert set(m.state_dict()) == set(m2.state_dict()), "key set changed across save/load"
     assert torch.equal(a, b), f"outputs differ after round-trip, max {(a - b).abs().max()}"
@@ -270,8 +298,28 @@ for name, fn in [
 
 print()
 if fails:
-    print(f"{len(fails)} FAIL at d{D} L{L} h{H} ffn{F} (device {DEV}):")
+    print(f"{len(fails)} FAIL at d{D} L{L} h{H} ffn{F} (device {DEV}, {KERNEL}):")
     for n, e in fails:
         print(f"  - {n}\n      {e}")
     sys.exit(1)
-print(f"all gates hold at d{D} L{L} h{H} ffn{F} (device {DEV})")
+print(f"all gates hold at d{D} L{L} h{H} ffn{F} (device {DEV}, {KERNEL})")
+if STANDIN:
+    # A green that means nothing, said out loud. fla is absent here, so chunk_kda was
+    # replaced with `lambda q,k,v,**kw: (q*0+v, None)` -- the ten cases below ran
+    # against a stand-in and touched no KDA kernel at all. This file first printed
+    # 10/10 on a laptop and 4 FAIL on the pod, and the laptop green was the more
+    # misleading of the two: an architecture-compatibility test reporting all-clear on
+    # the shape change it exists to clear, having exercised a substitute (fb,
+    # 2026-09-01). It exits 0 because the non-kernel cases -- block-end arithmetic,
+    # optimizer grouping, the dynamo limit -- are real and worth running anywhere.
+    print("\n  NOT A PASS OF THE SHAPE: fla is absent, chunk_kda is a stand-in, and no "
+          "KDA kernel ran.\n  The gate needs a GPU run: "
+          "CUDA_VISIBLE_DEVICES=<free card> python3 scripts/test_arch_L32.py")
+else:
+    # The gate's record, written from the values this run actually used rather than
+    # typed by hand: a hand-written row is a claim about what ran that is not derived
+    # from what ran, which is the shape the gate exists to refuse. A stand-in run
+    # writes nothing at all, so it can never be mistaken for a pass of the shape.
+    record_launch_test(__file__, "pass",
+                       {"d": D, "layers": L, "heads": H, "ffn_hidden": F},
+                       real_kernel=True)
