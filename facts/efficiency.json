@@ -1801,7 +1801,7 @@
   {
    "id": "eff.quant_tax_is_the_elementwise_group",
    "claim": "what the 107 ms 'elementwise / copy (aten)' group actually is, and whether it can be fused",
-   "value": "IT IS THE FP8 QUANTISATION TAX, not a residue of unrelated pointwise ops, and it is the SAME lever as the fp8 LM head rather than a separate rung. Attribution by correlation id on the ddp rank0 trace resolves 99.98% of the group (250.57 of 250.61 ms/step): aten::div 84.01 (n=14643), aten::add_ 82.00 (n=30179), aten::copy_ 67.17 (n=21102), aten::abs 13.84 (n=6884), aten::clamp 0.65 (n=6864) -- five ops are 99.0% of it. div + copy_ + abs + clamp = 165.7 ms/step = 66% of the group, and that set is _fp8_mm's signature op for op: abs().amax().clamp(min=1e-12) then (x/s).to(fp8) then .contiguous() (train.py:454). THE COUNTS CORROBORATE, WHICH THE NAMES ALONE WOULD NOT: 343 clamp/step means 343 scales computed per step, 344 abs/step is one abs per scale, and probes/t58_quant_tax.py independently predicted 320 amax reductions per step for the HEAD ALONE (5 per _fp8_mm call x 64 chunks) -- so the head is ~93% of every scale the model computes. CONSEQUENCE: t56's 'copies' rung is un-refuted and MERGES into the fp8-head/epilogue rung. One rung, one ceiling. The ceiling stays the single-instrument 75.5 ms = 4.44% from t58; this trace is corroboration of MECHANISM AND SCOPE, not a larger number -- it is a different run (7 cards, allreduce, different shapes) than t58's single card, and the two must not be added. The honest statement of size is: at least 4.50% of span by direct measurement, with the same work present at production scale across head and body. SEPARATE OPEN ITEM, not part of the epilogue path: aten::add_ at 82.00 ms/step over 1509 calls/step is the one large owner that is not quantisation; the optimizer/accumulate hypothesis for it is UNVERIFIED.",
+   "value": "IT IS THE FP8 QUANTISATION TAX, not a residue of unrelated pointwise ops, and it is the SAME lever as the fp8 LM head rather than a separate rung. Attribution by correlation id on the ddp rank0 trace resolves 99.98% of the group (250.57 of 250.61 ms/step): aten::div 84.01 (n=14643), aten::add_ 82.00 (n=30179), aten::copy_ 67.17 (n=21102), aten::abs 13.84 (n=6884), aten::clamp 0.65 (n=6864) -- five ops are 99.0% of it. div + copy_ + abs + clamp = 165.7 ms/step = 66% of the group, and that set is _fp8_mm's signature op for op: abs().amax().clamp(min=1e-12) then (x/s).to(fp8) then .contiguous() (train.py:454). THE COUNTS CORROBORATE, WHICH THE NAMES ALONE WOULD NOT: 343 clamp/step means 343 scales computed per step, 344 abs/step is one abs per scale, and probes/t58_quant_tax.py independently predicted 320 amax reductions per step for the HEAD ALONE (5 per _fp8_mm call x 64 chunks) -- so the head is ~93% of every scale the model computes. CONSEQUENCE: t56's 'copies' rung is un-refuted and MERGES into the fp8-head/epilogue rung. One rung, one ceiling. The ceiling stays the single-instrument 75.5 ms = 4.44% from t58; this trace is corroboration of MECHANISM AND SCOPE, not a larger number -- it is a different run (7 cards, allreduce, different shapes) than t58's single card, and the two must not be added. The honest statement of size is: at least 3.59% of span by direct measurement, with the same work present at production scale across head and body. SEPARATE OPEN ITEM, not part of the epilogue path: aten::add_ at 82.00 ms/step over 1509 calls/step is the one large owner that is not quantisation; the optimizer/accumulate hypothesis for it is UNVERIFIED. CEILING CORRECTION (adversarial review of the probe, same day): t58's bf16 arm ran torch.mm(Gt,A).float() -- a bf16 write plus an fp32 cast -- while BOTH fp8 arms pass out_dtype=torch.float32 and never pay it, ~12.9 GB/step = ~10.4 ms at the probe's own fitted bandwidth. So the baseline was penalised by work the candidate does not do: 205.3 ms against the traced head's 190.0 (eff.lm_head_is_compute_bound, 62.5+63.0+64.5), 8.1% rich. bf16 - pre corrects from 75.5 to 60.2 ms. eff.fp8_weight_byte_cache's 39.4 ms is UNAFFECTED: its three arms differ only in when the weight is quantised and all pay identical GEMMs, so the cast is in every arm and cancels.",
    "measured": "2026-09-01",
    "source": "bench_eff/t56_elementwise_owner.py, runs/t56_elementwise_owner.json, /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted); corroborates probes/t58_quant_tax.py + runs/t58_quant_tax.json",
    "config": {
@@ -1817,9 +1817,12 @@
     "clamp_calls_per_step": 343,
     "t58_predicted_head_amax_per_step": 320,
     "add_ms_per_step_unexplained": 82.0,
-    "ceiling_held_at_ms": 75.5,
-    "ceiling_held_at_pct_of_span_1676_63": 4.5,
-    "ceiling_held_at_pct_of_step_1702": 4.44
+    "ceiling_held_at_ms": 60.2,
+    "ceiling_held_at_pct_of_span_1676_63": 3.59,
+    "ceiling_held_at_pct_of_step_1702": 3.54,
+    "ceiling_superseded_ms": 75.5,
+    "probe_bf16_arm_ms": 205.3,
+    "traced_head_ms": 190.0
    },
    "uncertainty": "The ddp trace and t58's single-card microbench are different runs and are NOT added; the ceiling remains t58's. The 250.61 ms group total here differs from t56's 107.0 ms because that was the single-card lane trace -- expected by construction, not a discrepancy. aten::add_'s 82 ms has a hypothesis and no verification. The trace itself is uncommitted pod state (415 MB), so this attribution is not reproducible from the repo alone. BASE: percentages here are against t57's span 1676.63 ms, per fb's ruling that a doc and its facts use one base; eff.steady_state_composition already supersedes an entry for mixing span with the throughput-derived 1702 ms step. The 75.5 ms itself is unaffected.",
    "boundary": "METHOD WARNING, and the reason this entry exists in the form it does: the FIRST run of this attribution reported 0% resolved and was one commit away from being published as the finding 'the trace cannot name it'. That was a broken join, not a property of the trace -- kernels carry args.correlation, cpu_ops carry args['External id'], these are DIFFERENT KEYSPACES, and the cuda_runtime launch event carrying both is the required middle hop. A broken join is indistinguishable from a true negative. This is the only defect found today whose wrong answer was a NEGATIVE result, which is the hardest kind to catch because nobody argues with a null: a confident 'nothing here' invites no scrutiny, while a confident wrong positive gets challenged. Any attribution that resolves 0% or 100% should be treated as a suspected tooling failure until the join is verified on a case whose answer is known.",
@@ -1919,6 +1922,56 @@
    "uncertainty": "Two limits on transfer. CompleteP measures dense softmax transformers; we are KDA + gated MLA, and the `rest` bandwidth group whose L*d scaling drives our speed column has no counterpart in their models. And the 0.91 slope is a secant on the 0.2b-0.3b segment that has already fallen 38% by 0.3b-0.4b, so the quality budgets above expire within one budget point and must be recomputed at the budget actually being decided.",
    "boundary": "Names the direction and prices it; does not establish that a deeper shape would actually earn its 0.123 nat back at our scale on our mix. That requires a run, not a citation.",
    "status": "recorded"
+  },
+  {
+   "id": "eff.fp8_weight_byte_cache",
+   "claim": "how much of the fp8 quantisation tax is recoverable without an epilogue",
+   "value": "HALF OF IT, FROM A DICT. MEASURED 39.4 ms/step = 2.35% of t57's 1676.63 ms span, which is 52% of the full 75.5 ms epilogue ceiling (eff.quant_tax_is_the_elementwise_group) and needs no CUTLASS, no DeepGEMM, no Liger kernel change. _FP8_WSCALE (train.py:448) caches the head weight's SCALE across the 64 FLCE chunks but not its quantised BYTES, so every chunk re-runs divide-and-cast over 67.1 MB, at two call sites in two orientations; site 2 (grad_input) does not pass cache_b so it recomputes the scale as well. The weight is self.head.weight, tied to self.tok.weight (train.py:717), and unchanged within a step. probes/t60_weight_cache.py, three interleaved arms, 64 chunks, spread 0.003-0.007 ms/chunk: live 184.3, scale-cached-both-sites 178.8, bytes-cached 144.9 ms/step. So 5.5 ms is the scale caching already done at site 1 and 33.9 ms (2.02% of span) is new. TWO BOUNDS ON THE EPILOGUE HALF, so nobody re-derives the ceiling as if the full 75.5 ms were reachable: (1) site 2 has NO GEMM to attach an epilogue to -- grad_logits_chunk is written by Liger's liger_cross_entropy_kernel, a Triton softmax/CE kernel that overwrites logits_chunk in place, so emitting fp8 there means editing Liger's Triton kernel, not attaching a CUTLASS node; (2) one materialised fp8 copy of G is IRREDUCIBLE on hardware grounds -- sm90 fp8 tensor cores require TN (both operands K-major), site 2 contracts G over the vocab axis and site 3 over the token axis, and no single layout satisfies both. ~4.3 GB/step, budget 2-4 ms (DERIVED, not measured). DERIVED-VS-MEASURED, stated because it nearly cost this lever: I derived this saving at 7.5 ms from a peak-bandwidth model and measured 39.4 -- under by 5.3x, because the kernels do not reach peak HBM. Third derived figure today to miss a measured one by enough to change a decision.",
+   "measured": "2026-09-01",
+   "source": "probes/t60_weight_cache.py, runs/t60_weight_cache.json; bounds from the EVT feasibility analysis over train.py:454-537 and liger_kernel/ops/fused_linear_cross_entropy.py",
+   "config": {
+    "task": "tilerl-10",
+    "cards": 1,
+    "card_id": 7,
+    "shape": "M=2048 K=1024 N=32784, 64 chunks/step, 2 of 3 call sites",
+    "statistic": "median of 3 interleaved blocks, cuda events",
+    "live_ms_per_step": 184.3,
+    "scale_cached_ms_per_step": 178.8,
+    "bytes_cached_ms_per_step": 144.9,
+    "saving_ms_per_step": 39.4,
+    "saving_pct_of_span_1676_63": 2.35,
+    "new_beyond_scale_ms": 33.9,
+    "new_beyond_scale_pct_of_span": 2.02,
+    "pct_of_epilogue_ceiling": 52,
+    "derived_estimate_ms": 7.5,
+    "derived_miss_factor": 5.3
+   },
+   "uncertainty": "USAGE RESTRICTION, not a caveat (b0's distinction, 2026-09-01: a caveat degrades gracefully under skim-reading and a restriction does not). The 39.4 ms licenses 'this lever is worth building'. It does NOT license 'this lever delivers 39.4 ms in the live run', and it must not be summed with a lever measured on a different instrument unless the two are shown not to overlap. Measured on synthetic tensors of the production shape on ONE card, not in the live 7-card run; the saving is bandwidth-side so DDP is not expected to change it, but that is an expectation and the in-run A/B is what would settle it. Only 2 of the 3 call sites are exercised -- site 3 quantises A and G, not W. The 2-4 ms transpose budget in the value is DERIVED from a traffic model, the same class of estimate that missed this lever by 5.3x.",
+   "boundary": "SHIP GATE, fb 2026-09-01: parity is a veto, not a check -- cached vs live logits must be BIT-IDENTICAL on the first N chunks of a real step, not close and not on synthetic tensors, because this changes WHEN quantisation happens and not what it computes; anything other than exact equality means the cache is stale somewhere and the lever does not ship regardless of the 39.4 ms. INVALIDATION MUST BE STRUCTURAL: key the cache on the weight tensor's data_ptr() AND _version so a mutated weight MISSES instead of serving stale bytes. The two facts that make it safe today -- the optimizer runs after FLCE, and head.weight is tied to tok.weight -- are properties of the current training loop that a future change could break silently, and a comment asserting them is exactly the pattern catalogued in docs/lessons/instrument_not_system.md. No flag: a flag doubles the paths.",
+   "status": "measured",
+   "refuted_by": "a bit-identity check failing on real chunks, or an in-run A/B showing no throughput change"
+  },
+  {
+   "id": "eff.evt_epilogue_has_nothing_to_attach_to",
+   "claim": "whether a CUTLASS EVT or DeepGEMM epilogue can remove the fp8 head's quantisation tax",
+   "value": "NO, ON MECHANISM, not on size. An EVT is a GEMM epilogue, and NONE of the three tensors carrying the 135.1 ms tax is produced by a GEMM. G -- which carries 121 of the 135.1 ms at sites 2 and 3 -- is written IN PLACE by Liger's row-parallel Triton cross-entropy kernel (fused_linear_cross_entropy.py:200 `grad_logits_chunk = logits_chunk`, stored at cross_entropy.py:246). A is written by RMSNorm (train.py:240-247), also not a GEMM; the tool there would be a fused Triton RMSNorm-plus-quantise, not EVT. W is written by the optimizer once per step, which is a CACHING problem and is eff.fp8_weight_byte_cache. The CUTLASS facility itself is real -- Sm90ScaledLinCombPerRowBiasEltActAmaxAux emits fp8 D with a per-tensor scale and an amax -- it simply has no producer here to attach to. DEEPGEMM IS NOT A FALLBACK: its SM90 path is fp8_gemm_nt only with no fp8-output mode, it has no epilogue API, its README assigns fp8 casting and transposition to the caller, and its 1x128/128x128 block scaling is a DIFFERENT NUMERICS RECIPE than the per-tensor e4m3 that eff.fp8_head_activation_range validated -- adopting it reopens a numerics question already closed. RANGE, with the assumption at each end: 1-68 ms. Low: Liger's CE kernel cannot host a usable fp8 store, because a column-major scatter out of a row-parallel kernel is uncoalesced and costs more than it saves, so only the non-epilogue caching survives. High: every producer emits fp8 in its consumer's layout with no coalescing penalty and a delayed scale passes numerics. THE HIGH END REQUIRES EDITING LIGER'S TRITON KERNEL BODY, in a dependency we already patch by source-string rewrite that fails closed on a version bump (train.py:519) -- so it would be a second and more fragile rewrite of a kernel body rather than of a call site. One hardware constraint survives any epilogue: sm90 fp8 requires TN, site 2 contracts G over the vocab axis and site 3 over the token axis, so one materialised fp8 copy of G is irreducible (~4.3 GB/step, budget 2-4 ms, DERIVED). VERDICT: feasibility is established as POOR, not unknown. The rung's practical content is eff.fp8_weight_byte_cache's 39.4 ms.",
+   "measured": "2026-09-01",
+   "source": "paper analysis over train.py:454-537, liger_kernel/ops/fused_linear_cross_entropy.py, liger_kernel/ops/cross_entropy.py, aten/src/ATen/native/cuda/ScaledBlas.cpp, CUTLASS include/cutlass/epilogue/fusion/operations.hpp, DeepGEMM README; three independent adversarial reviews, all refuting",
+   "config": {
+    "task": "tilerl-10",
+    "method": "paper analysis, no GPU",
+    "tax_total_ms": 135.1,
+    "tax_at_sites_2_and_3_ms": 121,
+    "range_low_ms": 1,
+    "range_high_ms": 68,
+    "irreducible_transpose_ms_derived": "2-4",
+    "reviews_refuting": 3,
+    "reviews_total": 3
+   },
+   "uncertainty": "Paper analysis, not measured -- no epilogue was built and no Liger edit attempted. The 1-68 ms range is DERIVED at both ends. What would settle the high end is a prototype fp8 store in Liger's CE kernel measured for coalescing cost, which is a day of work in a vendored dependency and is not justified while the measured 39.4 ms lever is unbuilt.",
+   "boundary": "says nothing about the weight byte cache (eff.fp8_weight_byte_cache), which is not an epilogue and is measured",
+   "status": "recorded",
+   "refuted_by": "a working fp8 store in Liger's CE kernel whose coalescing cost is measured below its saving"
   }
  ]
 }

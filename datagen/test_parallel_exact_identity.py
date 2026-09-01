@@ -16,14 +16,19 @@ import build_corpus as B  # noqa: E402
 DUP = "public static void paginate records count cache size large enough text" * 2
 UNIQ = "def g(x): return x * 2 + 1 and the rest of this function body is long enough"
 HOLD = "REVEAL_ME_SENTINEL_HOLDOUT_0003 is a holdout marker that must be dropped"
+# A genuinely-held-out doc (real eval problem in data/eval/holdout_hashes.txt), to
+# exercise the holdout-slice gate end-to-end: captured in the pass, through _write_stats,
+# into holdout_slice_{phase}.jsonl whose row count must match the stamp's holdout reason.
+REAL_HOLD = "小明有10个苹果，他送给小红3个，还剩几个？"
 
 
 def main():
     # three shards; doc 0 x2 (exact dup across shard 0), UNIQ x2 (across shard 0/1),
-    # UNIQ x1 (shard 2), one holdout doc.
+    # UNIQ x1 (shard 2), one real holdout doc (HOLD sentinel is NOT a real holdout by
+    # itself, so REAL_HOLD is what the slice captures under phase="t").
     shards = [
         [{"content": DUP, "url": "u"}, {"content": DUP, "url": "u"},
-         {"content": UNIQ, "url": "u"}, {"content": HOLD, "url": "u"}],
+         {"content": UNIQ, "url": "u"}, {"content": HOLD, "url": "u"}, {"content": REAL_HOLD, "url": "u"}],
         [{"content": UNIQ, "url": "u"}, {"content": "another unique body is here and long", "url": "u"}],
         [{"content": "another unique body is here and long", "url": "u"}],
     ]
@@ -39,12 +44,23 @@ def main():
         a = argparse.Namespace(
             domain="t", out=w, source=[], filters="light", no_near_dedup=True,
             workers=3 if par else 1, global_only=True, dry=False, exclude=[],
-            limit=None, rg_mod=None, rg_idx=None, cache_dir=None,
+            limit=None, rg_mod=None, rg_idx=None, cache_dir=None, phase="t",
         )
         if par:
             B._parallel_exact_pass(a)
         else:
             B._global_pass(a)
+        # H3 (e1): end-to-end --phase coverage -- a real held-out doc captured in the
+        # pass, through _write_stats, into the frozen slice, row count == stamp's reason.
+        sp = os.path.join(w, "holdout_slice_t.jsonl")
+        assert os.path.exists(sp), f"phase='t' did not emit a holdout slice at {sp}"
+        with open(sp, encoding="utf-8") as _sf:
+            slice_rows = sum(1 for _ in _sf) - 1  # minus the header line
+        with open(os.path.join(w, "build_corpus_stats.json"), encoding="utf-8") as _st:
+            stats = json.load(_st)
+        assert slice_rows == stats["reasons"]["holdout"], (
+            f"slice rows {slice_rows} != stamp holdout reason {stats['reasons']['holdout']}"
+        )
         merged = os.path.join(w, "t_000.jsonl")
         with open(merged, "rb") as f:
             got = f.read()  # raw bytes: byte-identity is an exact-file comparison
