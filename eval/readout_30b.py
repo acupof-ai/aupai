@@ -803,6 +803,22 @@ def selftest():
     print("  a 2.0x weight change is judgeable when the cap clamps both draws, "
           "unjudgeable when it does not")
 
+    # 7. A refusal must reach the caller as a nonzero exit. run_one gates a milestone row
+    # and a fact on this exit code, so a refusal that exits 0 is recorded as a produced
+    # readout. Two breaks made this unreachable at once: the budget args were parsed and
+    # never passed, and the return value was discarded (b0-3 audit).
+    ran.append("7")
+    print("\n--- selftest 7: a budget refusal exits nonzero ---")
+    import subprocess as _sp7
+    _r7 = _sp7.run([sys.executable, os.path.abspath(__file__),
+                    "--milestone", "ckpt_p324.pt", "--paired", "ckpt_p324.pt",
+                    "--milestone-tokens", "8e9",
+                    "--actual-tokens", "8e9", "--paired-tokens", "3.24e9"],
+                   capture_output=True, text=True, cwd=ROOT)
+    assert "REFUSING" in _r7.stdout, f"budget mismatch did not refuse: {_r7.stdout[-300:]}"
+    assert _r7.returncode != 0, "a refused readout exited 0; run_one would record it as produced"
+    print(f"  budget mismatch refuses and exits {_r7.returncode}")
+
     return _done()
 
 
@@ -829,9 +845,16 @@ def main():
         sys.exit(selftest())
     if not a.milestone or not a.paired:
         ap.error("--milestone and --paired are required (or --selftest)")
-    readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
-            a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir,
-            milestone_mix=a.milestone_mix, paired_mix=a.paired_mix)
+    # --actual-tokens/--paired-tokens were parsed and then dropped, so the budget-mismatch
+    # refusal could not fire from the CLI at all; and readout() returns False when it
+    # refuses while main() discarded that and exited 0. harness run_one gates a milestone
+    # row and a fact on this process's exit code, so a refusal was recorded as a produced
+    # readout (b0-3 audit).
+    ok = readout(a.milestone, a.paired, a.score_matrix, a.milestone_domain_loss, a.paired_domain_loss,
+                 a.milestone_tokens, a.milestone_profile, a.paired_profile, ckpt_dir=a.ckpt_dir,
+                 milestone_mix=a.milestone_mix, paired_mix=a.paired_mix,
+                 actual_tokens=a.actual_tokens, paired_tokens=a.paired_tokens)
+    sys.exit(1 if ok is False else 0)
 
 
 if __name__ == "__main__":
