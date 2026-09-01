@@ -859,6 +859,43 @@ def selftest():
             "discards the clean roles, which is what this case exists to prevent.")
     print("  4 mismatched roles refused by name; 5 shared roles judged")
 
+    # 5c. The reweight gate must refuse the reweighted role AND ONLY it. 7.1 was dormant
+    # through every readout until 16B, and a gate that has never fired has never been
+    # tested (44, P6). One role's weight is altered; the rest are identical, so any
+    # over-refusal shows up as a clean role going unjudged.
+    ran.append("5c")
+    print("\n--- selftest 5c: the reweight gate refuses one role and only it ---")
+    _R = ("code_rp1t", "cot", "textbook_30b", "wiki_chat", "zh_web")
+    with _t5.TemporaryDirectory() as d5c:
+        m5c, p5c = os.path.join(d5c, "m.json"), os.path.join(d5c, "p.json")
+        _wp = {k: 0.20 for k in _R}
+        _wm = dict(_wp, cot=0.40)          # cot alone moves 2.0x; everything else identical
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in _wm.items()}},
+                  open(m5c, "w"))
+        json.dump({"total_tokens": 15e9, "domains": {k: {"weight": v} for k, v in _wp.items()}},
+                  open(p5c, "w"))
+        m_r = {"ckpt": "m.pt", "profile": "milestone",
+               "metrics": {"domain_loss": {k: {"loss": 1.5} for k in _R}}}
+        p_r = {"ckpt": "p.pt", "profile": "milestone",
+               "metrics": {"domain_loss": {k: {"loss": 2.5} for k in _R}}}
+        sm5c = os.path.join(d5c, "sm.jsonl")
+        with open(sm5c, "w") as f:
+            f.write(json.dumps(m_r) + "\n" + json.dumps(p_r) + "\n")
+        buf5c = _io.StringIO()
+        with _c.redirect_stdout(buf5c):
+            readout("m.pt", "p.pt", sm5c, None, None, 16e9, paired_profile="milestone",
+                    milestone_mix=m5c, paired_mix=p5c)
+        out5c = buf5c.getvalue()
+    _cot = " ".join(l for l in out5c.splitlines() if l.strip().startswith("cot"))
+    assert "reweighted, unjudgeable" in _cot, (
+        f"the gate did not fire on a 2.0x reweight: {_cot!r}. 7.1 has never refused a role "
+        "on real data, so this fixture is the only evidence it can.")
+    for _d in ("code_rp1t", "textbook_30b", "wiki_chat", "zh_web"):
+        _ln = " ".join(l for l in out5c.splitlines() if l.strip().startswith(_d))
+        assert "reweighted" not in _ln, f"{_d} held its weight and was refused anyway: {_ln!r}"
+        assert "moved" in _ln, f"{_d} held its weight and was not judged: {_ln!r}"
+    print("  1 reweighted role refused (2.0x); 4 unchanged roles judged")
+
     return _done()
 
 
