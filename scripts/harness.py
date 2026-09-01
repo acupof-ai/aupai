@@ -2056,9 +2056,21 @@ def merge_took_one_side(root, merge_sha="HEAD"):
             & set(git("diff", "--name-only", base, theirs).split()))
 
     def _blobs_in(side, path):
-        """Every blob this side's history has ever held at `path`."""
+        """Every blob this side's history has ever held at `path`.
+
+        One `cat-file --batch-check` rather than one `rev-parse` per commit. The loop
+        version cost 11.84s on data/pod_head_manifest.txt -- 880 commits, because the
+        hook rewrites that file on every commit -- and timed the whole check out on its
+        5s deadline, i.e. turned it into a gate that never ran (de, 2026-09-01). Batched:
+        0.29s for the same 879 blobs. The cost was per-contested-file, not per-merge:
+        five other merges the same night were 0.16s because none had a contested path."""
         shas = git("rev-list", side, "--", path).split()
-        return {git("rev-parse", f"{s}:{path}").strip() for s in shas} - {""}
+        if not shas:
+            return set()
+        r = subprocess.run(["git", "-C", root, "cat-file", "--batch-check"],
+                           input="".join(f"{s}:{path}\n" for s in shas),
+                           capture_output=True, text=True)
+        return {ln.split()[0] for ln in r.stdout.splitlines() if " blob " in ln}
 
     out = []
     for path in sorted(both):
@@ -2154,6 +2166,7 @@ def check_merge_complete(root):
     if len(r.stdout.split()) < 3:
         return PASS, "HEAD is not a merge (1 commit examined)"
     took = merge_took_one_side(root)
+    n_took_raw = len(took)
     # A ledger is union-merged by .gitattributes and legitimately equals one side
     # when only that side appended; that is the merge driver working, not a drop.
     took = [t for t in took if not t[0].endswith(".jsonl")
@@ -2201,7 +2214,12 @@ def check_merge_complete(root):
             + "; ".join(f"{name} in {path}" for path, name, _ in reverted[:3])
             + ". A side that never had the content did not delete it -- restore from the base."
         )
-    contested = len([1 for _ in merge_took_one_side(root)]) or 0
+    # The count for the PASS line comes from the scan already done above, not a second
+    # one. Recomputing it cost 12.57s of the check's 25.37s and timed the check out on
+    # its 5s deadline (de, 2026-09-01) -- and the second call answered a different
+    # question anyway: `took` has been filtered and mutated by then, so the two numbers
+    # were never the same. Measure once, report what you measured.
+    contested = n_took_raw
     n_both = len(set(subprocess.run(
         ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
         capture_output=True, text=True).stdout.split()))
@@ -5111,7 +5129,9 @@ def cmd_task(argv):
     a.add_argument("--why", required=True, help="why this is worth a session's time")
     a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
     a.add_argument("--pair", required=True,
-                   help="the second session who agreed this task before it started; not the owner")
+                   help="the second session who agreed this task before it started, and who "
+                        "second-reads it after; NOT a co-executor and not the owner -- the pair "
+                        "reviews, the owner writes")
     a.add_argument("--prior", required=True,
                    help="what is already known: an arXiv id, a facts/<f>.json#<id>, or the literal "
                         "'defect-fix' when the task repairs our own code and no prior art applies")

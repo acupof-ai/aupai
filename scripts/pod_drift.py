@@ -390,7 +390,17 @@ def check_head(root=ROOT):
     stale = [p for p in want if have.get(p, (None,))[0] != want[p]]
     gone = [p for p in have if p not in want]
     if stale or gone:
-        return False, f"manifest stale: {len(stale)} changed, {len(gone)} removed; run --write"
+        # Name them. A bare count makes two consecutive "1 changed" indistinguishable:
+        # the same file still unfixed, or a second file that arrived with a merge. The
+        # operator has to remember which, and on 2026-09-01 de read the second case as
+        # the first. This list is COMPLETE, not truncated -- the counts above are its
+        # length, so a reader can trust it as the whole set (fb's correction: the second
+        # entry that night was new drift, not a truncated line).
+        named = "; ".join(f"changed {p}" for p in sorted(stale))
+        if gone:
+            named += ("; " if named else "") + "; ".join(f"removed {p}" for p in sorted(gone))
+        return False, (f"manifest stale: {len(stale)} changed, {len(gone)} removed; "
+                       f"run --write -- {named}")
     return True, f"manifest matches HEAD ({len(want)} files)"
 
 
@@ -408,6 +418,7 @@ def selftest():
     unregistered, and check_pod still passes while naming it.
     Also: scope filtering -- a drifted corpus-scope file must not fail --scope training,
     and a drifted training-scope file must."""
+    import shutil
     import tempfile
 
     # Drop the caller's git env for the whole selftest, not per-subprocess: the helpers
@@ -580,6 +591,44 @@ def selftest():
         f.write(f"{'f' * 64}  gone.py  training\n")
     ok, ev = check_pod(k)
     assert not ok and "gone.py" in ev, f"a missing code file must still fail: {ok} {ev}"
+
+    # check_head names the files, because a bare count cannot distinguish "the same file
+    # is still unfixed" from "a merge brought a second one". de hit exactly that on
+    # 2026-09-01: two consecutive "1 changed" lines, and the second was new drift.
+    #
+    # Built from HEAD's REAL manifest with one entry's sha corrupted, and it reads the
+    # real repo directly -- check_head only needs MANIFEST and `git show HEAD:path`, so
+    # no copy is required. My first version copied .git with copytree and skipped the
+    # whole block under `if m`, because in a WORKTREE .git is a FILE, not a directory:
+    # NotADirectoryError, silently swallowed, assertion never evaluated. It passed on the
+    # count-only code it exists to catch -- the same vacuous shape, in the test written to
+    # prevent it (de, 2026-09-01).
+    m = tempfile.mkdtemp()
+    _orig_manifest = MANIFEST
+    try:
+        rows = open(_orig_manifest, encoding="utf-8").read().splitlines()
+        victim, out = None, []
+        for r in rows:
+            parts = r.split()
+            if victim is None and len(parts) >= 2 and parts[1].endswith(".py"):
+                victim = parts[1]
+                out.append(f"{'0' * 64}  {'  '.join(parts[1:])}")
+            else:
+                out.append(r)
+        assert victim, "HEAD's manifest names no .py -- this fixture cannot corrupt one"
+        broken = os.path.join(m, "pod_head_manifest.txt")
+        with open(broken, "w") as f:
+            f.write("\n".join(out) + "\n")
+        globals()["MANIFEST"] = broken
+        ok, ev = check_head(ROOT)
+        assert not ok, f"a corrupted manifest entry must fail check_head: {ev}"
+        assert victim in ev, (
+            f"check_head must NAME the stale file, not only count it -- an operator "
+            f"seeing two '1 changed' lines cannot tell a new file from an unfixed one. "
+            f"Expected {victim} in: {ev}")
+    finally:
+        globals()["MANIFEST"] = _orig_manifest
+        shutil.rmtree(m, ignore_errors=True)
 
     print("pod_drift selftest OK:", evidence)
 
