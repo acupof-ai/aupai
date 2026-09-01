@@ -246,6 +246,13 @@ def main():
         "probes/t64_val_head_overlap.py",
         "scripts/eval_artifacts.py", "scripts/pod_drift.py",
         "eval/compare_fewshot_arms.py", "scripts/audit_population_universals.py",
+        # Three mathbank selftests the gate could not see at all: its population is an
+        # os.listdir over eval/ scripts/ datagen/ probes/, so mathbank/ was outside what
+        # it looked at, and "51 files, all gated" was true of that subset and silent
+        # about these. Measured before adding: 0.08s / 0.07s / 0.14s, rc=0, no corpus or
+        # checkpoint needed (de, 2026-09-02, de-12 step 1).
+        "mathbank/arith_curriculum.py", "mathbank/dist_check.py",
+        "mathbank/procedure_curriculum.py",
     }
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
