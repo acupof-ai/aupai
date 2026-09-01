@@ -92,6 +92,28 @@ fb 2026-09-01:val-slice 缺陷后(`eval/domain_loss.py:47` 的 scored 集是训�
 
 **跨角色过拟合混杂(与缺陷同级,必须写进事实):** scored 集是训练池的随机样本,所以**一个被读 6 次的域在自己的训练文档上损失天然低于被读 0.08 次的域,这读起来就是"学得更多"**——cot 6 epoch vs wiki_chat 0.077 epoch。我们已发表的任何跨角色排序都带着这个方向已知的偏差(多 epoch 域被系统性高估)。16B 的 nat/B 表和 §3 的成本表都在此列;角色内跨时间比较不受此混杂影响。
 
+## 7. 原始抓取的重复密度:b0 实测 + 文献锚点
+
+b0 2026-09-01 同探针实测。探针参数:12 词 n-gram,whitespace 分词 + 小写;DF ≥ 3 个不同文档;0.53% 均匀文档抽样;指标 = 被至少 1 个合格 n-gram 覆盖的 token 比例;5 个已知答案用例验证(含文档内循环 = 0.0——查的是 DF 不是 TF)。
+
+| 语料 | 重复 token 占比 | 注 |
+|---|---|---|
+| code_rp1t(原始 RedPajama GitHub) | **≥7.49%** | 单侧向下:抽样只能假阴性,真值 ≥ 此 |
+| en_c4 | 0.16% | 同探针,47× 差距 |
+
+形状:文档中位数 0.00%;**6.7% 的文档 >50% token 在复现文本里**——重复集中在生成/vendored/模板文件,不均匀铺开。便宜动作是"丢掉 6.7% 的文档"(文档级),不是 span 级去重;可作 3b 近重复后处理的上游预滤。
+
+文献锚点(指标不同:文献报去重移除比例,b0 报重复 token 覆盖率,只做数量级对照):
+
+- **FineWeb**(arXiv:2406.17557):per-crawl MinHash 去重 36T→20T token,**~44% 移除**;全局变体 36T→4T(~89%)。FineWeb-Edu 是去重后 FineWeb 的子集——有能力的小模型配方站在去重后的一侧。
+- **The Stack v2**(HF 数据集卡):67.5TB→32.1TB(精确+近去重);**~40% 宽松许可文件是近重复**。GitHub 规模原始代码的重复水平。
+- **RedPajama-1T GitHub 切片**(rp_v1 分支 README):59B token,只做许可过滤(MIT/BSD/Apache),README 未记录任何近去重——code_rp1t 就是这个原始切片;近去重要到 RedPajama-V2 才有,而 V2 只有 CommonCrawl。
+- 我们自己的人工读样(near_dedup_gate):code_rp1t 文档级近重复 12%(Wilson 3.4–21%)——不同指标,方向一致。
+
+解读:未去重的原始 GitHub 切片上 7.49% 的重复 token 覆盖率,与 Stack v2 的 40% 近重复文件、FineWeb 的 44% 去重移除同量级;en_c4 的 0.16% 是去重+过滤后语料在同探针下的样子。**§3 的"89% 原始抓取"不只是定性——占 stage-2 配比 29.3% 的 code_rp1t 带着可测的重复质量,而文献里每个有能力的配方都会先把它删掉。**
+
+范围(fb 2026-09-01 判定关闭):不测量这是否解释 ppl 2.20,不重打分 ladder。此数字只用于本文的语料对比。
+
 ## Sources
 
 - SmolLM 博客(语料 220B/28B/4B,600B token): https://huggingface.co/blog/smollm
@@ -107,3 +129,6 @@ fb 2026-09-01:val-slice 缺陷后(`eval/domain_loss.py:47` 的 scored 集是训�
 - Pythia 论文(300B The Pile,与同参 OPT 持平——原始基线): https://arxiv.org/abs/2304.01373
 - Cerebras-GPT 论文(Pile nats/token 表,§6 参考带): https://arxiv.org/abs/2304.03208
 - Mamba 论文(Pile ppl 表 + Pythia 基线,§6 参考带): https://arxiv.org/abs/2312.00752
+- FineWeb 论文(per-crawl MinHash 去重 36T→20T,~44% 移除;§7 锚点): https://arxiv.org/abs/2406.17557
+- The Stack v2 数据集卡(67.5→32.1TB,~40% 宽松许可文件近重复;§7 锚点): https://huggingface.co/datasets/bigcode/the-stack-v2
+- RedPajama-Data rp_v1 README(GitHub 切片 59B token,仅许可过滤,未记录近去重;§7 锚点): https://github.com/togethercomputer/RedPajama-Data/tree/rp_v1
