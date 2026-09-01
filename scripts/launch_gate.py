@@ -300,7 +300,38 @@ def gate_recipe_provenance(root, mix_path, world):
     if unsourced:
         return NOGO, (f"{len(unsourced)} recipe value(s) with no source: "
                       f"{', '.join(unsourced)}")
-    return GO, f"all {len(RECIPE_FLAGS)} recipe values name a source"
+    # A SOURCE THAT DOES NOT RESOLVE IS A PLACEHOLDER THAT READS AS EVIDENCE. accum cited
+    # runs/w7_peak.log, which exists on neither machine (fb, 2026-09-02). The VALUE was
+    # never in doubt -- 7 x 32 x 4096 = 917,504 is forced by arithmetic -- but the gate
+    # passed a citation nobody could follow, which is the whole thing it checks. Same job
+    # fact_refs_resolve already does for facts/<f>.json#<id>; these sources are free text,
+    # so nothing was verifying them.
+    #
+    # Only paths under the repo, and only ones that look like a file: a source is prose
+    # that may mention a run name, a person, or a date, and demanding every token resolve
+    # would make this fire on sentences. Missing here means "named a file that is not
+    # there", not "is unverified".
+    # TRACKED, not merely present on disk (b0's pair review): os.path.exists would pass on
+    # the pod and fail on every laptop for a pod-only artifact like runs/w7_b16a2.log, and
+    # a gate whose answer depends on which machine ran it is the defect this repo spent the
+    # night on. "Named by a recipe source" therefore means "in git" -- which is also the
+    # stronger property, since an untracked artifact can vanish without any commit.
+    tracked = set(subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
+                                 text=True).stdout.split())
+    dead = []
+    for f in RECIPE_FLAGS:
+        for ref in re.findall(r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|"
+                              r"datagen)/[\w./-]+\.(?:log|json|jsonl|md|py|sh|txt))",
+                              str(prov.get(f, ""))):
+            if ref not in tracked:
+                where = ("present but untracked" if os.path.exists(os.path.join(root, ref))
+                         else "does not exist")
+                dead.append(f"{f} -> {ref} ({where})")
+    if dead:
+        return NOGO, (f"{len(dead)} recipe source(s) name a file git does not track: "
+                      f"{'; '.join(dead[:4])} -- a citation that cannot be followed is "
+                      f"not a source, however right the value is")
+    return GO, f"all {len(RECIPE_FLAGS)} recipe values name a source that resolves"
 
 
 def gate_memory_measured(root, mix_path, world):
