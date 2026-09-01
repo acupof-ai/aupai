@@ -97,6 +97,45 @@ instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
 quantisation band, firing on rounding. #4 nearly retired a live 4.44% lever.
 
+## When a qualifier has to be a restriction
+
+A number can be correct and still be misused, and the qualifier you attach
+decides which. **A caveat degrades gracefully under skimming; a restriction does
+not.** So there is a test:
+
+> If a reader skims the qualifier and uses the number anyway, are they wrong?
+> If yes, it is a restriction — it belongs in the usage clause, not the
+> uncertainty field.
+
+Two cases from 2026-09-01, one each side:
+
+- **`eff.fp8_weight_byte_cache`, 39.4 ms.** Measured on one card, synthetic
+  tensors of the production shape. It licenses *build this lever*. It does not
+  license *this lever delivers 39.4 ms in the live run*, and it does not license
+  summing with a lever measured on another instrument. Skim the hedge and you
+  promise 39.4 ms to someone. Restriction.
+- **b0's nat-per-own-token.** Dividing Δloss by a domain's own tokens assumes the
+  domain's loss is driven only by its own tokens; transfer violates that, and the
+  bias differs by role so it does not even preserve ranking. Skim the caveat and
+  you rank domains by nat/B. Restriction — and the doc now restricts the metric's
+  *use* (one role across time, never one role against another) rather than
+  flagging uncertainty.
+
+**The second case is the worse kind, and the difference is worth naming.** Mine
+was checkable — I measured my way out of it. b0's needs seven single-domain
+ablations that the run does not contain, so it is **unfalsifiable within the run
+that uses it**. A wrong denominator you can measure your way out of is a bug; one
+you cannot is a scope limit.
+
+### The corollary for sums
+
+Two measured numbers from different instruments do not add unless you have shown
+they do not overlap. The doc summing this lever's 39.4 ms with the seam's 54.9 ms
+now reads **"two measured levers, assumed independent, not jointly measured"** —
+because HBM traffic inside FLCE and compile stalls at the `rms_norm`→flash seam
+*look* independent, and "looks independent" is precisely the reasoning that
+produced the aggregate-as-bound error above.
+
 ## The fix, in priority order
 
 1. **One wall-clock timestamp per logged step.** Retires #1, #2 and #3 together:
