@@ -84,40 +84,80 @@ The one group where launch cost is plausibly material is elementwise-copy at
 58.9 µs mean over 1816 launches — still 30× a 2 µs launch, so even there the
 copies dominate their own dispatch.
 
-### The elementwise group is now attributed, and it is not its own rung
+### The elementwise group: the mechanism holds, the scope does not
 
 Every figure in the table above is the **single-card lane trace**, and this
 paragraph is the one place another trace is named. `eff.step_remainder_attribution`
 correction (d) recorded the elementwise-copy group's ownership as unverified;
-tilerl-10 has since resolved it by correlation id on the *ddp rank-0* trace
+tilerl-10 resolved it by correlation id on the *ddp rank-0* trace
 (`eff.quant_tax_is_the_elementwise_group`, 99.98% of the group named). 66% of
 that trace's version is `aten::div + copy_ + abs + clamp`, which is `_fp8_mm`'s
-signature op for op (`train.py:454`), and the counts corroborate independently:
-343 clamp/step against t58's separately predicted 320 amax reductions for the
-head alone.
+signature op for op (`train.py:454`).
 
-**So the group is the fp8 quantisation tax and merges into the fp8-head rung
-rather than standing as its own.** One rung, one ceiling — **60.2 ms, which b0's
-doc restates as 3.59% of t57's own span**.
+**The group is the fp8 quantisation tax — that part is measured and stands. But
+93% of it does not run in the live configuration** (`eff.fusion_and_elementwise_
+are_disjoint_but_the_trace_is_off_config`, tilerl-10). The ddp trace was captured
+with `FP8_HEAD=1`: 181 `aten::_scaled_mm`/step sit inside a Liger FLCE region,
+and the only code that puts them there is `patch_liger_flce_fp8` (`train.py:488`),
+reachable only under that flag — which is no-ship at −3.91% and absent from the
+live environment. Splitting by whether a launch is contained in a Liger region:
 
-That ceiling was 75.5 ms / 4.50% until tilerl's self-audit corrected it, and the
-correction is worth the sentence: t58's bf16 baseline paid a bf16 write plus an
-fp32 cast that both fp8 arms avoid via `out_dtype`, so the baseline carried
-~10.4 ms of work the candidate does not do. **A baseline cannot be charged for
-work the candidate never does** — a well-run measurement of the wrong contrast
-is still wrong, and no rigour marker on the measurement detects it.
+| owner | head (`FP8_HEAD=1`) | body (live) |
+|---|---|---|
+| `aten::div` | 79.20 | 4.82 |
+| `aten::copy_` | 60.35 | 6.82 |
+| `aten::abs` | 13.08 | 0.76 |
+| `aten::clamp` | 0.61 | 0.04 |
+| **the four quant ops** | **92.9%** | 7.1% |
 
-One rung above the byte cache is now **refuted, not open**: an EVT is a GEMM
+**So the live tax in this group is ~12 ms, not 165.7.** What survives is
+`aten::add_` at 78.52 ms body — the one owner that was never quantisation and was
+already flagged unexplained. The merged fp8-head rung keeps its mechanism and
+loses its production scope; its ceiling is `FP8_HEAD`-conditional like the byte
+cache beside it, not banked.
+
+**This is the row that moved, and tilerl-10 moved it.** I asked whether the
+fusion and elementwise groups were the same lever counted twice. The answer is
+no — the two kernel sets intersect in **zero** kernels, measured by identity
+rather than argued from the regex, because t56's elementwise rule matches
+`^triton_` first. 511.88 + 250.61 double-counts nothing, and §3's ranking is
+firmer than before for having survived the objection. The off-config capture was
+found on the way to that answer, not by looking for it.
+
+**The generalisation is the sixth tell and it is the one that outlives these
+numbers**: every check on that trace passed — 99.98% resolved, groups verified
+disjoint by kernel identity, three independent discriminators — while the trace
+itself was captured under a flag production does not set. *Correctness and
+relevance fail independently, and no amount of the first detects a failure of the
+second.* Verify the configuration a trace was captured under, not only that its
+attribution resolves.
+
+The fusion group, by contrast, **is body work and a real separate lever**:
+132.91 ms carries both a scale op and a cast, which is the body's torchao fp8
+linears, and those do run live. Three discriminators disagree by 91 ms
+(structural 132.9, name-based 180.4, fp8-GEMM adjacency 224.3), so quote it as a
+band and not a number.
+
+That ceiling was 75.5 ms / 4.50% until tilerl's self-audit corrected it to
+60.2 ms, and the correction is worth the sentence: t58's bf16 baseline paid a
+bf16 write plus an fp32 cast that both fp8 arms avoid via `out_dtype`, so the
+baseline carried ~10.4 ms of work the candidate does not do. **A baseline cannot
+be charged for work the candidate never does** — a well-run measurement of the
+wrong contrast is still wrong, and no rigour marker on the measurement detects
+it. That ceiling is now also `FP8_HEAD`-conditional, which is the second, larger
+qualifier on the same number.
+
+One rung above the byte cache is **refuted, not open**: an EVT is a GEMM
 epilogue, and none of the three tensors carrying the tax comes from a GEMM — G
 from Liger's Triton CE kernel, A from RMSNorm, W from the optimizer. There is
 nothing to attach an epilogue to. The 39.4 ms byte cache is **conditional, not
-banked**: it exists only under `FP8_HEAD=1`, which is no-ship, so it saves
-nothing today and cites at −20.2 ms net.
+banked**: it exists only under `FP8_HEAD=1`, so it saves nothing today and cites
+at −20.2 ms net.
 
 The two group totals are different measurements of overlapping things and are
 **not reconciled and never added**: 107.0 ms is the lane trace's group,
 250.61 ms is the ddp trace's under the corrected join — 7 cards, allreduce,
-different shapes.
+different shapes, and now also a different `FP8_HEAD` setting.
 
 **The method note is the part that generalises.** The first run of that
 attribution resolved ~0% and was nearly published as "the trace cannot name

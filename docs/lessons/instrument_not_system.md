@@ -271,11 +271,70 @@ The enforceable version: **a check reports `SKIP`, never `PASS`, when the thing
 it examines is absent.** A pass claims evidence; the absence of input is not
 evidence.
 
-### Six tells, and who caught them
+### A sixth tell: the measurement is clean and the configuration is wrong
 
-The section headings number the last two "fourth" and "fifth" because they were
-found in that order; counted as distinct questions to ask a measurement, there
-are six:
+The code-path check at the top of this page asks whether the *lever* runs in
+production. This one asks the same question of the *trace*, and it is harder to
+see because nothing in the analysis is wrong.
+
+tilerl-10's ddp rank-0 trace was captured with **`FP8_HEAD=1`**. 181
+`aten::_scaled_mm`/step sit inside a Liger FLCE region, and the only code that
+puts them there is `patch_liger_flce_fp8` — reachable only under that flag, which
+is no-ship at −3.91% and absent from the live environment. Splitting every kernel
+by whether its launch is contained in a Liger region puts **92.9% of the four
+quantisation ops on the head side**. The live tax in that group is ~12 ms, not
+165.7.
+
+**Every check on that trace passed.** 99.98% of the elementwise group resolved by
+correlation id. The fusion and elementwise groups verified disjoint by kernel
+identity — zero shared kernels, measured rather than argued. Three independent
+discriminators run on the fusion share. None of them asks what the process was
+configured to do while the trace was being recorded.
+
+> **Correctness and relevance fail independently, and no amount of the first
+> detects a failure of the second.**
+
+That sentence appears twice on this page now — once for the byte cache's dead
+code path and once here — which is the argument for making it a standing check
+rather than a lesson. **Verify the configuration a capture was taken under, not
+only that its attribution resolves.**
+
+The enforceable form is sharper than "the fact names the flag", and tilerl-10
+supplied the correction: a fact can name a flag and still claim the production
+saving, so the check must read the default from source and compare it against the
+claim. And it must fire on a fact whose *evidence* came from an off-config
+capture, not only one whose *claim* names a flag — this fact's parent never
+mentioned `FP8_HEAD` anywhere. The flag was in the trace, not in the text. So the
+check wants a **provenance field on the measurement**, not just a flag field on
+the claim.
+
+Two smaller things from the same probe, both worth carrying:
+
+- **The join broke again, in the opposite direction.** The correlation map that
+  resolved 99.98% of the elementwise group resolves **0.00%** of triton kernels:
+  aten launches through `cuda_runtime`, triton through `cuda_driver`. A map built
+  from one category returns a clean, confident, wholly wrong null for the other.
+  It was treated as tooling failure rather than disjointness *because of the
+  morning's instance* — which is this page working as intended. Fix is one line:
+  build the map from both categories.
+- **The outermost launching cpu_op for a triton kernel is the inductor wrapper of
+  the same name.** A tautology that reads like an attribution. The head/body split
+  uses timestamp containment instead.
+
+And a provenance trap that has nothing to do with instruments and will bite
+someone: the elementwise numbers **did not reproduce** on six traces under
+`/data01/aupai/backup/bench_eff/` — 29.6 ms instead of 250.61 — because that
+directory holds an earlier, different run under the same filenames. The real
+415 MB traces are under the kubelet volume path. **A re-run from the backup path
+produces plausible numbers from another run entirely.**
+
+
+
+### Seven tells, and who caught them
+
+The section headings number the last three "fourth", "fifth" and "sixth" because
+they were found in that order; counted as distinct questions to ask a
+measurement, there are seven:
 
 1. Is this code path reached in the live configuration?
 2. Read the format string — what is the resolution of the input?
@@ -283,15 +342,24 @@ are six:
 4. Does the cited number still describe what currently ships?
 5. Does the baseline pay work the candidate does not pay?
 6. Does the artifact contain the section being judged at all?
+7. What configuration was the capture taken under?
 
-Four of the six were caught by the author of the measurement, before anyone else
-challenged it — the byte cache's dead code path, t58's asymmetric baseline, the
-broken join, and the config drift. That is worth stating plainly, because it is
-the behaviour this page is trying to produce. **The purpose is not to review each
-other harder; it is to make the author's own second look find the thing first.**
-A reviewer who catches a wrong number saves one decision. An author who catches
-their own saves the decision and the review cycle, and does it while the context
-needed to see the defect is still loaded.
+Five of the seven were caught by the author of the measurement, before anyone
+else challenged it — the byte cache's dead code path, t58's asymmetric baseline,
+the broken join, the config drift, and the off-config trace. That is worth
+stating plainly, because it is the behaviour this page is trying to produce.
+**The purpose is not to review each other harder; it is to make the author's own
+second look find the thing first.** A reviewer who catches a wrong number saves
+one decision. An author who catches their own saves the decision and the review
+cycle, and does it while the context needed to see the defect is still loaded.
+
+One of the seven was found while answering an unrelated question. #7 surfaced on
+the way to settling whether the fusion and elementwise groups double-counted, and
+the answer to the question actually asked was "no, they are disjoint — zero
+shared kernels." **A question that closes cleanly is not a wasted question**: it
+is often how the adjacent defect gets found, and the ranking it was aimed at is
+firmer for having survived it.
+
 
 ## When a qualifier has to be a restriction
 
