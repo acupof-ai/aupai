@@ -371,7 +371,7 @@ before tilerl-9's numbers do.
 
 | the claim | what overturns it |
 |---|---|
-| **SoCC '25**: two kernels at 6.25% occupancy each slow one another **1.73×** | on our card, a co-tenant sized to consume ~9% of step time costs the primary **less than ~2%** of its tok/s. That would mean the published interference does not transfer to H20's roofline, and the spatial term is real after all. |
+| **SoCC '25**: two kernels at 6.25% occupancy each slow one another **1.73×** | **the named threshold (3b, before the run): a co-tenant at ~6% occupancy slows the primary by less than 1.4×.** Below that, the published interference does not transfer to H20's roofline, the 9.0–9.8% spatial ceiling is partly real, and "strict retune-first" weakens to "measure, then decide". |
 | **`eff.kda_occupancy_bound`**: KDA runs at **6–13% occupancy**, 15–29% of HBM peak, while kernels above 80% occupancy reach 85–93% | the retune returns **well under 1%** of step time. Then the 174 ms window is not recoverable by tuning, and renting it stops competing with fixing it. |
 | **arithmetic**: retune and co-location consume the same 174 ms | a co-tenant that measurably does **not** slow the primary — which would mean it is running in genuinely dead time the trace cannot see, and the two are not competing. |
 
@@ -388,6 +388,14 @@ Two conditions on that run, both of which change the answer if ignored:
 2. **Measure the primary, and measure per unit of co-tenant work.** A co-tenant
    throttled to near-nothing will show near-nothing; the quantity that matters is
    the exchange rate.
+
+**Read 1.4× as a test of the literature, not as a price worth paying.** At 1.4× the
+primary keeps 71.4% of its throughput — it is giving up 28.6% of tok/s to host a
+guest. The threshold asks whether interference on H20 is *below what SoCC
+measured on H100*, which is a question about transferability. It does not ask
+whether co-location is cheap, and a result of 1.4× would not by itself justify
+doing it. For reference: 1.0× is no interference, 1.2× keeps 83.3%, 1.73× keeps
+57.8%.
 
 If the measurement comes back and the verdict stands, this document becomes
 `recorded` with the number in it. If it overturns any row above, the row says so
