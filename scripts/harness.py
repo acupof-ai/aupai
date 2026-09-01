@@ -52,6 +52,17 @@ _CHECK_TIMEOUT = 5
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
     "eval_sft_template_contamination": 90,
+    # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
+    # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
+    # going to fit 5s, so it timed out on nine consecutive runs and FAILed with
+    # "has not actually run since" -- the contamination guard was off for a day while
+    # reading as a known-red rather than as absent. 60s is 4x the 14s measured total,
+    # which leaves room for a bigger pack without leaving room for a hang.
+    #
+    # Not indexed instead: a first-4-token sorted index over 192M positions costs 44s
+    # to build and 0.49s to search, so it is 3x SLOWER than the linear scan it would
+    # replace. Measured before choosing (de).
+    "sft_pack_uncontaminated": 60,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
