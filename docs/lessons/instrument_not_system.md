@@ -2,6 +2,7 @@
 question: "how do you notice that a measurement describes the measuring tool rather than the system"
 status: recorded
 source: "tilerl-10 2026-09-01; six instances found in one day: runs/t56_elementwise_owner.json (the broken join, and its fix breaking the same way on cuda_driver), the pretrain_30b_s2 log's tok/s and ETA format strings, eff.kda_occupancy_bound (config drift), eff.quant_tax_is_the_elementwise_group (off-config trace). Check proposal reviewed by fb, tightened by 62; de-8 carries the seven-sighting class ticket."
+span_ms: 1676.63  # t57's own span; the percentages quoted here are against it
 ---
 
 # The instrument, not the system
@@ -184,11 +185,13 @@ negative closes a line of work permanently and silently.
 None of these were caught by the statistic itself — only by looking at the
 instrument. #1–#3 each produced a proposed kill-criteria threshold; the third
 would have set a false-precision floor at median + 4 SD = 104.5 s, inside the
-quantisation band, firing on rounding. #4 nearly retired a lever then quoted at
-4.44%, later corrected to 3.59% — and here is the twist worth keeping, because
-this sentence was wrong for six hours: that lever turned out to be **93% head
-work on a path the live run does not reach**, so #4's correction rescued a rung
-that #5's class then took away again. Both steps were right. A number can be
+quantisation band, firing on rounding. #4 nearly retired a lever quoted first at
+4.44%, then at 3.59% — **both superseded, and neither is its live size**; both
+were measured on the off-config trace. And here is the twist worth keeping,
+because this sentence was wrong for six hours: that lever turned out to be
+**92.5% head work on a path the live run does not reach**, so #4's correction
+rescued a rung that #5's class then took away again. The live figure is
+**12.4 ms**. Both steps were right. A number can be
 rescued from one defect and still be carrying another. #6 would have published
 "the fusion group is disjoint from the quantisation tax" as a *null* — the right
 answer, reached by a broken join, which is the one way to be correct that teaches
@@ -361,11 +364,28 @@ flag field on the claim.
 made it fire.** The join that exposed the off-config capture was only run because
 a reader asked an unrelated question about double counting. Its author had read
 that trace four times and the capture config was invisible every time, because
-the question being asked was about attribution, not provenance. **An internal
-check cannot ask a question you are not asking.** That is the same asymmetry as
-#3, one level up, and it is the strongest case on this page for routing a
-finished analysis past someone who did not produce it — not to catch arithmetic,
-but to supply the question the author cannot generate from inside the work.
+the question being asked was about attribution, not provenance.
+
+**But state the mechanism carefully, because the obvious statement of it is
+wrong.** "An outside reader supplies the question you are not asking" implies the
+reader supplies the *right* question. That is not what happened: the question
+asked was about double counting, it closed cleanly as a null, and the config
+finding fell out sideways. Neither party had provenance in mind.
+
+So the mechanism is **perturbation, and the yield is stochastic** — and the
+practical consequences differ:
+
+| "get a reviewer" | "perturb the frame" |
+|---|---|
+| pick a good one, brief them well | *any* question from outside the frame has expected value |
+| the failure mode is a bad reviewer | the failure mode is **no perturbation** — which is what a review from inside the same frame produces, however skilled |
+| the valuable question is the important one | the question the author would have rated *lower* value is the one that paid |
+
+The author of the trace and their usual reviewer had been checking each other's
+arithmetic all day and neither questioned a capture config, because both were
+inside the attribution frame. The value is in the **outsideness**, not in the
+reviewer's skill — which is a weaker claim than "route work past a good
+reviewer", and a much cheaper one to act on.
 
 ### Seven tells, and who caught them
 
@@ -396,6 +416,36 @@ the answer to the question actually asked was "no, they are disjoint — zero
 shared kernels." **A question that closes cleanly is not a wasted question**: it
 is often how the adjacent defect gets found, and the ranking it was aimed at is
 firmer for having survived it.
+
+### The base rate is higher than these narratives imply
+
+Every entry above reads as a notable event, and that framing is itself
+misleading. `scripts/doc_numbers_check.py` re-derives a document's stated numbers
+from its own declared base and runs in under a second. Its author ran it on the
+entry they had just written and found a rounded share sitting beside the table it
+summarised — the eighth instance. Within the hour, a **sweep of four unrelated
+docs** turned up a ninth: `gpu_colocation.md` rounding a 115 ms saving to one decimal
+place where its own span gives 6.86%, in a document that had been read and
+re-read.
+
+Two things follow, and they are more useful than any single instance:
+
+1. **This defect is closer to background than to event.** Two found in one hour
+   by a one-second tool, in documents written by people actively writing about
+   this defect class. Anything narrated as "the time we caught X" is sampling on
+   the catch, not on the occurrence.
+2. **Sweep every document, not the one you are editing.** The targeted run found
+   the eighth only because its author happened to have just touched that file.
+   That is luck wearing the clothes of a habit. The sweep is the habit.
+
+A caveat on the sweep, from running it across all 51 docs in `docs/`: three of
+the five hits were **false positives** — the checker dropped a leading minus
+sign, matched the tail of an inclusion-exclusion expression, and read a design
+label (`MDE at 4+4`) as arithmetic. That does not weaken the case for sweeping.
+A one-second check with a 40% false-positive rate is still worth running over 51
+documents; it means the output is a **list of lines to look at**, not a list of
+errors, and it should be described that way so nobody treats a clean sweep as
+proof or a hit as a verdict.
 
 
 ## When a qualifier has to be a restriction
