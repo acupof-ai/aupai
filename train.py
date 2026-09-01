@@ -2315,8 +2315,16 @@ def main():
             gradient_as_bucket_view=not args.no_bucket_view, static_graph=not args.no_static_graph
         )
     if Cfg.compile and amp:
-        torch._dynamo.config.cache_size_limit = 64
-        torch._dynamo.config.accumulated_cache_size_limit = 256
+        # Derived from depth, not a literal. AttnRes Full builds one compiled graph per
+        # distinct source count -- 1 + 2*layers -- so the limit that fit at layers=12
+        # (need 25) is one SHORT at layers=32 (need 65), and the assert below refuses
+        # the launch. It refuses rather than degrading, which is right, but a constant
+        # that does not move with the shape it bounds turns a shape flag into a
+        # tripwire. +8 is headroom so a launch does not sit on the boundary; max(64,..)
+        # so nothing shrinks below today's value at the old depth (de, 2026-09-01).
+        _cache_need = max(64, 2 * Cfg.layers + 8)
+        torch._dynamo.config.cache_size_limit = _cache_need
+        torch._dynamo.config.accumulated_cache_size_limit = 4 * _cache_need
         if Cfg.attn_res:
             # The AttnRes loop builds one compiled graph per distinct source count: 1 + 2*layers
             # in Full mode (25), 1 + n_blocks in Block mode. Below that, torch.compile silently
