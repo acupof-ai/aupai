@@ -38,9 +38,9 @@ ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
-from holdout import is_holdout  # noqa: E402
 import prepare_sft  # noqa: E402
 import prepare_sft_math  # noqa: E402
+from holdout import is_holdout  # noqa: E402
 
 OUT_DEFAULT = os.path.join(ROOT, "data", "sft", "control_sft_text.jsonl")
 
@@ -130,6 +130,11 @@ def main():
     ap.add_argument("--allow_unchecked", action="store_true",
                     help="write even when no eval file was available to check against; the "
                          "pack's leak_check field then records 'unchecked'")
+    ap.add_argument("--holdout_every", type=int, default=50,
+                    help="every Nth example goes to the _heldout.jsonl file instead of "
+                         "_train.jsonl. BOTH arms read these two files, so the held-out set is "
+                         "one object -- an arm that split for itself would train on the other's "
+                         "validation set")
     ap.add_argument("--allow_missing_sources", action="store_true",
                     help="write even when some source files are absent; the run prints which. "
                          "Without it a partial pack is a refusal, not a warning")
@@ -195,26 +200,66 @@ def main():
               "provenance says so.")
         return 2
 
-    part = a.out + ".part"
+    # Split HERE, once, at the text level (fb's ruling 2026-09-02). Each arm splitting for
+    # itself was the bug: our arm would have trained on the 2% the control holds out, so it
+    # both trains on more data AND sees the control's validation set. Splitting at the shared
+    # text makes the held-out set one object with one id list, and the arms' held-out losses
+    # comparable (each in its own tokenizer, so report per supervised BYTE, not per token).
+    #
+    # Each row carries an explicit "id" -- its index in the deduped set. The id is what makes
+    # "the two arms held out the same examples" checkable after the fact rather than a claim
+    # about two scripts agreeing.
+    train_path = a.out.replace(".jsonl", "") + "_train.jsonl"
+    held_path = a.out.replace(".jsonl", "") + "_heldout.jsonl"
     os.makedirs(os.path.dirname(a.out), exist_ok=True)
-    with open(part, "w", encoding="utf-8") as f:
-        for q, ans, tag in uniq:
-            f.write(json.dumps({"question": q, "answer": ans, "src": tag},
-                               ensure_ascii=False) + "\n")
-    h = hashlib.sha256()
-    with open(part, "rb") as f:
-        while chunk := f.read(1 << 20):
-            h.update(chunk)
-    nbytes = os.path.getsize(part)
-    os.replace(part, a.out)
 
-    print(f"\nwrote {a.out}")
-    print(f"  rows        {len(uniq):,}")
-    print(f"  bytes       {nbytes:,}")
-    print(f"  sha256      {h.hexdigest()}")
-    print(f"  leak_check  {verdict}")
-    print("\nThis sha256 is the pack identity for the report header: both arms must quote it,"
-          "\nand each reports its own token count after tokenizing this same file.")
+    def write(path, rows):
+        part = path + ".part"
+        with open(part, "w", encoding="utf-8") as f:
+            for i, q, ans, tag in rows:
+                f.write(json.dumps({"id": i, "question": q, "answer": ans, "src": tag},
+                                   ensure_ascii=False) + "\n")
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+        n = os.path.getsize(part)
+        os.replace(part, path)
+        return h.hexdigest(), n
+
+    numbered = [(i, q, ans, tag) for i, (q, ans, tag) in enumerate(uniq)]
+    held = [r for r in numbered if r[0] % a.holdout_every == 0]
+    train = [r for r in numbered if r[0] % a.holdout_every != 0]
+    if not held or not train:
+        print(f"REFUSING to write: holdout_every={a.holdout_every} gives {len(train)} train / "
+              f"{len(held)} held-out rows; one side is empty.")
+        return 2
+    tr_sha, tr_bytes = write(train_path, train)
+    hd_sha, hd_bytes = write(held_path, held)
+
+    # Both files together, so a single number still identifies the whole input set.
+    h = hashlib.sha256()
+    for path in (train_path, held_path):
+        with open(path, "rb") as f:
+            while chunk := f.read(1 << 20):
+                h.update(chunk)
+    nbytes = tr_bytes + hd_bytes
+
+    print(f"\nwrote {train_path}")
+    print(f"  rows        {len(train):,}")
+    print(f"  bytes       {tr_bytes:,}")
+    print(f"  sha256      {tr_sha}")
+    print(f"wrote {held_path}")
+    print(f"  rows        {len(held):,}  (every {a.holdout_every}th example)")
+    print(f"  bytes       {hd_bytes:,}")
+    print(f"  sha256      {hd_sha}")
+    print(f"\n  combined rows    {len(uniq):,}")
+    print(f"  combined bytes   {nbytes:,}")
+    print(f"  combined sha256  {h.hexdigest()}")
+    print(f"  leak_check       {verdict}")
+    print("\nBoth arms read BOTH files and quote these sha256s. Each reports its own token "
+          "count\nafter tokenizing the same text; held-out losses are comparable per supervised "
+          "BYTE,\nnot per token, because the tokenizers differ.")
     return 0
 
 

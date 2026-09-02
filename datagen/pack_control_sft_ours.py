@@ -4,13 +4,19 @@
 """Tokenize the SHARED control text pack with OUR tokenizer into a .pt for sft_math.py.
 
     python3 datagen/pack_control_sft_ours.py \
-        --text data/sft/control_sft_text.jsonl \
+        --text data/sft/control_sft_text_train.jsonl \
         --out data/sft/control_sft_ours.pt
 
-The other half of scripts/sft_hf_control.py. Both arms read the same
-control_sft_text.jsonl and quote the same sha256; each tokenizes it with its own
-tokenizer, because the two vocabularies differ and a shared .pt would make every token id
-valid and wrong (check_sft_ready.py:check_vocab exists to refuse exactly that).
+The other half of scripts/sft_hf_control.py. Both arms read the same TWO files --
+<name>_train.jsonl and <name>_heldout.jsonl -- and quote the same sha256s; each tokenizes
+them with its own tokenizer, because the two vocabularies differ and a shared .pt would make
+every token id valid and wrong (check_sft_ready.py:check_vocab exists to refuse exactly
+that).
+
+THE SPLIT IS NOT MADE HERE, and that is the point (fb's ruling 2026-09-02). If each arm
+applied "every 50th example" itself, our arm would train on the 2% the control holds out:
+more training data AND the control's validation set. The builder splits once; both arms read
+the result; the example ids in the files make that checkable rather than assumed.
 
 This side reuses prepare_sft.pack_and_save verbatim -- the same masking, the same
 whole-example packing, the same over-length drop, the same fingerprints -- so the only
@@ -41,7 +47,11 @@ from prepare_sft import SEQ, pack_and_save  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--text", default=os.path.join(ROOT, "data", "sft", "control_sft_text.jsonl"))
+    ap.add_argument("--text",
+                    default=os.path.join(ROOT, "data", "sft", "control_sft_text_train.jsonl"))
+    ap.add_argument("--heldout", default=None,
+                    help="held-out text file; defaults to the _heldout.jsonl beside --text. "
+                         "Packed separately so our arm neither trains on it nor misses it")
     ap.add_argument("--out", default=os.path.join(ROOT, "data", "sft", "control_sft_ours.pt"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--seq", type=int, default=SEQ)
@@ -63,15 +73,35 @@ def main():
             h.update(chunk)
     text_sha = h.hexdigest()
 
-    pairs = []
-    with open(a.text, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            d = json.loads(line)
-            pairs.append(format_example(d["question"], d["answer"]))
+    def read(path):
+        pairs, ids = [], []
+        with open(path, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                line = line.strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                pairs.append(format_example(d["question"], d["answer"]))
+                ids.append(d.get("id", i))
+        return pairs, ids
+
+    pairs, train_ids = read(a.text)
     print(f"text {a.text}\n  sha256 {text_sha}\n  examples {len(pairs):,}", flush=True)
+
+    hp = a.heldout or (a.text[: -len("_train.jsonl")] + "_heldout.jsonl"
+                       if a.text.endswith("_train.jsonl") else None)
+    if not hp or not os.path.exists(hp):
+        print(f"CANNOT RUN: held-out file {hp} does not exist. Both arms must hold out the "
+              f"SAME examples; packing only the train file would leave our arm without the "
+              f"held-out set the control is scored on.")
+        return 2
+    held, held_ids = read(hp)
+    overlap = set(train_ids) & set(held_ids)
+    if overlap:
+        print(f"REFUSING: {len(overlap)} example id(s) are in both files")
+        return 1
+    print(f"held-out {hp}\n  examples {len(held):,}  overlap with train {len(overlap)}",
+          flush=True)
 
     tok = Tokenizer.from_file(a.tokenizer)
     eos = tok.token_to_id("<|endoftext|>")
@@ -81,9 +111,12 @@ def main():
         print("CANNOT RUN: no eos token found in the tokenizer")
         return 2
 
-    # sources = the one file this pack was actually built from.
+    # sources = the file this pack was actually built from.
     pack_and_save(pairs, tok, eos, a.out, a.seq,
                   sources=[(a.text, "question", "answer")])
+    held_out_pt = a.out.replace(".pt", "") + "_heldout.pt"
+    pack_and_save(held, tok, eos, held_out_pt, a.seq,
+                  sources=[(hp, "question", "answer")])
 
     import torch
     blob = torch.load(a.out, map_location="cpu", weights_only=True)
@@ -96,6 +129,18 @@ def main():
     print(f"  tokens          {blob['input_ids'].numel():,}")
     print(f"  dropped (>seq)  {st.get('dropped_overlong')}")
     print(f"  vocab_id        {blob.get('vocab_id')}")
+    hblob = torch.load(held_out_pt, map_location="cpu", weights_only=True)
+    hst = hblob.get("build_stats", {})
+    print(f"  held-out pack   {os.path.relpath(held_out_pt, ROOT)}")
+    print(f"    examples      {len(held):,}  rows {hst.get('rows')}")
+    print(f"    tokens        {hblob['input_ids'].numel():,}")
+    # Per supervised BYTE: the arms' held-out losses are only comparable in a unit both
+    # tokenizers share, and loss-per-token is not one when they segment the same text
+    # into different counts.
+    print(f"    supervised bytes {sum(len(c.encode()) for _, c in held):,}")
+    ids_fp = hashlib.sha256(",".join(str(i) for i in held_ids).encode()).hexdigest()[:16]
+    print(f"    held-out ids sha256 {ids_fp}  "
+          f"(must equal the control arm's held_out_ids_sha256)")
     return 0
 
 
@@ -115,25 +160,35 @@ def selftest():
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "t.jsonl")
         with open(p, "w", encoding="utf-8") as f:
-            for q, ans in (("q one", "a one"), ("q two", "a two")):
-                f.write(json.dumps({"question": q, "answer": ans, "src": "t"}) + "\n")
-        theirs = read_pack(p)
-        mine = []
+            for i, (q, ans) in zip((7, 9), (("q one", "a one"), ("q two", "a two")),
+                                   strict=True):
+                f.write(json.dumps({"id": i, "question": q, "answer": ans, "src": "t"}) + "\n")
+        theirs, their_ids = read_pack(p)
+        mine, my_ids = [], []
         with open(p, encoding="utf-8") as f:
-            for line in f:
+            for i, line in enumerate(f):
                 dd = json.loads(line)
                 mine.append(format_example(dd["question"], dd["answer"]))
+                my_ids.append(dd.get("id", i))
         if mine != theirs:
             fails.append(f"the two arms split the same row differently:\n  ours {mine}\n"
                          f"  control {theirs}")
+        # fb's requirement: the two arms' held-out sets must be the SAME example ids. Both
+        # arms read the same file, so the check is that both read the id field the same way --
+        # the failure mode is one arm falling back to line order while the other uses "id".
+        if my_ids != their_ids:
+            fails.append(f"the arms disagree on example ids: ours {my_ids} vs "
+                         f"control {their_ids}")
+        if my_ids != [7, 9]:
+            fails.append(f"the explicit id field was ignored: {my_ids}")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
     if fails:
         print(f"\n{len(fails)} selftest failure(s)")
         return 1
-    print("pack_control_sft_ours selftest OK (both arms produce an identical prompt/completion "
-          "split from the same shared row)")
+    print("pack_control_sft_ours selftest OK (both arms produce an identical "
+          "prompt/completion split AND the same example ids)")
     return 0
 
 
