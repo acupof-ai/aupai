@@ -25,8 +25,18 @@ def vocab_fingerprint(tok):
     return h.hexdigest()[:16]
 
 
-# sft.py, sft_math.py, eval/gsm8k.py and algorithms/rlvr_generate.py hardcode these ids;
-# a vocabulary rebuild moves them silently.
+# A TRIPWIRE, not a shared import. Nothing imports these (checked 2026-09-02: zero
+# references to loader.NUM_ID anywhere, and sft.py:40, sft_math.py:42, eval/gsm8k.py:20 each
+# keep their own `EOS_ID = 1`). Their value is the pair of asserts in _demo(), which fail the
+# moment a vocabulary rebuild moves either id -- catching for those private copies what they
+# cannot catch for themselves. An earlier version of this comment said the four files
+# "hardcode these ids", naming algorithms/rlvr_generate.py, which references neither; a
+# docstring describing a dependency structure that does not exist is worse than none, because
+# it tells the next reader that changing this line is dangerous when the danger is elsewhere.
+#
+# train.py does NOT rely on this: resolve_num_id() (train.py:1429) derives num_id from the
+# tokenizer and Cfg.num_id is set from it (train.py:1467), with scripts/test_num_id_resolve.py
+# asserting it reads the tokenizer's own id rather than a literal.
 EOS_ID = 1
 NUM_ID = 32772
 
