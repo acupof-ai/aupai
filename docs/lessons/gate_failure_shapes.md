@@ -1413,6 +1413,8 @@ e1 在五分钟内把同一个手数切片错误犯了两遍。第一遍 `[8:-5]
 
 规则:**结构化文件名一律正则解析,不用索引切片;选点脚本自带 ENDPOINT/BRACKETED 判决(标签必须匹配 `^[0-9.e-]+$` 且在已知 lr 集合里),不靠记忆。** 判断法:把解析结果喂给一个不认识文件名的判决器,判决器放行才算解析成功——解析和判决分开,记忆就不在路径上了。
 
+又一实例(44 当事人,2026-09-03,scripts/harness.py `_broken_keep_claim_reasons`):`_tmp_repo_shaped` 的 docstring 明写着"Write into a symlinked directory and you write into the repo, so a world that mutates a file under one must copy it in first (de, 2026-09-01)",我重读了 docstring 还是踩了——broken world 通过 symlink 把真实 facts/ 里三个 fact 翻成 retracted,工作树脏了才发现。教训在 docstring 里、在同一个函数里、读了一遍,仍然没拦住:**写进 docstring 的规矩是给读者的,不是给执行者的;执行者只被代码拦(copy-before-mutate 做进函数),不被注释拦。**
+
 ## 109. 配对设计用配对误差:共享噪声不是不确定性(e1 当事人,1e 提,2026-09-03,R6)
 
 同 batch、同顺序、只差 lr 的两个 run,batch 噪声是**共享**的——配对相减时它抵消。e1 把单 run 跨 batch 摆动(~0.17)当误差棒,于是配对 stdev 0.0085 的差异(+0.0535,11/11 个点全更低)被说成"在噪声带内"——可分性被稀释 20×(0.17/0.0085)。摆动量的是"这个 run 跨 batch 多不稳",配对差量的是"两个 run 之间的差多稳";两个 run 共享同一份不稳,它就不该进差值的误差棒。
