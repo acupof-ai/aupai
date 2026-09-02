@@ -717,7 +717,7 @@
       "id": "dq.sft_termination_underdetermined",
       "value": "SFT 终止欠定,实测:49,481 条 source 对(per-source 8K x9,全校源)→43,836 簇;近重组(>=2)1,606 簇=3.7%;**其中 23.9%(384 簇)答案结构形态 >1**(mean 1.26 形态/族),342 簇终符族不同。**集中在 math/general,不在 code**:school_math 81%(91/113)、s1k 82%(23/28)、openo1 67%(6/9)、coig 27%(257/940)、alpaca 35%(6/17);code_python 0%(0/81)、math_gsm8k 0%(0/360)。含 fb 的 FoNE 一题一格式规则的推广:同一近重题被教多种收尾→终止欠定。 | **机制解释(fb 确认,非相关性)**:code 源有确定边界(围栏/代码块)所以不欠定——这个结构解释预测了哪些源欠定且预测对。**独立成立的数据缺陷,非解释失败**。**修法 = renderer-per-source(nanochat 式:每任务一形态,由代码定,不继承源自带形态),非打包归一时(on-time 归一)). λ 合成目标:每簇一种形态,由生成器强制**。code 重复的 55.8% 成因另记(eval f8c08c1:贪心 55.8%/t=0.8 17%/base 25.4%,循环无藏物,成因在解码器不在模型/数据)。",
       "measured": "2026-08-30",
-      "source": "pod 实测 eval/measure_sft_termination.py;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
+      "source": "pod 实测 eval/measure_sft_termination.py@3d2acd9;data/*.jsonl + data/synthetic/*.jsonl 9 源 per-source 8K",
       "config": {
         "cluster": "MinHashLSH 128-perm/16-band + union-find over band keys",
         "shape_features": [
@@ -744,7 +744,7 @@
       "id": "dq.code_rp1t_handread_50",
       "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each. Near-dup rate 6/50 = 12% (Wilson 95% CI ~5-24% at n=50) -- this is the number that makes stage 2's parallel MinHash re-stamp non-optional. The stage-1 run trains on the set as is.",
       "measured": "2026-08-31",
-      "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
+      "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py@06e9e3b (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
       "config": {
         "n": 50,
         "denominator": "all 50 sampled docs, single-reader hand-read",
@@ -788,7 +788,7 @@
       "value": 0.0,
       "unit": "fraction of rows that are exact duplicates",
       "measured": "2026-09-01",
-      "source": "probes/t62_corpus_dup_rate.py (full-domain), probes/t63_cross_domain_dup.py (cross-domain)",
+      "source": "probes/t62_corpus_dup_rate.py@381d922 (full-domain), probes/t63_cross_domain_dup.py@381d922 (cross-domain)",
       "config": {
         "task": "P0 duplication hypothesis",
         "within_domain_full_scan": "cot 851,965 rows / 851,965 unique; textbook_30b 920,692 / 920,692; wiki_chat 372,827 / 372,827. max_copies 1 in every case.",
@@ -807,7 +807,7 @@
       "value": 0.00625,
       "unit": "fraction of scored docs that are actually held out",
       "measured": "2026-09-01",
-      "source": "probes/t64_val_head_overlap.py; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
+      "source": "probes/t64_val_head_overlap.py@381d922; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
       "config": {
         "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
         "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
@@ -827,7 +827,7 @@
       "value": 4.77,
       "unit": "percent of rows removable, code_rp1t, J>=0.5",
       "measured": "2026-09-01",
-      "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
+      "source": "probes/t65_near_dup_sweep.py@71006cf, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
       "config": {
         "task": "P0 duplication -- the one leg exact-dedup could not answer",
         "sample": "20,000 documents per domain, first shards in sorted order",
@@ -884,6 +884,46 @@
       "uncertainty": "a 20000-row head sample per domain, not a uniform draw; shard order is build order",
       "status": "measured",
       "boundary": "Says what the missing rules would have dropped, not whether dropping them helps. The rules were tuned on handread-150 only and no downstream measurement ties them to loss or to any eval. The controller ruled no rebuild at 0.25%."
+    },
+    {
+      "id": "dq.corpus_filter_residue",
+      "value": "corpus batch filters_fp=33462c13868a2194 (pod, 5 CCI3-HQ Chinese rules short of main 88ee503b); measured residue ~0.25% of total corpus",
+      "unit": "fraction of tokens",
+      "measured": "2026-09-01",
+      "source": "fb recomputation of fp_filters (main=88ee503b, pod/domain stamps=33462c13) over the 9 corpus domains",
+      "config": {
+        "filter_diff": "pod filters/pass3_garbage.py missing 5 of the 2026-08-30 CCI3-HQ Chinese rules that main has",
+        "residue_by_domain": {
+          "zh_web": "6.68% of domain, weight 3.05% -> 0.204% of total",
+          "textbook": "0.48% -> 0.049%",
+          "chat/cot": "~0",
+          "en": "0",
+          "code": "not 'zero': ast.parse is a SYNTAX filter (valid Python, not no-contamination); code_py_rp1t inherits cleanliness from code_rp1t sustain's light filter + holdout (e1: 29,333 rows 0-hit, holdout non-empty 2,533); out-of-list contamination unmeasured+untooled"
+        },
+        "total": "~0.25%",
+        "ruling": "no rebuild (fb 2026-09-01)",
+        "then": "filters/ to pod is tilerl's push"
+      },
+      "uncertainty": "residue measured by fb over the 9 stamped domains; the 5 missing rules are Chinese CCI3-HQ quality rules",
+      "status": "measured",
+      "boundary": "residue ~0.25% covers the CCI3-HQ Chinese-rule gap on the pod filter; does NOT cover contamination outside the holdout list for the code_py_rp1t chain (ast.parse is syntax-only: syntactically-correct code embedding eval answers survives). The code-python domain's upper bound comes from code_rp1t's light+holdout, which is unmeasured beyond the 2,533-item holdout list."
+    },
+    {
+      "id": "dq.code_py_starcoder_holdout_zero",
+      "value": "full holdout scan of the delivered code_py_starcoder corpus: 6,180,175 rows, 0 is_holdout hits",
+      "unit": "hits",
+      "measured": "2026-09-02",
+      "source": "datagen/scan_delivered_holdout.py (full 6.18M-row scan on the pod); corpus fp e1a14839e11f3e6f",
+      "config": {
+        "corpus_fp": "e1a14839e11f3e6f",
+        "rows_scanned": 6180175,
+        "holdout_hits": 0,
+        "build_note": "corpus built by a PARALLEL build_starcoder_py.py that dropped the is_holdout check (tilerl catch 09-02); this scan verifies the DELIVERED bytes are clean, not the build mechanism (the fixed/holdout-checking build is the one going forward)"
+      },
+      "uncertainty": "0 hits in the full scan is definitive for the delivered bytes at fp e1a14839e11f3e6f; it does not cover future rebuilds",
+      "status": "measured",
+      "boundary": "validates the delivered corpus at fp e1a14839e11f3e6f only; if the corpus changes, re-run before trusting a new zero",
+      "provenance": "the result is bound to corpus fp e1a14839e11f3e6f so a later zero knows which bytes it measured"
     }
   ]
 }

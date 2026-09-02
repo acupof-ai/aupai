@@ -100,7 +100,8 @@ in this document.
 ### Gold-answer bits-per-byte is the method we were missing
 
 AI2's `olmes` repo ships a suite commented "for evaluating small-scale
-experiments" (`oe_eval/configs/task_suites.py:931-1005`). Its composition is the
+experiments" (upstream olmes `oe_eval/configs/task_suites.py:931-1005`, URL in
+facts/base_eval.json). Its composition is the
 answer to our code problem: all QA is cloze (`:rc`, never `:mc`), and code and
 math are **bits-per-byte** — `codex_humaneval:3shot:bpb::none`,
 `mbpp:3shot:bpb::none`, `minerva_math_*:bpb`.
@@ -298,6 +299,6 @@ every metric already in the profile.
 - Sun et al., arXiv 2504.12491 — Table 1 (corpus perplexity below random as a
   downstream proxy)
 - Schaeffer et al., arXiv 2304.15004 — discontinuous metrics manufacture emergence
-- AI2 `olmes` — `oe_eval/configs/task_suites.py:931-1005`;
+- AI2 `olmes` (upstream) — `oe_eval/configs/task_suites.py:931-1005`;
   `codex_humaneval.py:149`, `codex_mbpp.py:213`, `minerva_math.py:198`
 - Our prior: `docs/lessons/base_eval_at_200m.md`, `facts/base_eval.json`

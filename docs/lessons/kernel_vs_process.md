@@ -1,7 +1,7 @@
 ---
 question: "is our throughput headroom in kernels or in process, and does the HF kernels hub help"
 status: recorded
-source: "e1-3 2026-09-01; eff.step_remainder_attribution (t56/tilerl-4), eff.lm_head_is_compute_bound, eff.kda_occupancy_bound, eff.dynamo_recompile_not_a_lever, eff.max_autotune_dynamic_shape_noship"
+source: "e1-3 2026-09-01; eff.step_remainder_attribution (t56/tilerl-4), eff.lm_head_is_compute_bound, eff.kda_occupancy_bound, eff.dynamo_recompile_not_a_lever (RETRACTED, refuted by eff.steady_state_composition -- see the three marked spots below), eff.max_autotune_dynamic_shape_noship, eff.steady_state_composition"
 ---
 
 # Kernels or process
@@ -51,11 +51,14 @@ retractions of earlier process-side recommendations:
 
 | fact | what it killed |
 |---|---|
-| `eff.dynamo_recompile_not_a_lever` | cu bucketing as t57's first lever: the recompiling frame carries 2.2 ms/step, 0.1% of compiled-region time. Ceiling ~0%. |
+| `eff.dynamo_recompile_not_a_lever` | cu bucketing as t57's first lever: the recompiling frame carries 2.2 ms/step, 0.1% of compiled-region time. Ceiling ~0%. **This fact is now `status: retracted`, refuted by `eff.steady_state_composition`: the compile seams PERSIST past step 50 — 54.9 ms/step at step 260, 3.27% of the step, 72% of all steady idle. The recompile tax is real. What survives is that cu is not its cause (see "This does not clear the recompile tax" below), which is why the lever named here stays dead while the ceiling it claimed does not.** |
 | `eff.max_autotune_dynamic_shape_noship` | max-autotune: 106 GEMM choices re-benchmarked per dynamic cu shape, never reaches steady state, 1K tok/s against a 72K baseline. |
 
 So the two most obvious process levers have already been measured and are gone.
-This document should not re-propose them, and it does not.
+This document should not re-propose them, and it does not. The first row's *ceiling*
+claim is the retracted half and is corrected in place above; the row is kept rather
+than deleted because the lever it killed is still dead and deleting it would let
+someone re-propose cu bucketing (de, 2026-09-02).
 
 ## The attribution, with per-launch cost
 
@@ -174,7 +177,9 @@ instrument rather than the system, with 0%/100% as the tell.
 ## The idle is one seam, not many launches
 
 The 186.6 ms of idle is not spread evenly, and that changes what a process-side
-lever would even be. From `eff.dynamo_recompile_not_a_lever`, over 138,460 gaps
+lever would even be. From `eff.dynamo_recompile_not_a_lever` (retracted for its
+amortizes-to-zero *conclusion*; the gap distribution below is the measurement it
+took and is not what `eff.steady_state_composition` refuted), over 138,460 gaps
 in the profiled window:
 
 | gaps | total |
@@ -192,13 +197,14 @@ Fixing one seam attacks the 165 ms. These are different projects with a 16×
 difference in ceiling, and only the second is worth a row in the ranking.
 
 The caveat that keeps this honest: those twenty gaps are compile events, and the
-window is a warmup window. `eff.dynamo_recompile_not_a_lever` already measured
-what survives into steady state and found the recompiling frame carries 2.2
-ms/step, 0.1% of compiled-region time. So the seam may largely be a warmup
-artifact — which is exactly what tilerl's steady-state trace will settle. If the
-seam persists at steady state it is the single best process lever; if it does
-not, the process side collapses toward the 10 ms of small gaps and the answer to
-fb's question becomes emphatic rather than merely clear.
+window is a warmup window. `eff.dynamo_recompile_not_a_lever` measured what it
+believed survives into steady state and found 2.2 ms/step, 0.1% of compiled-region
+time — **and that fact is retracted. `eff.steady_state_composition` (t57, window
+steps 56-76) settled this question against it: the seam PERSISTS at step 260, 8 gaps
+over 1 ms, 54.9 ms/step, 72% of all steady idle. So the answer to the open question
+below is the first branch, not the second: the seam is not a warmup artifact and it
+is the single best process lever available — bounded at 3.27% of the step, which is
+still under the 3% gate's neighbourhood rather than comfortably over it.**
 
 ## Half A: does the kernels hub reach any of it
 

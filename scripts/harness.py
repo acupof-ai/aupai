@@ -217,6 +217,16 @@ _MANUAL_RULES = {
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
     "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
+    "pod_push only ever ADDS: a deletion on main needs a second explicit step on the pod":
+        "the deletion is an operator SEQUENCE -- delete here, then delete there -- and the "
+        "second half happens on a filesystem no check reads. pod_drift compares the manifest "
+        "against the pod, and a file in neither is invisible to it by construction",
+    "Only a refusing: line means nothing shipped":
+        "how a human reads pod_push's stdout. The transcript is not an artifact, so nothing "
+        "records whether the reader's filter could see a refusal at all",
+    "pod_drift.py --write regenerates from HEAD, --write-index from the index":
+        "which flag a session typed is not recoverable from the manifest it produced -- both "
+        "write the same file, and a manifest built from the wrong side is well-formed",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -244,7 +254,16 @@ _MANUAL_RULES = {
 #: reading and killing in the same view is not, and a guard on [ -d /proc/<pid> ]
 #: written across it evaluated false on its first pass and launched a job onto a
 #: running probe's cards.
-_MANUAL_BASELINE = 25
+#: 25 -> 28 on 2026-09-02, three pod-side rules, all unenforceable for the same reason:
+#: the mistake happens on the pod's filesystem or in a terminal, and neither is an
+#: artifact this repo can read. pod_push's add-only asymmetry is a two-place sequence
+#: whose second half no check sees -- 69 files deleted from main were still on the pod
+#: with pod_drift green, because the manifest asserts that the files it LISTS match and
+#: says nothing about files in neither side. The `refusing:` rule is about reading
+#: stdout, and a `| tail -2` that ate the refusal leaves no trace of having done so.
+#: --write vs --write-index is not recoverable after the fact: both produce the same
+#: filename, and a manifest built from the pre-merge HEAD is well-formed and wrong.
+_MANUAL_BASELINE = 28
 
 
 def _norm_rule(text):
@@ -383,7 +402,7 @@ def check_cited_artifacts_attested(root):
     versioned-write case the attestation exists for: open_artifact(path, run=...) writes
     preds_x.r1.jsonl while a careless writer attests preds_x.jsonl, and identical bytes
     at two paths is the normal state during a rerun, not a coincidence
-    (tilerl T7-1, probe probes/t7_attest_path.py)."""
+    (tilerl T7-1, probe probes/t7_attest_path.py@41587cb)."""
     refs = os.path.join(root, "runs", "artifact_refs.jsonl")
     attested = set()  # (basename, sha256)
     if os.path.exists(refs):
@@ -644,7 +663,7 @@ def check_probe_numbers_unique(root):
 
     WHY THIS IS A WARN AND NOT A FAIL, which my first version got wrong: sharing
     a number is LEGITIMATE when the files are one task's sub-probes. t57 is
-    t57_absmax / t57_outlier / t57_seam, three angles on one fp8-head question,
+    t57_absmax@c3d02c4 / t57_outlier / t57_seam@1c470e7, three angles on one fp8-head question,
     cited by full filename and unambiguous. My FAIL version reddened the board on
     that convention -- a check that fires on correct practice trains people to
     ignore it, which is worse than no check.
@@ -690,7 +709,7 @@ def _broken_probe_numbers_unique():
     the check against a repo that does not exist.
 
     WARN, not FAIL: the check cannot tell a collision from one task's sub-probes
-    (t57_absmax / t57_outlier / t57_seam are legitimately one number)."""
+    (t57_absmax@c3d02c4 / t57_outlier / t57_seam@1c470e7 are legitimately one number)."""
     import shutil as _sh
 
     d = _tmp_repo()
@@ -914,7 +933,8 @@ def _broken_agents_rules_covered():
     wrong check it carried until 2026-09-01 -- the exact defect 44 and 3b found.
 
     This breaks the TABLE half, which the old broken world (an unmapped bullet) never
-    exercised. The bullet half is covered by _broken_agents_rules_unmapped."""
+    exercised. The bullet half is covered by _broken_agents_rules_unmapped, which CHECKS
+    cannot hold (one broken() per row) and the selftest runs explicitly after the loop."""
     d = _tmp_repo()
     src = os.path.join(ROOT, "AGENTS.md")
     if not os.path.exists(src):
@@ -1297,15 +1317,44 @@ def read_mix(path):
     return list(doms), None
 
 
+def _exp_fold(evs):
+    """The ledger's own fold, from scripts/exp.py. Lazy-imported, like _launch_shape.
+
+    exp.py owns runs/experiments.jsonl (it is the only writer), so it owns the
+    reduction; this file had four separate re-implementations of it and three of them
+    were wrong in different ways (position-based last-wins in two, name-only keying in
+    a third). Imported INSIDE the function rather than at module scope, for the reason
+    launch_tests documents about launch_gate: a selftest world is a partial tree, and
+    harness must still import where scripts/exp.py is absent. Falls back to the
+    terminal-wins fold inline -- not to position-based -- so a missing exp.py degrades
+    to the correct answer rather than the one this task exists to delete.
+    """
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from exp import fold
+        return fold(evs)
+    except Exception:
+        out = {}
+        for r in evs:
+            key = (r.get("name"), r.get("started"))
+            prev = out.get(key)
+            if (prev is not None and prev.get("status") != "running"
+                    and r.get("status") == "running"):
+                continue
+            out[key] = r
+        return list(out.values())
+
+
 @functools.lru_cache(maxsize=None)
 def experiments(raw=False):
-    """The experiment log, folded by (name, started): the last event for a run wins.
+    """The experiment log, folded by (name, started) with a close beating a later start.
 
     The file is an event log -- exp.py appends a running row and later a terminal one
-    rather than rewriting, so union merge cannot produce a running/done pair. A reader
-    that does not fold sees a superseded status: t56_profile went ok 13:34 then fail
-    13:47, and an unfolded read failed score_matrix_present on the stale ok.
-    raw=True yields every event."""
+    rather than rewriting. A reader that does not fold sees a superseded status:
+    t56_profile went ok 13:34 then fail 13:47, and an unfolded read failed
+    score_matrix_present on the stale ok. This used to fold on POSITION, which reopens
+    a closed run when a duplicate start lands after it (see _exp_fold); it now shares
+    the ledger's one fold. raw=True yields every event."""
     p = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(p):
         return []
@@ -1317,12 +1366,7 @@ def experiments(raw=False):
                 evs.append(json.loads(line))
             except Exception:
                 pass
-    if raw:
-        return evs
-    folded = {}
-    for r in evs:
-        folded[(r.get("name"), r.get("started"))] = r
-    return list(folded.values())
+    return evs if raw else _exp_fold(evs)
 
 
 CKPT_RE = re.compile(r"\bckpt_[A-Za-z0-9_.-]+?\.pt\b")
@@ -1494,7 +1538,6 @@ def _broken_tokenizer(eos_id=1, with_num=True):
 def _broken_stale_run():
     """The row is built by the REAL logger, not hand-written -- a hand-written row shares
     the check's own schema assumptions."""
-    import subprocess
 
     d = _tmp_repo()
     subprocess.run(
@@ -1926,7 +1969,6 @@ def check_no_oversized_blob(root):
 def _broken_blob():
     """A real blob through real git plumbing -- a synthesised ls-tree line shares the
     check's own assumptions."""
-    import subprocess
 
     d = _tmp_repo()
     big = os.path.join(d, "big.jsonl")
@@ -1944,8 +1986,11 @@ def _broken_blob():
 
 
 def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
-    """Definitions the merge base had that the merge result no longer has, where the
-    losing side never deleted them. Returns [(path, name, side_taken)].
+    """Definitions the merge base had that the merge result no longer has.
+
+    Returns [(path, name, side_taken, already_dropped_at)]. `already_dropped_at` is None
+    for the shape the caller must FAIL on, and a commit sha for the shape it must only
+    WARN on -- see the asymmetry below.
 
     The complement of merge_took_one_side, and the more dangerous shape. That
     function only examines paths BOTH parents changed since the base, on the
@@ -1959,6 +2004,31 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
     tested operationally (fb's rule): the removal counts as intended only when the
     removing side's OWN commits, merge-base..parent, contain a diff that removes the
     name. Otherwise the content is simply older than that branch.
+
+    THE TWO SHAPES ARE NOT SYMMETRIC, and treating them alike produced 117 reds in one
+    day (fb's ruling, 2026-09-02, after de measured that no single flag fixes it):
+
+      name in ours, gone from the result -- THIS merge lost it. FAIL. 21da619 is here:
+      base had it, ours had it, theirs had never seen it, and the resolution took theirs.
+
+      name absent from ours, present in theirs and in the base -- ours had ALREADY
+      dropped it before this merge ran, and this merge changed nothing about that. The
+      loss belongs to whichever merge dropped it, and that merge's own check owned it.
+      WARN naming that commit, because every later merge from an older branch inherits
+      the same absence and calling inheritance a defect is what made the check unusable.
+      e73554b is here: _built_set was dropped in 6d51c9c's conflict resolution, which
+      states its reason, and 117 merges after it inherited the red.
+
+    Why plain `-S` still gates the FAIL branch and no flag was added: `git log -S` shows
+    no diff for a merge commit, so a deletion made inside a resolution is invisible to
+    it. `-m` sees that but then also matches a merge which merely CARRIED a deletion in
+    from one side, which silences 21da619 -- a false PASS on the founding case, with
+    merge_took_one_side returning [] there too. `--diff-merges=first-parent` finds
+    neither, because 6d51c9c took parent1 whole and its first-parent diff is empty.
+    6d51c9c and ef27df0 are structurally identical at the graph level, so no predicate
+    over the graph separates deliberate from accidental (de, MEASURED). The first-parent
+    split above sidesteps the question instead of answering it: it asks which merge lost
+    the definition, which is decidable, rather than whether someone meant to.
 
     Scope: top-level `def NAME(` in tracked .py files. Definitions are what a merge
     can silently revert without breaking an import, and a name is cheap to test for.
@@ -1999,8 +2069,19 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
             deleted_deliberately = bool(
                 git("log", "--format=%h", "-S", f"def {name}(", f"{base}..{dropper}", "--", path).strip()
             )
-            if not deleted_deliberately:
-                out.append((path, name, side))
+            if deleted_deliberately:
+                continue
+            # Ours already lacked it before this merge: inherited, not lost here. Name
+            # the last commit on ours' line that removed it, so the WARN points at the
+            # merge that owns the decision instead of at this one. `-m` is right for
+            # THIS lookup -- unlike the gate above it is not deciding intent, only
+            # reporting where to look, and the removal is usually a resolution.
+            if not in_ours:
+                at = git("log", "--format=%h", "-m", "-S", f"def {name}(",
+                         f"{base}..{ours}", "--", path).split()
+                out.append((path, name, side, at[0] if at else "an unfound commit"))
+            else:
+                out.append((path, name, side, None))
     return out
 
 
@@ -2205,12 +2286,25 @@ def check_merge_complete(root):
     # and silently reverts the other side. merge_took_one_side cannot see it, because
     # it only examines files BOTH parents changed (21da619, 2026-08-31).
     reverted = merge_reverted_content(root)
-    if reverted:
+    lost_here = [r for r in reverted if r[3] is None]
+    inherited = [r for r in reverted if r[3] is not None]
+    if lost_here:
         return FAIL, (
-            f"{len(reverted)} definition(s) present in the merge base and gone from the "
-            "result, with no side deleting them: "
-            + "; ".join(f"{name} in {path}" for path, name, _ in reverted[:3])
+            f"{len(lost_here)} definition(s) present in the merge base and in ours, gone "
+            "from the result, with no side deleting them: "
+            + "; ".join(f"{name} in {path}" for path, name, _, _ in lost_here[:3])
             + ". A side that never had the content did not delete it -- restore from the base."
+        )
+    if inherited:
+        # Ours already lacked these before this merge, so this merge lost nothing. The
+        # merge that dropped it owned the decision, and its own run of this check saw it.
+        # FAILing on inheritance is what put the same red on 117 merges (fb, 2026-09-02).
+        return WARN, (
+            f"{len(inherited)} definition(s) the base had and ours had ALREADY dropped "
+            "before this merge: "
+            + "; ".join(f"{name} in {path}, last removed on ours by {at} (git log -m -S)"
+                        for path, name, _, at in inherited[:3])
+            + ". This merge did not change ours' state -- check whether that commit meant it."
         )
     # The count for the PASS line comes from the scan already done above, not a second
     # one. Recomputing it cost 12.57s of the check's 25.37s and timed the check out on
@@ -2388,29 +2482,7 @@ def _exp_events(root, folded=True):
             continue  # a line another session is mid-append
     if not folded:
         return evs
-    out = {}
-    for r in evs:
-        key = (r.get("name"), r.get("started"))
-        prev = out.get(key)
-        # A close is TERMINAL. Last-write-wins alone reopens a finished run when a
-        # duplicate start event lands after its close -- which the ledger contains:
-        # (sft_p324_v3, 2026-08-31 03:44) has an ok event at line 44 and a running
-        # event at line 132, and folding on order alone reported a run that finished
-        # in 32 minutes as 26 hours stale. A union merge of two branches can order
-        # events however it likes, so order is not evidence of sequence.
-        # Terminal beats running regardless of POSITION. A union merge concatenates
-        # two branches' rows, so a `running` row can land after the `ok` that closed
-        # it -- sft_p324_v3 has ok at line 44 and running at 132 for the same
-        # (name, started). Position-based last-wins reads that as an open run 25h old
-        # and refuses every merge in the shipment window. A run does not reopen; only
-        # `task reopen` does that, and it is a different ledger. Two terminal events
-        # for one run: the later one wins. (de and e1 reached this independently,
-        # 2026-09-01; de's inline version in check_no_stale_running and this shared
-        # one merged here, with de's reasoning kept.)
-        if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
-            continue
-        out[key] = r
-    return list(out.values())
+    return _exp_fold(evs)
 
 
 #: A `running` row older than this is a job that died without exp.py done. Named rather
@@ -2466,21 +2538,22 @@ def check_no_ghost_running(root):
     import subprocess
 
     # FOLD FIRST. experiments.jsonl is append-only: one run emits many rows and the
-    # readers fold by (name, started), last wins. Reading raw lines asked pgrep 54
-    # times where 13 were needed (measured on the pod, 0.083s each = the whole 4.1s),
-    # and reported the same run as several ghosts because its history has several
-    # rows. So the count was wrong as well as slow, and raising the deadline would
-    # have preserved both.
-    folded = {}
+    # readers fold by (name, started), a close beating a later start. Reading raw lines
+    # asked pgrep 54 times where 13 were needed (measured on the pod, 0.083s each = the
+    # whole 4.1s), and reported the same run as several ghosts because its history has
+    # several rows. So the count was wrong as well as slow, and raising the deadline
+    # would have preserved both. Through _exp_fold since e1-18: this fold was
+    # position-based, so a start event landing after a close made a finished run look
+    # like a ghost -- the check for ghosts inventing one.
+    evs = []
     with open(p, encoding="utf-8") as f:
         for line in f:
             try:
-                r = json.loads(line)
+                evs.append(json.loads(line))
             except Exception:
                 continue
-            folded[(r.get("name"), r.get("started"))] = r
     ghosts = []
-    for r in folded.values():
+    for r in _exp_fold(evs):
         if r.get("status") != "running":
             continue
         try:
@@ -3220,12 +3293,34 @@ FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
 FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
-    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+"
+    # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
+    # decision: 44's 22 probe deletions in 3fb1946 rewrote 39 refs to path@rev, and this
+    # check would have passed them either way because it never looked in that directory.
+    # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
+    # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
+    # profile_step.py live.
+    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes)/[\w./-]+"
 )
 # Debt register for tracked-missing sources: each entry carries a reason. Can only
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
 FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
 CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
+
+
+def _rev_has_path(root, rev, path):
+    """Does `path` exist in the tree at `rev`? False when git cannot answer.
+
+    A `path@rev` citation is only durable if the rev actually holds the file. Accepting
+    the syntax without checking would turn the retirement form into a way to make any
+    dead citation pass -- which is the shape this repo keeps paying for (metadata is a
+    claim, not a fact about content). False on the pod, where there is no .git; the
+    caller only reaches this on a full checkout."""
+    try:
+        r = subprocess.run(["git", "cat-file", "-e", f"{rev}:{path}"],
+                           cwd=root, capture_output=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _is_gitignored(path, root):
@@ -3297,14 +3392,22 @@ def check_tasks_paired_and_prior(root):
     Three sessions took AUTHORITY at once and two of them duplicated a merge; separately
     a throughput number had no reference point in the literature at all, so "is this
     good" could not be answered. Both are the same absence: nobody stated, before
-    starting, who agreed and what was already known (user order 2026-09-01)."""
+    starting, who agreed and what was already known (user order 2026-09-01).
+
+    A DROPPED task is out of scope. _read_tasks already folds by id, so the check reads
+    each task's latest state -- but it judged a dropped one anyway, and dropping is how a
+    task with a bad prior is supposed to be retired. fb hit this: after dropping a task
+    whose prior was wrong, the check still FAILed on it, and the only way through was to
+    delete the uncommitted row -- so the register loses the record of the decision to
+    satisfy a check about record-keeping."""
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     # Two scopes unioned, because a timestamp alone cannot separate them today: rows
     # written before the UTC fix carry CST, and 21:27 CST sorts after a 14:40 UTC
     # threshold. Every row the new `add` writes carries the prior key, so those are in
     # scope whatever their clock; the date takes over once every row is UTC.
     scope = [t for t in rows
-             if "prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM]
+             if (t.get("state") != "dropped"
+                 and ("prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM))]
     if not scope:
         return SKIP, f"no task opened since the rule took effect ({PAIR_PRIOR_FROM})"
     bad = []
@@ -3324,6 +3427,11 @@ def check_tasks_paired_and_prior(root):
 
 
 def _broken_tasks_paired_and_prior():
+    """The REAL register plus one open row with no pair and no prior.
+
+    Two rows, because the dropped-row exemption must not be a way through: x-2 is the
+    same violation retired by a later `dropped` event, and the world must still FAIL --
+    on x-1 only. A world with just the dropped row would pass and certify nothing."""
     import shutil as _sh
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -3332,6 +3440,10 @@ def _broken_tasks_paired_and_prior():
     _sh.copy(src, dst)
     with open(dst, "a", encoding="utf-8") as f:
         f.write(json.dumps({"id": "x-1", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+        f.write(json.dumps({"id": "x-2", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+        f.write(json.dumps({"id": "x-2", "owner": "de", "state": "dropped", "task": "t",
                             "opened": "2099-01-01 00:00"}) + "\n")
     return d
 
@@ -3599,8 +3711,21 @@ def check_facts_well_formed(root):
             # -- it was never there. CI and dev run this fully; the pod skips it. The config
             # half above runs everywhere.
             if not pod_drift.is_pod(root):
-                for m in FACT_SOURCE_PATH.findall(str(e["source"])):
+                src = str(e["source"])
+                for m in FACT_SOURCE_PATH.findall(src):
                     if os.path.exists(os.path.join(root, m)):
+                        continue
+                    # `path@rev` is the repo's retirement form for a deleted file: the
+                    # content is reachable at that sha, so the citation resolves even
+                    # though the path does not. launch_gate learned this in 1a4be21; this
+                    # check did not, and it FAILed on the seven retirements of de-21 while
+                    # 44's 22 in 3fb1946 passed only because `probes/` is absent from
+                    # FACT_SOURCE_PATH's directory list -- the same deletions in eval/ or
+                    # scripts/ would have failed. Verify the rev, do not just accept the
+                    # syntax: a sha that names nothing is a dead citation wearing the
+                    # durable form.
+                    rev = re.search(re.escape(m) + r"@([0-9a-f]{7,40})\b", src)
+                    if rev and _rev_has_path(root, rev.group(1), m):
                         continue
                     if _is_gitignored(m, root):
                         continue  # pod-only artifact; this machine doesn't have it
@@ -4186,18 +4311,19 @@ def check_score_matrix(root):
     log = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(log):
         return SKIP, "runs/experiments.jsonl not present"
-    # Fold by (name, started), last event wins: the ledger is an event log, so one run
-    # has a running row and then a terminal one. Reading raw events made a superseded
-    # 'ok' outlive the 'fail' that replaced it -- t56_profile, ok 13:34 then fail 13:47,
-    # failed this check as an unscored success (2026-08-31).
-    folded = {}
+    # Fold by (name, started) with a close beating a later start: the ledger is an event
+    # log, so one run has a running row and then a terminal one. Reading raw events made
+    # a superseded 'ok' outlive the 'fail' that replaced it -- t56_profile, ok 13:34 then
+    # fail 13:47, failed this check as an unscored success (2026-08-31). Through
+    # _exp_fold since e1-18; it was position-based, so a duplicate start after a close
+    # reopened the run and this check then demanded a score for a finished one.
+    evs = []
     for line in open(log, encoding="utf-8"):
         try:
-            r = json.loads(line)
+            evs.append(json.loads(line))
         except Exception:
             continue
-        folded[(r.get("name"), r.get("started"))] = r
-    rows = list(folded.values())
+    rows = _exp_fold(evs)
     if not rows:
         return SKIP, "experiments.jsonl has no rows"
     scored = set()
@@ -4237,7 +4363,6 @@ def check_score_matrix(root):
 def _broken_score_matrix():
     """A REAL ok training row, written by the real exp.py, with no score-matrix
     record -- the FAIL tier."""
-    import subprocess
 
     d = _tmp_repo()
     for argv in (
@@ -4436,15 +4561,29 @@ def check_ladder_config(root):
     declared = {}
     exp_path = os.path.join(root, "runs", "experiments.jsonl")
     if os.path.exists(exp_path):
+        # Folded first (e1-18), then keyed by NAME, and the second half is a known
+        # narrowing rather than an oversight. `declared` grants a frozen-key exemption,
+        # so which run of a name wins decides which deviations are forgiven -- and two
+        # names in this ledger ran with DIFFERENT flag sets: p02_s0 (4 runs, 3 sets) and
+        # p500m_20b_0902 (00:03 with 10 flags, the 01:03 relaunch with 15). Dropping
+        # `started` collapses those, so the exemption for ckpt_<name>.pt comes from
+        # whichever row wins rather than from the run that produced the checkpoint.
+        # Position order and start order agree on today's ledger (measured: 0 of 27
+        # names differ), so this is latent, and widening the key is a behaviour change
+        # to an exemption path -- left for a ruling, not folded in here. The fold does
+        # remove the other half: a duplicate start landing after a close can no longer
+        # be the row that grants an exemption.
+        evs = []
         for line in open(exp_path, encoding="utf-8"):
             if line.strip():
-                r = json.loads(line)
-                if "run_ddp.sh" in r.get("cmd", ""):
-                    nm = r.get("name", "")
-                    ladder_names.add(nm)
-                    flags = {_FLAG_TO_CFG.get(t[2:].split("=", 1)[0], t[2:].split("=", 1)[0])
-                             for t in r.get("cmd", "").split() if t.startswith("--")}
-                    declared[nm] = flags
+                evs.append(json.loads(line))
+        for r in _exp_fold(evs):
+            if "run_ddp.sh" in r.get("cmd", ""):
+                nm = r.get("name", "")
+                ladder_names.add(nm)
+                flags = {_FLAG_TO_CFG.get(t[2:].split("=", 1)[0], t[2:].split("=", 1)[0])
+                         for t in r.get("cmd", "").split() if t.startswith("--")}
+                declared[nm] = flags
     bad, unknown, exempt, checked = [], [], [], 0
     for p in ckpts:
         name = os.path.basename(p)[5:-3]  # ckpt_<name>.pt
@@ -5109,13 +5248,7 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
     task, and the register read as delivered. A commit hash is the one claim the repo
     can refute by itself -- it either resolves, reaches main, and moved that file, or
     it does not (user ruling 2026-09-01: the conversation is notification, the commit
-    is the truth).
-
-    Resolution is one minute: commit dates carry no seconds and the close time is
-    padded to :59, so a commit made in the same minute as the close always passes.
-    Measured by e1 (2026-09-02): closed 02:47 passes, closed 02:46 fails. The register
-    writes minutes, so a same-minute backdate is invisible to this check by design.
-    """
+    is the truth)."""
     root = root or ROOT
     g = ["git", "-C", root]
     main_log = _main_touched(root)
@@ -7370,16 +7503,28 @@ def _selftest_merge_reverted_content():
 
     The constructed case is the one that decides whether the check is usable: someone
     retiring a function on purpose must not be flagged, or every intentional deletion
-    becomes a red and the check gets bypassed."""
+    becomes a red and the check gets bypassed.
+
+    e73554b is the third case and the reason the return value grew a fourth field
+    (de-22, 2026-09-02): _built_set was dropped in 6d51c9c's conflict resolution, ours
+    already lacked it when this merge ran, and calling that a defect put the same red on
+    117 merges. It must land in the ALREADY-DROPPED class, naming 6d51c9c, while 21da619
+    stays a FAIL -- the two shapes are checked here together because a fix for either one
+    alone is what the flag experiments produced."""
     import shutil
     import tempfile
 
     real = "/Users/bytedance/code/aupai"
     if os.path.exists(os.path.join(real, ".git")):
         hit = merge_reverted_content(real, "21da619")
-        assert any(n == "_selftest_gpu_descendants" for _, n, _ in hit), \
-            f"21da619 must be caught, got {hit}"
+        assert any(n == "_selftest_gpu_descendants" and at is None for _, n, _, at in hit), \
+            f"21da619 must be caught with already_dropped_at None (a FAIL), got {hit}"
         assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
+        # The inherited class, and the whole point of the fourth field: the same scan must
+        # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
+        inh = merge_reverted_content(real, "e73554b")
+        assert any(n == "_built_set" and at == "6d51c9c" for _, n, _, at in inh), \
+            f"e73554b must report _built_set as already dropped by 6d51c9c, got {inh}"
 
     d = tempfile.mkdtemp(prefix="delib_")
     try:
@@ -7405,7 +7550,29 @@ def _selftest_merge_reverted_content():
             "a deliberate deletion must not be flagged, or every intended removal is a red"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
+
+    # The verdicts, not just the scan. check_merge_complete reads HEAD, so each case is a
+    # clone checked out AT that merge -- the real artifact, per the broken-world rule. The
+    # scan asserts above would still pass if the caller collapsed both classes to FAIL,
+    # which is exactly the bug being fixed, so the states are asserted here too.
+    if os.path.exists(os.path.join(real, ".git")):
+        w = tempfile.mkdtemp(prefix="mergecls_")
+        try:
+            for merge, want, needle in ((("21da619"), FAIL, "_selftest_gpu_descendants"),
+                                        (("e73554b"), WARN, "6d51c9c")):
+                c = os.path.join(w, merge)
+                assert subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", real, c],
+                                      capture_output=True).returncode == 0
+                assert subprocess.run(["git", "-C", c, "checkout", "-q", merge],
+                                      capture_output=True).returncode == 0
+                st, why = check_merge_complete(c)
+                assert st == want, f"{merge} must be {want}, got {st}: {why[:160]}"
+                assert needle in why, f"{merge}'s text must name {needle}: {why[:160]}"
+        finally:
+            shutil.rmtree(w, ignore_errors=True)
+
+    print("  merge revert: 21da619 FAIL, e73554b WARN naming 6d51c9c, 41294c1 clean, "
+          "deliberate deletion not flagged")
 
 
 def _selftest_attest_written_path():
@@ -7563,6 +7730,15 @@ def _selftest_exp_fold():
             {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
             # a genuinely open run must survive the fold
             {"name": "c", "started": recent, "status": "running", "ended": ""},
+            # ONE NAME, TWO RUNS, and it is here to give the key WIDTH something to fail
+            # on. Without it the fixture cannot tell (name, started) from name alone --
+            # every name appeared once, so both keyings returned identical rows and a
+            # reader folding by name only (check_ladder_flags_declared did, dropping
+            # `started`) passed the agreement assertion below. Verified by blinding:
+            # exp.fold keyed on name alone goes green on the other four rows and red on
+            # these two. d's two runs must stay two rows.
+            {"name": "d", "started": "2026-08-30 06:05", "status": "ok", "ended": "2026-08-30 06:06"},
+            {"name": "d", "started": "2026-08-30 06:13", "status": "fail", "ended": "2026-08-30 06:15"},
         ]
         with open(p, "w", encoding="utf-8") as f:
             for r in ev:
@@ -7574,16 +7750,58 @@ def _selftest_exp_fold():
             "a start appended after a close must NOT reopen the run"
         assert folded[("c", recent)]["status"] == "running", \
             "a genuinely open run must still read as running"
-        assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
+        assert len(_exp_events(d, folded=False)) == len(ev), "raw=False must return every event"
 
         # a and b keep fixed dates on purpose: both are CLOSED, and check_no_stale_running
         # only looks at rows whose status is still running, so no amount of clock movement
         # reaches them. Only the open row had to become relative.
         state, evidence = check_no_stale_running(d)
         assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
+
+        # EVERY READER, NOT JUST THIS ONE (e1-18). Four re-implementations of this fold
+        # lived here and in exp.py, and three were wrong in different ways: position-based
+        # last-wins in experiments() and check_no_ghost_running/check_score_matrix, and
+        # name-only keying in check_ladder_flags_declared. exp.py:34's docstring asserted
+        # the shape above was impossible -- "union-merging two branches cannot produce a
+        # running row and a done row for the same run" -- while the comment 200 lines up
+        # from here records the ledger containing it. Assert the AGREEMENT, because the
+        # defect was never one reader's answer, it was two readers giving different ones.
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import exp as _exp
+        prev_log = _exp.LOG
+        try:
+            _exp.LOG = p
+            by_exp = {(r["name"], r["started"]): r["status"] for r in _exp.rows()}
+        finally:
+            _exp.LOG = prev_log
+        by_harness = {(r["name"], r["started"]): r["status"] for r in _exp_events(d)}
+        assert by_exp == by_harness, (
+            f"exp.py and harness fold the same ledger differently: {by_exp} vs {by_harness} "
+            "-- one ledger, one reduction, or a check and the tool disagree about what ran")
+        assert by_exp[("b", "2026-08-31 03:44")] == "ok", \
+            "exp.py rows() must not reopen a closed run either (it folded on position)"
+        # AGREEMENT IS NOT THE PROPERTY, and finding that out is why these two lines
+        # exist. Both readers now reach one fold, so a regression IN that fold moves both
+        # and they agree while both are wrong -- verified by blinding exp.fold to
+        # name-only keying, which went green on the agreement assertion above. Assert the
+        # KEY WIDTH against d's two runs directly: one name, two `started` values, two
+        # rows. That is what check_ladder_flags_declared dropped, and it decides which
+        # run's flags grant a frozen-key exemption.
+        for reader, got in (("exp.py rows()", by_exp), ("harness _exp_events", by_harness)):
+            assert got.get(("d", "2026-08-30 06:05")) == "ok" and \
+                got.get(("d", "2026-08-30 06:13")) == "fail", \
+                (f"{reader} folded two runs of one name into one row ({got}) -- the key is "
+                 "(name, started), and dropping `started` makes a re-run replace its "
+                 "predecessor's record")
+        # And the fold reached through the lazy import is the same fold. A silent fallback
+        # to position-based would pass every assertion above, because the real exp.py is
+        # importable here; check the degraded path explicitly.
+        assert {(r["name"], r["started"]): r["status"] for r in _exp_fold(ev)} == by_harness, \
+            "_exp_fold must agree with the reader it replaced"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  exp fold: close clears its start; a later start does not reopen; open runs survive")
+    print("  exp fold: close clears its start; a later start does not reopen; open runs "
+          "survive; exp.py and harness agree")
 
 
 def _selftest_gpu_descendants():
@@ -7888,6 +8106,24 @@ def _demo():
                             f"unimportable script ({_why[:60]})")
     finally:
         shutil.rmtree(_imp, ignore_errors=True)
+
+    # agents_rules_covered needs a SECOND world for the same structural reason: CHECKS
+    # carries one broken() per row, and its registered world breaks the TABLE half (a
+    # coverage row naming the wrong check). The BULLET half -- a rule mapped to neither a
+    # check nor a manual reason -- has its world written and never run, which is why the
+    # deletion audit read it as dead code. It is not: on that world the check FAILs with
+    # "1 rule(s) map to neither a check nor a manual reason", a defect the table world
+    # cannot produce. Measured before wiring, since a world nobody runs is indistinguishable
+    # from one that cannot fail.
+    _unm = _broken_agents_rules_unmapped()
+    if _unm:
+        try:
+            _st, _why = check_agents_rules_covered(_unm)
+            if _st != FAIL:
+                untested.append(f"agents_rules_covered reported {_st} on an unmapped rule "
+                                f"bullet ({_why[:60]})")
+        finally:
+            shutil.rmtree(_unm, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
@@ -8758,110 +8994,6 @@ def cmd_sync(rest):
 # --------------------------------------------------------------------------- clean
 
 
-def cmd_clean(rest):
-    """`harness clean --dry` -- list superseded artifacts, do not delete.
-    Deletion is a separate step from this committed listing, by exact path.
-    Each line: path, bytes, producer, why superseded."""
-    if "--dry" not in rest:
-        print("usage: harness.py clean --dry (list only; deletion is a separate step)")
-        return 2
-    pod = os.path.expanduser("~/bin/pod")
-    rows = []
-
-    def pod_lines(cmd):
-        if not os.path.exists(pod):
-            return []
-        r = subprocess.run([pod, cmd], capture_output=True, text=True, timeout=30)
-        return r.stdout.splitlines() if r.returncode == 0 else []
-
-    # 1. Checkpoints: scan pod for ckpt_*.pt, flag known-superseded names.
-    for ln in pod_lines("ls -la /work/aupai/ckpt_*.pt 2>/dev/null"):
-        parts = ln.split()
-        if len(parts) < 9:
-            continue
-        sz, name = parts[4], parts[-1]
-        base = os.path.basename(name)
-        why = ""
-        if base == "ckpt_sft_p324_v2.pt":
-            why = "superseded by t20/t01 rerun (verify rerun exists before deleting)"
-        elif "faFalse" in base or "fa_false" in base or "fa0" in base:
-            why = "fa=False ablation arm, superseded by t20/t01 rerun (verify rerun exists)"
-        if why:
-            rows.append((name, sz, "training run", why))
-
-    # 2. eval_hard shard residue: .N.jsonl files left by multi-GPU eval.
-    for ln in pod_lines("find /work/aupai/data/eval -name '*.\\d.jsonl' 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "eval_hard.sh multi-GPU shard",
-                      "shard residue: a single-card run read 7 shard leftovers as 148/1032 preds"))
-
-    # 3. Orphan .part files under data/raw.
-    for ln in pod_lines("find /work/aupai/data/raw -name '*.part' 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "fetch_corpus.py interrupted",
-                      "partial shard, never renamed to final -- fetch deletes stale .part on startup"))
-
-    # 4. /tmp logs on the pod.
-    for ln in pod_lines("find /tmp -maxdepth 2 -name '*.log' -size +1M 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "pod /tmp log", "superseded: /tmp is wiped on restart"))
-
-    # 5. Unregistered .py files on the pod: throwaway probes and bare-podput arrivals
-    # that no manifest entry names. The ones nothing names (UNNAMED) are deletion
-    # candidates; the rest are kept until their run is done.
-    import shlex
-    scan = (
-        "import os,json,time\n"
-        "m=set()\n"
-        "for l in open('data/pod_head_manifest.txt'):\n"
-        " p=l.strip().split('  ',1)\n"
-        " if len(p)==2:m.add(p[1])\n"
-        "pr={}\n"
-        "try:\n"
-        " for l in open('runs/experiments.jsonl'):\n"
-        "  r=json.loads(l)\n"
-        "  for w in r.get('cmd','').split():\n"
-        "   if w.endswith('.py'):pr.setdefault(os.path.basename(w),[]).append(r.get('name','?'))\n"
-        "except:pass\n"
-        "EX=('datagen','filters','mathbank','workflows','.git','__pycache__')\n"
-        "for dp,dn,fns in os.walk('.'):\n"
-        " dn[:]=[d for d in dn if d not in EX and not d.startswith('.')]\n"
-        " rel=os.path.relpath(dp,'.')\n"
-        " if rel.split(os.sep)[0] in('data','runs'):continue\n"
-        " for fn in fns:\n"
-        "  if fn.endswith('.py'):\n"
-        "   p=os.path.normpath(os.path.join(rel,fn))\n"
-        "   if p not in m:\n"
-        "    st=os.stat(p)\n"
-        "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
-        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.gmtime(st.st_mtime))}\\t{prd}')\n"
-    )
-    for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
-        parts = ln.split("\t")
-        if len(parts) >= 4:
-            path, sz, mtime, prod = parts[0], parts[1], parts[2], parts[3]
-            why = "deletion candidate: no run names it" if prod == "UNNAMED" else f"in use by: {prod}"
-            rows.append((path, sz, f"unregistered .py (mtime {mtime})", why))
-
-    if not rows:
-        print("no superseded artifacts found")
-        return 0
-    print(f"{'PATH':<60} {'BYTES':>12}  PRODUCER / WHY SUPERSEDED")
-    for path, sz, producer, why in rows:
-        print(f"{path:<60} {sz:>12}  {producer}: {why}")
-    print(f"\n{len(rows)} candidate(s). Deletion is a separate step, by exact path.")
-    return 0
-
-
 def _expand_cards(spec):
     """Card spec to a sorted index list. Accepts "0,1,2", "0-7", and both mixed.
 
@@ -8882,36 +9014,21 @@ def _expand_cards(spec):
 
 
 def _allocation_cards(training):
-    """Card set from the controller's grant, never from the caller and never from a recipe.
+    """Card set from the controller's allocation file, never from the caller.
 
-    runs/card_assignment.json is the authority: it is where the controller records a
-    decision, and launch_gate.py:360 already reads the same file for the same purpose.
-    The ladder config is a RECIPE -- its `cards` describes what the six budget points
-    ran on, and its own _comment says card identity changes no computation. Reading it
-    as the allocation forced world=7 under an eight-card grant, so the 500M launch
-    bypassed `harness launch` entirely and silently lost --auto-resume with it: 40
-    minutes unsupervised, and scripts/supervise_run.sh exists only because of that.
-
-    No grant is a refusal, not a default. A defaulted card set is how a launch proceeds
-    on cards nobody granted; returning None makes the caller say so."""
-    grant_path = os.path.join(ROOT, "runs", "card_assignment.json")
-    if not os.path.isfile(grant_path):
-        return None
-    try:
-        grant = json.load(open(grant_path, encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if training:
-        if not grant.get("launch_block_granted"):
-            return None
-        block = _expand_cards(grant.get("block_cards"))
-        return ",".join(str(c) for c in block) if block else None
-    lane = grant.get("lane_card")
-    if lane is not None:
-        return ",".join(str(c) for c in _expand_cards(lane))
-    # lane_card null with the block granted: the grant took every card, so there is no
-    # lane. Distinct from "no grant" -- the controller decided this, and said so.
-    return "" if grant.get("launch_block_granted") else None
+    Training jobs get the block (all cards in mix_scale_run_config.json).
+    Non-training jobs get the lane (the card not in the block)."""
+    config_path = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+    if os.path.isfile(config_path):
+        config = json.load(open(config_path, encoding="utf-8"))
+        block = config.get("cards", "")
+        if training:
+            return block
+        block_set = {c.strip() for c in block.split(",") if c.strip()}
+        all_cards = {str(i) for i in range(8)}
+        lane = sorted(all_cards - block_set)
+        return ",".join(lane) if lane else block
+    return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
 
 
 def _lane_occupant(card):
@@ -8947,7 +9064,7 @@ def cmd_free_card(argv):
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
     a = ap.parse_args(argv)
-    lane = [c.strip() for c in (_allocation_cards(False) or "").split(",") if c.strip()]
+    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
     if not lane:
         print("no lane card in the allocation", file=sys.stderr)
         return 1
@@ -9181,8 +9298,6 @@ def cmd_launch(rest):
     ap.add_argument("--auto-resume", type=int, default=0, metavar="N",
                     help="on a non-zero exit, relaunch with --resume <latest step ckpt>, up to N times "
                          "(blocks: detach the whole command with setsid nohup)")
-    ap.add_argument("--dry", action="store_true",
-                    help="print the allocation and exit: no ledger row, no process, no card touched")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
     if "--" not in rest:
         ap.error("no command given after --")
@@ -9196,7 +9311,7 @@ def cmd_launch(rest):
     # have killed tonight's healthy 15B run, whose first step came 6m26s in.
     gate_note = None
     if args.gate_timeout is None:
-        if args.training and not args.dry:
+        if args.training:
             derived, gate_note = _derive_gate_timeout(cmd)
             if derived is None and gate_note and "no token caches" in gate_note:
                 # REFUSE rather than fall back. The fallback was backwards: the emptier
@@ -9215,8 +9330,7 @@ def cmd_launch(rest):
         else:
             args.gate_timeout = 300 if "--resume" in cmd else 120
     if args.training:
-        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)")
-              if not args.dry else "startup gate: derived at launch from the cache size (not read by --dry)")
+        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)"))
 
     # Popen does not use a shell: a bare foo.py fails with Permission denied.
     # Prepend the interpreter when the command is a .py file in the repo.
@@ -9235,28 +9349,6 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
-        if cards is None:
-            # Before the ledger row: a refused launch leaves no trace. Refusing rather
-            # than defaulting is the point -- the 500M bypass happened because a recipe
-            # supplied a card count nobody granted, and a default is indistinguishable
-            # from a decision once the job is running.
-            print(f"REFUSED: {args.name} - no card grant in runs/card_assignment.json"
-                  f"{' with launch_block_granted' if args.training else ''}. "
-                  f"Card ownership is a controller decision; ask for a grant. "
-                  f"No ledger row written.", file=sys.stderr)
-            return 1
-
-    if args.dry:
-        # After allocation, before the lane check and the ledger row: the question --dry
-        # answers is "which cards, how many ranks", and answering it must touch no card
-        # and write no row. The refusal above still applies, so --dry reports a missing
-        # grant as a refusal instead of printing a plausible default.
-        ngpu = len(cards.split(",")) if (args.training and cards) else 0
-        print(f"cards {cards or '(none)'}"
-              + (f" world {ngpu}" if ngpu else "")
-              + (f" auto-resume {args.auto_resume}" if args.auto_resume else "")
-              + f"\ncmd {' '.join(cmd)}")
-        return 0
 
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
@@ -10182,6 +10274,20 @@ def cmd_install_hooks(rest):
 
 
 def main():
+    # Drop inherited GIT_* before anything runs. git sets GIT_DIR and GIT_INDEX_FILE for
+    # its hooks, and a hook that runs a selftest passes them down: any `git init` in a
+    # temp directory then RECONFIGURES the real repository, and `core.bare = true` on a
+    # repo with a worktree makes every git command in every session fatal. That happened
+    # twice on 2026-09-02, from two different selftests.
+    #
+    # Here, not at the eight `git init` call sites, and not only in the hook: the
+    # invariant is "this file's git work is about ROOT, never about whatever invoked us",
+    # which holds for `harness check` under a hook, under CI, and typed by hand. Guarding
+    # the call sites means every future one must remember; guarding the hook means only
+    # that entry point is safe. pod_drift.py keeps its own copy -- it runs standalone.
+    for _v in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY",
+               "GIT_COMMON_DIR"):
+        os.environ.pop(_v, None)
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
     # failure mode this file exists to prevent.
@@ -10191,8 +10297,6 @@ def main():
         return cmd_task(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "clean":
-        return cmd_clean(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "launch":

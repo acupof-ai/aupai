@@ -77,7 +77,13 @@ GO, NOGO, UNKNOWN = "GO", "NO-GO", "UNKNOWN"
 # own flag surface rather than hand-listed, so a flag added there cannot silently
 # escape provenance -- see gate 5.
 RECIPE_FLAGS = ("dim", "layers", "heads", "ffn_hidden", "batch", "accum",
-                "lr_scale", "grad_ckpt")
+                "lr_scale", "grad_ckpt",
+                # Added by e1-9 (2026-09-02). These four were PASSED on every launch
+                # command and listed in NO gate, so the four omissions of 2026-09-02 --
+                # --warmdown, --anneal_frac, --warmup, --save_every -- fell outside what
+                # any check looked at. The gate written to reconcile the recipe could not
+                # see the keys the incident was about.
+                "warmdown", "anneal_frac", "warmup", "save_every")
 
 
 def _mix(path):
@@ -189,11 +195,28 @@ def gate_corpora(root, mix_path, world):
 
 ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
 LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+# The mix being launched, beside the shape and for the same reason: launch_tests needs to
+# say whether a recorded arch-test pass touched the launch DATA, and it may not hold a
+# second copy of this path (_launch_shape's docstring: a second copy drifts invisibly in
+# exactly the case the warning exists for). A module constant rather than the --mix default
+# it used to be, so both readers and the parser take it from one place (de-10).
+LAUNCH_MIX = "data/mix_500m.json"
 
 
 def _sha256(p):
-    if not os.path.exists(p):
-        return None
+    """Chunked sha256. RAISES on a missing file, matching launch_tests._sha256 exactly.
+
+    It used to return None first, and that branch was UNREACHABLE from both call sites:
+    gate_arch_tests:236 returns NO-GO on any absent ARCH_TESTS file before the digest is
+    taken, and the selftest hashes files it has just copied. Worse than dead -- if it ever
+    became reachable, the `here and` in the comparison below would have SKIPPED the check
+    for a file that is gone, so a deleted test would read as one whose sha still matches;
+    that guard is deleted with it. Deleted
+    rather than merged into launch_tests': that module lazily imports THIS one and
+    documents why (a tree holding one file and not the other is one named single-file push
+    away), so a module-level import here would invert the protection and stop the gate
+    itself from loading. Two six-line twins with identical behaviour cost less than that.
+    """
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -267,13 +290,78 @@ def gate_arch_tests(root, mix_path, world):
             if want is None:
                 problems.append(f"{name}: the row carries no test_sha256, so it cannot "
                                 f"be shown to describe the file that is here now")
-            elif here and want != here:
+            elif want != here:
                 problems.append(f"{name}: recorded against {want[:12]}, the file here "
                                 f"is {here[:12]} -- the test changed after it passed")
     if problems:
         return NOGO, "; ".join(problems[:3])
     return GO, (f"{len(ARCH_TESTS)} shape test(s) passed at "
                 f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel")
+
+
+CITATION = re.compile(
+    # jsonl BEFORE json: regex alternation takes the first branch that matches, so
+    # ".../experiments.jsonl" matched ".json" and the trailing "l" was dropped -- the gate
+    # then reported "runs/experiments.json does not exist", a dead citation for a file that
+    # is tracked. Every .jsonl citation in recipe_provenance was unciteable, and the first
+    # two ever written (e1-9, 2026-09-02) tripped it immediately. The trailing (?![\w])
+    # stops a prefix match from standing in for the whole extension.
+    #
+    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: 3fb1946
+    # (44-13) deleted 22 probes and rewrote 39 refs in facts/*.json plus
+    # scripts/harness.py:386,647,693 to probes/<name>.py@<sha>. All 26 distinct ones
+    # resolve. This gate could not read one of them -- the pattern stopped at the
+    # extension, the @sha was discarded, and the bare path then failed ls-files -- so every
+    # retired citation read as dead, and telling the citer to "use an accepted spelling"
+    # would have been advice with no accepted spelling behind it. Second instance of one
+    # shape: the gate not recognising a reference format the repo is already using (the
+    # first was jsonl eaten as json).
+    #
+    # The rev is [\w~^-]+ joined by single ./ -- NOT [\w./~^-]+. The greedy version
+    # captured the sentence-ending period ("...py@849026e." -> rev "849026e."), which git
+    # rejects, so a correctly-retired citation would have gone NO-GO on the punctuation
+    # after it. Found by running the pattern on real prose, not by reading it: both
+    # spellings look right in the source. Still admits 849026e~1, 849026e^2, v1.2,
+    # refs/tags/v1.
+    r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|datagen|bench_eff)/"
+    r"[\w./-]+\.(?:jsonl|json|log|md|py|sh|txt))(?![\w])"
+    r"(?:@([\w~^-]+(?:[./][\w~^-]+)*))?")
+
+
+def dead_citations(root, text, tracked):
+    """Which file references in one prose source cannot be followed.
+
+    Only paths under the repo, and only ones that look like a file: a source is prose
+    that may mention a run name, a person or a date, and demanding every token resolve
+    would make this fire on sentences. Dead here means "named a file that is not there",
+    not "is unverified".
+
+    Two forms, one property -- can a reader reach the bytes:
+      path        must be TRACKED, not merely present on disk (b0's pair review):
+                  os.path.exists would pass on the pod and fail on every laptop for a
+                  pod-only artifact like runs/w7_b16a2.log, and a gate whose answer
+                  depends on which machine ran it is the defect this repo spent a night
+                  on. Tracked is also stronger: an untracked file can vanish with no
+                  commit.
+      path@rev    the blob must be reachable at that rev. `git cat-file -e <rev>:<path>`
+                  is the whole judgement; its three failures all return 128 -- no such
+                  rev, that rev never held the path, the short sha is ambiguous. The rev
+                  need NOT be where the path last existed (fb's ruling, 2026-09-02): a
+                  source cites the content of one version, not the newest one. So a
+                  deletion no longer kills a citation, which is what the retirement
+                  convention is for.
+    """
+    dead = []
+    for ref, rev in CITATION.findall(str(text)):
+        if rev:
+            if subprocess.run(["git", "cat-file", "-e", f"{rev}:{ref}"], cwd=root,
+                              capture_output=True, text=True).returncode != 0:
+                dead.append(f"{ref}@{rev} (no such blob in git)")
+        elif ref not in tracked:
+            dead.append(f"{ref} (" + ("present but untracked"
+                                      if os.path.exists(os.path.join(root, ref))
+                                      else "does not exist") + ")")
+    return dead
 
 
 def gate_recipe_provenance(root, mix_path, world):
@@ -305,28 +393,11 @@ def gate_recipe_provenance(root, mix_path, world):
     # never in doubt -- 7 x 32 x 4096 = 917,504 is forced by arithmetic -- but the gate
     # passed a citation nobody could follow, which is the whole thing it checks. Same job
     # fact_refs_resolve already does for facts/<f>.json#<id>; these sources are free text,
-    # so nothing was verifying them.
-    #
-    # Only paths under the repo, and only ones that look like a file: a source is prose
-    # that may mention a run name, a person, or a date, and demanding every token resolve
-    # would make this fire on sentences. Missing here means "named a file that is not
-    # there", not "is unverified".
-    # TRACKED, not merely present on disk (b0's pair review): os.path.exists would pass on
-    # the pod and fail on every laptop for a pod-only artifact like runs/w7_b16a2.log, and
-    # a gate whose answer depends on which machine ran it is the defect this repo spent the
-    # night on. "Named by a recipe source" therefore means "in git" -- which is also the
-    # stronger property, since an untracked artifact can vanish without any commit.
+    # so nothing was verifying them. dead_citations holds the judgement and its reasons.
     tracked = set(subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
                                  text=True).stdout.split())
-    dead = []
-    for f in RECIPE_FLAGS:
-        for ref in re.findall(r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|"
-                              r"datagen)/[\w./-]+\.(?:log|json|jsonl|md|py|sh|txt))",
-                              str(prov.get(f, ""))):
-            if ref not in tracked:
-                where = ("present but untracked" if os.path.exists(os.path.join(root, ref))
-                         else "does not exist")
-                dead.append(f"{f} -> {ref} ({where})")
+    dead = [f"{f} -> {d}" for f in RECIPE_FLAGS
+            for d in dead_citations(root, prov.get(f, ""), tracked)]
     if dead:
         return NOGO, (f"{len(dead)} recipe source(s) name a file git does not track: "
                       f"{'; '.join(dead[:4])} -- a citation that cannot be followed is "
@@ -425,6 +496,10 @@ def gate_checks_and_drift(root, mix_path, world):
 #   BOTH  different things in each place, needs both readings
 AUTHORITY = {
     "mix_file": "main", "recipe_provenance": "main", "vocab_id": "main",
+    # main: the register and the recipe are both tracked files, so the reconciliation
+    # answers the same on either machine. It is the pod that cannot answer -- the pod
+    # has no git and no runs/experiments.jsonl of its own.
+    "launch_command": "main",
     "arch_tests": "main", "cards": "main", "memory_measured": "main",
     "corpora": "pod", "epochs_measured": "pod",
     "checks_and_drift": "both",
@@ -460,6 +535,128 @@ def _here():
     return "pod" if os.path.isdir("/work/aupai") and os.path.abspath(ROOT).startswith("/work/") else "main"
 
 
+def reconcile_command(cmd, prov, flags=RECIPE_FLAGS):
+    """Which recipe flags the launch command does not carry. Pure: no I/O, no git.
+
+    Returns (missing, unjustified). `missing` is a justified flag absent from the
+    command; `unjustified` is a flag present in the command with no entry in
+    recipe_provenance -- the other direction, a knob turned without a recorded reason.
+
+    PRESENCE, NOT VALUE. A gate that reads the resolved config instead of the command
+    cannot see five of these twelve, because omitting them falls back to a Cfg default
+    that HAPPENS TO EQUAL the recipe:
+
+        key          recipe   fallback   omission visible in resolved config?
+        dim          1024     1024       NO
+        heads        8        8          NO
+        ffn_hidden   3072     3072       NO
+        batch        32       32         NO
+        accum        1        1          NO
+        layers       32       12         yes
+        lr_scale     0.85     1.0        yes
+        grad_ckpt    True     False      yes
+        warmdown     0.1      0.65       yes
+        anneal_frac  0.0      0.1        yes
+        warmup       300      20         yes
+        save_every   500      1000       yes
+
+    So the 00:03 launch that "omitted eight values" omitted eight and only two could
+    ever have been noticed -- layers (12, wrong depth) and grad_ckpt (False, OOM at
+    94.87 GiB). The other six were invisible by construction. The Kubernetes docs state
+    the general form: a validating webhook "cannot distinguish user-supplied from
+    defaulted values", and "a dropped field is indistinguishable from success".
+
+    Absence of a flag is the property; whether it MATTERS is a separate question this
+    function does not answer. mix_500m.json has |weight - anneal| == 0 in all nine
+    domains, so a missing --anneal_frac changes row order and nothing else, while a
+    missing --warmdown puts 13.00B tokens in the cosine tail instead of 2.00B, a 6.5x
+    error. Both are reported; severity is the caller's, and shape 28's rule holds in
+    both directions -- "a parameter was omitted" does not set severity, and "the
+    effective value is correct" does not prove the parameter was passed.
+    """
+    missing, unjustified = [], []
+    for f in flags:
+        present = re.search(rf"(?<![\w-])--{re.escape(f)}(?![\w-])", cmd) is not None
+        justified = str(prov.get(f, "")).strip() != ""
+        if justified and not present:
+            missing.append(f)
+        elif present and not justified:
+            unjustified.append(f)
+    return missing, unjustified
+
+
+def gate_launch_command(root, mix_path, world, cmd=None):
+    """10. The launch command carries every recipe value that has a recorded source.
+
+    recipe_provenance certifies that each value HAS a source. It does not certify that
+    the command passed it, and on 2026-09-02 one command missed three times running
+    while all nine gates stayed green (shape 28). The flags fall back silently and the
+    log prints the fallback, so nothing anywhere says a value was dropped.
+
+    UNKNOWN, never GO, when there is no command to read: this gate's evidence is the
+    argv of a launch that has not happened yet. It is written as a pure function
+    (reconcile_command) so run_ddp.sh / supervise_run.sh can call it at launch -- the
+    Kubernetes admission shape, refusing before the run is persisted rather than
+    auditing afterwards. The audit twin stays here, reading the recorded command of a
+    run already started.
+    """
+    p = os.path.join(root, "runs", "recipe_provenance.json")
+    if not os.path.exists(p):
+        return UNKNOWN, "no runs/recipe_provenance.json, so there is nothing to reconcile"
+    try:
+        with open(p, encoding="utf-8") as fh:
+            prov = json.load(fh)
+    except (OSError, ValueError) as e:
+        return NOGO, f"recipe_provenance.json unreadable: {e}"
+    if cmd is None:
+        cmd, src = _recorded_cmd(root)
+        if cmd is None:
+            return UNKNOWN, (f"no launch command recorded for a running run ({src}); "
+                             "this gate answers on argv, which exists at launch time")
+    else:
+        src = "the command given to this gate"
+    missing, unjustified = reconcile_command(cmd, prov)
+    if missing:
+        return NOGO, (f"{len(missing)} recipe value(s) justified but NOT in the command "
+                      f"({src}): {', '.join(missing)} -- each falls back to a Cfg default "
+                      "silently, and the log prints the fallback")
+    if unjustified:
+        return GO, (f"all {len(RECIPE_FLAGS)} recipe values are in the command ({src}); "
+                    f"{len(unjustified)} flag(s) passed with no recorded source: "
+                    f"{', '.join(unjustified)}")
+    return GO, f"all {len(RECIPE_FLAGS)} recipe values appear in the command ({src})"
+
+
+def _recorded_cmd(root):
+    """(cmd, source) for the run that is running, from runs/experiments.jsonl.
+
+    The register is append-only and folded by name, so the LAST row for a name wins --
+    an earlier failed attempt of the same run must not be read as the live command.
+    """
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return None, "runs/experiments.jsonl does not exist"
+    latest = {}
+    try:
+        with open(p, encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                r = json.loads(ln)
+                if r.get("name"):
+                    latest[r["name"]] = r
+    except (OSError, ValueError) as e:
+        return None, f"runs/experiments.jsonl unreadable: {e}"
+    running = [r for r in latest.values() if r.get("status") == "running" and r.get("cmd")]
+    if not running:
+        return None, "no row with status running and a cmd field"
+    if len(running) > 1:
+        names = ", ".join(sorted(r["name"] for r in running))
+        return None, f"{len(running)} runs claim status running ({names})"
+    return running[0]["cmd"], f"runs/experiments.jsonl, {running[0]['name']}"
+
+
 GATES = [
     ("mix_file", gate_mix_file),
     ("epochs_measured", gate_epochs_measured),
@@ -470,6 +667,7 @@ GATES = [
     ("cards", gate_cards),
     ("vocab_id", gate_vocab_id),
     ("checks_and_drift", gate_checks_and_drift),
+    ("launch_command", gate_launch_command),
 ]
 
 
@@ -522,7 +720,7 @@ def pod_attribution(root):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_500m.json"))
+    ap.add_argument("--mix", default=os.path.join(ROOT, LAUNCH_MIX))
     ap.add_argument("--world", type=int, default=7)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -693,6 +891,24 @@ def selftest():
     d = world(_noharness)
     broken["checks_and_drift"] = (d, os.path.join(d, mix_rel))
 
+    # launch_command: the register carries the run's own 00:03 attempt, which omitted
+    # --warmdown --anneal_frac --warmup --save_every and was NOT recoverable from any
+    # reconstruction -- it is the verbatim cmd field of a real row. Written as the only
+    # running row so _recorded_cmd finds it.
+    def _badcmd(d):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        with open(os.path.join(d, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "name": "p500m_20b_0902", "status": "running",
+                "cmd": ("CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh "
+                        "--mix data/mix_500m.json --name p500m_20b_0902 --dim 1024 "
+                        "--layers 32 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 "
+                        "--grad_ckpt --lr_scale 0.85"),
+            }) + "\n")
+    d = world(_badcmd)
+    broken["launch_command"] = (d, os.path.join(d, mix_rel))
+
     ungated = [n for n, _ in GATES if n not in broken]
     assert not ungated, (
         "gate(s) with no broken world: " + ", ".join(ungated) +
@@ -771,6 +987,7 @@ def selftest():
         "cards": "card_assignment.json",
         "vocab_id": "distinct vocab_id",
         "checks_and_drift": "no check lines",
+        "launch_command": "warmdown",
     }
     bad = []
     for name, fn in GATES:
@@ -813,6 +1030,67 @@ def selftest():
     reversible["cards"] = (dc, mc, lambda d: json.dump(
         {"launch_block_granted": True, "note": "granted for the selftest"},
         open(os.path.join(d, "runs", "card_assignment.json"), "w", encoding="utf-8")))
+
+    # launch_command: add the four missing flags to the command. Reversibility matters
+    # more here than for the others -- the gate could refuse because the register is
+    # unreadable, or because no row is running, both of which look identical in the
+    # summary. Undoing ONLY the omission must clear it.
+    dl, ml = broken["launch_command"]
+
+    def _fixcmd(d):
+        path = os.path.join(d, "runs", "experiments.jsonl")
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(ln) for ln in fh if ln.strip()]
+        for r in rows:
+            if r.get("status") == "running":
+                r["cmd"] += " --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500"
+        with open(path, "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r) + "\n")
+    reversible["launch_command"] = (dl, ml, _fixcmd)
+
+    # Citation forms, exercised on the REAL tree rather than in a temp world, because both
+    # properties are about git and a world has no .git: `git cat-file -e` returns 128 there
+    # for EVERY rev, so an @sha world would go red without the judgement being reached --
+    # the shape fb ruled on tonight (a world that fails before the stage under test proves
+    # nothing). dead_citations is pure enough to call directly with constructed prose, which
+    # is the same reason reconcile_command is pure.
+    _tracked = set(subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True,
+                                  text=True).stdout.split())
+    _probe = [p for p in ("runs/experiments.jsonl", "runs/board.jsonl", "runs/tasks.jsonl")
+              if p in _tracked]
+    if not _probe:
+        bad.append("no tracked .jsonl in the repo to probe the citation regex with")
+    elif dead_citations(ROOT, f"read from {_probe[0]}, some run name", _tracked):
+        # Before e1-9 the alternation put json ahead of jsonl, so every .jsonl citation was
+        # truncated to .json and reported as a file that does not exist -- a dead citation
+        # for a tracked file, failing CLOSED and so invisible until the first was written.
+        bad.append(f"a mention of {_probe[0]!r} reads as a dead citation -- the extension "
+                   "was truncated, so a tracked file looks missing (jsonl before json)")
+
+    # @rev: one live commit, four judgements. The live pair comes from the tree, not from a
+    # constant: a hardcoded sha is itself a citation that rots, and this file would then be
+    # asserting against a rev it can no longer reach.
+    _del = subprocess.run(["git", "log", "--diff-filter=D", "--format=%H", "-1",
+                           "--name-only", "--", "probes/", "bench_eff/"],
+                          cwd=ROOT, capture_output=True, text=True).stdout.split()
+    if len(_del) < 2:
+        bad.append("no deleted probe in history to test an @rev citation with")
+    else:
+        _sha, _gone = _del[0], _del[1]
+        for text, want_dead, what in (
+            (f"measured in {_gone}@{_sha}~1.", False,
+             "a retired path at the commit before its deletion must RESOLVE"),
+            (f"measured in {_gone}.", True,
+             "a deleted path with no @rev must stay DEAD, or @rev support has "
+             "silently retired the tracked test for every bare path"),
+            (f"measured in {_gone}@0000000000000000000000000000000000000000.", True,
+             "@ a rev that does not exist must be DEAD (fb's world)"),
+            (f"measured in probes/never_existed_xyz.py@{_sha}.", True,
+             "@ a real rev that never held the path must be DEAD"),
+        ):
+            if bool(dead_citations(ROOT, text, _tracked)) != want_dead:
+                bad.append(f"citation {text!r}: {what}")
 
     for name, (d, mixp, restore) in reversible.items():
         fn = dict(GATES)[name]

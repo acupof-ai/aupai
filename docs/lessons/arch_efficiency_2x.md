@@ -38,7 +38,7 @@ busy 拆成三块，后面所有推导都基于这个拆分：
 | 其余（fusion / KDA / elementwise / flash / FLCE） | 917.2 | L×d（每层每 token 的带宽流量） |
 
 **fp8 GEMM 那 493.1 ms 是地板。** cuBLASLt 实测 274.5 TFLOPS，而这块卡实测的
-fp8 峰值是 279.6 TFLOPS（probes/t59_fp8_peak.py，8192³，30 迭代），即
+fp8 峰值是 279.6 TFLOPS（probes/t59_fp8_peak.py@fa8cc81，8192³，30 迭代），即
 98.2%。换库最多回收 8.9 ms = 0.53%（`eff.fp8_gemm_at_realizable_peak`）。
 
 即使 head 和其余两组全部归零，上界也只有
@@ -302,3 +302,32 @@ trace 报 190.0，8.1% 的差不是噪声，是探针在测 trace 没测的东�
 界定一个未测的分量**（body 的 60.93 ms quantize 行），而分量实测 135.1 ms，
 比用来界定它的聚合量还大 2.2 倍。**聚合量不构成其分量的上界，除非已知分量
 确实在它里面**（tilerl 归纳）。
+
+### 6.1 08-30 的先验估计（t56/t57 实测之前）
+
+`architecture_efficiency.md`（e1 文献综述，94 行）与 `arch_efficiency_plan.md`
+（测量计划，140 行）写就于 t56/t57 之前，2026-09-02 折叠进本表（audit §6c）。
+它们决定了 t56/t57 该测什么；其中的 per-component 耗时表已被本文 §1 的无
+profiler 实测取代——profiler 膨胀不均匀（整体 1.85×，LM head 2.1×），08-30
+表的组件占比有偏，不应再被引用。
+
+| 先验判断 | 依据 | 出处 |
+|---|---|---|
+| MFU 31% 无法从文献判定高低 | H20 无 200M 级 dense 训练 MFU 公开数字 | facts/efficiency.json#eff.h20_mfu_200m |
+| 首要嫌疑：Triton chunk_kda vs CUTLASS（未实测） | 训练走 Triton、推理走 CUTLASS 的代码路径 | facts/efficiency.json#eff.kda_kernel_path |
+| 第一杠杆：batch 32→48/64（零代码） | batch 32 = 90K tok/s，72 OOM，48–64 从未测 | facts/efficiency.json#eff.batch_ceiling |
+| KDA:MLA = 3:1 不改 | Jamba 1:3 与 1:7 质量几乎相同；Meta ~1:5 质量+效率最优 | facts/efficiency.json#eff.jamba_ratio, facts/efficiency.json#eff.meta_hybrid_ratio |
+| AttnRes 算力税从未测到 | 论文只在 48B 验证；内部两次 A/B 均 OOM | facts/efficiency.json#eff.attnres_paper, facts/efficiency.json#eff.attnres_internal |
+| tied embedding 不解开 | Leviathan naive untied 在 200M 全程输 tied | facts/efficiency.json#eff.leviathan_tied |
+| 固定算力下加数据不加参数 | 数据指数 β=0.555 ≫ Chinchilla α=0.34 | facts/efficiency.json#eff.fb_data_curve, facts/efficiency.json#eff.chinchilla_alpha |
+| MFU 上界 ~39% | KDA 2×（+1.4%）+ generic overhead 减半 | arch_efficiency_plan.md §1（已折叠） |
+| FP8 GEMM 已在 93% peak，不是杠杆 | tilerl 按 shape 精确算 | 同上 |
+| KDA kernel ~3% peak（240 ms 换 ~2% FLOPS） | ncu occupancy 6–12% | 同上 |
+| 64K→75K 分解：bucket 100→50 +14.1%、vocab padding 32773→32776 +8.1%、chunk 64→32 ~2% | 3-GPU 隔离 A/B + 单 kernel 实测；三者不可加 | 同上 |
+| 200M launch-bound（~230 ms，11% step）；2B 降到 ~1.1%；纯 scale 换 ~10% MFU | 组件耗时外推 | 同上 §4 |
+| KDA vs attention A/B 取消 | `attn_every=1` 去掉全部 KDA 后 GatedMLA 无位置信息（NoPE），treatment 臂不成立；train.py 已加守卫 | 同上 §2 |
+
+**折叠时丢弃的：** A/B 的 σ̂/MDE/配对设计（treatment 臂不成立后全部作废）、
+文献综述的散文（结论在上表，引文在 facts/efficiency.json）、per-component 耗时表
+（profiler 有偏，被 §1 取代）。`eff.h20_mfu_200m` 是 "unmeasured"——"未找到出处"
+的记录，不是一个测量值。
