@@ -95,12 +95,22 @@ for v in $ARMS; do
     --save_every "$STEPS" $extra "$@"
 done
 
-ARM="$ARM" python3 - <<'PY'
+ARM="$ARM" SKIP_BASE="$SKIP_BASE" BASE_CKPT="${BASE_CKPT:-}" python3 - <<'PY'
 import os
 import re
 out = {}
 arm = os.environ.get("ARM", "zeroinit")
-for v in ("base", arm):
+# With SKIP_BASE the base log belongs to the run that produced the reused checkpoint, under
+# THAT run's arm name, so it is absent here by construction. Reading it would fire the
+# name-disagreement refusal below -- a message that says "the run may have completed fine"
+# and would be read as a failure of a launch that did exactly what it was told.
+arms = (arm,) if os.environ.get("SKIP_BASE") == "1" else ("base", arm)
+if len(arms) == 1:
+    print(f"SKIP_BASE=1: no base arm in this launch. Train loss below is {arm} ALONE -- there "
+          f"is no delta to print here. The comparison runs against "
+          f"{os.environ.get('BASE_CKPT') or 'the reused base checkpoint'} in eval, and its "
+          f"world/steps/mix/seed match is the caller's claim, recorded in the exp row.")
+for v in arms:
     path = f"runs/ab_{arm}_{v}.log"
     try:
         xs = [float(m) for m in re.findall(r"loss ([\d.]+)", open(path).read())]
