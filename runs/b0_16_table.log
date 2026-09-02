@@ -1,0 +1,86 @@
+claimed 7 for b0_16_l9
+
+=== step 832  layer 9 ratio 0.8266  median 0.8252  (1.002x) ===
+
+ckpt_p200m_4b_0902.pt.interrupt.step832  (vocab 32784, seq 4096)
+  math_owm_stage2 2.1609   (262,144 tok)
+  en_c4_stage2 3.2773   (262,144 tok)
+  cot        1.2961   (262,144 tok)
+  textbook_30b 2.3998   (262,144 tok)
+  chatml     3.2797   (262,144 tok)
+  chat_qa    3.2784   (262,144 tok)
+  zh_web     4.6339   (262,144 tok)
+  code_py_starcoder 1.3542   (262,144 tok)
+  code_py_rp1t 1.2954   (262,144 tok)
+  MEAN       2.5529   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9.json
+
+
+=== step 1192  layer 9 ratio 0.8428  median 0.8484  (0.993x) ===
+
+ckpt_p200m_4b_0902.pt.interrupt.step1192  (vocab 32784, seq 4096)
+  math_owm_stage2 2.0696   (262,144 tok)
+  en_c4_stage2 3.1621   (262,144 tok)
+  cot        1.2276   (262,144 tok)
+  textbook_30b 2.2511   (262,144 tok)
+  chatml     3.1154   (262,144 tok)
+  chat_qa    3.0998   (262,144 tok)
+  zh_web     4.4533   (262,144 tok)
+  code_py_starcoder 1.2842   (262,144 tok)
+  code_py_rp1t 1.2156   (262,144 tok)
+  MEAN       2.4310   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9.json
+
+
+=== step 2500  layer 9 ratio 0.7252  median 0.8670  (0.836x) ===
+
+ckpt_p200m_4b_0902.pt.step2500  (vocab 32784, seq 4096)
+  math_owm_stage2 1.9160   (262,144 tok)
+  en_c4_stage2 2.9997   (262,144 tok)
+  cot        1.1044   (262,144 tok)
+  textbook_30b 2.0294   (262,144 tok)
+  chatml     2.8166   (262,144 tok)
+  chat_qa    2.8018   (262,144 tok)
+  zh_web     4.2161   (262,144 tok)
+  code_py_starcoder 1.1820   (262,144 tok)
+  code_py_rp1t 1.1089   (262,144 tok)
+  MEAN       2.2417   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9.json
+
+
+=== step 3000  layer 9 ratio 0.6469  median 0.8675  (0.746x) ===
+
+ckpt_p200m_4b_0902.pt.step3000  (vocab 32784, seq 4096)
+  math_owm_stage2 1.8713   (262,144 tok)
+  en_c4_stage2 2.9521   (262,144 tok)
+  cot        1.0717   (262,144 tok)
+  textbook_30b 1.9670   (262,144 tok)
+  chatml     2.7265   (262,144 tok)
+  chat_qa    2.7046   (262,144 tok)
+  zh_web     4.1431   (262,144 tok)
+  code_py_starcoder 1.1532   (262,144 tok)
+  code_py_rp1t 1.0829   (262,144 tok)
+  MEAN       2.1858   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9.json
+
+
+=== step 3500  layer 9 ratio 0.6052  median 0.8673  (0.698x) ===
+
+ckpt_p200m_4b_0902.pt.step3500  (vocab 32784, seq 4096)
+  math_owm_stage2 1.8606   (262,144 tok)
+  en_c4_stage2 2.9307   (262,144 tok)
+  cot        1.0470   (262,144 tok)
+  textbook_30b 1.9360   (262,144 tok)
+  chatml     2.6624   (262,144 tok)
+  chat_qa    2.6406   (262,144 tok)
+  zh_web     4.1108   (262,144 tok)
+  code_py_starcoder 1.1435   (262,144 tok)
+  code_py_rp1t 1.0646   (262,144 tok)
+  MEAN       2.1551   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9.json
+
