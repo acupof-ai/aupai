@@ -1,0 +1,19 @@
+44-23 acceptance: eval/domain_loss.py --selftest on the pod
+=============================================================
+Pod stamp: 255401e (main, pushed by 1e 2026-09-03)
+Checkpoint: ckpt_p200m_4b_0902.pt
+Run by: 1e (card 2, claimed then released; card back to 0 MiB after)
+
+CUDA_VISIBLE_DEVICES=2 python3 eval/domain_loss.py --ckpt ckpt_p200m_4b_0902.pt --selftest
+
+  selftest real 3.1378 | shuffled 7.0348 | bs4 3.1378 | bs1 3.1378
+  selftest OK   rc=0
+
+Known answers:
+- shuffled - real = 3.90 nat (bar: >= 1.0) -- the metric reads its input.
+- bs4 == bs1 to 4 decimals -- the accumulator sums and divides once.
+
+CPU-only attempt (CUDA_VISIBLE_DEVICES=''): rc=1,
+triton/runtime/driver.py: 0 active drivers -- the KDA kernel has no CPU
+path, so the pre-flight needs one card. Recorded in the pre-flight comment
+in this same commit.

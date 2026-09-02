@@ -278,8 +278,10 @@ def main():
 
     if a.selftest:
         # Pre-flight known answers, before the mix and cache machinery: this path needs
-        # only the checkpoint, so it runs on a fresh tree. _mix_for and the cache build
-        # below used to run first, so --selftest paid for a full mix it never scored.
+        # only the checkpoint, so it runs on a fresh tree -- but it DOES need one card:
+        # the KDA kernel has no CPU path (triton driver error with no visible device).
+        # _mix_for and the cache build below used to run first, so --selftest paid for
+        # a full mix it never scored.
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model, cfg = load_checkpoint(a.ckpt[0], device=device, dtype=torch.bfloat16)
         set_vocab_id(cfg)
