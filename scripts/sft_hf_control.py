@@ -33,11 +33,19 @@ NECESSARILY DIFFERENT, and this belongs in the report header rather than a footn
                   check_sft_ready.py:check_vocab would correctly refuse one.
   the optimizer   our arm uses Muon (lr 0.01) on 2D matrices with AdamW on embeddings and
                   scalars. Muon on a foreign model is a second intervention on top of the
-                  data, so this arm uses AdamW throughout at --lr, whose default is
-                  train.Cfg.embed_lr * sft_math's --lr_scale default. That makes the LR
-                  MAGNITUDE comparable and the optimizer not identical. Any claim from this
-                  comparison must therefore be about data and architecture TOGETHER, not
-                  about either alone.
+                  data, so this arm uses AdamW throughout. Any claim from this comparison
+                  must therefore be about data and architecture TOGETHER, not either alone.
+  the LR          AND IT IS NOT DERIVABLE FROM OURS, which the first version of this file got
+                  wrong. It set 1e-2 = Cfg.embed_lr (0.1) x sft_math --lr_scale (0.1) and
+                  called that "the same magnitude". Two errors in one: Cfg.embed_lr applies
+                  to the EMBEDDING GROUP ONLY (Muon carries the 2D matrices at 0.01, and
+                  Muon's update is orthogonalised, so its lr is not on the same scale as
+                  AdamW's at all), and a per-group lr from our optimizer says nothing about a
+                  foreign model's every-parameter lr. Measured on a CPU smoke test over 4
+                  steps: 1e-2 DIVERGES (loss 11.52 -> 13.27), 1e-4 descends (-> 2.49), 2e-5
+                  is too slow (-> 7.60). The default is therefore 1e-4, chosen by measurement
+                  on this model, and the report must say the arms' LRs were each set for their
+                  own optimizer rather than matched.
   the ChatML tokens  ours are single special tokens; the NeoX BPE has no <|im_start|>, so
                   they tokenize as several ordinary tokens. Added to the tokenizer as real
                   special tokens here so the two sides both learn a dedicated stop symbol --
@@ -157,14 +165,18 @@ def main():
     ap.add_argument("--epochs", type=int, default=1, help="sft_math.py's default")
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--accum", type=int, default=6, help="effective batch = batch * accum")
-    ap.add_argument("--lr", type=float, default=0.01,
-                    help="AdamW lr. Default = train.Cfg.embed_lr (0.1) * sft_math --lr_scale "
-                         "default (0.1): the same MAGNITUDE as our arm, not the same optimizer")
+    ap.add_argument("--lr", type=float, default=1e-4,
+                    help="AdamW lr. NOT derived from our Cfg -- see the LR note in the module "
+                         "docstring. 1e-4 is where a CPU smoke test on this model actually "
+                         "descends (11.52 -> 2.49 over 4 steps); 0.01 DIVERGES (-> 13.27)")
     ap.add_argument("--warmup", type=int, default=20, help="train.Cfg.warmup, absolute steps")
     ap.add_argument("--warmdown", type=float, default=0.65, help="train.Cfg.warmdown")
     ap.add_argument("--final_lr_frac", type=float, default=0.05, help="train.Cfg.final_lr_frac")
     ap.add_argument("--seq", type=int, default=SEQ)
     ap.add_argument("--max_steps", type=int, default=None, help="smoke tests only")
+    ap.add_argument("--device", default="cuda",
+                    help="'cpu' runs the real forward/backward without a card -- the only way "
+                         "to prove this loop executes before it holds one")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -227,9 +239,10 @@ def main():
           f"no resize (a resize to len(tok)={len(tok)} would DISCARD "
           f"{emb_rows - len(tok)} trained rows)", flush=True)
     model.gradient_checkpointing_enable()
-    model.cuda().train()
+    model.to(a.device).train()
+    # fused AdamW is a CUDA-only kernel; the cpu path exists to smoke-test this loop.
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, betas=(0.9, 0.95),
-                            weight_decay=0.01, fused=True)
+                            weight_decay=0.01, fused=(a.device == "cuda"))
     for g in opt.param_groups:
         g["initial_lr"] = g["lr"]
 
@@ -260,8 +273,8 @@ def main():
             acc_loss = 0.0
             for k in range(a.accum):
                 lo = (s * a.accum + k) * a.batch
-                bi = ids[lo:lo + a.batch].cuda()
-                bl = lab[lo:lo + a.batch].cuda()
+                bi = ids[lo:lo + a.batch].to(a.device)
+                bl = lab[lo:lo + a.batch].to(a.device)
                 # train.py's convention: predict token t+1 from tokens <= t.
                 out = model(input_ids=bi[:, :-1], labels=bl[:, 1:])
                 (out.loss / a.accum).backward()
@@ -294,7 +307,7 @@ def main():
         "supervised_frac": round(st["supervised"] / max(st["total"], 1), 4),
         "steps": step, "epochs": a.epochs, "effective_batch": a.batch * a.accum,
         "optimizer": "AdamW (our arm uses Muon on 2D matrices -- NOT the same optimizer)",
-        "lr": a.lr, "warmup": a.warmup, "warmdown": a.warmdown,
+        "lr": a.lr, "lr_note": "set by CPU smoke test on this model, NOT matched to our arm -- 1e-2 diverges here", "warmup": a.warmup, "warmdown": a.warmdown,
         "final_lr_frac": a.final_lr_frac,
         "final_loss": losses[-1] if losses else None,
         "first_loss": losses[0] if losses else None,
