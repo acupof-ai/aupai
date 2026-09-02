@@ -939,3 +939,29 @@ lessons-62 同一天从相反方向踩到同一件事:第五轮 `git apply` 报
 规则:**在共享 worktree 里,任何基于「谁改了这个文件」的动作之前,先跑一次
 `merge-base --is-ancestor`。** 这条不进 AGENTS.md(1e 裁定):它不是一条约束,是一次
 误读的记录,而误读的成本已经写在上面那张表里。
+## 71. 一道检查被守卫条件挡住，从未执行；"静默通过"与"跳过"在日志里同形（2026-09-03，e1、lessons-58 报）
+
+守卫条件和断言体读不同的字段名，检查就永不执行——而它要防的恰恰是唯一一种不报错的失败。
+
+实例：`sft_math.py` 的 vocab_id 断言（2026-09-03 前）：
+
+```python
+ck_vocab = args.vocab or ck.get("vocab_id")
+if ck_vocab and "vocab" in d:          # 守卫判 "vocab"
+    assert d["vocab_id"] == ck_vocab   # 断言体用 "vocab_id"
+elif is_main:
+    print("WARNING the pack predates vocabulary fingerprinting; verify by hand")
+```
+
+packer（`datagen/prepare_sft.py:288`）写的键是 `vocab_id`。跨 `data/sft/*.pt` 普查：只有 2026-08 之前的五个 `arith_*` pack 带裸 `"vocab"`，**现行 packer 产出的每一个 pack 都只有 `vocab_id`**——于是现行 packer 造的每个 pack 都走 warning 分支，这道断言一次都没触发过。而它的注释自己写着要防什么："a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match"——不会报错的失败，正是最需要守卫的那种。这次没有损害（两边实测都是 `0bce3584bc24f255`），被记录的是守卫失效本身。
+
+**为什么能活这么久——这是 shape 的核心，不是"写错了键"那么浅：**
+
+1. **失败模式与成功模式在日志里同形。** assert 通过时不打印任何东西，跳过时打印一条 WARNING。"检查过了"是静默的，"没检查"是一行警告——**没有任何一次运行的日志能区分这两种状态。**
+2. **那条 WARNING 把缺陷说成了产物的属性。** 它写 "the pack predates vocabulary fingerprinting"——而那个 pack 明明带 fingerprint。读者会去查 pack，不会去查 reader。
+
+**怎么被抓到的（可复用）：** `check_sft_ready.py:check_vocab` 读的是正确的键，pre-flight 报 READY；同一次上卡，trainer 报"我判断不了"。**同一个字段的两个独立读取者给出矛盾结论**——它们的分歧比任何一方的结论更有信息量。没有那道独立的 gate，这条永远不会露头。
+
+修法（`7aacbac`）：两键都读；**匹配时也打印 id**——让"通过"在日志里有形状。
+
+规则：守卫条件和断言体必须读同一个字段名，写完拿一个真反例喂一次（known-answer negative）；**凡是"通不过才说话"的检查，都无法从日志证明它跑过——匹配时也打印。** 检测法：一个字段有两个读取者时，先看它们的结论是否一致。
