@@ -601,30 +601,41 @@ def check_selftests_are_gated(root):
     # the second is acceptable -- silence about the first is how a selftest goes unrun.
     nd = re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
     gated |= set(re.findall(r'"([^"]+)":', nd.group(1))) if nd else set()
+    # The map's other direction, which nothing watched: an entry naming a file that no
+    # longer exists. Found by measurement, not by reasoning -- main deleted
+    # mathbank/arith_curriculum.py and mathbank/procedure_curriculum.py and both stayed
+    # in SELFTEST_FILES, invisible because this check only ever asked whether every
+    # selftest is IN the map, never whether every entry still names a file (de-12,
+    # 2026-09-02). A stale entry is not dangerous the way an ungated selftest is, but it
+    # is a claim about coverage of something that is gone, and the count it inflates is
+    # the number this check reports. Only path-shaped entries: the maps carry prose keys
+    # in comments that the value regex also matches.
+    stale = sorted(g for g in gated
+                   if "/" in g and g.endswith((".py", ".sh"))
+                   and not os.path.exists(os.path.join(root, g)))
+    if stale:
+        return FAIL, (f"{len(stale)} hook map entry(ies) name a file that does not exist, "
+                      f"so the map claims coverage of something deleted: {', '.join(stale[:4])}")
     have = set()
-    for sub in ("eval", "scripts", "datagen", "probes"):
-        d = os.path.join(root, sub)
-        if not os.path.isdir(d):
-            continue
-        for nm in os.listdir(d):
-            if not nm.endswith(".py"):
-                continue
-            rel = f"{sub}/{nm}"
-            try:
-                body = open(os.path.join(d, nm), encoding="utf-8").read()
-            except OSError:
-                continue
-            # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
-            # narrow predicate assumed every selftest is wired through argparse; nine
-            # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
-            # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
-            # gate reported "27 files, all gated" while those nine ran nowhere. A gate
-            # that cannot see a file cannot report it missing, so its PASS counted only
-            # the files it already understood -- the check encoding an assumption about
-            # where the interesting case lives, which is this repo's named class, in
-            # the check written to catch that class (de, 2026-09-01, on 62's gate).
-            if "--selftest" in body:
-                have.add(rel)
+    # walk_tracked, not an os.listdir over four hand-named directories. The list was
+    # ("eval", "scripts", "datagen", "probes"), so mathbank/ was outside what the check
+    # looked at entirely and "42 files, all gated" was true of that subset and silent
+    # about the rest -- the same shape as the predicate bug recorded below, one level up:
+    # a gate that cannot see a file cannot report it missing. mathbank/dist_check.py
+    # carries a selftest and was invisible here (de, 2026-09-02, MEASURED at 42 vs 43).
+    for p, body in walk_tracked(root, (".py",)):
+        rel = os.path.relpath(p, root)
+        # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
+        # narrow predicate assumed every selftest is wired through argparse; nine
+        # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
+        # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
+        # gate reported "27 files, all gated" while those nine ran nowhere. A gate
+        # that cannot see a file cannot report it missing, so its PASS counted only
+        # the files it already understood -- the check encoding an assumption about
+        # where the interesting case lives, which is this repo's named class, in
+        # the check written to catch that class (de, 2026-09-01, on 62's gate).
+        if "--selftest" in body:
+            have.add(rel)
     missing = sorted(have - gated)
     if missing:
         return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
@@ -790,8 +801,15 @@ def _broken_selftests_are_gated():
     all and this world would have gone GREEN with the file unguarded. That is exactly
     the defect the widening fixes, and using an argparse file here would leave the
     widening untested (de, 2026-09-01).
+
+    Built on _tmp_repo_shaped, not _tmp_repo, since de-12 added the stale-entry
+    assertion: in a bare tree none of the map's 49 paths resolve, so the check FAILed
+    there naming datagen/build_corpus.py and never reached the ungated selftest. A world
+    failing for the wrong reason proves nothing about the mutation it was built for
+    (de, 2026-09-02). scripts/ is a symlink into the real repo in a shaped world, so the
+    mutated hook needs its own copied directory or the write lands in the repo itself.
     """
-    d = _tmp_repo()
+    d = _tmp_repo_shaped()
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
     ev = os.path.join(ROOT, "scripts", "eval_artifacts.py")
     if not (os.path.exists(hook) and os.path.exists(ev)):
@@ -799,13 +817,17 @@ def _broken_selftests_are_gated():
     text = open(hook, encoding="utf-8").read()
     if '"scripts/eval_artifacts.py"' not in text:
         return None
-    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    # Replace the scripts/ symlink with a real copy: everything the map names must still
+    # resolve, and only the hook may differ.
+    import shutil
+    link = os.path.join(d, "scripts")
+    if os.path.islink(link):
+        os.unlink(link)
+    shutil.copytree(os.path.join(ROOT, "scripts"), link,
+                    ignore=shutil.ignore_patterns("__pycache__"))
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
         text.replace('"scripts/eval_artifacts.py", ', "")
-            .replace('"scripts/eval_artifacts.py"', '"x/y.py"'))
-    # the real file, so the check must find its --selftest and miss it in the map
-    open(os.path.join(d, "scripts", "eval_artifacts.py"), "w", encoding="utf-8").write(
-        open(ev, encoding="utf-8").read())
+            .replace('"scripts/eval_artifacts.py"', '"scripts/harness.py"'))
     return d
 
 
@@ -1125,6 +1147,20 @@ def walk_tracked(root, suffixes):
                 yield p, open(p, encoding="utf-8", errors="replace").read()
 
 
+def strip_docstrings(text):
+    """Blank docstring bodies, keeping their newlines so line numbers stay true.
+
+    Blanking rather than deleting is the whole content of this function, and the reason
+    it is one definition instead of three: `re.sub(..., "")` shifts every line number
+    after the docstring, so a check that reports `path:n` names a line that holds nothing
+    it was looking for. timestamps_are_utc had the blanking form and curl_ipv4 had the
+    deleting one -- MEASURED 2026-09-02 on a file whose curl sits on line 10 after a
+    six-line docstring: the deleting form reported line 5. Two copies of a traversal
+    diverge; the copy without the fix is the one nobody was reading."""
+    return re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
+                  lambda m: "\n" * m.group(0).count("\n"), text)
+
+
 def check_curl_ipv4(root):
     """Every curl invocation in tracked code passes -4.
 
@@ -1140,8 +1176,10 @@ def check_curl_ipv4(root):
     scanned = 0
     for p, text in walk_tracked(root, (".py", ".sh")):
         scanned += 1
-        # Drop docstrings and comments before looking for invocations.
-        text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+        # Drop comments and blank docstrings before looking for invocations. This used a
+        # deleting re.sub until 2026-09-02, so every line number it reported after a
+        # docstring was too low -- the FAIL named a line holding no curl at all.
+        text = strip_docstrings(text)
         for n, line in enumerate(text.split("\n"), 1):
             s = line.split("#", 1)[0]
             if inv.search(s) and not re.search(r"-4\b", s):
@@ -1163,11 +1201,7 @@ def check_timestamps_are_utc(root):
     scanned = 0
     for p, text in walk_tracked(root, (".py",)):
         scanned += 1
-        # Blank the docstring, keep its newlines: dropping it outright shifts every
-        # line number after it, which is how the first run of this check named three
-        # lines that hold no timestamp at all.
-        text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
-                      lambda m: "\n" * m.group(0).count("\n"), text)
+        text = strip_docstrings(text)
         lines = text.split("\n")
         for n, line in enumerate(lines, 1):
             # The call's arguments may wrap, so read the continuation too: a first
