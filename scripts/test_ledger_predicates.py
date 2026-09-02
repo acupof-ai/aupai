@@ -154,6 +154,11 @@ def _worlds():
     W.append(
         ("6018c62: key-fold, -97 lines", a, b, False, "folds each key to its last row; audited correct by b0")
     )
+    # The acceptance negative control 1e named for the hook (de-33): an ordinary append of one
+    # done event. Measured 227 -> 228 rows with 0 keys added, so the close folds onto an
+    # existing key -- the shape the guard must never refuse.
+    a, b = lines("c3a5a23^"), lines("c3a5a23")
+    W.append(("c3a5a23: append one done event", a, b, False, "+1 row, 0 keys added"))
 
     real = lines("main")
     assert real, "runs/experiments.jsonl is absent on main"
