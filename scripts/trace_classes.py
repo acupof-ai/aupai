@@ -56,10 +56,45 @@ PEAK = {"fp8": 279.6e12, "bf16": 136.7e12, "fp16": 136.7e12, "fp32": 44e12}
 #: against it is a bound, not a measurement.
 HBM_BYTES_PER_S = 4.0e12
 
+#: Every key is a string the profiler ACTUALLY writes, verified against the p200m trace's own
+#: Input type values, not guessed from torch's dtype repr. The trace says "c10::BFloat16" and
+#: "c10::Float8_e4m3fn" -- neither was in this table, so 3,720 of 15,426 elementwise kernels got
+#: no width and therefore no ideal at all. The short aliases below are kept because other
+#: profiler versions emit them.
+#:
+#: NOT-A-TENSOR entries are deliberately absent: "Scalar", "TensorList", "" and the like carry no
+#: bytes, and _width_of skips them rather than mapping them to a size.
 DTYPE_BYTES = {"float": 4, "float32": 4, "f32": 4, "double": 8,
                "bfloat16": 2, "bf16": 2, "half": 2, "float16": 2, "f16": 2,
                "char": 1, "int8": 1, "float8_e4m3fn": 1, "float8_e5m2": 1,
-               "long": 8, "int64": 8, "int": 4, "int32": 4, "bool": 1}
+               "long": 8, "long int": 8, "int64": 8, "int": 4, "int32": 4, "bool": 1,
+               "c10::BFloat16": 2, "c10::Half": 2, "c10::Float8_e4m3fn": 1,
+               "c10::Float8_e5m2": 1, "c10::complex<float>": 8}
+
+#: Input type entries that are not tensors. A Scalar has no bytes, and it is usually FIRST in the
+#: list for ops like add_(t, alpha=1) -- so "the first entry with a known width" picked the
+#: scalar's `float` (4 bytes) for 1,794 bf16 kernels and `double` (8) for 531, pricing 2-byte
+#: traffic at 2x and 4x. The width must come from the first entry that is a TENSOR.
+NON_TENSOR_TYPES = {"Scalar", "ScalarList", "TensorList", "GenericList", "Device", "Layout",
+                    "MemoryFormat", "Generator", "Storage", "", "None"}
+
+
+def _width_of(types: list) -> int | None:
+    """Bytes per element of the first TENSOR operand, or None.
+
+    The dtype of the data, not of whatever happens to be listed first: an aten op's Input type
+    interleaves tensors with Scalars, and a Scalar records as `float` or `double`. Taking the
+    first *recognised* string therefore priced bf16 traffic at 4 or 8 bytes per element on 2,325
+    of p200m's elementwise kernels. None when no operand is a tensor of known dtype -- an
+    unpriced kernel is reported as unpriced, never given a guessed width.
+    """
+    for t in types:
+        if t in NON_TENSOR_TYPES:
+            continue
+        if t in DTYPE_BYTES:
+            return DTYPE_BYTES[t]
+        return None
+    return None
 
 #: Matched in order; first hit wins. Names are substrings of the CUDA kernel.
 CLASS_PATTERNS = [
@@ -258,7 +293,7 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         cls = classify(name)
         if op_name and ("kda" in op_name.lower() or "delta_rule" in op_name.lower()):
             cls = "fla_kda"
-        width = next((DTYPE_BYTES[t] for t in types if t in DTYPE_BYTES), None)
+        width = _width_of(types)
         rec = per[cls]
         rec["us"] += dur
         rec["n"] += 1
@@ -373,6 +408,22 @@ def _selftest() -> None:
     assert _shape_bytes([], 2) is None and _shape_bytes([[]], 2) is None, \
         "no shapes means no ideal, never zero bytes"
     # The width matters and is the dtype's, not a constant: bf16 and fp32 differ 2x.
+    assert _shape_bytes([[10, 10]], 4) == 800
+
+    # _width_of: the dtype of the first TENSOR, and the strings the profiler really writes.
+    # Both halves were wrong and each is worth a case. Counted on p200m's 15,426 elementwise
+    # kernels: 3,720 got NO width because "c10::BFloat16" was not in the table, and 2,325 got
+    # 4 or 8 bytes for 2-byte data because a leading Scalar records as float or double.
+    assert _width_of(["c10::BFloat16"]) == 2, "the trace writes c10::BFloat16, not bfloat16"
+    assert _width_of(["c10::Float8_e4m3fn"]) == 1
+    assert _width_of(["Scalar", "c10::BFloat16"]) == 2, "a Scalar is not the data's dtype"
+    assert _width_of(["float", "c10::BFloat16"]) == 4, \
+        "a leading float TENSOR is the data's dtype -- only non-tensors are skipped"
+    assert _width_of(["Scalar", "Scalar"]) is None, "no tensor operand means no width"
+    assert _width_of([]) is None
+    assert _width_of(["SomeFutureType"]) is None, "an unknown tensor type is unpriced, not guessed"
+    # bf16 at 2 bytes, priced as float, is 2x the real traffic -- the ratio it produces is HALF.
+    assert _shape_bytes([[10, 10]], _width_of(["Scalar", "c10::BFloat16"])) == 400
     assert _shape_bytes([[10, 10]], 4) == 800
     assert _shape_flops([[4, 8], [16, 32]]) is None, "no shared dim -> no guess"
     # One 1 TFLOP-ish GEMM at exactly peak must read 1.0x, and a kernel with no
