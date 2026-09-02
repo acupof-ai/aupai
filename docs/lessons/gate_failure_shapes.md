@@ -867,3 +867,31 @@ model.py:330    n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_su
 - **R1(传播)**:44 引用 fact 的机制时没读当下的代码——fact 说「重读」,代码说「绝对 cursor」。论证建在过期源上。动作(早停)碰巧是对的(重起既被钉在 832,丢弃必然,越早越少),但理由是错的;机制读出前,对的理由和碰巧对的错理由无法区分。
 
 规则:**修 bug 的同一个 commit 要 grep facts/ 里描述这个 bug 的条目,挂 refuted_by**;引用一条 fact 的机制做论证前,先读它描述的代码当下的样子。检测法:fact 的 value 里出现「re-read/重读/second resume」这类行为断言、而该行为的修复 commit 已在 main 上、fact 无 refuted_by——就是本条。
+
+## 69. 判据的 needle 落在判据自己那一行——它没有能力失败(b0 当事人,2026-09-03,与 §67 同族)
+
+一个 grep 型守卫,断言「被守护的那段文案还在」。**那句文案就出现在守卫自己那一行里**,所以 `needle not in src` 恒为假。它读起来完全正确,静态复审看不出问题,**只有给它造 broken world 才会露:改坏被守护的代码,守卫是绿的。**
+
+实例:`scripts/sft_hf_control.py` 的 selftest。`resize_token_embeddings(len(tok))` 在 Pythia-160m 上是**缩小**(50304 → 50279,丢 25 行和 128 对齐),而且**完全静默**——不报错,下游没有任何检查会红。所以写了两个 grep:
+
+```python
+# 守卫 1(真的):grep 那个调用本身
+if ".resize_token_" + "embeddings(" in src:            # 断成两半,不匹配自己的文档
+    fails.append("resize_token_embeddings is called again: ...")
+
+# 守卫 2(假的):grep 边界检查的报错文案
+if "is outside the embedding" not in src:              # ← 这句就在这一行里
+    fails.append("the ChatML-id bounds check is gone, ...")
+```
+
+`grep -n "is outside the embedding"` 出来**两处**:`:276` 是被守护的 `print`,`:486` 是守卫自己。把 `:276` 改坏,`src` 里仍然有 `:486` 那一份,selftest 绿。
+
+守卫 1 之所以没踩同一个坑,是因为**needle 被写成 `".resize_token_" + "embeddings("`**,拼接后才等于要找的串,所以这个文件的散文和注释里怎么写都不会自匹配。这不是巧合,是这类判据唯一的写法。
+
+**处理是删掉,不是修。** 改成搜 `if max_id >= emb_rows` 能用,但那条边界检查是 `main()` 里一个活的 `if`——**删掉它是一次可见的代码删除**,不是 grep 该防的静默失效。grep 只该守「删了没人会发现」的东西,resize 那条正是,边界检查那条不是。删除理由写在本该放那个检查的位置,因为下一个想加它的人会伸手拿同一个形状。
+
+与 §67 的关系:§67 是「断言约束的是数值不是机制」,本条是**断言约束的是它自己**。两条同一根:**判据的作用域没有排除判据自身**。de 同日在 `harness.py` 的 `no_conflict_markers` 上遇到同一件事并正确处理了——它的 needle 列表里就有那些 marker,所以**把自己排除在扫描之外**。判据和数据在同一个文件里时,要么排除自己(de 的做法),要么让 needle 拼接后才成立(守卫 1 的做法);两者都不做就是本条。
+
+规则:**grep 型判据必须跑一次 broken world**——改坏被守护的东西,确认它红。检测法:把 needle 拿去 `grep -n` 整个文件,**命中数 ≥ 2 且其中一处是判据自己那一行**,就是本条。
+
+推论,比本条更宽:**「注释断言了代码没做的事」和「判据断言了它没在检查的事」不是同一件事,后者严重得多**。前者读代码能发现(注释和代码并排,矛盾可见);后者读代码发现不了,因为**它读起来完全正确**。所以「守卫交付标准 = 证明它会失效」在这类上不是把标准提高,**是唯一的发现手段**。
