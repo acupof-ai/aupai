@@ -14,6 +14,7 @@
   "attn_res_dyn_q": false,
   "zero_init_out": false,
   "muon_shape_lr": false,
+  "value_embed": false,
   "seq": 4096,
   "grad_ckpt": false,
   "fone": false,
