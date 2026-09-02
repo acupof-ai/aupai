@@ -124,6 +124,70 @@ def _selftest():
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} the recorded p200m shape matches e19eeb7's line")
 
+    # fp8 must be APPLIED, not just recorded. The first GPU attempt wrote fp8=True while
+    # calling neither of train.py's two fp8 steps, so the model stayed fp32, every activation
+    # doubled, and 32x4096 OOMed at 93 GiB of a 95 GiB card. Same shape as the EOS_ID default
+    # that was always taken: a field describing a premise the code never established.
+    #
+    # Checked by walking main()'s AST, NOT by a substring scan of this file. The substring
+    # version could not fail: the needle "train.convert_to_fp8_compute(raw)" sat in the
+    # check's own data table, so it matched itself even after the real call was deleted --
+    # a check whose subject includes the check is self-satisfying. Verified RED by deleting
+    # the call from a copy of this file (/tmp/break_fp8.py).
+    import ast as _ast
+
+    with open(os.path.abspath(__file__), encoding="utf-8") as fh:
+        me = fh.read()
+    _main = next((n for n in _ast.parse(me).body
+                  if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
+    calls, casts, loops, dicts = set(), set(), [], []
+    for n in _ast.walk(_main) if _main else ():
+        if isinstance(n, _ast.Call):
+            f = n.func
+            if isinstance(f, _ast.Attribute):
+                calls.add(f.attr)
+                if f.attr == "to":
+                    casts.update(_ast.unparse(x) for x in n.args)
+        elif isinstance(n, _ast.For):
+            loops.append(_ast.unparse(n.iter))
+        elif isinstance(n, _ast.Dict):
+            dicts.append({_ast.unparse(k): _ast.unparse(v)
+                          for k, v in zip(n.keys, n.values) if k is not None})
+    # The record's fp8 field must carry the APPLIED value (the local `fp8`), not the requested
+    # flag (`a.fp8`). Read from the AST, not by substring: a literal '"fp8": fp8,' in this
+    # check's own data table would match itself, which is how the first version of the check
+    # below stayed green after the real call was deleted.
+    fp8_field = next((d["'fp8'"] for d in dicts if "'fp8'" in d), None)
+    for ok, why, hint in (
+        (_main is not None, "has a main() to check at all", "main() is gone"),
+        ("convert_to_fp8_compute" in calls, "calls convert_to_fp8_compute (train.py:2020)",
+         "fp8 would be recorded but the linears never converted"),
+        (any("bfloat16" in c for c in casts), "casts the model to bf16 (train.py:2019)",
+         "the model stays fp32 and every activation doubles -- this is what OOMed"),
+        (fp8_field == "fp8", "records the APPLIED fp8, not the requested flag",
+         f"the record's fp8 field is {fp8_field!r}; a.fp8 is the request, fp8 is what ran"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
+
+    # A step is `accum` micro-batches, not one. The first version ran a single forward per
+    # timed step, so step_total did not depend on accum at all -- and the b32a1-vs-b16a2 A/B
+    # is a comparison whose ONLY variable is accum, so the b16a2 arm would have reported half
+    # its work and won. Checked structurally: some loop in main() must iterate over Cfg.accum,
+    # and the DDP no_sync that train.py:2246 applies to every micro-batch but the last must be
+    # called, or the high-accum arm all-reduces accum times per step and pays what the run
+    # does not.
+    for ok, why, hint in (
+        (any(it.replace(" ", "") == "range(train.Cfg.accum)" for it in loops),
+         "loops over range(Cfg.accum) micro-batches",
+         f"no loop in main() iterates range(Cfg.accum) (loops: {loops}); step_total would be "
+         "independent of accum, deciding the b32a1/b16a2 A/B backwards"),
+        ("no_sync" in calls, "calls no_sync for all but the last micro-batch (train.py:2246)",
+         "DDP would all-reduce accum times per step, inflating the high-accum arm"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} the timed step {why}" + ("" if ok else f" -- {hint}"))
+
     # Every train.* name this file resolves must exist, checked by AST rather than by import
     # (train pulls in CUDA-only modules). Three of my drafts named symbols that do not exist
     # -- build_model, an EOS_ID constant, build_tokenizer(is_main) -- and each would have died
@@ -159,7 +223,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2
+    n = 6 + 3 + 2 + 4 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -212,21 +276,23 @@ def main():
     # there are none -- the function is at train.py's top level.
     train.VOCAB_ID = train.vocab_fingerprint(tok)
     tr, va = train.build_mix(os.path.join(ROOT, a.mix), tok, is_main, ddp, rank, world)
-    seqs = (tr[0] if train.Cfg.fone else tr).long()
+    # NOT .long(): build_mix returns int32 and the plan is 976,552 x 4097 = 14.9 GiB, so a
+    # widening copy costs 29.8 GiB of host RAM for rows the step never reads. train.py keeps
+    # the plan as returned and indexes into pinned buffers, which is what is timed below.
+    seqs = tr[0] if train.Cfg.fone else tr
     X, Y = seqs[:, :-1], seqs[:, 1:]
-    vseqs = (va[0] if train.Cfg.fone else va).long()
+    vseqs = va[0] if train.Cfg.fone else va
     Xva, Yva = vseqs[:, :-1], vseqs[:, 1:]
 
     raw = train.HybridLM(train.Cfg).to(dev)
-    # --fp8 IS NOT JUST A FLAG TO RECORD (de, 2026-09-02). train.py:2016-2020 does two things
-    # under it -- casts the whole model to bf16 AND swaps the linears for FP8 -- and this file
-    # recorded fp8=True while doing neither, so the model stayed fp32 and activations doubled.
-    # de's 206M profiler OOMed at 93.3/95.22 GiB on a (131072, 3072) FFN buffer that way.
-    # The failure mode is what makes it worth a comment: it presents as "this shape does not
-    # fit", so an L18 probe with this gap would report a memory verdict about the wrong program
-    # and the conclusion written down would be "L18 is too big".
-    amp = True  # set before the cast below, which reads it exactly as train.py:2016 does
-    if a.fp8 and amp:
+    # train.py:2016-2020 -- fp8 is `args.fp8 and amp`, and it does TWO things: casts the
+    # module to bf16 and then converts the linears. Recording fp8=True while doing neither
+    # is a number without its premise: the model stays fp32, every activation doubles, and
+    # 32x4096 OOMs at 93 GiB on a 95 GiB card (measured, this run's first attempt). The
+    # cast is also not cosmetic -- it is what makes the timed step the run's step.
+    amp = True
+    fp8 = a.fp8 and amp
+    if fp8:
         raw = raw.to(torch.bfloat16)
         train.convert_to_fp8_compute(raw)
     # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
@@ -264,7 +330,7 @@ def main():
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
         print(f"built {n_par / 1e6:.2f}M params, compile={train.Cfg.compile and amp}, "
-              f"fp8={a.fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
+              f"fp8={fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
               flush=True)
 
     # Peak is measured over the TIMED steps only. Reset here, after warmup's allocations have
@@ -293,23 +359,40 @@ def main():
         if st == a.warmup:
             torch.cuda.reset_peak_memory_stats()
             wall0 = time.perf_counter()
-        idx = torch.arange(st * B, st * B + B) % len(X)
         torch.cuda.synchronize()
         t_step = time.perf_counter()
-        torch.index_select(X, 0, idx, out=xb_pin)
-        torch.index_select(Y, 0, idx, out=yb_pin)
-        xb = xb_pin.to(dev, non_blocking=True)
-        yb = yb_pin.to(dev, non_blocking=True)
-        torch.cuda.synchronize()
-        t_fwd = time.perf_counter()
+        t_fwd = None
+        # ACCUM micro-batches per optimizer step, as train.py:2212 does: its loop strides by
+        # Cfg.batch and steps the optimizer every Cfg.accum-th iteration, so one "step" is
+        # accum forward/backward passes. Timing a single pass and calling it a step made
+        # step_total independent of accum -- which would have decided fb's b32a1 vs b16a2 A/B
+        # backwards, since accum IS the variable there: the b16a2 arm would report half its
+        # real work and win on a number that describes half a step.
+        for micro in range(train.Cfg.accum):
+            idx = torch.arange(st * B * train.Cfg.accum + micro * B,
+                               st * B * train.Cfg.accum + (micro + 1) * B) % len(X)
+            torch.index_select(X, 0, idx, out=xb_pin)
+            torch.index_select(Y, 0, idx, out=yb_pin)
+            xb = xb_pin.to(dev, non_blocking=True)
+            yb = yb_pin.to(dev, non_blocking=True)
+            if micro == 0:
+                torch.cuda.synchronize()
+                t_fwd = time.perf_counter()
 
-        cu = train.doc_cu_seqlens(xb, eos) if train.Cfg.doc_mask else None
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-            hidden, _ = model(xb, yb, cu, None)
-        Bt, Tt, D = hidden.shape
-        weight = raw.head.weight[: raw.cfg.vocab]
-        loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
-        (loss / train.Cfg.accum).backward()
+            cu = train.doc_cu_seqlens(xb, eos) if train.Cfg.doc_mask else None
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
+                hidden, _ = model(xb, yb, cu, None)
+            Bt, Tt, D = hidden.shape
+            weight = raw.head.weight[: raw.cfg.vocab]
+            loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
+            loss = loss / train.Cfg.accum
+            # train.py:2246 -- no_sync on every micro-batch but the last, or DDP all-reduces
+            # accum times per step and the NCCL cost of the b16a2 arm doubles for no reason.
+            if ddp and train.Cfg.accum > 1 and micro + 1 != train.Cfg.accum:
+                with model.no_sync():
+                    loss.backward()
+            else:
+                loss.backward()
         torch.nn.utils.clip_grad_norm_(raw.parameters(), train.Cfg.clip)
         for opt in optimizers:
             opt.step()
@@ -378,7 +461,7 @@ def main():
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.dim,
-           "fp8": a.fp8, "grad_ckpt": a.grad_ckpt,
+           "fp8": fp8, "grad_ckpt": a.grad_ckpt,
            "compile": bool(train.Cfg.compile and amp), "steps_timed": len(steps),
            "step_total": _stats(steps), "loader_wait": _stats(loader),
            "nccl_floor": _stats(nccl) if ddp else None,
@@ -387,7 +470,7 @@ def main():
         tot = rec["step_total"]["median_ms"] if rec["step_total"] else None
         print(f"\n200M host-side per-step cost  (mix {a.mix}, world {world}, "
               f"{rec['params_m']}M, batch {B} x accum {train.Cfg.accum} x seq {SEQ}, "
-              f"fp8={a.fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
+              f"fp8={fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
         for k in ("step_total", "loader_wait", "nccl_floor", "save", "val"):
             print("  " + fmt_row(k, rec[k], world, tot))
         if a.json:
