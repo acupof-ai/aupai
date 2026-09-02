@@ -867,4 +867,3 @@ model.py:330    n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_su
 - **R1(传播)**:44 引用 fact 的机制时没读当下的代码——fact 说「重读」,代码说「绝对 cursor」。论证建在过期源上。动作(早停)碰巧是对的(重起既被钉在 832,丢弃必然,越早越少),但理由是错的;机制读出前,对的理由和碰巧对的错理由无法区分。
 
 规则:**修 bug 的同一个 commit 要 grep facts/ 里描述这个 bug 的条目,挂 refuted_by**;引用一条 fact 的机制做论证前,先读它描述的代码当下的样子。检测法:fact 的 value 里出现「re-read/重读/second resume」这类行为断言、而该行为的修复 commit 已在 main 上、fact 无 refuted_by——就是本条。
->>>>>>> Stashed changes
