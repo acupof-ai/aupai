@@ -264,7 +264,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 6 | §7 §13 §25 §27 §51 §59 |
 | State the vision before the number; outside it, label unmeasured, not absent | 10 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 |
-| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 7 | §1 §11 §12 §20 §21 §50 §55 |
+| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 9 | §1 §11 §12 §20 §21 §50 §55 §62 §63 |
 | Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 4 | §16 §22 §42 §58 |
 | Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §33 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
