@@ -59,6 +59,7 @@ import ast
 import contextlib
 import io
 import os
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -165,6 +166,34 @@ def _parse(parser, argv):
         return None, (e.code if e.code is not None else 0)
 
 
+def undefined_names(path):
+    """Names train.py uses and never binds, via ruff F821. Static, and that is the point.
+
+    b0's shape, 2026-09-02, and it applies to this file: its model.py/train.py split
+    moved _FP8_MAX_E4M3 into model.py while six uses stayed in train.py, and all FOUR of
+    its dynamic acceptance checks went green because the paths they exercise never touch
+    FP8. ruff F821 named it in one second. A dynamic assertion speaks about the code it
+    RUNS; a name that is gone from code the assertion does not reach is invisible to it.
+
+    Measured on this very file before adding this: with `_GONE = _NEVER_DEFINED_XYZ`
+    injected into a real copy of train.py, the fourteen assertions below report the
+    identical "14 red, 0 wrong" -- because build_parser() execs only the parser REGION,
+    so a name broken anywhere else in the module cannot reach them. e1-16 edits argparse
+    defaults and Cfg fields, exactly the kind of edit that leaves a dangling reference
+    behind, so the acceptance would have gone green on a train.py that cannot import.
+
+    Returns [] when ruff is unavailable -- absence of the tool is not evidence of
+    absence of the defect, so main() reports that as a separate, third outcome rather
+    than as a pass.
+    """
+    try:
+        r = subprocess.run(["ruff", "check", "--select", "F821", "--output-format",
+                            "concise", path], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        return None, f"could not run ruff: {e}"
+    return [ln for ln in r.stdout.splitlines() if "F821" in ln], ""
+
+
 def main():
     strict = "--strict" in sys.argv
     parser, why = build_parser()
@@ -176,6 +205,18 @@ def main():
 
     cfg = cfg_defaults()
     red, green, wrong = [], [], []
+
+    # STATIC FIRST, because a dangling name is invisible to every assertion below and
+    # e1-16's edit is exactly the kind that leaves one (see undefined_names).
+    dangling, ruff_why = undefined_names(os.path.join(ROOT, "train.py"))
+    if dangling is None:
+        wrong.append(f"{ruff_why} -- the static half of this acceptance did not run, and "
+                     "a tool that could not run is not a clean result")
+    elif dangling:
+        wrong.append(f"train.py has {len(dangling)} undefined name(s), so it cannot "
+                     f"import regardless of what the parser accepts: {dangling[0]}")
+    else:
+        green.append("train.py binds every name it uses (ruff F821)")
 
     # 1. Omitting any justified knob must be refused.
     for knob in RECIPE_FLAGS:
