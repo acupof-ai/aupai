@@ -1,0 +1,57 @@
+claimed 7 for b0_16_l9
+step 3500: layer 9 ratio 0.6052, 12-layer median 0.8673 -> rescale mixer.o by 1.4330
+control: layer 6 (ratio 0.8719, near the median) gets the SAME x1.4330, so a null can be told apart from no resolution
+=== A: unscaled ===
+
+ckpt_p200m_4b_0902.pt.step3500  (vocab 32784, seq 4096)
+  math_owm_stage2 1.8606   (262,144 tok)
+  en_c4_stage2 2.9307   (262,144 tok)
+  cot        1.0470   (262,144 tok)
+  textbook_30b 1.9360   (262,144 tok)
+  chatml     2.6624   (262,144 tok)
+  chat_qa    2.6406   (262,144 tok)
+  zh_web     4.1108   (262,144 tok)
+  code_py_starcoder 1.1435   (262,144 tok)
+  code_py_rp1t 1.0646   (262,144 tok)
+  MEAN       2.1551   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9_rescale.json
+
+=== B: layer 9 (the split) rescaled x1.4330 ===
+
+_l9rescale_9_1.4330.pt  (vocab 32784, seq 4096)
+  math_owm_stage2 1.8957   (262,144 tok)
+  en_c4_stage2 2.9776   (262,144 tok)
+  cot        1.0736   (262,144 tok)
+  textbook_30b 1.9872   (262,144 tok)
+  chatml     2.7327   (262,144 tok)
+  chat_qa    2.7244   (262,144 tok)
+  zh_web     4.1838   (262,144 tok)
+  code_py_starcoder 1.1696   (262,144 tok)
+  code_py_rp1t 1.0893   (262,144 tok)
+  MEAN       2.2038   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9_rescale.json
+
+=== C: layer 6 (control, normal) rescaled x1.4330 ===
+
+_l9rescale_6_1.4330.pt  (vocab 32784, seq 4096)
+  math_owm_stage2 1.8681   (262,144 tok)
+  en_c4_stage2 2.9366   (262,144 tok)
+  cot        1.0499   (262,144 tok)
+  textbook_30b 1.9478   (262,144 tok)
+  chatml     2.6665   (262,144 tok)
+  chat_qa    2.6461   (262,144 tok)
+  zh_web     4.1185   (262,144 tok)
+  code_py_starcoder 1.1496   (262,144 tok)
+  code_py_rp1t 1.0713   (262,144 tok)
+  MEAN       2.1616   (unweighted across domains)
+
+appended 1 record(s) to runs/b0_16_l9_rescale.json
+
+
+READ, pre-registered before these numbers existed:
+  |B-A| > 0.24                -> layer 9's split has a measured consequence
+  |B-A| <= 0.24 and |C-A| > 0.24 -> bounded below the bar; the probe HAS resolution, so this is a real null and b0-16 closes as a correlate
+  |B-A| <= 0.24 and |C-A| <= 0.24 -> NO RESOLUTION: a 43% branch-gain change is invisible to domain_loss anywhere, so the null says nothing about layer 9
+  B WORSE than A does NOT mean the split is harmless -- it means the trained value beats the median, which is a different claim.
