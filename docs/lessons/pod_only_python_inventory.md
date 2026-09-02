@@ -278,6 +278,38 @@ source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: 
 - `triton_scan.py` — Triton kernel for Gated Delta Net recurrence scan — 10-50x f
 
 
+## 3.5 已执行：16 个删除（2026-09-02，b0 执行、3b 复核）
+
+**三关全过，逐项记录：**
+
+| 关 | 方法 | 结果 |
+|---|---|---|
+| 一 · 字节比对 | 双方独立分类后逐条对账 | 179/20/158 三份清单完全一致，`diff` 空 |
+| 二 · glob + 运行时加载器 | 全路径 grep + `pod_head_manifest.txt` + 候选目录 58 处 `glob(`/`import_module` | 16 个全部 0 命中 |
+| 三 · 59 门 selftest | pod 上删除前后各跑一次，**逐行 diff 每门结论** | **IDENTICAL**，59 门判决完全相同 |
+
+**门三用 diff 而不是看 FAIL 数**，因为 fb 的验收是"结论完全不变"——
+**"两次都 0 FAIL"不等于"每一门的结论都相同"**：一门从 PASS 变 SKIP、或从
+SKIP 变 PASS，FAIL 数都是 0。基线里本来有一个与本次无关的
+`[FAIL] cited_artifacts_attested`，**它删除前后都在，这正是逐行 diff 才能
+说清的事**——如果只看"有 1 个 FAIL"，无法区分"还是那一个"和"换了一个"。
+
+**basename grep 的假阳性，双方各自撞到同样四个**（3b 独立复核）：
+`bench_eff/fone`、`bench_eff/train`、`scripts/holdout`、
+`scripts/scan_math_contamination` —— 全部是**同名文件解析到别的路径**
+（根 `fone.py`／`train.py`、`datagen/holdout.py`、
+`datagen/scan_math_contamination.py`），不是候选路径的活引用。
+**门二必须按全路径查，basename 会把活文件的引用记到候选头上。**
+
+**`t66.py` 附带一处必须同时改的引用**：`probes/t66_depth_shape.py:14` 的 usage
+行写着 `python3 t66.py`，而那是它自己的前身。**删文件不修这行，就造出一条指向
+不存在文件的文档引用**——今晚在 `recipe_provenance` 修过的同一类断引用。已改为
+指向自身路径。
+
+**没有删的**：`scan_delivered_holdout.py`（P0 结论的复现器，结果已落 fact
+`e0dcccf`，复现器比结论便宜）、`cascade_code_py.py`、
+`classify_parse_failures.py`、`starcoder_shape.py`（在 3b 分支上，**该合不该删**）。
+
 ## 4. 有 docstring 的比例
 
 72 / 158 个带 docstring。**没有 docstring 的那些是最难判的**：
