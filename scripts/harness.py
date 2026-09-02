@@ -5109,7 +5109,13 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
     task, and the register read as delivered. A commit hash is the one claim the repo
     can refute by itself -- it either resolves, reaches main, and moved that file, or
     it does not (user ruling 2026-09-01: the conversation is notification, the commit
-    is the truth)."""
+    is the truth).
+
+    Resolution is one minute: commit dates carry no seconds and the close time is
+    padded to :59, so a commit made in the same minute as the close always passes.
+    Measured by e1 (2026-09-02): closed 02:47 passes, closed 02:46 fails. The register
+    writes minutes, so a same-minute backdate is invisible to this check by design.
+    """
     root = root or ROOT
     g = ["git", "-C", root]
     main_log = _main_touched(root)
