@@ -24,8 +24,12 @@ EXP = os.path.join(ROOT, "scripts", "exp.py")
 REAL = os.path.join(ROOT, "runs", "experiments.jsonl")
 
 
-def _world(n_open):
-    """A repo-shaped tree whose ledger is the REAL one plus n_open open rows for one name."""
+def _world(n_open, n_closed=0):
+    """A repo-shaped tree whose ledger is the REAL one plus open (and optionally closed) rows.
+
+    n_closed rows get BOTH a running event and a later terminal event, which is what the real
+    ledger holds -- `done` appends rather than rewriting. Those rows are NOT open, and a
+    reader that filters raw events on status=="running" counts them anyway."""
     d = tempfile.mkdtemp(prefix="expdone_")
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     shutil.copy(REAL, os.path.join(d, "runs", "experiments.jsonl"))
@@ -33,6 +37,14 @@ def _world(n_open):
     template = next(r for r in rows if r.get("status") == "running") if any(
         r.get("status") == "running" for r in rows) else dict(rows[-1], status="running")
     with open(os.path.join(d, "runs", "experiments.jsonl"), "a", encoding="utf-8") as f:
+        for i in range(n_closed):
+            st = f"2026-09-02 0{i}:00"
+            f.write(json.dumps(dict(template, name="zz_probe", status="running",
+                                    started=st, result="", ended=""),
+                               ensure_ascii=False) + "\n")
+            f.write(json.dumps(dict(template, name="zz_probe", status="fail",
+                                    started=st, result="oom", ended="2026-09-02 09:00"),
+                               ensure_ascii=False) + "\n")
         for i in range(n_open):
             f.write(json.dumps(dict(template, name="zz_probe", status="running",
                                     started=f"2026-09-02 1{i}:00", result="", ended=""),
@@ -96,7 +108,33 @@ def main():
     print(f"  {'ok  ' if ok else 'BUG '} an unknown --started refuses and lists the open rows "
           f"(rc={rc}, closes={got})")
 
-    print(f"test_exp_done_started: {4 - bad}/4 pass")
+    # 5. A CLOSED row is not an open row. This is the case the four above could not see: they
+    #    only ever built worlds whose extra rows were open, so a reader that counts raw
+    #    running EVENTS rather than folding by (name, started) passed all four. MEASURED on
+    #    the real ledger (1e, 2026-09-03): p200m_4b_0902 read 5 open rows while fold() gives
+    #    exactly one running. With four closed rows and one open, `done` must take the default
+    #    path -- no --started -- and close the open one.
+    d = _world(1, n_closed=4)
+    rc, out = _done(d, "--result", "one live among four closed")
+    got = [g for g in _closed(d) if g[1] != "oom"]
+    ok = rc == 0 and got == [("2026-09-02 10:00", "one live among four closed")]
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} four closed rows are not open; the one live row closes "
+          f"without --started (rc={rc}, {got})")
+    if not ok:
+        print(f"       output was: {out.strip()[:200]}")
+
+    # 6. And the refusal still fires on two GENUINELY open rows even with closed ones present,
+    #    so 5 did not buy its fix by relaxing the guard.
+    d = _world(2, n_closed=3)
+    rc, out = _done(d, "--result", "should not land")
+    got = [g for g in _closed(d) if g[1] != "oom"]
+    ok = rc != 0 and not got and "--started" in out
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} two open + three closed still refuses "
+          f"(rc={rc}, closes={got})")
+
+    print(f"test_exp_done_started: {6 - bad}/6 pass")
     return 1 if bad else 0
 
 

@@ -240,8 +240,25 @@ def main():
         # newest-row default is safe only when there is exactly one candidate; with more, the
         # default is a silent wrong answer, and picking one is not a decision this tool can
         # make (de, 2026-09-02).
-        rs = rows(raw=True)
-        open_rows = [r for r in rs if r["name"] == a.name and r["status"] == "running"]
+        # OPEN MEANS "the LAST event for this (name, started) is running", not "a running
+        # event exists". A start event stays in the raw log forever, so filtering raw events
+        # on status=="running" reports every launch a name ever had as still open -- and the
+        # refusal below then demands --started on every close. MEASURED on this ledger
+        # (1e, 2026-09-03): p200m_4b_0902 read 5 open rows, while fold() gives
+        # fail/fail/stopped/stopped and exactly one running (14:32), the live run. So the
+        # count was 5 and the answer was 1, and the tool asked a human to disambiguate
+        # something it already had the data to settle.
+        #
+        # fold() is that data and already existed -- keyed on (name, started) with a close
+        # terminal regardless of file position, which is why raw order cannot substitute for
+        # it. rows() without raw=True IS the fold; the bug was reaching past it.
+        #
+        # The refusal is NOT relaxed: with two genuinely-live rows it still fires, which is
+        # the case it was written for. p200m_4b_0902 had three open rows in eight minutes
+        # (two OOMed launches and the live run), and a bare `done` would have closed the LIVE
+        # run and written the OOM as its result. Fixing the count does not make picking one
+        # of two live runs a decision this tool can make.
+        open_rows = [r for r in rows() if r["name"] == a.name and r["status"] == "running"]
         if a.started:
             base = next((r for r in open_rows if r.get("started") == a.started), None)
             if base is None:
