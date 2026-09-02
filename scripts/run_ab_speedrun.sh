@@ -2,6 +2,10 @@
 # One speedrun A/B: baseline vs one flag, at equal tokens. ARM picks which flag.
 #   CUDA_VISIBLE_DEVICES=3,4,5,6 ARM=zeroinit scripts/run_ab_speedrun.sh   # A/B (3)
 #   CUDA_VISIBLE_DEVICES=3,4,5,6 ARM=shapelr  scripts/run_ab_speedrun.sh   # A/B (2a)
+#   CUDA_VISIBLE_DEVICES=3,4,5,6 ARM=valueembed scripts/run_ab_speedrun.sh # A/B (4)
+#
+# NOTE for A/B (4) only: that arm is NOT parameter-matched (+33.6M, +16.3%). Every other arm
+# here is. The exp row says so and the reading must not be quoted as a mechanism result.
 #
 # Two arms, equal tokens, equal seed, equal data, same process shape. The ONLY difference is
 # --zero_init_out, and the parameter count is IDENTICAL between arms -- unlike run_ablation.sh's
@@ -54,9 +58,10 @@ NGPU=$(awk -F, '{print NF}' <<<"$CARDS")   # NF on the comma-split line; `seq -s
 # depends on (tokens, seed, data, process shape, parameter count) is identical either way.
 ARM=${ARM:-zeroinit}
 case "$ARM" in
-  zeroinit) ARM_FLAG="--zero_init_out" ;;
-  shapelr)  ARM_FLAG="--muon_shape_lr" ;;
-  *) echo "refusing: ARM must be zeroinit or shapelr, got '$ARM'" >&2; exit 1 ;;
+  zeroinit)   ARM_FLAG="--zero_init_out" ;;
+  shapelr)    ARM_FLAG="--muon_shape_lr" ;;
+  valueembed) ARM_FLAG="--value_embed" ;;
+  *) echo "refusing: ARM must be zeroinit, shapelr or valueembed, got '$ARM'" >&2; exit 1 ;;
 esac
 
 trap 'python3 scripts/card_claim.py release --name "ab_$ARM" || true' EXIT
