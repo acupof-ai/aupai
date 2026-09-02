@@ -531,7 +531,7 @@
   },
   {
    "id": "ds.second_resume_rereads_one_segment",
-   "value": "The row cursor counts ONE SEGMENT and does not accumulate, so the SECOND and every later resume re-reads rows the run has already trained on. train.py:1387 computes rows_done = (step - _origin) * batch * accum, and :2309 sets _origin = resume_step, so a checkpoint written after a resume describes only the rows THAT resume drew -- not the run's total. Measured on p500m_20b_0902 (de and tilerl, independently, same hour): the nine domain cursors in .interrupt.step32 sum to 8,192 = 32x256, correct because that segment started at origin 0; the cursors in .interrupt.step83 sum to 13,056 = 51x256, while step 83 had truly consumed 21,248 = 83x256. Neither checkpoint records the total, and nothing raises. Relaunching from .interrupt.step83 seeded used[] with 13,056 against FULL pools, so rows 13,056..21,248 were read a SECOND time: 8,192 rows, 33.5M tokens, 0.168% of the 20B budget. Those rows are at epoch 2.0 while the corpus around them is at 1.0. Nine srcfp fingerprints matched and no domain reset to row 0, so de-13's discard fix is confirmed working in production by the same artifact.",
+   "value": "RETRACTED 2026-09-02, same day, by the fix its own uncertainty asked for. The defect described below was real on the code that produced the p500m checkpoints, and is gone from main: 52aec31 adds `+ int(_base.get(n, 0))` at train.py:1030, where _base is the cursor build_mix APPLIED (train.py:1580), so a post-resume save writes an ABSOLUTE row count instead of a segment count. VERIFIED on three real checkpoints of the current run, read on the pod with the equality the uncertainty named -- sum(row_cursor) == row_cursor_as_of_step x batch x accum x world, rows/step = 16x2x8 = 256: step500 128,000 = 500x256; interrupt.step832 212,992 = 832x256; interrupt.step1192 305,152 = 1192x256. Only the third has discriminating power -- it was written after a resume at origin 832, where absolute and segment-only disagree (305,152 against 92,160), and 305,152 - 212,992 = 92,160 = 360x256 is exactly the 360 steps of that segment added in. The first two sit at origin 0, where both implementations give the same number and the old code would also read green. THE COST OF LEAVING THIS AT status=measured: on 2026-09-02 the controller session chose to resume the 200M run from step832 rather than step1192 to avoid the re-read this entry predicts, discarding 360 steps = 1.36 card-hours against a risk that no longer existed. A fact whose code has been fixed is not merely stale; it is acted on. WHAT SURVIVES: the p500m numbers below are a correct reading of the old behaviour, and eff.resume_inflates_total_steps cites its 8,192-row overlap for that run. WHAT DOES NOT: any prediction about a resume on current main.\n\nThe row cursor counts ONE SEGMENT and does not accumulate, so the SECOND and every later resume re-reads rows the run has already trained on. train.py:1387 computes rows_done = (step - _origin) * batch * accum, and :2309 sets _origin = resume_step, so a checkpoint written after a resume describes only the rows THAT resume drew -- not the run's total. Measured on p500m_20b_0902 (de and tilerl, independently, same hour): the nine domain cursors in .interrupt.step32 sum to 8,192 = 32x256, correct because that segment started at origin 0; the cursors in .interrupt.step83 sum to 13,056 = 51x256, while step 83 had truly consumed 21,248 = 83x256. Neither checkpoint records the total, and nothing raises. Relaunching from .interrupt.step83 seeded used[] with 13,056 against FULL pools, so rows 13,056..21,248 were read a SECOND time: 8,192 rows, 33.5M tokens, 0.168% of the 20B budget. Those rows are at epoch 2.0 while the corpus around them is at 1.0. Nine srcfp fingerprints matched and no domain reset to row 0, so de-13's discard fix is confirmed working in production by the same artifact.",
    "measured": "2026-09-02",
    "source": "train.py:1387,2309; ckpt_p500m_20b_0902.pt.interrupt.step32 and .step83 row_cursor fields",
    "config": {
@@ -547,11 +547,43 @@
     "reread_tokens": 33554432,
     "reread_frac_of_20B": 0.00168,
     "corpus_rows": 4882812,
-    "how_it_happened": "segment 1 fresh -> SIGTERM at 32; segment 2 --resume step32 -> SIGTERM at 83; segment 3 --resume step83, hand-written, is the second resume. supervise_run.sh allows exactly one automatic resume for this reason; the second was a human relaunch, which is how the cost came to be measured rather than assumed."
+    "how_it_happened": "segment 1 fresh -> SIGTERM at 32; segment 2 --resume step32 -> SIGTERM at 83; segment 3 --resume step83, hand-written, is the second resume. supervise_run.sh allows exactly one automatic resume for this reason; the second was a human relaunch, which is how the cost came to be measured rather than assumed.",
+    "refutation": {
+     "run": "p200m_4b_0902",
+     "rows_per_step": 256,
+     "batch": 16,
+     "accum": 2,
+     "world": 8,
+     "checkpoints": {
+      "ckpt_p200m_4b_0902.pt.step500": {
+       "as_of_step": 500,
+       "cursor_sum": 128000,
+       "origin": 0
+      },
+      "ckpt_p200m_4b_0902.pt.interrupt.step832": {
+       "as_of_step": 832,
+       "cursor_sum": 212992,
+       "origin": 0
+      },
+      "ckpt_p200m_4b_0902.pt.interrupt.step1192": {
+       "as_of_step": 1192,
+       "cursor_sum": 305152,
+       "origin": 832
+      }
+     },
+     "segment_only_would_write_at_1192": 92160,
+     "discriminating_checkpoints": [
+      "ckpt_p200m_4b_0902.pt.interrupt.step1192"
+     ],
+     "source_command": "torch.load(ckpt, mmap=True) on the pod; header only, no tensors read"
+    }
    },
-   "boundary": "The FIRST resume is immune -- its origin is 0, so its segment count is the run total. From the second resume on, the rows re-read equal the length of the FIRST segment, whatever that was. Here: 8,192 rows = 33.5M tokens = 0.168%. The quantity does not grow with later resumes; it is re-paid once per resume beyond the first.",
-   "uncertainty": "A single occurrence, and the arithmetic is exact rather than sampled, so there is no spread to report. NOT verified: whether the re-read rows are the same rows in the same order -- the plan is rebuilt under the same seed 42, so they should be, but that was not checked row-by-row. The check that would catch a recurrence does not exist yet: assert sum(row_cursor) == row_cursor_as_of_step * batch * accum * world at save time. The checkpoints on disk are a real broken world for that assertion, so it needs no constructed fixture (de-13).",
-   "status": "measured"
+   "boundary": "The FIRST resume is immune -- its origin is 0, so its segment count is the run total. From the second resume on, the rows re-read equal the length of the FIRST segment, whatever that was. Here: 8,192 rows = 33.5M tokens = 0.168%. The quantity does not grow with later resumes; it is re-paid once per resume beyond the first. AS OF 52aec31 the boundary is moot on main: no resume re-reads a segment, because the count written is absolute. The boundary still describes any checkpoint written before 52aec31 (2026-09-02 18:10 +0800), which includes every p500m_20b_0902 interrupt file.",
+   "uncertainty": "The refutation rests on one post-resume checkpoint. That is enough to kill the claim -- the claim predicted 92,160 and the file says 305,152 -- but it does not establish that the absolute count is right for every shape: all three files come from one run at one (batch, accum, world), and a checkpoint saved mid-accumulation or with a domain whose cursor was DISCARDED (corpus fp change, seed change) is untested. The discard path is the one to watch: train.py:1580 sets _base only in the branch that applied the cursor, so a discarded domain contributes 0 to _base by design, and the equality would then fail legitimately -- the assert must not fire there. NOT DONE: the equality is not yet asserted in train.py at save and at resume-load. That is queued with the plan-length fix on the de branch and needs the same unfreeze window; until it lands, nothing stops a regression.",
+   "status": "retracted",
+   "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
+   "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
+   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names."
   }
  ]
 }
