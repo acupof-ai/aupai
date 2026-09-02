@@ -313,6 +313,119 @@ def main():
         sys.exit(1)
     print(f"hook: blob+allowlist {time.time() - t0:.2f}s", file=sys.stderr)
 
+    # A staged runs/*.jsonl must not lose a record. de-33.
+    #
+    # a59ac1f staged a runs/experiments.jsonl one line shorter than its parent and dropped b0's
+    # ab_zeroinit AMENDMENT row. All five hook lines were green; b0 found it by eye, reading
+    # "1 -" in the diffstat. These files merge by union, so a row that leaves is not a conflict
+    # anyone resolves -- it is a record that stops existing.
+    #
+    # The predicate lives in scripts/ledger_audit.py (b0) over de's subsume/key_present, and is
+    # PER LEDGER because the write tools differ: exp.py appends, harness.py:5805 rewrites
+    # tasks.jsonl whole, score_matrix.py:573 replaces a row by design. Subsumption everywhere
+    # would refuse 30 of tasks.jsonl's last 161 commits -- all of them a plain
+    # `harness task done`. That is why this calls regressions() instead of comparing lines.
+    #
+    # WHY THE ESCAPE IS AN ENV VAR AND NOT A COMMIT-MESSAGE MARKER: git does not pass the
+    # message to pre-commit, and .git/COMMIT_EDITMSG at this point still holds the PREVIOUS
+    # commit's message. Measured four ways in a real repo (de, 2026-09-03): the first commit
+    # sees no file at all, and a plain commit right after a marked one reads the marker it did
+    # not write. An exception keyed on that would exempt commits nobody declared and refuse the
+    # ones that were. AUPAI_LEDGER_REWRITE names the intent of THIS invocation, and unlike
+    # --no-verify it does not also skip blob size, ruff, the selftests and harness check.
+    t0 = time.time()
+    _ledger_note = ""
+    try:
+        sys.path.insert(0, os.path.join(repo_root(), "scripts"))
+        import ledger_audit as _la
+
+        _staged_ledgers = [f for f in staged("M") if f in _la.PREDICATE]
+        _why = os.environ.get("AUPAI_LEDGER_REWRITE", "").strip()
+        _hits = []
+        _dups = []
+        for f in _staged_ledgers:
+            head = subprocess.run(["git", "show", f"HEAD:{f}"], capture_output=True, text=True)
+            index = subprocess.run(["git", "show", f":{f}"], capture_output=True, text=True)
+            if head.returncode or index.returncode:
+                continue
+            bad = _la.regressions(f, head.stdout, index.stdout)
+            if bad:
+                _hits.append((f, bad))
+            # A duplicate key, on the one ledger whose writer cannot produce one. Scoped by
+            # DUP_IS_FAULT, not applied file-wide: exp.py APPENDS events under the start row's
+            # key, so experiments/tasks/board/retro carry duplicates by design and a file-wide
+            # rule would refuse 99 keys in tasks alone.
+            _dups.extend((f, k) for k in _la.duplicates(f, index.stdout))
+        if _hits:
+            total = sum(len(b) for _, b in _hits)
+            for f, bad in _hits:
+                print(f"{'ALLOWING' if _why else 'REFUSING'}: {f} loses {len(bad)} record(s) "
+                      f"-- these files merge by union, so a row that leaves is a record that "
+                      f"stops existing (de-33: a59ac1f dropped b0's ab_zeroinit amendment "
+                      f"under five green hook lines)", file=sys.stderr)
+                for key, row in bad[:4]:
+                    print(f"    - {key}", file=sys.stderr)
+                if len(bad) > 4:
+                    print(f"    ... and {len(bad) - 4} more", file=sys.stderr)
+            if _why:
+                # Hand the finding to commit-msg, which is the only hook that sees THIS
+                # commit's message. The env var is a pass; the marker file is what forces the
+                # reason into history, where a reader six weeks out can find it.
+                _mark = subprocess.run(
+                    ["git", "rev-parse", "--git-path", "AUPAI_LEDGER_REGRESSED"],
+                    capture_output=True, text=True).stdout.strip()
+                if _mark:
+                    try:
+                        with open(_mark, "w", encoding="utf-8") as fh:
+                            fh.write("\n".join(f"{f} {key}" for f, bad in _hits for key, _ in bad))
+                    except OSError:
+                        pass
+                print(f"AUPAI_LEDGER_REWRITE={_why!r} -- allowed here; commit-msg will require "
+                      f"`ledger-rewrite: <why>` in the message. The env var is not recoverable "
+                      f"from history, so the message is the only place the reason survives.",
+                      file=sys.stderr)
+                _ledger_note = f", {total} loss(es) ALLOWED by AUPAI_LEDGER_REWRITE"
+            else:
+                print("If the loss is intentional -- reconciling duplicate rows from a pod "
+                      "sync is the real case -- re-run with "
+                      "AUPAI_LEDGER_REWRITE='<why>' and say the same thing in the commit "
+                      "message. Do NOT use --no-verify: it also skips blob size, ruff, the "
+                      "selftests and harness check.", file=sys.stderr)
+                sys.exit(1)
+        if _dups:
+            # Judge the DELTA, not the presence. score_matrix.jsonl carried 22 duplicates until
+            # 44's fold landed, and "any duplicate refuses" would have refused the folding commit
+            # itself along with every other commit touching the file. Refuse only a key that HEAD
+            # did not already have duplicated; a commit that leaves or reduces them says so in
+            # the count line and passes.
+            _added = []
+            for f in {f for f, _ in _dups}:
+                head = subprocess.run(["git", "show", f"HEAD:{f}"], capture_output=True, text=True)
+                was = set(_la.duplicates(f, head.stdout)) if not head.returncode else set()
+                _added += [(f, k) for g, k in _dups if g == f and k not in was]
+            if _added:
+                for f, k in _added[:6]:
+                    print(f"REFUSING: {f} has more than one row under {k}, which HEAD did not. "
+                          f"Its writer replaces the same key by design "
+                          f"(eval/score_matrix.py:573), so a second row is not something it "
+                          f"can produce -- it arrives through a cross-branch union merge, "
+                          f"where the .lock does not reach.", file=sys.stderr)
+                if len(_added) > 6:
+                    print(f"    ... and {len(_added) - 6} more", file=sys.stderr)
+                print("Fold the duplicate rows and commit the folded file, or if the "
+                      "duplication is real, re-run with AUPAI_LEDGER_REWRITE='<why>'.",
+                      file=sys.stderr)
+                if not _why:
+                    sys.exit(1)
+            else:
+                _ledger_note += (f", {len(_dups)} pre-existing duplicate key(s) "
+                                 f"(none added)")
+    except ImportError:
+        _ledger_note = ", ledger_audit absent (SKIP)"
+    print(f"hook: ledger-append-only {time.time() - t0:.2f}s "
+          f"({len(_staged_ledgers) if '_staged_ledgers' in dir() else 0} staged"
+          f"{_ledger_note})", file=sys.stderr)
+
     # Ruff E9/F on staged .py files -- the same gate CI runs, caught at commit time.
     t0 = time.time()
     py_files = [f for f in staged("AM") if f.endswith(".py")]
@@ -486,6 +599,11 @@ def main():
         # these worlds are what says whether that function is the right one. Reads git history
         # only, ~20s.
         "scripts/test_ledger_predicates.py",
+        # de-33 acceptance: the five pre-registered readings, run by invoking BOTH hooks as
+        # programs against temp repos built from real blobs. A green commit is not evidence for
+        # a hook change -- .git/hooks/pre-commit resolves to MAIN's copy -- so this file is how
+        # a branch-side hook edit gets checked at all. ~10s.
+        "scripts/test_ledger_hook.py",
         # The predicate's home, and the history scan built on it. Its selftest asserts the two
         # known cases -- a59ac1f flagged (a plain commit that reverted an amendment whose key is
         # SHARED with the rows it amends, so merges-only, default history simplification, and

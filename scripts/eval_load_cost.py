@@ -28,6 +28,7 @@ a 54-second interval overrun prints as 29 lost hours (gate_failure_shapes.md §5
 # restartable: reads source files and a table of measurements. Writes nothing.
 """
 
+import ast
 import os
 import re
 import sys
@@ -66,10 +67,46 @@ MEASURED = {
 CACHE_READERS = ("_domain_seqs", "val_seqs")
 
 
+def _executable_src(src):
+    """src with string literals and comments blanked out, so a substring test cannot match
+    prose. Two defects came from testing the raw text (de, 2026-09-03):
+
+      cache_guard.py  read as host_io=YES on five occurrences of _domain_seqs/val_seqs, ALL
+                      of them in its docstring. It is the guard that checks a cache without
+                      loading it -- it reads only the tiny .vocab stamp -- so the column was
+                      exactly backwards on the one file whose job is to not read the cache.
+      nan_probe.py    read as ckpt_load='-' because it hard-codes its paths instead of taking
+                      --ckpt, while it torch.loads a 2 GB checkpoint AND a 6 GB SFT pack.
+
+    Blanking prose fixes the first. The second is not a prose problem, so classify also
+    matches a literal .pt path in torch.load.
+    """
+    out = list(src)
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return src
+    starts = [0]
+    for ln in src.splitlines(keepends=True):
+        starts.append(starts[-1] + len(ln))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.lineno:
+            a = starts[node.lineno - 1] + node.col_offset
+            b = starts[node.end_lineno - 1] + node.end_col_offset
+            for i in range(a, min(b, len(out))):
+                out[i] = " "
+    return re.sub(r"#[^\n]*", "", "".join(out))
+
+
 def classify(path):
-    src = open(path, encoding="utf-8").read()
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read()
+    src = _executable_src(raw)
     return {
-        "ckpt_load": bool(re.search(r"load_checkpoint\(|--ckpt", src)),
+        # A hard-coded "<name>.pt" counts: nan_probe.py loads two large files without ever
+        # naming --ckpt, and a table that calls that "no load" understates it by 8 GB.
+        "ckpt_load": bool(re.search(r"load_checkpoint\(|--ckpt", src))
+        or bool(re.search(r"torch\.load\([^)]*\.pt[\"']", raw)),
         "host_io": any(r in src for r in CACHE_READERS),
         "generative": bool(re.search(r"generate_batch|max_new|open_artifact\(", src)),
     }
@@ -142,11 +179,44 @@ def _selftest():
     assert r["ppl.py"]["host_io"], "ppl.py no longer reads a token cache -- re-derive"
     assert r["domain_loss.py"]["host_io"], "domain_loss.py should read caches via val_seqs"
     assert not r["arc.py"]["host_io"], "arc.py should not touch a token cache"
+    # THE NEGATIVE CASES, which the three above do not cover: every assertion here was a
+    # POSITIVE (a file that does reach a cache, or one that plainly does not mention it), so
+    # the column could be wrong in the one direction nobody tested -- a file that MENTIONS
+    # the names without reading. Both defects below were live and green (de, 2026-09-03).
+    assert not r["cache_guard.py"]["host_io"], (
+        "cache_guard.py names _domain_seqs five times IN ITS DOCSTRING and reads only the "
+        "tiny .vocab stamp; counting it as a >10GB reader inverts the column on the one "
+        "file whose job is to check a cache without loading it"
+    )
+    assert r["nan_probe.py"]["ckpt_load"], (
+        "nan_probe.py hard-codes its paths instead of taking --ckpt, and torch.loads a 2GB "
+        "checkpoint plus a 6GB SFT pack; a '-' here understates it by 8GB"
+    )
+    assert not r["ceval.py"]["ckpt_load"], (
+        "ceval.py's only --ckpt is a usage line in its docstring: it is a benchmark module "
+        "run_eval.py invokes, and run_eval.py is what loads the checkpoint"
+    )
+    # A prose-only mention must never set a column. Checked as a property on real source
+    # rather than per file, so a new eval that only documents the names is covered too.
+    import glob as _glob
+
+    for p in _glob.glob(os.path.join(ROOT, "eval", "*.py")):
+        with open(p, encoding="utf-8") as fh:
+            raw = fh.read()
+        exe = _executable_src(raw)
+        for name in CACHE_READERS:
+            if name in raw and name not in exe:
+                assert not classify(p)["host_io"] or any(
+                    n in exe for n in CACHE_READERS
+                ), f"{os.path.basename(p)}: host_io set by a prose-only mention of {name}"
     # And the table must not silently omit an eval.
     assert len(rows()) >= 25, f"only {len(rows())} evals found"
-    print(f"selftest OK: interval arithmetic on 4 known answers, 4 published costs "
-          f"reproduce, ETA amplification 29.1h vs 54.6s real, cache-reader column correct "
-          f"on 3 files, {len(rows())} evals listed")
+    print(
+        f"selftest OK: interval arithmetic on 4 known answers, 4 published costs "
+        f"reproduce, ETA amplification 29.1h vs 54.6s real, cache-reader column correct "
+        f"on 6 files (3 positive, 3 negative) plus the prose-only property over all "
+        f"{len(rows())} evals listed"
+    )
     return 0
 
 

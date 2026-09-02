@@ -93,9 +93,21 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEYS = {
     "runs/experiments.jsonl":   lambda r: (r.get("name"), r.get("started")),
     "runs/tasks.jsonl":         lambda r: r.get("id"),
-    "runs/review.jsonl":        lambda r: r.get("id"),
+    # (ts, reviewer, task). The first version read `id`, which no review row carries -- 58 of 67
+    # keyed to None. Rows carry ts/reviewer/task/item/verdict/basis/outcome. Measured on main:
+    # (ts, reviewer, task) gives 62 distinct over 67 rows, 0 None-rows. Rejected: (ts,) leaves 9
+    # rows at None because some rows use `at`; (ts, reviewer) collapses 20 rows, which is more
+    # folding than one reviewer's separate reviews should get. (de, 1e's authorization)
+    "runs/review.jsonl":        lambda r: (r.get("ts") or r.get("at"), r.get("reviewer"), r.get("task")),
     "runs/board.jsonl":         lambda r: (r.get("ts"), r.get("from") or r.get("who")),
-    "runs/milestones.jsonl":    lambda r: (r.get("name"), r.get("at") or r.get("ts")),
+    # (ckpt, milestone). The first version read (name, at|ts), and NO milestones row has any of
+    # those three fields -- every one of the 13 keyed to None, which is worse than a wrong key:
+    # with one key holding the file, subsume asks only "is the last row preserved somewhere" and
+    # key_present only "is the file non-empty", so the ledger could lose 12 records and pass.
+    # Measured on main: (ckpt, milestone) gives 8 distinct keys over 13 rows with 0 None-rows,
+    # and 5 rows folding onto an earlier key, which is the re-measurement the writer intends.
+    # Rejected: (milestone,) alone leaves 3 rows at None. (de, 1e's authorization, 2026-09-03)
+    "runs/milestones.jsonl":    lambda r: (r.get("ckpt"), r.get("milestone")),
     # (ckpt, profile), NOT (ckpt, measured): write_records replaces same-(ckpt, profile) and
     # eval/score_matrix.py:578 records why -- "a milestone-profile record must never replace a
     # checkpoint's full record". Keying on `measured` would make every re-score a NEW audit key
@@ -209,6 +221,23 @@ def regressions(path, head_lines, index_lines, message=""):
                 [json.dumps(r) for r in _rows(path, index_lines)], kf)
 
 
+# Ledgers where TWO ROWS UNDER ONE KEY is a fault. The test is the same one that decides the
+# predicate: does the writer itself produce duplicates?
+#
+#   score_matrix.jsonl  NO. score_matrix.py:573 write_records is read-modify-write and replaces
+#                       the same (ckpt, profile) by design, so it can never leave two. The 22
+#                       duplicates on main came in through a cross-branch union merge (44's
+#                       attribution: 21 from 7464dc1's profile-field migration, 1 a real
+#                       re-measurement). The .lock serializes one tree; a merge is not in it, so
+#                       commit time is the only place this is visible.
+#   everything else     YES, by design. exp.py:82 appends a close event under the START row's
+#                       (name, started), so ab_shapelr's 11 rows are one run's 11 events -- and
+#                       not one of them is byte-identical to an earlier row (measured). Applying
+#                       this predicate file-wide would refuse tasks 99 keys, experiments 23,
+#                       board 18, retro 5 -- i.e. the writers' normal output. (de, 1e's ruling)
+DUP_IS_FAULT = {"runs/score_matrix.jsonl"}
+
+
 def declared_rewrite(message):
     return REWRITE_MARKER in (message or "")
 
@@ -221,7 +250,16 @@ def duplicates(path, index_lines):
     state. write_records replaces same-key rows in-process, so duplicates enter via
     cross-branch union merge, which the in-tree lock cannot see -- the guard has to run at
     commit time on the index blob.
+
+    SCOPED BY DUP_IS_FAULT, by the same test that decides the predicate: does the writer itself
+    produce duplicates? score_matrix.py:573 replaces the same (ckpt, profile), so it cannot, and
+    a second row is necessarily foreign. Every other ledger produces them BY DESIGN -- exp.py:82
+    appends a close event under the START row's key, so ab_shapelr's 11 rows are one run's 11
+    events and not one is byte-identical to an earlier row. Unscoped, this refuses tasks 99 keys,
+    experiments 23, board 18, retro 5: the writers' normal output. (de, 1e's ruling 2026-09-03)
     """
+    if path not in DUP_IS_FAULT:
+        return []
     kf = KEYS[path]
     counts = defaultdict(int)
     for r in _rows(path, index_lines):
@@ -424,7 +462,15 @@ def _selftest():
 
     # 8. duplicates(): the third predicate. subsume/key_present guard what LEAVES; this
     #    guards what DOUBLES. b0-15's 22 keys entered via cross-branch union merge.
-    sm = _blob("HEAD", "runs/score_matrix.jsonl")
+    #
+    #    READ THE INDEX, FALLING BACK TO HEAD -- not HEAD alone. During a merge HEAD is still the
+    #    PRE-merge commit, so an assertion about "the current file" reads a blob the merge is
+    #    about to replace, and the selftest refuses the very commit that fixes it. That happened
+    #    on the merge bringing 44's fold into a worktree whose HEAD predated it: the staged blob
+    #    was the folded 43-row file, HEAD was the 65-row one, and there is no way to advance HEAD
+    #    without committing the merge this assertion blocks. Same shape as pod_drift.py's
+    #    --write vs --write-index (AGENTS.md), one file over.
+    sm = _blob("", "runs/score_matrix.jsonl") or _blob("HEAD", "runs/score_matrix.jsonl")
     if sm:
         if duplicates("runs/score_matrix.jsonl", sm):
             fails.append("HEAD's score_matrix.jsonl still has duplicate (ckpt, profile) keys "

@@ -11444,9 +11444,18 @@ def cmd_install_hooks(rest):
     # post-commit has its OWN source: it is not the same script under another name.
     # It repairs the shared index that pre-commit's manifest `git add` leaves stale
     # under `git commit -- <paths>` -- see scripts/hooks/post-commit.
-    for name in ("pre-commit", "pre-merge-commit", "post-commit"):
-        src = (os.path.join(main_root, "scripts", "hooks", "post-commit")
-               if name == "post-commit" else hook_src)
+    for name in ("pre-commit", "pre-merge-commit", "post-commit", "commit-msg"):
+        # commit-msg is its own file, not the pre-commit script under another name: it is the
+        # only hook git hands THIS commit's message (argv[1]). pre-commit cannot read it --
+        # .git/COMMIT_EDITMSG there still holds the PREVIOUS commit's message, measured four ways
+        # (de-33, 2026-09-03) -- so the ledger guard grants its exception by env var in
+        # pre-commit and requires the reason here, where the message is real.
+        if name == "post-commit":
+            src = os.path.join(main_root, "scripts", "hooks", "post-commit")
+        elif name == "commit-msg":
+            src = os.path.join(main_root, "scripts", "hooks", "commit-msg")
+        else:
+            src = hook_src
         if not os.path.exists(src):
             print(f"hook source missing: {src}")
             return 1
