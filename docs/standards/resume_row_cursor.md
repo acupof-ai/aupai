@@ -84,6 +84,42 @@ phase. Recorded rather than rounded away: it bounds what the reconstruction can 
 and a future discrepancy larger than single-digit rows is a different fault, not this
 one.
 
+### The cursor covers one segment, not the run (MEASURED on the live 20B run)
+
+The cursor is per-segment and does not accumulate across resumes. Two `interrupt`
+checkpoints from `p500m_20b_0902`, read with `torch.load` on the pod 2026-09-02 02:20 UTC
+(container view), at `cfg batch 32 accum 1`, world 8:
+
+| checkpoint | `step` | `row_cursor_as_of_step` | sum of nine domains |
+|---|---|---|---|
+| `.interrupt.step32` | 32 | 32 | 8,192 |
+| `.interrupt.step83` | 83 | 83 | 13,056 |
+
+Arithmetic: `32 x 32 x 1 x 8 = 8192` and `(83 - 32) x 32 x 1 x 8 = 13056`. Both match
+their own segment exactly, and `8192 + 13056 = 21248 = 83 x 32 x 1 x 8` -- the run's
+actual consumption at step 83, which **neither checkpoint records**. The supervisor log
+supplies the missing origin: `01:23:15 exit 1 -- resuming ONCE from
+...interrupt.step32`, so `step83` was written by a segment whose `_plan_step_origin` was
+32.
+
+Every part of this is working as written. `rows_done = (step - _origin) * _batch *
+_accum` (`:1386`) is deliberately relative, because `_plan_domains` holds only this
+plan's rows and an absolute step indexes past its end. The gap is that nothing adds the
+**previous** segments' consumption back, and `row_cursor_as_of_step: 83` labels the value
+with the absolute step, so the field reads as run-cumulative while holding a segment
+count. A reader cannot tell the two apart from the checkpoint alone.
+
+The consequence is data, not a label: `i0 = 0 if _plan_trimmed` (`:2504`), so a resume
+whose cursor seeded `used[]` starts at its plan's row 0, and that plan was built from
+cursor 13,056. Segment 3 of this run therefore re-reads the 8,192 rows segment 1
+consumed -- **33.5M tokens, 0.168% of 20B**. Bounded by the earlier segments' length, not
+by run length, and the FIRST resume is unaffected (`_origin` is 0, so relative equals
+absolute). Correct at the first resume, wrong from the second: the same shape as the two
+defects above, and the third time this file records that shape.
+
+Not grounds to kill the run -- 0.168% at step 250 of 19,151 costs less than a restart --
+and no later fix changes it, since the duplication has already happened.
+
 ## The stage-1 cursor is reconstructed, not recorded
 
 Verbatim in the rehearsal report and in the stage-2 launch exp row's `hypothesis`
