@@ -192,7 +192,7 @@ for any checkpoint where it is not.
 **Result:** `be.gold_bpb_falls_while_generation_scores_zero` — YES ON CODE,
 YES-WITH-ONE-BUMP ON MATH. Code BPB down 15.6% across the ladder while code_500
 generative stays 0.0. Artifact: `runs/gold_bpb.json`
-(probes/t65_gold_bpb.py@c0683b7, GPU6; tokenizer file fp verified identical,
+(probes/t65_gold_bpb.py@12a39c8, GPU6; tokenizer file fp verified identical,
 recorded as `tokenizer_file_fp`).
 
 ---
