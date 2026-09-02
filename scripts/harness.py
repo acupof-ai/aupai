@@ -3297,14 +3297,22 @@ def check_tasks_paired_and_prior(root):
     Three sessions took AUTHORITY at once and two of them duplicated a merge; separately
     a throughput number had no reference point in the literature at all, so "is this
     good" could not be answered. Both are the same absence: nobody stated, before
-    starting, who agreed and what was already known (user order 2026-09-01)."""
+    starting, who agreed and what was already known (user order 2026-09-01).
+
+    A DROPPED task is out of scope. _read_tasks already folds by id, so the check reads
+    each task's latest state -- but it judged a dropped one anyway, and dropping is how a
+    task with a bad prior is supposed to be retired. fb hit this: after dropping a task
+    whose prior was wrong, the check still FAILed on it, and the only way through was to
+    delete the uncommitted row -- so the register loses the record of the decision to
+    satisfy a check about record-keeping."""
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     # Two scopes unioned, because a timestamp alone cannot separate them today: rows
     # written before the UTC fix carry CST, and 21:27 CST sorts after a 14:40 UTC
     # threshold. Every row the new `add` writes carries the prior key, so those are in
     # scope whatever their clock; the date takes over once every row is UTC.
     scope = [t for t in rows
-             if "prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM]
+             if (t.get("state") != "dropped"
+                 and ("prior" in t or (t.get("opened") or "") >= PAIR_PRIOR_FROM))]
     if not scope:
         return SKIP, f"no task opened since the rule took effect ({PAIR_PRIOR_FROM})"
     bad = []
@@ -3324,6 +3332,11 @@ def check_tasks_paired_and_prior(root):
 
 
 def _broken_tasks_paired_and_prior():
+    """The REAL register plus one open row with no pair and no prior.
+
+    Two rows, because the dropped-row exemption must not be a way through: x-2 is the
+    same violation retired by a later `dropped` event, and the world must still FAIL --
+    on x-1 only. A world with just the dropped row would pass and certify nothing."""
     import shutil as _sh
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -3332,6 +3345,10 @@ def _broken_tasks_paired_and_prior():
     _sh.copy(src, dst)
     with open(dst, "a", encoding="utf-8") as f:
         f.write(json.dumps({"id": "x-1", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+        f.write(json.dumps({"id": "x-2", "owner": "de", "state": "open", "task": "t",
+                            "opened": "2099-01-01 00:00"}) + "\n")
+        f.write(json.dumps({"id": "x-2", "owner": "de", "state": "dropped", "task": "t",
                             "opened": "2099-01-01 00:00"}) + "\n")
     return d
 
