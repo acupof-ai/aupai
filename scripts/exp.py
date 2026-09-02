@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 
 # --root is a FLAG, not an env var: an ambient AUPAI_ROOT would silently redirect the
@@ -192,6 +193,9 @@ def main():
     d.add_argument("--status", default="ok")
     d.add_argument("--finding", default="", help="what the number means — the interpretation, not the number")
     d.add_argument("--decision", default="", help="what changes next because of this result")
+    d.add_argument("--started", default=None,
+                   help="close THIS row (its 'started' value), not the newest running one. "
+                        "Required when a name has more than one open row")
     m = sub.add_parser("merge", help="merge another experiments.jsonl into this one (pod sync)")
     m.add_argument("--from", dest="src", required=True)
     sub.add_parser("render")
@@ -229,12 +233,29 @@ def main():
         # just closed, so it cannot close the older one at all. Closing eight stale rows
         # across four duplicated names on 2026-09-02 went 6 -> 4 and looked stuck; the
         # fix is to append a close carrying that row's own `started`, which is identity.
+        #
+        # --started IS that fix, and the refusal below is the half that matters. p200m_4b_0902
+        # had three open rows in eight minutes (two OOMed launches and the live run), so a
+        # bare `done` would have closed the LIVE run and written the OOM as its result. The
+        # newest-row default is safe only when there is exactly one candidate; with more, the
+        # default is a silent wrong answer, and picking one is not a decision this tool can
+        # make (de, 2026-09-02).
         rs = rows(raw=True)
-        base = None
-        for r in reversed(rs):
-            if r["name"] == a.name and r["status"] == "running":
-                base = r
-                break
+        open_rows = [r for r in rs if r["name"] == a.name and r["status"] == "running"]
+        if a.started:
+            base = next((r for r in open_rows if r.get("started") == a.started), None)
+            if base is None:
+                seen = [r.get("started") for r in open_rows]
+                sys.exit(f"no open row for {a.name} started {a.started!r}. Open rows: {seen or 'none'}")
+        elif len(open_rows) > 1:
+            seen = [r.get("started") for r in open_rows]
+            sys.exit(
+                f"{a.name} has {len(open_rows)} open rows ({seen}); closing the newest by "
+                f"default would write this result onto a run that may still be alive. "
+                f"Pass --started <value> to say which one."
+            )
+        else:
+            base = open_rows[-1] if open_rows else None
         ev = dict(
             base
             or {
