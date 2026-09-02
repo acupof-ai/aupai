@@ -624,12 +624,22 @@ def main():
         # construction and recovers at step 1). Pins both halves of that contract.
         "scripts/test_zero_init_out.py",
         # A/B (4)'s row-norm reading, pre-registered in the exp row: did the VE table buy
-        # something, or did a few frequent rows? Its selftest pins the trap that would have made
+        # something, or did a few frequent rows? Its selftest pins the traps that would have made
         # the answer meaningless -- value_embed is not the first Embedding drawn from the RNG, so
         # reproducing it with a bare nn.Embedding under the seed yields tok's init and reports all
-        # 32832 rows moved on a table nobody touched. Also pins that an untouched row keeps norm
-        # ~sqrt(d)=32, so no norm threshold can separate touched from trained. CPU, seconds.
+        # 32832 rows moved on a table nobody touched; the decay floor must be MEASURED, since an
+        # estimate at 10x the median row (on the premise most rows stay untouched, which is the
+        # claim under test) sat ~900x too high and read 274 of 32832 rows trained where all
+        # 32832 are; and no norm cutoff separates the populations, because this model inits
+        # embeddings to std=0.02 (model.py:453) so an untouched row keeps norm 0.64 -- an earlier
+        # version of this comment said ~sqrt(d)=32, which is torch's N(0,1) default, not ours.
+        # CPU, seconds.
         "scripts/ve_row_norms.py",
+        # The step line train.py prints must still parse with RunLog._STEP_RE, which feeds
+        # trackio and had no test. b0-14's honest format ("lr muon 7e-3 embed 1e-1 ...", no
+        # privileged bare value) does NOT match -- measured -- so it would have stopped every
+        # trackio metric on that line while the log looked richer. Pure regex, milliseconds.
+        "scripts/test_step_line_parses.py",
         # A/B (2a)'s arm: an inverted ratio shrinks exactly the matrices the record says to
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
