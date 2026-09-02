@@ -161,6 +161,7 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
     """Per-class device time, share, ideal time and the ratio."""
     per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0})
     ops = _shape_index(events)
+    counted: set = set()
     spans: list[tuple[float, float]] = []
     sum_us = 0.0
     tmin, tmax = None, None
@@ -182,6 +183,14 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         rec["us"] += dur
         rec["n"] += 1
         sum_us += dur
+        # One op can launch many kernels (up to 32 here: split-k, epilogues).
+        # Its FLOPs are the op's, not each kernel's -- charging them per kernel
+        # inflated the GEMM ideal 12x and produced a 0.1x ratio, i.e. measured
+        # "faster than peak", which is the arithmetic reporting its own error.
+        ext = args.get("External id")
+        first = ext is None or ext not in counted
+        if ext is not None:
+            counted.add(ext)
         ts = float(e.get("ts", 0.0))
         spans.append((ts, ts + dur))
         tmin = ts if tmin is None else min(tmin, ts)
@@ -197,7 +206,7 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
                 ideal = by / HBM_BYTES_PER_S * 1e6
         if ideal is None:
             rec["unknown"] += 1
-        else:
+        elif first:
             rec["ideal_us"] += ideal
     wall_us = (tmax - tmin) if (tmin is not None and tmax is not None) else 0.0
     busy_us = _busy_us(spans)
