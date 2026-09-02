@@ -477,6 +477,8 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # retract: a read-only grep over a temp tree -- no data, no card.
+        "scripts/retract.py",
         "scripts/test_exp_done_started.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
