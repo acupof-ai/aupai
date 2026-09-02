@@ -1,7 +1,7 @@
 ---
 question: 模型学会了复制、而 val 因为语料从未去重所以看不见——这个假设成立吗
 status: recorded
-source: b0 P0（fb 转达用户，2026-09-01）。重复率 probes/t62_corpus_dup_rate.py@381d922 与 t63_cross_domain_dup.py；val 头部错位 probes/t64_val_head_overlap.py@381d922；样板率为 12-word n-gram / DF≥3 / 0.53% 文档抽样。判读规则在 docs/lessons/copy_hypothesis_prereg.md，写于全部测量之前
+source: b0 P0（fb 转达用户，2026-09-01）。重复率 probes/t62_corpus_dup_rate.py@381d922 与 t63_cross_domain_dup.py；val 头部错位 probes/t64_val_head_overlap.py@381d922；样板率为 12-word n-gram / DF≥3 / 0.53% 文档抽样。判读规则在 docs/lessons/copy_hypothesis_chain.md，写于全部测量之前
 ---
 
 # 复制假设：语料侧的三次测量
