@@ -254,7 +254,11 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 
 一个配置文件冻结的是一组特定运行,读取它的代码却把它当成所有运行的来源;没有任何检查发现「一个非阶梯的运行读了阶梯的配置」。
 
-实例:`data/mix_scale_run_config.json` 冻结的是六个阶梯点(world/cards/batch/accum/warmup/warmdown/anneal_frac/vocab),`harness.py launch`(:4403)却从它做所有训练运行的卡分配。500M 跑的是 `mix_500m.json`、不是阶梯点,首次启动被带成 7 卡(world: 7, cards: 0-6)。fb 没改冻结文件(改 world 会重开整个阶梯),显式 8 卡重起。
+实例:`data/mix_scale_run_config.json` 冻结的是六个阶梯点(world/cards/batch/accum/warmup/warmdown/anneal_frac/vocab),`_allocation_cards`(harness.py:8829,`launch` 在 :9159 调它)却从它做所有训练运行的卡分配。500M 跑的是 `mix_500m.json`、不是阶梯点,首次启动被带成 7 卡(world: 7, cards: 0-6)。fb 没改冻结文件(改 world 会重开整个阶梯),显式 8 卡重起。(注:harness.py:4403 是 `check_ladder_config` 事后比对 checkpoint 的地方,不产生这个失败——tilerl 2026-09-02 更正行号。)
+
+实例(tilerl 2026-09-02,同族):**recipe_provenance 认证「八个值各有出处」,不认证「启动命令传了它们」。** 九个门禁全绿,而命令可以一个配方值都不带——今晚同一条命令连漏三次:第一次漏八个(layers 回落 12、grad_ckpt 回落 False,OOM);第二次漏 `--warmdown`(0.65 而非声明的 0.1,13B tokens 进衰减段而不是 2B);第三次漏 `--warmup`(20 而非 300,0.105% 的 run)。三次都不报错,日志照常打印回落后的值。
+
+共同点:**产物证明的东西比读的人以为的窄。** 冻结文件证明的是「这六个点的配方」,不是「所有运行的卡分配」;provenance 证明的是「值有依据」,不是「值生效了」。(发车后 tilerl 写 run_ddp.sh 启动对账。)
 
 ## Sources
 
