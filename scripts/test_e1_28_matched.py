@@ -66,13 +66,44 @@ def main():
             fails.append(f"the output does not carry {key}; a count cannot be turned into a "
                          f"clean subset with its own evaluated_ids_sha256")
 
+    # 7. GUARD ARTIFACTS ARE NOT SHARDS. data/corpus/<domain>/ carries holdout_slice_<domain>.jsonl,
+    #    whose one row is {"phase","rule_fp","n":0}. A bare *.jsonl glob fed it to text_of, which
+    #    refused on the missing content field and killed the whole scan mid-run. e1_28_leak_scan.py
+    #    has the same glob and survives only because holdout_slice sorts after the numbered shards
+    #    and its row cap is reached first -- luck, not design.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        base = os.path.join(td, "data", "corpus", "cot")
+        os.makedirs(base)
+        for name in ("cot_000.jsonl", "cot_001.jsonl",
+                     "holdout_slice_cot.jsonl", "build_corpus_stats.jsonl"):
+            open(os.path.join(base, name), "w").write("{}\n")
+        got = [os.path.basename(p) for p in M.shards("cot", root=td)]
+        if got != ["cot_000.jsonl", "cot_001.jsonl"]:
+            fails.append(f"shards() returned {got}; guard artifacts must be excluded by name, "
+                         f"not left to sort order")
+
+    # 8. THE ROW CAP IS THE CURSOR'S, NOT UNBOUNDED. Reading every row on disk scans 232 GB instead
+    #    of the 1,189,548 rows the run consumed, which is a different population and would report
+    #    overlap from rows the model never saw.
+    if "a.rows_per_shard or (cursor or {}).get(dom, 0)" not in src:
+        fails.append("the read loop does not fall back to the cursor's per-domain row count, so "
+                     "it scans the corpus on disk rather than the consumed population")
+
+
+    # A FAILING RUN MUST SAY WHY. Inserting cases 7 and 8 above overwrote this loop, so the suite
+    # returned 1 while printing nothing at all -- rc=1 with empty stdout AND stderr, which reads
+    # exactly like a crash or a hang. I caught it only because a mutation I expected to fail
+    # reported "0 FAILs": grep -c over empty output is 0, so the check that was supposed to prove
+    # the test works reported the same number as a passing run.
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:
+        print(f"{len(fails)} check(s) failed", file=sys.stderr)
         return 1
     print("e1_28_matched OK: universal forms excluded; doubt counts as contamination; one "
           "substantive gram keeps an id; an empty gram set is not universal; ws_by_id untruncated; "
-          "N_all written as ids")
+          "N_all written as ids; guard artifacts are not shards; the read cap is the cursor's")
     return 0
 
 
