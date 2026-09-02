@@ -604,6 +604,11 @@ def main():
         # these worlds are what says whether that function is the right one. Reads git history
         # only, ~20s.
         "scripts/test_ledger_predicates.py",
+        # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
+        # is fabricated rows plus a stubbed pod reader, because the live numbers change
+        # daily and an assertion against them would be red the moment someone pulls (the
+        # de-35 shape, this morning). ~0.3s.
+        "scripts/pod_pull_ledgers.py",
         # de-33 acceptance: the five pre-registered readings, run by invoking BOTH hooks as
         # programs against temp repos built from real blobs. A green commit is not evidence for
         # a hook change -- .git/hooks/pre-commit resolves to MAIN's copy -- so this file is how

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """The leak scanner finds a planted overlap, and does not invent one.
 
+# restartable: runs in-process assertions plus two subprocess scans over a 2-document fake corpus
+# under a TemporaryDirectory. Seconds of CPU, no GPU, no state outside the temp dir. An interrupt
+# costs the rerun and leaves nothing behind.
+
 A containment scan that reports zero is indistinguishable from a broken one unless you have
 planted a known answer. This repo has already shipped a leak check that returned "clean" on an
 empty population and a probe that printed "no docs" for six domains because it read the wrong
@@ -39,6 +43,66 @@ def main():
     if any(len(g) != 13 for g in a):
         fails.append("a character gram is not 13 characters")
 
+    # 1b. THE LOW-ENTROPY FILTER drops markdown rules and keeps real text. A 13-char window over
+    #     whitespace-stripped text matched '-------------' 538 times and '_____________' 66 times
+    #     in the first full scan -- two different corpora reported the IDENTICAL 816 hits, which is
+    #     a shared template, not leakage. The filter must kill those without touching content.
+    for junk in ("-------------", "_____________", "-----|-------", "=============",
+                 "  ---   ---  ", "aaaaaaaaaaaaa"):
+        if not S.low_entropy("".join(junk.split()) or junk):
+            fails.append(f"low_entropy passed a formatting gram: {junk!r}")
+    for real in ("55个遗产地 2. 中国", "the quick brow", "def compute_x(", "意大利55个遗产地中国"):
+        if S.low_entropy(real):
+            fails.append(f"low_entropy DROPPED real content: {real!r} -- the filter is eating "
+                         f"evidence, not noise")
+    # THE BAND IS PINNED FROM BOTH SIDES, and the upper bound is a declared number rather than a
+    # contrived string. My first attempt asserted that '沙沙沙沙沙沙沙沙响' and '1. 1. 1. 1. 1.'
+    # must survive, to catch MIN_CHARSET=9 -- but those carry 2 and 3 distinct characters, so a
+    # correct filter drops them, and they are precisely the "list skeleton" class this scan is
+    # supposed to exclude. The test was wrong, not the filter. Asserting the bound directly says
+    # what is actually being constrained: too low and markdown rules count as leakage, too high
+    # and ordinary text gets discarded.
+    if S.MIN_CHARSET < 2:
+        fails.append(f"MIN_CHARSET={S.MIN_CHARSET} disables the filter")
+    if S.MIN_CHARSET > 5:
+        fails.append(f"MIN_CHARSET={S.MIN_CHARSET} is too aggressive: a 13-char window over "
+                     f"ordinary text carries few distinct characters, so this discards content")
+
+    # 1c. THE FILTER IS ACTUALLY APPLIED BY THE SCAN, not merely defined. Replacing the counting
+    #     loop's `if low_entropy(g): continue` with `if False: continue` left every other case in
+    #     this file green -- the filter could be disconnected entirely and nothing noticed, which
+    #     is the same shape as a guard whose input is empty. A row carrying both a markdown rule
+    #     and real content must produce filtered < raw, and must keep the real match.
+    rule = "-" * 40
+    # >= 13 whitespace tokens, or ws_grams yields nothing and the needle set is EMPTY -- which
+    # made this case report "scan_text missed a verbatim whitespace match" against a correct
+    # scanner. An empty needle set finds nothing and looks exactly like a broken scan.
+    real = ("seventeen blue penguins recite arithmetic in a corridor at dawn today again "
+            "and twice more before the harbour bell finally rings")
+    ws_need = {g: 1 for g in S.ws_grams(real)}
+    assert ws_need, "the fixture itself has no 13-gram; this case would test nothing"
+    ch_need = {g: 2 for g in S.char_grams(rule)}
+    for g in S.char_grams(real):
+        ch_need.setdefault(g, 1)
+    ws_h, ch_h, ch_raw = S.scan_text(f"prefix {rule} {real} suffix", ws_need, ch_need, True)
+    if 1 not in ws_h:
+        fails.append("scan_text missed a verbatim whitespace match")
+    if 2 not in ch_raw:
+        fails.append("the unfiltered character count lost the markdown rule, so 'raw' is not raw")
+    if 2 in ch_h:
+        fails.append("THE FILTER IS NOT WIRED INTO THE SCAN: a 40-dash markdown rule survived "
+                     "into the filtered character hits. low_entropy() exists but the counting "
+                     "loop does not call it")
+    if 1 not in ch_h:
+        fails.append("the filtered character count dropped a real content match")
+    if len(ch_h) >= len(ch_raw):
+        fails.append(f"filtered ({len(ch_h)}) is not smaller than raw ({len(ch_raw)}) on a row "
+                     f"containing a markdown rule -- the two counts are the same number")
+    _, ch_off, raw_off = S.scan_text(rule, ws_need, ch_need, False)
+    if ch_off or raw_off:
+        fails.append("use_char=False still produced character hits, so code domains would be "
+                     "scanned with a unit the design excludes")
+
     # 2. A MISSING FIELD REFUSES rather than counting zero. This is the exact defect that made a
     #    six-domain probe print "no docs with >=13 whitespace tokens".
     try:
@@ -47,6 +111,43 @@ def main():
     except KeyError as e:
         if "body" not in str(e):
             fails.append(f"text_of's error does not name the keys it saw: {e}")
+
+    # 2b. THE FINGERPRINT MUST BE train.py's, NOT A LOOKALIKE. This case exists because my first
+    #     version reimplemented it (sha256 of whole files) and reported SRCFP CHANGED for six of
+     #     nine domains -- 720,000 rows including all of code_py_starcoder -- which I was about to
+    #     report as "the corpus was rebuilt, those rows are unrecomputable". Two implementations of
+    #     one quantity disagreeing is not a finding about the data.
+    #
+    #     Checked against the CHECKPOINT's own recorded values, which is the only witness that
+    #     settles it: if the majority of domains disagree, the algorithm is wrong, not the corpus.
+    ckpt_early = os.path.join(ROOT, "ckpt_p200m_4b_0902.pt")
+    if not os.path.isfile(ckpt_early):
+        SKIPS.append("case 2b (fingerprint parity with the checkpoint) needs "
+                     "ckpt_p200m_4b_0902.pt, which is pod-only")
+    else:
+        try:
+            import torch
+            ck = torch.load(ckpt_early, map_location="cpu", weights_only=False)
+            want = ck.get("row_cursor_srcfp") or {}
+            agree, differ = [], []
+            for dom, fp in sorted(want.items()):
+                got, _ = S.domain_fp(dom)
+                (agree if got == fp else differ).append(dom)
+            if not want:
+                SKIPS.append("case 2b: the checkpoint records no row_cursor_srcfp")
+            elif len(differ) > len(agree):
+                fails.append(f"{len(differ)} of {len(want)} domains disagree with the "
+                             f"checkpoint's recorded srcfp ({', '.join(differ[:4])}...). With most "
+                             f"domains disagreeing the fingerprint ALGORITHM is wrong, not the "
+                             f"corpus -- import datagen/corpus_fingerprint.fp_dir, do not "
+                             f"reimplement it")
+            else:
+                print(f"  case 2b: {len(agree)}/{len(want)} domains match the checkpoint's "
+                      f"recorded srcfp"
+                      + (f"; genuinely changed since: {', '.join(differ)}" if differ else ""),
+                      file=sys.stderr)
+        except ImportError as e:
+            SKIPS.append(f"case 2b: {type(e).__name__}: {e}")
 
     # 3. END TO END, with a PLANTED overlap and a control document that must NOT match.
     #    Run against a real checkpoint if one is here; otherwise this case reports SKIP, because
