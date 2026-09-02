@@ -142,13 +142,23 @@ class HFModel:
         from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: PLC0415
 
         self.tok = AutoTokenizer.from_pretrained(path)
-        self.model = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32).to(device)
+        # `dtype`, NOT `torch_dtype`: the pod runs transformers 5.6.0, where torch_dtype still
+        # works but prints "`torch_dtype` is deprecated! Use `dtype` instead!" (verified by
+        # loading the real control model both ways). And no pipeline / device_map: accelerate
+        # is absent on the pod, so the move is a plain .to(device).
+        self.model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).to(device)
         self.model.eval()
         self.eos = self.tok.eos_token_id
         self.device = device
+        # PARAMETERS ONLY, never buffers. Pythia-160M carries causal-mask and rotary inv_freq
+        # buffers; counting them gave 212M/135M, which was wrong and is retracted (e1,
+        # 2026-09-02). model.parameters() excludes buffers, so this is right by construction --
+        # verified against the real checkpoint: 162,322,944 total, 85,056,000 non-embedding,
+        # embed_in and embed_out 38,633,472 each (UNTIED, unlike ours).
         self.n_params = sum(p.numel() for p in self.model.parameters())
         self.n_params_non_embed = self.n_params - sum(
-            p.numel() for n, p in self.model.named_parameters() if "embed" in n or "wte" in n)
+            p.numel() for n, p in self.model.named_parameters()
+            if "embed_in" in n or "embed_out" in n or "wte" in n or "lm_head" in n)
 
     def encode(self, s):
         return self.tok.encode(s)
