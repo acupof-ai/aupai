@@ -106,6 +106,27 @@ def rescaled_checkpoint(path, layer, factor, dest):
     return dest
 
 
+def pick_control(ratios, kda, layer, med):
+    """A KDA layer near the median, to receive the SAME rescale factor as `layer`.
+
+    Split out to be testable and to FAIL LOUDLY. Returning None here would crash inside the
+    third eval arm, after arm A has already been paid for -- and the run would look like an
+    infrastructure error rather than "this checkpoint has no valid control".
+    """
+    cands = [L for L in kda if L != layer
+             and abs(ratios[L] - med) < abs(ratios[layer] - med) / 4]
+    if not cands:
+        raise ValueError(
+            f"no KDA layer is near the median: layer {layer} is {abs(ratios[layer] - med):.4f} "
+            f"from the median {med:.4f} and no other KDA layer is within a quarter of that. "
+            f"Ratios: { {L: round(ratios[L], 4) for L in kda} }. Without a control a null "
+            f"result cannot be told apart from the probe having no resolution -- pass "
+            f"--control explicitly and say in the writeup why that layer stands in.")
+    # The closest to the median, so the control is the most 'normal' layer available rather than
+    # whichever one the dict happened to yield first.
+    return min(cands, key=lambda L: abs(ratios[L] - med))
+
+
 def score(path, out_json, rescale_layer=None, rescale_factor=None):
     """domain_loss for one checkpoint, optionally with one layer's KDA output rescaled.
 
@@ -233,6 +254,42 @@ def _selftest():
         if abs(ratios[9] - want) > 1e-5:
             fails.append(f"layer 9 ratio {ratios[9]} != {want}")
 
+    # 3b. pick_control must return the layer CLOSEST to the median (not merely a passing one),
+    #     and must RAISE when none qualifies. A None return would crash inside the third eval arm
+    #     after arm A was already paid for, reading as infrastructure failure rather than "this
+    #     checkpoint has no valid control".
+    # The closest layer is deliberately NOT the first candidate: with layer 0 at 0.900 and layer 2
+    # at 0.867, any-passing-candidate returns 0 while closest returns 2. My first fixture had the
+    # closest layer first, so `return cands[0]` passed it -- the check could not fail.
+    rr = {0: 0.900, 1: 0.880, 2: 0.867, 9: 0.605}
+    kk = [0, 1, 2, 9]
+    got = pick_control(rr, kk, 9, 0.8673)
+    if got != 2:
+        fails.append(f"pick_control chose layer {got}; layer 2 (0.867) is closest to the median "
+                     f"0.8673 while layer 0 (0.900) merely passes the threshold. 'A layer that "
+                     f"qualifies' is not 'the most normal layer available', and the control has "
+                     f"to be the latter for a null to mean anything.")
+    # The refusal must be the DELIBERATE ValueError carrying the explanation, not whatever the
+    # code throws next. Measured: replacing the guarded return with `cands[0]` raises IndexError
+    # on the empty list, and a bare `except ValueError` let that escape as a crash -- the selftest
+    # reported an error rather than a FAIL, which reads as a broken test instead of a broken
+    # guard. Same shape as the KeyError guard deleted from rescaled_checkpoint: an alternative
+    # path raising a DIFFERENT exception hides the missing guard, and one raising the SAME
+    # exception makes it unfalsifiable.
+    try:
+        pick_control({9: 0.605, 8: 0.700}, [8, 9], 9, 0.8673)
+    except ValueError as e:
+        if "no KDA layer is near the median" not in str(e):
+            fails.append(f"pick_control raised ValueError without its explanation: {e}")
+    except Exception as e:  # noqa: BLE001
+        fails.append(f"pick_control raised {type(e).__name__} ({e}) instead of the deliberate "
+                     f"ValueError -- the guard is gone and something else failed in its place")
+    else:
+        fails.append("pick_control accepted layer 8 at 0.700 as 'near' the median 0.8673 when "
+                     "layer 9 is 0.262 away -- 0.167 is not within a quarter of that, so a "
+                     "not-normal layer would stand in as the control and a null would be "
+                     "unreadable in a way nothing reports")
+
     # 4. median() on an even-length list must average the middle two, not pick one. The rescale
     #    factor is median/ratio, so an off-by-one median silently rescales to the wrong target --
     #    a probe that answers a slightly different question than the one asked.
@@ -250,8 +307,11 @@ def _selftest():
           "requested factor (a silent no-op would report 'no consequence' for every factor, the "
           "failure that looks like a finding); ckpt_path finds both .step and .interrupt.step "
           "spellings, which is how two of b0-16's five points are named; KDA membership is read "
-          "from A_log presence rather than assumed from attn_every; and median averages the "
-          "middle two on an even-length list, since the rescale factor is median/ratio.")
+          "from A_log presence rather than assumed from attn_every; median averages the "
+          "middle two on an even-length list, since the rescale factor is median/ratio; and "
+          "pick_control returns the layer CLOSEST to the median and RAISES when none qualifies, "
+          "because the control arm is what separates a real null from the probe having no "
+          "resolution at all.")
     return 0
 
 
@@ -262,6 +322,8 @@ def main():
     ap.add_argument("--rescale", action="store_true",
                     help="scale layer 9's mixer.o to put its branch ratio at the median")
     ap.add_argument("--layer", type=int, default=9)
+    ap.add_argument("--control", type=int, default=None,
+                    help="layer for the same-factor control arm (default: a near-median KDA layer)")
     ap.add_argument("--out", help="json for the eval rows")
     ap.add_argument("--claim", action="store_true", help="claim the lane card for this pid")
     ap.add_argument("--selftest", action="store_true")
@@ -287,13 +349,30 @@ def main():
         ratios, kda = branch_ratios(p)
         med = median(ratios.values())
         f = med / ratios[a.layer]
+        # THE CONTROL, and without it a null is unreadable. Rescaling layer 9 to the median makes
+        # its branch 43% louder; if domain_loss does not move, that has two explanations -- layer
+        # 9's branch does not matter, OR the network is insensitive to ANY branch gain at this
+        # magnitude. Applying the SAME factor to a normal KDA layer separates them: if the control
+        # also does not move, the probe has no resolution and the null says nothing about layer 9.
+        ctrl = a.control if a.control is not None else pick_control(ratios, kda, a.layer, med)
         print(f"step {a.step}: layer {a.layer} ratio {ratios[a.layer]:.4f}, 12-layer median "
               f"{med:.4f} -> rescale mixer.o by {f:.4f}", flush=True)
-        print("=== unscaled ===", flush=True)
+        print(f"control: layer {ctrl} (ratio {ratios[ctrl]:.4f}, near the median) gets the SAME "
+              f"x{f:.4f}, so a null can be told apart from no resolution", flush=True)
+        print("=== A: unscaled ===", flush=True)
         print(score(p, a.out), flush=True)
-        print(f"=== layer {a.layer} rescaled x{f:.4f} ===", flush=True)
+        print(f"=== B: layer {a.layer} (the split) rescaled x{f:.4f} ===", flush=True)
         print(score(p, a.out, rescale_layer=a.layer, rescale_factor=f), flush=True)
-        print(f"Compare the two unweighted_mean values against the {BAR} nat bar.", flush=True)
+        print(f"=== C: layer {ctrl} (control, normal) rescaled x{f:.4f} ===", flush=True)
+        print(score(p, a.out, rescale_layer=ctrl, rescale_factor=f), flush=True)
+        print(f"\nREAD, pre-registered before these numbers existed:\n"
+              f"  |B-A| > {BAR}                -> layer {a.layer}'s split has a measured consequence\n"
+              f"  |B-A| <= {BAR} and |C-A| > {BAR} -> bounded below the bar; the probe HAS "
+              f"resolution, so this is a real null and b0-16 closes as a correlate\n"
+              f"  |B-A| <= {BAR} and |C-A| <= {BAR} -> NO RESOLUTION: a 43% branch-gain change is "
+              f"invisible to domain_loss anywhere, so the null says nothing about layer {a.layer}\n"
+              f"  B WORSE than A does NOT mean the split is harmless -- it means the trained value "
+              f"beats the median, which is a different claim.", flush=True)
         return 0
 
     if not a.steps:
