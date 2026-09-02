@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 import traceback
+from collections import Counter
 
 import torch
 
@@ -582,23 +583,62 @@ def write_records(path, records):
     it, two score_matrix processes on different ckpts can interleave their
     read-modify-write cycles, and the later writer overwrites the earlier's
     fresh record. Both print 'wrote N record(s)', both exit 0, and a record
-    vanishes with no log to say so."""
+    vanishes with no log to say so.
+
+    DUPLICATE KEYS RAISE, both on the way in and on the way out (b0-15). The
+    matrix is 'the current state, not a history', so two rows under one key
+    have no defined current state -- and the audit that refuses them at commit
+    time (scripts/ledger_audit.py duplicates()) justifies itself by asserting
+    THIS function cannot produce them. It could, in two ways, both measured:
+
+      1. `records` itself carrying one key twice wrote both rows. The dedup
+         above builds a SET of keys and filters existing lines by it; it never
+         looks at `records` for internal collisions.
+      2. A file that ALREADY held two rows for some other key kept them: those
+         lines are not in `keys`, so they are copied to `existing` verbatim.
+         This is how the live matrix reached 22 duplicate keys -- union merges
+         put them there and every later write preserved them, exit 0, silently.
+
+    Case 2 raises on a key this call does not touch, which is deliberate: this
+    is the only code that reads the whole file, so it is the only place the
+    corruption is visible before the commit hook. The message names the keys and
+    says to fold them, because a writer that repaired them silently would erase
+    the evidence that a merge is producing them."""
+    dup_in = sorted(k for k, n in Counter(
+        (r["ckpt"], r.get("profile", "full")) for r in records).items() if n > 1)
+    if dup_in:
+        raise ValueError(
+            f"write_records was handed {len(dup_in)} duplicate key(s) in ONE call: {dup_in}. "
+            f"The matrix is current state, not history, so two rows under one "
+            f"(ckpt, profile) have no defined current state. Fold them before writing.")
     keys = {(r["ckpt"], r.get("profile", "full")) for r in records}
     lock_path = path + ".lock"
     with open(lock_path, "w") as lock_f:
         fcntl.flock(lock_f, fcntl.LOCK_EX)
         try:
             existing = []
+            kept = Counter()
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
                     for line in f:
                         try:
                             r = json.loads(line)
-                            if (r.get("ckpt"), r.get("profile", "full")) in keys:
+                            k = (r.get("ckpt"), r.get("profile", "full"))
+                            if k in keys:
                                 continue
+                            kept[k] += 1
                         except Exception:
                             pass
                         existing.append(line)
+            dup_out = sorted(k for k, n in kept.items() if n > 1)
+            if dup_out:
+                raise ValueError(
+                    f"{path} already holds {len(dup_out)} duplicate key(s) that this call does "
+                    f"not touch: {dup_out}. A union merge is the usual source (.gitattributes "
+                    f"marks this file merge=union, and the in-process lock cannot see across "
+                    f"branches). Refusing to write on top of a file with no defined current "
+                    f"state -- fold the duplicates, keeping the row you can justify, then rerun. "
+                    f"This is not repaired automatically: that would hide the merge producing it.")
             with open(path, "w", encoding="utf-8") as f:
                 f.writelines(existing)
                 for r in records:
@@ -805,6 +845,50 @@ def selftest():
         write_records(p, [{"ckpt": "a.pt", "v": 2}])
         rows = [json.loads(l) for l in open(p, encoding="utf-8")]  # noqa: SIM115
         assert {(r["ckpt"], r["v"]) for r in rows} == {("a.pt", 2), ("b.pt", 1)}, rows
+
+        # DUPLICATE KEYS RAISE (b0-15). Both holes measured before the fix: each wrote
+        # successfully and exited 0, and ledger_audit.py's duplicates() justifies refusing a
+        # second row at commit time by asserting this writer cannot produce one.
+        #
+        # Hole 1: one call carrying the same key twice. The dedup builds a SET of keys and
+        # never looks at `records` for internal collisions -- measured: 2 rows for 1 key.
+        try:
+            write_records(p, [{"ckpt": "c.pt", "v": 1}, {"ckpt": "c.pt", "v": 2}])
+            raise AssertionError("write_records accepted the same key twice in ONE call; before "
+                                 "the guard this wrote both rows and exited 0")
+        except ValueError as e:
+            assert "ONE call" in str(e) and "c.pt" in str(e), e
+        # ...and the refused call must not have touched the file.
+        rows = [json.loads(l) for l in open(p, encoding="utf-8")]  # noqa: SIM115
+        assert {(r["ckpt"], r["v"]) for r in rows} == {("a.pt", 2), ("b.pt", 1)}, \
+            f"a refused write still modified the file: {rows}"
+
+        # Hole 2: the file already holds two rows for a key this call does NOT touch. Those
+        # lines are absent from `keys`, so they were copied through verbatim -- which is how
+        # the live matrix reached 22 duplicates via union merges, every write preserving them.
+        p5 = os.path.join(d, "m5.jsonl")
+        with open(p5, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ckpt": "x.pt", "v": 1}) + "\n")
+            f.write(json.dumps({"ckpt": "x.pt", "v": 2}) + "\n")
+        try:
+            write_records(p5, [{"ckpt": "y.pt", "v": 1}])
+            raise AssertionError("write_records wrote on top of a file with two rows under one "
+                                 "key; before the guard this exited 0 and kept both")
+        except ValueError as e:
+            assert "already holds" in str(e) and "x.pt" in str(e), e
+        # The corruption is REPORTED, never silently repaired: a writer that folded them would
+        # erase the evidence that a merge is producing them.
+        rows = [json.loads(l) for l in open(p5, encoding="utf-8")]  # noqa: SIM115
+        assert len(rows) == 2 and not any(r["ckpt"] == "y.pt" for r in rows), \
+            f"the refused write repaired or partially applied: {rows}"
+        # The SAME key differing only by profile is two legitimate rows, not a duplicate -- a
+        # guard keyed on ckpt alone would refuse the milestone/full pair the key exists for.
+        p6 = os.path.join(d, "m6.jsonl")
+        write_records(p6, [{"ckpt": "z.pt", "profile": "full", "v": 1},
+                           {"ckpt": "z.pt", "profile": "milestone", "v": 1}])
+        write_records(p6, [{"ckpt": "w.pt", "v": 1}])
+        rows = [json.loads(l) for l in open(p6, encoding="utf-8")]  # noqa: SIM115
+        assert len(rows) == 3, f"(ckpt, profile) pairs were treated as duplicates: {rows}"
         # concurrent writers: every record must survive. Without flock, the later
         # writer reads stale content and overwrites the earlier's record — both
         # print "wrote N record(s)", both exit 0, and a record vanishes silently.
