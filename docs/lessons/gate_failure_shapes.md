@@ -967,3 +967,35 @@ packer（`datagen/prepare_sft.py:288`）写的键是 `vocab_id`。全量普查 2
 修法（`7aacbac`）：两键都读；**匹配时也打印 id**——让"通过"在日志里有形状。
 
 规则：守卫条件和断言体必须读同一个字段名，写完拿一个真反例喂一次（known-answer negative）；**凡是"通不过才说话"的检查，都无法从日志证明它跑过——匹配时也打印。** 检测法：一个字段有两个读取者时，先看它们的结论是否一致。
+
+## 72. 条件 stub：测试在依赖缺失的机器上绿、在依赖存在的机器上红——"本机绿"对目标机零信息量(b0 当事人,2026-09-03,与 §71 反向)
+
+用「真东西能不能 import」来决定 stub 什么。**方向和平常相反**：条件 stub 在依赖**缺失**的地方通过，在依赖**存在**的地方失败——而后者正是要跑生产的那台机器。所以「本机绿」不是弱证据，**是零证据**：它恰好只在不重要的环境里成立。
+
+实例：`scripts/test_zero_init_out.py`（A/B (3) 的守卫）。同一个形状在一个文件里出现两次：
+
+```python
+if getattr(M, "chunk_kda", None) is None:      # ① fla 在 pod 上可导入
+    M.chunk_kda = lambda q, k, v, **kw: ...    #   → 真 Triton kernel 留在原地
+# HAS_FA 保持读到的值                            # ② flash_attn 在 pod 上可导入
+                                               #   → MLA 走 flash_attn_func
+```
+
+pod 上两条依次炸：
+
+| | 报错 | 为什么本机不炸 |
+|---|---|---|
+| ① | `Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)` | Mac 无 triton，`chunk_kda is None`，stub 装上了 |
+| ② | `inputs must be float16, bfloat16, fp8 e4m3fn, or fp8 e5m2` | Mac 无 flash_attn，`HAS_FA=False`，走 SDPA 回退 |
+
+**②比①更值得记**：它不是"stub 没装"，是**测试构造的 fp32 参数撞上一个只接 bf16 的后端**。测试要测的契约（zero-init 的梯度形状）与 dtype 和后端都无关，**但它继承了环境而不是钉住环境**。
+
+修法是**无条件强制**：`M.chunk_kda = stub`、`M.HAS_FA = False`，不问能不能 import。判据要覆盖的东西不是那个 kernel，**stub 的存在性不该是环境的函数**。
+
+**代价是真的**：这个测试在 pod 上跑之前，我已经把它 commit 进 gate、写进 commit message 说"三个 broken world 全红"——那三个 world 是在**一个从不执行真 kernel 的环境**里验的。broken world 验的是判据能不能红，**不验判据能不能跑**。两件事都要。
+
+**与 §71 同一根、方向相反**：§71 是检查被守卫条件挡住而从未执行（"静默通过"与"跳过"同形）；本条是**测试执行了，但执行的是另一条代码路径**。共同点：**判据的行为是环境的函数，而记录里只有"绿"这一个字**。
+
+**这次的补救动作本身也是一个错，1e 报的，比上面那条更贵**：我发现 pod 上崩了之后用 `podput` 直接推了修复。**tracked 文件只能经 `pod_push` 上 pod，不能 podput** —— 我那份副本随后被 1e 的 `--all` 覆盖回旧版（这次运气好，只是又崩一次），**换个时序就是 A/B 跑在未提交代码上而 manifest 全绿**：manifest 记的是 commit，podput 不改 commit，所以"漂移"这件事对守卫不可见的那一半正是我手动塞进去的那一半。要在 pod 上试未合并的改动，**先合 main 再推**。这次守卫恰好因为 diff 抓到了（`pod code drift: 1 drifted: diff scripts/test_zero_init_out.py`），但它抓到的是内容差异，不是"有人绕过了发布路径"。
+
+**这也是 AGENTS.md 那句 "green here is not green on the pod" 的原文场景**——那句写给 harness check，而我把同一个洞开在了 selftest 里。规则：**任何 selftest 只要 import 了带原生后端的模块（fla / flash_attn / torchao / triton），stub 必须无条件，且必须在 pod 上跑过一次才算交付。** 检测法：`grep -n "if.*is None" ` 你的 stub 行——**条件 stub 就是本条**。
