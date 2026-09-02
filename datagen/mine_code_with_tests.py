@@ -103,6 +103,19 @@ def stdlib_core_ok(src):
     return True
 
 
+def test_runner_suffix():
+    """Appended to the blob so the test ACTUALLY RUNS (not just imports/parses).
+    Runs unittest-discovered TestCases in the inlined module; exit 1 on failure
+    so a wrong impl cannot yield rc 0. Mirrors de-28's pytest semantics for the
+    unittest-pattern tests this miner accepts."""
+    return (
+        "\n\nimport unittest as _un\n"
+        "_suite = _un.defaultTestLoader.loadTestsFromModule(__import__('__main__'))\n"
+        "_res = _un.TextTestRunner(verbosity=0).run(_suite)\n"
+        "raise SystemExit(0 if _res.wasSuccessful() else 1)\n"
+    )
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("shard")
@@ -145,7 +158,7 @@ def main():
                 impl = files[ip]
                 if not impl or not stdlib_core_ok(impl):
                     continue
-                blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % target + src
+                blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % target + src + test_runner_suffix()
                 rc, outt, err = sandbox_exec.run_sandboxed(blob, timeout=15)
                 if rc == 0:
                     fo.write(json.dumps({"repo": repo, "impl_path": ip, "impl": impl,
