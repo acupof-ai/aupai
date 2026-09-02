@@ -242,18 +242,64 @@ def selftest(model, tok, texts, seq, device):
     return ok
 
 
+def mix_from_ckpt(ck_path, override=None):
+    """The mix the checkpoint was TRAINED on, not a default. `override` wins when given.
+
+    fb hit the failure this closes (2026-09-02): score_matrix defaulted --mix to the ladder
+    mix `data/mix_scale_3.24b.json` while scoring a p500m step-2500 checkpoint, so the eval
+    went looking for domains that run never touched and cache_guard refused on web_hq's empty
+    .vocab stamp. **The guard was right and the default was wrong** -- and a default that
+    names a real file cannot be caught by "does this path exist", because it does.
+
+    Same reasoning as vocab_id: the artifact carries the identity of what produced it, and a
+    consumer reads it from there instead of from a constant. A checkpoint whose cfg has no
+    mix raises rather than falling back, because falling back is the bug.
+    """
+    if override:
+        return override
+    ck = torch.load(ck_path, map_location="cpu", weights_only=False)
+    cfg = ck.get("cfg")
+    # cfg is a DICT on every checkpoint this repo writes (verified against
+    # ckpt_p500m_20b_0902.pt.step2500: `cfg` is a dict of 47 keys with mix='data/mix_500m.json').
+    # The first version of this function used getattr only, which returns None on a dict and
+    # therefore refused every real checkpoint -- a correct-looking guard that turns a wrong
+    # default into a false refusal, which is worse. Both shapes are read because
+    # test_arch_compat round-trips older checkpoints and consumers build from ck["cfg"].
+    if isinstance(cfg, dict):
+        mix = cfg.get("mix")
+    else:
+        mix = getattr(cfg, "mix", None) if cfg is not None else None
+    if not mix:
+        raise SystemExit(
+            f"refusing: {ck_path} carries no cfg.mix, so the mix it was trained on is "
+            f"unknown. Pass --mix explicitly and say which one you mean. Defaulting to a "
+            f"ladder mix is what sent an eval at domains its run never saw.")
+    return mix if os.path.isabs(mix) else os.path.join(ROOT, mix)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", action="append", required=True)
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
+    ap.add_argument("--mix", default=None,
+                    help="default: the mix named in the checkpoint's own cfg (never a "
+                         "hardcoded ladder mix -- see mix_from_ckpt)")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     a = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    files = domain_files(a.mix, ROOT)
-    assert files, f"{a.mix} named domains but none have shards -- nothing to score"
+    mix_path = mix_from_ckpt(a.ckpt[0], a.mix)
+    if len(a.ckpt) > 1 and not a.mix:
+        # Several checkpoints from different runs do not share a mix, and scoring them
+        # against one another's domains is the same error one level up.
+        others = {mix_from_ckpt(c) for c in a.ckpt[1:]}
+        if others - {mix_path}:
+            raise SystemExit(
+                f"refusing: these checkpoints name different mixes ({sorted({mix_path} | others)}). "
+                f"Score them separately, or pass --mix to say deliberately which one applies.")
+    files = domain_files(mix_path, ROOT)
+    assert files, f"{mix_path} named domains but none have shards -- nothing to score"
     cache = {name: head_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
 
     out = []
@@ -291,6 +337,11 @@ def main():
         # across domains", the weighted one asks "how good on this mix". Reporting the
         # weighted one alone is what let a 49.6%-textbook mix read as a model result.
         print(f"  {'MEAN':10s} {row['unweighted_mean']:.4f}   (unweighted across domains)", flush=True)
+        # Which mix these domains came from, and whether a human named it. A number scored
+        # against the wrong mix is well-formed and wrong, so the record has to say -- the
+        # same reason a checkpoint carries vocab_id.
+        row["mix"] = os.path.relpath(mix_path, ROOT)
+        row["mix_source"] = "--mix" if a.mix else "ckpt cfg"
         out.append(row)
         del model
         torch.cuda.empty_cache()
