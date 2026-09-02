@@ -261,7 +261,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 16 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 17 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 §106 |
 | A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 40 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 7 | §7 §13 §25 §27 §51 §59 §101 |
@@ -269,7 +269,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 15 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 |
 | Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §42 §58 §68 §102 |
 | Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §33 |
-| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 3 | §39 §41 §107 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
 
 Full cases live in the shapes doc; new shapes land there first and this table follows.
