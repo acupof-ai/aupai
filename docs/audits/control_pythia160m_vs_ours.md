@@ -152,10 +152,31 @@ leak check: humaneval 0/164 命中、code_holdout 0/156 命中
 
 14.1% 是对照臂少训的受监督字节比例（§2.2）。**这条规则先定后看数，是为了让"阈值"不能事后挑。**
 
-待回填，两臂完成后写入：
+### 5.1 我们臂（已测）
 
-1. 交集 10,421 题上各臂的 NLL / supervised byte（分母同为 10,554,038 B）
-2. 两臂的 `evaluated_ids_sha256`，必须相等 —— 不等则不出数
+```
+ckpt_control_ours.pt   seq 4096   scored 10,421 / 10,641（丢 28）
+evaluated_ids_sha256   cae4daf7ad59388c        ← 必须与对照臂相同
+supervised bytes       10,554,038              ← 两臂同一分母
+supervised tokens      2,844,458               （我们的 tokenizer，不可跨臂比）
+total NLL              3,102,766.0
+NLL / supervised BYTE  0.293989                ← 跨臂比这个
+NLL / supervised token 1.090811                （臂内数）
+```
+`runs/heldout_ours.json`，2026-09-02 18:2xZ，卡 2。
+
+**自洽性核对**：留出 per-token 1.0908 对训练末端 1.064（`runs/control_ours.log` step 1020）—— 差 2.5%，是个合理的泛化间隙。如果留出数远低于训练数，那才要怀疑评的是训练过的题。
+
+**评分器的 dtype 是 bf16**，与 `eval/domain_loss.py:286`、`eval/run_eval.py:274` 一致。这不是可选项：checkpoint 里存的是 bf16，而 `HybridLM(Cfg)` 建 fp32 参数、`load_state_dict` 会把权重**上转**成 fp32，那样 KDA kernel 抛 `CUDA error: misaligned address`。逐项排除后确认是 dtype（fp32 在切片和 contiguous 下都崩，bf16 两种都过）。
+
+### 5.2 对照臂
+
+待回填，等三点扫描完（点位 1 lr 3e-5 已出：留出 loss 10.1599 → **2.5594**，但**它不是选中点，不进结论**）。三点完后取留出 loss 最低的点，跑同一个脚本，**其 `evaluated_ids_sha256` 必须等于 `cae4daf7ad59388c`，不等则不出跨臂数**。
+
+对照臂完成后还要写入：
+
+1. ~~交集 10,421 题上各臂的 NLL / supervised byte~~ —— 我们臂已在 §5.1（0.293989）；对照臂待填
+2. ~~两臂的 `evaluated_ids_sha256` 必须相等~~ —— 我们臂 `cae4daf7ad59388c` 已定；对照臂须相同
 3. 对照臂三点表（3e-5 / 1e-4 / 3e-4）与选中点，选择依据是留出 loss
 4. **训练 loss 会不会选出不同的点** —— 会的话说明这个扫描起了作用
 5. 按上表判出的结论，并复述当时的领先幅度与 14.1% 的比较
