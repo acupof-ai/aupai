@@ -204,8 +204,19 @@ LAUNCH_MIX = "data/mix_500m.json"
 
 
 def _sha256(p):
-    if not os.path.exists(p):
-        return None
+    """Chunked sha256. RAISES on a missing file, matching launch_tests._sha256 exactly.
+
+    It used to return None first, and that branch was UNREACHABLE from both call sites:
+    gate_arch_tests:236 returns NO-GO on any absent ARCH_TESTS file before the digest is
+    taken, and the selftest hashes files it has just copied. Worse than dead -- if it ever
+    became reachable, the `here and` in the comparison below would have SKIPPED the check
+    for a file that is gone, so a deleted test would read as one whose sha still matches;
+    that guard is deleted with it. Deleted
+    rather than merged into launch_tests': that module lazily imports THIS one and
+    documents why (a tree holding one file and not the other is one named single-file push
+    away), so a module-level import here would invert the protection and stop the gate
+    itself from loading. Two six-line twins with identical behaviour cost less than that.
+    """
     h = hashlib.sha256()
     with open(p, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
@@ -279,7 +290,7 @@ def gate_arch_tests(root, mix_path, world):
             if want is None:
                 problems.append(f"{name}: the row carries no test_sha256, so it cannot "
                                 f"be shown to describe the file that is here now")
-            elif here and want != here:
+            elif want != here:
                 problems.append(f"{name}: recorded against {want[:12]}, the file here "
                                 f"is {here[:12]} -- the test changed after it passed")
     if problems:

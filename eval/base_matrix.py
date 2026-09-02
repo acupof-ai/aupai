@@ -334,7 +334,7 @@ def score_mc_tripwire(model, tok, cfg, device, benchmarks=MC_TRIPWIRE):
 def summarize(runs):
     """Ladder table + resolution verdict per metric. A metric whose best-worst
     spread across the ladder is < 0.10 is declared no-resolution and cut."""
-    data = [json.load(open(p)) for p in runs]
+    data = [json.load(open(p, encoding="utf-8")) for p in runs]
     data.sort(key=lambda d: d.get("n_params", 0))
     dims = sorted({d for d_ in data for d in d_["dimensions"]})
     print(f"{'ckpt':>28} " + " ".join(f"{d[:10]:>10}" for d in dims) + "  overall")
