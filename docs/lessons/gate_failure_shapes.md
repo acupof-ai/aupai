@@ -547,7 +547,42 @@ git reset,同一个 merge      →  成功,1 file changed
 
 与 §48 同族但方向相反:§48 是从一个样本推出普适判据(证据不足),这条是**手上有充分证据而没有去读**;两者的共同点是结论的置信度由推理的流畅度决定,而不是由证据决定。规则:**在判定一条规则本身有缺陷之前,先检索自己对这条规则做过的测量**——尤其当结论是"只能违反它"的时候,因为那个结论的收益正好是绕过检查。
 
+**补记(同日晚,de-28a 第二轮):真的互锁存在,但条件比我原来说的窄得多,而且可以精确命名。** 上面写"没有死锁"也是过度推广——`git reset` 解的是三方合并,不是全部。当晚第二次撞上时把两半都测了:
 
+| 合并形状 | 脏路径 main 是否也改 | 结果 |
+|---|---|---|
+| 三方 | 不改 | `git reset` 后成功(`/tmp/deadlock.sh`) |
+| fast-forward | 不改 | **直接成功**,工作树完好(`/tmp/ff_tracked.sh`) |
+| fast-forward | 也改 | 拒绝,且 `git reset` 无用——ff 要写那个路径 |
+
+只有第三格是真互锁:`git reset` 帮不了,因为 fast-forward 像 checkout 一样要**写**那个路径,而不是写 index。当晚的实例是 `runs/tasks.jsonl`——我加了三条 done 行,main 也加了 `3b-9`。`git stash` 被禁,所以出路是:把那一个路径的改动存到仓库外、`git checkout --` 它、合并、再按行 union 重新应用。注意 `git checkout --` 从 **index** 恢复,所以已 stage 的路径要先 `git reset HEAD <path>`,否则它恢复的是你正想丢掉的那一版。
+
+这里还有一个独立的坑,值得单独记:重新应用时**不能整文件拷回**。我存的副本里没有 main 的 `3b-9`,拷回去等于删掉别人的行。第一版 union 脚本按 `(id, event, ts)` 比较——这三个字段里有两个在这个 ledger 里根本不存在,于是每行都"已存在",脚本报告"re-applying 0"并正常退出。**只有计数自相矛盾暴露了它**:live 260 行、saved 262 行、新增 0 行,三个数不可能同时成立。这与 §51 同形:一个按构造永远命中的判据,和一个真的没有差异的判据,输出一模一样。
+
+
+
+## 53. uid 0 在 chroot 里不是隔离,而移除它会暴露一切原来靠 root 才通过的路径(de-28a,2026-09-02,fb 裁定)
+
+一个沙箱把命名空间、chroot、rlimit 都装齐了,唯独进程仍是 uid 0。**chroot 里的 root 不是被关起来的 root**:它能 mknod 出宿主磁盘的块设备、无视只读 bind 上的所有 DAC 位、不受 RLIMIT_NPROC 约束(内核对 uid 0 不执行),并且 chdir-then-chroot 是教科书级的走出方法。所以"层数"看起来是四层,第一层就漏。
+
+修法是在命名空间和 chroot 都就位**之后**降权(`setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs`)——顺序不可换,每一步都需要它正要放弃的那个特权。`--no-new-privs` 让降权不能经 setuid 二进制回滚。65534 是内核自己的 overflow uid,chroot 内不需要 `/etc/passwd`。
+
+**教训在后半段:降权一次性暴露了两处"只因为是 root 才没报错"的路径,而两者的报错都指向错误的方向。**
+
+| 缺陷 | 症状 | 读起来像 | 实际 |
+|---|---|---|---|
+| chroot 根是 0700 | 根下每个二进制都 `error while loading shared libraries: libc.so.6` | /usr 的 bind 挂坏了 | `mkdtemp` 建的根 root 所有且不可穿越,65534 进不去,根下什么都解析不了 |
+| cwd 是 chroot 根 | 测试写相对路径 EACCES | 隔离过严,或测试有问题 | root 时它静默写进 chroot 根(root 所有),降权后同一个写立刻被拒 |
+
+第一个的鉴别只用两条命令:root 下 `ls libm.so.6` 正常并显示 644,65534 下连 `/bin/sh` 都载不动 libc。**同一个文件,不同 uid,一个能读一个不能——这排除了文件本身,只剩路径穿越。** 在此之前我先怀疑了 `chown -R` 弄坏宿主 `/usr`(查了,没有)和 `ulimit -u 64`(逐行 bisect,不是它)。
+
+第二个是被一条断言抓到的,但那条断言**报的原因是错的**:rollout 的 cross-rollout marker 测试红了,消息写着"peer 的 workdir 可见",而记录里 reward 0.0、`escaped` 为 false、stdout 里明明是 `PermissionError`。一个对的红配一条错的消息,代价是"不相信这条消息"所花的时间。现在它分开两种情况:没有 REACHED marker 就说明 marker 测试根本没跑,隔离是**未被测试**,不是被突破。
+
+规则两条:**降权是隔离的第一层,不是最后一层;**以及**当一个加固改动让不相关的东西开始报错,先问哪些路径原来是靠特权才通过的**——它们不是被改坏的,它们从来没有被真正测过。
+
+同时记一条能力边界,因为它决定裁定能不能落地:Landlock 在这台 pod 上**结构性不可用**——内核 5.4.250,Landlock 自 5.13 起才有,syscall 444/445/446 全 ENOSYS,`/sys/kernel/security` 为空。seccomp 可用(`seccomp(99)` 返回 EINVAL 而非 ENOSYS,`PR_SET_NO_NEW_PRIVS` 成功,当前模式 0),userns 可用(`max_user_namespaces` 7900484,`unshare -Ur true` 成功)。**ENOSYS 和 EINVAL 的区别就是"这个内核没有"和"有但参数不对"的区别**,只看"调用失败"会把前者读成配置问题。
+
+与 §51 同族:那条是检查按构造不能报警,这条是**被检查的属性按构造一直被绕过**——测试跑在 root 下,于是每一条关于权限的结论都只对 root 成立。
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
 - 44-7/44-8 分流夜:/tmp/hcheck.txt、tilerl 零漂移复跑记录
@@ -583,4 +618,5 @@ git reset,同一个 merge      →  成功,1 file changed
 - fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族
 - de-25(2026-09-02,fb 裁定接受,reviewer 3b):AGENTS.md 的 merge 四格测量取自 fast-forward,三方合并下 staged 改动一律被拒(路径不相干也拒);八格复现脚本 `/tmp/merge_ff.sh`,规则改为「merge 前 index 必须与 HEAD 一致」
 - de-27(2026-09-02,fb 复核并撤回自己 07:29 的归因):p500m_20b_0902.log 每 10 步速率序列 + ckpt/eval 日志 mtime 锚点反推;run 自带对照组 step 500/1000/1500/2000 四次 7K 无 eval(2000 那次在 ppl 被杀之后,是干净的第四点);1990 步累计掉档 10.3 分钟 = 2.8%;ETA 单区间外推放大 29h/54s;成本脚本 /tmp/cost.py、/tmp/attrib.py、/tmp/eta.py
-- de-28a(2026-09-02,fb 内容接受并纠正流程):探针在 impl 里 print 被 pytest 捕获→`escaped:False` 按构造成立,10/10 绿含两次真逃逸;改成 test 内 assert 后在 rlimits_only 实测会红(reward 0.0/escaped true/点出 `/Users/bytedance/.ssh`);`/dev` 三次测量(ro bind→Errno 30、逐设备 bind→null/zero/full/tty 未进 chroot、mknod 固定主次号);死锁判定被 fb 推翻——`/tmp/deadlock.sh` 实测 `git reset` 后三方合并成功且工作树完好,出路在 de-25 自己的表里
+- de-28a 第二轮(2026-09-02,fb 裁定 survey A.3/C.5):chroot 内 uid 0 = mknod 宿主块设备 + RLIMIT_NPROC 不生效 + chdir-then-chroot;`setpriv` 降权后 pod 16/16 known answer(含 uid=65534、mknod EPERM、setsid 双 fork、/proc environ 三进程无泄漏);降权暴露 chroot 根 0700(报错指向 /usr bind)与 cwd 在 chroot 根(报错指向隔离过严);互锁三格表 `/tmp/deadlock.sh` `/tmp/ff_tracked.sh`——只有「ff + main 也改该路径」是真互锁;union 脚本按不存在的字段比较,报 re-applying 0 而计数自相矛盾;Landlock 内核 5.4 结构性缺失(444/445/446 ENOSYS),seccomp 与 userns 可用
+- de-28a 第一轮(2026-09-02,fb 内容接受并纠正流程):探针在 impl 里 print 被 pytest 捕获→`escaped:False` 按构造成立,10/10 绿含两次真逃逸;改成 test 内 assert 后在 rlimits_only 实测会红(reward 0.0/escaped true/点出 `/Users/bytedance/.ssh`);`/dev` 三次测量(ro bind→Errno 30、逐设备 bind→null/zero/full/tty 未进 chroot、mknod 固定主次号);死锁判定被 fb 推翻——`/tmp/deadlock.sh` 实测 `git reset` 后三方合并成功且工作树完好,出路在 de-25 自己的表里
