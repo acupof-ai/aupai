@@ -47,6 +47,10 @@ Rules, each bought with a case from 2026-09-02:
   next reader nothing; "tilerl showed `mv` unlinks the inode under the live fd" does.
 - **State what you did against what was asked, when they differ.** `cp` was used where
   the task said `mv`; the message said so first and why second.
+- **A derivation inherits the status of its premise.** Terminal lr 0.0539 was computed
+  correctly from a fact that said the run stops 78 steps short; the fact was wrong and the
+  loop bound (`train.py:2508`, `len(Xtr)`) could be counted in thirty seconds. A fact's
+  `uncertainty` field is an instruction to verify, not a note that someone else will.
 - **Say what you cannot see.** Every message that reports state names its view (host,
   container, main, worktree) and its time in UTC.
 

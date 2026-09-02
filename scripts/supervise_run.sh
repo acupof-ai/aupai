@@ -88,17 +88,6 @@ for _ in $(seq 1 60); do
 done
 
 say "exit $rc -- resuming ONCE from $CKPT ($prev bytes)"
-
-# Copy the crash scene before the resume writes into the same log. stdout here is a
-# plain O_WRONLY fd the resumed child inherits, so it does not truncate -- but train.py's
-# RunLog reopens the same path in append mode, two writers on one file, and the resumed
-# run's output interleaves with the dead one's traceback. `cp`, not `mv`: moving the file
-# out from under the inherited fd leaves the child writing to an unlinked inode, and the
-# live log goes empty. The step-83 scene survived only because a person remembered to
-# archive it by hand; this is that memory made structural.
-DIED="runs/${NAME}.log.died_$(date -u +%Y%m%dT%H%M%SZ)"
-cp "runs/${NAME}.log" "$DIED" 2>/dev/null && say "crash scene archived: $DIED"
-
 sleep 30   # let the dead ranks release their cards before eight more ask for them
 
 "$@" --resume "$CKPT" &
