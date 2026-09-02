@@ -42,7 +42,20 @@ def cause(t):
     if head.startswith("package ") and ";" in low:      # Java
         return "non-python-under-py"
     if low.startswith("using system;") or "module.exports" in low or "function(" in low \
-       or low.startswith("#include") or low.startswith("require('") or low.startswith("require(\""):
+       or low.startswith("#include") or low.startswith("require('") or low.startswith("require(\"") \
+       or "export default class" in low or "export default function" in low \
+       or "require('" in low or 'require("path")' in low or "var path = require" in low \
+       or low.startswith("#ifndef") or low.startswith("#define"):
+        return "non-python-under-py"
+    # RST / Markdown / prose: a heading underline (===== / ------ / ~~~~~) directly
+    # beneath a short title line, i.e. a doc page, not code
+    nonblank = [l for l in head.split("\n") if l.strip()]
+    if len(nonblank) >= 2 and len(nonblank[0]) < 60 and nonblank[1] and \
+       set(nonblank[1].strip()) <= set("=-~^'\""):
+        return "non-python-under-py"
+    # C/C++/Java namespace enum / android: 'namespace X {' or 'import android'
+    if "namespace " in low and "{" in head or "import android" in low or "import org." in low \
+       or "import java." in low or "import com." in low or "import android.support" in low:
         return "non-python-under-py"
     # 2 encoding / control bytes: a NUL, or a lone surrogate that breaks utf-8 decode
     if "\x00" in t or "\x01" in t or "\x02" in t:
