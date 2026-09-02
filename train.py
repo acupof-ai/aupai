@@ -2466,6 +2466,7 @@ def main():
             on_trace_ready=lambda p: p.export_chrome_trace(f"/work/aupai/bench_eff/ddp_trace_rank{rank}.json"),
         )
         _prof.start()
+    GOOD_SAVE_INTERVAL = 200
     # An interrupt writes a checkpoint before it dies. The periodic save is the floor,
     # not the only line: SIGTERM (container stop, torchrun teardown, an operator's kill)
     # and SIGINT reach the main thread between bytecodes, so the handler can snapshot
@@ -2615,14 +2616,19 @@ def main():
                 step += 1
                 if _prof is not None:
                     _prof.step()
-                # One cadence, not two. The rollback buffer lived in memory and died with
-                # the process, so a crash lost everything since the last DISK write while a
-                # fresher copy sat in RAM. Refreshing straight to disk deletes the buffer,
-                # the second cadence, and the "is the snapshot stale" question with it.
+                # Refresh the rollback buffer on the finer of the two cadences so a save
+                # never writes a stale snapshot (save_every can be < GOOD_SAVE_INTERVAL).
+                # EVERY rank, not just rank 0: the NaN rollback below loads good_state
+                # unguarded, so a rank whose buffer never refreshed would restore itself to
+                # initialisation while rank 0 restored a real step, and DDP synchronises
+                # gradients, not parameters -- the divergence would not heal and would not
+                # raise. Folding this into the is_main save reopened exactly that (tilerl,
+                # 2026-09-02, caught before it ran).
                 _step_now[0] = step
-                if step > 0 and step % args.save_every == 0 and is_main:
+                if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
+                if step > 0 and step % args.save_every == 0 and is_main:
                     save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
                     # keep the newest 3; resume only needs the latest
                     stale = sorted(
