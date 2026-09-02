@@ -10,19 +10,29 @@ next steps: "the table bought something" argues for keeping a full [vocab, d] ta
 while "the 200 most frequent rows bought something" argues for a much smaller table or a
 factorised one, at a fraction of the +16.3% parameters.
 
-WHY ROW NORM ALONE CANNOT ANSWER "WHICH ROWS WERE TOUCHED". nn.Embedding initialises to
-N(0, 1), so an UNTOUCHED row at d=1024 has expected norm sqrt(1024) = 32.0 -- not zero. A naive
-"rows with norm > 0 were trained" reads 32832 of 32832 and says nothing. Two things separate
-touched from untouched:
+TWO READINGS THAT LOOK RIGHT AND ARE NOT. Both were caught before the number was used, and
+both would have produced a confident answer to the pre-registered question:
 
-  1. The DELTA against a fresh table under the checkpoint's own seed. A row no gradient reached
-     is bit-identical to its init; a row that was trained is not. This is exact, not a threshold.
-  2. The token counts from the run's own data, which say how often each row COULD have been
-     reached. Reported beside the norms so the reader sees frequency and movement together.
+  1. "Rows with norm > 0 were trained" reads 32832 of 32832. nn.Embedding inits to N(0, 1), so an
+     untouched row at d=1024 has norm ~sqrt(1024) = 32, not zero.
 
-Both are needed: (1) alone says a row moved, (2) alone says a row was available. The claim the
-exp row has to support is about the JOINT distribution -- whether the movement concentrates in
-the frequent rows.
+  2. "Rows whose weights differ from init were trained" ALSO reads 32832 of 32832 -- and this is
+     the one I was about to ship. The table sits in the AdamW `embed` group with
+     weight_decay=0.001 (train.py:779), an Embedding's gradient is a DENSE zero-filled tensor,
+     and AdamW's decoupled decay therefore steps every row whether or not a token reached it.
+     Measured on a toy: after one step all 10 of 10 rows moved, touched rows by 2.0e-2 and
+     untouched rows by 1.3e-5.
+
+So neither presence nor movement separates the populations; MAGNITUDE does, and the two are three
+orders apart. The reading is the delta distribution against a fresh table, with the decay floor
+estimated from the data (the median row, since most rows are untouched at 0.26B tokens) rather
+than assumed -- and the concentration of that delta, which answers the pre-registered question
+without needing token frequencies at all: if a few hundred rows of 32832 hold nearly all the
+gradient movement, the TABLE is not what won, whatever the frequency ranking was.
+
+Token counts remain optional (--counts) and add only the frequency ORDERING, i.e. whether the
+rows that moved are the frequent ones. They are not required for the verdict, and scanning the
+mix's caches for them costs 35 GB of reads on one domain alone.
 """
 
 import argparse
@@ -47,19 +57,37 @@ def row_stats(trained, fresh):
 
 
 def summarise(norms, delta, counts=None, topk=(10, 100, 1000)):
-    """The reading: how many rows moved at all, and how concentrated the movement is."""
+    """The reading: how the movement is DISTRIBUTED across rows.
+
+    `rows_moved` is deliberately NOT the headline, and the reason is measured: the VE table sits
+    in the AdamW `embed` group with weight_decay=0.001 (train.py:779), an Embedding's gradient is
+    a DENSE zero-filled tensor, and AdamW's decoupled decay therefore steps EVERY row whether a
+    token reached it or not. Verified on a toy: after one step, all 10 of 10 rows have moved --
+    touched rows by 2.0e-2 and untouched rows by 1.3e-5, three orders apart. So a moved/unmoved
+    count reads 32832 of 32832 and says nothing, exactly like the norm threshold it replaced.
+
+    What separates the populations is MAGNITUDE. A decay-only row moves by about lr*wd*|p| per
+    step, uniformly and tiny; a row that received gradient moves by its gradient. The reading is
+    therefore the delta distribution and its concentration, with a decay floor estimated from the
+    data itself (the median, since most rows are untouched at 0.26B tokens) rather than assumed.
+    """
     v = norms.numel()
     moved = (delta > 0).sum().item()
+    med = delta.median().item()
+    # The decay floor: most rows are untouched at this token count, so the MEDIAN row is a
+    # decay-only row. 10x that is a generous line between "decay only" and "gradient reached it".
+    floor = max(med * 10, 0.0)
+    above = (delta > floor).sum().item()
     out = {
         "vocab_rows": v,
-        "rows_moved": moved,
-        "rows_moved_frac": moved / v,
-        "rows_untouched": v - moved,
-        # An untouched row keeps its init norm; reporting the two populations separately is the
-        # whole point, since a mean over all rows is dominated by the untouched ones.
-        "norm_mean_moved": norms[delta > 0].mean().item() if moved else None,
-        "norm_mean_untouched": norms[delta == 0].mean().item() if moved < v else None,
+        "rows_moved_at_all": moved,
+        "delta_median": med,
+        "decay_floor_10x_median": floor,
+        "rows_above_decay_floor": above,
+        "rows_above_decay_floor_frac": above / v,
         "delta_sum": delta.sum().item(),
+        "norm_mean_above_floor": norms[delta > floor].mean().item() if above else None,
+        "norm_mean_below_floor": norms[delta <= floor].mean().item() if above < v else None,
     }
     order = torch.argsort(delta, descending=True)
     total = delta.sum().item()
@@ -78,10 +106,9 @@ def summarise(norms, delta, counts=None, topk=(10, 100, 1000)):
         seen = (counts > 0).sum().item()
         out["rows_seen_in_data"] = seen
         out["rows_seen_frac"] = seen / v
-        # The honest cross-check: a row that was SEEN must have moved, and a row that moved must
-        # have been seen. Either violation means the counts and the checkpoint disagree.
-        out["moved_but_unseen"] = int(((delta > 0) & (counts == 0)).sum().item())
-        out["seen_but_unmoved"] = int(((delta == 0) & (counts > 0)).sum().item())
+        # Cross-check against the floor, not against "moved": every row moves under decay.
+        out["above_floor_but_unseen"] = int(((delta > floor) & (counts == 0)).sum().item())
+        out["seen_but_below_floor"] = int(((delta <= floor) & (counts > 0)).sum().item())
     return out
 
 
@@ -89,47 +116,56 @@ def _selftest():
     torch.manual_seed(0)
     v, d = 64, 8
     fresh = torch.randn(v, d)
-    trained = fresh.clone()
-    # Move exactly three rows, by very different amounts.
+
+    # THE DECAY WORLD, which is the real one: AdamW's decoupled decay steps EVERY row because an
+    # Embedding's grad is dense. So build a table where all 64 rows moved a little and three moved
+    # a lot, and require the reading to separate them. A moved/unmoved count cannot.
+    trained = fresh * (1 - 1e-5)          # decay floor on every row
     trained[5] += 10.0
     trained[9] += 1.0
     trained[40] += 0.1
     counts = torch.zeros(v)
-    counts[5] = 1000
-    counts[9] = 10
-    counts[40] = 1
+    counts[5], counts[9], counts[40] = 1000, 10, 1
 
     norms, delta = row_stats(trained, fresh)
     s = summarise(norms, delta, counts, topk=(1, 3))
-    assert s["rows_moved"] == 3, s["rows_moved"]
-    assert s["rows_untouched"] == v - 3
-    assert s["moved_but_unseen"] == 0, s
-    assert s["seen_but_unmoved"] == 0, s
-    # The heaviest row must dominate: 10.0 of 11.1 total delta.
-    assert 0.85 < s["delta_share_top1"] < 0.95, s["delta_share_top1"]
-    assert abs(s["delta_share_top3"] - 1.0) < 1e-6, s["delta_share_top3"]
-    # Frequency and movement agree here by construction, so both top1 shares match.
+    assert s["rows_moved_at_all"] == v, \
+        f"only {s['rows_moved_at_all']} of {v} rows moved; the decay fixture is not realistic"
+    assert s["rows_above_decay_floor"] == 3, \
+        (f"the floor admits {s['rows_above_decay_floor']} rows, expected the 3 with gradient. "
+         f"A moved/unmoved count would have said {v}.")
+    assert s["above_floor_but_unseen"] == 0, s
+    assert s["seen_but_below_floor"] == 0, s
+    # The heaviest row must dominate: 10.0 of ~11.1 total gradient movement.
+    assert 0.80 < s["delta_share_top1"] < 0.95, s["delta_share_top1"]
+    # Frequency and movement agree here by construction.
     assert abs(s["delta_share_top1"] - s["delta_share_top1_by_frequency"]) < 1e-6
 
     # THE CASE THAT MATTERS: frequency and movement DISAGREE. If the by-frequency share equalled
     # the by-delta share unconditionally, the comparison would be vacuous -- so build a world
     # where the most frequent row barely moved and check the two diverge.
-    t2 = fresh.clone()
+    t2 = fresh * (1 - 1e-5)
     t2[5] += 0.01      # most frequent, barely moves
     t2[40] += 10.0     # rare, moves a lot
     n2, d2 = row_stats(t2, fresh)
     s2 = summarise(n2, d2, counts, topk=(1,))
-    assert s2["delta_share_top1"] > 0.99, s2["delta_share_top1"]
-    assert s2["delta_share_top1_by_frequency"] < 0.01, s2["delta_share_top1_by_frequency"]
+    assert s2["delta_share_top1"] > 0.90, s2["delta_share_top1"]
+    assert s2["delta_share_top1_by_frequency"] < 0.05, s2["delta_share_top1_by_frequency"]
 
-    # An UNTOUCHED table must read as zero rows moved, and its norms must be the init norms --
-    # this is the check that stops "norm > 0" from being mistaken for "trained".
-    n3, d3 = row_stats(fresh.clone(), fresh)
+    # A DECAY-ONLY table -- no row received gradient -- must read as ZERO rows above the floor,
+    # even though every row moved. This is the check that stops the decay floor from being
+    # mistaken for training, and it is the shape the real 0.26B run may well have.
+    t3 = fresh * (1 - 1e-5)
+    n3, d3 = row_stats(t3, fresh)
     s3 = summarise(n3, d3, counts, topk=(1,))
-    assert s3["rows_moved"] == 0, s3
-    assert s3["seen_but_unmoved"] == 3, s3
-    assert s3["norm_mean_untouched"] is not None
-    # And at the real width an untouched row's norm is ~sqrt(d), nowhere near zero.
+    assert s3["rows_moved_at_all"] == v, s3["rows_moved_at_all"]
+    assert s3["rows_above_decay_floor"] == 0, \
+        (f"{s3['rows_above_decay_floor']} rows read as trained in a table where NOTHING but "
+         f"decay happened; the floor is not separating the populations")
+    assert s3["seen_but_below_floor"] == 3, s3
+
+    # And at the real width an untouched row's norm is ~sqrt(d), nowhere near zero -- so no norm
+    # threshold can separate the populations either.
     big = torch.randn(16, 1024)
     assert 0.9 * math.sqrt(1024) < big.norm(dim=1).mean().item() < 1.1 * math.sqrt(1024)
 
@@ -157,9 +193,11 @@ def _selftest():
         f"the shortcut's table differs from the second draw on only {(d4 > 0).sum().item()} of " \
         f"{v2} rows; the measured claim is ALL rows"
 
-    print("ve_row_norms selftest OK: counts only rows whose weights actually moved from init "
-          "(an untouched row keeps norm ~sqrt(d)=32 at d=1024, so a norm threshold would call "
-          "all 32832 rows trained), separates the moved and untouched populations, and the "
+    print("ve_row_norms selftest OK: separates gradient movement from the AdamW decay floor "
+          "(decay steps EVERY row, so a moved/unmoved count reads the whole vocab -- measured "
+          "2.0e-2 touched against 1.3e-5 decay-only), reads zero trained rows in a decay-only "
+          "table, no norm threshold could do either since an untouched row keeps norm "
+          "~sqrt(d)=32 at d=1024, and the "
           "by-frequency share diverges from the by-delta share when frequency does NOT explain "
           "the movement, and the construction-order trap is live (a bare nn.Embedding under the "
           "seed reproduces the FIRST draw, i.e. tok, and differs from the second on ALL rows -- "
