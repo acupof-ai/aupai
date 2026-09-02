@@ -953,7 +953,7 @@ elif is_main:
     print("WARNING the pack predates vocabulary fingerprinting; verify by hand")
 ```
 
-packer（`datagen/prepare_sft.py:288`）写的键是 `vocab_id`。跨 `data/sft/*.pt` 普查：只有 2026-08 之前的五个 `arith_*` pack 带裸 `"vocab"`，**现行 packer 产出的每一个 pack 都只有 `vocab_id`**——于是现行 packer 造的每个 pack 都走 warning 分支，这道断言一次都没触发过。而它的注释自己写着要防什么："a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match"——不会报错的失败，正是最需要守卫的那种。这次没有损害（两边实测都是 `0bce3584bc24f255`），被记录的是守卫失效本身。
+packer（`datagen/prepare_sft.py:288`）写的键是 `vocab_id`。pod 上 `data/sft/*.pt` 抽样 6 个（lessons-58）：5 个 2026-08 前的 `arith_*` pack 带裸 `"vocab"`、无 `vocab_id`，第 6 个现行 pack 只有 `vocab_id`——"只有 arith_* 带裸 vocab"是抽样结论，不是全量普查；但"现行 packer 只写 `vocab_id`"从 `prepare_sft.py:288` 直接读得，是硬的。于是现行 packer 造的每个 pack 都走 warning 分支，这道断言一次都没触发过。而它的注释自己写着要防什么："a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match"——不会报错的失败，正是最需要守卫的那种。这次没有损害（两边实测都是 `0bce3584bc24f255`），被记录的是守卫失效本身。
 
 **为什么能活这么久——这是 shape 的核心，不是"写错了键"那么浅：**
 
