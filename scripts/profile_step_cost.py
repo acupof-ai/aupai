@@ -124,6 +124,42 @@ def _selftest():
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} the recorded p200m shape matches e19eeb7's line")
 
+    # fp8 must be APPLIED, not just recorded. The first GPU attempt wrote fp8=True while
+    # calling neither of train.py's two fp8 steps, so the model stayed fp32, every activation
+    # doubled, and 32x4096 OOMed at 93 GiB of a 95 GiB card. Same shape as the EOS_ID default
+    # that was always taken: a field describing a premise the code never established.
+    #
+    # Checked by walking main()'s AST, NOT by a substring scan of this file. The substring
+    # version could not fail: the needle "train.convert_to_fp8_compute(raw)" sat in the
+    # check's own data table, so it matched itself even after the real call was deleted --
+    # a check whose subject includes the check is self-satisfying. Verified RED by deleting
+    # the call from a copy of this file (/tmp/break_fp8.py).
+    import ast as _ast
+
+    with open(os.path.abspath(__file__), encoding="utf-8") as fh:
+        me = fh.read()
+    _main = next((n for n in _ast.parse(me).body
+                  if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
+    calls, casts = set(), set()
+    for n in _ast.walk(_main) if _main else ():
+        if isinstance(n, _ast.Call):
+            f = n.func
+            if isinstance(f, _ast.Attribute):
+                calls.add(f.attr)
+                if f.attr == "to":
+                    casts.update(_ast.unparse(x) for x in n.args)
+    for ok, why, hint in (
+        (_main is not None, "has a main() to check at all", "main() is gone"),
+        ("convert_to_fp8_compute" in calls, "calls convert_to_fp8_compute (train.py:2020)",
+         "fp8 would be recorded but the linears never converted"),
+        (any("bfloat16" in c for c in casts), "casts the model to bf16 (train.py:2019)",
+         "the model stays fp32 and every activation doubles -- this is what OOMed"),
+        ('"fp8": fp8,' in me, "records the APPLIED fp8, not the requested flag",
+         "the record would claim a premise the run never established"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
+
     # Every train.* name this file resolves must exist, checked by AST rather than by import
     # (train pulls in CUDA-only modules). Three of my drafts named symbols that do not exist
     # -- build_model, an EOS_ID constant, build_tokenizer(is_main) -- and each would have died
@@ -159,7 +195,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2
+    n = 6 + 3 + 2 + 4
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -205,18 +241,30 @@ def main():
     # there are none -- the function is at train.py's top level.
     train.VOCAB_ID = train.vocab_fingerprint(tok)
     tr, va = train.build_mix(os.path.join(ROOT, a.mix), tok, is_main, ddp, rank, world)
-    seqs = (tr[0] if train.Cfg.fone else tr).long()
+    # NOT .long(): build_mix returns int32 and the plan is 976,552 x 4097 = 14.9 GiB, so a
+    # widening copy costs 29.8 GiB of host RAM for rows the step never reads. train.py keeps
+    # the plan as returned and indexes into pinned buffers, which is what is timed below.
+    seqs = tr[0] if train.Cfg.fone else tr
     X, Y = seqs[:, :-1], seqs[:, 1:]
-    vseqs = (va[0] if train.Cfg.fone else va).long()
+    vseqs = va[0] if train.Cfg.fone else va
     Xva, Yva = vseqs[:, :-1], vseqs[:, 1:]
 
     raw = train.HybridLM(train.Cfg).to(dev)
+    # train.py:2016-2020 -- fp8 is `args.fp8 and amp`, and it does TWO things: casts the
+    # module to bf16 and then converts the linears. Recording fp8=True while doing neither
+    # is a number without its premise: the model stays fp32, every activation doubles, and
+    # 32x4096 OOMs at 93 GiB on a 95 GiB card (measured, this run's first attempt). The
+    # cast is also not cosmetic -- it is what makes the timed step the run's step.
+    amp = True
+    fp8 = a.fp8 and amp
+    if fp8:
+        raw = raw.to(torch.bfloat16)
+        train.convert_to_fp8_compute(raw)
     optimizers = train.build_optimizers(raw, train.Cfg)
     model = raw
     if ddp:
         model = DDP(model, device_ids=[local], bucket_cap_mb=25, gradient_as_bucket_view=True,
                     static_graph=True)
-    amp = True
     if train.Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = max(64, 2 * train.Cfg.layers + 8)
         model = torch.compile(model, dynamic=False)
@@ -244,7 +292,7 @@ def main():
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
         print(f"built {n_par / 1e6:.2f}M params, compile={train.Cfg.compile and amp}, "
-              f"fp8={a.fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
+              f"fp8={fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
               flush=True)
 
     for st in range(a.steps + a.warmup):
@@ -305,7 +353,7 @@ def main():
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.dim,
-           "fp8": a.fp8, "grad_ckpt": a.grad_ckpt,
+           "fp8": fp8, "grad_ckpt": a.grad_ckpt,
            "compile": bool(train.Cfg.compile and amp), "steps_timed": len(steps),
            "step_total": _stats(steps), "loader_wait": _stats(loader),
            "nccl_floor": _stats(nccl) if ddp else None,
@@ -314,7 +362,7 @@ def main():
         tot = rec["step_total"]["median_ms"] if rec["step_total"] else None
         print(f"\n200M host-side per-step cost  (mix {a.mix}, world {world}, "
               f"{rec['params_m']}M, batch {B} x accum {train.Cfg.accum} x seq {SEQ}, "
-              f"fp8={a.fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
+              f"fp8={fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
         for k in ("step_total", "loader_wait", "nccl_floor", "save", "val"):
             print("  " + fmt_row(k, rec[k], world, tot))
         if a.json:
