@@ -71,13 +71,48 @@ def _fp_file(path):
         return hashlib.sha256(f.read()).hexdigest()[:16]
 
 
-def _fp_sources():
-    """Content hash of all SOURCES files. A source swap that does not trigger a
-    repack is invisible without this."""
+def _fp_sources(sources=None):
+    """Content hash of the source files a pack was ACTUALLY built from.
+
+    `sources` is the caller's own list. Defaulting to this module's SOURCES was wrong in
+    two ways at once, and the second is the expensive one:
+
+      it crashed every caller that supplies examples directly. pack_and_save takes
+      (prompt, output) pairs, so test_sft_pack, test_arch_compat and prepare_sft.selftest
+      never touch SOURCES -- but the stamp opened all ten anyway, and all ten are
+      gitignored pod data. Both tests died with FileNotFoundError on
+      data/alpaca_gpt4_zh.jsonl in their own bookkeeping, after their real assertions had
+      passed. test_arch_compat is the gate fb named for the step-832 interrupt checkpoint's
+      loadability, and its legacy round-trip prints OK two lines before the crash.
+
+      IT WROTE A FALSE PROVENANCE. prepare_sft_math.py has its OWN four-file SOURCES
+      (school_math_train, gsm8k_zh_train, alpaca_gpt4_zh, coig_50k) and calls this same
+      packer, so every ckpt_sft_p324_v* pack carries a sources_fp computed over
+      prepare_sft's TEN files -- a fingerprint naming sources that pack never read. A
+      provenance field that describes the wrong inputs is worse than an absent one: it
+      answers "which sources built this?" with a confident wrong answer, and nothing
+      reads it today, so nothing would have caught it.
+
+    None means the caller supplied examples directly and no source list applies; the stamp
+    then says so rather than inventing one.
+    """
+    if sources is None:
+        return "caller-supplied examples, no source list"
     h = hashlib.sha256()
-    for path, _, _ in SOURCES:
+    missing = []
+    for path, _, _ in sources:
+        if not os.path.exists(path):
+            missing.append(os.path.basename(path))
+            continue
         with open(path, "rb") as f:
             h.update(os.path.basename(path).encode() + b"\0" + hashlib.sha256(f.read()).digest())
+    if missing:
+        # Absent inputs are not a hash over what remains: that would give a stable-looking
+        # fingerprint for a pack built from a different set of files.
+        raise FileNotFoundError(
+            f"{len(missing)} source file(s) absent, so this pack's provenance cannot be "
+            f"computed: {missing[:4]}"
+        )
     return h.hexdigest()[:16]
 
 
@@ -140,7 +175,7 @@ def _encode_pairs(batch, tok, num_id):
 from loader import vocab_fingerprint as _vocab_fingerprint  # noqa: E402
 
 
-def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
+def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
     """Greedily pack (prompt, output) text pairs into (seq+1)-token rows and save.
 
     One example never split across rows; over-length examples dropped; rows are
@@ -149,6 +184,11 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
 
     num_id set adds "values": float32 (N, seq+1), the number at every [NUM]
     position and 0 elsewhere, which sft_math.py feeds to the FoNE embedding.
+
+    `sources` is the caller's own source list, stamped into sources_fp. Pass it when the
+    examples came from files; leave it None when they were built in-process. It is a
+    parameter rather than this module's SOURCES because prepare_sft_math.py has a different
+    four-file list and calls this same function -- see _fp_sources.
     """
     # Never split an example across rows; drop over-length ones. sft.py doc-masks by
     # <eos>, so within-row cross-example attention is already blocked, but a truncated
@@ -247,7 +287,7 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None):
         "labels": labels,
         "vocab_id": _vocab_fingerprint(tok),
         "packer_fp": _fp_file(os.path.abspath(__file__)),
-        "sources_fp": _fp_sources(),
+        "sources_fp": _fp_sources(sources),
         "holdout_fp": _fp_file(os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")),
     }
     if num_id is not None:
@@ -338,7 +378,7 @@ def main():
         examples = examples[:MAX_EXAMPLES]
     print(f"total examples: {len(examples)}", flush=True)
 
-    pack_and_save(examples, tok, eos, out_path, SEQ)
+    pack_and_save(examples, tok, eos, out_path, SEQ, sources=SOURCES)
 
 
 if __name__ == "__main__":

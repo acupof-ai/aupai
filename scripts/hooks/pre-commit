@@ -44,6 +44,7 @@ ALLOWED = [
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
+    "data/rl_tasks/*",
     "data/sft_contamination_baseline.json",
 ]
 
@@ -371,6 +372,12 @@ def main():
         "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Added in the same commit as the file itself: selftests_are_gated refuses to
+        # register a path that does not exist, so registering from main first would have
+        # been red until the file landed, and landing the file first is red the other way.
+        # The two halves of that deadlock only cancel inside one commit.
+        "scripts/check_sft_ready.py",
         # e1-23: the twelve recipe knobs are required=True as of this commit, so this
         # file's 14 reds are green and it can be gated. It takes --strict rather than
         # --selftest: without it the file exits 0 while red BY DESIGN (that is what let

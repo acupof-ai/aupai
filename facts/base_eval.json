@@ -9,7 +9,7 @@
     "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
     "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
    },
-   "uncertainty": null,
+   "uncertainty": "CHECKPOINT STATUS 2026-09-02 (e1, 44-22): the checkpoint named in value, 0830v1-0.8b (only .pt.ep1 is listed) and ckpt_k8_proc_replay (not listed at all), is NOT on the pod's complete file enumeration (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)), so it was already pruned or was never a durable artifact. Both are pre-0830v1 and zeroed by the reset; the run itself was pod-only and never in the repo, which the source already states. Value untouched; the reading stands as recorded and cannot be re-derived from the file.",
    "status": "recorded"
   },
   {
@@ -166,7 +166,7 @@
     "lambada_source": "data/corpus/batch_00{1..9}.jsonl (training-domain, calibration only)",
     "math_wrong_answer": "one deterministic digit edit d->(d+1)%10 on the answer's last digit, same char length"
    },
-   "uncertainty": "lambada open_acc1=24% is measured on training-domain text and is an upper bound; the held-out number is unmeasured",
+   "uncertainty": "lambada open_acc1=24% is measured on training-domain text and is an upper bound; the held-out number is unmeasured. CHECKPOINT STATUS 2026-09-02 (e1, 44-22): ckpt_0830v1_3.24b.pt.ep1 was zeroed by the 0830v1 reset (AGENTS.md: no pre-0830v1 checkpoint is a baseline) and only its .ep1 sibling survives on the pod list (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)). The reading stands as recorded -- a measurement that was taken, not a baseline anyone may cite. Value untouched.",
    "status": "recorded"
   },
   {
@@ -179,7 +179,7 @@
     "items": "1000, single-token targets, distractor = another item's same-char-length target",
     "acceptance": "0/523 exact-match hits in data/corpus/web (4,731,988 docs), 2026-08-30"
    },
-   "uncertainty": "acceptance is exact-match only; near-duplicates of holdout docs could survive in the corpus (the scanner has near-dedup machinery, not run for this acceptance)",
+   "uncertainty": "acceptance is exact-match only; near-duplicates of holdout docs could survive in the corpus (the scanner has near-dedup machinery, not run for this acceptance). CHECKPOINT STATUS 2026-09-02 (e1, 44-22): ckpt_0830v1_3.24b.pt.ep1 was zeroed by the 0830v1 reset (AGENTS.md: no pre-0830v1 checkpoint is a baseline) and only its .ep1 sibling survives on the pod list (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)). The reading stands as recorded -- a measurement that was taken, not a baseline anyone may cite. Value untouched.",
    "status": "recorded"
   },
   {
@@ -197,7 +197,7 @@
      "5000": 2.0
     }
    },
-   "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise",
+   "uncertainty": "the 9 exhausted families' unique counts are structural ceilings of the current generators, not measurement noise. CHECKPOINT STATUS 2026-09-02 (e1, 44-22): ckpt_0830v1_3.24b.pt.ep1 was zeroed by the 0830v1 reset (AGENTS.md: no pre-0830v1 checkpoint is a baseline) and only its .ep1 sibling survives on the pod list (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)). The reading stands as recorded -- a measurement that was taken, not a baseline anyone may cite. Value untouched.",
    "status": "recorded"
   },
   {
@@ -573,7 +573,7 @@
     "variable": "carve source removed from SOURCES; everything else identical (v3 recipe, same base ckpt_p324, same hparams); pack 47078 rows vs v3's 46938, fence rows 14021 vs 15555",
     "v3_pair": "be.sft_v3_code500 (200/500 = 40.0% with the carve source's 2278 sibling examples in pack)"
    },
-   "uncertainty": "code-asking question share per source is a keyword upper bound (openo1's 54% includes math-CoT questions using 实现/算法/函数). v4's 0/500 independently re-derived: rescore_code.py on the full 500-row t28-format preds, row_agree 500/500, reproduces=True (2026-08-31).",
+   "uncertainty": "code-asking question share per source is a keyword upper bound (openo1's 54% includes math-CoT questions using 实现/算法/函数). v4's 0/500 independently re-derived: rescore_code.py on the full 500-row t28-format preds, row_agree 500/500, reproduces=True (2026-08-31). CHECKPOINT STATUS 2026-09-02 (e1, 44-22): the checkpoint named in value, ckpt_sft_p324_v4.pt, is on the pod deletion candidate list, runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files) -- deleted 2026-09-03 14:00Z unless claimed. I did not claim it: this reading is recorded here and in the value above, and re-deriving it would need the run, not the file. Value untouched; the reading stands as recorded.",
    "status": "measured"
   },
   {
@@ -840,7 +840,7 @@
   },
   {
    "id": "be.milestone_16b",
-   "value": "16B milestone (ckpt_pretrain_30b_s2.pt.step17500, 16.056B actual) vs the 8B stage-1 baseline (ckpt_pretrain_15b_s1.pt.step8500, 7.799B): 3 of 9 per-role domain losses moved past the 0.1176 nat floor, all improving -- zh_web 3.7544->3.6040 (+0.1504), wiki_chat 3.3679->3.2108 (+0.1571), textbook_30b 2.0585->1.9203 (+0.1382). cot +0.0821 floor. code_rp1t +0.0483 floor and separately REFUSED by the 7.1 weight gate (0.37200->0.29330 = 0.79x, outside the 5% tolerance). en_c4/en_c4_stage2 and math_owm/math_owm_stage2 refused by name: stage 2 renamed 2 of 7 roles, so those two sides were scored on different text. ceval 22.3->21.6 (-0.70pt, floor at threshold 5.9pt); code_500 0.0->0.0 (floor, degenerate_rate 0.414); math_hard_pass_at_1 and rl_gap ABSENT from one or both records. This is the first live firing of the 7.1 weight gate and the first cross-stage per-role read on byte-identical heads. Read it as SCALE progress, not as a mix read -- the three roles that moved are the ones whose weights barely changed, and the one role that was reweighted is refused.",
+   "value": "16B milestone (ckpt_pretrain_30b_s2.pt.step17500, 16.056B actual) vs the 8B stage-1 baseline (ckpt_pretrain_15b_s1.milestone_8b_step8500.pt (this entry said .pt.step8500 until 2026-09-02; the file on the pod has always carried the milestone name, and the pruner's ckpt_<run>.pt.step* glob cannot see it -- corrected by e1, the measurement is unaffected), 7.799B): 3 of 9 per-role domain losses moved past the 0.1176 nat floor, all improving -- zh_web 3.7544->3.6040 (+0.1504), wiki_chat 3.3679->3.2108 (+0.1571), textbook_30b 2.0585->1.9203 (+0.1382). cot +0.0821 floor. code_rp1t +0.0483 floor and separately REFUSED by the 7.1 weight gate (0.37200->0.29330 = 0.79x, outside the 5% tolerance). en_c4/en_c4_stage2 and math_owm/math_owm_stage2 refused by name: stage 2 renamed 2 of 7 roles, so those two sides were scored on different text. ceval 22.3->21.6 (-0.70pt, floor at threshold 5.9pt); code_500 0.0->0.0 (floor, degenerate_rate 0.414); math_hard_pass_at_1 and rl_gap ABSENT from one or both records. This is the first live firing of the 7.1 weight gate and the first cross-stage per-role read on byte-identical heads. Read it as SCALE progress, not as a mix read -- the three roles that moved are the ones whose weights barely changed, and the one role that was reweighted is refused.",
    "measured": "2026-09-01",
    "source": "runs/readout_ckpt_pretrain_30b_s2.pt.step17500.txt (pod); runs/milestones.jsonl last row for step17500",
    "config": {
