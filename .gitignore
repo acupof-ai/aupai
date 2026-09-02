@@ -58,3 +58,8 @@ runs/.board_seen.json
 # rather than sitting in the missing-source baseline as debt that will never be paid. The
 # DERIVED table is what belongs in the repo (facts/efficiency.json, scripts/trace_classes.py).
 runs/trace_*.json
+
+# eval/score_matrix.py's flock file, created beside the ledger on every write_records call.
+# Untracked and unignored, it shows up in `git status` for whoever writes the matrix next and
+# gets swept into a `git add`; a lock is per-machine state, never history.
+runs/*.jsonl.lock
