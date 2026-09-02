@@ -44,4 +44,17 @@ model class; it enters the loop as a served policy behind the same API when it i
 | 4. Reward, no trained reward model | (a) tests pass when the task ships tests (`(code, tests) -> float`, round-trip rule); (b) otherwise the 27B served by tileRL judges the K rollouts of one task **pairwise within the group**, and only the group-relative order is used; (c) GRPO group-normalised advantages, optional KL to the reference; no critic is trained. Trajectory = shim token ids + logprobs aligned to the transcript by request id | none for (a); the serving card for (b) | de (a), tilerl (b) | one rollout's shim record equals the sampled sequence by `torch.equal`; judge order agrees with test order on 20 tasks that have both |
 | 5. Training | GRPO in tileRL over K rollouts per task with the stage-4 rewards, LoRA on the served weights, sampler = trainer so no weight sync | one card after the run | tilerl | reward rises on a 20-task pilot and MMLU does not drop within noise |
 
+
+## Survey results folded in (2026-09-02, `docs/lessons/sandbox_env_survey.md`)
+
+| decision | ruling |
+|---|---|
+| two boundaries, not one | B1 = the agent's own Bash tool: Claude Code's built-in sandbox (`sandbox` settings key; bubblewrap + socat on Linux, Seatbelt on macOS) with `failIfUnavailable: true`, `denyRead` on `~/.claude`, `allowedDomains` = the tileRL host only. B2 = grading generated code: our wrapper, never dependent on bwrap |
+| B2 tiers | userns (`unshare -Urnmpf`) → drop to a non-zero uid → Landlock fs allowlist → seccomp deny `socket`/`ptrace`/`setsid` → rlimits → wall-clock kill; without userns: uid + Landlock + seccomp; without Landlock: uid + DAC + seccomp; nothing: refuse. **Tests never run as uid 0.** The probe writes the tier into every rollout record (de-28's `level`) |
+| env interface | mirror Agent Lightning / Tinker, not OpenEnv `reset/step`: env = `setup(workdir)`, `prompt`, `grade(workdir, transcript) -> rubric list`; the trainer never drives steps; tileRL groups Messages calls into one trajectory by a per-rollout tag the launcher sets (`metadata.user_id` or a header) |
+| task sets for the pilot | Aider polyglot (Python subset) + Exercism python + EvalPlus: pytest-graded, stdlib-only, no Docker; competitive sets (LiveCodeBench, codeforces, TACO) for volume; 3b's mined impl+test pairs as the in-house source |
+| grading rules | grade on a fresh checkout with only the `src` diff applied; hidden tests copied in at grade time; a diff that touches test paths scores 0; parse pytest's summary, not the exit code; binary all-pass; timeout = fail; ≥5 tests per task or the task is not admitted |
+| judge | tie-break only, inside the all-pass or all-fail subgroup; both orderings, disagreement = abstain (44-19); a frozen model of **another family** than the policy: for a 27B Qwen policy the 27B is the same family, so the 27B-policy pilot is tests-only until a cross-family judge is served; for the 500M policy the 27B qualifies |
+| refused | gVisor, Firecracker, nsjail, firejail, WASM: each needs root, `/dev/kvm`, a userns policy we do not control, or breaks pytest workloads |
+
 Order is fixed: no stage starts before the previous one's "done when" is an artifact. Stages 1-3 and 4(a) need no GPU and start now. User constraints 2026-09-02 16:25 +0800: no containers (some environments have none), open-source sandboxing, no trained reward model. Tasks: tilerl-19 covers stages 1, 2, 4(b) and 5; de-28 stage 3 and 4(a); e1-24 the trajectory alignment.
