@@ -10,6 +10,8 @@ source: fb 裁定 + 44-7/44-8 分流夜实测 + 2026-09-01/02 夜。44-6 草稿,
 
 > 整表说明(b0,2026-09-02,不进表):b0 提交前又用 `git diff --name-only HEAD main` 判「main 动过我的文件」——正确判据是 `git log HEAD..main -- <path>`,他自己提出、AGENTS 已写的规则,第三次踩。**能说出病名不等于免疫。**
 
+> b0 原话(2026-09-02,文首并列):「每一次核验成本都远低于事故成本,而每一次不核的理由都是看起来对。」今晚四次:行号、区间结束行、diff 判据、fb 的 reset 前提。
+
 ## 1. 观察值 vs 外推值(fb 2026-09-02 裁定,原文)
 
 > 一个 token 数必须说明它是从缓存数出来的,还是从 stamp 外推的。外推值和实测值在文本上完全一样,差 0.48% 时看起来像舍入,而 0.48% 在 8.7B 上是 4200 万 token。和「亲历/重建」是同一原则的两个面:前者管来源,后者管数字。一个产物必须说明它是被观察到的还是被推算出来的。
@@ -79,7 +81,7 @@ fb 点名漏掉的那一条——recompile 守卫:train.py 的 dynamo 守卫(dc8
 而两者在输出上一模一样。当有独立证据说不该是零(作者说他写了、消息里写着
 "补全 9 域块"),这个矛盾就是该去找的第三个数。
 
-实例(tilerl,2026-09-02):我数 3b 的 988c016 里九个 mix 域标题,报 **0**,
+实例(tilerl,2026-09-02):我数 3b 的 0d90dbb 里九个 mix 域标题,报 **0**,
 并把它当作推翻控制器裁定的两条理由之一。fb 逐个数,**9 个一个不少**。
 
     grep -cE "^### (九个域名)"   → 0    ← 我用的,b0 那份是 ### 层级
@@ -123,7 +125,7 @@ token 数矛盾——是实测的,后来查明是 `len(ids)` vs `ids+EOS` 的口
 
 **判据:任何造世界的步骤有静默失败路径**——世界没造出来而测试不报错。`except: world = None` 后面跟 `if world:` 是它最常见的形状,和具体撞上什么环境事实无关。
 
-实例:给 check_head 加「必须打出文件名」的断言。破坏世界用 `shutil.copytree` 复制 `.git`,但 worktree 里 `.git` 是文件不是目录,copytree 抛 NotADirectoryError,except 吞掉,整块在 `if world:` 下被跳过。它在「只打计数」的旧代码上是**绿的**——即在它存在的唯一理由上通过了。修法不是修 copytree,是去掉复制:check_head 只需要 MANIFEST 和 `git show HEAD:path`,直接读真仓库、只把临时 manifest 里一条的 sha 改坏,并加一条「fixture 必须找到一个 .py 去改坏」的断言,让空 manifest 也不能平凡通过(5fa5946)。
+实例:给 check_head 加「必须打出文件名」的断言。破坏世界用 `shutil.copytree` 复制 `.git`,但 worktree 里 `.git` 是文件不是目录,copytree 抛 NotADirectoryError,except 吞掉,整块在 `if world:` 下被跳过。它在「只打计数」的旧代码上是**绿的**——即在它存在的唯一理由上通过了。修法不是修 copytree,是去掉复制:check_head 只需要 MANIFEST 和 `git show HEAD:path`,直接读真仓库、只把临时 manifest 里一条的 sha 改坏,并加一条「fixture 必须找到一个 .py 去改坏」的断言,让空 manifest 也不能平凡通过(ea16c9d)。
 
 注:`.git` 是文件这个事实不是新发现——`scripts/harness.py:5116` 早有注释「os.path.exists, not isdir: in a linked worktree .git is a FILE」。教训是**已知事实没被应用**,不是发现了新环境事实。全仓 `.git` 判定都用 `os.path.exists`,四处 copytree 复制的都是真目录,没有第二处。
 
@@ -141,7 +143,7 @@ token 数矛盾——是实测的,后来查明是 `len(ids)` vs `ids+EOS` 的口
 
 > 一个正在执行的 .sh 不是一个文件,是一个指向文件的游标。
 
-实例:f467182 在 run_ddp.sh 尾部追加 13 行,而 1.2 臂的活 shell(PID 1949302)停在 torchrun 行等训练结束、还没走到那里。bash 按字节偏移增量读脚本,覆盖会让活着的 shell 在半行处继续读——最坏的时机。tilerl 暂缓推送,等臂结束;fb 批准并称为「今晚最好的一次操作判断」。
+实例:92936a6 在 run_ddp.sh 尾部追加 13 行,而 1.2 臂的活 shell(PID 1949302)停在 torchrun 行等训练结束、还没走到那里。bash 按字节偏移增量读脚本,覆盖会让活着的 shell 在半行处继续读——最坏的时机。tilerl 暂缓推送,等臂结束;fb 批准并称为「今晚最好的一次操作判断」。
 
 比这一次大:pod_push.sh --all 在任何 pod 作业运行期间都有这个风险,受影响的是所有正在被执行的 .sh,而 --all 的定义就是全推。「全量同步」和「有作业在跑」两个状态互斥,从来没有任何东西检查过——今晚靠一个人恰好想到,下次未必。
 
@@ -183,9 +185,9 @@ fb 自述今晚第三次同形状,但与前两次不同:前两次(§14 的 `_ce`
 
 同步检查回答「字节是否相同」,回答不了「这一版的行为语义是什么」。一个把缺失报成已有的判法,比没有判法更坏。
 
-实例:b0 用 `--find-object` 判 pod 的 run_ddp.sh 停在哪一版——它把「删除该 blob 的提交」也列进来,而那必然是最新的一个,于是「取最新命中」定向偏晚一个提交。在「pod 缺哪个修复」这个问题上,偏晚一个提交 = 把缺失报成已有。实际:pod 仍是 `|| echo WARN`,评分失败被吞、退出码干净(f467182 不在 pod,--all 才会带上)。两步判法的正确形态:一、`git cat-file -e <blob>` 判真假(无窗口);二、`git rev-list <ref> -- <path>` 逐个 `rev-parse <c>:<path>` 比对取最新命中,判年代。
+实例:b0 用 `--find-object` 判 pod 的 run_ddp.sh 停在哪一版——它把「删除该 blob 的提交」也列进来,而那必然是最新的一个,于是「取最新命中」定向偏晚一个提交。在「pod 缺哪个修复」这个问题上,偏晚一个提交 = 把缺失报成已有。实际:pod 仍是 `|| echo WARN`,评分失败被吞、退出码干净(92936a6 不在 pod,--all 才会带上)。两步判法的正确形态:一、`git cat-file -e <blob>` 判真假(无窗口);二、`git rev-list <ref> -- <path>` 逐个 `rev-parse <c>:<path>` 比对取最新命中,判年代。
 
-教训的边界(fb 2026-09-02 收窄,原话):**2' 对清单覆盖的文件,同步蕴含行为;对清单外的文件,什么都不蕴含。** b0 初版从正确的机制推出过宽的结论——「四条核验条件都不捕捉」不成立:f467182 在 main、run_ddp.sh 在清单里,sha 相等 + dirty=0 + 无漂移传递性地覆盖它,字节一致蕴含行为一致。「同步≠正确行为」真正成立的地方是清单外:168 个从未进 git 的 pod 独有 .py(3b-4 要分类的那批),四条核验对它们什么都没说。一条过宽的教训会让人放弃一个管用的工具。
+教训的边界(fb 2026-09-02 收窄,原话):**2' 对清单覆盖的文件,同步蕴含行为;对清单外的文件,什么都不蕴含。** b0 初版从正确的机制推出过宽的结论——「四条核验条件都不捕捉」不成立:92936a6 在 main、run_ddp.sh 在清单里,sha 相等 + dirty=0 + 无漂移传递性地覆盖它,字节一致蕴含行为一致。「同步≠正确行为」真正成立的地方是清单外:168 个从未进 git 的 pod 独有 .py(3b-4 要分类的那批),四条核验对它们什么都没说。一条过宽的教训会让人放弃一个管用的工具。
 
 ## 20. 无法被核的数仍然驱动了决策(fb,2026-09-02)
 
@@ -228,7 +230,7 @@ min(a,b) 看起来像「设成 b」,实际是「不超过 b」——只能压低
 一对:b0——测试不走缺陷路径,验收走顺路、缺陷在岔路;tilerl——正确路径上没有仪表,「成功」在日志里没有痕迹。两个合起来:一次正确的执行在系统里不留任何痕迹,唯一能验的变成「没有坏消息」——今晚几乎所有的假绿都是这个结构。
 
 实例(b0 三个):
-- **train.py:2374 的 resume 守卫没有 else 分支**(b0 引 2365,行号漂移——shape 24 当场又一例):707f84f 的守卫只覆盖「step 在、opt 不在」;「step 不在」(收尾档陷阱)既不守卫也无测试,直到今晚 606fd3b + test_e2e stage 11 才补上。
+- **train.py:2374 的 resume 守卫没有 else 分支**(b0 引 2365,行号漂移——shape 24 当场又一例):707f84f 的守卫只覆盖「step 在、opt 不在」;「step 不在」(收尾档陷阱)既不守卫也无测试,直到今晚 f1deeff + test_e2e stage 11 才补上。
 - **train.py:2699 收尾保存少传参**:`save_checkpoint` 不传 opt 不传 step——保存路径的缺陷分支,而所有测试都走 save_every 路径。
 - **顺路测试**:测试走「能跑通的那条路」,缺陷分支不在验收路径上——前两个实例能活这么久,都是因为这一条。
 
@@ -274,33 +276,33 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 - **e1 的裸路径审计**(e1 自报):`grep -o 'probes/[a-z0-9_]*\.py'` 查裸路径,字符类里没有 `@`——25 条正确退休的 `probes/<name>.py@<sha>` 引用全被截到 `.py`、报成裸路径。判据能表达「裸路径」,表达不了「仓库自己的退休引用格式」。
 - **我给 tilerl 的删除候选命令**(44,tilerl 拦住):`git log --diff-filter=D --name-only <三个 sha>` 给的是三个 sha 的可达历史并集,不是「这三次提交删的文件」——415 个候选里 266 个是 run 正在读的语料,实删 54。判据(git log 的输出)按构造不含「只这三次提交」这个性质。
 
-三条合为一句(e1-15 修复时的表述):**门禁认不出仓库自己的引用格式。** `path@sha` 是 44-13 立下的退休约定,gate_recipe_provenance 的模式停在扩展名、`@sha` 被丢掉、裸路径再死在 ls-files 上——每条退休引用都被读成死链(1a4be21 修成一个判断 `git cat-file -e <rev>:<path>`,三种失败同一个返回码)。
+三条合为一句(e1-15 修复时的表述):**门禁认不出仓库自己的引用格式。** `path@sha` 是 44-13 立下的退休约定,gate_recipe_provenance 的模式停在扩展名、`@sha` 被丢掉、裸路径再死在 ls-files 上——每条退休引用都被读成死链(4676118 修成一个判断 `git cat-file -e <rev>:<path>`,三种失败同一个返回码)。
 
-尾注(正例,2026-09-02):问「这个提交是哪棵 worktree 敲的」——作者字段全是 `t`、七个分支全 contains,两者按构造答不了;reflog 的 `commit:` 创建事件能(tilerl 从 `worktrees/aupai-de/HEAD@{46} commit: de-16…` 读出 c0a5e6a 是 de 早先那轮的提交)。判据要能表达被问的性质:这次是选对了工具的例子。
+尾注(正例,2026-09-02):问「这个提交是哪棵 worktree 敲的」——作者字段全是 `t`、七个分支全 contains,两者按构造答不了;reflog 的 `commit:` 创建事件能(tilerl 从 `worktrees/aupai-de/HEAD@{46} commit: de-16…` 读出 e355a1b 是 de 早先那轮的提交)。判据要能表达被问的性质:这次是选对了工具的例子。
 
 ## 30. 审计认不出门的字面量引用——「没有引用」只是「没有我扫的那种引用」(de,2026-09-02)
 
 §29 的镜像:§29 是门禁认不出仓库的引用格式,这条是审计认不出门禁的引用格式。一个扫描说「没有引用」时,它说的只是「没有我这个判据能表达的那种引用」。
 
-实例(de 核,9209cde):44 的删除审计把 `scripts/test_arch_L32.py` 判为 "run by nothing"——括号写「launch_tests.py 从 runs/launch_tests.json 读 test_file 字段、不点名它」。这对 launch_tests.py 成立,对 `launch_gate.py:196` 不成立:门在 `ARCH_TESTS` 元组里逐字点名它,文件缺席、无 pass 记录、sha 不匹配都返回 NO-GO。审计的引用扫描按自己的语法找引用,门的字面量元组不在它的语法里。1a 区最贵的一次漏判:它差点删掉的是发车门禁自己的证据——而那个门此刻正因两条 ARCH_TESTS 记录的 sha 过期而 NO-GO,即门在正常工作。
+实例(de 核,e0a6d1c):44 的删除审计把 `scripts/test_arch_L32.py` 判为 "run by nothing"——括号写「launch_tests.py 从 runs/launch_tests.json 读 test_file 字段、不点名它」。这对 launch_tests.py 成立,对 `launch_gate.py:196` 不成立:门在 `ARCH_TESTS` 元组里逐字点名它,文件缺席、无 pass 记录、sha 不匹配都返回 NO-GO。审计的引用扫描按自己的语法找引用,门的字面量元组不在它的语法里。1a 区最贵的一次漏判:它差点删掉的是发车门禁自己的证据——而那个门此刻正因两条 ARCH_TESTS 记录的 sha 过期而 NO-GO,即门在正常工作。
 
 同次更正另两例同形:`eval/l1_fewshot.py` 被 score_matrix.py 当记录在案的指标跑(12 处引用,行里自带 "verify before deleting" 警告,验一下就有答案);`test_parallel_encode.py` 是 `_encode_domain(workers>1)` 与 workers=1 逐元素相同的唯一断言,唯一的使用证据在一个 fact 的 value 散文里——source 扫描和名字扫描都看不见它,删了它就静默证伪了一次测量的方法。
 
-规则(9209cde 原话):"no reference" meant "no reference of the kind I scanned for"。与 §29 同一条规则,方向相反。
+规则(e0a6d1c 原话):"no reference" meant "no reference of the kind I scanned for"。与 §29 同一条规则,方向相反。
 
 ## 31. 自测断言判决,不只断言扫描;谓词换不动时换问题(de-22,2026-09-02)
 
-de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selftest 教训:
+de-22(dca2d1c)修 merge_complete 的「删除是否故意」误判,两条 selftest 教训:
 
 **verdict 与 scan 分开断言。** 自测断言了扫描命中该命中的 merge,但这个断言在 caller 把 FAIL/WARN 两类合并成一类时照样绿——而那正是要修的 bug。所以判决必须单独断言:每个 case 建真仓库、checkout 到那个 merge,断言状态和理由文本。只断言扫描,等于没断言判决。
 
-**过度修正方向:三个谓词各把一类误判换成另一类。** plain `-S` 两个都漏;`-m` 找到真的那个、但把事故报成故意、真 revert 反绿;`--diff-merges=first-parent` 两个都找不到。在谓词层面调,每修一个方向就破另一个方向。fb 的裁定是把问题换成可判定的那个:不问「删除是否故意」(图上不可判定——6d51c9c 与 ef27df0 结构逐字相同),问「哪个 merge 丢了它」——merge 只能丢它某个 parent 还持有的东西。ours 有、结果里没有 → FAIL(这个 merge 丢的);ours 没有、theirs 和 base 有 → WARN(ours 这一支早先丢的,本 merge 什么都没改)。不对称是故意的:丢失只发生一次,属于造成它的那个 merge;之后每个从旧分支合过来的 merge 都继承同一个缺席。
+**过度修正方向:三个谓词各把一类误判换成另一类。** plain `-S` 两个都漏;`-m` 找到真的那个、但把事故报成故意、真 revert 反绿;`--diff-merges=first-parent` 两个都找不到。在谓词层面调,每修一个方向就破另一个方向。fb 的裁定是把问题换成可判定的那个:不问「删除是否故意」(图上不可判定——d5aac3d 与 ef27df0 结构逐字相同),问「哪个 merge 丢了它」——merge 只能丢它某个 parent 还持有的东西。ours 有、结果里没有 → FAIL(这个 merge 丢的);ours 没有、theirs 和 base 有 → WARN(ours 这一支早先丢的,本 merge 什么都没改)。不对称是故意的:丢失只发生一次,属于造成它的那个 merge;之后每个从旧分支合过来的 merge 都继承同一个缺席。
 
 规则:一个谓词在两个方向上轮流过拟合时,不要继续调——把问题换成图上可判定的那个。自测的断言清单必须包含判决,不只是扫描。
 
 同节三例(fb 2026-09-02 转达,出处见 Sources):
 
-- **一致不是性质(e1-18,b002d91):** 自测断言两个 reader 结果相同,抓不到它们共用的 fold 的回归——盲化 fold 成 name-only 键,两个 reader 一起错、互相同、全绿。修法:盲化 fold 后逐 reader 直接查键宽;四种盲化各起进程,全红(shared fold→name-only 塌缩、shared fold→position last-wins 复活、只 exp.py 退化、只 harness 退化)。e1 原话:"AGREEMENT IS NOT THE PROPERTY, and I found that out by blinding rather than by reasoning."
+- **一致不是性质(e1-18,0d45db9):** 自测断言两个 reader 结果相同,抓不到它们共用的 fold 的回归——盲化 fold 成 name-only 键,两个 reader 一起错、互相同、全绿。修法:盲化 fold 后逐 reader 直接查键宽;四种盲化各起进程,全红(shared fold→name-only 塌缩、shared fold→position last-wins 复活、只 exp.py 退化、只 harness 退化)。e1 原话:"AGREEMENT IS NOT THE PROPERTY, and I found that out by blinding rather than by reasoning."
 - **先疑探针再疑数据(b0,正面例子):** 查 mix_500m 指纹用错键名 corpus_fingerprint,得 0/9——数据没问题,判据的键名是错的。这是 §29 规则的正面实例:判据先在已知答案上试一次;0/9 这个极端值先怀疑工具,再怀疑产物。
 - **复合命令的失败不可定位(e1,与 §29 同族):** `merge-base --is-ancestor <sha> main && git show --stat <sha>` 写进一个 && 链,第二条读到 HEAD 的 diff,三条正确 sha 全报 NOT ancestor;逐条重跑才对。&& 链按构造只表达「全过/不过」,不表达「哪条不过」——要定位就拆开跑。
 
@@ -310,7 +312,7 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 在 pod 上量到的「没有」,说的是 pod,不是仓库。两个视图(AGENTS.md:`tn exec` 是宿主机、`~/bin/pod` 是容器,同一路径两个目录)之间,缺席不传递。
 
-实例(be81192):de-16 的一遍把三条 `runs/*.log` 引用当「不存在」删了——pod 上 find 没有它们。但三条都被 git 跟踪、每个 checkout 都在(`t57_pad_ab.log` 自 fa43fed、`t57_twin.log` 自 233afca,均 2026-09-01,`git log --diff-filter=D` 为空):测量在 pod 上做,而那些是本地单卡 run 写的,pod 的 `/work/aupai/runs/` 只有 pod 作业写的东西。pod 侧缺席被读成仓库陈述,三个 fact 丢了一手证据,只剩探针(本身已被删、退成 @rev)或设计文档这些派生来源;原始日志一直在 runs/ 里跟踪着。
+实例(e639d78):de-16 的一遍把三条 `runs/*.log` 引用当「不存在」删了——pod 上 find 没有它们。但三条都被 git 跟踪、每个 checkout 都在(`t57_pad_ab.log` 自 fa43fed、`t57_twin.log` 自 233afca,均 2026-09-01,`git log --diff-filter=D` 为空):测量在 pod 上做,而那些是本地单卡 run 写的,pod 的 `/work/aupai/runs/` 只有 pod 作业写的东西。pod 侧缺席被读成仓库陈述,三个 fact 丢了一手证据,只剩探针(本身已被删、退成 @rev)或设计文档这些派生来源;原始日志一直在 runs/ 里跟踪着。
 
 规则:一个测量必须说明它在哪个视图上做的;把一个视图的缺席读成另一个视图的陈述,与 §17(参照物来自被检查侧)同族——参照物和被检查物必须在同一侧。
 
@@ -330,7 +332,7 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 一个区间有两端;校验只验起始端,结束端就是盲区——而结束端多带走的东西,正是拆分类改动里最贵的错误。
 
-实例(b0-8,5add1c8):model_module_split 设计页给 HybridLM 732-875、GatedMLA 358-414;实际结束在 862 和 408——865-873 是 Muon 段头加 POLAR_EXPRESS(Muon 的,留下)、411-412 是 FP8 段头加 `_FP8_MAX_E4M3`(FP8 的,留下)。按页面切走后 `NameError: POLAR_EXPRESS` + 四个 `F821 Undefined name _FP8_MAX_E4M3`。防这件事的校验脚本只核每个区间的起始行是那个定义,从不核结束行——`| HybridLM | 732-875 |` 过,因为 732 是 `class HybridLM`。b0 原话:"A range has two ends and I validated one."
+实例(b0-8,be845ec):model_module_split 设计页给 HybridLM 732-875、GatedMLA 358-414;实际结束在 862 和 408——865-873 是 Muon 段头加 POLAR_EXPRESS(Muon 的,留下)、411-412 是 FP8 段头加 `_FP8_MAX_E4M3`(FP8 的,留下)。按页面切走后 `NameError: POLAR_EXPRESS` + 四个 `F821 Undefined name _FP8_MAX_E4M3`。防这件事的校验脚本只核每个区间的起始行是那个定义,从不核结束行——`| HybridLM | 732-875 |` 过,因为 732 是 `class HybridLM`。b0 原话:"A range has two ends and I validated one."
 
 与 §29 同族:判据按构造只表达了「起始对不对」,表达不了「结束对不对」。
 
@@ -340,7 +342,7 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 拆分类改动的动态验收(跑一遍、加载、前向比对)只覆盖被搬走的代码;留在原地但丢了名字的代码,动态用例不进去就无话可说。修法:拆分类改动的验收必须含一道静态检查——这个缺口动态用例补不上。
 
-实例(b0-8,5add1c8):四条动态验收全绿——test_arch_compat(移动后跑通)、legacy ckpt strict=True 键集一致、同进程 torch.equal 逐位相同、构造期抛错——而 `_FP8_MAX_E4M3` 未定义:没有一条动态用例进 FP8 路径。hook 的 ruff F821 一秒抓到。b0 原话:"Four dynamic conditions on the moved code say nothing about code that stayed and lost a name -- the acceptance set needed a static pass, and the hook supplied it."
+实例(b0-8,be845ec):四条动态验收全绿——test_arch_compat(移动后跑通)、legacy ckpt strict=True 键集一致、同进程 torch.equal 逐位相同、构造期抛错——而 `_FP8_MAX_E4M3` 未定义:没有一条动态用例进 FP8 路径。hook 的 ruff F821 一秒抓到。b0 原话:"Four dynamic conditions on the moved code say nothing about code that stayed and lost a name -- the acceptance set needed a static pass, and the hook supplied it."
 
 附带同次发现:re-export 不能被 monkey-patch——`from X import name` 是另一个绑定,test_arch_compat 给 `train.chunk_kda` 打桩不再到达调用点;修测试(两边都打桩)不改模型。
 
@@ -366,16 +368,92 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 一个破坏性指令的授权链再清楚,指令里描述的世界仍可能是错的;执行前要核的是世界,不是授权。
 
-实例(fb 当事人,b0 执行):fb 给 b0 的指令写「`git reset --hard` 到 5add1c8 的父,都是你自己的提交」。实际 43a5846 之后七个非合并提交里五个是 44 的(0d38b27、0c8a762、752c6a9、7a70ac8、fdb5fae,均已核在 main 上)——fb 没核归属。b0 没停手、也没照做:先逐个 `merge-base --is-ancestor <c> main` 确认五个都已在 main 上,reset 才安全。安全的理由与 fb 给的理由不同——不是「都是你的提交」(假),是「都已在 main 上」(真)。
+实例(fb 当事人,b0 执行):fb 给 b0 的指令写「`git reset --hard` 到 be845ec 的父,都是你自己的提交」。实际 7b44696 之后七个非合并提交里五个是 44 的(e4609fe、ede2897、8f00123、ba10189、d734bbf,均已核在 main 上)——fb 没核归属。b0 没停手、也没照做:先逐个 `merge-base --is-ancestor <c> main` 确认五个都已在 main 上,reset 才安全。安全的理由与 fb 给的理由不同——不是「都是你的提交」(假),是「都已在 main 上」(真)。
 
 规则:破坏性指令的双重验证——授权 + 世界为真;后者只能执行者自己核,授权者的描述不免除这一步。
+
+## 38. 规则在测出它的场景成立、在目标场景不成立(fb 当事人,2026-09-02,与 §34 同形)
+
+一条规则从实测里长出来,只在测过的场景里被验过;目标场景换了变量,规则原样应用就是新错误。
+
+实例(fb 当事人,b0 A/B):fb 给出规则「先 merge 再 stage」,依据 e1/tilerl 的实测。b0 的 A/B 显示暂存与否无关——真正的变量是 main 是否动了同一文件,而那个文件是 `data/pod_head_manifest.txt`,hook 每次提交重生成。规则在测出它的场景成立,在目标场景不成立。
+
+修法两层:手册(派生物 checkout 后重合,tilerl)、hook 不留脏 manifest(e1-19)。
+
+## 39. 过期的 fixture key 读起来与一条死测试完全一样(de,2026-09-02)
+
+删除候选里「死测试」和「死在 setup 的测试」不可读分辨——跑一次才分得出。
+
+实例(de-5,a477ad1):`test_domain_loss_val` 死在自己的 fixture:写 `{"text": …}`,而 train.py:1197 `_jsonl_content` 读 `["content"]` 直接 raise——正是 20B 发车 step 0 撞死的那个 `KeyError('content')`。一行 fixture 修好,pod 上就过。删前跑一次:fb 对 de-5 的裁定就是「每个 test_ 形候选先跑再判」——五个全过、全留,删除集从 12 降到 7。
+
+## 40. 门只检查它碰巧能跑的东西:hook 的 runner 语法里没有 .sh(de,2026-09-02,与 §29 同族)
+
+hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -euo pipefail`,所以 SELFTEST_FILES 里从来零个 .sh——不是 .sh 不需要验,是门的 runner 按构造跑不了它们。
+
+实例(de-5,a477ad1):`test_eval_rescore.sh` 验 eval_math.sh/eval_code.sh 的裸 rescore 拒绝,0.4s 跑过——归 CI 不归 hook,因为 hook 跑它必红。门只检查它碰巧能跑的东西;不能跑的那类需要另一种 runner(CI),不是不需要检查。
+
+## 41. 手跑的运维工具是任何仓库扫描按构造看不见的 reader(de,2026-09-02)
+
+一个脚本的调用者是一个人的巡检规格、不在树里,那么 glob、加载器扫描、reachability 审计按构造都找不到它——删它的审计结论在审计自己的判据下无懈可击,页面在人那边冻结。
+
+实例(de-5,a477ad1):`scripts/progress_feed.py`(165 行)被删,理由原话「the audit excluded it as 'operational', which is not reader evidence」。而 98 每 5–20 分钟手跑它写进展页,页面因此冻结。de 这一步判得对——「operational」是豁免不是证据——只是少了把证据造出来那一步。
+
+修法:给它一行 AGENTS 入口表作为 reader,而不是豁免。规则:删除清单发到每个可能手跑它的人,24 小时无人认领再删。
+
+同族:`mathbank/vet_programs.py:37`(main 上在)的 glob——运行时依赖,扫描同样看不见。
+
+## 42. commit message 里的 HOLD 约束的是人不是 merge(tilerl,2026-09-02)
+
+文字 HOLD 对自动化合并且无摩擦力——它约束读到它的人,不约束 merge。
+
+实例(tilerl 自报):da06097 首行写 `HOLD: do not merge to main while p500m_20b_0902 is training`,随整条 tilerl 分支被合进 main;两分钟后 df206eb 只回退 train.py(diff 0,pod 0 命中)。修法:tilerl-17 `frozen_paths` 检查进 hook——机器判据,不是文字约定。
+
+## 43. eval 复用训练的数据路径而不带训练的身份变量,「重建」是默认动作(fb 当事人,2026-09-02,de-23)
+
+复用路径的人必须复用身份变量;身份对不上时正确动作是拒绝,不是重建。
+
+实例(fb 一手):用户要 step1500 的 benchmark,起 `eval/ppl.py --mix data/mix_500m.json`,2 分钟后日志 `cache was built by another vocabulary, retokenizing`。ppl.py 从不设 `train.VOCAB_ID`(只有 train.py:1462 设);build_mix:1647 拿 `(VOCAB_ID or "")` 比 stamp 必假——/data00 九个活缓存会被重 tokenize 并以空 stamp 覆盖。按精确 PID 杀,缓存 mtime 未动。写侧的对称洞见 §47。
+
+## 44. 守卫对路径错:无 checkpoint 名的产物路径(fb 当事人,2026-09-02,de-24)
+
+守卫本身是对的(拒绝覆盖),但它守的路径把两个 checkpoint 的产物映射到同一个名字——守卫在守一个错误的身份。
+
+实例(同一次):score_matrix 的 l1_fewshot 写 `data/eval/preds_l1_d3.jsonl`,路径无 checkpoint 名,第二个 checkpoint 被 ArtifactExists 正确拒绝。产物路径必须带生成者身份(checkpoint/step),否则守卫越正确越锁死错误。
+
+## 45. 判据用退出码不用 stdout 文本(e1,2026-09-02,16004c5,与 §40 同族)
+
+工具的结论在退出码里,stdout 文本是给人看的副产物——拿副产物当判据,工具的失败模式(跑不起来、无法解析)全部落进过滤器的盲区。
+
+实例(e1 一手,16004c5):ruff 跑了但失败(exit 127、stdout 空)被 "F821 in line" 文本匹配读成 GREEN;invalid-syntax 被 F821 过滤丢掉读成「无未定义名」。修法(e1 已落):rc not in (0,1) = no-verdict;invalid-syntax 计入。
+
+## 46. 自报时间戳不带时钟来源 = 不可核验(fb 当事人,2026-09-02)
+
+「UTC」是对时钟的声明,不是格式选择:把本地时间(+0800)习惯性标成 UTC,每条消息的时间戳全部静默错位 8 小时,下游的因果排序跟着全错。
+
+实例(fb 当事人,2026-09-02):fb 全天消息里的「UTC hh:mm」都是本地 +0800 误标——违反他自己写的 Fidelity 条款,自请入表。44 转述的「kill ≈ 05:0x UTC」与 98 实测的日志 mtime(06:10 UTC)造出一个「被杀进程死后 70 分钟还在写日志」的鬼矛盾。三只钟(98 容器、44 本机 `date -u`、fb 的 `date -u`)对齐后真相平凡:ppl 06:10Z 启动、06:10:54Z 最后一行、06:13Z killed,fb 看到的是 ELAPSED 02:07 的僵尸。没有鬼进程,只有错标签。
+
+规则:时间戳要么从 `date -u` 现读,要么不写时区;读对方的时间戳,先问它来自哪只钟。
+
+## 47. 兜底值同时出现在写和读两侧,指纹检查就永远过(tilerl,2026-09-02)
+
+「派生产物带指纹」的硬约束在自己实现里留了一个自洽的洞:写侧用兜底值,读侧也用同一个兜底值——检查不是失效,是按构造永远过。
+
+实例(tilerl 一手,已核 train.py 原文):写侧 :1686 `f.write(VOCAB_ID or "")`——无 vocab 时写出空 stamp;读侧 :1647 `same_vocab = ... open(stamp).read().strip() == (VOCAB_ID or "")`——无 vocab 读空 stamp,`'' == (None or '')` 为 True。:1649 注释写着「An unstamped cache REBUILDS」,但空 stamp 文件存在、内容为空,在无 vocab 读者眼里就是 same_vocab。修法进 de-23 train 半,三处:None 即 raise、不写空 stamp、空 stamp 即 stale;tilerl review。
+
+规则:指纹的写侧和读侧不许共享兜底值;身份缺失时正确动作是拒绝,不是用空值配对。
+
+## 48. 从一个样本推出一个判据(fb 当事人,2026-09-02,与 §29 同族)
+
+判据按构造只认识它被推出时的那个样本;样本之外的同类项全部落进盲区。
+
+实例(fb 当事人):fb 对 tilerl 说「看到 0 字节 .vocab 就是 de 测试的指纹」——pod 上有七个 09-01 的 0 字节 stamp 早于该测试。空 stamp 观察本身没错(§43 的指纹),错的是把「这次的空 stamp 来自 de 测试」推广成「空 stamp ⇒ de 测试」。判据看不见被问的性质(stamp 为什么空),只看得见样本的特征(0 字节)。
 
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
 - 44-7/44-8 分流夜:/tmp/hcheck.txt、tilerl 零漂移复跑记录
 - lrprobe_0.85.log(pod,2026-09-02):871 行 saved、880 行 OOM、评分器自分配 94.65 GiB
-- scripts/harness.py EVIDENCE 声明(b500834)、scripts/launch_gate.py 分层
+- scripts/harness.py EVIDENCE 声明(fa32318)、scripts/launch_gate.py 分层
 - b0 推演原文:6375636、stage2_composition.md §3.5(推演,非测量)
 - tilerl train.py 行号核实(2026-09-02):2285/2431-2432/2691/2698-2699/1362-1364
 - fb 四条裁定及后续(98 转达,2026-09-02):不分段、de-13 验证并关闭、b0 测量 sha、8 卡代价上报;转述形状;撤销规则
@@ -383,12 +461,24 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - fb 六条积压裁定(98 转达,2026-09-02):min 钳制形状、标识符立族、readout 分辨率、de cursor 判据、b0 第四处引用、tilerl 钉点分叉
 - b0 形状(98 转达,2026-09-02):验收路径避开缺陷分支,三实例(2374 守卫无 else/2699 少传参/顺路测试)
 - tilerl 配对实例(98 转达,2026-09-02):游标采用静默、丢弃大声——正确路径无仪表,与 b0 合成 shape 25
-- de 审计更正(2026-09-02):9209cde 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
-- de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
-- fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
-- be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
+- de 审计更正(2026-09-02):e0a6d1c 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
+- de-22(2026-09-02):dca2d1c merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
+- fb 转达三例(2026-09-02):e1-18 0d45db9「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
+- e639d78(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
 - fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
-- b0-8(2026-09-02):5add1c8 model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
+- b0-8(2026-09-02):be845ec model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
 - de 的 de-5 清单(fb 转达,2026-09-02):引用扫描器五个可信错版本;known-answer 规则 4 loader-reached/2 hook-map/3 not-reached;arch.html 的 reader 是 pages.yml
-- b0 补注(849993f,fb 转达,2026-09-02):F821 只查新文件的盲区 + 89 条假数字(真 8 条全在 train.py);结束行正则漏下划线开头常量;`git diff --name-only HEAD main` 第三次踩自己立的规则
+- b0 补注(0ee9c0c,fb 转达,2026-09-02):F821 只查新文件的盲区 + 89 条假数字(真 8 条全在 train.py);结束行正则漏下划线开头常量;`git diff --name-only HEAD main` 第三次踩自己立的规则
 - fb 当事人(2026-09-02,b0 消息一手):reset --hard 指令的归属描述错误(五个提交是 44 的),b0 逐个 is-ancestor 核后执行——授权 + 世界为真双重验证
+- b0 原话 + A/B(2026-09-02,fb 转达):核验成本远低于事故成本;「先 merge 再 stage」在目标场景不成立,变量是 main 是否动了 hook 重生成的 manifest
+- de-5(a477ad1,2026-09-02):test_domain_loss_val fixture key 过期=20B step0 KeyError,跑一次才分得出死活;test_eval_rescore.sh 归 CI——hook 的 sys.executable 跑不了 .sh,门只检查它碰巧能跑的
+- de-5(a477ad1,2026-09-02)+ 98(fb 转达,UTC 12:3x):progress_feed.py 以「operational 非 reader 证据」被删,98 每 5–20 分钟手跑它写进展页,页面冻结——手跑运维工具按构造逃过一切仓库扫描;修法=AGENTS 入口行 + 删除清单 24h 认领制
+- mathbank/vet_programs.py:37(main,2026-09-02 sed 核验):glob 运行时依赖,shape 41 锚点
+- tilerl(da06097/3bc18f8,2026-09-02):HOLD 文字随分支合进 main,约束人不约束 merge;tilerl-17 frozen_paths 进 hook
+- fb 当事人(2026-09-02):ppl.py 不设 VOCAB_ID→build_mix:1647 必假→九活缓存险被重 tokenize(de-23);preds_l1_d3.jsonl 无 checkpoint 名被 ArtifactExists 拒(de-24)
+- e1-16(16004c5,2026-09-02):exit 127 空 stdout 读成 GREEN、invalid-syntax 被 F821 过滤丢掉;rc not in (0,1)=no-verdict
+- fb 当事人(2026-09-02,1e 转达 06:32Z):全天「UTC」标签为本地 +0800 误标,自请入表;真实时间线 ppl 06:10Z 启动/06:13Z killed,鬼矛盾是错标签造的
+- 98(2026-09-02):容器时钟 + 日志 mtime 06:10 UTC 抓出矛盾;缓存审计九安全、probe_domain.pt 空 .vocab 是 VOCAB_ID 类缺陷指纹(de 的测试产物,非 ppl 所写)
+- 44 本机 `date -u` 06:27 UTC:第三只钟,与 98 容器一致
+- tilerl(2026-09-02,1e 转达 06:4x):train.py:1647 读侧 / :1686 写侧共享 `VOCAB_ID or ""` 兜底值,空 stamp 被无 vocab 读者判为 same_vocab——指纹检查按构造永远过;修法进 de-23 train 半(None 即 raise/不写空 stamp/空 stamp 即 stale),tilerl review
+- fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族

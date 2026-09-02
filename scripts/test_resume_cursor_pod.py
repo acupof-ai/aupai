@@ -89,6 +89,15 @@ def main():
     # test is not a side-effect-free test.
     tok = build_tokenizer([])
     assert train.VOCAB_ID, "VOCAB_ID unset after build_tokenizer: a rebuild here would stamp an empty vocab"
+    # And refuse rather than rebuild. The assert above proves the STAMP would be right;
+    # it does not stop a rebuild, and a rebuild is the expensive thing -- 851,965 docs and
+    # five idle cards. This test reads a real /data00 cache for a real domain on purpose
+    # (the cursor arithmetic is only meaningful against the pool the run uses), so the
+    # guard is what keeps "reads it" from silently becoming "rewrites it" when a shard
+    # moves or the seed changes. It raises and names the domain and the stamp.
+    from eval.cache_guard import assert_caches_fresh
+
+    assert_caches_fresh([dom])
 
     Cfg.seq, Cfg.batch, Cfg.accum = 512, 2, 1
     mix = {"total_tokens": 4e6, "domains": {dom: {"weight": 1.0, "epochs": 1}}}

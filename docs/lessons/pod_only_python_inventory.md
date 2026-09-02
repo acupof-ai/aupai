@@ -55,10 +55,10 @@ fb 的硬边界二：先知道每个文件是什么，再动它。**顺序是这
 
 ### 1.1 本轮扣下的三个
 
-- **`datagen/scan_delivered_holdout.py`** —— 有提交 `2965ded` 但不在 HEAD。它是
+- **`datagen/scan_delivered_holdout.py`** —— 有提交 `c6da034` 但不在 HEAD。它是
   跑出 `FULL 6180175 rows | holdout HITS 0` 那个 P0 结果的脚本，**而那个结果至今
   没有落成 fact 或写进 PROVENANCE**。删掉它，零命中结论再也无法复现。
-  **已落盘（3b，`e0dcccf`）**：fact `dq.code_py_starcoder_holdout_zero`，绑定语料
+  **已落盘（3b，`43c40f8`）**：fact `dq.code_py_starcoder_holdout_zero`，绑定语料
   指纹 `e1a14839e11f3e6f`。**前置满足，但脚本仍建议留**——它是那个结论的复现器，
   而复现器比结论便宜。
 - **`datagen/cascade_code_py.py`**、**`datagen/classify_parse_failures.py`** ——
@@ -304,13 +304,13 @@ SKIP 变 PASS，FAIL 数都是 0。基线里本来有一个与本次无关的
 `datagen/scan_math_contamination.py`），不是候选路径的活引用。
 **门二必须按全路径查，basename 会把活文件的引用记到候选头上。**
 
-**`t66.py` 附带一处必须同时改的引用**：`probes/t66_depth_shape.py@849026e:14` 的 usage
+**`t66.py` 附带一处必须同时改的引用**：`probes/t66_depth_shape.py@4016bdc:14` 的 usage
 行写着 `python3 t66.py`，而那是它自己的前身。**删文件不修这行，就造出一条指向
 不存在文件的文档引用**——今晚在 `recipe_provenance` 修过的同一类断引用。已改为
 指向自身路径。
 
 **没有删的**：`scan_delivered_holdout.py`（P0 结论的复现器，结果已落 fact
-`e0dcccf`，复现器比结论便宜）、`cascade_code_py.py`、
+`43c40f8`，复现器比结论便宜）、`cascade_code_py.py`、
 `classify_parse_failures.py`、`starcoder_shape.py`（在 3b 分支上，**该合不该删**）。
 
 ## 4. 有 docstring 的比例

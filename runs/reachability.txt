@@ -50,7 +50,7 @@ datagen/holdout_split.py                                   126  c3a47e8 2026-08-
 datagen/make_mixed.py                                       39  c3a47e8 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/measure_duplication.py                             160  b40ac28 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/numma_to_jsonl.py                                   43  b24997d 2026-08-31    docs:docs/lessons/scale_36b_plan.md            
-datagen/prepare_sft.py                                     348  3a6ddb0 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
+datagen/prepare_sft.py                                     348  797c055 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/prepare_sft_math.py                                 93  c3a47e8 2026-08-31    ENTRY                                          
 datagen/pretokenize.py                                      72  b5fab8a 2026-09-01    ENTRY                                          
 datagen/quality_clf.py                                     169  9176f85 2026-08-30    facts:facts/data_quality.json                  
@@ -70,12 +70,12 @@ datagen/test_near_dedup_identity.py                         87  0db14ad 2026-09-
 datagen/test_parallel_exact_identity.py                     86  6b312f7 2026-09-01    docs:docs/lessons/near_dedup_stage2_postpass.md  
 datagen/test_scan_math_contamination.py                    116  c3a47e8 2026-08-31    docs:docs/audits/audit_math_corpus.md          
 datagen/train_quality_head.py                              161  9176f85 2026-08-30    ENTRY                                          
-eval/__init__.py                                            22  5f81d01 2026-09-02    import:eval/code_l0prime.py                    
+eval/__init__.py                                            22  af1a34b 2026-09-02    import:eval/code_l0prime.py                    
 eval/_devs.sh                                               31  4680029 2026-08-31    ENTRY                                          
 eval/arc.py                                                 82  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/assemble_lambda_probe.py                               93  3d2acd9 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
-eval/base_matrix.py                                        485  c296097 2026-09-02    ENTRY                                          
-eval/boolq.py                                               14  5f81d01 2026-09-02    registry:eval/run_eval.py                      
+eval/base_matrix.py                                        485  14c555c 2026-09-02    ENTRY                                          
+eval/boolq.py                                               14  af1a34b 2026-09-02    registry:eval/run_eval.py                      
 eval/ceval.py                                              107  edc5c70 2026-08-31    registry:eval/run_eval.py                      
 eval/chid_probe.py                                          79  9176f85 2026-08-30    import:eval/base_matrix.py                     
 eval/code_fewshot.py                                       199  384a4f9 2026-09-01    docs:docs/lessons/honest_measurement_prereg.md  
@@ -83,7 +83,7 @@ eval/code_l0prime.py                                       281  27c8a7f 2026-09-
 eval/code_zh.py                                            230  47cb01c 2026-09-01    ENTRY                                          
 eval/compare_fewshot_arms.py                               249  85b567a 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 eval/ctx_probe.py                                          218  3b32e69 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
-eval/domain_loss.py                                        295  0b3bfe7 2026-09-02    ENTRY                                          
+eval/domain_loss.py                                        295  6fbb692 2026-09-02    ENTRY                                          
 eval/eval_all.sh                                            94  4680029 2026-08-31    ENTRY                                          
 eval/eval_code.sh                                           63  616205b 2026-09-01    ENTRY                                          
 eval/eval_hard.sh                                           85  89de381 2026-08-31    ENTRY                                          
@@ -100,7 +100,7 @@ eval/math_zh.py                                            190  47cb01c 2026-09-
 eval/measure_sft_termination.py                            213  3d2acd9 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
 eval/mmlu.py                                                67  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/nan_probe.py                                          131  ef2a730 2026-08-31    ENTRY                                          
-eval/openbookqa.py                                          13  5f81d01 2026-09-02    registry:eval/run_eval.py                      
+eval/openbookqa.py                                          13  af1a34b 2026-09-02    registry:eval/run_eval.py                      
 eval/piqa.py                                                74  5604d42 2026-08-29    registry:eval/run_eval.py                      
 eval/ppl.py                                                 84  26c14d9 2026-08-30    ENTRY                                          KEEP (AGENTS.md row — eval tool)
 eval/probe_band.sh                                          48  4680029 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
@@ -108,7 +108,7 @@ eval/readout_30b.py                                       1086  0ec0a84 2026-09-
 eval/run_eval.py                                           340  c51019a 2026-08-30    ENTRY                                          
 eval/score_code_exec.py                                    410  01fdc08 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 eval/score_math_formatfree.py                              335  eabc37f 2026-09-01    docs:docs/lessons/honest_measurement_prereg.md  
-eval/score_matrix.py                                       842  55d85ce 2026-09-02    ENTRY                                          
+eval/score_matrix.py                                       842  3ee3dd2 2026-09-02    ENTRY                                          
 eval/validate_lambda_probe.py                               58  3d2acd9 2026-08-31    ENTRY                                          KEEP (3b's t05, deprioritised, live)
 eval/winogrande.py                                          69  9176f85 2026-08-30    registry:eval/run_eval.py                      
 filters/pass1_garbage.py                                   126  aa3a8b9 2026-08-26    ENTRY                                          
@@ -165,7 +165,7 @@ probes/profile_step.py                                     139  bcc43c4 2026-08-
 probes/t57_outlier.py                                       33  2faa10f 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 probes/t70_external_loss.py                                180  be8e94a 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 probes/t71_depth_lr_rule.py                                293  b88de6c 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-run_ddp.sh                                                  77  f467182 2026-09-02    ENTRY                                          
+run_ddp.sh                                                  77  92936a6 2026-09-02    ENTRY                                          
 sampling.py                                                 17  7b21241 2026-08-27    import:chat.py                                 
 scripts/ab_attnres.sh                                       52  dec5bcb 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/assert_vocab.sh                                     19  4c669ba 2026-08-30    docs:scripts/test_eval_rescore.sh              
@@ -181,24 +181,24 @@ scripts/doc_numbers_check.py                               233  dddd82a 2026-09-
 scripts/env_fp.py                                           54  6ef7e7a 2026-08-30    import:algorithms/rlvr.py                      
 scripts/eqcheck.py                                          61  9176f85 2026-08-30    ENTRY                                          
 scripts/eval_artifacts.py                                  244  bafd719 2026-09-01    ENTRY                                          
-scripts/exp.py                                             238  80491f0 2026-09-02    ENTRY                                          
+scripts/exp.py                                             238  9e266ee 2026-09-02    ENTRY                                          
 scripts/fit_scaling.py                                     138  c669a4f 2026-08-31    docs:docs/standards/0830v1_gates.md            
-scripts/harness.py                                       10165  a3c708d 2026-09-02    ENTRY                                          
+scripts/harness.py                                       10165  500ec18 2026-09-02    ENTRY                                          
 scripts/launch_30b.sh                                      134  1154a2c 2026-08-31    docs:docs/audits/harness_review_0901_b0.md     
-scripts/launch_gate.py                                    1111  d7c4469 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/launch_tests.py                                    215  c3ab512 2026-09-02    ENTRY                                          
+scripts/launch_gate.py                                    1111  bb5da52 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
+scripts/launch_tests.py                                    215  fe6b3ed 2026-09-02    ENTRY                                          
 scripts/loader.py                                          294  3e7a53d 2026-09-01    ENTRY                                          
 scripts/lr_probe.sh                                         52  4407c20 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/plot_curves.py                                      97  9176f85 2026-08-30    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/pod_drift.py                                       683  af5cbb6 2026-09-02    ENTRY                                          
-scripts/pod_push.sh                                        202  d5e6cd4 2026-09-02    ENTRY                                          
+scripts/pod_drift.py                                       683  bbf329c 2026-09-02    ENTRY                                          
+scripts/pod_push.sh                                        202  19ad3ee 2026-09-02    ENTRY                                          
 scripts/pod_sync_check.sh                                   26  8479815 2026-09-01    ENTRY                                          
 scripts/probe_gradckpt_sources.py                           94  f78f22b 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/progress_feed.py                                   164  bafd719 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/prove_resume.sh                                    134  eb138ef 2026-09-02    docs:scripts/supervise_run.sh                  
+scripts/prove_resume.sh                                    134  60b794a 2026-09-02    docs:scripts/supervise_run.sh                  
 scripts/reachability.py                                    371  32de5e3 2026-08-31    ENTRY                                          KEEP (add to AGENTS.md entry-point table)
-scripts/read_lr_probe.py                                   200  81a53be 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/read_resume_proof.py                               366  20f0beb 2026-09-02    docs:scripts/prove_resume.sh                   
+scripts/read_lr_probe.py                                   200  32de3cf 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
+scripts/read_resume_proof.py                               366  9911bf1 2026-09-02    docs:scripts/prove_resume.sh                   
 scripts/rehearse_cursor.py                                 111  0e4c525 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/replay_cursor.py                                   321  2645161 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/restartability_audit.py                            237  9bf64d6 2026-08-30    ENTRY                                          
@@ -213,7 +213,7 @@ scripts/select_band.py                                      66  9176f85 2026-08-
 scripts/shape_audit.py                                     138  db762ca 2026-08-30    ENTRY                                          
 scripts/stale_claims.py                                    111  df80b6b 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/stamp_cache_seeds.py                                63  1a439ee 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/supervise_run.sh                                    99  d9f9e3e 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
+scripts/supervise_run.sh                                    99  52a4c75 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/sweep_stale_rows.py                                 60  1eb5660 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_arch_L32.py                                   325  e83fe5d 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_arch_compat.py                                673  36328ab 2026-09-01    ENTRY                                          
@@ -222,10 +222,10 @@ scripts/test_check_summary.py                               54  aded6c5 2026-09-
 scripts/test_cursor_save.py                                191  1c8f0c4 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_domain_loss_val.py                            137  a153681 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_drop_zombies.py                                59  79dfda7 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_e2e.py                                        317  606fd3b 2026-09-02    ENTRY                                          
-scripts/test_eval_load_only.py                              17  5f81d01 2026-09-02    none                                           
+scripts/test_e2e.py                                        317  f1deeff 2026-09-02    ENTRY                                          
+scripts/test_eval_load_only.py                              17  af1a34b 2026-09-02    none                                           
 scripts/test_eval_rescore.sh                                66  616205b 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_facts_olmes_urls.py                            18  afaf805 2026-09-02    none                                           
+scripts/test_facts_olmes_urls.py                            18  b0f6c09 2026-09-02    none                                           
 scripts/test_fewshot_demos.py                              136  beb3e74 2026-09-01    ENTRY                                          
 scripts/test_fewshot_stop.py                                59  a7f2f74 2026-09-01    ENTRY                                          
 scripts/test_free_card.py                                  125  d9ba571 2026-09-01    ENTRY                                          
@@ -235,19 +235,19 @@ scripts/test_monitor_exit.py                               145  f292f53 2026-09-
 scripts/test_num_id_resolve.py                              62  aef7dbb 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_orphan_kill.sh                                 27  d87feb4 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_parallel_encode.py                             38  8e7c2d4 2026-08-31    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_pod_drift_root.py                              71  af5cbb6 2026-09-02    none                                           
+scripts/test_pod_drift_root.py                              71  bbf329c 2026-09-02    none                                           
 scripts/test_pod_ps_judge.py                                96  a863156 2026-09-01    ENTRY                                          
 scripts/test_pod_sync_stamp.py                             121  8479815 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_reachability_fresh.py                          21  acdf7f9 2026-09-02    none                                           
+scripts/test_reachability_fresh.py                          21  3a56a62 2026-09-02    none                                           
 scripts/test_rep_stop_flag.py                               92  bd1e005 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_resume_cursor_pod.py                          181  6a456cb 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_score_exit.py                                 109  d2ad18d 2026-09-02    ENTRY                                          
+scripts/test_resume_cursor_pod.py                          181  b7ae780 2026-09-02    docs:docs/audits/deletion_audit_2026-09-02.md  
+scripts/test_score_exit.py                                 109  8c8f3cd 2026-09-02    ENTRY                                          
 scripts/test_score_matrix_failpath.py                       96  ae2868f 2026-09-01    ENTRY                                          
-scripts/test_serve_history.py                               47  432050b 2026-09-02    none                                           
+scripts/test_serve_history.py                               47  0f4337a 2026-09-02    none                                           
 scripts/test_sft_pack.py                                   146  c3a47e8 2026-08-31    ENTRY                                          
 scripts/test_shard_glob.py                                 178  cbaa12d 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/test_spawned_fast.py                                87  8548ac8 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_tokenizer_fp_name.py                           21  3fb1946 2026-09-02    none                                           
+scripts/test_tokenizer_fp_name.py                           21  30b9010 2026-09-02    none                                           
 scripts/tokenizer_eval.py                                  360  9176f85 2026-08-30    ENTRY                                          
 scripts/tokenizer_report.py                                485  9176f85 2026-08-30    ENTRY                                          
 scripts/tokenizer_sweep.py                                 135  9176f85 2026-08-30    import:scripts/tokenizer_eval.py               
@@ -256,10 +256,10 @@ scripts/w7_peak.sh                                          59  116f665 2026-09-
 scripts/watch_pod_log.sh                                    19  f24669b 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/write_mix_500m.py                                 1230  ea0d080 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/write_mix_stage2.py                                317  a3a7dd3 2026-09-01    docs:docs/audits/deletion_audit_2026-09-02.md  
-serve.py                                                   166  432050b 2026-09-02    ENTRY                                          
+serve.py                                                   166  0f4337a 2026-09-02    ENTRY                                          
 sft.py                                                     186  9176f85 2026-08-30    ENTRY                                          
 sft_math.py                                                256  3bfb667 2026-08-31    ENTRY                                          
-train.py                                                  2751  3612a20 2026-09-02    ENTRY                                          
+train.py                                                  2751  79f12e1 2026-09-02    ENTRY                                          
 
 ==================================================================================================================================
 Total: 255 files, 77 entry points, 248 BFS-reachable, 238 citation edges, 6 unreachable (0 DELETE, 0 KEEP)

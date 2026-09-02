@@ -73,13 +73,34 @@ def main():
     tok = load_tokenizer(tok_path, None)
 
     old_data, old_seq, old_frac, old_max = train.DATA, train.Cfg.seq, train.Cfg.val_frac, train.Cfg.val_rows_max
-    old_cache = os.environ.get("HARNESS_TOKEN_CACHE_DIR")
+    old_token_cache, old_vid = train.TOKEN_CACHE, train.VOCAB_ID
     try:
         train.DATA = d
         train.Cfg.seq = 128           # short: many sequences from a small corpus
         train.Cfg.val_frac = 0.05
         train.Cfg.val_rows_max = 5000
-        os.environ["HARNESS_TOKEN_CACHE_DIR"] = os.path.join(d, "cache")
+        # train.TOKEN_CACHE, not os.environ["HARNESS_TOKEN_CACHE_DIR"]. train.py never
+        # reads that variable -- only scripts/harness.py's _token_cache_dir does -- so
+        # setting it redirected nothing and _domain_cache_path still returned
+        # /data00/tokens_probe_domain.pt. MEASURED 2026-09-02: this test wrote a real
+        # cache into the pod's shared /data00 at 05:50:42Z with a 0-byte .vocab beside
+        # it, because load_tokenizer leaves train.VOCAB_ID None and :1686 writes
+        # `VOCAB_ID or ""`. probe_domain is not in mix_500m so the live run was unharmed,
+        # and that was luck: any domain name colliding with the mix would have poisoned a
+        # cache the run reads. A test that writes outside its tempdir is not a CPU-only
+        # test (fb, 2026-09-02).
+        os.makedirs(os.path.join(d, "cache"), exist_ok=True)
+        train.TOKEN_CACHE = os.path.join(d, "cache", "tokens.pt")
+        assert train._domain_cache_path(dom).startswith(d), (
+            f"the cache would land at {train._domain_cache_path(dom)}, outside this "
+            f"test's tempdir {d}"
+        )
+        # And the vocabulary fingerprint, for the same reason one line up: load_tokenizer
+        # does not set it, so without this the cache this test writes carries a 0-byte
+        # .vocab -- which val_seqs' freshness guard now refuses, correctly. Setting it from
+        # the tokenizer rather than from a checkpoint because there is no checkpoint here.
+        from scripts.loader import vocab_fingerprint
+        train.VOCAB_ID = vocab_fingerprint(tok)
 
         seqs = train._domain_seqs(dom, tok, True, False)
         seqs = seqs[0] if train.Cfg.fone else seqs
@@ -123,10 +144,8 @@ def main():
     finally:
         train.DATA, train.Cfg.seq = old_data, old_seq
         train.Cfg.val_frac, train.Cfg.val_rows_max = old_frac, old_max
-        if old_cache is None:
-            os.environ.pop("HARNESS_TOKEN_CACHE_DIR", None)
-        else:
-            os.environ["HARNESS_TOKEN_CACHE_DIR"] = old_cache
+        train.TOKEN_CACHE = old_token_cache
+        train.VOCAB_ID = old_vid
         shutil.rmtree(d, ignore_errors=True)
 
     if bad:

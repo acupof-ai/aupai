@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
+from cache_guard import set_vocab_id  # noqa: E402
 from domain_loss import domain_loss_seqs, seqs_fp, val_seqs  # noqa: E402
 
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
@@ -695,6 +696,14 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
         tok = load_tokenizer(tok_path, cfg)
         model.eval()
         seq = getattr(cfg, "seq", 4096)
+        # train.VOCAB_ID from the checkpoint, before val_seqs reaches _domain_seqs. Only
+        # train.build_tokenizer sets it, and nothing here calls that -- so without this the
+        # module global stays None, every cache stamp reads as a mismatch, and the domain_loss
+        # metric retokenizes the training caches and re-stamps them with an empty
+        # vocabulary (fb, 2026-09-02, caught on ppl.py two minutes into a live run).
+        # val_seqs checks freshness per domain; this half cannot live there, because the
+        # fingerprint comes from the checkpoint and val_seqs is not given one.
+        set_vocab_id(cfg)
         print(f"  {'model':15s} loaded", flush=True)
 
     if "domain_loss" in wanted:
