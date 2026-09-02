@@ -147,9 +147,16 @@ def main():
     evals = rows[args.eval_from:]
     print(f"code few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
-    preds_path = os.path.join(ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot"
-                              + (f".t{args.temperature}" if args.temperature else "")
-                              + ".jsonl")
+    # The checkpoint's name is IN the path, for the reason l1_fewshot.py:168 records: a
+    # path without it collides across checkpoints and the second scoring gets
+    # ArtifactExists instead of a number. Found on l1_fewshot (fb, 2026-09-02); this file
+    # carried the same defect and no one had hit it yet. --ckpt is optional here (--selfcheck
+    # loads nothing), so the empty case gets a literal rather than "None".
+    preds_path = os.path.join(
+        ROOT, f"data/eval/preds_code_fewshot_{args.demos}shot"
+        f"_{os.path.basename(args.ckpt) if args.ckpt else 'nockpt'}"
+        + (f".t{args.temperature}" if args.temperature else "")
+        + ".jsonl")
     correct = total = no_fence = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         # --run versions the path, so the handle's name is the file that exists.

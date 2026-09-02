@@ -19,6 +19,7 @@ import torch
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
+sys.path.insert(0, os.path.join(ROOT, "eval"))
 
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
@@ -36,6 +37,7 @@ def main():
     import json
 
     import train
+    from cache_guard import guard
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
     tok = load_tokenizer(a.tokenizer, cfg)
@@ -47,6 +49,14 @@ def main():
             setattr(train.Cfg, k, v)
 
     mix = json.load(open(a.mix, encoding="utf-8"))
+    # Before the first _domain_seqs call, not inside the loop: this ran on card 7 against
+    # the live 20B run's nine caches and printed "cache was built by another vocabulary,
+    # retokenizing" two minutes in (fb killed it by exact PID, 2026-09-02). train.VOCAB_ID
+    # is set only by train.build_tokenizer; load_checkpoint never touches it, so it was
+    # None, every stamp read as a mismatch, and the rebuild would have re-stamped nine
+    # training caches with an empty vocabulary. Cfg is set above first because the guard's
+    # cache path depends on Cfg.fone.
+    guard(cfg, list(mix["domains"]))
     out = {}
     for name in mix["domains"]:
         seqs = train._domain_seqs(name, tok, True, False)
