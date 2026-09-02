@@ -412,7 +412,7 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 复用路径的人必须复用身份变量;身份对不上时正确动作是拒绝,不是重建。
 
-实例(fb 一手):用户要 step1500 的 benchmark,起 `eval/ppl.py --mix data/mix_500m.json`,2 分钟后日志 `cache was built by another vocabulary, retokenizing`。ppl.py 从不设 `train.VOCAB_ID`(只有 train.py:1462 设);build_mix:1647 拿 `(VOCAB_ID or "")` 比 stamp 必假——/data00 九个活缓存会被重 tokenize 并以空 stamp 覆盖。按精确 PID 杀,缓存 mtime 未动。
+实例(fb 一手):用户要 step1500 的 benchmark,起 `eval/ppl.py --mix data/mix_500m.json`,2 分钟后日志 `cache was built by another vocabulary, retokenizing`。ppl.py 从不设 `train.VOCAB_ID`(只有 train.py:1462 设);build_mix:1647 拿 `(VOCAB_ID or "")` 比 stamp 必假——/data00 九个活缓存会被重 tokenize 并以空 stamp 覆盖。按精确 PID 杀,缓存 mtime 未动。写侧的对称洞见 §47。
 
 ## 44. 守卫对路径错:无 checkpoint 名的产物路径(fb 当事人,2026-09-02,de-24)
 
@@ -425,6 +425,28 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 工具的结论在退出码里,stdout 文本是给人看的副产物——拿副产物当判据,工具的失败模式(跑不起来、无法解析)全部落进过滤器的盲区。
 
 实例(e1 一手,86e1917):ruff 跑了但失败(exit 127、stdout 空)被 "F821 in line" 文本匹配读成 GREEN;invalid-syntax 被 F821 过滤丢掉读成「无未定义名」。修法(e1 已落):rc not in (0,1) = no-verdict;invalid-syntax 计入。
+
+## 46. 自报时间戳不带时钟来源 = 不可核验(fb 当事人,2026-09-02)
+
+「UTC」是对时钟的声明,不是格式选择:把本地时间(+0800)习惯性标成 UTC,每条消息的时间戳全部静默错位 8 小时,下游的因果排序跟着全错。
+
+实例(fb 当事人,2026-09-02):fb 全天消息里的「UTC hh:mm」都是本地 +0800 误标——违反他自己写的 Fidelity 条款,自请入表。44 转述的「kill ≈ 05:0x UTC」与 98 实测的日志 mtime(06:10 UTC)造出一个「被杀进程死后 70 分钟还在写日志」的鬼矛盾。三只钟(98 容器、44 本机 `date -u`、fb 的 `date -u`)对齐后真相平凡:ppl 06:10Z 启动、06:10:54Z 最后一行、06:13Z killed,fb 看到的是 ELAPSED 02:07 的僵尸。没有鬼进程,只有错标签。
+
+规则:时间戳要么从 `date -u` 现读,要么不写时区;读对方的时间戳,先问它来自哪只钟。
+
+## 47. 兜底值同时出现在写和读两侧,指纹检查就永远过(tilerl,2026-09-02)
+
+「派生产物带指纹」的硬约束在自己实现里留了一个自洽的洞:写侧用兜底值,读侧也用同一个兜底值——检查不是失效,是按构造永远过。
+
+实例(tilerl 一手,已核 train.py 原文):写侧 :1686 `f.write(VOCAB_ID or "")`——无 vocab 时写出空 stamp;读侧 :1647 `same_vocab = ... open(stamp).read().strip() == (VOCAB_ID or "")`——无 vocab 读空 stamp,`'' == (None or '')` 为 True。:1649 注释写着「An unstamped cache REBUILDS」,但空 stamp 文件存在、内容为空,在无 vocab 读者眼里就是 same_vocab。修法进 de-23 train 半,三处:None 即 raise、不写空 stamp、空 stamp 即 stale;tilerl review。
+
+规则:指纹的写侧和读侧不许共享兜底值;身份缺失时正确动作是拒绝,不是用空值配对。
+
+## 48. 从一个样本推出一个判据(fb 当事人,2026-09-02,与 §29 同族)
+
+判据按构造只认识它被推出时的那个样本;样本之外的同类项全部落进盲区。
+
+实例(fb 当事人):fb 对 tilerl 说「看到 0 字节 .vocab 就是 de 测试的指纹」——pod 上有七个 09-01 的 0 字节 stamp 早于该测试。空 stamp 观察本身没错(§43 的指纹),错的是把「这次的空 stamp 来自 de 测试」推广成「空 stamp ⇒ de 测试」。判据看不见被问的性质(stamp 为什么空),只看得见样本的特征(0 字节)。
 
 ## Sources
 
@@ -455,3 +477,8 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - tilerl(f82ca46/3bc18f8,2026-09-02):HOLD 文字随分支合进 main,约束人不约束 merge;tilerl-17 frozen_paths 进 hook
 - fb 当事人(2026-09-02):ppl.py 不设 VOCAB_ID→build_mix:1647 必假→九活缓存险被重 tokenize(de-23);preds_l1_d3.jsonl 无 checkpoint 名被 ArtifactExists 拒(de-24)
 - e1-16(86e1917,2026-09-02):exit 127 空 stdout 读成 GREEN、invalid-syntax 被 F821 过滤丢掉;rc not in (0,1)=no-verdict
+- fb 当事人(2026-09-02,1e 转达 06:32Z):全天「UTC」标签为本地 +0800 误标,自请入表;真实时间线 ppl 06:10Z 启动/06:13Z killed,鬼矛盾是错标签造的
+- 98(2026-09-02):容器时钟 + 日志 mtime 06:10 UTC 抓出矛盾;缓存审计九安全、probe_domain.pt 空 .vocab 是 VOCAB_ID 类缺陷指纹(de 的测试产物,非 ppl 所写)
+- 44 本机 `date -u` 06:27 UTC:第三只钟,与 98 容器一致
+- tilerl(2026-09-02,1e 转达 06:4x):train.py:1647 读侧 / :1686 写侧共享 `VOCAB_ID or ""` 兜底值,空 stamp 被无 vocab 读者判为 same_vocab——指纹检查按构造永远过;修法进 de-23 train 半(None 即 raise/不写空 stamp/空 stamp 即 stale),tilerl review
+- fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族
