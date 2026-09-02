@@ -166,8 +166,36 @@ def _parse(parser, argv):
         return None, (e.code if e.code is not None else 0)
 
 
-def undefined_names(path):
-    """Names train.py uses and never binds, via ruff F821. Static, and that is the point.
+def local_deps():
+    """train.py and every repo-local module it imports at module level.
+
+    NOT train.py alone, and this correction is b0's own finding turned back on this
+    file. b0's check ran `ruff --select F821 model.py` on the cut where the six
+    _FP8_MAX_E4M3 uses had been left behind in train.py; ruff said "All checks passed"
+    because the file it was pointed at was the clean half of the break. A dangling
+    reference lives on ONE SIDE of a split, and which side is not knowable in advance,
+    so naming a file is guessing. Measured on main 2026-09-02: train.py imports fone,
+    and `ruff F821 train.py` cannot see fone.py at all.
+
+    Derived from train.py's own import statements rather than listed, so b0's
+    model.py enters this set the moment the split lands and no one has to remember.
+    """
+    with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    mods = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            mods.update(a.name.split(".")[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            mods.add(node.module.split(".")[0])
+    out = [os.path.join(ROOT, "train.py")]
+    out += [p for m in sorted(mods)
+            if os.path.exists(p := os.path.join(ROOT, f"{m}.py"))]
+    return out
+
+
+def undefined_names(paths):
+    """Names these modules use and never bind, via ruff F821. Static, and that is the point.
 
     b0's shape, 2026-09-02, and it applies to this file: its model.py/train.py split
     moved _FP8_MAX_E4M3 into model.py while six uses stayed in train.py, and all FOUR of
@@ -182,16 +210,28 @@ def undefined_names(path):
     defaults and Cfg fields, exactly the kind of edit that leaves a dangling reference
     behind, so the acceptance would have gone green on a train.py that cannot import.
 
-    Returns [] when ruff is unavailable -- absence of the tool is not evidence of
-    absence of the defect, so main() reports that as a separate, third outcome rather
-    than as a pass.
+    Returns None with a reason when ruff did not deliver a verdict -- absence of the
+    tool is not evidence of absence of the defect, so main() reports that as a separate,
+    third outcome rather than as a pass. THE VERDICT IS THE EXIT CODE, not the presence
+    of matching text: ruff exits 0 clean, 1 with diagnostics, 2 when it could not run.
+    Measured 2026-09-02 with a stub `ruff` that exits 127 -- stdout is empty, so
+    filtering stdout for "F821" found nothing and this reported GREEN on a check that
+    never ran. My earlier missing-tool test stubbed the binary AWAY, which raises OSError
+    and took a different branch, so it did not cover a tool that runs and fails.
+
+    Every reported line is kept, not only F821-tagged ones, for the same reason: a file
+    ruff cannot PARSE exits 1 with "invalid-syntax", which the F821 filter dropped -- a
+    module too broken to tokenize read as a module with no undefined names.
     """
     try:
         r = subprocess.run(["ruff", "check", "--select", "F821", "--output-format",
-                            "concise", path], capture_output=True, text=True, timeout=60)
+                            "concise", *paths], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as e:
         return None, f"could not run ruff: {e}"
-    return [ln for ln in r.stdout.splitlines() if "F821" in ln], ""
+    if r.returncode not in (0, 1):
+        return None, (f"ruff exited {r.returncode} without a verdict: "
+                      f"{(r.stderr or r.stdout).strip().splitlines()[:1]}")
+    return [ln for ln in r.stdout.splitlines() if ": F821 " in ln or ": invalid-syntax" in ln], ""
 
 
 def main():
@@ -208,15 +248,18 @@ def main():
 
     # STATIC FIRST, because a dangling name is invisible to every assertion below and
     # e1-16's edit is exactly the kind that leaves one (see undefined_names).
-    dangling, ruff_why = undefined_names(os.path.join(ROOT, "train.py"))
+    deps = local_deps()
+    dangling, ruff_why = undefined_names(deps)
+    scope = ", ".join(os.path.basename(p) for p in deps)
     if dangling is None:
         wrong.append(f"{ruff_why} -- the static half of this acceptance did not run, and "
                      "a tool that could not run is not a clean result")
     elif dangling:
-        wrong.append(f"train.py has {len(dangling)} undefined name(s), so it cannot "
-                     f"import regardless of what the parser accepts: {dangling[0]}")
+        wrong.append(f"{len(dangling)} unresolved name/parse error(s) across {scope}, so "
+                     f"train.py cannot import regardless of what the parser accepts: "
+                     f"{dangling[0]}")
     else:
-        green.append("train.py binds every name it uses (ruff F821)")
+        green.append(f"every name bound across {scope} (ruff F821)")
 
     # 1. Omitting any justified knob must be refused.
     for knob in RECIPE_FLAGS:
