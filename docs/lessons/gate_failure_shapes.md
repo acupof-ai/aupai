@@ -1507,7 +1507,7 @@ near-dedup 的验证阶段:MinHash 签名用 **char 5-gram**(build_corpus.py:169
 
 执行用例先手抄了 logging loop 跑副本——真 loop 改成 `for opt in []` 照绿,因为测的是手抄件,不是文件。与 eval_heldout.py 曾自带 chat template 副本同构:**副本不是证人,它只证明抄的人抄对了。** 修法:从 sft_math.py 的 AST 抽原块 exec——被测代码和被执行代码是同一块,变异无处藏。
 
-陷阱实例(同文件):`--max_steps 40` 让 total_steps 变 40,warmdown 起点从 359 挪到 14,step 40 的 lr 只剩 5%(18.7×)——用它做"前 40 步复现"会因与变量无关的原因发散,被读成"配方不同"。**复现工具改变了被复现的东西:step 40 在 40 步 run 里和在 1024 步 run 里不是同一个 schedule 位置(§99 的 x 轴)。**
+陷阱实例(同文件):`--max_steps 40` 让 total_steps 变 40,warmdown 起点从 359 挪到 14,step 40 的 lr 只剩 5%(18.7×)——用它做"前 40 步复现"会因与变量无关的原因发散,被读成"配方不同"。**复现工具改变了被复现的东西:step 40 在 40 步 run 里和在 1024 步 run 里不是同一个 schedule 位置(§99 的 x 轴)。**(2026-09-03 撤回一半,ebc2d28c:18.7× 是 Cfg 类默认值(warmup 20/warmdown 0.65)下的算术;SFT run 用的是 resume 进来的 cfg(warmup 300/warmdown 0.1),step 40 还在 warmup 里,--max_steps 对那次 run 无害。危害的**大小**是 cfg 的函数,flag 本身仍对——前缀复现不该依赖读者知道 resume 的是哪份 cfg。)
 
 规则:**执行用例从被测文件的 AST 抽原块 exec,不手抄副本;复现前先问"这个复现工具改了被复现的东西没有"。** 判断法:把被测代码改成空操作——副本照绿,你的执行用例就在测抄件。
 
