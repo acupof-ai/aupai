@@ -30,12 +30,22 @@ LOG="runs/${NAME}.supervisor.log"
 
 say() { echo "[supervisor $(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
-# The newest ckpt_<name>.pt.stepN. Sorted numerically on the suffix, not lexically:
-# .step9000 sorts above .step10000 as a string, and resuming from the older one silently
-# discards real training.
+# The newest resumable checkpoint, whichever kind wrote it. Two names exist:
+# ckpt_<name>.pt.step<N> from the periodic save, and ckpt_<name>.pt.interrupt.step<N>
+# from train.py's SIGTERM handler. The interrupt file is by construction the NEWEST
+# thing on disk when a signal arrives -- it is written at the step the signal hit, after
+# the last periodic save -- so a glob that only matched `.pt.step*` would skip it and
+# resume from up to save_every steps earlier, silently discarding the save whose whole
+# purpose was to not lose them (fb predicted this shape; confirmed by glob before the
+# acceptance test ran).
+#
+# Sorted numerically on the trailing step, not lexically: .step9000 sorts above
+# .step10000 as a string, and resuming from the older one silently discards real
+# training. Ties (a periodic and an interrupt save at the same step) go to the interrupt
+# file, which is the later write.
 latest_ckpt() {
-  ls -1 "ckpt_${NAME}.pt.step"* 2>/dev/null \
-    | sed 's/.*\.step\([0-9]*\)$/\1 &/' | sort -k1,1n | tail -1 | cut -d' ' -f2-
+  ls -1 "ckpt_${NAME}.pt.step"* "ckpt_${NAME}.pt.interrupt.step"* 2>/dev/null \
+    | sed 's/.*\.step\([0-9]*\)$/\1 &/' | sort -k1,1n -k2,2 | tail -1 | cut -d' ' -f2-
 }
 
 say "watching: $*"
