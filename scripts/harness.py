@@ -3543,6 +3543,54 @@ def _broken_tasks_closed_by_commit():
     return d
 
 
+QUEUE_MIN_OPEN = 2
+QUEUE_EXEMPT = {"fb", "98"}
+
+
+def check_owner_queue_depth(root):
+    """Every roster member has at least QUEUE_MIN_OPEN open, unblocked tasks.
+
+    On 2026-09-02 the user found six sessions idle while the register showed 16 open rows:
+    nine of them were blocked on the frozen training path and the rest were held by two
+    owners. An idle session is a cost with no artifact, and nothing in the repo said so.
+    An empty queue is FAIL: that session is idle now. A queue of one is WARN: the
+    controller refills before it empties."""
+    roster_p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(roster_p):
+        return SKIP, "no runs/roster.json"
+    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
+               if m["name"] not in QUEUE_EXEMPT]
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    depth = {m: 0 for m in members}
+    for t in rows:
+        if t.get("state") == "open" and not (t.get("blocked_on") or "").strip():
+            if t.get("owner") in depth:
+                depth[t["owner"]] += 1
+    empty = [m for m, n in sorted(depth.items()) if n == 0]
+    if empty:
+        return FAIL, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
+    short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
+    if short:
+        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills"
+    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items()))
+
+
+def _broken_owner_queue_depth():
+    import shutil as _sh
+    d = _tmp_repo()
+    for rel in ("runs/roster.json", "runs/tasks.jsonl"):
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        _sh.copy(os.path.join(ROOT, rel), os.path.join(d, rel))
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    rows = [json.loads(x) for x in open(dst, encoding="utf-8") if x.strip()]
+    with open(dst, "w", encoding="utf-8") as fh:
+        for r in rows:
+            if r.get("state") == "open":
+                r = dict(r, blocked_on="frozen until the run ends")
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return d
+
+
 def check_review_present(root):
     """Every done task has a review row from the reviewer it named.
 
@@ -6031,6 +6079,156 @@ def _broken_dirty_aged():
 _STASH_GRACE_DAYS = 30
 
 
+#: Paths that must not change on main while a training run holds the block. Not "files
+#: that matter" -- files whose content the RUNNING job re-reads or is defined by, so a
+#: change to one makes the live run and the tree describe different experiments.
+_FROZEN_PATHS = (
+    "train.py", "run_ddp.sh", "scripts/supervise_run.sh", "scripts/pod_drift.py",
+    "eval/score_matrix.py", "eval/domain_loss.py", "data/mix_500m.json",
+    "data/tokenizer.json",
+)
+
+
+_RUN_LOG_FRESH_S = 900
+
+
+def _run_holds_the_block(root):
+    """(True, note) while a training run owns the cards.
+
+    TWO SOURCES, because neither reaches both places. runs/card_assignment.json is the
+    grant and it is current in a git tree -- but pod_push skips runs/ by design
+    (pod_drift.py:270), so the pod's copy is whatever it was when someone last put it
+    there: on 2026-09-02 the pod still read a 09-01 grant saying `launch_block_granted:
+    false` while eight cards were training. A check keyed only on that file disarms
+    itself on the pod, which is the one place a mid-run edit actually lands.
+
+    So the pod's source is a run log still being written: mtime within
+    _RUN_LOG_FRESH_S. That is the same evidence a person uses (`tail` it and see it
+    move), it needs nothing synced, and it cannot claim a run that has stopped. The
+    grant is checked first because it is the authority where it is fresh, and it also
+    covers the window between a crash and its resume, when no log is being written."""
+    try:
+        with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as f:
+            a = json.load(f)
+        if a.get("launch_block_granted") and \
+                (a.get("next_grant") or {}).get("blocked_on") == "the run itself":
+            return True, str(a.get("note", ""))[:60]
+    except (OSError, ValueError):
+        pass
+    now = time.time()
+    for p in glob.glob(os.path.join(root, "runs", "*.log")):
+        try:
+            if now - os.path.getmtime(p) < _RUN_LOG_FRESH_S:
+                return True, f"{os.path.basename(p)} written in the last {_RUN_LOG_FRESH_S // 60} min"
+        except OSError:
+            continue
+    return False, "no block grant and no run log written recently"
+
+
+def check_frozen_paths(root):
+    """While a run holds the block, main does not change what the run is made of.
+
+    A commit message saying HOLD binds the person who wrote it, and `git merge` does not
+    read English: da06097 carried "do not merge to main while p500m_20b_0902 is training"
+    in its own first line, and I merged the branch that contained it 40 minutes later
+    (2026-09-02). The revert was clean and that is not the point -- the same mistake with
+    train.py would have made the tree describe a model the running job is not training.
+
+    THE BASELINE IS THE SHA IN THE RUN'S LOG, not the one in its exp row. The exp row is
+    stamped once at `exp start` and never again, so a relaunch leaves it naming code the
+    job stopped executing 36 minutes later: p500m_20b_0902's row says dca9762 while the
+    log's banner and every byte on the pod say cdfa1db. Reading the row made this check
+    FAIL on two files that are byte-identical between main and the pod -- a stale baseline
+    reports drift where there is none, which is worse than not checking, because a red
+    that is always red gets muted.
+
+    The log line is `pod code: <sha> (clean, synced ...)`, written by run_ddp.sh:41 from
+    data/pod_synced_head at launch. CEILING, stated rather than hidden: that log is live
+    on the pod and reaches a git tree only once committed, i.e. after the run, so this is
+    armed where a mid-run edit lands and SKIPs on a Mac meanwhile. No banner: SKIP rather
+    than fall back to the exp row -- that value is available and wrong, and a wrong answer
+    is not better than none.
+
+    # ponytail: banner-scrape, upgrade to a launch-written runs/<name>.base sha when a
+    # second reader needs it."""
+    ok, note = _run_holds_the_block(root)
+    if not ok:
+        return SKIP, f"no run holds the block ({note})"
+    rows = [r for r in (_exp_events(root) or []) if r.get("status") == "running"]
+    base = None
+    for r in reversed(rows):
+        # `pod code: <sha>` is written by run_ddp.sh:41 from data/pod_synced_head at
+        # launch. On the pod that log is live; in a git tree it is there once the log has
+        # been committed, which is after the run ends. So this check is armed on the pod
+        # (where a mid-run edit would actually land) and SKIPs on a Mac until the log
+        # arrives -- stated rather than papered over with the exp row.
+        try:
+            with open(os.path.join(root, "runs", f"{r.get('name')}.log"),
+                      encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    m = re.match(r"pod code: ([0-9a-f]{7,40})\b", ln)
+                    if m:
+                        base = m.group(1)
+                        break
+        except OSError:
+            continue
+        if base:
+            break
+    if not base:
+        return SKIP, ("a run holds the block but no readable run log carries a `pod code:` "
+                      "banner. NOT falling back to the exp row's commit: it is stamped at "
+                      "`exp start` and a relaunch makes it name code the job stopped "
+                      "executing (dca9762 vs the live cdfa1db, 2026-09-02), so it reports "
+                      "drift on files that are byte-identical")
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return FAIL, f"the running row names commit {base}, which is not in this repo"
+    r = subprocess.run(["git", "diff", "--name-only", base, "HEAD", "--", *_FROZEN_PATHS],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, f"git diff failed: {r.stderr.strip()[:80]}"
+    changed = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    if changed:
+        return FAIL, (f"{len(changed)} frozen path(s) changed on main since {base[:7]}, the commit "
+                      f"the running job executes: {', '.join(changed[:4])}")
+    return PASS, f"{len(_FROZEN_PATHS)} frozen paths unchanged since the run's {base[:7]}"
+
+
+def _broken_frozen_paths():
+    """A clone with a block grant, a running exp row naming the base commit, and a later
+    commit touching train.py. Real commits, because the check compares two shas."""
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
+    with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+        json.dump({"launch_block_granted": True, "note": "broken world",
+                   "next_grant": {"blocked_on": "the run itself"}}, f)
+    sp.run(["git", "add", "-A"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", *ident, "commit", "-m", "base"], cwd=d, capture_output=True, env=env)
+    base = sp.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True,
+                  env=env).stdout.strip()
+    # The running row names the commit the job executes -- written after that commit
+    # exists, which is the same order pod_push stamps it in.
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
+        f.write(json.dumps({"started": "2026-09-02 01:03", "name": "brokenworld",
+                            "status": "running", "commit": base, "ended": ""}) + "\n")
+    with open(os.path.join(d, "runs", "brokenworld.log"), "w") as f:
+        f.write(f"pod code: {base} (clean, synced 2026-09-02T00:00:00Z, manifest verified)\n")
+    with open(os.path.join(d, "train.py"), "a") as f:
+        f.write("\n# the change that must not happen mid-run\n")
+    sp.run(["git", "add", "-A"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", *ident, "commit", "-m", "touch a frozen path"], cwd=d,
+           capture_output=True, env=env)
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -6251,6 +6449,13 @@ CHECKS = [
         "the register closed on free text, so a task closed on a path that never existed read as delivered; a whole evening's assignments lived only in chat and none was recoverable",
         check_tasks_closed_by_commit,
         _broken_tasks_closed_by_commit,
+    ),
+    (
+        "owner_queue_depth",
+        "every roster member has at least two open, unblocked tasks",
+        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02)",
+        check_owner_queue_depth,
+        _broken_owner_queue_depth,
     ),
     (
         "review_present",
@@ -6499,6 +6704,13 @@ CHECKS = [
         _broken_untracked_aged,
     ),
     (
+        "frozen_paths",
+        "main does not change what a running job is made of, while it is running",
+        "a HOLD in a commit message binds the person who wrote it; git merge does not read English (da06097)",
+        check_frozen_paths,
+        _broken_frozen_paths,
+    ),
+    (
         "no_shared_stash",
         "the stash stack is empty; it is shared by every worktree in this repo",
         "e1 and b0 each stashed, merged main and popped in the same window -- and each popped the other's entry",
@@ -6543,7 +6755,7 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
-    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo",
+    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
@@ -6552,7 +6764,7 @@ EVIDENCE = {
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo",
+    "no_shared_stash": "repo", "frozen_paths": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
