@@ -800,6 +800,14 @@ def build_optimizers(model, cfg, master=None):
         for g in opt.param_groups:
             g["initial_lr"] = g["lr"]
             g["initial_wd"] = g["weight_decay"]
+    # The group's NAME, carried on the optimizer itself so a reader of the step line does not
+    # have to know this function's construction order (b0-14). Attached as an attribute rather
+    # than returned alongside: ten call sites unpack this list (sft.py:101, sft_math.py:181,
+    # bench_eff/*, probes/, scripts/test_arch_*), and returning a tuple would break every one.
+    # `arq` is present only when the model has attn_res pseudo-queries, so the zip below must
+    # not assume four.
+    for opt, nm in zip(opts, ["muon", "embed", "scalar", "arq"], strict=False):
+        opt.aupai_group = nm
     return opts
 
 
@@ -2571,9 +2579,26 @@ def main():
                     # earlier, larger one (2026-09-01).
                     peak_gib = torch.cuda.max_memory_allocated() / 2**30
                     torch.cuda.reset_peak_memory_stats()
+                    # EVERY optimizer group's lr, not just optimizers[0]'s. Two sessions read
+                    # this line's `lr 1.00e-02` as the embedding lr on 2026-09-02 while the
+                    # embedding group was at 0.1 (Cfg.embed_lr, train.py:263) -- a log that
+                    # shows one of four optimizers' lr guarantees that misread (b0-14).
+                    #
+                    # THE BARE `lr <value>` STAYS FIRST, and that is a constraint rather than a
+                    # style choice: RunLog._STEP_RE (train.py:46) parses this line to feed
+                    # trackio, and it has no test. Measured against the real regex -- a fully
+                    # labeled field (`lr muon 7.00e-03 embed 1.00e-01 ...`) does NOT match, and
+                    # neither does a slash-joined one, so either would silently stop every
+                    # trackio metric on this line while the log still looked richer. The parser
+                    # now has a test (test_step_line_parses) that fails on exactly that.
+                    lrs = " ".join(
+                        f"{getattr(o, 'aupai_group', f'opt{i}')} {o.param_groups[0]['lr']:.2e}"
+                        for i, o in enumerate(optimizers)
+                    )
                     runlog(
                         f"step {step}/{total_steps} {step / total_steps:.0%}{phase} | loss {last:.3f} "
-                        f"| lr {optimizers[0].param_groups[0]['lr']:.2e} | gnorm {grad_norm.item():.2f} "
+                        f"| lr {optimizers[0].param_groups[0]['lr']:.2e} ({lrs}) "
+                        f"| gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
