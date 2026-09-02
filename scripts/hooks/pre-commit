@@ -635,6 +635,13 @@ def main():
         # version of this comment said ~sqrt(d)=32, which is torch's N(0,1) default, not ours.
         # CPU, seconds.
         "scripts/ve_row_norms.py",
+        # The embed-norm same-direction-rate reading, and the two comparisons it REFUSES. The
+        # rate is a within-interval-length statistic (linear `predicted` against compounding real
+        # growth moves it ~2000x from n=10 to n=1000) and it moves 4.1x with step position at
+        # fixed depth/lr/n -- larger than the 1.71x depth term structure_experiments.md attributes
+        # to it. Both refusals verified red independently; a single fixture violating both left
+        # each guard unpinned. CPU, milliseconds.
+        "scripts/embed_norm_sdr.py",
         # The step line train.py prints must still parse with RunLog._STEP_RE, which feeds
         # trackio and had no test. b0-14's honest format ("lr muon 7e-3 embed 1e-1 ...", no
         # privileged bare value) does NOT match -- measured -- so it would have stopped every
