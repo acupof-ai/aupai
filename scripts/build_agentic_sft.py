@@ -348,7 +348,32 @@ NON_ANSWER = re.compile(r"\s*(?:No response requested\.?|\(no response\)|)\s*$")
 #: 3b, after the credential scan and every structural filter had passed them.
 HARNESS_ERROR = re.compile(
     r"\s*(?:API [Ee]rror|Request timed out|\[?Request interrupted by user"
-    r"|Prompt is too long|Claude's response was cut off)")
+    r"|Prompt is too long|Claude's response was cut off"
+    # The CLIENT talking to its user in the assistant's voice: quota, auth, session
+    # limits. Same defect as an API error, different vocabulary, and found the same way --
+    # by reading row 34 of the 50-row sample after the API-error rule was already in.
+    r"|You're out of usage credits|You've (?:hit|reached) your"
+    r"|Please run /|Run /usage-credits|Credit balance)")
+#: A tool invocation that was never parsed, left sitting in the assistant's TEXT. The
+#: recording client emits tool calls as structured blocks; when one is malformed the client
+#: cannot parse it, so the raw markup lands in the text block instead -- and it packs as
+#: supervised text, teaching the model to write a broken invocation in prose. 7 turns.
+#:
+#: LINE-ANCHORED, deliberately. 3 of the 10 turns mentioning this markup are prose ABOUT
+#: tool syntax ("does it contain any tool-call syntax (JSON tool_call / XML <function_calls>
+#: ...)", and a review noting a Grep argument was dirty) -- exactly the discussion this
+#: repo's transcripts are full of, and exactly what a substring match would eat. The same
+#: shape as CHATML_LITERAL: an explanation is not an instance.
+BROKEN_INVOCATION = re.compile(r"(?:^|\n)\s*<(?:antml:)?(?:invoke|function_calls)\b")
+#: The human said NO to this tool call. The rejection is recorded as the tool RESULT, so it
+#: is masked and looks harmless -- but the assistant turn before it is the refused call, and
+#: that turn is supervised as a completion. 132 refused calls across 125 episodes (2.9%) are
+#: currently teaching the model to emit exactly the calls a person vetoed. The negative
+#: signal is real supervision in the wrong direction, and it is invisible to every check
+#: that looks at the tool turn (which is correctly masked) rather than the turn before it.
+REJECTED_CALL = re.compile(
+    r"The user doesn't want to proceed with this tool use|tool use was rejected")
+
 
 
 
@@ -408,6 +433,14 @@ def usable(messages):
     # never used -- which trains the model to call a tool and abandon it.
     if any(m["role"] == "assistant" and HARNESS_ERROR.match(m["content"]) for m in messages):
         return False, "an assistant turn is a harness error, not a response"
+    if any(m["role"] == "assistant" and BROKEN_INVOCATION.search(m["content"])
+           for m in messages):
+        return False, "an assistant turn holds an unparsed tool invocation as text"
+    # The whole episode, not a truncation before the refused call: 124 of the 125 have the
+    # rejection as the final turn, so truncating recovers almost nothing, and a truncation
+    # rule is a repair whose boundary I would be choosing.
+    if any(m["role"] == "tool" and REJECTED_CALL.search(m["content"]) for m in messages):
+        return False, "a tool call was refused by the user; the refused call is supervised"
     if any(CHATML_LITERAL.search(m["content"]) for m in messages):
         return False, "text contains a literal ChatML marker (tokenizes as the real token)"
     if is_synthetic_user(messages[0]["content"]):
@@ -418,6 +451,38 @@ def usable(messages):
         if m["role"] == "tool" and (i == 0 or messages[i - 1]["role"] != "assistant"):
             return False, "tool turn not preceded by an assistant turn"
     return True, ""
+
+
+def dedupe(rows):
+    """(kept, n_dropped) -- one episode per (opener, final answer) pair, first wins.
+
+    A WHOLE-PACK property, so it cannot live in usable(): each of these episodes is
+    individually fine, and only the pack shows the repetition. 206 of 4329 rows (4.8%) are
+    redundant, and they are not evenly spread -- a 5-minute patrol cron contributes 61
+    episodes whose user turn is byte-identical and whose answer is "无新情况。戳已盖。",
+    and three connectivity probes ("Reply with exactly: alpha") contribute 19 each. At that
+    concentration the model is being taught to memorize boilerplate.
+
+    Keyed on the opener plus the FINAL assistant turn, not the whole conversation: the
+    patrol episodes differ in the middle (each reports a different training step) while
+    being the same episode to learn from. Exact-prefix keys rather than a similarity
+    threshold, because a threshold needs a cutoff nobody can defend and this shape does not
+    need one -- these are byte-identical at both ends.
+
+    NOT datagen/near_dedup_postpass.py (3b-8), which is the right tool for a different
+    question: MinHash/LSH with Jaccard >= 0.5 over normalised code shards, for corpus rows
+    that are near-copies of each other. These episodes are exact at both endpoints and
+    differ in the middle, and the unit is a conversation rather than a document -- a
+    shingled similarity measure would be a heavier tool giving the same answer here.
+    """
+    seen, kept = set(), []
+    for r in rows:
+        key = (r["messages"][0]["content"][:120], r["messages"][-1]["content"][:60])
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(r)
+    return kept, len(rows) - len(kept)
 
 
 def token_filter(rows, tok_path, max_tokens=4096):
@@ -801,6 +866,20 @@ def _selftest():
           {"role": "assistant", "content": "Request timed out"}], "a harness timeout as an answer"),
         ([{"role": "user", "content": "跑"},
           {"role": "assistant", "content": "API Error: 500"}], "a bare API error as an answer"),
+        # An unparsed tool invocation left in the text.
+        ([{"role": "user", "content": "读它"},
+          {"role": "assistant",
+           "content": "先读再改。\n<invoke name=\"Read\">\n<parameter name=\"file_path\">x</parameter>"}],
+         "a broken tool invocation as assistant text"),
+        # A refused call. The rejection sits in the TOOL turn (masked, so it looks
+        # harmless); the defect is the assistant turn before it, which is supervised.
+        ([{"role": "user", "content": "查一下"},
+          {"role": "assistant", "content": '{"tool": "Bash", "input": {"command": "rm -rf /"}}'},
+          {"role": "tool",
+           "content": "The user doesn't want to proceed with this tool use. The tool use "
+                      "was rejected (eg. if it was a file edit, the new_string was NOT "
+                      "written to the file)"}],
+         "an episode whose supervised call the user refused"),
     ):
         ok, why = usable(msgs)
         if ok:
@@ -813,6 +892,14 @@ def _selftest():
         ([{"role": "user", "content": "x"},
           {"role": "assistant", "content": "跑挂了：Request timed out 是 pod 那侧的，不是代码。"}],
          "an answer quoting a timeout mid-sentence"),
+        # Prose ABOUT tool-call markup. 3 of the 10 real turns matching this markup are
+        # this, in a repo whose transcripts discuss tool syntax constantly -- a substring
+        # match would eat every one of them.
+        ([{"role": "user", "content": "它输出了什么"},
+          {"role": "assistant",
+           "content": "关键是：里面有没有 tool-call 语法（JSON tool_call / XML <function_calls>），"
+                      "还是纯散文？引用实际字节。"}],
+         "prose discussing <function_calls> syntax"),
     ):
         ok, why = usable(msgs)
         if not ok:
@@ -824,6 +911,24 @@ def _selftest():
     ok, why = usable(bad)
     if ok:
         fails.append("an orphan tool turn was accepted; format_agentic would raise on it")
+
+    # 8. Dedup is a PACK property: each of these episodes is individually usable, so
+    #    usable() cannot see the defect and only a whole-pack pass can.
+    patrol = [{"project": "p", "messages": [
+        {"role": "user", "content": "定时巡检"},
+        {"role": "assistant", "content": f"step {i}"},
+        {"role": "assistant", "content": "无新情况。戳已盖。"}]} for i in range(5)]
+    kept, n = dedupe(patrol)
+    if len(kept) != 1 or n != 4:
+        fails.append(f"dedupe kept {len(kept)} of 5 episodes that differ only in the middle")
+    # And it must not collapse genuinely different work: same opener, different answer.
+    distinct = [{"project": "p", "messages": [
+        {"role": "user", "content": "log"},
+        {"role": "assistant", "content": f"answer {i}"}]} for i in range(3)]
+    kept, n = dedupe(distinct)
+    if len(kept) != 3 or n:
+        fails.append(f"dedupe collapsed {n} episodes that share an opener but answer "
+                     "differently -- 'log' is the most common opener in this corpus")
 
     for f in fails:
         print(f"  FAIL {f}")
@@ -871,6 +976,7 @@ def main():
             print(f"  {c['types']}  {c['turns']} turns  {c['project']}")
         print("  Content is not printed or written anywhere. The source files still hold "
               "these; that is a separate problem for whoever owns the machine.")
+    rows, n_dup = dedupe(rows)
     tokens_note = ""
     if os.path.exists(a.tokenizer):
         before = len(rows)
@@ -888,6 +994,7 @@ def main():
     print("dropped:")
     for why, n in sorted(rep["dropped"].items(), key=lambda kv: -kv[1]):
         print(f"  {n:7d}  {why}")
+    print(f"  {n_dup:7d}  near-duplicate of an earlier episode (same opener and answer)")
     print("top projects:")
     for proj, n in sorted(rep["by_project"].items(), key=lambda kv: -kv[1])[:8]:
         print(f"  {n:7d}  {proj[:70]}  ({n / max(rep['kept'], 1):.1%})")
