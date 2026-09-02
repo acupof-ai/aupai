@@ -704,3 +704,19 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 实例二(同一天,更狠):同一个文件的 flash 段在无 flash_attn 的机器上 SKIP。b0-8 把 GatedMLA 搬进 model.py 后,测试 monkeypatch 的 `train.HAS_FA` 不再到达模块——模块读自己的 model.HAS_FA(`GatedMLA.forward.__globals__` 实测指向 model)——于是「fallback」段在 pod 上静默改走 flash 分支,拿 fp32 输入撞 flash 的 dtype 断言,报错行是 test:587 → model.py:170。CI 全程绿,因为 CI 根本不跑这段。b0 修过同一族的 chunk_kda 绑定(注释写明「re-exported SEPARATE binding」),HAS_FA 的四个 patch 点漏了。
 
 规则:环境门控的断言必须把「我没跑」报成可见状态,不是绿;一个断言在唯一执行环境里的结果必须当天拿回仓库(与 §2 合流:只在 pod 发生过的事没发生过)。
+
+## 61. source 是 briefing 的 fact,记的是有人说过的话,不是有人量过的数(b0 当事人,2026-09-02,fb 裁定进表)
+
+一条 fact 的 `value` 与它的 `source` 是两种东西。`source: "aupai-fb briefing"` 说明这行数字的来路是一次转述,**它的每个字段都继承转述的地位,包括那些看起来像测量参数的字段**。而 `status: measured` 盖在整条 fact 上,不分字段——于是一个从未被量过的旋钮值,和一个真被量过的吞吐数,在同一条 fact 里拥有同样的可信度外观。
+
+实例(b0,f36fd09):`eff.fb_mfu` 写「31% MFU, 73K tok/s/gpu, FP8, 8xH20, **batch 32**, seq 4096, no grad_ckpt」,source 是 briefing。我把 batch 32 读成一个被测过的配置,拿它当参照物去解释一次 OOM,结论是「`record_shapes` 吃掉了显存」。
+
+**真相是 batch 32 从来装不下**:`eff.microbatch_32_oom`(t52 pair1,2026-08-31,**比 fb_mfu 晚一天**)实测 b32a1 在 93.8/95.2 GB OOM,判决「保持 micro-batch 16」,基线臂 b16a2 = 72K tok/s/gpu;`stop_window` 的 p200m 启动行写的是 `--batch 16 --accum 2`。**同一个 93.8/95.2 GB 出现三次——t52 的 A/B、我的 trace、12:00Z 的 p200m 本体,而最后一次进程里根本没有 profiler。** 变量是 batch。
+
+**两层错,第二层比第一层贵:**
+1. 拿未验证的前提去推导——推导继承前提的状态(`docs/standards/writing.md`)。
+2. **拿它去否证一条实测。** 一个 briefing 值和一个实测值冲突时,默认输的是 briefing;我反过来了,于是把别人一次正确的测量解释成了工具的缺陷。**这比自己算错一个数贵,因为它污染的是别人的结论。**
+
+规则:引用一条 fact 的某个字段前,先看它的 source 支不支持那个字段。**briefing / 设计文档 / 别人的转述,支持「有人主张过」,不支持「这个配置跑过」。** 冲突时按测量日期与证据强度排序,不按 status 字段——status 盖整条,而错的往往只是其中一个字段。
+
+推论(给 facts 的写法):**一条 fact 里混着实测字段与转述字段时,boundary 必须点名哪些是转述的。** `eff.fb_mfu` 现在按 fb 裁定改 `status: recorded` 并在 boundary 指向 `eff.microbatch_32_oom`(e1 执行),value 不删——因为 73K 那个吞吐数本身可能是真的,坏的是它旁边那个 batch。
