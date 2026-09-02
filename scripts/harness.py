@@ -4321,11 +4321,18 @@ def check_review_present(root):
         if (t.get("closed") or "") < REVIEW_RULE_FROM:
             continue  # closed before the rule; see REVIEW_RULE_FROM
         named = t.get("reviewer")
+        task_reviews = reviews.get(tid, [])
         if not named:
+            # pre-rule rows named no reviewer; any peer review row or a
+            # legacy-unreviewed declaration (artifacts gone, 44-28) closes them
+            if task_reviews:
+                continue
             no_reviewer.append(tid)
             continue
-        if any(r.get("reviewer") == named for r in reviews.get(tid, [])):
+        if any(r.get("reviewer") == named for r in task_reviews):
             continue
+        if any(r.get("verdict") == "legacy-unreviewed" for r in task_reviews):
+            continue  # artifacts gone, declared in the ledger (44-28)
         closed = t.get("closed", "")
         try:
             age_min = (now - time.mktime(time.strptime(closed, "%Y-%m-%d %H:%M"))) / 60
@@ -4367,6 +4374,10 @@ def _broken_review_present():
         for r in reviews:
             if r.get("task") != drop:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # a done row naming NO reviewer with no review row of any kind: must WARN (44-28)
+    with open(os.path.join(d, "runs", "tasks.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"id": "selftest-norev", "state": "done", "owner": "t",
+                            "closed": "2026-09-02 00:00"}) + "\n")
     return d
 
 
@@ -9008,6 +9019,37 @@ def _selftest_commit_delivers_fact_ref():
     print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path unchanged")
 
 
+def _selftest_review_present_legacy():
+    """A legacy-unreviewed declaration closes a no-reviewer done row; without it the row WARNs (44-28).
+
+    Two worlds over one register: a done row naming no reviewer, with and without the
+    declaration. The pre-rule rows (t01/t02/...) named no reviewer because the rule did
+    not exist; classifying them once -- review row where the artifact survives,
+    legacy-unreviewed where it is gone -- must silence the permanent WARN, while a NEW
+    unreviewed row must still warn."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix="rpl_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        task = {"id": "t-old", "state": "done", "owner": "t", "closed": "2026-09-02 00:00"}
+        with open(os.path.join(d, "runs", "tasks.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(task) + "\n")
+        legacy = {"id": "44-legacy-t-old", "reviewer": "44", "owner": "t", "task": "t-old",
+                  "verdict": "legacy-unreviewed", "finding": "artifacts gone"}
+        with open(os.path.join(d, "runs", "review.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(legacy) + "\n")
+        verdict, msg = check_review_present(d)
+        assert verdict == PASS, f"a legacy-declared row still warns: {msg}"
+        # remove the declaration: the same row must WARN naming it
+        open(os.path.join(d, "runs", "review.jsonl"), "w").close()
+        verdict, msg = check_review_present(d)
+        assert verdict == WARN and "t-old" in msg, f"an undeclared no-reviewer row did not warn: {msg}"
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    print("  review_present: legacy declaration silences a pre-rule row; without it the row WARNs")
+
+
 def _selftest_attest_written_path():
     """attest must record the path that was WRITTEN, not the one requested.
 
@@ -9923,6 +9965,7 @@ def _demo():
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
+    _selftest_review_present_legacy()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
