@@ -193,6 +193,11 @@ def main():
         # this: duplicate t39/t40, 2026-08-31). Identity is (name, started), and
         # readers fold on it -- `merge` already does, and rows() now does too, so an
         # appended close carries the start row's `started` to fold onto it.
+        # ONE name, LAST running row: reversed() takes the newest and stops. A name with
+        # two open rows needs two calls -- and the second reaches the same row the first
+        # just closed, so it cannot close the older one at all. Closing eight stale rows
+        # across four duplicated names on 2026-09-02 went 6 -> 4 and looked stuck; the
+        # fix is to append a close carrying that row's own `started`, which is identity.
         rs = rows(raw=True)
         base = None
         for r in reversed(rs):
