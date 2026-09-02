@@ -129,40 +129,43 @@ def classify(local_row, pod_row):
 
 
 def diff_rows(pod_rows, local_rows, keyfn):
-    """(missing, collisions). missing: pod rows whose key is absent locally, deduplicated
-    on key so one call never carries a key twice -- write_records raises on that, and the
-    pod's own experiments ledger holds each eval row twice.
+    """(missing, collisions). missing: pod rows whose key is absent locally. collisions:
+    [(key, why, local_last, pod_last)] for a key on both sides whose CURRENT rows differ.
 
-    collisions: [(key, why, local_row, pod_row)] for a key on both sides whose content
-    differs, classified by `classify`. Reported, never applied.
+    BOTH SIDES FOLD TO THEIR LAST ROW BEFORE ANYTHING IS COMPARED. These ledgers are
+    append-folds: exp.py done appends a closing row rather than rewriting the open one, so
+    a key's current state is its last row and every earlier row under it is history.
 
-    The LAST local row under a key is the current one, not the first: exp.py done appends
-    a closing row rather than rewriting the open one, so a `setdefault` here reads every
-    closed run as still open. Measured both ways before choosing -- 152 differing against
-    the first row, 155 against the last -- which is also the proof that exact equality was
-    never the right test: the two readings disagree by 3 and both report ~155."""
-    local = {}
+    The first version folded only the LOCAL side and compared EVERY pod row against it. On
+    the real ledgers that reported 161 differences, and the number was an artifact of the
+    method: the pod holds up to five rows under one key (sft_p324_v3 has ok, running,
+    killed, fail, killed), so one key alone contributed four "differences" against a local
+    row that in fact matched its last one. Folded both sides: 171 of 185 shared keys AGREE
+    and 14 differ. The 53 "the pod has a result and the repository does not" rows were the
+    same artifact -- the pod's own last row for all 53 is the identical close the local row
+    carries, because those closes were written ON the pod and pulled home. Measured
+    2026-09-03: 178 pod rows are byte-identical to the current local last row.
+
+    A report of 161 where the answer is 14 is not a loud version of the same finding. It
+    made the pod look older than the repository when the pod is a superset of it, and a
+    ruling issued on those numbers would have rewritten 53 correct local rows from rows
+    the pod itself supersedes."""
+    local, pod_last, order = {}, {}, []
     for r in local_rows:
         local[keyfn(r)] = r
-    missing, collisions, at = [], [], {}
     for r in pod_rows:
         k = keyfn(r)
+        if k not in pod_last:
+            order.append(k)
+        pod_last[k] = r
+    missing, collisions = [], []
+    for k in order:
+        r = pod_last[k]
         if k in local:
             if local[k] != r:
                 collisions.append((k, classify(local[k], r), local[k], r))
-            continue
-        # LAST row wins here too, for the same reason it does above: the pod holds each
-        # run's open row AND its close (eval_p500m_step1500_ppl is `running` then
-        # `killed: killed at 2 min, no output`). Keeping the FIRST appended the open row
-        # and dropped the result -- so the pull reported 0 pod-only rows afterwards while
-        # the close was still only on the pod, and the next run then counted that close as
-        # a NEW result_only_on_pod row against the row this one had just written. 53 became
-        # 59 and the discrepancy is what exposed it (de-36, measured).
-        if k in at:
-            missing[at[k]] = r
-            continue
-        at[k] = len(missing)
-        missing.append(r)
+        else:
+            missing.append(r)
     return missing, collisions
 
 
@@ -310,18 +313,22 @@ def _selftest():
         "diff_rows compared against the FIRST local row under the key; exp.py done appends "
         "a close, so the last row is the current one")
 
-    # The pod's experiments ledger holds each eval row TWICE -- the open row and its
-    # close. One call must carry a key once, or write_records raises on the duplicate it
-    # was handed; and the one it carries must be the CLOSE, or the pull writes the open
-    # row, reports 0 pod-only rows afterwards, and leaves the result on the pod. That is
-    # not hypothetical: it is what the first apply did, and the next run counted the
-    # close as a NEW result_only_on_pod row (53 -> 59), which is how it was found.
-    missing, _ = diff_rows([b, b_changed], [a], kf)
+    # BOTH SIDES FOLD TO THEIR LAST ROW. The pod holds up to five rows under one key
+    # (sft_p324_v3: ok, running, killed, fail, killed), and comparing each of them against
+    # the local row is what produced 161 differences where the answer is 14.
+    missing, coll = diff_rows([b, b_changed], [a], kf)
     assert len(missing) == 1, f"a key repeated on the pod was offered twice: {missing}"
     assert missing[0]["v"] == 99, (
         f"the FIRST pod row under a repeated key was kept, got v={missing[0]['v']}. The pod "
         f"holds a run's open row and its close under one key; keeping the first writes the "
         f"open row and abandons the result")
+    # The property the first version got wrong, as a known answer: a pod key whose EARLIER
+    # rows differ but whose LAST row matches locally is agreement, not a collision.
+    missing, coll = diff_rows([{"ckpt": "c1", "profile": "full", "v": 7}, a], [a], kf)
+    assert not missing and not coll, (
+        f"an earlier pod row under a key whose LAST row matches locally was reported as a "
+        f"difference: {coll}. That is the artifact that turned 14 into 161 -- the pod is an "
+        f"append log, and every row but the last is history")
 
     # An identical row is neither missing nor a collision.
     missing, coll = diff_rows([a], [a], kf)
@@ -350,10 +357,11 @@ def _selftest():
 
     print("pod_pull_ledgers selftest OK: 4 ledgers keyed from ledger_audit.KEYS; "
           "missing/duplicate-key/identical on known answers; all three difference classes "
-          "(stale, result_only_on_pod, contradicts) including the status-only-open form "
-          "that is 59 of the real 155; the last local row under a key is current, not the "
-          "first; a missing pod file reports an error instead of zero; and a pod file with "
-          "FEWER rows correctly yields nothing to pull")
+          "(stale, result_only_on_pod, contradicts); BOTH sides fold to their last row, "
+          "asserted on the case that produced 161 differences where the answer is 14 -- an "
+          "earlier pod row under a key whose last row matches locally; a missing pod file "
+          "reports an error instead of zero; and a pod file with FEWER rows correctly "
+          "yields nothing to pull")
     return 0
 
 
