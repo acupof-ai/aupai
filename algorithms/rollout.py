@@ -256,6 +256,16 @@ def _selftest(repo=None):
 
     a, b = g["records"][8], g["records"][9]
     for r, other in ((a, "B"), (b, "A")):
+        # Two ways this reward can be 0.0 and only one of them is an isolation breach. When
+        # the uid drop landed, the marker write started failing with EACCES (the cwd was the
+        # root-owned chroot root, not the workdir) and this assertion reported "a peer's
+        # workdir was visible" -- a correct red for the wrong reason, which costs the time it
+        # takes to disbelieve the message. The marker's own assertion carries REACHED, so
+        # `escaped` separates the two; anything else is the rollout failing to run at all.
+        if r["reward"] != 1.0 and not r["escaped"]:
+            raise AssertionError(
+                f"rollout {other}'s marker test did not run, so cross-rollout isolation is "
+                f"UNTESTED (not breached -- no REACHED marker). Read the failure: {r}")
         assert r["reward"] == 1.0 and not r["escaped"], (
             f"rollout {other}'s workdir was visible to its peer: {r}"
         )
