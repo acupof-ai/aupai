@@ -37,7 +37,6 @@ into matches that mean nothing.
 """
 import argparse
 import glob
-import hashlib
 import json
 import os
 import sys
@@ -46,22 +45,77 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CHAR_WINDOW_DOMAINS = {"zh_web", "chatml", "chat_qa"}
 NGRAM = 13
 
+# A 13-CHARACTER WINDOW OVER LOW-ENTROPY TEXT MATCHES FORMATTING, NOT CONTENT.
+# The first full scan reported chat_qa 816 char-hits and chatml 816 char-hits -- the SAME count
+# from two different corpora, which is the signature of a shared template rather than leakage.
+# Printing the matched strings settled it: '-------------' x538, '_____________' x66, and table
+# rules like '-----|-------' x30. Thirteen characters of a markdown rule collide by necessity.
+# So a character gram drawn from fewer than this many distinct characters is not evidence. The
+# threshold is declared here, BEFORE the numbers, and both the filtered and unfiltered counts are
+# reported -- a filter introduced after seeing the hits and reported only post-filter is a knob
+# tuned to make a number look better.
+MIN_CHARSET = 4
 
-def srcfp(path):
-    """The same shape train.py's _corpus_fp uses: content, not mtime."""
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()[:16]
+# Distinct matched grams recorded per domain, so the whitespace hits can be read by a human
+# instead of reasoned about from a count. Truncation is recorded in the output: a silent cap
+# reads as "this was all of them".
+MAX_RECORDED = 400
+
+
+def low_entropy(g):
+    """True when a gram is built from too few distinct characters to be evidence of anything."""
+    return len(set(g)) < MIN_CHARSET
+
+
+def scan_text(t, ws_need, ch_need, use_char):
+    """One row's matches: (whitespace ids, character ids kept, character ids before the filter).
+
+    This is a function rather than three inline loops because the filter's APPLICATION needs a
+    test, not just the predicate. With low_entropy() tested on its own, replacing the loop's
+    `if low_entropy(g): continue` with `if False: continue` left every case green -- the filter
+    could be disconnected from the scan entirely and nothing noticed. A predicate nobody calls is
+    not a filter.
+
+    SETS, not counters. These were dicts of id -> match count, but only the KEYS ever reached the
+    output (`sorted(hits_ws)`), so deleting `count += 1` changed nothing any test or any result
+    could see -- three mutations of the counting lines passed a green suite because the value was
+    dead. Per-gram counts are still kept, in matched_*_grams, where they are actually read.
+    """
+    ws, ch, ch_raw = set(), set(), set()
+    for g in ws_grams(t):
+        if g in ws_need:
+            ws.add(ws_need[g])
+    if use_char:
+        for g in char_grams(t, stride=1):
+            if g in ch_need:
+                # BOTH sets. ch_raw is every match; ch drops the grams that cannot be evidence
+                # (markdown rules), per MIN_CHARSET above.
+                ch_raw.add(ch_need[g])
+                if not low_entropy(g):
+                    ch.add(ch_need[g])
+    return ws, ch, ch_raw
 
 
 def domain_fp(d, root=None):
-    files = sorted(glob.glob(os.path.join(root or ROOT, "data", "corpus", d, "*.jsonl")))
-    h = hashlib.sha256()
-    for p in files:
-        h.update(srcfp(p).encode())
-    return h.hexdigest()[:16], files
+    """The CANONICAL fingerprint, imported -- never reimplemented.
+
+    row_cursor_srcfp is written by train.py:1796 from _corpus_fp, which is sha1 over sorted
+    "name:size:sha256(first 64KB):sha256(last 64KB)" per shard, skipping build_corpus_stats.json.
+    My first version invented its own: sha256 of every full file, no skip list. It reported
+    SRCFP CHANGED for six of nine domains -- 720,000 rows including all of code_py_starcoder --
+    and I was one message away from reporting that as "the corpus was rebuilt since that run and
+    those rows are no longer recomputable". Every one of those was my hash disagreeing with
+    train.py's, which is what comparing two implementations of one quantity produces.
+    datagen/corpus_fingerprint.py's own --self-check exists to assert parity with train.py, so
+    fp_dir is the only honest source here.
+    """
+    base = os.path.join(root or ROOT, "data", "corpus", d)
+    files = sorted(glob.glob(os.path.join(base, "*.jsonl")))
+    if not os.path.isdir(base):
+        return None, files
+    sys.path.insert(0, os.path.join(ROOT, "datagen"))
+    from corpus_fingerprint import fp_dir
+    return fp_dir(base), files
 
 
 def text_of(rec):
@@ -166,7 +220,9 @@ def main():
                   f"the rows consumed; reported separately, NOT in the total")
             continue
         cap = a.limit_rows or nrows
-        hits_ws, hits_ch, seen, chars = {}, {}, 0, 0
+        hits_ws, hits_ch, hits_ch_raw = set(), set(), set()
+        seen, chars = 0, 0
+        grams_ws, grams_ch = {}, {}
         use_char = dom in CHAR_WINDOW_DOMAINS
         for p in files:
             if seen >= cap:
@@ -181,20 +237,32 @@ def main():
                     except (KeyError, json.JSONDecodeError) as e:
                         sys.exit(f"REFUSING: {p} row {seen}: {e}")
                     chars += len(t)
+                    ws_h, ch_h, ch_r = scan_text(t, ws_need, ch_need, use_char)
+                    hits_ws |= ws_h
+                    hits_ch |= ch_h
+                    hits_ch_raw |= ch_r
+                    # The distinct grams themselves, so a human reads the strings rather than
+                    # reasoning from a count -- which is how the 816 formatting hits were caught.
                     for g in ws_grams(t):
-                        if g in ws_need:
-                            hits_ws.setdefault(ws_need[g], 0)
-                            hits_ws[ws_need[g]] += 1
+                        if g in ws_need and (g in grams_ws or len(grams_ws) < MAX_RECORDED):
+                            grams_ws[g] = grams_ws.get(g, 0) + 1
                     if use_char:
                         for g in char_grams(t, stride=1):
-                            if g in ch_need:
-                                hits_ch.setdefault(ch_need[g], 0)
-                                hits_ch[ch_need[g]] += 1
+                            if g in ch_need and not low_entropy(g) and (
+                                    g in grams_ch or len(grams_ch) < MAX_RECORDED):
+                                grams_ch[g] = grams_ch.get(g, 0) + 1
         results[dom] = {"rows_scanned": seen, "rows_in_cursor": nrows, "chars": chars,
-                        "srcfp": got, "ws_hit_ids": sorted(hits_ws), "char_hit_ids": sorted(hits_ch),
-                        "char_window_applied": use_char}
+                        "srcfp": got, "ws_hit_ids": sorted(hits_ws),
+                        "char_hit_ids": sorted(hits_ch),
+                        "char_hit_ids_unfiltered": sorted(hits_ch_raw),
+                        "char_window_applied": use_char,
+                        "matched_ws_grams": grams_ws, "matched_char_grams": grams_ch,
+                        "matched_grams_truncated": (len(grams_ws) >= MAX_RECORDED
+                                                    or len(grams_ch) >= MAX_RECORDED)}
         print(f"  {dom:<20} {seen:>9,} rows {chars / 1e9:>6.2f} GB  ws-hits "
-              f"{len(hits_ws):>4}  char-hits {len(hits_ch) if use_char else '-':>4}")
+              f"{len(hits_ws):>4}  char-hits "
+              f"{(str(len(hits_ch)) + '/' + str(len(hits_ch_raw))) if use_char else '-':>9}"
+              f"{'  (filtered/raw)' if use_char else ''}")
 
     scanned = sum(r["rows_scanned"] for r in results.values())
     if scanned == 0:
@@ -207,8 +275,10 @@ def main():
               f"({len(stale)} domain(s) stale) -- any count below is a LOWER BOUND")
 
     all_ids = set()
+    raw_ids = set()
     for r in results.values():
         all_ids |= set(r["ws_hit_ids"]) | set(r["char_hit_ids"])
+        raw_ids |= set(r["ws_hit_ids"]) | set(r["char_hit_ids_unfiltered"])
     out = {
         "ckpt": a.ckpt,
         "rows_in_cursor": sum(cursor.values()),
@@ -216,9 +286,11 @@ def main():
         "completions_checked": len(targets),
         "ngram": NGRAM,
         "char_window_domains": sorted(CHAR_WINDOW_DOMAINS),
+        "char_min_charset": MIN_CHARSET,
         "per_domain": results,
         "stale_srcfp": [{"domain": d, "expected": w, "got": g, "rows": n} for d, w, g, n in stale],
         "contaminated_ids": sorted(all_ids),
+        "contaminated_ids_unfiltered": sorted(raw_ids),
         "limit_rows": a.limit_rows,
         "UNSAFE_skip_srcfp_check": a.UNSAFE_skip_srcfp_check,
     }
@@ -226,7 +298,8 @@ def main():
         json.dump(out, f, indent=1)
 
     print(f"\n{len(all_ids)} of {len(targets):,} held-out completions appear in the rows this "
-          f"checkpoint consumed")
+          f"checkpoint consumed ({len(raw_ids)} before the MIN_CHARSET={MIN_CHARSET} filter on "
+          f"character grams)")
     if a.UNSAFE_skip_srcfp_check:
         print("*** --UNSAFE_skip_srcfp_check WAS SET: the rows scanned are not verified to be "
               "the rows consumed. NOT A MEASUREMENT. ***")
