@@ -504,7 +504,27 @@ Same-named generators with different bodies (not mergeable without a semantic ch
 
 Shared base verdict: a base module removes the `_reg` defs (−90), `_d` (−52), self-check tails (−223, `vet_programs.py` already does it), duplicate headers (−100); registration by module scan removes the 1,257 `_reg(...)` lines. **Total ≈ 1.6–1.7K lines (4.7 %) with module-scan registration, ≈ 450 (1.3 %) without.** The remaining 28 % redundancy is the program-body idiom, not scaffolding — a shared base does not cut it. `mathcommon.py` (40 lines) already holds `NAMES/GOODS/…`, `num`, `frac`, `pct`, `eval_lhs`; only `_d`, `_gcd` (`l4_ext3.py:31`, stdlib `math.gcd`), `_dec`, `_factor` are reimplemented locally.
 
-The larger question is §2e: the generators' only consumer is the frozen 0830v1 `math` domain, which no live mix names and which the gate forbids rebuilding. Deleting `mathbank/math_programs_*` + `run_math_short.py` + `run_short_sol.py` + `make_v11*.py` + `split_bank.py` + `dist_check.py` + `vet_programs.py` + `program_probe.py` + `*_curriculum.py` (keeping `eval_hard_v2_gen.py` 467 + `mathcommon.py` 40, which `eval_hard_v2_gen.py` imports — verify) removes **≈ 39,900 lines, 44 % of all Python in the repo**, at the cost of reproducibility of frozen bytes whose provenance already records the generator + seed (`data/PROVENANCE.md:55,113,127`). Citations to retire first: AGENTS.md:60,76,271 (`vet_programs.py` entry-point row), `scripts/harness.py:213`, `scripts/reachability.py:50,219-230,343`, `docs/audits/audit_math_corpus.md:102-145`, `facts/contamination.json:133-141,447-464` (source → `@sha`). Checks that must pass after: `harness check` (`entrypoints_ran`, `doc_commands_exist`, `entrypoints_table_present`), CI `py_compile mathbank/*.py` (edit `ci.yml:13` if the directory is emptied). Owner 3b; ruling is the user's, since it deletes the last generator of a frozen corpus.
+Ruling 2026-09-02 (user): mathbank is **kept, not deleted**. The cost of deleting it, measured:
+
+| what a delete removes | measured | what it buys |
+|---|---:|---|
+| deletion set (`math_programs_*`, `run_math_short.py`, `run_short_sol.py`, `make_v11*.py`, `split_bank.py`, `dist_check.py`, `vet_programs.py`, `program_probe.py`, `*_curriculum.py`) | 35 files / 39,560 lines = 46.6 % of the repo's `.py` | 39,560 fewer lines committed |
+| kept with it: `eval_hard_v2_gen.py` 467 + `mathcommon.py` 40 | self-contained (see below) | subject of the delete's citation surface |
+
+The delete's premise has **two measured failures**, so the cost column is largely notional:
+
+| premise the audit left open | measured truth (3b, 2026-09-02) |
+|---|---|
+| "the gate forbids rebuilding" | `gate_math_short.sh`'s REJECT list (v3/v5/v6/v7/v8/v10/v11) was measured against the retired `math_hard_eval_1k` holdout. Against the active v2 holdout the gate **passes all 6 local `math_short` batches** (`facts/contamination.json#cont.math_hard_v2`): `build_math_expand.sh` is UNBLOCKED for `math_short` batches since 2026-08-30. The actual rebuild blocker is the absent baseline `data/corpus/math/gsm8k_zh_000.jsonl` (a missing artifact, not a gate refusal). |
+| "no live mix names a mathbank-produced domain" | holds: `mix_500m.json` (0902 launch) has no `math` domain; the only mixes naming `math` are the ladder `mix_scale_*` / `mix_repeat_4ep` / `mix_smoke_warmup`, retired and unfrozen. `data/corpus/math/` does not exist on this checkout. |
+| keeping the generators | reproducibility of the frozen 0830v1 `math` bytes, whose provenance (`data/PROVENANCE.md:55,113,127`) records generator + seed. That provenance is intact only while the generators are. |
+
+Two corrections to the earlier scan:
+
+- `eval_hard_v2_gen.py` is **self-contained**: imports only stdlib (`json/os/random/sys/Fraction`), touches no `math_programs_*`, no `mathcommon`. The claim "`eval_hard_v2_gen.py` imports `mathcommon.py`" was wrong (measured). `mathcommon.py`'s 28 importers are all in the deletion set — a delete carries it away regardless.
+- The "kept 467 + 40" framing was exact only under a delete; under the keep ruling both stay with no citation work.
+
+Citations that a delete would have had to retire first (unchanged, recorded here so a future ruling does not recompute them): `AGENTS.md:60,76,271` (`vet_programs.py` entry row), `scripts/harness.py:213`, `scripts/reachability.py:50,219-230,343`, `docs/audits/audit_math_corpus.md:102-145`, `facts/contamination.json:133-141,447-464` (source → `@sha`); and `ci.yml:13` would need `py_compile mathbank/*.py` removed if the directory emptied.
 
 ---
 
