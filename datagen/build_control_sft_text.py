@@ -45,16 +45,20 @@ import prepare_sft_math  # noqa: E402
 OUT_DEFAULT = os.path.join(ROOT, "data", "sft", "control_sft_text.jsonl")
 
 
-def read_pairs(sources, tag):
+def read_pairs(sources, tag, missing):
     """(question, answer, tag) from a source list, holdout questions dropped.
 
     Deliberately mirrors prepare_sft.read_examples -- including the `input` field
     concatenation, which several sources use and which a reimplementation would silently
     drop -- but yields RAW text instead of calling format_example, because the template is
     applied per arm by that arm's own tokenizer.
+
+    Absent sources are appended to `missing` rather than merely printed: this pack feeds two
+    training runs, and "I read 4 of 14 files" must be a refusal, not a line of scrollback.
     """
     for path, qk, ak in sources:
         if not os.path.exists(path):
+            missing.append(os.path.relpath(path, ROOT))
             print(f"  MISSING {path}", flush=True)
             continue
         n = n_hold = 0
@@ -126,15 +130,32 @@ def main():
     ap.add_argument("--allow_unchecked", action="store_true",
                     help="write even when no eval file was available to check against; the "
                          "pack's leak_check field then records 'unchecked'")
+    ap.add_argument("--allow_missing_sources", action="store_true",
+                    help="write even when some source files are absent; the run prints which. "
+                         "Without it a partial pack is a refusal, not a warning")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
 
+    missing = []
     print("code + general (prepare_sft.SOURCES, v5 family-clean list):", flush=True)
-    rows = list(read_pairs(prepare_sft.SOURCES, "code_general"))
+    rows = list(read_pairs(prepare_sft.SOURCES, "code_general", missing))
     print("math CoT (prepare_sft_math.SOURCES):", flush=True)
-    rows += list(read_pairs(prepare_sft_math.SOURCES, "math_cot"))
+    rows += list(read_pairs(prepare_sft_math.SOURCES, "math_cot", missing))
+
+    n_src = len(prepare_sft.SOURCES) + len(prepare_sft_math.SOURCES)
+    if missing:
+        print(f"\n{len(missing)} of {n_src} sources absent:")
+        for m in missing:
+            print(f"  {m}")
+        if not a.allow_missing_sources:
+            print("\nREFUSING to write: a pack built from a subset of its sources is not the "
+                  "pack both arms are supposed to share, and nothing downstream can tell the "
+                  "difference from the file alone.\nThese sources are gitignored pod data, so "
+                  "this is the expected outcome on a dev box -- run it on the pod. "
+                  "--allow_missing_sources writes anyway and records which files were absent.")
+            return 2
 
     # The two lists overlap on alpaca_gpt4_zh and coig: dedupe on (question, answer) so a
     # row is not silently weighted twice. Order preserved -- the arms must see the same
@@ -148,6 +169,16 @@ def main():
         uniq.append((q, ans, tag))
     print(f"\n{len(rows):,} rows -> {len(uniq):,} after dedupe ({len(rows)-len(uniq):,} dupes)",
           flush=True)
+
+    # A zero-row pack passes every check below trivially -- no row can match an eval
+    # question, so the leak check reports "clean" on a pack containing nothing. Refused on
+    # its own rather than left to the missing-sources branch, because every-file-present
+    # with every-file-empty reaches here too.
+    if not uniq:
+        print("REFUSING to write: the pack is empty. Every check below would pass on it "
+              "vacuously, which is the same defect as a criterion verified on an empty "
+              "population (gate_failure_shapes.md §64).")
+        return 2
 
     notes = []
     verdict = check_no_eval_leak(uniq, notes)
@@ -199,7 +230,7 @@ def selftest():
         with open(p, "w", encoding="utf-8") as f:
             f.write(json.dumps({"instruction": "Q", "input": "EXTRA", "output": "A"}) + "\n")
             f.write(json.dumps({"instruction": "", "output": "A"}) + "\n")  # dropped
-        got = list(read_pairs([(p, "instruction", "output")], "t"))
+        got = list(read_pairs([(p, "instruction", "output")], "t", []))
         if len(got) != 1:
             fails.append(f"expected 1 usable row, got {len(got)}")
         elif got[0][0] != "Q\nEXTRA":
@@ -230,6 +261,16 @@ def selftest():
                 fails.append(f"a clean pack was not reported clean: {out}")
         finally:
             globals()["ROOT"] = real_root
+
+    # 3. an absent source must be REPORTED, not merely printed -- the missing list is what
+    #    turns "I read 4 of 14 files" into a refusal. The local dry run wrote a 0-row pack
+    #    and labelled it clean before this existed.
+    with tempfile.TemporaryDirectory() as d:
+        missing = []
+        got = list(read_pairs([(os.path.join(d, "nope.jsonl"), "instruction", "output")],
+                              "t", missing))
+        if got or len(missing) != 1:
+            fails.append(f"an absent source was not recorded: rows={len(got)} missing={missing}")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
