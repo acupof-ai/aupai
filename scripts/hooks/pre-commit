@@ -421,6 +421,18 @@ def main():
         #                              k>1 at t=0 refuses
         "scripts/test_monitor_exit.py",
         "scripts/test_math_passk.py",
+        # de, 2026-09-02, registered in the SAME commit as the files (the deadlock above).
+        # Both stub train._domain_seqs, so they need no corpus, no tokenizer and no card:
+        #   test_plan_length   ~6s  a resume allocates the REMAINDER, the two paths end and
+        #                           warm down at the same absolute step, and the fresh plan
+        #                           is bit-identical to a sha recorded on the PRE-fix code.
+        #                           11/11 mutations of train.py go red naming an assertion.
+        #   test_cursor_sum    ~4s  sum(row_cursor) == as_of_step x batch x accum x world,
+        #                           against three real p200m_4b_0902 checkpoints. 8/8 red.
+        # Neither takes a --selftest flag: the file IS the test, and its default path is
+        # the gate. They are in the map so a train.py edit cannot land without them.
+        "scripts/test_plan_length.py",
+        "scripts/test_cursor_sum.py",
         # These dispatch on sys.argv instead of argparse, which the gate's old
         # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
         # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
