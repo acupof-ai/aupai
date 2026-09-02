@@ -33,10 +33,19 @@ import train  # noqa: E402
 
 def build(zero):
     """A 4-layer CPU model, small but containing both block kinds and a real FFN."""
-    if getattr(M, "chunk_kda", None) is None:
-        # No fla on a dev box (needs triton). Shape-preserving stand-in, as
-        # test_arch_compat.py:33 does. The split under test is init, not the kda call.
-        M.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)  # noqa: E731
+    # UNCONDITIONAL stub, not `if chunk_kda is None`. This test runs on CPU, and on the pod
+    # fla IS importable, so the conditional left the real Triton kernel in place and it died
+    # with "Pointer argument cannot be accessed from Triton (cpu tensor?)". The kernel is not
+    # what this test covers -- zero-init is -- so the stand-in is always installed. Shape and
+    # dtype preserving, the same stand-in test_arch_compat.py:33 uses.
+    M.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)  # noqa: E731
+    # flash_attn is a SECOND pod-only path. It IS importable there, so model.HAS_FA is True and
+    # the MLA block calls flash_attn_func, which asserts fp16/bf16/fp8 and rejects the fp32 this
+    # test builds ("inputs must be float16, bfloat16, ..."). The gradient contract under test is
+    # dtype-independent, so HAS_FA is forced off and the SDPA fallback runs -- ~20x slower per
+    # step and irrelevant at this size. Forced, not conditional: the conditional stub above is
+    # exactly the bug this line is fixing, green on a dev box and red on the pod.
+    M.HAS_FA = False
     cfg = train.Cfg
     cfg.d, cfg.layers, cfg.heads, cfg.ffn_hidden = 128, 4, 4, 256
     cfg.vocab, cfg.vocab_real = 512, 500
