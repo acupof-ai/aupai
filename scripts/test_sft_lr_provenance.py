@@ -23,7 +23,20 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "sft_math.py")
 
 
-def lr_mult(step, total, warmup=20, warmdown=0.65, final_lr_frac=0.05):
+# Cfg's CLASS defaults. NOT what an SFT run uses: sft_math.py setattrs every key of the resumed
+# checkpoint's cfg onto Cfg, and ckpt_p200m_4b_0902.pt carries warmup 300 / warmdown 0.1. Under
+# those, step 40 is still inside warmup and total=1024 vs total=40 give the SAME multiplier --
+# so --max_steps would have been harmless for a 40-step prefix of that particular run. I first
+# justified the flag with the 18.7x figure below and called it this run's hazard; it is the
+# hazard at Cfg's defaults, which is a different claim. The flag is still right (a prefix must
+# not depend on the reader knowing which cfg was resumed) but the number is not universal.
+CFG_DEFAULT_WARMUP, CFG_DEFAULT_WARMDOWN = 20, 0.65
+# What ckpt_p200m_4b_0902.pt actually carries, read from its cfg.
+RESUMED_WARMUP, RESUMED_WARMDOWN = 300, 0.1
+
+
+def lr_mult(step, total, warmup=CFG_DEFAULT_WARMUP, warmdown=CFG_DEFAULT_WARMDOWN,
+            final_lr_frac=0.05):
     """train.py:1823 restated. Restated deliberately: importing train.py pulls torch and CUDA
     into a source-level test, and the point here is the ARITHMETIC of total, which is stable."""
     if step < warmup:
@@ -47,12 +60,26 @@ def main():
     at_full = lr_mult(39, 1024)
     at_short = lr_mult(39, 40)
     if not (at_full > 0.9 and at_short < 0.2):
-        fails.append(f"step 40 lr multiplier: total=1024 gives {at_full:.4f}, total=40 gives "
-                     f"{at_short:.4f} -- the premise for --stop_after no longer holds, so either "
-                     f"the schedule changed or this test is stale")
+        fails.append(f"step 40 lr multiplier at Cfg's defaults: total=1024 gives {at_full:.4f}, "
+                     f"total=40 gives {at_short:.4f} -- the premise for --stop_after no longer "
+                     f"holds, so either the schedule changed or this test is stale")
     if abs(at_short - at_full) < 1e-9:
         fails.append("shortening total does not change the schedule at all -- impossible unless "
                      "lr_mult stopped reading total")
+
+    # 1b. AND THE HAZARD'S SIZE IS cfg-DEPENDENT, which is the correction to my own first
+    #     justification. Asserted so nobody (me included) re-reads the 18.7x as universal:
+    #     under the RESUMED cfg a 40-step prefix is unaffected, and the flag is justified by
+    #     "a prefix must not depend on which cfg was resumed", not by a number.
+    r_full = lr_mult(39, 1024, RESUMED_WARMUP, RESUMED_WARMDOWN)
+    r_short = lr_mult(39, 40, RESUMED_WARMUP, RESUMED_WARMDOWN)
+    if abs(r_full - r_short) > 1e-9:
+        fails.append(f"under warmup {RESUMED_WARMUP} / warmdown {RESUMED_WARMDOWN}, step 40 was "
+                     f"expected to sit inside warmup so both totals agree, but they read "
+                     f"{r_full:.4f} and {r_short:.4f} -- re-derive before quoting either figure")
+    if RESUMED_WARMUP <= 40:
+        fails.append(f"step 40 is no longer inside warmup ({RESUMED_WARMUP}), so the comment "
+                     f"explaining why --max_steps was harmless for THIS base is now wrong")
 
     # 2. --stop_after EXISTS AND total_steps DOES NOT DEPEND ON IT. The mutation this catches is
     #    the obvious lazy implementation: reusing the max_steps line for stop_after, which would
@@ -251,8 +278,10 @@ def main():
     # The summary names only what actually ran. A line that claims "the two flags cannot
     # combine" while case 3 skipped is the same defect as a harness reporting a check that
     # never executed -- and this file's whole subject is a claim nobody verified.
-    ran = [f"--stop_after keeps total_steps (step-40 multiplier {at_full:.3f} full vs "
-           f"{at_short:.3f} shortened, {at_full / at_short:.1f}x apart)"]
+    ran = [f"--stop_after keeps total_steps (at Cfg's defaults the step-40 multiplier is "
+           f"{at_full:.3f} full vs {at_short:.3f} shortened, {at_full / at_short:.1f}x apart; "
+           f"under the resumed warmup {RESUMED_WARMUP} both read {r_full:.4f}, so the hazard's "
+           f"size depends on the cfg and the flag is justified by not needing to know it)"]
     if not any("case 3" in s for s in skips):
         ran.append("the CLI refuses both flags before loading the checkpoint")
     if not any("case 4b" in s for s in skips):
