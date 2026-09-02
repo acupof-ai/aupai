@@ -117,6 +117,12 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 那是"配置说开了、实际没开"的经典形状。**设计要求：`Block` 基类提供默认
 `sublayers()`，子类不实现就用默认；`AttnRes` 遇到 `None` 时抛，不跳过。**
 
+**抛在 `AttnRes.__init__`，不在 `forward`**（tilerl 定，2026-09-02）。理由是这个条件
+**静态可判**：哪些 block 实现了 `sublayers()` 在模型构造完就确定，不随 step 变。
+构造期抛，错误出现在 step 0 之前、栈里带着那个 block 的类名；forward 里抛，最好
+情况 step 1 崩，**最坏情况某个条件分支上的 block 到 step 8000 才第一次被问到**。
+**这条规则存在的理由正是"配置说开了、实际没开"不能悄悄跑下去，那就该在开跑前喊。**
+
 ## 3. `test_arch_compat` 必须覆盖什么
 
 **核心风险不是"切错了"，是"切完老 ckpt 加载看起来成功但权重错位"。**
@@ -130,6 +136,14 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 2. **前向逐位相等**：同一 ckpt、同一输入、同一 seed，搬迁前后的 logits
    `torch.equal`（不是 `allclose`）。**搬移代码不该改变任何一个 bit**；如果只能过
    `allclose`，说明搬迁改了计算顺序，那是另一件事，要单独裁定。
+   **前提：比较必须在同一个进程里做**（tilerl 定，2026-09-02）——搬迁前后各构造
+   一次模型、同一份权重、同一个输入、**同一个进程**。跨进程比较会引入 cuBLAS
+   workspace 和 autotune 缓存的差异，那时逐位相等会**假红**，而**假红比不做检查
+   更糟：它会让人以为搬移改了计算，去查一个不存在的 bug**。
+   tilerl 核过 kernel 选择的三处（`HAS_FA` 是模块级 try-import 的布尔、Liger FLCE
+   在 `Cfg.compile` 之外显式构造、`chunk_kda` 是 fla 的直接调用），**三处都只依赖
+   import 成不成功，不依赖先后**，所以搬移不改变哪个包能 import 成功，逐位相等
+   可以要求。
 3. **`sublayers()` 契约**：每个 block 类型在 `attn_res=True` 下都真的用上了 `AttnRes`
    ——断言深度注意力的参数出现在梯度里，**不是断言配置为 True**。
 4. **import 方向单向**：`model.py` 的 import 集合里没有 `train`。
@@ -175,7 +189,10 @@ ddp_even_len, doc_cu_seqlens, opt_snapshot, save_checkpoint, set_schedule, setup
 
 ## 6. 顺序与硬约束
 
-1. tilerl 读这页 → 对 §2 的三条接口契约和 §3 的四条覆盖点表态
+1. ~~tilerl 读这页 → 对 §2 的三条接口契约和 §3 的四条覆盖点表态~~
+   **已完成 2026-09-02**：三条接口契约 + 四条覆盖点全部同意，各补一条约束
+   （§2 第三条抛的位置、§3 第二条同进程前提，已并入正文）。tilerl 按行内容复核了
+   §2 的两行证据（签名与唯一 return），**整页不作废**。
 2. **tilerl 把本页合进 main**（roster：integration 持有 main 的合并权；b0 不自合）
 3. **做 diff 前，在分支 `b0` 上跑 `python3 scripts/check_split_page_lines.py`**
    ——按行内容核 §1／§2 的 25 处行号 + 比对 stamp 的 blob sha，8 个破坏世界全抓。
