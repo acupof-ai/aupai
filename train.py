@@ -1340,6 +1340,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
     _origin = 0 if isinstance(cfg, dict) else (getattr(cfg, "_plan_step_origin", 0) or 0)
+    _base = {} if isinstance(cfg, dict) else (getattr(cfg, "_row_cursor_base", None) or {})
     _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
     _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
@@ -1402,7 +1403,14 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                 world = int(os.environ.get("WORLD_SIZE", 1))
                 # x world: every rank walks its own stripe of the same plan at the same
                 # rate, so the whole-run consumption of a domain is this rank's count x world.
-                ck["row_cursor"] = {n: int(counts[i]) * world for i, n in enumerate(names)}
+                # PLUS the cursor this plan started from: dom_idx holds only the current
+                # plan's rows, so counting it alone describes THIS segment and every earlier
+                # one is invisible. MEASURED on p500m_20b_0902: .interrupt.step83 summed to
+                # 13,056 = (83-32)x256 while step 83 had consumed 21,248 = 83x256, and the
+                # 8,192 difference is exactly segment one -- which every later resume then
+                # re-read (de-13).
+                ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))
+                                    for i, n in enumerate(names)}
                 ck["row_cursor_as_of_step"] = step
         else:
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
@@ -1595,12 +1603,20 @@ def _sample_seed():
     return Cfg.seed if Cfg.sample_seed is None else Cfg.sample_seed
 
 
+def _token_cache_dir():
+    """Directory holding the token caches; AUPAI_TOKEN_CACHE_DIR relocates it, unset is unchanged.
+    scripts/test_domain_loss_val.py set HARNESS_TOKEN_CACHE_DIR to redirect its cache and train.py
+    read no such variable, so the test wrote a real cache into the pod's shared /data00 beside the
+    live run's (2026-09-02); it only stopped mattering because probe_domain is not in mix_500m."""
+    return os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.path.dirname(TOKEN_CACHE)
+
+
 def _domain_cache_path(domain):
     """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
     token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
     silent both ways -- a plain cache read as FoNE dies 40 minutes in unpacking `ids, vals`, and a
     FoNE cache read as plain gives len(data)==2, i.e. zero rows, and trains on nothing."""
-    return os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
+    return os.path.join(_token_cache_dir(), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
 
 
 def _domain_seqs(domain, tok, is_main, ddp, workers=1):
@@ -1644,7 +1660,11 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
             f"A shard misnamed here would be dropped from training in silence. Rename it "
             f"to the shard pattern, or add it to NON_SHARD_JSONL / NON_SHARD_RE in train.py."
         )
-    same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
+    # bool(VOCAB_ID) first, and compared against VOCAB_ID rather than (VOCAB_ID or ""):
+    # the old form made an empty stamp equal an unset VOCAB_ID, so the check passed by
+    # construction and the seven 0-byte .vocab files on the pod read as fresh (fb,
+    # 2026-09-02: eval/ppl.py was two minutes from retokenizing the 20B run's nine caches).
+    same_vocab = bool(VOCAB_ID) and os.path.exists(stamp) and open(stamp).read().strip() == VOCAB_ID
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
     same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
     # An unstamped cache REBUILDS. The 17 caches that predate this stamp were written
@@ -1682,8 +1702,19 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         data = _encode_domain(texts, tok, workers, log=lambda m: print(m, flush=True))
         del texts
         torch.save(data, cache)
+        # Before open(), not inside the with: raising after it leaves behind exactly the
+        # 0-byte stamp this guards against. `VOCAB_ID or ""` wrote one, and the read side
+        # above then accepted it as a match -- seven such files landed on the pod 2026-09-01.
+        if not VOCAB_ID:
+            raise RuntimeError(
+                f"refusing to stamp {stamp} with no vocabulary: VOCAB_ID is unset, so this "
+                f"cache could never be told apart from one built by another vocabulary. "
+                f"Only train.build_tokenizer sets it -- an eval reaching _domain_seqs "
+                f"through scripts.loader must set train.VOCAB_ID from the checkpoint's "
+                f"vocab_id first (eval/cache_guard.set_vocab_id)."
+            )
         with open(stamp, "w") as f:
-            f.write(VOCAB_ID or "")
+            f.write(VOCAB_ID)
         with open(srcfp, "w") as f:
             f.write(live_fp)
         with open(seedfp, "w") as f:
@@ -1856,6 +1887,25 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     The schedule is an index plan -- (domain, row) pairs, ~22MB -- and only this rank's 1/world
     slice becomes token rows: materializing it per rank costs ~2.3TB of host RAM at 11.5B x 8.
     Rows are pre-shuffled per phase and consumed in order, so main -> anneal is exact."""
+    # Refused here, not defaulted: _domain_seqs compares every cache's .vocab stamp against
+    # VOCAB_ID, so an unset one makes all nine read as another vocabulary's and retokenize.
+    # eval/ppl.py reached this state through scripts.loader (which never sets VOCAB_ID) and
+    # was two minutes from rebuilding the live 20B run's caches (fb, 2026-09-02).
+    #
+    # Gated on `tok`, because the risk is the cache path and not this function. With tok=None
+    # nothing is encoded and no stamp is read or written -- test_arch_compat:208 builds four
+    # rank shards that way to check the plan partition, and an ungated guard failed it, i.e.
+    # broke a CI gate and one of the three pre-relaunch gates to protect a path that call
+    # cannot reach. A guard whose condition is wider than its hazard turns working callers
+    # into refusals, which is the same cost as the bug it prevents.
+    if tok is not None and not VOCAB_ID:
+        raise RuntimeError(
+            "refusing to build the mix with train.VOCAB_ID unset: every token cache's "
+            "vocabulary stamp would read as a mismatch and the domains would be "
+            "retokenized. Only train.build_tokenizer sets it; a caller coming through "
+            "scripts.loader must set train.VOCAB_ID from the checkpoint's vocab_id "
+            "(eval/cache_guard.set_vocab_id) before calling build_mix."
+        )
     mix = json.load(open(cfg_path, encoding="utf-8"))
     rows = mix["total_tokens"] / Cfg.seq
     phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
@@ -1904,6 +1954,15 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                           flush=True)
             else:
                 used[name] = int(row_cursor[name])
+                # The base the next save adds to. Set HERE, in the branch that actually
+                # applied the cursor: a domain whose cursor was discarded above restarted at
+                # row 0, so adding its old value back would claim rows this run never read.
+                # Cfg, not a return value, because build_mix runs BEFORE the resume block
+                # (train.py:2278 vs :2307) and already publishes _plan_* the same way.
+                base = getattr(Cfg, "_row_cursor_base", None)
+                if base is None:
+                    base = Cfg._row_cursor_base = {}
+                base[name] = used[name]
                 if is_main:
                     print(f"mix: {name} resuming at row {used[name]} "
                           f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
