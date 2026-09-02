@@ -1,0 +1,50 @@
+=== run 1: instruction-field corpora Sun Aug 30 11:59:42 AM UTC 2026 ===
+Traceback (most recent call last):
+  File "/work/aupai/scripts/scan_math_contamination.py", line 570, in <module>
+    main()
+  File "/work/aupai/scripts/scan_math_contamination.py", line 515, in main
+    row = ledger_cached(ledger, p, hhash, args.threshold, baseline_id)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/scripts/scan_math_contamination.py", line 408, in ledger_cached
+    st = os.stat(path)
+         ^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'data/{sft_math_code,synthetic_code,evol_code}.jsonl'
+=== run 2a: code_raw (raw crawl) Sun Aug 30 11:59:42 AM UTC 2026 ===
+IDF pass: 1566324 docs over 63 paths, 490/490 holdout bigrams present in corpus
+BASELINE (62 shard(s), 1366324 rows, 5.915 GB): 0 hit rows = 0.0/GB, 0 exact
+
+=== code_raw.jsonl: 200000 rows, 0.225 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.427, 'p75': 0.47, 'p90': 0.494, 'p95': 0.548, 'p99': 0.561, 'p100': 0.561}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 307
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+=== run 2b: corpus/code shards (training form) Sun Aug 30 12:02:24 PM UTC 2026 ===
+IDF pass: 1566300 docs over 65 paths, 490/490 holdout bigrams present in corpus
+BASELINE (62 shard(s), 1366324 rows, 5.915 GB): 0 hit rows = 0.0/GB, 0 exact
+
+=== code_filtered_000.jsonl: 95406 rows, 0.105 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.294, 'p75': 0.407, 'p90': 0.469, 'p95': 0.474, 'p99': 0.476, 'p100': 0.476}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 152
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+
+=== code_filtered_001.jsonl: 85573 rows, 0.105 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.278, 'p75': 0.333, 'p90': 0.369, 'p95': 0.388, 'p99': 0.446, 'p100': 0.446}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 132
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+
+=== code_filtered_002.jsonl: 18997 rows, 0.023 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.333, 'p75': 0.454, 'p90': 0.494, 'p95': 0.548, 'p99': 0.561, 'p100': 0.561}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 23
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+=== DONE Sun Aug 30 12:04:51 PM UTC 2026 ===

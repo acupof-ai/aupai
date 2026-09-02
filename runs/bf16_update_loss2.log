@@ -1,0 +1,17 @@
+ckpt ckpt_p324.pt | batch 4 | steps 4 | rows 53104
+param dtype as trained: torch.bfloat16
+  lr_scale 0.5    step 0  loss 1.9105  frozen 48.45%
+  lr_scale 0.5    step 1  loss 2.6220  frozen 48.59%
+  lr_scale 0.5    step 2  loss 2.0393  frozen 48.20%
+  lr_scale 0.5    step 3  loss 2.2132  frozen 48.26%
+lr_scale 0.5: mean frozen 48.38% of parameter elements
+  lr_scale 0.2    step 0  loss 1.9105  frozen 71.43%
+  lr_scale 0.2    step 1  loss 2.2422  frozen 71.09%
+  lr_scale 0.2    step 2  loss 1.9397  frozen 71.61%
+  lr_scale 0.2    step 3  loss 2.1119  frozen 72.12%
+lr_scale 0.2: mean frozen 71.56% of parameter elements
+  lr_scale 0.05   step 0  loss 1.9105  frozen 90.86%
+  lr_scale 0.05   step 1  loss 2.2834  frozen 91.09%
+  lr_scale 0.05   step 2  loss 2.0209  frozen 91.47%
+  lr_scale 0.05   step 3  loss 2.2019  frozen 91.75%
+lr_scale 0.05: mean frozen 91.29% of parameter elements

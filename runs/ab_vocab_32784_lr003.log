@@ -1,0 +1,15 @@
+mix: sample 1757 rows = 0.72 epochs
+mix: 1757 rows = 0.00B tokens scheduled
+axis=vocab (arms: vocab=32773 baseline, vocab=32784 candidate)
+step     =32773     =32784      delta
+   0    10.6263    10.6266    +0.0003
+   1    10.1680    10.1683    +0.0003
+   2     9.6817     9.6818    +0.0001
+   3     9.3090     9.3097    +0.0007
+   4     8.9011     8.9009    -0.0002
+   5     8.0729     8.0734    +0.0005
+   6     7.4534     7.4542    +0.0008
+   7     7.1883     7.1887    +0.0004
+   8     7.5083     7.5099    +0.0016
+   9     7.2187     7.2183    -0.0004
+dynamo guard (real runs): cache_size_limit=64 (AttnRes Full needs 25); this script runs eager (limit here: 8)
