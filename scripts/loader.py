@@ -25,8 +25,18 @@ def vocab_fingerprint(tok):
     return h.hexdigest()[:16]
 
 
-# sft.py, sft_math.py, eval/gsm8k.py and algorithms/rlvr_generate.py hardcode these ids;
-# a vocabulary rebuild moves them silently.
+# A TRIPWIRE, not a shared import. Nothing imports these (checked 2026-09-02: zero
+# references to loader.NUM_ID anywhere, and sft.py:40, sft_math.py:42, eval/gsm8k.py:20 each
+# keep their own `EOS_ID = 1`). Their value is the pair of asserts in _demo(), which fail the
+# moment a vocabulary rebuild moves either id -- catching for those private copies what they
+# cannot catch for themselves. An earlier version of this comment said the four files
+# "hardcode these ids", naming algorithms/rlvr_generate.py, which references neither; a
+# docstring describing a dependency structure that does not exist is worse than none, because
+# it tells the next reader that changing this line is dangerous when the danger is elsewhere.
+#
+# train.py does NOT rely on this: resolve_num_id() (train.py:1429) derives num_id from the
+# tokenizer and Cfg.num_id is set from it (train.py:1467), with scripts/test_num_id_resolve.py
+# asserting it reads the tokenizer's own id rather than a literal.
 EOS_ID = 1
 NUM_ID = 32772
 
@@ -128,6 +138,46 @@ def format_prompt(question, system=None):
     return f"{s}{IM_START}user\n{question}{IM_END}\n{IM_START}assistant\n"
 
 
+def format_continuation(question, demos=()):
+    """A base checkpoint's prompt: plain text it CONTINUES, never a chat turn.
+
+    format_prompt is right for anything instruction-tuned and wrong for a base model, and
+    the difference is measured, not stylistic. Its ChatML prefix occurs 0 times in 168,000
+    corpus rows sampled across all 42 domains (AGENTS.md:200, stated as a bound: 0 of 4000
+    puts a domain's rate under 0.075%), so a base model handed
+    <|im_start|>user...<|im_start|>assistant is not answering a question -- it is
+    continuing a token sequence it has never seen, and it repeats the input or drifts into
+    web boilerplate. eval/score_code_exec.py:9-31 measured the size of this: 41 of 2586
+    generations contained a code fence under ChatML (1.6%), against 469 of 497 under
+    1-shot plain continuation (94.4%), same checkpoint family. Every base generative zero
+    taken before 2026-09-02 measures response to an unseen prefix, not capability.
+
+    `问：/答：` rather than English labels because that is what the corpus actually holds:
+    the chat domain is 问：/答： plain text in 4000 of 4000 rows sampled. Demos are the
+    real mechanism -- eval/l1_fewshot.py and eval/code_fewshot.py already do this and are
+    the arm that works; a zero-shot continuation is still a legitimate prompt (the trailing
+    `答：` is the format cue) but it measures less.
+    """
+    parts = [f"问：{q}\n答：{a}" for q, a in demos]
+    parts.append(f"问：{question}\n答：")
+    return "\n\n".join(parts)
+
+
+def prompt_fn(kind):
+    """The prompt builder a checkpoint of this type can actually answer.
+
+    ONE owner, next to the two formatters it selects between. Copied into each of the five
+    eval scripts it would be five things to keep in step, and the defect this fixes was
+    exactly a second list drifting from the first (score_matrix validated metric names
+    against the union of all types and never against the type in front of it).
+
+    Callers pass the kind from eval/score_matrix.classify(cfg, name), which reads the
+    checkpoint rather than the filename -- 'sft' in a filename proves nothing, and the old
+    default in eval/gsm8k.py was the literal string "ckpt_sft.pt".
+    """
+    return format_continuation if kind == "base" else format_prompt
+
+
 def format_example(question, answer, system=None):
     """(prompt, completion) split at the loss boundary: pack_and_save concatenates them, so
     joined text here would duplicate the prompt into every row. The completion ends with
@@ -180,6 +230,25 @@ def _demo():
     """Each way this loader is supposed to fail, actually provoked -- a self-test that
     never builds a wrong tokenizer proves nothing about the fingerprint."""
     from tokenizers import Tokenizer
+
+    # BEFORE the tokenizer gate, because these need no tokenizer and the gate returns on
+    # every clean checkout (data/tokenizer.json is gitignored). The existing format
+    # assertions live below it and therefore do not run here at all -- which is how a
+    # format defect stays invisible on the machine where most commits are made.
+    #
+    # e1-22: the two formats must not be confusable. format_prompt is ChatML and stays
+    # that way (chat.py, serve.py, rlvr_trainer and SFT packing all depend on it);
+    # format_continuation is what a BASE checkpoint gets, and the property is that no
+    # ChatML marker can reach it.
+    assert format_prompt("x") == f"{IM_START}user\nx{IM_END}\n{IM_START}assistant\n"
+    assert format_continuation("x") == "问：x\n答：", format_continuation("x")
+    assert format_continuation("b", [("a", "1")]) == "问：a\n答：1\n\n问：b\n答："
+    for probe in (format_continuation("x"), format_continuation("y", [("a", "1"), ("b", "2")])):
+        assert IM_START not in probe and IM_END not in probe, probe
+        assert "im_start" not in probe and "im_end" not in probe, probe
+    # A demo pair must actually appear, or "few-shot" would be a label on a zero-shot
+    # prompt -- the arm eval/l1_fewshot.py measures as the one that works.
+    assert "问：a\n答：1" in format_continuation("b", [("a", "1")])
 
     path = os.path.join(ROOT, "data", "tokenizer.json")
     if not os.path.exists(path):

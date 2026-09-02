@@ -26,7 +26,7 @@ os.environ.setdefault("FLA_FLASH_KDA", "0")
 import fone  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
-from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer, prompt_fn  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -91,6 +91,15 @@ def main():
     # dtype through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to fp32
     # after the cast); a separate .to(bf16) here would undo the upcast.
     model, cfg = load_checkpoint(args.ckpt, device=args.device, dtype=torch.bfloat16)
+    # The prompt format follows the CHECKPOINT, not this script's habit. A base checkpoint
+    # handed format_prompt's ChatML prefix continues a sequence absent from 168,000 sampled
+    # corpus rows (AGENTS.md:200) rather than answering: 1.6% of generations carried a code
+    # fence under ChatML against 94.4% under 1-shot continuation, same family
+    # (eval/score_code_exec.py:9-31). classify() reads cfg, never the filename.
+    from score_matrix import classify
+
+    _fmt = prompt_fn(classify(cfg, os.path.basename(args.ckpt)))
+    print(f"  prompt format: {_fmt.__name__}", flush=True)
     tok = load_tokenizer(args.tokenizer, cfg)
     # A FoNE checkpoint must decode through fone: tok.decode emits the [NUM] token
     # itself, so no answer parses and the score collapses for a non-model reason.
@@ -116,7 +125,7 @@ def main():
         per_batch = max(1, args.batch // k)
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
-            texts_in = [format_prompt(r["instruction"]) for r in batch]
+            texts_in = [_fmt(r["instruction"]) for r in batch]
             if fone_on:
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:
