@@ -1,0 +1,15 @@
+vocab_id matches: 0bce3584bc24f255
+sft rows 49152 per rank (world 1)
+resumed ckpt_p200m_4b_0902.pt | params 206.1M | fp8 True | fa True | doc_mask True
+argv ["--resume", "ckpt_p200m_4b_0902.pt", "--sft_path", "data/sft/control_sft_ours.pt", "--out", "/tmp/e1_27_repro_lr1.0.pt", "--lr_scale", "1.0", "--stop_after", "40", "--epochs", "1"]
+lr_scale 1.0 total_steps 1024 stop_after 40 batch 48 epochs 1 seed 42
+  lr[Muon:0] initial 0.01 -> step0 3.33e-05
+  lr[AdamW:0] initial 0.1 -> step0 0.000333
+  lr[AdamW:0] initial 0.15 -> step0 0.0005
+  lr[AdamW:0] initial 0.01 -> step0 3.33e-05
+step 10/1024 loss 1.574 73s/10steps
+step 20/1024 loss 1.532 55s/10steps
+step 30/1024 loss 1.435 55s/10steps
+step 40/1024 loss 1.439 56s/10steps
+saved /tmp/e1_27_repro_lr1.0.pt
+/work/aupai/runs/e1_27_repro_lr1.0.log -> /work/aupai/plots/e1_27_repro_lr1.0.png

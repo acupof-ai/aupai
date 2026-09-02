@@ -1,0 +1,371 @@
+{
+ "domains": [
+  "code_py_starcoder",
+  "code_py_rp1t"
+ ],
+ "docs_total": 6389842,
+ "sample": "FULL (all shards)",
+ "method": "MinHash-J estimate + top-pair exact verify (n_perm=96, bands=12(8/band), char 5-gram; est and exact use the same shingle, so J is J of that shingle)",
+ "candidate_pairs": 11573240,
+ "near_threshold_band": {
+  "range": [
+   0.6,
+   0.85
+  ],
+  "pairs": 2683833
+ },
+ "thresholds": {
+  "0.7": {
+   "near_dup_rate": 0.070378,
+   "rate_ci95": [
+    0.07018,
+    0.070577
+   ],
+   "docs_in_clustered_pairs": 449704,
+   "edges": 1220695,
+   "clusters": 180717,
+   "cross_domain_pairs": 120758,
+   "cross_domain_share": 0.0989,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:32",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_103.jsonl:17571",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:92",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_003.jsonl:7614",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:227",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_133.jsonl:1782",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:389",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_158.jsonl:12445",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:460",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:5108",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:544",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_001.jsonl:4574",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:799",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:5282",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1076",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:10790",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1251",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:1223",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_044.jsonl:13758",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_172.jsonl:20610",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1370",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:11450",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1443",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_253.jsonl:15522",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1704",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_243.jsonl:613",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1843",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_024.jsonl:4153",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1954",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_014.jsonl:1025",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2386",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:10333",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_124.jsonl:496",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_264.jsonl:13016",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2534",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_271.jsonl:5226",
+     "est": 1.0
+    }
+   ]
+  },
+  "0.8": {
+   "near_dup_rate": 0.041814,
+   "rate_ci95": [
+    0.041659,
+    0.041969
+   ],
+   "docs_in_clustered_pairs": 267184,
+   "edges": 525366,
+   "clusters": 116380,
+   "cross_domain_pairs": 62836,
+   "cross_domain_share": 0.1196,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:32",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_103.jsonl:17571",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:92",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_003.jsonl:7614",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:227",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_133.jsonl:1782",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:389",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_158.jsonl:12445",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:460",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:5108",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:544",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_001.jsonl:4574",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:799",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:5282",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1076",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:10790",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1251",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:1223",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_044.jsonl:13758",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_172.jsonl:20610",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1370",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:11450",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1443",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_253.jsonl:15522",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1704",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_243.jsonl:613",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1843",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_024.jsonl:4153",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1954",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_014.jsonl:1025",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2386",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:10333",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_124.jsonl:496",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_264.jsonl:13016",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2534",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_271.jsonl:5226",
+     "est": 1.0
+    }
+   ]
+  },
+  "0.9": {
+   "near_dup_rate": 0.021339,
+   "rate_ci95": [
+    0.021227,
+    0.021451
+   ],
+   "docs_in_clustered_pairs": 136351,
+   "edges": 162123,
+   "clusters": 63727,
+   "cross_domain_pairs": 40628,
+   "cross_domain_share": 0.2506,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:32",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_103.jsonl:17571",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:92",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_003.jsonl:7614",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:227",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_133.jsonl:1782",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:389",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_158.jsonl:12445",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:460",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:5108",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:544",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_001.jsonl:4574",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:799",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:5282",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1076",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:10790",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1251",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_012.jsonl:1223",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_044.jsonl:13758",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1301",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_172.jsonl:20610",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1370",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_000.jsonl:11450",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1443",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_253.jsonl:15522",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1704",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_243.jsonl:613",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1843",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_024.jsonl:4153",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:1954",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_014.jsonl:1025",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2386",
+     "b": "data/corpus/code_py_rp1t/code_py_rp1t_009.jsonl:10333",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_124.jsonl:496",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2450",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_264.jsonl:13016",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_py_starcoder/code_py_starcoder_013.jsonl:2534",
+     "b": "data/corpus/code_py_starcoder/code_py_starcoder_271.jsonl:5226",
+     "est": 1.0
+    }
+   ]
+  }
+ },
+ "exact_verify": {
+  "sample_n": 200,
+  "sample_of": 294979,
+  "mean_est": 0.9225,
+  "mean_exact": 0.9109708357264981,
+  "mean_diff_exact_minus_est": -0.0115,
+  "mae": 0.0194,
+  "diff_sd": 0.0257,
+  "est_approx_exact": true
+ }
+}

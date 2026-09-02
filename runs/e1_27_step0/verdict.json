@@ -1,0 +1,19 @@
+{
+ "anchors": {
+  "10": 1.606,
+  "20": 1.629,
+  "30": 1.606,
+  "40": 1.663
+ },
+ "tolerance": 0.02,
+ "match": {
+  "0.1": true,
+  "1.0": false
+ },
+ "worst_abs_delta": {
+  "0.1": 0.0,
+  "1.0": 0.22399999999999998
+ },
+ "verdict": "confirmed",
+ "reading": "x1 == lr_scale 0.1 CONFIRMED and the negative world separates (0.1 worst |delta| 0.000 <= 0.02 < 0.224 for 1.0). Reusing 0.293989 as the fifth point is LEGITIMATE."
+}

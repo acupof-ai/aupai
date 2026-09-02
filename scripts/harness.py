@@ -2720,7 +2720,15 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
             # THIS lookup -- unlike the gate above it is not deciding intent, only
             # reporting where to look, and the removal is usually a resolution.
             if not in_ours:
-                at = git("log", "--format=%h", "-m", "-S", f"def {name}(",
+                # %H, not %h: `git log --format=%h` uses git's AUTO-SCALING abbreviation,
+                # which lengthens as the object count grows (core.abbrev is unset here).
+                # d5aac3d printed as 7 chars when de-22 landed and as 8 once the repo
+                # crossed the next threshold, so this selftest's `at == "d5aac3d"` went
+                # red on a tree where nothing about the merge had changed -- a permanent
+                # red, which is the same as no signal. A caller comparing an identity
+                # needs one that does not depend on repository size, so the full sha is
+                # returned and every reader abbreviates for itself (de-35).
+                at = git("log", "--format=%H", "-m", "-S", f"def {name}(",
                          f"{base}..{ours}", "--", path).split()
                 out.append((path, name, side, at[0] if at else "an unfound commit"))
             else:
@@ -8805,8 +8813,24 @@ def _selftest_merge_reverted_content():
         # The inherited class, and the whole point of the fourth field: the same scan must
         # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
         inh = merge_reverted_content(real, "c8a4578")
-        assert any(n == "_built_set" and at == "d5aac3d" for _, n, _, at in inh), \
+        # startswith, not ==, and the producer now returns %H (de-35). The previous form
+        # pinned `at == "d5aac3d"` against git's auto-scaling abbreviation: it printed 7
+        # chars when de-22 wrote this and 8 once the object count crossed a threshold, so
+        # the selftest went red with nothing about the merge or the check having changed.
+        # A permanent red is the same as no signal, and it sat red on main for a day.
+        # The full sha is the stable identity; a prefix test states the fact being
+        # asserted -- which commit -- without depending on how git chose to print it.
+        assert any(n == "_built_set" and at and at.startswith("d5aac3d") for _, n, _, at in inh), \
             f"c8a4578 must report _built_set as already dropped by d5aac3d, got {inh}"
+        # And the identity is the FULL sha, asserted directly: startswith alone is
+        # satisfied by any longer-but-wrong value and by the abbreviation this fix
+        # removes, so without this the same time bomb could be reintroduced at the
+        # producer and this selftest would stay green.
+        ats = [at for _, n, _, at in inh if n == "_built_set"]
+        assert all(len(a) == 40 for a in ats), (
+            f"already_dropped_at must be a full 40-char sha, got {ats} -- an abbreviated "
+            f"sha changes length with the repository's object count, which is what made "
+            f"this assertion a permanent red (de-35)")
 
     d = tempfile.mkdtemp(prefix="delib_")
     try:
