@@ -5,12 +5,22 @@ Consumes judge outputs (two position-swapped judgements per pair) and optional
 test winners, emits per-pair verdicts and the acceptance report. Protocol:
 docs/lessons/pairwise_judge_protocol.md.
 
-Precondition (protocol section 1): pairs reaching the judge are within the
-all-pass or all-fail subgroup -- tests decide first, the judge only breaks
-ties. The judge must be a different model family from the policy (section 1b).
+Precondition (protocol section 1): pairs reaching the judge in production are
+within the all-pass or all-fail subgroup -- tests decide first, the judge only
+breaks ties. The judge must be a different model family from the policy
+(section 1b).
+
+Validation is decoupled from production (tilerl review, 2026-09-02): acceptance
+runs on "mixed" pairs (one rollout passes tests, one fails), where test_winner
+is a real gold standard -- a within-subgroup pair has no distinguishable gold,
+so validating on it measures nothing (a tie-everything judge scores 1.0).
+Agreement is measured only on mixed rows where the judge took a side; ties and
+abstentions are reported beside it, never counted in the denominator.
 
 Input JSONL, one line per pair:
-  {"pair_id": "task01", "order_ab": "A", "order_ba": "B", "test_winner": "A"}
+  {"pair_id": "task01", "order_ab": "A", "order_ba": "B",
+   "test_winner": "A", "subgroup": "mixed"}
+subgroup is "all_pass" / "all_fail" (production) or "mixed" (validation).
 test_winner is null for tasks without tests (reward issued, not validated).
 
 Usage:
@@ -38,31 +48,44 @@ def verdict(order_ab, order_ba):
 
 
 def score(rows):
-    """Returns (verdicts, report). verdicts: pair_id -> verdict. report: dict."""
+    """Returns (verdicts, report). verdicts: pair_id -> verdict. report: dict.
+
+    Agreement is measured only on mixed pairs (test differences exist) where
+    the judge took a side A/B. Ties and abstentions never enter the
+    denominator -- a tie-everything judge must score nothing, not 1.0.
+    """
     verdicts = {}
-    agree = disagree = abstained = ties = 0
+    agree = disagree = abstained = ties = unknown = 0
+    n_validated = n_production = 0
     for r in rows:
         v = verdict(r["order_ab"], r["order_ba"])
         verdicts[r["pair_id"]] = v
-        tw = r.get("test_winner")
+        sub = r.get("subgroup")
+        if sub not in ("mixed", "all_pass", "all_fail"):
+            unknown += 1
         if v == "abstain":
             abstained += 1
             continue
         if v == "tie":
             ties += 1
-        if tw is None:
-            continue  # no ground truth: reward issued, not validated
-        if v == tw:
-            agree += 1
-        else:
-            disagree += 1
+            continue
+        if sub == "mixed" and r.get("test_winner") is not None:
+            n_validated += 1
+            if v == r["test_winner"]:
+                agree += 1
+            else:
+                disagree += 1
+        elif sub in ("all_pass", "all_fail"):
+            n_production += 1
     judged = agree + disagree
     return verdicts, {
         "agreement": agree / judged if judged else None,
         "abstain_rate": abstained / len(rows) if rows else None,
         "tie_rate": ties / len(rows) if rows else None,
         "n": len(rows),
-        "n_with_tests": judged,
+        "n_validated": n_validated,
+        "n_production": n_production,
+        "n_unknown_subgroup": unknown,
         "accepted": (agree / judged >= 0.8) if judged else False,
     }
 
@@ -70,12 +93,13 @@ def score(rows):
 def _selftest():
     # Known-answer worlds. One must abstain, one must agree, one must disagree.
     rows = [
-        {"pair_id": "consistent", "order_ab": "A", "order_ba": "A", "test_winner": "A"},
-        {"pair_id": "swapped", "order_ab": "A", "order_ba": "B", "test_winner": "A"},
-        {"pair_id": "tie_one_side", "order_ab": "tie", "order_ba": "A", "test_winner": "A"},
-        {"pair_id": "both_tie", "order_ab": "tie", "order_ba": "tie", "test_winner": "tie"},
-        {"pair_id": "wrong", "order_ab": "B", "order_ba": "B", "test_winner": "A"},
-        {"pair_id": "no_test", "order_ab": "A", "order_ba": "A", "test_winner": None},
+        {"pair_id": "consistent", "order_ab": "A", "order_ba": "A", "test_winner": "A", "subgroup": "mixed"},
+        {"pair_id": "swapped", "order_ab": "A", "order_ba": "B", "test_winner": "A", "subgroup": "mixed"},
+        {"pair_id": "tie_one_side", "order_ab": "tie", "order_ba": "A", "test_winner": "A", "subgroup": "mixed"},
+        {"pair_id": "both_tie", "order_ab": "tie", "order_ba": "tie", "test_winner": "A", "subgroup": "mixed"},
+        {"pair_id": "wrong", "order_ab": "B", "order_ba": "B", "test_winner": "A", "subgroup": "mixed"},
+        {"pair_id": "no_test", "order_ab": "A", "order_ba": "A", "test_winner": None, "subgroup": "mixed"},
+        {"pair_id": "prod", "order_ab": "A", "order_ba": "A", "test_winner": None, "subgroup": "all_pass"},
     ]
     verdicts, rep = score(rows)
     assert verdicts["consistent"] == "A", verdicts
@@ -83,17 +107,28 @@ def _selftest():
     assert verdicts["tie_one_side"] == "abstain", verdicts
     assert verdicts["both_tie"] == "tie", verdicts
     assert verdicts["wrong"] == "B", verdicts
-    # agreement: consistent(agree) + both_tie(agree, tie==tie) + wrong(disagree) = 2/3
-    assert rep["agreement"] == 2 / 3, rep
-    assert rep["abstain_rate"] == 2 / 6, rep
-    assert rep["accepted"] is False, rep  # 0.667 < 0.8
+    # agreement: consistent(agree) + wrong(disagree) = 1/2; both_tie excluded,
+    # no_test has no gold, prod is a production row
+    assert rep["agreement"] == 0.5, rep
+    assert rep["abstain_rate"] == 2 / 7, rep
+    assert rep["tie_rate"] == 1 / 7, rep
+    assert rep["n_validated"] == 2 and rep["n_production"] == 1, rep
+    assert rep["accepted"] is False, rep
+    # The blocker world (tilerl 2026-09-02): a tie-everything judge on mixed
+    # pairs must NOT pass -- ties never enter the denominator.
+    degenerate = [{"pair_id": str(i), "order_ab": "tie", "order_ba": "tie",
+                   "test_winner": "A", "subgroup": "mixed"} for i in range(5)]
+    _, rep_d = score(degenerate)
+    assert rep_d["agreement"] is None and rep_d["accepted"] is False, rep_d
+    assert rep_d["tie_rate"] == 1.0, rep_d
     # A world that DOES pass the bar: 4 agree, 1 disagree -> 0.8 exactly.
-    ok = [{"pair_id": str(i), "order_ab": "A", "order_ba": "A", "test_winner": "A"}
-          for i in range(4)]
-    ok.append({"pair_id": "x", "order_ab": "B", "order_ba": "B", "test_winner": "A"})
+    ok = [{"pair_id": str(i), "order_ab": "A", "order_ba": "A",
+           "test_winner": "A", "subgroup": "mixed"} for i in range(4)]
+    ok.append({"pair_id": "x", "order_ab": "B", "order_ba": "B",
+               "test_winner": "A", "subgroup": "mixed"})
     _, rep2 = score(ok)
     assert rep2["agreement"] == 0.8 and rep2["accepted"] is True, rep2
-    print("selftest OK: verdict, abstention, tie, agreement and the 0.8 bar all behave")
+    print("selftest OK: verdict, abstention, tie-exclusion, agreement and the 0.8 bar all behave")
 
 
 def main():
