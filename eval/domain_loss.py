@@ -251,9 +251,33 @@ def main():
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     a = ap.parse_args()
 
+    # The mix is a property of the CHECKPOINT, and this CLI defaulted to the ladder's -- so
+    # scoring a non-ladder checkpoint read domain rows for domains it never trained on, and
+    # cache_guard refused, correctly, since the seqs fingerprint belongs to another corpus. Fixed
+    # in score_matrix.py first (3415e9e); this is the same defect in the standalone entry point,
+    # found by 44 reviewing that commit.
+    #
+    # IMPORTED, not reimplemented. _mix_for carries five known answers built on real torch.save
+    # files, and its subtlety is that "--mix was named" cannot be read from a.mix (argparse fills
+    # the default either way) -- only from sys.argv. A second copy here would be a second thing
+    # to keep correct, and the copy that drifts is the one nobody runs the selftest for.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from score_matrix import _mix_for
+
+    mix_given = any(x == "--mix" or x.startswith("--mix=") for x in sys.argv[1:])
+    mix_path = _mix_for(a.ckpt[0], a.mix, explicit=mix_given)
+    # One mix for the batch, from the FIRST checkpoint, and it is named out loud: --ckpt takes
+    # several, the domain caches are read once for all of them, and two checkpoints from
+    # different mixes cannot share one table of per-domain rows. Scoring them together against
+    # the first one's mix silently is what this whole fix is about.
+    if len(a.ckpt) > 1 and not mix_given:
+        print(f"note: {len(a.ckpt)} checkpoints, all scored against "
+              f"{os.path.basename(mix_path)} (from {os.path.basename(a.ckpt[0])}); pass --mix to "
+              f"override", flush=True)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    files = domain_files(a.mix, ROOT)
-    assert files, f"{a.mix} named domains but none have shards -- nothing to score"
+    files = domain_files(mix_path, ROOT)
+    assert files, f"{mix_path} named domains but none have shards -- nothing to score"
     cache = {name: head_texts(p, HOLDOUT_ROWS) for name, p in files.items()}
 
     out = []
