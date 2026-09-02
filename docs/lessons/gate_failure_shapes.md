@@ -310,6 +310,16 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 规则:一个测量必须说明它在哪个视图上做的;把一个视图的缺席读成另一个视图的陈述,与 §17(参照物来自被检查侧)同族——参照物和被检查物必须在同一侧。
 
+## 33. 规则把人推向共享全局状态:stash 是仓库级单 ref(fb 核对,2026-09-02)
+
+与 §29 族不同:不是判据看不见性质,是门禁的正确要求经由一个错误习惯,诱导出按构造不安全的动作。
+
+事实(fb 对两棵树核对):`.git/refs/stash` 在多 worktree 布局下是仓库级单一 ref——所有 worktree 共享一个 stash 栈。e1 与 b0 同时 stash→merge→pop,各自取到对方的改动。核对后无内容丢失:b0 树上保有更新版本,e1 的测试文件完整在 b0 树里未跟踪。
+
+链条:门禁要求「behind-main 先 merge」(对)→ 习惯「merge 前树要干净」(错)→ 动作「stash 再 merge」(按构造不安全:stash 是共享全局状态,两个 worktree 同时用就串)。
+
+修法两层:规则改为「直接 merge、永不 stash」(merge 能带未提交改动走;带不动就先提交到自己的分支);加 `no_shared_stash` 检查(tilerl 在做)。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -327,3 +337,4 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
 - fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
 - be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
+- fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
