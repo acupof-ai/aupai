@@ -392,6 +392,16 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 实例(de-5,5c2cb9c):`test_eval_rescore.sh` 验 eval_math.sh/eval_code.sh 的裸 rescore 拒绝,0.4s 跑过——归 CI 不归 hook,因为 hook 跑它必红。门只检查它碰巧能跑的东西;不能跑的那类需要另一种 runner(CI),不是不需要检查。
 
+## 41. 手跑的运维工具是任何仓库扫描按构造看不见的 reader(de,2026-09-02)
+
+一个脚本的调用者是一个人的巡检规格、不在树里,那么 glob、加载器扫描、reachability 审计按构造都找不到它——删它的审计结论在审计自己的判据下无懈可击,页面在人那边冻结。
+
+实例(de-5,5c2cb9c):`scripts/progress_feed.py`(165 行)被删,理由原话「the audit excluded it as 'operational', which is not reader evidence」。而 98 每 5–20 分钟手跑它写进展页,页面因此冻结。de 这一步判得对——「operational」是豁免不是证据——只是少了把证据造出来那一步。
+
+修法:给它一行 AGENTS 入口表作为 reader,而不是豁免。规则:删除清单发到每个可能手跑它的人,24 小时无人认领再删。
+
+同族(fb 转达):vet_programs.py:37 的 glob——运行时依赖,扫描同样看不见。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -416,3 +426,4 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - fb 当事人(2026-09-02,b0 消息一手):reset --hard 指令的归属描述错误(五个提交是 44 的),b0 逐个 is-ancestor 核后执行——授权 + 世界为真双重验证
 - b0 原话 + A/B(2026-09-02,fb 转达):核验成本远低于事故成本;「先 merge 再 stage」在目标场景不成立,变量是 main 是否动了 hook 重生成的 manifest
 - de-5(5c2cb9c,2026-09-02):test_domain_loss_val fixture key 过期=20B step0 KeyError,跑一次才分得出死活;test_eval_rescore.sh 归 CI——hook 的 sys.executable 跑不了 .sh,门只检查它碰巧能跑的
+- de-5(5c2cb9c,2026-09-02)+ 98(fb 转达,UTC 12:3x):progress_feed.py 以「operational 非 reader 证据」被删,98 每 5–20 分钟手跑它写进展页,页面冻结——手跑运维工具按构造逃过一切仓库扫描;修法=AGENTS 入口行 + 删除清单 24h 认领制
