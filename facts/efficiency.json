@@ -2206,19 +2206,26 @@
     "rows_distinct": 4894660,
     "rows_fresh_vs_original": 11848,
     "rows_reread": 8192,
-    "final_step_logs": {
+    "completion_scan": {
      "logs_scanned": 415,
-     "reached_step_N_over_N": 35,
-     "largest": 16050,
-     "resumed_runs_that_finished": [
-      "runs/rehearse_join.log",
-      "runs/twin_nocursor.log"
+     "carry_finalization_line": 51,
+     "with_nonzero_train_loss": 49,
+     "finalized_after_zero_steps": [
+      "rehearse_resume.log",
+      "e2e_tmp.log"
      ],
-     "method": "awk comparing the two fields of `step A/B` numerically. The naive grep -oE 'step ([0-9]+)/\\1' is wrong: the backreference matches a PREFIX of the denominator, so `step 1460/14606` reads as a finished run."
+     "criterion": "grep -lE '^ep [0-9]+/[0-9]+ train ' AND the train loss is not 0.000",
+     "full_length_resumed_run_completed": "p200m_4b_0902 resume2, 832 -> 3814, 2026-09-03",
+     "superseded_criterion": {
+      "was": "grep for `step N/N`",
+      "hits": 35,
+      "why_wrong": "all 35 have total_steps == 0 mod 10, so it selected for total_steps being a multiple of the 10-step log interval, not for completion. p200m_4b_0902's own last line is 3810/3814, so the scan cannot see the very run that settles this.",
+      "still_true_of_it": "the awk-over-grep point stands: grep -oE 'step ([0-9]+)/\\1' reads step 1460/14606 as finished, because the backreference matches a prefix."
+     }
     }
    },
    "boundary": "The token axis of the readout is 19,151 x 1,048,576 = 20,081,278,976 = 20.08B, NOT the 20.00B the mix declares and the log's plan line prints -- that line describes the plan, not the run. Warmdown starts at step 17,236 = 18.07B. Anyone aligning a milestone or a scaling point against this run uses 20.08B; the 0.4% gap is two resumes' worth of extra fresh rows. THREE THINGS THE 200M RESUME SETTLED (de, 2026-09-02, runs/p200m_4b_0902{,_resume2}.log): (1) a checkpoint carries no total_steps field at all, so the resumed process cannot compare its recomputed total against the original run's -- there is nothing to compare against, which is why the inflation is silent rather than caught; (2) the plan line reads 976556 rows = 4.00B IDENTICALLY in the original run and in the resume, so the plan was never trimmed on this run and the inflation here is pure over-allocation, not the pool-depth effect measured on p500m; (3) the row cursor changes only WHERE consumption starts, never HOW MANY rows :1597 allocates -- :1597 multiplies the full mix budget by the domain weight regardless of resume_step, so the cursor cannot shorten the plan and `--max_steps` is the only thing that bounds the run. Under --max_steps 3814 the 200M resume trains its 4.00B budget and leaves 26,645 of 122,069 rows per rank (22%) unread: the symptom is capped, the over-allocation is not.",
-   "uncertainty": "The end-of-plan claim is no longer pending observation: 35 of 415 logs on the pod print `step N/N`, and two of the largest are RESUMED runs that reached it -- rehearse_join and twin_nocursor both at step 16050/16050, each followed by its `saved ckpt_*.pt` line. So a resumed run has been watched running its raised total to the end and finalizing. WHAT THAT DOES NOT COVER: both are 50-step tails resumed at step 16000, so they exercise the loop bound and the finalize path, not a full-length plan; no 19,151-step p500m run has finished, and the identity that predicts 19,151 is still arithmetic reproducing three observed values rather than an observed endpoint. Each further resume raises the total again by the same rule.",
+   "uncertainty": "OBSERVED TO COMPLETION, and the criterion I first used to establish that was WRONG. p200m_4b_0902 resume2 finished on 2026-09-03: `ep 1/1 train 1.492 val 1.922 5214s` then `saved ckpt_p200m_4b_0902.pt`, a full-length resumed plan (832 -> 3814) run to its end with warmdown firing at 3433 as derived. THE FIRST SCAN COULD NOT HAVE SEEN IT: it grepped for `step N/N`, and this run's last step line is `3810/3814`, because step lines print every 10 steps and 3814 is not a multiple of 10. Every one of the 35 hits that scan found has total_steps == 0 mod 10 -- so it was measuring `total_steps is a multiple of the log interval`, not `the run completed`. The correct criterion is the finalization line: 51 of the pod's logs carry `ep N/M train ...`, and 49 of those trained a nonzero loss. The other 2 (rehearse_resume, e2e_tmp) print the finalization line with `train 0.000` after running ZERO steps, which is why the criterion needs both halves -- the 16000/7998 case finalizes and saves without training. WHAT IS STILL NOT COVERED: no p500m 19,151-step run has finished, so the identity predicting 19,151 remains arithmetic reproducing three observed values rather than an observed endpoint. Each further resume raises the total again by the same rule.",
    "status": "measured"
   },
   {
@@ -2464,6 +2471,74 @@
    },
    "boundary": "THIS IS A THROUGHPUT ANSWER ONLY. It says clipping and its sync are not where step time goes at this shape; it says nothing about whether clip=1.0 helps or hurts the loss, and nothing about stability at a shape where gradients spike. The 1.8 ms member of each pair is not attributed to a caller here -- only the 125 ms member was checked against GPU occupancy.\n\nOne shape, 4 cards, 3 steps. The sync's cost DEPENDS on device occupancy, which is the one quantity that changes with shape and card count: at a shape where the GPU goes idle waiting on the host, the same sync would cost real step time. Do not carry 0.092% or 'the sync is free' to the 500M run without re-reading its idle fraction (2026-08-30's grad_ckpt 2.4x-at-12-layers became 1.116x at 32 layers -- a constant measured at one shape and carried to another is this repo's recurring shape).",
    "uncertainty": "The 99.2% figure is GPU busy time inside the sync window, computed by clipping kernel intervals to the window; overlapping kernels on different streams are summed, so a window with two concurrent streams could read above 100% and this one does not, which is weak evidence that concurrency is low rather than proof the arithmetic is exclusive. What would settle it is per-stream occupancy, not measured. NOT MEASURED AT ALL: isfinite has no matching cpu_op in the trace, so its cost is unknown rather than zero -- it is fused into a triton kernel whose name the needle did not match, and the needle was not widened to find it.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.grad_ckpt_300m_two_arm",
+   "value": "2.27x THROUGHPUT FOR 1.82x MEMORY at 293.05M, and THE TWO ARMS DIFFER IN TWO VARIABLES, so this number is not attributable to grad_ckpt alone. Measured: grad_ckpt=True at batch 16 x accum 2 gives 22,544 tok/s/gpu at 21.19 GiB peak; grad_ckpt=False at batch 8 x accum 4 gives 51,238 tok/s/gpu at 38.59 GiB. 51238/22544 = 2.2728, 38.59/21.19 = 1.8211. Effective batch is 32 on both sides, but the MICRO-batch is 16 against 8 -- so the freed activation memory was spent on a different micro-batch rather than held constant, and the 2.27x is the joint effect of turning grad_ckpt off AND halving the micro-batch. This repo has paid for that exact confound before: the 36%-vs-5% ablation, where the freed 31% went to web and the verdict was web's.\n\nWHAT IT IS STILL GOOD FOR: it bounds the ORDER OF MAGNITUDE of grad_ckpt's cost at this shape, and that is enough to adjudicate two contradicting comments in train.py. :189 says 2.4x (measured at 12 layers, per eff.grad_ckpt_inverts_with_depth); :217 says 25% wall-clock with no cited source. 2.27x supports :189's order of magnitude and refutes :217's. A second, independent path agrees: the depth extrapolation gives 2.40x. Neither says 25%.\n\nAND IT DOES NOT TRANSFER TO 32 LAYERS. At d1024 L32 the same comparison at EQUAL batch is 1.116x (eff.grad_ckpt_inverts_with_depth) -- grad_ckpt inverts with depth, so 2.27x is a 12-layer figure and the 500M recipe's grad_ckpt=ON ruling stands on the L32 measurement, not on this one.",
+   "measured": "2026-09-02",
+   "source": "CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/profile_step_cost.py --mix data/mix_200m_4b.json --dim 1024 --layers 12 --batch 16 --accum 2 --steps 8 --warmup 8 (arm a2, grad_ckpt on), and the same command with --batch 8 --accum 4 and grad_ckpt off (arm b)",
+   "config": {
+    "params_M": 293.05,
+    "world": 4,
+    "seq": 4096,
+    "fp8": true,
+    "compile": true,
+    "mix": "data/mix_200m_4b.json",
+    "warmup_steps_discarded": 8,
+    "statistic": "median step",
+    "arm_a2": {
+     "grad_ckpt": true,
+     "batch": 16,
+     "accum": 2,
+     "tok_s_per_gpu": 22544,
+     "peak_gib": 21.19
+    },
+    "arm_b": {
+     "grad_ckpt": false,
+     "batch": 8,
+     "accum": 4,
+     "tok_s_per_gpu": 51238,
+     "peak_gib": 38.59
+    },
+    "throughput_ratio": 2.2728,
+    "memory_ratio": 1.8211,
+    "effective_batch_both_arms": 32,
+    "variables_that_differ": [
+     "grad_ckpt",
+     "micro_batch"
+    ],
+    "logs_pod_only": "ab300m_a2.log and ab300m_b.log under the pod's runs/ directory. Named here rather than in source because they do not resolve from main and facts_well_formed reads any runs/-prefixed path in source as a citation. The two numbers each log settles are restated in arm_a2/arm_b above, so nothing depends on reaching the files."
+   },
+   "boundary": "TWO VARIABLES, ONE RATIO. grad_ckpt and micro-batch both move between the arms, so no part of the 2.27x can be assigned to either alone from this pair. The clean version is a third arm -- grad_ckpt=False at batch 16 x accum 2 -- which was NOT run: it is the OOM-risk configuration this shape was being tested to avoid, and eff.microbatch_32_oom records the neighbouring failure. Until that arm exists, quote this as an order of magnitude, never as grad_ckpt's cost.\n\n12 layers only. The measurement that governs the 500M recipe is eff.grad_ckpt_inverts_with_depth's 1.116x at L32, which inverts the verdict.",
+   "uncertainty": "Median of one run per arm, not a repeated measurement, so there is no spread. The arms were launched from a profiler that at the time did NOT seed before building the model (fixed in 41c5cd8, and the arms initialized different weights 0.016 apart at step 0) -- that invalidated the LOSS-PARITY gate, which was retracted, and does NOT affect these two numbers: throughput is wall-clock over a fixed shape and peak is an allocator reading, neither of which depends on the values in the weights. Stated explicitly because a reader who knows the parity failure would reasonably suspect the whole pair.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.run_end_cursor_overstates_under_max_steps",
+   "value": "THE RUN-END CHECKPOINT'S ROW CURSOR CLAIMS 213,164 ROWS (0.87B TOKENS) THE RUN NEVER TRAINED ON, whenever --max_steps stops the loop before the plan is consumed. Two checkpoints of the SAME run, written seconds apart, disagree: ckpt_p200m_4b_0902.pt.ep1 carries row_cursor summing to 976,384 = 3814 x 256, the rows actually read; the bare ckpt_p200m_4b_0902.pt carries 1,189,548. The difference is 213,164 rows. A resume from the bare checkpoint would start each domain past rows it was never trained on and skip them silently.\n\nMECHANISM, and it is a two-line interaction. train.py:2561 calls save_checkpoint WITHOUT a step, and :1034 reads a missing step as `no step (run-end save): the plan is complete` and writes the plan-complete counts. That reading was true when it was written -- reaching the end of the loop did mean reaching the end of the plan. It stopped being true when --max_steps was used to bound a resume: :2151 caps total_steps, :2520 breaks at `step >= total_steps`, and the plan still holds the rows the cap excluded. So the run-end save states a FACT (no step was passed) and the branch draws an INFERENCE from it (therefore the plan finished), in one line, with the inference recorded as data. The .ep1 save at :2545 passes step and is correct, which is why the same run holds both numbers.\n\nARITHMETIC. Segment 1 read 832 x 256 = 212,992 rows; segment 2 read (3814 - 832) x 256 = 763,392; total 976,384, matching .ep1 exactly. The bare checkpoint's 1,189,548 = 212,992 + 976,556, i.e. segment 1's rows plus the WHOLE second plan -- which is also why it exceeds the 4.00B budget: 976,556 rows was the over-allocated plan (eff.resume_inflates_total_steps), and 26,645 of the 122,069 rows per rank went unread.\n\nSCOPE: any run that ends via --max_steps rather than by consuming its plan. Not specific to a resume -- a fresh run with --max_steps has the same shape -- but a resume is where it costs something, because a resume is the only consumer of the cursor.",
+   "measured": "2026-09-03",
+   "source": "train.py:1034 (the no-step branch), :2545 (the .ep1 save, passes step), :2561 (the run-end save, no step), :2151 (--max_steps cap), :2520 (the break); torch.load(mmap=True) of both checkpoints on the pod",
+   "config": {
+    "run": "p200m_4b_0902 (fresh + resume2)",
+    "rows_per_step": 256,
+    "batch": 16,
+    "accum": 2,
+    "world": 8,
+    "total_steps": 3814,
+    "resume_step": 832,
+    "plan_rows": 976556,
+    "rows_actually_read": 976384,
+    "ep1_cursor_sum": 976384,
+    "ep1_as_of_step": 3814,
+    "bare_ckpt_cursor_sum": 1189548,
+    "overstatement_rows": 213164,
+    "overstatement_tokens": 873119744,
+    "identity_on_ep1": "976384 == 3814 * 256, exact",
+    "how_bare_decomposes": "212992 (segment 1) + 976556 (the whole second plan) = 1189548"
+   },
+   "boundary": "ONE RUN, and the two checkpoints are the evidence -- this is not a survey of how often the shape occurs. It occurs whenever --max_steps ends a run, which is every bounded resume and every short ablation, but no scan was run to count them. NOT CHECKED: whether any existing checkpoint on the pod has already been resumed from under this condition, which is what would turn a latent defect into lost training. The .ep1 file is the correct one to resume from for this run; that is a workaround, not a fix, and it depends on .ep1 existing (it is written only when the epoch loop completes an epoch).",
+   "uncertainty": "The 213,164 figure is exact arithmetic against two file reads, so there is no spread. What is INFERRED rather than measured: that a resume from the bare checkpoint would skip those rows. The mechanism is build_mix seeding used[] from the cursor (train.py:1574) and indexing from arange(used, used+want) (:1607), both read, but no resume from this checkpoint was performed to observe the skip -- doing so would cost a run. The fix is not written yet: the run-end save must either pass step or the no-step branch must refuse when total_steps was capped, and choosing between those needs the frozen-train.py window.",
    "status": "measured"
   }
  ]
