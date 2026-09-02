@@ -318,6 +318,7 @@ def main():
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
         "scripts/test_eval_load_only.py",
+        "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
@@ -542,9 +543,17 @@ def main():
             try:
                 with open(tmp_py, "wb") as f:
                     f.write(staged_py.stdout)
+                # POD_DRIFT_ROOT: in a linked worktree tmp_py lives under
+                # <common>.git/worktrees/<name>/, so pod_drift's __file__-relative
+                # ROOT resolves to <common>.git/worktrees and the manifest is written
+                # to a phantom path while this hook's check below reads the
+                # unregenerated worktree manifest -- a false refusal on any commit
+                # that deletes a scoped file (measured 2026-09-02, 44-15). Pass the
+                # real root explicitly.
                 r = subprocess.run(
                     [sys.executable, tmp_py, "--write-index"],
                     capture_output=True, text=True,
+                    env={**os.environ, "POD_DRIFT_ROOT": repo},
                 )
                 if r.returncode == 0:
                     # Consistency: every manifest path must resolve in the index
