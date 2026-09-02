@@ -370,6 +370,10 @@ def main():
         # it be committed against a frozen train.py), and a gate that accepts exit 0
         # from a red test is not a gate. See SELFTEST_FLAG below.
         "scripts/test_recipe_required.py",
+        # e1-22: no eval script may hand a base checkpoint a ChatML prompt. Runs on the
+        # default --selftest path because it is green today and has no reason to exit 0
+        # while red -- unlike test_recipe_required, which needed --strict.
+        "scripts/test_eval_base_prompt_format.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
