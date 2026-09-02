@@ -3543,6 +3543,54 @@ def _broken_tasks_closed_by_commit():
     return d
 
 
+QUEUE_MIN_OPEN = 2
+QUEUE_EXEMPT = {"fb", "98"}
+
+
+def check_owner_queue_depth(root):
+    """Every roster member has at least QUEUE_MIN_OPEN open, unblocked tasks.
+
+    On 2026-09-02 the user found six sessions idle while the register showed 16 open rows:
+    nine of them were blocked on the frozen training path and the rest were held by two
+    owners. An idle session is a cost with no artifact, and nothing in the repo said so.
+    An empty queue is FAIL: that session is idle now. A queue of one is WARN: the
+    controller refills before it empties."""
+    roster_p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(roster_p):
+        return SKIP, "no runs/roster.json"
+    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
+               if m["name"] not in QUEUE_EXEMPT]
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    depth = {m: 0 for m in members}
+    for t in rows:
+        if t.get("state") == "open" and not (t.get("blocked_on") or "").strip():
+            if t.get("owner") in depth:
+                depth[t["owner"]] += 1
+    empty = [m for m, n in sorted(depth.items()) if n == 0]
+    if empty:
+        return FAIL, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
+    short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
+    if short:
+        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills"
+    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items()))
+
+
+def _broken_owner_queue_depth():
+    import shutil as _sh
+    d = _tmp_repo()
+    for rel in ("runs/roster.json", "runs/tasks.jsonl"):
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        _sh.copy(os.path.join(ROOT, rel), os.path.join(d, rel))
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    rows = [json.loads(x) for x in open(dst, encoding="utf-8") if x.strip()]
+    with open(dst, "w", encoding="utf-8") as fh:
+        for r in rows:
+            if r.get("state") == "open":
+                r = dict(r, blocked_on="frozen until the run ends")
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return d
+
+
 def check_review_present(root):
     """Every done task has a review row from the reviewer it named.
 
@@ -6403,6 +6451,13 @@ CHECKS = [
         _broken_tasks_closed_by_commit,
     ),
     (
+        "owner_queue_depth",
+        "every roster member has at least two open, unblocked tasks",
+        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02)",
+        check_owner_queue_depth,
+        _broken_owner_queue_depth,
+    ),
+    (
         "review_present",
         "every done task carries a review row from the peer it named",
         "the controller review caught four evidenced errors in one day while every other session's deliveries shipped with one reader",
@@ -6700,7 +6755,7 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
-    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo",
+    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
