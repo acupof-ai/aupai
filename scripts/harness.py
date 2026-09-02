@@ -217,6 +217,16 @@ _MANUAL_RULES = {
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
     "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
+    "pod_push only ever ADDS: a deletion on main needs a second explicit step on the pod":
+        "the deletion is an operator SEQUENCE -- delete here, then delete there -- and the "
+        "second half happens on a filesystem no check reads. pod_drift compares the manifest "
+        "against the pod, and a file in neither is invisible to it by construction",
+    "Only a refusing: line means nothing shipped":
+        "how a human reads pod_push's stdout. The transcript is not an artifact, so nothing "
+        "records whether the reader's filter could see a refusal at all",
+    "pod_drift.py --write regenerates from HEAD, --write-index from the index":
+        "which flag a session typed is not recoverable from the manifest it produced -- both "
+        "write the same file, and a manifest built from the wrong side is well-formed",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -244,7 +254,16 @@ _MANUAL_RULES = {
 #: reading and killing in the same view is not, and a guard on [ -d /proc/<pid> ]
 #: written across it evaluated false on its first pass and launched a job onto a
 #: running probe's cards.
-_MANUAL_BASELINE = 25
+#: 25 -> 28 on 2026-09-02, three pod-side rules, all unenforceable for the same reason:
+#: the mistake happens on the pod's filesystem or in a terminal, and neither is an
+#: artifact this repo can read. pod_push's add-only asymmetry is a two-place sequence
+#: whose second half no check sees -- 69 files deleted from main were still on the pod
+#: with pod_drift green, because the manifest asserts that the files it LISTS match and
+#: says nothing about files in neither side. The `refusing:` rule is about reading
+#: stdout, and a `| tail -2` that ate the refusal leaves no trace of having done so.
+#: --write vs --write-index is not recoverable after the fact: both produce the same
+#: filename, and a manifest built from the pre-merge HEAD is well-formed and wrong.
+_MANUAL_BASELINE = 28
 
 
 def _norm_rule(text):
