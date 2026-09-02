@@ -1490,3 +1490,9 @@ de-34(8393d579)让 card_claim 见到 shell pid 就拒。run_ab_speedrun.sh 在 t
 launcher 等 fork/exec 窗口结束,用 `case *torchrun*` 匹配子进程 cmdline——但 exec 前那个 shell 的 cmdline **本来就含 "torchrun train.py"**(那是它自己的参数),glob 匹配的正是要等它消失的那个 shell,等待循环等于没测。修法用守卫自己的判据:basename(argv[0]) 对 shell 列表(card_claim.py:157),拿 exec 前 sleep 0.7s 的 stub 验证——claim 绑的是 exec 后的进程,释放干净。
 
 规则:**等待 X 消失的判据,必须在 X 还在时为真、X 消失后为假;拿 X 自己的属性当判据,循环永远不空转也永远不生效。** 判断法:把判据在"等待开始前"和"等待结束后"各代一次——两次都真,判据没在测它该测的东西。
+
+## 121. 验证器与被验对象定义不同:char 5-gram 的 est 对 word 3-gram 的 exact(3b 当事人,1e 提,2026-09-03,证据 datagen/build_corpus.py:167、datagen/near_dedup_scale.py:79,R2)
+
+near-dedup 的验证阶段:MinHash 签名用 **char 5-gram**(build_corpus.py:169,`s[i:i+5]`,原文不规范化),exact Jaccard 用 **word 3-gram on normalise_code**(near_dedup_scale.py:83)。200 顶对 est 0.922 vs exact 0.729 被读成"MinHash 系统性高估"——实际是两个量:字符 5-gram 对词 3-gram、原文对规范化后,定义不同,数值没有义务相等。**验证器和被验对象各用各的定义,验证的不是同一个东西;读出"偏差"是把两个量的差当成了一个量的偏差。**
+
+规则:**验证器与被验量共用同一定义——同样的 shingle、同样的规范化、同样的 tokenization;已知答案用一对按构造 est 必须等于 exact 的文档(两条完全相同的文档,两个定义都该给 1.0)。** 判断法:把验证器和被验量的定义并排写——有一个字不同,验证就在测别的东西。
