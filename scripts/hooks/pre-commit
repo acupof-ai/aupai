@@ -350,6 +350,11 @@ def main():
         # a `required=True` on --ckpt that made `--selftest` itself un-runnable, and a
         # comment claiming the hyphen was a word boundary while the set omitted it.
         "eval/lambada_en.py",
+        # humaneval gold BPB: its selftest needs no data and no model -- a uniform-distribution
+        # stand-in has a known answer (log2(V) bits/byte exactly), which is what pins the bit
+        # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
+        # truncate a solution. All four verified red on their broken worlds.
+        "eval/humaneval_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
