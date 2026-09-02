@@ -269,22 +269,27 @@ MC_TRIPWIRE = ["arc-easy", "arc-challenge", "winogrande", "piqa", "openbookqa",
 def _constant_baseline(items):
     """Accuracy of the best always-answer-slot-i strategy, measured on these items.
 
-    The decision line for any MC or short-answer eval is the STRONGEST CONSTANT
-    strategy, never random (44's ruling 2026-09-01, docs/lessons/honest_measurement_prereg.md,
-    after math_test_500 scored 9.78% by always answering '2' and three L1 points came in
-    BELOW it while reading z=8.42 over shuffle). Measured on arc-easy, n=2376: constant
-    26.64% against random 25.00%, so the +2se line moves 26.78% -> 28.45%. An accuracy in
-    that 1.68pt band is 2 sigma over random and below a strategy that reads nothing.
+    The counting is eval/compare_fewshot_arms.constant_baseline, imported rather than
+    reimplemented: that function is the reference implementation of 44's ruling and its
+    docstring carries the measurement that bought it (math_test_500, 491 rows, always
+    answering "2" scores 9.78%, the 3-demo arm 8.15% -- clear of a 2.52% shuffle by
+    z=8.42 and BELOW the constant guess). A second copy of a decision rule drifts, and
+    the first version of this function WAS that second copy (de, 2026-09-02).
 
-    Returns None when the gold labels are not slot indices, rather than guessing: an
-    unmeasurable baseline must not silently become a favourable one."""
-    from collections import Counter
+    What stays here is the MC-specific part the shared function cannot know: gold labels
+    must be slot indices. Returns None when they are not, rather than guessing -- an
+    unmeasurable baseline must not silently become a favourable one. Measured on
+    arc-easy, n=2376: constant 26.64% against random 25.00%, so the +2se line moves
+    26.78% -> 28.45%, and an accuracy in that 1.68pt band is 2 sigma over random while
+    below a strategy that reads nothing."""
+    from eval.compare_fewshot_arms import constant_baseline
     if not items:
         return None
     golds = [it.get("answer", it.get("label")) for it in items]
     if any(not isinstance(g, int) for g in golds):
         return None
-    return max(Counter(golds).values()) / len(items)
+    rate, _value, _n = constant_baseline(golds)
+    return rate
 
 
 def z_over_chance(acc, chance, n):
