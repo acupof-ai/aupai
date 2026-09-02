@@ -183,6 +183,24 @@ def queue_section():
         out.append(f'<tr><td>{html.escape(m)}{tag}</td><td class={cls}>{open_cell}</td>'
                    f'<td>{oldest}</td><td>{closed}</td></tr>')
     out.append("</table>")
+    names = {m: [] for m in members}
+    for t in latest.values():
+        if t.get("state") == "open" and not (t.get("blocked_on") or "").strip() and t.get("owner") in names:
+            first = t.get("task", "")
+            if first.upper().startswith("LONG LINE:"):
+                first = first.split(":", 1)[1].strip()
+            cut = next((i for i, ch in enumerate(first[:40]) if ch in ":;,("), 0)
+            if cut:
+                first = first[:cut]
+            elif len(first) > 40:
+                first = first[:40].rsplit(" ", 1)[0]
+            names[t["owner"]].append(first.strip())
+    listed = [f"<tr><td>{html.escape(m)}</td><td>{html.escape('；'.join(names[m]))}</td></tr>"
+              for m in members if names[m]]
+    if listed:
+        out.append("<table><tr><th></th><th>open 任务</th></tr>")
+        out.extend(listed)
+        out.append("</table>")
     return "".join(out)
 
 
