@@ -40,6 +40,17 @@ fi
 # than reporting the endpoint as if it were a minimum.
 LRS="3e-5 1e-4 3e-4"
 
+# One exp row for the SCAN, not per point: the three points are one experiment with one
+# question ("which lr does held-out loss pick"), and three rows would read as three findings.
+if [ -z "${HYPOTHESIS:-}" ]; then
+  echo "REFUSING: set HYPOTHESIS='<what this scan is meant to test>' before launching."
+  exit 2
+fi
+python3 scripts/exp.py start --name "$CLAIM_NAME" \
+  --cmd "scan_control_lr.sh $PACK ($LRS)" --hypothesis "$HYPOTHESIS" \
+  --notes "3 lr points serial on card(s) ${CLAIM_CARDS:-unset}, selected on held-out loss" \
+  >/dev/null || true
+
 for LR in $LRS; do
   CKPT="$OUT/pythia160m_lr$LR"
   if [ -f "$CKPT.meta.json" ]; then

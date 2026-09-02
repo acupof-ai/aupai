@@ -157,9 +157,20 @@ def check_mask(pack, out):
                             "model would be trained to generate the user's turn"))
         return False
     pct = 100.0 * sup / total
-    # A supervised fraction outside a wide band is a mask defect rather than a data
-    # property: SFT rows are mostly prompt, so a few percent is normal and half is not.
-    band = (0.5, 60.0)
+    # BAND MEASURED, NOT ASSUMED. The first version said (0.5, 60.0) on the reasoning that
+    # "SFT rows are mostly prompt, so a few percent is normal and half is not". That reasoning
+    # is wrong for this repo's data and the ceiling was never checked against a real pack: the
+    # three packs behind be.sft_v3/v4/v5 all sit at 79.3% supervised, and so does the control
+    # pack at 79.4% (measured on the pod 2026-09-03). Our prompts are short Chinese
+    # instructions and the completions are long CoT answers, so most of every row IS the
+    # answer. The old ceiling would have refused every genuine pack in the repo -- a gate
+    # whose failing case is the normal artifact gets bypassed, and then it protects nothing.
+    #
+    # The ceiling that still means something is 100%: no masking at all, which check_mask
+    # already catches above as its own named failure. This band keeps a floor (a pack that
+    # supervises almost nothing is a mask defect) and a ceiling loose enough to admit the
+    # measured population, 95%.
+    band = (0.5, 95.0)
     verdict = "ok" if band[0] <= pct <= band[1] else "FAIL"
     out.append((verdict, f"{n_rows:,} rows x {row_len} tokens, {sup:,} supervised "
                          f"({pct:.1f}%), expected {band[0]}-{band[1]}%"))
@@ -301,6 +312,18 @@ def selftest():
     ok, out = run(check_mask, {"input_ids": ids, "labels": lab_good})
     if not ok:
         fails.append(f"a well-formed pack reported as a failure: {out}")
+
+    # THE BAND MUST ADMIT THIS REPO'S REAL PACKS. The band shipped as (0.5, 60.0) and every
+    # genuine pack here is at 79.3-79.4%, so the gate refused the normal artifact -- caught
+    # only by running it on the pod, because every case above uses a synthetic fixture whose
+    # supervised fraction I chose. A fixture at the measured rate is what makes this a check on
+    # the BAND rather than on the arithmetic.
+    real_rate_ids = torch.arange(1000, dtype=torch.int32).reshape(10, 100)
+    real_rate_lab = real_rate_ids.clone()
+    real_rate_lab[:, :21] = -100          # 79% supervised, the measured population
+    ok, out = run(check_mask, {"input_ids": real_rate_ids, "labels": real_rate_lab})
+    if not ok:
+        fails.append(f"a pack at the repo's measured 79% supervised rate was refused: {out}")
 
     # the real parser
     ok, out = run(check_sft_math_parser)

@@ -25,7 +25,18 @@ CARDS=${CARDS:-$(seq 0 $((NGPU - 1)) | tr '\n' ',' | sed 's/,$//')}
 NGPU=$(printf '%s' "$CARDS" | tr ',' '\n' | grep -c .)
 CMD="CUDA_VISIBLE_DEVICES=$CARDS torchrun --nproc_per_node=$NGPU sft_math.py --resume $RESUME --sft_path $DATA --out $OUT $*"
 
-python3 scripts/exp.py start --name "$NAME" --cmd "$CMD" --notes "$(python3 - "$DATA" <<'PY'
+# HYPOTHESIS is required by exp.py's own contract ("written BEFORE it starts") and this
+# launcher never passed it, so every run through here left the field empty. Required here
+# rather than defaulted: a generated hypothesis would satisfy the check and say nothing, which
+# is worse than a blank one because the blank is visible.
+if [ -z "${HYPOTHESIS:-}" ]; then
+  echo "REFUSING: set HYPOTHESIS='<what this run is meant to test>' before launching."
+  echo "  exp.py records it BEFORE the run so the claim cannot be fitted to the result."
+  exit 2
+fi
+
+python3 scripts/exp.py start --name "$NAME" --cmd "$CMD" --hypothesis "$HYPOTHESIS" \
+  --notes "$(python3 - "$DATA" <<'PY'
 import sys, torch
 d = torch.load(sys.argv[1], map_location="cpu", weights_only=True)
 n = d["input_ids"].shape[0]
