@@ -16,13 +16,13 @@
   {
    "id": "eff.h20_mfu_200m",
    "claim": "a dense ~200M Transformer reaches X% MFU on H20 in FP8 training",
-   "value": "\u672a\u627e\u5230\u51fa\u5904 \u2014 no published H20 training MFU for ~200M-class dense models found in the literature searched",
+   "value": "未找到出处 — no published H20 training MFU for ~200M-class dense models found in the literature searched",
    "measured": "2026-08-30",
    "source": "literature search (WebSearch + arXiv sweeps, 2026-08-30)",
    "config": {
     "searched": [
      "H20 LLM training MFU",
-     "H20 FP8 \u8bad\u7ec3 MFU \u5c0f\u6a21\u578b",
+     "H20 FP8 训练 MFU 小模型",
      "H20 tokens/s training benchmark"
     ]
    },
@@ -55,12 +55,12 @@
     "ratio_ablation": "1:3 vs 1:7"
    },
    "uncertainty": "as reported in the paper; no error bars in Table 4",
-   "boundary": "1.3B scale; fb's 172.5M non-embedding is 7.5x smaller \u2014 [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
+   "boundary": "1.3B scale; fb's 172.5M non-embedding is 7.5x smaller — [extrapolation]; Jamba's Mamba is not KDA but the ratio question is primitive-agnostic within linear-attention family",
    "status": "recorded"
   },
   {
    "id": "eff.meta_hybrid_ratio",
-   "value": "Meta systematic hybrid study (2510.04800): balanced 1:1 ratio yields best quality; ~1:5 optimal for quality+efficiency; Transformer blocks must be in middle/later stages \u2014 early-layer attention causes significant performance drop, holds at 350M and 1B across ratios 1:1 to 1:12",
+   "value": "Meta systematic hybrid study (2510.04800): balanced 1:1 ratio yields best quality; ~1:5 optimal for quality+efficiency; Transformer blocks must be in middle/later stages — early-layer attention causes significant performance drop, holds at 350M and 1B across ratios 1:1 to 1:12",
    "measured": "2026-08-30",
    "source": "Hybrid Architectures for Language Models: Systematic Analysis and Design Insights, arXiv 2510.04800, Sec.4.5 + Table 16-17",
    "config": {
@@ -69,12 +69,12 @@
     "ratios_tested": "1:0, 1:1, 1:3, 1:5, 1:12, 0:1"
    },
    "uncertainty": "as reported; no per-seed variance given",
-   "boundary": "350M smallest ablation scale \u2014 2.0x fb's 172.5M [extrapolation]; SWA/Mamba primitives, not KDA",
+   "boundary": "350M smallest ablation scale — 2.0x fb's 172.5M [extrapolation]; SWA/Mamba primitives, not KDA",
    "status": "recorded"
   },
   {
    "id": "eff.meta_hybrid_scaling_method",
-   "value": "IsoFLOPs scaling at 100M/350M/1B/3B across 5 compute budgets (2e19-4e20 FLOPs) using a Trapezoid LR scheduler and REUSING INTERMEDIATE CHECKPOINTS from the largest-budget run \u2014 i.e., WSD-style one-run-many-readouts validated at sub-1B scales; 0.5M tokens/step; LR 6e-3/3e-3/6e-4/3e-4",
+   "value": "IsoFLOPs scaling at 100M/350M/1B/3B across 5 compute budgets (2e19-4e20 FLOPs) using a Trapezoid LR scheduler and REUSING INTERMEDIATE CHECKPOINTS from the largest-budget run — i.e., WSD-style one-run-many-readouts validated at sub-1B scales; 0.5M tokens/step; LR 6e-3/3e-3/6e-4/3e-4",
    "measured": "2026-08-30",
    "source": "arXiv 2510.04800, Appendix M (Sec.4053-4075)",
    "config": {
@@ -82,7 +82,7 @@
     "budgets": "2e19-4e20 FLOPs"
    },
    "uncertainty": "methodology claim; no error bars",
-   "boundary": "validates the checkpoint-reuse scaling methodology at 100M-3B \u2014 directly supports the P1 calibration in data_scaling_design.md",
+   "boundary": "validates the checkpoint-reuse scaling methodology at 100M-3B — directly supports the P1 calibration in data_scaling_design.md",
    "status": "recorded"
   },
   {
@@ -94,7 +94,7 @@
     "validation_scale": "Kimi Linear 48B total / 3B active, 1.4T tokens"
    },
    "uncertainty": "overhead claim is architectural; the <2% latency figure is the paper's, no CI",
-   "boundary": "validated at 48B ONLY \u2014 no sub-1B measurement exists; overhead claim is architectural, not measured at 200M",
+   "boundary": "validated at 48B ONLY — no sub-1B measurement exists; overhead claim is architectural, not measured at 200M",
    "status": "recorded"
   },
   {
@@ -168,7 +168,7 @@
     "corpus": "3.24B unique"
    },
    "uncertainty": "error bars describe fit tightness, not parameter uncertainty (fb's correction)",
-   "boundary": "beta=0.555 is 1.6-2x the literature 0.28-0.37 \u2014 steep data exponent at this scale/architecture",
+   "boundary": "beta=0.555 is 1.6-2x the literature 0.28-0.37 — steep data exponent at this scale/architecture",
    "status": "measured"
   },
   {
@@ -180,7 +180,7 @@
     "range": "70M-16B"
    },
    "uncertainty": "as reported; fit uncertainty not given in the paper",
-   "boundary": "dense Transformers, English MassiveText \u2014 [extrapolation] to KDA+MLA hybrid; no joint fit exists for this architecture",
+   "boundary": "dense Transformers, English MassiveText — [extrapolation] to KDA+MLA hybrid; no joint fit exists for this architecture",
    "status": "recorded"
   },
   {
@@ -194,7 +194,7 @@
      "work": "13.19 TFLOP (exact)",
      "achieved": "61.1 TFLOPS",
      "peak": "148 bf16",
-     "verdict": "41% of peak \u2014 cuBLAS picks an SM75 align-1 kernel because vocab 32773 leaves the logits' leading dim 2-byte aligned; 92% after padding to a multiple of 8"
+     "verdict": "41% of peak — cuBLAS picks an SM75 align-1 kernel because vocab 32773 leaves the logits' leading dim 2-byte aligned; 92% after padding to a multiple of 8"
     },
     {
      "operator": "fp8 linears (189 _scaled_mm)",
@@ -203,7 +203,7 @@
      "work": "67.8 TFLOP (exact)",
      "achieved": "~274 TFLOPS",
      "peak": "296 fp8",
-     "verdict": "93% of peak \u2014 compute-bound, no headroom"
+     "verdict": "93% of peak — compute-bound, no headroom"
     },
     {
      "operator": "AttnRes (delta vs plain residual)",
@@ -221,16 +221,16 @@
      "work": "127 GB (est)",
      "achieved": "3.5 TB/s",
      "peak": "4 TB/s",
-     "verdict": "87% of peak per add \u2014 each is optimal, there are just 300 of them"
+     "verdict": "87% of peak per add — each is optimal, there are just 300 of them"
     },
     {
      "operator": "KDA chunk (9 layers, fwd+bwd)",
      "ms_per_step": 106.4,
      "pct_step": 10.8,
      "work": "~33 GB (est), negligible FLOP",
-     "achieved": "~0.31 TB/s (est) \u2014 CORRECTED to 1.16 TB/s measured by ncu, see eff.kda_occupancy_bound",
+     "achieved": "~0.31 TB/s (est) — CORRECTED to 1.16 TB/s measured by ncu, see eff.kda_occupancy_bound",
      "peak": "4 TB/s",
-     "verdict": "neither roof \u2014 latency/occupancy bound, 8% of HBM"
+     "verdict": "neither roof — latency/occupancy bound, 8% of HBM"
     },
     {
      "operator": "Flash attention (3 layers)",
@@ -239,7 +239,7 @@
      "work": "5.77 TFLOP (exact)",
      "achieved": "85.5 TFLOPS",
      "peak": "148 bf16",
-     "verdict": "58% \u2014 compute-bound (FA2 on Hopper)"
+     "verdict": "58% — compute-bound (FA2 on Hopper)"
     },
     {
      "operator": "liger_cross_entropy_kernel",
@@ -260,12 +260,12 @@
      "verdict": "bandwidth-bound"
     },
     {
-     "operator": "remainder (norms, quant, memset) \u2014 UNBROKEN DOWN",
+     "operator": "remainder (norms, quant, memset) — UNBROKEN DOWN",
      "ms_per_step": 169.0,
      "pct_step": 17.2,
-     "work": "\u2014",
-     "achieved": "\u2014",
-     "peak": "\u2014",
+     "work": "—",
+     "achieved": "—",
+     "peak": "—",
      "verdict": "largest single unexplained item; grows to ~20% once the vocab padding shrinks the denominator"
     }
    ],
@@ -555,7 +555,7 @@
   {
    "id": "eff.gpu4_peak_flops",
    "claim": "GPU4 sustained bf16 GEMM throughput vs GPU0",
-   "value": "GPU4 137.0 TFLOPS, GPU0 137.3 TFLOPS \u2014 identical, no hardware throttling",
+   "value": "GPU4 137.0 TFLOPS, GPU0 137.3 TFLOPS — identical, no hardware throttling",
    "measured": "2026-08-30",
    "source": "probes/bench_gpu_probe.py, 8192^3 bf16 GEMM, 30 iters",
    "config": {
@@ -629,7 +629,7 @@
     "bucket_50_tok_s_gpu": 73000,
     "bucket_25_tok_s_gpu": 73000
    },
-   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K \u2014 likely ceiling, may not stack",
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift used (mix guard bypassed for CCI3 hardlinks, restored after); bucket50/25 and NCCL Simple all reach 73K — likely ceiling, may not stack",
    "boundary": "3-GPU DDP; 7-GPU optimal bucket may differ (more ranks = smaller per-rank chunks)",
    "status": "recorded"
   },
@@ -682,8 +682,8 @@
     "nccl_protocol": "default (RING_LL)",
     "nccl_algo": "default"
    },
-   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) \u2014 NCCL auto-selects good protocol at smaller per-rank chunks",
-   "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU \u2014 not ring-length-dependent in this regime",
+   "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift with hardlinked CCI3 shards (restored after); 7-GPU default protocol matches 3-GPU forced-Simple (75K) — NCCL auto-selects good protocol at smaller per-rank chunks",
+   "boundary": "7-GPU DDP; per-rank chunk = bucket/7 (7.1MB at 50, 3.6MB at 25); comm residue 6.25% same as 3-GPU — not ring-length-dependent in this regime",
    "status": "recorded"
   },
   {
@@ -718,14 +718,14 @@
     "gnorm_step10_warmup_3": 3.38,
     "gnorm_step10_warmup_20": 1.43
    },
-   "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) \u2014 the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
-   "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum \u2014 the 2->3->20 trend is monotonic \u2014 but 20 is the chosen smaller-bias config, not a measured optimum.",
+   "uncertainty": "single run per arm; the smoke mix has no web_hq (its CCI3 shards are symlinks, the mix guard refuses them even with --allow_corpus_drift) — the warmup conclusion is optimizer-dynamics and should transfer, but the absolute val values are from a six-domain recipe",
+   "boundary": "The warmup FRACTION confound is NOT removed by fixing 20: it ranges from 9.2% of steps at 0.2b to 0.57% at 3.24b. Direction: small points spend more of their run at reduced LR, so their loss is biased high and beta is overestimated. The proportional alternative (1% of steps) biased the same direction harder (measured 0.52 val at 0.2b) and was rejected. Read fitted beta with this overestimate in mind. Also: even 20 may not be the optimum — the 2->3->20 trend is monotonic — but 20 is the chosen smaller-bias config, not a measured optimum.",
    "status": "measured"
   },
   {
    "id": "eff.ddp_5k_not_identified",
    "claim": "7-GPU vs single-GPU 6.25% throughput gap: two candidates (static_graph, gradient_as_bucket_view) both exonerated, source not identified",
-   "value": "7-GPU vs single-GPU 6.25% gap. static_graph=False: no change. bucket_view=False: no change. Not proven intrinsic \u2014 two candidates excluded, others remain.",
+   "value": "7-GPU vs single-GPU 6.25% gap. static_graph=False: no change. bucket_view=False: no change. Not proven intrinsic — two candidates excluded, others remain.",
    "measured": "2026-08-30",
    "source": "A/B: b4_no_sg (static_graph=False) vs b4_no_bv (bucket_view=False) vs baseline, 4xGPU4-7, batch16/accum2/seq4096, fp8, compiled, vocab=32776, chunk_size=32, mix_scale_0.2b, 40 steps, bucket50, default NCCL protocol. Profile: GPU idle only 1.5% (27.7ms/step), NCCL 18.2% (overlapped with compute), GPU 98.5% busy.",
    "config": {
@@ -747,7 +747,7 @@
     "nccl_pct": 18.2
    },
    "uncertainty": "single run per arm; stable-zone step 20-40; --allow_corpus_drift + --allow_pod_drift with hardlinked CCI3 shards (restored after); 1K difference within noise",
-   "boundary": "\u6309\u65f6\u95f4\u76d2\u5173\u95ed,\u4e0d\u662f\u56e0\u4e3a\u67e5\u6e05\u4e86\u3002\u5df2\u6392\u9664 \u2014\u2014 NCCL \u4f20\u8f93(18.2% \u5df2\u91cd\u53e0)\u3001GPU \u7a7a\u95f2(1.5%)\u3001static_graph\u3001gradient_as_bucket_view\u3002\u672a\u6392\u9664 \u2014\u2014 CPU \u4fa7 reducer hook \u7684 launch \u62d6\u6162\u3001DDP \u5f15\u5165\u7684\u989d\u5916\u5c0f kernel\u3002\u6a21\u578b\u53d8\u5927\u65f6\u5e94\u88ab\u644a\u8584;\u82e5\u4e0d\u964d\u5219\u6b64\u5f52\u56e0\u9700\u91cd\u5f00\u3002",
+   "boundary": "按时间盒关闭,不是因为查清了。已排除 —— NCCL 传输(18.2% 已重叠)、GPU 空闲(1.5%)、static_graph、gradient_as_bucket_view。未排除 —— CPU 侧 reducer hook 的 launch 拖慢、DDP 引入的额外小 kernel。模型变大时应被摊薄;若不降则此归因需重开。",
    "status": "recorded"
   },
   {
@@ -893,7 +893,7 @@
   },
   {
    "id": "eff.fetch_curl92_silent_death",
-   "value": "fetch_corpus 12h \u65e0\u58f0\u6b7b\u4ea1\u6839\u56e0(fb 2026-08-31):subprocess.run(curl, check=True) \u88ab curl exit 92(HTTP/2 stream error)\u51fb\u7a7f\u2014\u2014\u4e00\u4e2a\u77ac\u6001 stream \u9519,curl \u5185\u90e8 --retry 6 \u540e\u4ecd\u975e\u96f6,check=True \u628a\u5b83\u53d8 CalledProcessError,\u6574\u4e2a 11 \u6587\u4ef6 fetch \u5d29,\u4ec5\u843d 2 \u6587\u4ef6 + 1 .part 1.72GB,\u8fdb\u7a0b\u6b7b\u3001\u65e0\u54e8\u5175\u3001\u65e5\u5fd7\u843d /tmp(\u975e runs/)\u3002**'\u5931\u8d25\u65f6\u4e0d\u62a5\u9519'\u7b2c\u5341\u53f7\u540c\u578b\u7684\u89e6\u53d1\u56e0\u5b50:check=True \u662f fetch \u4e0a\u6700\u4e0d\u8be5\u6709\u7684\u5b88\u536b,curl \u77ac\u6001\u9519 net \u6210\u975e\u96f6\u662f\u5e38\u6001\u3002** \u4fee1(b81d051):curl \u975e fatal,\u5916\u5c42\u6709\u754c\u9000\u907f\u7eed .part\u3002\u4fee2(e0258fa):stale-.part \u53ea\u5728\u8be5\u6e90\u53d8\u5316\u65f6\u5220,\u540c\u6e90\u7eed\u4f20\u7559 .part \u7ed9 -C -(\u91cd\u542f\u628a resumable 1.72GB \u5f53 stale \u5220\u4e22\u5e26\u5bbd)\u3002",
+   "value": "fetch_corpus 12h 无声死亡根因(fb 2026-08-31):subprocess.run(curl, check=True) 被 curl exit 92(HTTP/2 stream error)击穿——一个瞬态 stream 错,curl 内部 --retry 6 后仍非零,check=True 把它变 CalledProcessError,整个 11 文件 fetch 崩,仅落 2 文件 + 1 .part 1.72GB,进程死、无哨兵、日志落 /tmp(非 runs/)。**'失败时不报错'第十号同型的触发因子:check=True 是 fetch 上最不该有的守卫,curl 瞬态错 net 成非零是常态。** 修1(b81d051):curl 非 fatal,外层有界退避续 .part。修2(e0258fa):stale-.part 只在该源变化时删,同源续传留 .part 给 -C -(重启把 resumable 1.72GB 当 stale 删丢带宽)。",
    "measured": "2026-08-31",
    "source": "/tmp/fetch_code.log traceback; commit b81d051, e0258fa",
    "config": {
@@ -902,12 +902,12 @@
     "landed_before_death": "2 files (2.66+1.58GB) + file3 .part 1.72GB",
     "log_path_bug": "wrote /tmp/fetch_code.log not runs/"
    },
-   "uncertainty": "\u6b7b\u4ea1\u662f\u5426\u542b pod/\u7f51\u7edc\u91cd\u542f\u52a8\u56e0\u672a\u6392\u9664;curl 92 \u662f\u77ac\u6001,\u975e\u672c fetch \u7279\u6709",
+   "uncertainty": "死亡是否含 pod/网络重启动因未排除;curl 92 是瞬态,非本 fetch 特有",
    "status": "measured"
   },
   {
    "id": "eff.short_conv_shifted_madd",
-   "value": "ShortConv \u6539 K \u4e2a shifted multiply-add \u66ff nn.Conv1d(t02, 2026-08-31):\u5fae\u57fa\u51c6 D=512 B=16 T=4096 compiled 3.44x(conv1d 0.777\u2192shifted 0.226 ms/call),eager 0.61x(\u53cd\u800c\u6162,\u53ea\u5728 torch.compile \u4e0b\u8d62);train.py \u7f16\u8bd1\u6a21\u578b\u4f53,\u6240\u4ee5\u8d70 compiled regime\u3002end-to-end 7 \u5361 0.2b 50 \u6b65\u7a33\u6001:baseline 71K tok/s/gpu(MFU 30%)vs patched 72K(MFU 30%),\u7ea6 +1.4%\u2014\u2014per-op 3.44x \u5728\u4e00\u4e2a\u5360 step \u6781\u5c0f\u6bd4\u4f8b\u7684 op \u4e0a,end-to-end \u5fae\u589e\u3002\u6570\u503c\u4e0e conv \u9010\u503c\u7b49\u4ef7(parity 3e-7),loss \u4e00\u81f4(val 5.594 vs 5.602,\u79cd\u5b50\u566a\u58f0\u5185)\u3002verdict:patched \u2265 baseline,ship\u3002",
+   "value": "ShortConv 改 K 个 shifted multiply-add 替 nn.Conv1d(t02, 2026-08-31):微基准 D=512 B=16 T=4096 compiled 3.44x(conv1d 0.777→shifted 0.226 ms/call),eager 0.61x(反而慢,只在 torch.compile 下赢);train.py 编译模型体,所以走 compiled regime。end-to-end 7 卡 0.2b 50 步稳态:baseline 71K tok/s/gpu(MFU 30%)vs patched 72K(MFU 30%),约 +1.4%——per-op 3.44x 在一个占 step 极小比例的 op 上,end-to-end 微增。数值与 conv 逐值等价(parity 3e-7),loss 一致(val 5.594 vs 5.602,种子噪声内)。verdict:patched ≥ baseline,ship。",
    "measured": "2026-08-31",
    "source": "runs/p02_sc_base.log, runs/p02_sc_patched.log, bench_short_conv2.py",
    "config": {
@@ -928,7 +928,7 @@
   },
   {
    "id": "eff.ckpt_resume_16h_interval",
-   "value": "Resume equivalence + checkpoint interval for the 16h 30B run (t38, 2026-08-31): kill by SIGKILL at step 40, resume from a 959MB checkpoint (model+opt+step). Resumed loss step50 5.841 vs ref 5.874, step60 5.532 vs ref 5.503 (|\u0394|\u22640.033 nat, within t01 val sd 0.039); lr exact at both steps (1.67e-3, 2.00e-3) \u2014 schedule and Muon momentum continue from the absolute step, not zero. Checkpoint write 4.91s median (cold) for 959MB with optimizer state at d=1024. Recommend --save_every 500 (~15 min, 0.55% of wall, \u226415 min work lost on crash). Floor is ~8 min (491s) to keep write <1%.",
+   "value": "Resume equivalence + checkpoint interval for the 16h 30B run (t38, 2026-08-31): kill by SIGKILL at step 40, resume from a 959MB checkpoint (model+opt+step). Resumed loss step50 5.841 vs ref 5.874, step60 5.532 vs ref 5.503 (|Δ|≤0.033 nat, within t01 val sd 0.039); lr exact at both steps (1.67e-3, 2.00e-3) — schedule and Muon momentum continue from the absolute step, not zero. Checkpoint write 4.91s median (cold) for 959MB with optimizer state at d=1024. Recommend --save_every 500 (~15 min, 0.55% of wall, ≤15 min work lost on crash). Floor is ~8 min (491s) to keep write <1%.",
    "measured": "2026-08-31",
    "source": "runs/t38_ref.log, runs/t38_resume.log, ckpt_cost.py",
    "config": {
@@ -2166,6 +2166,33 @@
     "fixed_GiB_predicted": 2.76
    },
    "uncertainty": "RANK 0 ONLY, so this is a LOWER bound on the worst rank, not an upper one -- the whole log line is is_main and per-rank DDP buckets differ. A lower bound mistaken for an upper bound misleads exactly when headroom is tightest, which is the situation this number will be quoted in. Getting the true max needs every rank to report, which is a further change. Also: 30 steps of this configuration is not the full run -- the real job adds a longer mix, periodic validation batches, and checkpoint-time temporaries, none of which are in this window. 25.59 GiB is the margin for what was measured, not a safety budget for 20B tokens. The step-10 reading spans compilation, so its throughput field is meaningless; its PEAK is still valid, because compile-time allocations are real allocations. The b16+accum2 control reported 36.29 GiB, confirming the field tracks configuration. BOTH arms are rank 0, so the linear model is fitted to lower bounds and the worst rank's line sits above it -- fine at 25.6 GiB of headroom, NOT usable if margin ever narrows below about 10 GiB, at which point every rank has to report. The extrapolations to seq 8192 and batch 64 inherit that, and they also assume activation memory scales with seq exactly as it does with batch, which is untested: attention's quadratic term and the KDA recurrent state need not move together. A post-run line reads `ckpt_w7_b32a1.pt: SKIPPED (OutOfMemoryError...)` and is NOT a training or checkpoint failure: the checkpoint wrote (987 MB at 10:57) and the training side had zero OOMs. What failed is the score_matrix eval that auto-triggers afterwards, on card 0, which is outside this measurement's card set. The message's subject is the scoring, not the save -- it reads like the save failed, and on first reading I took it that way.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.resume_inflates_total_steps",
+   "value": "A resume RAISES total_steps and the run then ends BEFORE reaching it -- no crash, no overrun, no wrap. train.py:2436 computes total_steps from the plan currently in memory, and :2445 adds resume_step back so step numbers stay absolute for the LR schedule. After a resume the plan is TRIMMED to unread rows, so the sum exceeds the original: 19,073 -> 19,101 (resume at 32) -> 19,151 (resume at 83). The increment is NOT resume_step: it is resume_step minus the steps the trim removed (+28 for a 32-step segment, +50 for a 51-step one), because a trimmed plan loses whole rows, not whole steps, and the floor division absorbs the remainder. WHAT HAPPENS AT THE END: the training for-loop at :2508 is bounded by len(Xtr) -- the rows in the plan -- not by total_steps. total_steps only ever appears in `if step >= total_steps: break` (:2581, :2702, :2735), which is an EARLY exit. When the rows run out the loop falls through to the epoch-end validate and the .ep1 checkpoint (:2712-2733); `step >= total_steps` is then FALSE, so the epoch loop would continue, and Cfg.epochs=1 ends it. The run therefore stops ~78 steps short of the number its own log prints, having consumed every row exactly once. Nothing reads past the end of the plan, so the last-steps overrun that would have eaten the supervisor's one resume does not exist.",
+   "measured": "2026-09-02",
+   "source": "train.py:2436,2445,2508,2581,2702,2735",
+   "config": {
+    "run": "p500m_20b_0902",
+    "resumes_observed": [
+     32,
+     83
+    ],
+    "total_steps_sequence": [
+     19073,
+     19101,
+     19151
+    ],
+    "warmdown_start_drift": [
+     17166,
+     17191,
+     17236
+    ],
+    "cost": "warmdown starts 0.41% later after two resumes; monotonic in resume count, not noise",
+    "observed_in": "runs/p500m_20b_0902.log on the pod (WSD JOIN lines at resume 32 and 83); not cited as a source because that log is pod-only and does not resolve from main -- the three total_steps values are restated in this config instead"
+   },
+   "uncertainty": "The end-of-plan path is read from the code, not yet observed -- this run has not reached it. The row-count identity (trimmed plan + consumed = original) is train.py's own comment at :2495-2498, verified against the arithmetic of both observed resumes, not measured row by row.",
    "status": "measured"
   }
  ]

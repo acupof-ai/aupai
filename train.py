@@ -21,6 +21,7 @@ import math
 import multiprocessing as mp
 import random
 import re
+import signal
 import shutil
 import tempfile
 import time
@@ -2466,6 +2467,27 @@ def main():
         )
         _prof.start()
     GOOD_SAVE_INTERVAL = 200
+    # An interrupt writes a checkpoint before it dies. The periodic save is the floor,
+    # not the only line: SIGTERM (container stop, torchrun teardown, an operator's kill)
+    # and SIGINT reach the main thread between bytecodes, so the handler can snapshot
+    # GPU to CPU at the moment it arrives. SIGKILL and a dead node cannot -- for those
+    # the periodic save is all there is, which is why it stays.
+    _step_now = [resume_step]
+
+    def _save_on_interrupt(signum, _frame):
+        if is_main:
+            p = ckpt_path + f".interrupt.step{_step_now[0]}"
+            try:
+                save_checkpoint(p, {k: v.cpu() for k, v in raw_model.state_dict().items()},
+                                Cfg, VOCAB_ID, opt_snapshot(optimizers), _step_now[0])
+                print(f"interrupt (signal {signum}): saved {p}", flush=True)
+            except Exception as e:
+                print(f"interrupt (signal {signum}): SAVE FAILED {type(e).__name__}: {e}", flush=True)
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    signal.signal(signal.SIGTERM, _save_on_interrupt)
+    signal.signal(signal.SIGINT, _save_on_interrupt)
+
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
@@ -2596,6 +2618,13 @@ def main():
                     _prof.step()
                 # Refresh the rollback buffer on the finer of the two cadences so a save
                 # never writes a stale snapshot (save_every can be < GOOD_SAVE_INTERVAL).
+                # EVERY rank, not just rank 0: the NaN rollback below loads good_state
+                # unguarded, so a rank whose buffer never refreshed would restore itself to
+                # initialisation while rank 0 restored a real step, and DDP synchronises
+                # gradients, not parameters -- the divergence would not heal and would not
+                # raise. Folding this into the is_main save reopened exactly that (tilerl,
+                # 2026-09-02, caught before it ran).
+                _step_now[0] = step
                 if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)

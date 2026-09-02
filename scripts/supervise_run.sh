@@ -1,0 +1,110 @@
+#!/bin/bash
+# Relaunch a training run ONCE if it crashes. The auto-resume that `harness launch`
+# provides, for a run that cannot go through `harness launch`.
+#
+#   setsid nohup bash scripts/supervise_run.sh <name> -- <command...> &
+#
+# WHY THIS EXISTS. --auto-resume lives in harness.py's _supervise (:9315) and needs a
+# live parent to reap the exit code. The 500M launch had to bypass `harness launch`
+# entirely, because _allocation_cards (:8829) reads the six-point ladder's frozen
+# config and would have forced world=7 onto a run that is not a ladder point. That
+# bypass was correct and it silently took auto-resume with it: the run went 40 minutes
+# with no supervisor while its own gate test had proven resume works (fb, 2026-09-02).
+#
+# ONE RESUME, NEVER MORE. train.py:2308 sets _plan_step_origin = resume_step and :1386
+# computes the row cursor as (step - origin) * batch * accum, so the cursor is
+# per-segment: it describes rows drawn since THIS resume, not since the start. A second
+# resume re-reads what the first one already trained on -- 10,240 rows at this shape --
+# and no test has ever covered it. Exhausted is a stop, not a third attempt.
+set -u
+
+NAME="${1:?usage: supervise_run.sh <name> -- <command...>}"
+shift
+[ "${1:-}" = "--" ] || { echo "usage: supervise_run.sh <name> -- <command...>" >&2; exit 2; }
+shift
+[ $# -gt 0 ] || { echo "no command given after --" >&2; exit 2; }
+
+ROOT="${SUPERVISE_ROOT:-/work/aupai}"
+cd "$ROOT" || exit 1
+LOG="runs/${NAME}.supervisor.log"
+
+say() { echo "[supervisor $(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
+
+# The newest resumable checkpoint, whichever kind wrote it. Two names exist:
+# ckpt_<name>.pt.step<N> from the periodic save, and ckpt_<name>.pt.interrupt.step<N>
+# from train.py's SIGTERM handler. The interrupt file is by construction the NEWEST
+# thing on disk when a signal arrives -- it is written at the step the signal hit, after
+# the last periodic save -- so a glob that only matched `.pt.step*` would skip it and
+# resume from up to save_every steps earlier, silently discarding the save whose whole
+# purpose was to not lose them (fb predicted this shape; confirmed by glob before the
+# acceptance test ran).
+#
+# Sorted numerically on the trailing step, not lexically: .step9000 sorts above
+# .step10000 as a string, and resuming from the older one silently discards real
+# training. Ties (a periodic and an interrupt save at the same step) go to the interrupt
+# file, which is the later write.
+latest_ckpt() {
+  ls -1 "ckpt_${NAME}.pt.step"* "ckpt_${NAME}.pt.interrupt.step"* 2>/dev/null \
+    | sed 's/.*\.step\([0-9]*\)$/\1 &/' | sort -k1,1n -k2,2 | tail -1 | cut -d' ' -f2-
+}
+
+say "watching: $*"
+"$@" &
+CHILD=$!
+say "child pid $CHILD"
+wait $CHILD
+rc=$?
+
+if [ $rc -eq 0 ]; then
+  say "exit 0 -- clean finish, nothing to resume"
+  exit 0
+fi
+
+# 42 is train.py's reserved kill-criterion exit: a deliberate abort (NaN, kill
+# criterion), not a crash. Resuming it would relaunch into the condition that stopped it.
+if [ $rc -eq 42 ]; then
+  say "exit 42 -- deliberate stop (kill criterion), NOT resuming"
+  exit 42
+fi
+
+CKPT=$(latest_ckpt)
+if [ -z "$CKPT" ]; then
+  say "exit $rc -- no ckpt_${NAME}.pt.stepN exists, crashed before the first save. NOT resuming."
+  exit $rc
+fi
+
+# A checkpoint still being written is a truncated file, and resuming from it reads as a
+# corrupt-resume failure with the wrong cause. Two identical sizes 5s apart is the save
+# having finished, whatever the disk was doing (the same wait prove_resume.sh uses).
+# `wc -c`, not `stat -c %s`: -c is GNU-only, and on a BSD stat it fails into `|| echo 0`,
+# where a size that is never non-zero never satisfies the break -- the wait then burns its
+# full 5 minutes and resumes anyway, silently. Measured on this Mac before it shipped.
+prev=-1
+for _ in $(seq 1 60); do
+  sz=$(wc -c < "$CKPT" 2>/dev/null | tr -d ' ' || echo 0)
+  [ "$sz" = "$prev" ] && [ "${sz:-0}" != "0" ] && break
+  prev=$sz
+  sleep 5
+done
+
+say "exit $rc -- resuming ONCE from $CKPT ($prev bytes)"
+
+# Copy the crash scene before the resume writes into the same log. stdout here is a
+# plain O_WRONLY fd the resumed child inherits, so it does not truncate -- but train.py's
+# RunLog reopens the same path in append mode, two writers on one file, and the resumed
+# run's output interleaves with the dead one's traceback. `cp`, not `mv`: moving the file
+# out from under the inherited fd leaves the child writing to an unlinked inode, and the
+# live log goes empty. The step-83 scene survived only because a person remembered to
+# archive it by hand; this is that memory made structural.
+DIED="runs/${NAME}.log.died_$(date -u +%Y%m%dT%H%M%SZ)"
+cp "runs/${NAME}.log" "$DIED" 2>/dev/null && say "crash scene archived: $DIED"
+
+sleep 30   # let the dead ranks release their cards before eight more ask for them
+
+"$@" --resume "$CKPT" &
+CHILD=$!
+say "resumed child pid $CHILD"
+wait $CHILD
+rc2=$?
+say "exit $rc2 after one resume -- auto-resume exhausted, no further attempt"
+exit $rc2
