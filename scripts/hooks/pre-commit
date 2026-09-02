@@ -392,6 +392,12 @@ def main():
         # tokenizer -- it builds a fixture transcript and asserts the turn shape,
         # format_agentic's contract, and that the redaction leaves no username.
         "scripts/build_agentic_sft.py",
+        # The control comparison (Pythia-160m vs ours on one shared pack). Both run
+        # cardless: the builder's selftest uses a temp-dir fixture, and the trainer's
+        # asserts its LR schedule equals train.lr_mult, its mask, and that the stop token
+        # lands in the supervised half -- none of which touch a model or a card.
+        "datagen/build_control_sft_text.py",
+        "scripts/sft_hf_control.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
