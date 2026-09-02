@@ -355,6 +355,10 @@ def main():
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
         # truncate a solution. All four verified red on their broken worlds.
         "eval/humaneval_bpb.py",
+        # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
+        # first-token exclusion via chunk-invariance and the decode round-trip measure that
+        # certifies both arms score the same bytes. Four broken worlds verified red.
+        "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
