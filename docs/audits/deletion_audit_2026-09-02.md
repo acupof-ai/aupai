@@ -269,6 +269,56 @@ Dead code: `_broken_agents_rules_unmapped` (`:931`, 13 L) is referenced only by 
 
 (a) merging overlapping checks: 59 → 47 checks, **≈ 330 lines** including their tuples and worlds. Every merged entry keeps one `broken()` that FAILs; all pairs admit a single world carrying both defects. Renames propagate to `EVIDENCE` 6222, `_CHECK_TIMEOUTS` 55, `_RULE_CHECKS` 149, `STAGES`, and the AGENTS.md coverage table — `agents_rules_covered` FAILs until done, which is the guard working.
 
+**4b correction, measured 2026-09-02 (de). Not done: the merge is ≈94 lines at best, not 330, and three of the reasons are structural rather than arithmetic.**
+
+1. **The base predates de-12, so one row is already collected.** This audit reads main
+   `0622878`; `git merge-base --is-ancestor 34acbb9 0622878` is false, and `34acbb9` is
+   "harness: one tree walker for curl_ipv4 and timestamps_are_utc". The 20-line duplicate
+   walk at 1109–1120 ≡ 1139–1150 is gone: both call `walk_tracked` (`:1122`, `:1145`), and
+   the whole file now holds **2** `os.walk` sites — that helper and the selftest's
+   repo-real-path guard. The "five hand-written populations for repo python files" row is
+   resolved; counting its 30 lines again would book one deletion twice.
+
+2. **Two candidate merges straddle the repo/pod authority split and cannot be merged at
+   all.** `CHECK_AUTHORITY` (`:6280`) separates checks whose evidence is in git (answers on
+   main) from those whose evidence exists only on the training box:
+
+   | candidate | authorities |
+   |---|---|
+   | default mix | `mix_not_unfiltered`=repo, `mix_shards_present`=**pod** |
+   | running rows | `no_stale_running`=repo, `no_ghost_running`=**pod** |
+
+   A merged check carries one authority. Give it repo and a pod-only artifact gets judged on
+   a Mac; give it pod and a rule whose evidence is in git stops answering on main. The
+   summary line "green here is not green on the pod" is exactly this split, so these two
+   pairs are not a size question.
+
+3. **Four candidates cannot be proved on a dev box, and proving them is the acceptance
+   condition.** The rule (fb) is that each folded rule must still be shown to FAIL on its
+   own after the merge. Here `ckpt header` and `tokenizer` both SKIP (no checkpoint;
+   `data/tokenizer.json` is gitignored, and `_broken_tokenizer` raises `SelftestSkip`), and
+   `corpus stamp` is pod-authority. Merging them here would record "cannot show" as
+   "verified".
+
+   Ceiling after removing the three: **≈94 lines** across `git tree`, `tasks rows` and
+   `AGENTS.md` — and 237, the all-ten figure, assumes a merged function costs nothing, while
+   `tasks rows` needs a (row-scope, field, validator) table and this audit's own text notes
+   the `corpus stamp` trio's SKIP rules differ three ways.
+
+   The direction is also wrong. `CHECKS` holds one `broken()` per row, so a check with two
+   independent failure modes cannot register both — `agents_rules_covered` needed 20 lines
+   of explicit post-loop wiring for its second world (`72ebbce`). Merging two checks makes
+   two rules share one world, tightening the constraint that just had to be worked around.
+
+**4a correction (de).** Both "dead code" calls in 4a are wrong, and the shape is worth
+naming: reachability is not usefulness. `_broken_agents_rules_unmapped` (:931) FAILs the
+check with "1 rule(s) map to neither a check nor a manual reason", a defect the registered
+world cannot produce; it was unreachable because CHECKS holds one world per row, not because
+it was dead, and it is now wired in. `_broken_spawned_scripts_importable` is called at
+`:7897`, not "only from `_demo`". **An unwired broken world is a check somebody finished
+writing and nobody ran; under grep it is identical to dead code.** Before deleting anything
+shaped like `test_*` or `_broken_*` from 1a's 21 files, run it and see whether it FAILs.
+
 ### 4c. `_broken_*` worlds — 1,125 lines
 
 | setup pattern | n | worlds (line) |
@@ -306,6 +356,25 @@ Composition: 59 `def` + 188 docstring + 45 comment + 39 blank + **331 setup boil
 
 ≈ **110 lines** by one `_jsonl`/`_fold`, deleting `experiments()` for `_exp_events`, `exp.now()`, one `_git`.
 
+**4d correction, measured 2026-09-02 (de). Not done: ≈4 lines, not 110.** The duplication is
+real and it is almost all *inline expressions*, which cost tokens rather than lines:
+
+| claim | measured | lines a fix saves |
+|---|---|---:|
+| 12 `strftime(gmtime)` literals duplicating `exp.now()` | 11 exact matches, **every one inline** inside a dict literal or call argument | 0 |
+| harness shells out to `exp.py` 12× instead of importing | 10 sites, all `start`/`done` **writes** | 0 (importing changes failure semantics, not size) |
+| local `git(*a)` at 8 sites → one `_git(root, *a)` | 4 definitions; exactly 2 byte-identical (`:1965`, `:2041`, 4 lines each, inside `merge_reverted_content` and `merge_took_one_side`); `:6365` returns `None` not `""`, `:6984` takes `cwd=` and returns the CompletedProcess | 4 |
+
+Replacing an inline `time.strftime(...)` with `exp.now()` shortens a line and removes none:
+zero of the 11 sites is a standalone statement. Deleting `experiments()` in favour of
+`_exp_events` is a behaviour change (weak last-wins vs terminal-wins fold), which the entry
+itself notes `ledger`/`gaps`/`recorded_scores` still depend on — a fold swap under three
+readers is not a line-count item. The two identical `git` helpers net 4 lines and sit inside
+the two merge-safety functions; that is not a trade worth making on this code.
+
+The general point for the other sections' figures: a repeated *expression* and a repeated
+*block* both read as duplication in a grep, and only the second is lines.
+
 ### 4e. Subcommands that are not checks
 
 | verb | lines | wraps | citations outside harness.py (`grep -rn -E 'harness(\.py)? +<verb>\b'`) | ruling |
@@ -332,8 +401,8 @@ Composition: 59 `def` + 188 docstring + 45 comment + 39 blank + **331 setup boil
 |---|---:|---|
 | delete `clean` only (**not** `stages`/`gaps`/`ledger` — see 4g note) | 104 measured | none (not a check); remove its `sys.argv[1]` dispatch, keep the `clean` PIPELINE step at `:8668`, which is `clean_corpus.py` and unrelated |
 | (b) world builder + dead world | 47 measured (not 205) | skipped by ruling: 47 lines against each world's self-evidence |
-| (a) merge 12 → 6 checks + stamp trio 3 → 1 | ~330 | one `broken()` per merged entry, FAILs on each folded rule; propagate names to `EVIDENCE`, `_CHECK_TIMEOUTS`, `_RULE_CHECKS`, `STAGES`, AGENTS.md coverage table |
-| one `_jsonl`/`_fold`, `_git`, `exp.now`, `cfp._shard_line`, `pod_drift.sha_disk` | ~140 | `_selftest_exp_fold` 7492 already covers the fold |
+| (a) merge 12 → 6 checks + stamp trio 3 → 1 | ≈94 measured ceiling (not 330); **not done** | see 4b correction: one row already collected by de-12, two pairs straddle repo/pod authority, four unprovable on a dev box |
+| one `_jsonl`/`_fold`, `_git`, `exp.now`, `cfp._shard_line`, `pod_drift.sha_disk` | 4 measured (not 140); **not done** | see 4d correction: 11 of the 12 duplicates are inline expressions, which cost no lines |
 
 **4g note, measured 2026-09-02 (de, corrects this table's first two rows).**
 `stages`, `gaps` and `ledger` are NOT dead surface and were not deleted. They run under
@@ -440,7 +509,7 @@ Eight e1 docs, 678 lines, one hypothesis chain, one day (2026-09-01), identical 
 | 4 | One-shot probes whose number is already a fact (§2b, 24 more probes after item 3) — retire each fact `source` to `probes/<f>@<sha>`, delete `padshim.py` (retracted fact) and `t7_attest_path.py` first | 2,994 | 44 | `harness check` (`probe_numbers_unique`, `selftests_are_gated` after editing the hook map, `fact_refs_resolve`) |
 | 5 | Hook-only tests + eval with no runner (§1b): six `scripts/test_*.py` into CI or gone (561); `score_code_exec.py` + `code_l0prime.py` wired into `score_matrix.py` or gone (691); `stale_claims.py`, `audit_population_universals.py`, `read_lr_probe.py` (442) | 1,694 | de (scripts), 44 (eval) | `harness check` `selftests_are_gated` after removing the map lines; CI if tests are added |
 | 6 | Helper dedup (§3): MC suite → `load_items` + `run_eval` table (350), `iter_jsonl` in `loader.py` (320), hash → `corpus_fingerprint` (55), argparse → `loader.add_model_args` (40), 12 AST-identical pairs (165), rest (170) | 1,100 | 44 (eval 400), de (scripts/loader 400), 3b (datagen/mathbank 300) | CI `ruff` + `python scripts/loader.py selftest` + `scripts/test_arch_compat.py`; `eval/score_matrix.py --selftest` for the MC change |
-| 7 | `scripts/harness.py` (§4): delete `clean` (104 measured; `stages`/`gaps`/`ledger` KEPT — they run under the argparse default, see 4g note), 3 redundant `import subprocess` in `_broken_` fns, merge 12 → 6 checks + stamp trio (~330, unmeasured), `_jsonl/_git/exp.now` (~140, unmeasured) | 107 landed of ~890 claimed | de | `python scripts/harness.py --selftest && python scripts/harness.py check`; `agents_rules_covered` after renaming; AGENTS.md Harness table rows edited |
+| 7 | `scripts/harness.py` (§4): delete `clean` (104 measured; `stages`/`gaps`/`ledger` KEPT — they run under the argparse default, see 4g note), 3 redundant `import subprocess` in `_broken_` fns; check merges and helper dedup NOT done, see the 4b and 4d corrections | **−86 landed** of ~890 claimed; the remaining ~800 is not there at these prices | de | `python scripts/harness.py --selftest && python scripts/harness.py check`; `agents_rules_covered` after renaming; AGENTS.md Harness table rows edited |
 | 8 | `bench_eff/` (§2a, 4 trace analyzers, facts-only) — retire `source` to `@sha` | 541 | 44 | `harness check` `facts_well_formed`, `fact_refs_resolve` |
 | 9 | Docs (§6): eight `*_prereg.md` → one `copy_hypothesis_chain.md` with `status: measured` (−160); `architecture_efficiency.md` + `arch_efficiency_plan.md` folded into `arch_efficiency_2x.md` (−200); `incremental_batch_jobs.md` into `sop.md` (−18) | 380 | 44 | `harness check` (`lessons_have_frontmatter`, `fact_refs_resolve`, `doc_commands_exist`); `python scripts/reachability.py > runs/reachability.txt` to un-stale the listing |
 | 10 | `mathbank/` generators (§5, §2e): 27 `math_programs_*` + `run_math_short`/`run_short_sol`/`make_v11*`/`split_bank`/`dist_check`/`vet_programs`/`program_probe`/`*_curriculum`; keep `eval_hard_v2_gen.py` (live: `math_hard_eval_v2_1k.jsonl` ← `eval/math_v2_like.py:43`) | 39,900 (44 % of all Python) | 3b; **user ruling** — deletes the last generator of a frozen corpus whose provenance already records generator+seed | `harness check` (`entrypoints_ran`, `entrypoints_table_present` after editing AGENTS.md:60,76,271; `doc_commands_exist` for `audit_math_corpus.md:102-145`), CI `py_compile mathbank/*.py` (edit `ci.yml:13`), `facts/contamination.json` sources → `@sha`. Fallback if refused: shared `_reg`/`_d`/self-check base = −1,650 (4.7 %) |
