@@ -704,3 +704,13 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 实例二(同一天,更狠):同一个文件的 flash 段在无 flash_attn 的机器上 SKIP。b0-8 把 GatedMLA 搬进 model.py 后,测试 monkeypatch 的 `train.HAS_FA` 不再到达模块——模块读自己的 model.HAS_FA(`GatedMLA.forward.__globals__` 实测指向 model)——于是「fallback」段在 pod 上静默改走 flash 分支,拿 fp32 输入撞 flash 的 dtype 断言,报错行是 test:587 → model.py:170。CI 全程绿,因为 CI 根本不跑这段。b0 修过同一族的 chunk_kda 绑定(注释写明「re-exported SEPARATE binding」),HAS_FA 的四个 patch 点漏了。
 
 规则:环境门控的断言必须把「我没跑」报成可见状态,不是绿;一个断言在唯一执行环境里的结果必须当天拿回仓库(与 §2 合流:只在 pod 发生过的事没发生过)。
+
+## 60. 决定没有和记录做 join:检查对着解析器,没对着事实库(fb 自报,2026-09-02,与 §57 同族)
+
+一个决定有记录在案的否决性事实,而链条上的每道检查都只验证了「格式合法」,没有一道把决定和事实做 join。事实在库里躺了两天,离决定一次 grep 的距离。
+
+实例:p200m_4b 首次启动(11:57Z)用 batch 32 accum 1,首个 backward 全 rank OOM 95.1 GiB——`eff.microbatch_32_oom`(08-31,200M 形状,93.8/95.2 GB)两天前就记了这个配置必 OOM、基线是 b16a2。启动行过了两道检查:e1 核了 argparse(12 个 required flag 齐),44 的 e1-23 review 核了 required flags + grad_ckpt 条件——都只问「能不能跑」,没人问「这个配置是不是已经死过」。fb 自报,行改 b16a2(5342b61),de 重起。
+
+与「记录的值 vs 生效的值」是邻居但不同:那条是写时漂移(记的 X、生效 Y),这条是读时缺席(决定时根本没读记录)。与 §57 同族:机械检查全绿,缺陷在检查单元旁边一格——§57 是数据交付前要人读行,这条是配置决定前要和事实库 join。
+
+规则:写启动行时必须对着 facts/ 里同形状的 OOM/否决记录核一遍;审启动行时 argparse 通过不算过,对着事实库核过才算过。
