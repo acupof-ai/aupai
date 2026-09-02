@@ -76,9 +76,19 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 **一、`forward(x, cu)` → 同形状 `x`。** 残差流进出，形状 `[B, T, d]` 不变。
 **一个新 block 只要满足这条，就能塞进 `HybridLM.blocks` 的任意位置。**
 
-**二、KDA 状态不在接口里，在 `DeltaRecurrence` 内部。** 我查了：整个 train.py 没有
-跨 block 传递 recurrent state 的路径（`self.state` 唯一出现在 `Muon:958`，那是优化器
-动量，不是 KDA）。**所以"位置在 KDA state"这个性质是 block 局部的**——
+**二、KDA 状态不在接口里，在 `DeltaRecurrence` 内部。** 两条证据，一反一正：
+
+- **反向（没有 state 在流动）**：`self.state` 在整个 train.py 只出现在 `Muon:958`，
+  那是优化器动量，不是 KDA。
+- **正向（签名本身不接收也不返回 state）**：`DeltaRecurrence.forward` 的签名是
+  `train.py:313` `def forward(self, x, cu=None)` —— **只有残差流和 doc 边界，没有
+  state 入参**；唯一的 return 在 `train.py:354`
+  `return self.o(out.reshape(B, T, D).to(x.dtype))` —— **只返回一个张量，不返回
+  (out, state) 元组**。一个不接收、不返回 state 的 forward，无法参与跨 block 的
+  状态传递。
+
+**反向证据只能说"我没找到"，正向证据说的是"接口上没有位置放它"。** 这一条是整页的
+作废条件，所以两条都要有（fb 要求，2026-09-02）。**所以"位置在 KDA state"这个性质是 block 局部的**——
 `GatedMLA` 是 NoPE，位置信息由序列里的 KDA 层提供，**但那是通过残差流传的，不是通过
 一个 state 参数**。
 
