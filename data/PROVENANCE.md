@@ -91,6 +91,7 @@ were stages of the pipeline that produced sft_k4.pt, which measured HARMFUL (k5 
 51.2% → sft_k5 44.8% on math-500, p=0.043), and every one is regenerable from
 datagen/fetch_sft_data.py plus datagen/make_mixed.py. Kept: the network-sourced
 downloads (fable5_cot, gsm8k_zh, qwq_mmlu, reasoning, sft_all, sft_all_v2).
+`fable5_cot` cleaned by `datagen/fable5/clean_fable5.py`; `datagen/fable5/analyse_fable5.py` produces its statistical breakdown.
 
 In data/rl: rlvr_math_clean.jsonl (a second clean pass differing from rlvr_clean by
 21 rows) and probe_gens.jsonl (21 MB of raw band-probe generations whose distilled
@@ -159,6 +160,10 @@ records the arithmetic; it is deliberately not applied.
 517 for ±0.80%, and 1,178 for ±0.53%. The whole L3/L4 bank is 943.
 
 ## SFT real-math data work — 2026-08-28 (aupai-3b)
+
+`datagen/prep_math_data.py` produces the workbatch SFT packs (`data/workbatch/school_math_train.jsonl`,
+`gsm8k_zh_train.jsonl`, `coig_50k.jsonl`, consumed by `datagen/prepare_sft_math.py:32-35`) and the
+`data/eval/math_test_500.jsonl` holdout (read by `datagen/holdout.py:21`, `datagen/scan_math_contamination.py:104`).
 
 ### 1. Eval contamination
 Bigram-Jaccard scan (self-validated; methods verified to recall hand-built
