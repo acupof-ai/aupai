@@ -39,14 +39,14 @@ The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_s
 
 | run | config | steps | measured or estimated tok/s/gpu | wall |
 |---|---|---|---|---|
-| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206M, batch 32 accum 1, no grad_ckpt | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
-| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), ~293M, batch 32, grad_ckpt decided by the probe | 5,722 | unmeasured, ~50K | ~4 h |
+| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 32 accum 1, `--no-grad_ckpt` (the 73K baseline's setting) | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
+| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), 293.05M built, batch 32, `--no-grad_ckpt` pending the L18 memory probe (`eff.grad_ckpt_inverts_with_depth`: 2.4x slower at L12, 1.116x at L32, L18 unmeasured) | 5,722 | unmeasured, ~50K | ~4 h |
 
 Order after the stop: merges as listed → a 60-minute throughput sprint on all eight cards with the 200M config (user, 10:07Z: every idle owner works on training speed) → launch the 200M with the sprint's best config → the 300M after it ends. Launch lines, every knob explicit (row 173's omission):
 
 ```
-setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
-setsid nohup bash scripts/supervise_run.sh p300m_6b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_300m_6b.json --name p300m_6b_0902 --dim 1024 --layers 18 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+setsid nohup bash scripts/supervise_run.sh p300m_6b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_300m_6b.json --name p300m_6b_0902 --dim 1024 --layers 18 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
 ```
 
 Sprint split: tilerl profiles (3-step trace, compile on/off, batch 32/64, fla chunk size); b0 reads the trace per block kind and lists the matmuls not on FP8; de measures host side (loader wait, save, val, NCCL share); 3b measures the startup cost of `build_mix` and the token-cache read path for the 4B mix; e1 surveys industry methods with an expected gain and cost per item for this stack (`docs/lessons/throughput_survey.md`); 44 reviews every number's measurement config. Every probe is a `harness launch` row with a hypothesis.
