@@ -115,8 +115,7 @@ def _is_mount(path):
 #: The seven sessions in this round and each one's reviewer. A delivery gets a second
 #: reader who is not its author: the controller review with 44 caught four evidenced
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
-REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl",
-                "3b": "e1", "e1": "3b", "fb": "44"}
+REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl", "3b": "b0", "fb": "44"}
 #: How long a dirty or untracked file may sit before the check names it. ONE constant
 #: for both: they measure the same thing (work parked in a tree others share) and split
 #: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
@@ -6362,7 +6361,7 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
         dur = time.time() - t0
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
-            print(f"  [{state:^4}] {name:<22} {evidence}  ({dur:.1f}s)")
+            print(f"  [{state:^4}] {name:<22} {evidence}  ({dur:.1f}s) auth={EVIDENCE.get(name, '?')}")
             if state in (FAIL, WARN, TIMEOUT):
                 print(f"         asserts: {asserts}")
             if state == FAIL:
@@ -10159,6 +10158,13 @@ def main():
               f"NOT run here: {', '.join(skipped)} -- green here is not green on the pod")
     if warns:
         print(f"\n{len(warns)} non-blocking warning(s) (to-dos, not failures): {', '.join(warns)}")
+    # 44-10: the verdict carries its own authority, so a reader no longer holds the
+    # pod/repo mapping in their head. Green on one side is green only for that side's
+    # checks -- the line above naming what did NOT run is the refusal, this names the
+    # scope of what did.
+    n_pod = sum(1 for v in EVIDENCE.values() if v == "pod")
+    print(f"\nauthority: {len(EVIDENCE) - n_pod} repo checks (green here = green on main), "
+          f"{n_pod} pod checks (green here = green on the pod only)")
     return 0
 
 
