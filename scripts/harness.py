@@ -6031,6 +6031,137 @@ def _broken_dirty_aged():
 _STASH_GRACE_DAYS = 30
 
 
+#: Paths that must not change on main while a training run holds the block. Not "files
+#: that matter" -- files whose content the RUNNING job re-reads or is defined by, so a
+#: change to one makes the live run and the tree describe different experiments.
+_FROZEN_PATHS = (
+    "train.py", "run_ddp.sh", "scripts/supervise_run.sh", "scripts/pod_drift.py",
+    "eval/score_matrix.py", "eval/domain_loss.py", "data/mix_500m.json",
+    "data/tokenizer.json",
+)
+
+
+def _run_holds_the_block(root):
+    """(True, note) while a training run owns the cards, from the allocation file.
+
+    The grant is the state, not `nvidia-smi`: a run between its crash and its resume
+    still owns the block, and the cards read idle for that whole window."""
+    try:
+        with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as f:
+            a = json.load(f)
+    except (OSError, ValueError):
+        return False, "no readable card_assignment.json"
+    if not a.get("launch_block_granted"):
+        return False, "no block grant"
+    if (a.get("next_grant") or {}).get("blocked_on") != "the run itself":
+        return False, "the block is granted but not to a running job"
+    return True, str(a.get("note", ""))[:60]
+
+
+def check_frozen_paths(root):
+    """While a run holds the block, main does not change what the run is made of.
+
+    A commit message saying HOLD binds the person who wrote it, and `git merge` does not
+    read English: da06097 carried "do not merge to main while p500m_20b_0902 is training"
+    in its own first line, and I merged the branch that contained it 40 minutes later
+    (2026-09-02). The revert was clean and that is not the point -- the same mistake with
+    train.py would have made the tree describe a model the running job is not training.
+
+    THE BASELINE IS THE SHA IN THE RUN'S LOG, not the one in its exp row. The exp row is
+    stamped once at `exp start` and never again, so a relaunch leaves it naming code the
+    job stopped executing 36 minutes later: p500m_20b_0902's row says dca9762 while the
+    log's banner and every byte on the pod say cdfa1db. Reading the row made this check
+    FAIL on two files that are byte-identical between main and the pod -- a stale baseline
+    reports drift where there is none, which is worse than not checking, because a red
+    that is always red gets muted.
+
+    The log line is `pod code: <sha> (clean, synced ...)`, written by run_ddp.sh:41 from
+    data/pod_synced_head at launch. CEILING, stated rather than hidden: that log is live
+    on the pod and reaches a git tree only once committed, i.e. after the run, so this is
+    armed where a mid-run edit lands and SKIPs on a Mac meanwhile. No banner: SKIP rather
+    than fall back to the exp row -- that value is available and wrong, and a wrong answer
+    is not better than none.
+
+    # ponytail: banner-scrape, upgrade to a launch-written runs/<name>.base sha when a
+    # second reader needs it."""
+    ok, note = _run_holds_the_block(root)
+    if not ok:
+        return SKIP, f"no run holds the block ({note})"
+    rows = [r for r in (_exp_events(root) or []) if r.get("status") == "running"]
+    base = None
+    for r in reversed(rows):
+        # `pod code: <sha>` is written by run_ddp.sh:41 from data/pod_synced_head at
+        # launch. On the pod that log is live; in a git tree it is there once the log has
+        # been committed, which is after the run ends. So this check is armed on the pod
+        # (where a mid-run edit would actually land) and SKIPs on a Mac until the log
+        # arrives -- stated rather than papered over with the exp row.
+        try:
+            with open(os.path.join(root, "runs", f"{r.get('name')}.log"),
+                      encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    m = re.match(r"pod code: ([0-9a-f]{7,40})\b", ln)
+                    if m:
+                        base = m.group(1)
+                        break
+        except OSError:
+            continue
+        if base:
+            break
+    if not base:
+        return SKIP, ("a run holds the block but no readable run log carries a `pod code:` "
+                      "banner. NOT falling back to the exp row's commit: it is stamped at "
+                      "`exp start` and a relaunch makes it name code the job stopped "
+                      "executing (dca9762 vs the live cdfa1db, 2026-09-02), so it reports "
+                      "drift on files that are byte-identical")
+    r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return FAIL, f"the running row names commit {base}, which is not in this repo"
+    r = subprocess.run(["git", "diff", "--name-only", base, "HEAD", "--", *_FROZEN_PATHS],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, f"git diff failed: {r.stderr.strip()[:80]}"
+    changed = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    if changed:
+        return FAIL, (f"{len(changed)} frozen path(s) changed on main since {base[:7]}, the commit "
+                      f"the running job executes: {', '.join(changed[:4])}")
+    return PASS, f"{len(_FROZEN_PATHS)} frozen paths unchanged since the run's {base[:7]}"
+
+
+def _broken_frozen_paths():
+    """A clone with a block grant, a running exp row naming the base commit, and a later
+    commit touching train.py. Real commits, because the check compares two shas."""
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
+    with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+        json.dump({"launch_block_granted": True, "note": "broken world",
+                   "next_grant": {"blocked_on": "the run itself"}}, f)
+    sp.run(["git", "add", "-A"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", *ident, "commit", "-m", "base"], cwd=d, capture_output=True, env=env)
+    base = sp.run(["git", "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True,
+                  env=env).stdout.strip()
+    # The running row names the commit the job executes -- written after that commit
+    # exists, which is the same order pod_push stamps it in.
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "w") as f:
+        f.write(json.dumps({"started": "2026-09-02 01:03", "name": "brokenworld",
+                            "status": "running", "commit": base, "ended": ""}) + "\n")
+    with open(os.path.join(d, "runs", "brokenworld.log"), "w") as f:
+        f.write(f"pod code: {base} (clean, synced 2026-09-02T00:00:00Z, manifest verified)\n")
+    with open(os.path.join(d, "train.py"), "a") as f:
+        f.write("\n# the change that must not happen mid-run\n")
+    sp.run(["git", "add", "-A"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", *ident, "commit", "-m", "touch a frozen path"], cwd=d,
+           capture_output=True, env=env)
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -6499,6 +6630,13 @@ CHECKS = [
         _broken_untracked_aged,
     ),
     (
+        "frozen_paths",
+        "main does not change what a running job is made of, while it is running",
+        "a HOLD in a commit message binds the person who wrote it; git merge does not read English (da06097)",
+        check_frozen_paths,
+        _broken_frozen_paths,
+    ),
+    (
         "no_shared_stash",
         "the stash stack is empty; it is shared by every worktree in this repo",
         "e1 and b0 each stashed, merged main and popped in the same window -- and each popped the other's entry",
@@ -6552,7 +6690,7 @@ EVIDENCE = {
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo",
+    "no_shared_stash": "repo", "frozen_paths": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
