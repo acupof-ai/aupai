@@ -56,6 +56,24 @@ from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 HOLDOUT_ROWS = 4000  # source lines read from the first shard, packed then truncated to SEQ_CAP
 SEQ_CAP = 64  # sequences per domain: 64 x 4096 = 262K tokens, enough for +-0.01 nat
 
+# Probe for the --selftest pre-flight: real structured text, small enough to ship, long
+# enough that shuffling it must score far worse. The metric is what is tested, not the
+# cache path, so domain text is unnecessary.
+_SELFT_PROBE = [
+    "The sum of the first n positive integers is n(n+1)/2; the proof pairs the smallest "
+    "with the largest, and each pair sums to n+1.",
+    "A prime number has exactly two divisors: one and itself. Two is the only even prime, "
+    "and every composite number factors into primes in exactly one way, up to ordering.",
+    "The derivative of x squared is two x. At x equals three the tangent line has slope "
+    "six, and the area under the curve from zero to three is nine.",
+    "Training loss decreases when the model assigns more probability to the observed "
+    "token; shuffling the tokens destroys the structure the probability is built from.",
+    "A cache stamped with one vocabulary must not be read by a process scoring another: "
+    "every id would be valid, in range, and wrong, and no error would fire.",
+    "The mean of batch means is not the mean of the tokens, because batches carry "
+    "different token counts; the accumulator must sum and divide once at the end.",
+]
+
 
 def val_seqs(domain, tok, cap=SEQ_CAP):
     """The rows train.py actually holds out for this domain, as packed sequences.
@@ -251,6 +269,21 @@ def main():
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     a = ap.parse_args()
 
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from cache_guard import set_vocab_id
+
+    if a.selftest:
+        # Pre-flight known answers, before the mix and cache machinery: this path needs
+        # only the checkpoint, so it runs on a fresh tree. _mix_for and the cache build
+        # below used to run first, so --selftest paid for a full mix it never scored.
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model, cfg = load_checkpoint(a.ckpt[0], device=device, dtype=torch.bfloat16)
+        set_vocab_id(cfg)
+        tok = load_tokenizer(a.tokenizer, cfg)
+        model.eval()
+        ok = selftest(model, tok, _SELFT_PROBE, getattr(cfg, "seq", 4096), device)
+        sys.exit(0 if ok else "selftest failed -- the metric is not measuring")
+
     # The mix is a property of the CHECKPOINT, and this CLI defaulted to the ladder's -- so
     # scoring a non-ladder checkpoint read domain rows for domains it never trained on, and
     # cache_guard refused, correctly, since the seqs fingerprint belongs to another corpus. Fixed
@@ -284,16 +317,17 @@ def main():
     for ck_path in a.ckpt:
         # bf16: the MLA path goes through FlashAttention, which refuses fp32 outright.
         model, cfg = load_checkpoint(ck_path, device=device, dtype=torch.bfloat16)
+        # train.VOCAB_ID for cache_guard, which val_seqs hits per domain below. Without
+        # this the module global stays None, every cache stamp reads as a mismatch with
+        # an empty right side, and the error says "cache dirty" when the process simply
+        # has no fingerprint (score_matrix.py:1086; fb 2026-09-02, caught on ppl.py).
+        set_vocab_id(cfg)
         # load_tokenizer cross-checks size and vocab_id against this cfg and raises on a
         # mismatch. Scoring with the wrong vocabulary is silent noise, so it is checked
         # per checkpoint rather than once for the batch.
         tok = load_tokenizer(a.tokenizer, cfg)
         model.eval()
         seq = getattr(cfg, "seq", 4096)  # cfg is a SimpleNamespace, not a dict
-        if a.selftest:
-            probe = next(iter(cache.values()))
-            if not selftest(model, tok, probe, seq, device):
-                sys.exit("selftest failed -- the numbers below would not be measurements")
         row = {"ckpt": os.path.basename(ck_path), "domains": {}}
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
         for name in cache:
