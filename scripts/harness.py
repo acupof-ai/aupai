@@ -214,6 +214,15 @@ _MANUAL_RULES = {
     "tn exec and ~/bin/pod are two different filesystem views":
         "a fact about the environment; the mistakes it prevents are interactive",
     "cd inside a backgrounded chain stays in it": "a shell fact; no artifact records the mistake",
+    "The pod is frozen from a training launch until that run prints its first step":
+        "the window is bounded by two events in different places -- a launch timestamp on the "
+        "pod and a push from a laptop -- and nothing records the second. pod_drift sees the "
+        "drift that results, which is the consequence; whether a push landed inside someone "
+        "else's startup window is not recoverable from any artifact",
+    "Check a launch line's shape against `facts/efficiency.json` before it reaches a card":
+        "44-20: the check is assigned and not yet written. Both sides ARE static -- the launch "
+        "line's (batch, accum, seq, layers) and the fact store's config blocks -- so this is "
+        "manual only until that lands, not manual by nature",
     "Stage by path, never `git add -A`": "git history cannot show which command staged a commit",
     "Never run `git checkout` / `git restore` on a file you did not write":
         "no record of who wrote an uncommitted change",
@@ -301,7 +310,17 @@ _MANUAL_RULES = {
 #:      checkable half is on the instrument, not the operator -- ETA as a window mean, or
 #:      the per-interval overrun printed beside it -- and that edits train.py, frozen for
 #:      p500m_20b_0902. When that lands, this comes back to 31 or 30.
-_MANUAL_BASELINE = 32
+#: 32 -> 34 (de, 2026-09-02), and both are temporary for stated reasons, not new
+#: unenforceable ground:
+#:   "The pod is frozen from a training launch until that run prints its first step" is
+#:   manual by nature -- the window is bounded by a launch on the pod and a push from a
+#:   laptop, and nothing records the second, so no artifact can say whether a push landed
+#:   inside someone's startup window. This one does not come back down.
+#:   "Check a launch line's shape against facts/efficiency.json" is manual only until
+#:   44-20 lands. Both sides are static -- the launch line's (batch, accum, seq, layers)
+#:   and the fact store's config blocks -- so it is fully checkable; it just is not
+#:   written yet. When 44-20 lands this returns to 33.
+_MANUAL_BASELINE = 34
 
 
 def _norm_rule(text):
