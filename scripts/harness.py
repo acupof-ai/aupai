@@ -156,6 +156,7 @@ _RULE_CHECKS = {
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
     "Check a launch line's shape against `facts/efficiency.json` before it reaches a card": "launch_line_vs_oom_facts",
+    "A fact's source names only checkpoints that still exist": "ckpt_facts_sources_present",
     "setsid, not nohup": "no_foreground_pod_training",
     "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
@@ -1881,6 +1882,179 @@ def _broken_launch_line_oom():
                      r"\g<1>32\g<2>1", text, count=1)
     assert mutated != text, "broken world found no run_ddp.sh --batch 16 --accum 2 line to mutate"
     open(doc, "w").write(mutated)
+    return d
+
+
+def _ckpt_names(text):
+    """Concrete checkpoint filenames named in a fact's source/config text.
+
+    Brace notation `X.pt.step{1500,2000,2500}` is an explicit enumeration and is
+    expanded; everything else is exact-match only. A fact that shortens a name
+    (`ckpt_p200m_4b_0902.pt.step832` for the on-disk `.pt.interrupt.step832`,
+    b0's eff.kda_mla_growth_ratio_l12, 2026-09-02) is a DEFECT IN THE FACT, not
+    something the check resolves away: the absent name FAILs as a dead source.
+    `.pt` is required in the token so ckpt_health.py and friends never match;
+    trailing doc extensions (.jsonl/.txt) are stripped so a citation of a
+    readout sidecar resolves to its checkpoint."""
+    text = re.sub(r"(ckpt_[\w.]+?)\.step\{([\d, ]+)\}",
+                  lambda m: " ".join(f"{m.group(1)}.step{n.strip()}"
+                                     for n in m.group(2).split(",")),
+                  text)
+    names = set()
+    for tok in re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", text):
+        for ext in (".jsonl", ".txt", ".md"):
+            if tok.endswith(ext):
+                tok = tok[: -len(ext)]
+        names.add(tok.rstrip("."))
+    return names
+
+
+def _parse_ckpt_listing(path):
+    """-> (listing_date, keep_set, {candidate: (mtime, section)}).
+
+    KEEP lines carry series shorthand (`X.pt.step2000, .pt.step2500`); a
+    continuation attaches after the bare core OR after the `.pt` boundary, and
+    both readings are kept -- the wrong reading names a file that cannot exist,
+    so over-protection costs nothing and under-protection is the hazard."""
+    keep, cands, date, section = set(), {}, None, "A"
+    for line in open(path, encoding="utf-8").read().splitlines():
+        if line.startswith("# "):
+            m = re.search(r"listed (\d{4}-\d{2}-\d{2} \d{2}:\d{2}Z)", line)
+            if m:
+                date = m.group(1)
+            if re.match(r"# [A-Z]\.", line):
+                section = line[2]
+            if line.startswith("# KEEP"):
+                base = pt = None
+                for item in (s.strip() for s in line.split(",")):
+                    # A claim line separates claims with "; " but shorthand continuations
+                    # with ",", so one item can both continue the previous claim and name
+                    # the next: attach the leading continuation FIRST (old base), then let
+                    # tokens rebase. "NOT kept: X" is an explicit exclusion -- cut it.
+                    kept = item.split("NOT kept")[0]
+                    if item.startswith(".") and base:
+                        cont = re.match(r"[\w.]+", item).group(0)
+                        keep.add(base + cont)
+                        if pt:
+                            keep.add(pt + cont)
+                    toks = re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", kept)
+                    if toks:
+                        for t in toks:
+                            keep.add(t.rstrip("."))
+                        first = toks[0].rstrip(".")
+                        base = re.match(r"ckpt_[\w.]+?(?=\.)", first).group(0)
+                        mm = re.match(r"ckpt_[\w.]+?\.pt", first)
+                        pt = mm.group(0) if mm else None
+            continue
+        m = re.match(r"(\d{4}-\d\d-\d\d_\d\d:\d\d) [\d.]+ (\S+)", line)
+        if m:
+            cands[m.group(2)] = (m.group(1), section)
+    return date, keep, cands
+
+
+def _noted_gone(entry, name):
+    """Whether the entry's uncertainty/boundary already names this checkpoint as
+    deleted/pruned. A stale source with an honest note is a WARN, not a FAIL:
+    b0's eff.kda_mla_growth_ratio_l32 keeps step1500 in its source (provenance) and
+    records the pruning in uncertainty, and that is the right shape. The tail after
+    `.pt` matches the note; tails under 5 chars (`ep1`) must appear in full, since
+    `ep1` is a substring of `step1000` and friends. The gone-word list includes the
+    check's own tier labels (`absent`, `zero`ed, `delet`ion-candidate): a note that
+    says "[absent] -- not in the listing" is speaking this check's language."""
+    note = f"{entry.get('uncertainty') or ''} {entry.get('boundary') or ''}"
+    if not note.strip():
+        return False
+    tail = name.split(".pt", 1)[-1].lstrip(".")
+    named = name in note or (len(tail) >= 5 and tail in note)
+    return bool(named and re.search(
+        r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", note, re.I))
+
+
+def check_ckpt_facts_sources_present(root):
+    """A measured fact whose only recomputable source is a checkpoint that is
+    doomed or gone must be red at write time, not at prune time.
+
+    Three tiers (44 review, fb ruling 2026-09-02):
+    [deletion-candidate] a fact's source/config names a checkpoint on the pod
+    deletion list (runs/pod_ckpt_candidates_*.txt, newest by date) that no KEEP
+    line claims -- eff.kda_mla_growth_ratio_l32's step1500 was pruned with
+    nothing red, and step2000/2500/3000 nearly followed it the same day.
+    [absent] / [zeroed] a fact's source/config names a checkpoint not in the
+    listing -- pruned (step1500), zeroed by the reset (section A), or misnamed
+    (`.pt.step832` vs the on-disk `.pt.interrupt.step832`). FAIL, unless the
+    entry's uncertainty/boundary already names it as gone: then WARN -- the
+    fact is honest about its dead source, and source keeps its provenance.
+    A listing is a snapshot: a checkpoint newer than it reads absent until the
+    listing is refreshed, which the FAIL message says. Only source/config fields
+    are scanned -- a ckpt mentioned in a value or uncertainty is prose, not a
+    source claim. Names match exactly: a fact that shortens a name is a DEFECT
+    IN THE FACT (b0's step832), never resolved away here."""
+    listings = sorted(glob.glob(os.path.join(root, "runs", "pod_ckpt_candidates_*.txt")))
+    if not listings:
+        return FAIL, "no runs/pod_ckpt_candidates_*.txt -- the facts side of this check is empty"
+    date, keep, cands = _parse_ckpt_listing(listings[-1])
+    bad, warned, n_facts = [], [], 0
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            src = str(e.get("source", ""))
+            cfg = e.get("config")
+            if isinstance(cfg, dict):
+                src += " " + json.dumps(cfg, ensure_ascii=False)
+            else:
+                src += " " + str(cfg or "")
+            names = _ckpt_names(src)
+            if not names:
+                continue
+            n_facts += 1
+            fid = e.get("id", os.path.basename(fp))
+            for name in sorted(names):
+                if name in cands:
+                    mtime, section = cands[name]
+                    if name in keep:
+                        continue
+                    if section == "A":
+                        msg = f"[zeroed] {fid} -> {name} (section A, zeroed by the reset)"
+                    else:
+                        msg = f"[deletion-candidate] {fid} -> {name} (candidate {mtime}, not KEEP-claimed)"
+                elif name not in keep:
+                    msg = f"[absent] {fid} -> {name} (not in pod listing {date}; pruned, misnamed, or newer than the snapshot)"
+                else:
+                    continue
+                (warned if _noted_gone(e, name) else bad).append(msg)
+    if bad:
+        both = "; ".join(bad + warned)
+        return FAIL, f"{len(bad)} FAIL + {len(warned)} WARN: fact source(s) name doomed/gone " \
+                     f"checkpoints (listing {date}): {both}"
+    if warned:
+        return WARN, f"{n_facts} fact(s) cite checkpoints; {len(warned)} source(s) name a gone " \
+                     f"checkpoint already disclosed in uncertainty/boundary (listing {date}): " + "; ".join(warned)
+    return PASS, (f"{n_facts} fact(s) cite checkpoints; every name is KEEP-claimed or "
+                  f"resolves against the listing ({date}, {len(cands)} candidates)")
+
+
+def _broken_ckpt_facts_sources():
+    """The real candidates listing with every KEEP line deleted: the checkpoints
+    fb ruled to keep at 14:15Z become unkept deletion candidates, and the facts
+    that cite them must FAIL. runs/ is not linked in a shaped world, so it is
+    copied in first (2.2M) -- the same copy-before-mutate rule as docs/."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)  # _tmp_repo makes an empty runs/ dir
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    assert listings, "broken world found no candidates listing to strip"
+    path = listings[-1]
+    lines = [ln for ln in open(path, encoding="utf-8").read().splitlines()
+             if not ln.startswith("# KEEP")]
+    assert len(lines) < sum(1 for _ in open(path, encoding="utf-8")), \
+        "broken world found no KEEP lines to strip"
+    open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
     return d
 
 
@@ -6597,6 +6771,13 @@ CHECKS = [
         _broken_launch_line_oom,
     ),
     (
+        "ckpt_facts_sources_present",
+        "no fact source/config names a checkpoint on the deletion list unkept, or one absent from the pod listing",
+        "eff.kda_mla_growth_ratio_l32's step1500 source was pruned with nothing red; the same day's list nearly took step2000/2500/3000 too",
+        check_ckpt_facts_sources_present,
+        _broken_ckpt_facts_sources,
+    ),
+    (
         "no_oversized_blob",
         f"no file over {MAX_TRACKED_MB}MB is tracked by git",
         "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
@@ -7057,6 +7238,7 @@ EVIDENCE = {
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo",
     "launch_line_vs_oom_facts": "repo",
+    "ckpt_facts_sources_present": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
