@@ -1,0 +1,313 @@
+#!/usr/bin/env python3
+# restartable: one JSON line per task is appended to --preds as it is scored, and a rerun with
+# the same --preds skips task_ids already there. An interrupt costs the current task only.
+"""HumanEval gold BPB: bits per byte of the 164 canonical solutions, teacher-forced.
+
+    python3 eval/humaneval_bpb.py --ckpt <ckpt.pt>
+    python3 eval/humaneval_bpb.py --ckpt <hf-dir> --hf     # control arm, its own tokenizer
+    python3 eval/humaneval_bpb.py --selftest               # no card, no model
+
+WHY BPB AND NOT pass@k. This is the metric that WORKS at 200M. facts/base_eval.json
+#be.gold_bpb_falls_while_generation_scores_zero measured the split directly: code_500
+generative accuracy sat at 0.0 across a whole checkpoint ladder while gold BPB fell
+monotonically 1.087 -> 0.918. A base model at this scale cannot complete a function body well
+enough to execute, so pass@k is 0 for both arms and 0 == 0 says nothing. The likelihood of the
+REAL solution moves, and it moves before generation does.
+
+WHY PER BYTE. The two arms of the control comparison have different tokenizers (ours vs a
+50,304-entry NeoX BPE), so per-token loss is not comparable between them -- the same text is a
+different number of tokens per side, and whichever tokenizer packs code more tightly wins on a
+per-token metric for a reason unrelated to modelling. UTF-8 bytes are the same on both sides,
+which makes bits/byte the only cross-tokenizer-honest unit here (1e's standing ruling, also
+what eval/lambada_en.py uses).
+
+WHAT IS SCORED. The prompt (signature + docstring) is context and carries NO loss; the
+canonical solution is the target. That split is the whole point: scoring the prompt too would
+mix "can it model a docstring" into a number reported as code modelling, and the prompt is
+several times longer than the solution in most tasks.
+
+NOT A pass@k SUBSTITUTE, and the record says so. BPB says the model assigns the real solution
+higher likelihood; it does not say the model would produce it. Both readings belong in the
+panel, and at 200M only this one has resolution.
+"""
+
+import argparse
+import json
+import math
+import os
+import sys
+
+import torch
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+os.environ.setdefault("FLA_FLASH_KDA", "0")
+
+TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
+DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "humaneval", "humaneval_164.jsonl")
+N_TASKS = 164  # the published set; a short file is a broken download, not a small run
+
+
+def load_tasks(path, limit=None):
+    """(task_id, prompt, canonical_solution) per row, prompt and solution both required.
+
+    A row missing either field is a REFUSAL, not a skip: the denominator of this metric is the
+    task count, and silently scoring 163 of 164 makes two runs incomparable while both look
+    complete.
+    """
+    tasks = []
+    with open(path, encoding="utf-8") as f:
+        for k, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            for field in ("task_id", "prompt", "canonical_solution"):
+                if not r.get(field):
+                    raise ValueError(f"{path} row {k} has no {field!r}; this file cannot be "
+                                     f"scored without it")
+            tasks.append((r["task_id"], r["prompt"], r["canonical_solution"]))
+            if limit and len(tasks) >= limit:
+                break
+    return tasks
+
+
+class OursModel:
+    def __init__(self, ckpt, tok_path, device):
+        from scripts.loader import load_checkpoint, load_tokenizer  # noqa: PLC0415
+
+        self.model, self.cfg = load_checkpoint(ckpt, device=device, dtype=torch.bfloat16)
+        self.tok = load_tokenizer(tok_path, self.cfg)
+        self.device = device
+        self.n_params = sum(p.numel() for p in self.model.parameters())
+
+    def encode(self, s):
+        return self.tok.encode(s, add_special_tokens=False).ids
+
+    def logprobs(self, ids):
+        """log p over the vocabulary at every position, given ids."""
+        x = torch.tensor([ids], device=self.device)
+        with torch.no_grad():
+            out = self.model(x)
+        lg = (out[0] if isinstance(out, tuple) else out)[0].float()
+        return torch.log_softmax(lg, -1)
+
+
+class HFModel:
+    def __init__(self, path, device):
+        from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: PLC0415
+
+        self.tok = AutoTokenizer.from_pretrained(path)
+        # `dtype`, not `torch_dtype` (deprecated in the pod's transformers 5.6.0), and a plain
+        # .to(device) because accelerate is absent so device_map/pipeline are unavailable.
+        self.model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.float32).to(device)
+        self.model.eval()
+        self.device = device
+        # Parameters, never buffers: Pythia-160m carries causal-mask and rotary inv_freq
+        # buffers and counting them gives 212M instead of the real 162,322,944.
+        self.n_params = sum(p.numel() for p in self.model.parameters())
+
+    def encode(self, s):
+        return self.tok.encode(s)
+
+    def logprobs(self, ids):
+        x = torch.tensor([ids], device=self.device)
+        with torch.no_grad():
+            return torch.log_softmax(self.model(x).logits[0].float(), -1)
+
+
+def solution_bpb(m, prompt, solution, max_ctx=2048):
+    """Bits per UTF-8 byte of `solution`, conditioned on `prompt`. None if it does not fit.
+
+    Teacher-forced: one forward over prompt+solution, then sum -log p of each solution token at
+    the position that predicts it. The prompt contributes context and no loss.
+    """
+    p_ids = m.encode(prompt)
+    s_ids = m.encode(solution)
+    if not s_ids:
+        return None, "solution encodes to zero tokens"
+    ids = p_ids + s_ids
+    if len(ids) > max_ctx:
+        # TRUNCATE THE PROMPT, never the solution: the solution is the thing being scored, and
+        # a partial solution's bits are not this metric. Keeping the prompt's TAIL keeps the
+        # signature and the end of the docstring, which is what the solution continues from.
+        keep = max_ctx - len(s_ids)
+        if keep <= 0:
+            return None, f"solution alone is {len(s_ids)} tokens, over the {max_ctx} context"
+        p_ids = p_ids[-keep:]
+        ids = p_ids + s_ids
+    lp = m.logprobs(ids)
+    # Position i's distribution predicts token i+1, so the token at index len(p_ids)+j is
+    # predicted by the row at len(p_ids)+j-1.
+    total = 0.0
+    for j, t in enumerate(s_ids):
+        row = len(p_ids) + j - 1
+        total -= float(lp[row, t])
+    n_bytes = len(solution.encode("utf-8"))
+    if n_bytes == 0:
+        return None, "solution is zero bytes"
+    return total / math.log(2) / n_bytes, None
+
+
+def _selftest():
+    # BPB arithmetic, on a model whose distribution is known exactly. A uniform distribution
+    # over V symbols costs log2(V) bits per token by definition, so a one-token-per-byte
+    # encoder must read exactly log2(V) bits per byte -- the one case where the right answer is
+    # known without a model.
+    class UniformModel:
+        """Every next-token distribution is uniform over `v` ids; one id per byte."""
+        def __init__(self, v):
+            self.v = v
+
+        def encode(self, s):
+            return [b % self.v for b in s.encode("utf-8")]
+
+        def logprobs(self, ids):
+            return torch.full((len(ids), self.v), -math.log(self.v))
+
+    for v in (256, 1024):
+        m = UniformModel(v)
+        bpb, err = solution_bpb(m, "ctx", "abcd")
+        assert err is None, err
+        want = math.log2(v)
+        assert abs(bpb - want) < 1e-6, f"uniform({v}): {bpb} != log2({v}) = {want}"
+
+    # The PROMPT must not enter the number. Same solution, two prompts of very different
+    # length: a uniform model's bpb cannot depend on the context at all.
+    m = UniformModel(256)
+    a, _ = solution_bpb(m, "x", "hello")
+    b, _ = solution_bpb(m, "x" * 500, "hello")
+    assert abs(a - b) < 1e-9, f"prompt length changed the bpb: {a} vs {b}"
+
+    # Multi-byte UTF-8: the divisor is BYTES, not characters. Three-byte characters must give
+    # a third of the per-character figure under a one-token-per-byte encoder.
+    one_byte, _ = solution_bpb(m, "x", "aaa")          # 3 bytes, 3 tokens
+    three_byte, _ = solution_bpb(m, "x", "中")          # 3 bytes, 3 tokens
+    assert abs(one_byte - three_byte) < 1e-9, f"{one_byte} vs {three_byte}"
+
+    # Over-context: the PROMPT is trimmed and the solution survives whole. A solution that
+    # cannot fit at all returns an error rather than a partial score.
+    long_sol = "z" * 40
+    bpb, err = solution_bpb(m, "p" * 500, long_sol, max_ctx=60)
+    assert err is None and bpb is not None, f"should have trimmed the prompt: {err}"
+    bpb, err = solution_bpb(m, "p", "z" * 100, max_ctx=50)
+    assert bpb is None and "over the" in (err or ""), f"expected a refusal, got {bpb} {err}"
+
+    # A row missing a field is a refusal, not a skip.
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as tf:
+        tf.write(json.dumps({"task_id": "t/0", "prompt": "p", "canonical_solution": "s"}) + "\n")
+        tf.write(json.dumps({"task_id": "t/1", "prompt": "p"}) + "\n")
+        bad = tf.name
+    try:
+        try:
+            load_tasks(bad)
+            raise AssertionError("a row with no canonical_solution was accepted")
+        except ValueError as e:
+            assert "canonical_solution" in str(e), e
+    finally:
+        os.unlink(bad)
+
+    print("humaneval_bpb self-test OK: uniform models read exactly log2(V) bits/byte, the "
+          "prompt does not enter the number, the divisor is bytes not characters, an "
+          "over-length prompt is trimmed while the solution never is, and a row missing a "
+          "field refuses")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ckpt", help="our .pt, or an HF directory with --hf")
+    ap.add_argument("--hf", action="store_true", help="control arm: HF format, own tokenizer")
+    ap.add_argument("--data", default=DEFAULT_DATA)
+    ap.add_argument("--tokenizer", default=TOK_PATH)
+    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--limit", type=int, help="first N tasks (smoke test)")
+    ap.add_argument("--max_ctx", type=int, default=2048)
+    ap.add_argument("--preds", help="jsonl, appended per task; rerun resumes from it")
+    ap.add_argument("--out", help="summary json")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args()
+
+    if a.selftest:
+        _selftest()
+        return 0
+    if not a.ckpt:
+        ap.error("--ckpt required (or --selftest)")
+    if not os.path.exists(a.data):
+        sys.exit(f"humaneval data missing: {a.data}")
+
+    tasks = load_tasks(a.data, a.limit)
+    if not a.limit and len(tasks) != N_TASKS:
+        sys.exit(f"{a.data} has {len(tasks)} tasks, expected {N_TASKS}. A short file is a "
+                 f"broken download; scoring it would produce a number that looks like the "
+                 f"published metric and is not.")
+
+    m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
+    print(f"Loaded {a.ckpt}: {m.n_params / 1e6:.2f}M params | tasks {len(tasks)}", flush=True)
+
+    done = {}
+    if a.preds and os.path.exists(a.preds):
+        with open(a.preds, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                done[r["task_id"]] = r
+        print(f"resuming: {len(done)} tasks already in {a.preds}", flush=True)
+
+    vals, errs = [], []
+    for tid, prompt, sol in tasks:
+        r = done.get(tid)
+        if r is None:
+            bpb, err = solution_bpb(m, prompt, sol, a.max_ctx)
+            r = {"task_id": tid, "bpb": bpb, "error": err,
+                 "n_bytes": len(sol.encode("utf-8"))}
+            if a.preds:
+                with open(a.preds, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        if r.get("bpb") is None:
+            errs.append((r["task_id"], r.get("error")))
+        else:
+            vals.append((r["bpb"], r["n_bytes"]))
+
+    if not vals:
+        print("REFUSING: no task produced a number")
+        return 1
+    # TWO means, because they answer different questions and averaging one of them silently
+    # would be a choice nobody could see. The per-task mean weights every task equally; the
+    # byte-weighted mean is the bits/byte of the corpus as one string, which is what "BPB of
+    # HumanEval" normally denotes. They differ when solution lengths differ, and they do.
+    per_task = sum(v for v, _ in vals) / len(vals)
+    tot_bytes = sum(n for _, n in vals)
+    byte_weighted = sum(v * n for v, n in vals) / tot_bytes
+
+    result = {
+        "ckpt": a.ckpt, "hf": a.hf, "n_tasks": len(vals), "n_tasks_total": len(tasks),
+        "n_params": m.n_params,
+        "gold_bpb_per_task_mean": per_task,
+        "gold_bpb_byte_weighted": byte_weighted,
+        "total_solution_bytes": tot_bytes,
+        "errors": [{"task_id": t, "error": e} for t, e in errs],
+        "reading": "bits per UTF-8 byte of the canonical solution, teacher-forced, prompt "
+                   "carries no loss; cross-tokenizer comparable by construction",
+        "boundary": "NOT a pass@k substitute: this says the real solution gets higher "
+                    "likelihood, not that the model would generate it. At 200M pass@k is 0 "
+                    "for both arms (be.gold_bpb_falls_while_generation_scores_zero: code_500 "
+                    "generative 0.0 across a ladder while gold BPB fell 1.087 -> 0.918), so "
+                    "this is the reading with resolution at this scale, and the two numbers "
+                    "must not be read as one.",
+    }
+    if errs:
+        result["boundary"] += (f" {len(errs)} of {len(tasks)} tasks produced no number and are "
+                               f"listed in `errors`; the means are over the rest.")
+    if a.out:
+        os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+        json.dump(result, open(a.out, "w"), ensure_ascii=False, indent=1)
+    print(json.dumps(result, ensure_ascii=False, indent=1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
