@@ -66,7 +66,7 @@ def selftest():
         path = f.name
     try:
         # truncate the stored gen the way code_zh.py did before t28
-        rows = [json.loads(l) for l in open(path)]
+        rows = [json.loads(l) for l in open(path, encoding="utf-8")]
         rows[0]["gen"] = rows[0]["gen"][-300:]
         with open(path, "w") as f:
             for r in rows:
