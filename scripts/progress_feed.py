@@ -24,6 +24,7 @@ import time
 
 STORE = os.path.expanduser("~/.aupai-progress.jsonl")
 STATUS = os.path.expanduser("~/.aupai-status.json")
+CONTROL = os.path.expanduser("~/.aupai-control.json")
 PAGE = os.path.expanduser("~/aupai-progress.html")
 PATROL = os.path.expanduser("~/.aupai-patrol")
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -146,6 +147,22 @@ def _age(opened, now):
     return f"{mins // (60 * 24)}d"
 
 
+def control_section():
+    if not os.path.exists(CONTROL):
+        return ""
+    d = json.load(open(CONTROL, encoding="utf-8"))
+    out = ["<h2>对照实验</h2>",
+           '<div class=head style="border-top-color:#0d9488">',
+           f'<div class=bi>{html.escape(d["title"])}</div>']
+    for r in d["rows"]:
+        pending = "" if r.get("final") else ' <b style="color:#d97706">（待定）</b>'
+        note = f" — {html.escape(r['note'])}" if r.get("note") else ""
+        out.append(f'<div class=su>{html.escape(r["text"])}{pending}{note} '
+                   f'<span style="opacity:.7">{html.escape(r["measured"])} 测</span></div>')
+    out.append("</div>")
+    return "".join(out)
+
+
 def queue_section():
     tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
     roster_p = os.path.join(REPO, "runs", "roster.json")
@@ -259,6 +276,7 @@ def render(rows):
                     parts.append(f'<div class=bar><i style="width:{pct}%;background:{colour}"></i></div>')
                 parts.append(f'<div class=su>{html.escape(c["sub"])}</div>{asof_html}</div>')
             parts.append('</div>')
+    parts.append(control_section())
     parts.append(queue_section())
     rest = rows
     parts.append("<h2>时间线</h2><ol>")
