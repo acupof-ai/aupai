@@ -261,7 +261,7 @@ def _op_class(op_name: str, kernel_cls: str) -> str:
 
 def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
     """Per-class device time, share, ideal time and the ratio."""
-    per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0})
+    per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0, "priced_us": 0.0})
     ops = _shape_index(events)
     counted: set = set()
     spans: list[tuple[float, float]] = []
@@ -333,18 +333,31 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
             rec["unknown"] += 1
         elif first:
             rec["ideal_us"] += ideal
+        # The ratio's NUMERATOR must cover the same kernels as its denominator. Measured time was
+        # accumulated for every kernel while ideal time only for those an op priced, so a class
+        # with unpriced kernels divided ALL of its time by PART of its ideal. MEASURED: gemm
+        # printed 1.36x that way and 1.17x over its priced kernels alone, because 43% of its 3,918
+        # kernels carry no matmul op. That 0.19x is bookkeeping, not room.
+        #
+        # `ideal is not None` is exactly "this kernel's time is covered by a pricing basis": an
+        # op's ideal covers every kernel it launched, and the flag is recomputed per kernel from
+        # the same op, so all of a priced op's kernels count here while its ideal is added once.
+        if ideal is not None:
+            rec["priced_us"] += dur
     wall_us = (tmax - tmin) if (tmin is not None and tmax is not None) else 0.0
     busy_us = _busy_us(spans)
     rows = []
     for cls, r in sorted(per.items(), key=lambda kv: -kv[1]["us"]):
-        covered = r["n"] - r["unknown"]
         rows.append({
             "class": cls,
             "gpu_ms_per_step": r["us"] / 1000.0 / steps,
             "share": r["us"] / sum_us if sum_us else 0.0,
             "kernels": r["n"],
-            "ideal_ms_per_step": (r["ideal_us"] / 1000.0 / steps) if covered else None,
-            "ratio": (r["us"] / r["ideal_us"]) if r["ideal_us"] > 0 else None,
+            "ideal_ms_per_step": (r["ideal_us"] / 1000.0 / steps) if r["ideal_us"] > 0 else None,
+            # measured/ideal over THE SAME kernels. `priced_ms_per_step` is that numerator, printed
+            # beside the ratio so a class whose ratio covers half its time says so.
+            "priced_ms_per_step": r["priced_us"] / 1000.0 / steps,
+            "ratio": (r["priced_us"] / r["ideal_us"]) if r["ideal_us"] > 0 else None,
             "shapes_missing": r["unknown"],
         })
     return {
@@ -359,25 +372,48 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
 
 
 def render(rep: dict) -> str:
-    out = [f"{'class':<18}{'GPU ms/step':>12}{'share':>8}{'ideal ms':>10}"
+    out = [f"{'class':<18}{'GPU ms/step':>12}{'share':>8}{'priced ms':>11}{'ideal ms':>10}"
            f"{'ratio':>8}{'kernels':>9}{'no-shape':>10}"]
     for r in rep["rows"]:
         ideal = f"{r['ideal_ms_per_step']:.2f}" if r["ideal_ms_per_step"] is not None else "-"
-        ratio = f"{r['ratio']:.1f}x" if r["ratio"] is not None else "-"
+        ratio = f"{r['ratio']:.2f}x" if r["ratio"] is not None else "-"
+        priced = f"{r['priced_ms_per_step']:.2f}" if r["ideal_ms_per_step"] is not None else "-"
         out.append(f"{r['class']:<18}{r['gpu_ms_per_step']:>12.2f}{r['share']:>7.1%}"
-                   f"{ideal:>10}{ratio:>8}{r['kernels']:>9}{r['shapes_missing']:>10}")
+                   f"{priced:>11}{ideal:>10}{ratio:>8}{r['kernels']:>9}"
+                   f"{r['shapes_missing']:>10}")
     out.append(f"{'':<18}{'-'*12}")
     out.append(f"{'busy':<18}{rep['busy_ms_per_step']:>12.2f}")
     out.append(f"{'idle (wall-busy)':<18}{rep['idle_ms_per_step']:>12.2f}")
     out.append(f"{'wall':<18}{rep['wall_ms_per_step']:>12.2f}")
-    out.append(f"\nratio = measured / ideal at {rep['precision_assumed']} peak "
-               "(aten::_scaled_mm always at the fp8 peak); 'no-shape' counts kernels with no "
-               "priced ideal: no cpu_op shapes, or a launching op that is not a matmul, whose "
-               "dims do not describe the multiply.")
+    out.append(
+        f"\nratio = priced ms / ideal ms at {rep['precision_assumed']} peak (aten::_scaled_mm "
+        "always at the fp8 peak). BOTH cover the same kernels: 'priced ms' is the measured time of\n"
+        "the kernels an op could price, which is what the ideal is computed over -- dividing a "
+        "class's WHOLE time by a partial ideal read gemm as 1.36x where its priced\nkernels are "
+        "1.17x. 'GPU ms/step' minus 'priced ms' is time with no roofline basis, not time at ratio "
+        "1. 'no-shape' counts the kernels in that gap: no cpu_op\nshapes, or a launching op that "
+        "is not a matmul, whose dims do not describe a multiply."
+    )
     return "\n".join(out)
 
 
 def _selftest() -> None:
+    # PEAK must be THIS pod's measured peak, asserted against literals. Every other case here
+    # computes its expectation FROM PEAK, so all of them move together when PEAK moves and none
+    # can see a wrong peak -- the mutation that swaps in the vendor sheet's 296/148 stayed green
+    # across the whole file. A constant that only ever appears on both sides of an equation is
+    # unguarded by construction. Sources: facts/efficiency.json#eff.fp8_gemm_at_realizable_peak
+    # (279.6 fp8, probes/t59_fp8_peak.py) and #eff.gpu4_peak_flops (137.0/137.3 bf16).
+    assert PEAK["fp8"] == 279.6e12, (
+        f"fp8 peak is {PEAK['fp8'] / 1e12:.1f} TFLOPS; the MEASURED value is 279.6. The H20 sheet's "
+        "296 is 5.5% higher than this silicon reaches, and dividing by it is how a GEMM already at "
+        "100% of the machine reads as 93% with 7% to gain."
+    )
+    assert PEAK["bf16"] == PEAK["fp16"] == 136.7e12, (
+        f"bf16 peak is {PEAK['bf16'] / 1e12:.1f} TFLOPS; the MEASURED value is 136.7, against the "
+        "sheet's 148."
+    )
+    assert HBM_BYTES_PER_S == 4.0e12, "bandwidth is the sheet's 4.0 TB/s, labelled assumed"
     assert classify("nccl:all_reduce") == "nccl"
     assert classify("chunk_kda_fwd_kernel") == "fla_kda"
     assert classify("flash_fwd_kernel") == "flash_mla"
@@ -519,6 +555,59 @@ def _selftest() -> None:
             "args": {"External id": 11}}]
     rows = {r["class"]: r for r in analyse(mix, steps=1)["rows"]}
     assert rows["gemm"]["ratio"] is not None, rows
+
+    # The ratio's numerator and denominator must cover THE SAME kernels. A class with some
+    # unpriced kernels divided ALL its time by PART of its ideal: gemm printed 1.36x that way
+    # where its priced kernels are 1.17x, because 43% of its 3,918 kernels carry no matmul op.
+    # Two GEMM-classified kernels here, one priced at exactly peak and one launched by nothing:
+    # the ratio must read 1.0x over the priced one, not 3.0x over both.
+    part = [{"ph": "X", "cat": "cpu_op", "ts": 0.0, "dur": 1.0, "name": "aten::_scaled_mm",
+             "args": {"External id": 21, "Input Dims": [[100, 100], [100, 100]],
+                      "Input type": ["c10::Float8_e4m3fn", "c10::Float8_e4m3fn"]}},
+            {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "ts": 0.0, "dur": us,
+             "args": {"External id": 21}},
+            {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "ts": us, "dur": 2 * us,
+             "args": {"External id": 22}}]
+    g = next(r for r in analyse(part, steps=1)["rows"] if r["class"] == "gemm")
+    assert g["ratio"] is not None, f"the priced kernel produced no ideal: {g}"
+    assert abs(g["ratio"] - 1.0) < 1e-6, \
+        f"ratio must be priced/ideal, not total/ideal: {g['ratio']:.2f}x over {g}"
+    assert abs(g["priced_ms_per_step"] - us / 1000.0) < 1e-9, g
+    assert g["gpu_ms_per_step"] > g["priced_ms_per_step"], \
+        "the unpriced kernel's time must still be reported in the class total"
+    assert g["shapes_missing"] == 1, g
+
+    # analyse() must go through _width_of, not pick the first recognised type itself. The unit
+    # cases above pass while the call site does the old thing -- a function tested in isolation
+    # and never reached is the same defect as an import with no call site. End to end: an
+    # in-place bf16 add with a leading Scalar, 100 elements, 2 reads + 1 write at 2 bytes.
+    ip = [{"ph": "X", "cat": "cpu_op", "ts": 0.0, "dur": 1.0, "name": "aten::add_",
+           "args": {"External id": 31, "Input Dims": [[10, 10], [10, 10], []],
+                    "Input type": ["c10::BFloat16", "c10::BFloat16", "Scalar"]}},
+          {"ph": "X", "cat": "kernel", "name": "vectorized_elementwise_kernel", "ts": 0.0,
+           "dur": 1.0, "args": {"External id": 31}}]
+    e_row = next(r for r in analyse(ip, steps=1)["rows"])
+    want_ms = 3 * 100 * 2 / HBM_BYTES_PER_S * 1e6 / 1000.0
+    assert e_row["ideal_ms_per_step"] is not None, f"the bf16 width did not resolve: {e_row}"
+    assert abs(e_row["ideal_ms_per_step"] - want_ms) < 1e-12, \
+        f"expected {want_ms} ms for 3x100 bf16 elements, got {e_row['ideal_ms_per_step']}"
+    # A Scalar LEADING the list must not set the width. Same op, Scalar first: same answer.
+    ip[0]["args"]["Input type"] = ["Scalar", "c10::BFloat16", "c10::BFloat16"]
+    e_row2 = next(r for r in analyse(ip, steps=1)["rows"])
+    assert e_row2["ideal_ms_per_step"] == e_row["ideal_ms_per_step"], \
+        f"a leading Scalar changed the width: {e_row2} vs {e_row}"
+
+    # analyse() must REFUSE when the first tensor's dtype is unknown, rather than walking on to a
+    # later operand's. That walk is the general form of the real failure: p200m has 525
+    # aten::mul with ["c10::BFloat16", "double", ...] and 525 aten::div_ with
+    # ["c10::BFloat16", "long int"], where skipping the unrecognised leading name landed on the
+    # 8-byte one and priced 2-byte traffic at 4x. Adding the c10:: names fixes those two cases;
+    # this assertion is what stops the next unrecognised dtype from doing it again.
+    ip[0]["args"]["Input type"] = ["c10::SomeFutureDtype", "double"]
+    e_row3 = next(r for r in analyse(ip, steps=1)["rows"])
+    assert e_row3["ideal_ms_per_step"] is None, \
+        f"an unknown leading dtype borrowed a later operand's width: {e_row3}"
+    assert e_row3["shapes_missing"] == 1, e_row3
     assert rows["other"]["ideal_ms_per_step"] in (None, 0.0), rows
     print("trace_classes selftest OK: classes, A_log split, roofline, idle, join, "
           "matmul-only pricing, per-op precision, opaque KDA names")
