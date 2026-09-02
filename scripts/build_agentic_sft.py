@@ -547,15 +547,37 @@ def token_filter(rows, tok_path, max_tokens=4096):
     return kept, dropped
 
 
-def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
+def build(limit=10000, max_chars=400000, sessions=None, verbose=True):
     """Episodes -> (rows, report). Rows are {"messages": [...], "project": str}.
 
-    max_chars is a CHARACTER pre-filter, not the token limit fb specified. The real bound
-    is 4096 tokens and it cannot be applied on this machine: data/tokenizer.json is
-    gitignored and absent here, so any token count I printed would be a guess dressed as a
-    measurement. 12000 chars is a deliberately loose upper bound (~3 chars/token on this
-    mixed zh/en corpus would put 4096 tokens near 12k chars); the token-exact filter runs
-    where the tokenizer is, and the report says so rather than implying it ran.
+    max_chars IS NOT AN ADMISSION CRITERION. It is a memory ceiling and nothing else: an
+    episode above it would be held in RAM only to be tokenized and dropped, and one
+    subagent transcript alone reached 158,860 chars mean with a long tail. The single exact
+    bound is 4096 TOKENS, applied by token_filter() against the real tokenizer.
+
+    IT USED TO BE ONE (12000), AND THAT IS THE DEFECT THIS FIXES (fb's ruling, 2026-09-02,
+    option C of three). 12000 chars was a stand-in for 4096 tokens written when
+    data/tokenizer.json was absent from this Mac -- a proxy, documented as a proxy, and
+    roughly right on the source it was calibrated against: it dropped 3,600 of 23,701
+    parent-session episodes (15%). On subagent sidecars the same number dropped 1,270 of
+    2,017 (63%), because a subagent dumps whole files into its context and its episodes are
+    40x larger (158,860 chars mean against 3,899). A proxy that answers differently on two
+    sources is not a criterion. So the proxy is retired to a memory ceiling at 400,000
+    chars -- above the largest episode this corpus holds -- and the token filter decides
+    admission for both sources by the same exact rule.
+
+    Over 4096 tokens is still DROPPED, not truncated: truncating an agentic episode cuts a
+    tool loop somewhere, and the cut point would be my choice rather than a measurement.
+
+    WHAT THE PROXY ACTUALLY COST, measured after the ruling and before believing my own
+    argument: 0 of 60 sampled over-12000-char subagent episodes would have fit 4096 tokens.
+    The corpus runs 2.56 chars/token (mixed zh/en, and Chinese is under 2), so 12000 chars
+    is ~4690 tokens -- the proxy sat ABOVE the real bound, not below it, and dropped only
+    episodes the token filter drops anyway. So the 63% was NOT over-dropping and the row
+    count barely moves. The ruling still stands on its own terms: one exact criterion
+    instead of a proxy whose agreement with it was luck, and luck that would break the
+    first time the language mix shifted. A proxy that happens to be conservative is still
+    a second criterion nobody is checking.
     """
     files = sorted(glob.glob(SESSIONS)) if sessions is None else sessions
     rows, rep = [], {"sessions": len(files), "episodes": 0, "kept": 0,
@@ -582,8 +604,8 @@ def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
             msgs = [{"role": m["role"], "content": scrub(m["content"])} for m in msgs]
             n = sum(len(m["content"]) for m in msgs)
             if n > max_chars:
-                rep["dropped"]["over max_chars (token filter pending)"] = \
-                    rep["dropped"].get("over max_chars (token filter pending)", 0) + 1
+                rep["dropped"]["over the memory ceiling (not an admission criterion)"] = \
+                    rep["dropped"].get("over the memory ceiling (not an admission criterion)", 0) + 1
                 continue
             rows.append({"messages": msgs, "project": project})
             rep["kept"] += 1
@@ -994,6 +1016,23 @@ def _selftest():
         fails.append(f"dedupe collapsed {n} episodes that share an opener but answer "
                      "differently -- 'log' is the most common opener in this corpus")
 
+    # 9. max_chars is a MEMORY CEILING, not an admission criterion (fb's ruling, option C).
+    #    Asserted by SIGNATURE DEFAULT, because the way this regresses is someone tightening
+    #    the number back toward a token estimate -- which is what 12000 was, and what made
+    #    the same knob answer 15% on one source and 63% on another.
+    import inspect
+    ceiling = inspect.signature(build).parameters["max_chars"].default
+    if ceiling < 200000:
+        fails.append(f"build()'s max_chars default is {ceiling}, under the 200k floor fb set. "
+                     "Below that it stops being a memory ceiling and starts deciding "
+                     "admission, which only --max-tokens may do")
+    # The ceiling must sit clear of the real bound at this corpus's measured density
+    # (2.56 chars/token, so 4096 tokens is ~10.5k chars). A ceiling anywhere near that is
+    # a token filter wearing a different name.
+    if ceiling < 4 * 4096 * 2.56:
+        fails.append(f"max_chars {ceiling} is within 4x of the 4096-token bound at 2.56 "
+                     "chars/token; it would shadow the exact criterion")
+
     for f in fails:
         print(f"  FAIL {f}")
     print(f"\n{len(fails)} failure(s)")
@@ -1003,8 +1042,10 @@ def _selftest():
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--limit", type=int, default=10000, help="stop after N pairs")
-    ap.add_argument("--max-chars", type=int, default=12000,
-                    help="character pre-filter; the 4096-token filter runs where the tokenizer is")
+    ap.add_argument("--max-chars", type=int, default=400000,
+                    help="MEMORY CEILING, not an admission criterion: above the largest "
+                         "episode this corpus holds. Admission is decided only by "
+                         "--max-tokens against the real tokenizer")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"),
                     help="apply the real 4096-token filter with this tokenizer")
     ap.add_argument("--max-tokens", type=int, default=4096)
