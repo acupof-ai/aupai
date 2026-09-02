@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +44,9 @@ import prepare_sft_math  # noqa: E402
 from holdout import is_holdout  # noqa: E402
 
 OUT_DEFAULT = os.path.join(ROOT, "data", "sft", "control_sft_text.jsonl")
+#: prepare_sft.py:377 uses 42. Same value so this pack's order is drawn the same way as every
+#: other pack in the repo, and the ids below are stable across rebuilds of the same inputs.
+SHUFFLE_SEED = 42
 
 
 def read_pairs(sources, tag, missing):
@@ -165,6 +169,13 @@ def main():
     # The two lists overlap on alpaca_gpt4_zh and coig: dedupe on (question, answer) so a
     # row is not silently weighted twice. Order preserved -- the arms must see the same
     # sequence, and a set would make it depend on hash seeding.
+    # NOTE ON `src`. It records which LIST first yielded the row, not what the row is. The two
+    # lists overlap on more than the two files they obviously share: prepare_sft.SOURCES
+    # already contains school_math_r1_zh.jsonl, which is byte-identical in content to
+    # prepare_sft_math's school_math_train.jsonl. So dedupe keeps the code_general copy and the
+    # tag reads 99.8% code_general / 0.2% math_cot on a pack that is ~37% math word problems by
+    # content (measured on a 6,000-row sample of the built pack, 2026-09-03). Anyone reading
+    # composition off this field will be wrong; read it off the text.
     seen, uniq = set(), []
     for q, ans, tag in rows:
         k = hashlib.sha256((q + "\0" + ans).encode()).digest()
@@ -227,6 +238,21 @@ def main():
         os.replace(part, path)
         return h.hexdigest(), n
 
+    # SHUFFLE before numbering. prepare_sft.py:377 shuffles with seed 42 before packing and
+    # this file did not, so the pack came out source-ordered: 52k alpaca, then 163k coig, then
+    # openo1, with math_cot last. Two consequences, and the second is the expensive one:
+    #
+    #   both arms would train on one source at a time -- an SFT curriculum nobody chose, and
+    #   the last source seen dominates what the model ends up doing
+    #
+    #   the held-out split (every 50th) would be proportional but the TRAINING order would
+    #   differ from every other pack in the repo, so this comparison's numbers would not be
+    #   comparable to be.sft_v3/v4/v5 either
+    #
+    # Seeded and applied HERE, once, so both arms read the same order -- which is what fb
+    # required ("same pack, same order") and what a per-arm shuffle would quietly break.
+    random.seed(SHUFFLE_SEED)
+    random.shuffle(uniq)
     numbered = [(i, q, ans, tag) for i, (q, ans, tag) in enumerate(uniq)]
     held = [r for r in numbered if r[0] % a.holdout_every == 0]
     train = [r for r in numbered if r[0] % a.holdout_every != 0]
