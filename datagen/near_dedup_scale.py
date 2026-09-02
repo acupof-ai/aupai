@@ -1,25 +1,24 @@
 #!/usr/bin/env python3
-# restartable: signatures checkpoint per domain (.sig.npy); an interrupt costs only
-# re-band + re-verify since signed domains reload, never re-hash.
-"""3b-8 FULL (v4): near-dedup report over BOTH pre-train code domains.
+# restartable: signatures checkpoint per domain (.sig.npy); re-run reloads, never re-hashes.
+"""3b-8 FULL (v5): near-dedup report over BOTH pre-train code domains.
 
-fb conditions: Pool<=16 + nice -n 10 + CUDA_VISIBLE_DEVICES=''; per-N-doc progress (counts);
-signatures checkpointed per domain; report states MinHash/LSH params + full-vs-sample + rate + CI.
+fb rule (2026-09-02): near-dup rate by MinHash-J ESTIMATE (est>=th clustering, Wilson CI);
+exact Jaccard only on a RANDOM SAMPLE of est>=0.85 top pairs to verify est≈J (sample size + its
+own CI in the report); the near-threshold band (est in [0.60,0.85), 2,978,812 pairs) is reported
+as a morphological finding, not exact-ranged. Method column: "MinHash-J estimate + top-pair
+exact verify". The 181-min exact-abort decision is kept (fb approved).
 
-Stage A: stream each domain (16-proc Pool) -> MinHash signature -> <domain>.sig.npy + .loc.json.
-Stage B: all-domain LSH banding -> candidate pairs -> coarse MinHash-J estimate (est, elementwise
-sig equality, fast) -> exact Jaccard ONLY on est >= EXACT_FL (0.60; est<0.60 means J is below every
-report floor with margin, MinHash est std ~0.03) -> report thresholds 0.7/0.8/0.9.
-Verify phase is now parallel with LRU per-doc normalised-shingle reuse (same doc in many pairs is
-not re-normalised/re-read; fixes the unbounded-cache RSS blowup) and imap progress + --max_pairs cap.
-
-Reporting: near-dup rate = docs in clustered (>=th) pairs / total; Wilson 95% CI; est<EXACT_FL pairs
-are assumed below every floor (documented in boundary). Read-only; never writes corpus.
+Stage A: 16-proc Pool streaming -> MinHash signature -> <domain>.sig.npy + .loc.json (checkpoint).
+Stage B: all-domain LSH banding -> candidate pairs -> MinHash-J estimate est = elementwise sig
+equality. Per threshold th in {0.7,0.8,0.9}: cluster docs on est>=th edges; rate = clustered/total
+with Wilson 95% CI; cross-domain share; 20 sample pairs. Verify: exact J on a fixed-seed random
+sample of est>=0.85 pairs; report sample n, mean(est-J), and a CI on that. Read-only.
 """
 import argparse
 import glob
 import json
 import os
+import random
 import sys
 import time
 from collections import OrderedDict, defaultdict
@@ -29,20 +28,21 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_corpus as B  # noqa: E402
+from build_corpus import _NORM  # noqa: E402
 import near_dedup_postpass as ND  # noqa: E402
 
 THRESHOLDS = (0.7, 0.8, 0.9)
 PERMS = 96
 BANDS = 12
 BAND_ROWS = PERMS // BANDS
-EXACT_FL = 0.60
+BAND_LO = 0.60
+BAND_HI = 0.85
+VERIFY_N = 200  # top-pair exact-verify sample cap
 
 _GB = None
 _GL = None
-# per-worker LRU: gid -> frozenset of normalised 3-word shingles (reused across pairs)
 _SHL = OrderedDict()
 _SHL_MAX = 20000
-_BYTES = 0
 
 
 def sig_one(shard_path):
@@ -63,16 +63,13 @@ def sig_one(shard_path):
 
 
 def _read_doc(g):
-    global _BYTES
     d = int(np.searchsorted(_GB, g, side="right"))
     local = g - (0 if d == 0 else _GB[d - 1])
     shard, ln = _GL[d][local]
     with open(shard, encoding="utf-8") as f:
         for i, line in enumerate(f):
             if i == ln:
-                txt = json.loads(line).get("content", "")
-                _BYTES += len(txt.encode("utf-8", "replace"))
-                return txt
+                return json.loads(line).get("content", "")
     return ""
 
 
@@ -80,7 +77,10 @@ def _shingles(g):
     if g in _SHL:
         _SHL.move_to_end(g)
         return _SHL[g]
-    sh = frozenset(ND.word_shingles(ND.normalise_code(_read_doc(g))))
+    s = _NORM.sub("", _read_doc(g))
+    # char 5-gram — the SAME shingle the MinHash signature uses (build_corpus.MinHashLSH.signature 168-169),
+    # so exact Jaccard and the est metric measure the SAME J (fb: verify failed on definition mismatch).
+    sh = frozenset(s[i:i + 5] for i in range(max(1, len(s) - 4)))
     _SHL[g] = sh
     if len(_SHL) > _SHL_MAX:
         _SHL.popitem(last=False)
@@ -94,11 +94,7 @@ def _init_verify(g_dom_bound, g_dom_locs):
 
 
 def _exact_jac(pair):
-    global _BYTES
-    u, v = pair
-    _BYTES = 0
-    j = ND.jaccard(_shingles(u), _shingles(v))
-    return j, _BYTES
+    return ND.jaccard(_shingles(pair[0]), _shingles(pair[1]))
 
 
 def main():
@@ -108,7 +104,6 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--ckdir", required=True)
     ap.add_argument("--pool", type=int, default=16)
-    ap.add_argument("--max_pairs", type=int, default=0, help="cap exact-Jaccard pairs (0=unlimited)")
     a = ap.parse_args()
     os.makedirs(a.ckdir, exist_ok=True)
 
@@ -149,7 +144,7 @@ def main():
         for b in range(BANDS):
             BUCKETS[(b, tuple(sig[b * BAND_ROWS:(b + 1) * BAND_ROWS].tolist()))].append(g)
     rr = round(time.perf_counter() - t0)
-    print(f"banded {all_sigs.shape[0]} docs into {len(BUCKETS)} buckets ({rr // 60}m{rr % 60}s)", flush=True)
+    print(f"banded {n} docs into {len(BUCKETS)} buckets ({rr // 60}m{rr % 60}s)", flush=True)
 
     pairs = set()
     for (b, key), ords in BUCKETS.items():
@@ -161,50 +156,21 @@ def main():
                 pairs.add((u, v) if u < v else (v, u))
     pv = np.asarray(sorted(pairs), dtype=np.int64).reshape(-1, 2)
     est = (all_sigs[pv[:, 0]] == all_sigs[pv[:, 1]]).mean(axis=1)
-    exact_pv = pv[est >= EXACT_FL]
     rr = round(time.perf_counter() - t0)
-    print(f"{len(pairs)} candidates, est>={EXACT_FL}: {exact_pv.shape[0]} for exact Jaccard ({rr // 60}m{rr % 60}s)", flush=True)
+    print(f"{len(pairs)} candidates; est band [{BAND_LO},{BAND_HI}): {int(((est >= BAND_LO) & (est < BAND_HI)).sum())} pairs ({rr // 60}m{rr % 60}s)", flush=True)
 
-    scored = {}
-    n_exact = exact_pv.shape[0]
-    if a.max_pairs and n_exact > a.max_pairs:
-        exact_pv = exact_pv[:a.max_pairs]
-        n_exact = exact_pv.shape[0]
-    ETA_CEIL = 7200  # 2h; abort before full verify (fb rule)
-    if exact_pv.size:
-        with Pool(a.pool, initializer=_init_verify, initargs=(dom_bound, dom_locs)) as pool:
-            done = bytes_total = 0
-            probe_t0 = time.perf_counter()
-            probed = False
-            for (u, v), (j, br) in zip(exact_pv.tolist(),
-                                       pool.imap_unordered(_exact_jac, exact_pv.tolist(), chunksize=512)):
-                scored[(int(u), int(v))] = j
-                done += 1
-                bytes_total += br
-                if not probed and done == 10000:
-                    per = (time.perf_counter() - probe_t0) / 10000.0
-                    eta = (n_exact - done) * per
-                    print(f"probe 10k pairs: {per * 1000:.2f} ms/pair, ETA {eta / 60:.1f} min ({eta:.0f}s)", flush=True)
-                    probed = True
-                    if eta > ETA_CEIL:
-                        print(f"ABORT (fb rule): ETA {eta / 60:.1f} min > 2h ceiling; not entering full verify", flush=True)
-                        with open(a.out, "w", encoding="utf-8") as f:
-                            json.dump({"aborted": True, "reason": f"ETA {eta/60:.1f} min > 2h",
-                                       "docs_total": n, "verified_pairs": done}, f, indent=1)
-                        return
-                if done % 200000 == 0:
-                    rr = round(time.perf_counter() - t0)
-                    mb = bytes_total / 1e6
-                    print(f"  exact: {done}/{n_exact} pairs, {mb:.0f} MB read ({rr // 60}m{rr % 60}s)", flush=True)
-        rr = round(time.perf_counter() - t0)
-        print(f"exact Jaccard done: {len(scored)}/{n_exact} pairs, {bytes_total/1e6:.0f} MB ({rr // 60}m{rr % 60}s)", flush=True)
+    def dom_loc(g):
+        d = int(np.searchsorted(dom_bound, g, side="right"))
+        return d, g - (0 if d == 0 else dom_bound[d - 1])
 
     out = {"domains": a.domains, "docs_total": n, "sample": "FULL (all shards)",
-           "method": f"MinHash-LSH n_perm={PERMS} bands={BANDS}({BAND_ROWS}/band) + exact Jaccard on est>={EXACT_FL}",
-           "candidate_pairs": len(pairs), "est_exact": int(exact_pv.shape[0]),
-           "verified_pairs": len(scored), "thresholds": {}}
+           "method": "MinHash-J estimate + top-pair exact verify (n_perm=%d, bands=%d(%d/band), char 5-gram; est and exact use the same shingle, so J is J of that shingle)" % (PERMS, BANDS, BAND_ROWS),
+           "candidate_pairs": len(pairs),
+           "near_threshold_band": {"range": [BAND_LO, BAND_HI], "pairs": int(((est >= BAND_LO) & (est < BAND_HI)).sum())},
+           "thresholds": {}}
     for th in THRESHOLDS:
-        e = [(u, v, j) for (u, v), j in scored.items() if j >= th]
+        emask = est >= th
+        edges = pv[emask]
         parent = list(range(n))
         def find(x):
             while parent[x] != x:
@@ -215,7 +181,7 @@ def main():
             rx, ry = find(x), find(y)
             if rx != ry:
                 parent[max(rx, ry)] = min(rx, ry)
-        for u, v, _ in e:
+        for u, v in edges:
             union(u, v)
         cl = defaultdict(list)
         for i in range(n):
@@ -227,23 +193,44 @@ def main():
         denom = 1 + z * z / n
         p_hat = (rate + z * z / (2 * n)) / denom
         half = z * np.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n)) / denom
-
-        def dom_loc(g):
-            d = int(np.searchsorted(dom_bound, g, side="right"))
-            return d, g - (0 if d == 0 else dom_bound[d - 1])
-
-        cross = sum(1 for u, v, _ in e if dom_loc(u)[0] != dom_loc(v)[0])
-        samples = sorted(e, key=lambda x: -x[2])[:20]
+        cross = sum(1 for u, v in edges if dom_loc(u)[0] != dom_loc(v)[0])
+        samples = sorted([(int(u), int(v), float(e)) for u, v, e in zip(edges[:, 0], edges[:, 1], est[emask])],
+                         key=lambda x: -x[2])[:20]
         out["thresholds"][str(th)] = {
-            "pairs": len(e), "docs_in_clustered_pairs": docs_in,
             "near_dup_rate": round(rate, 6), "rate_ci95": [round(p_hat - half, 6), round(p_hat + half, 6)],
-            "clusters": len(multi), "cross_domain_pairs": cross,
-            "cross_domain_share": round(cross / max(1, len(e)), 4),
+            "docs_in_clustered_pairs": docs_in, "edges": int(emask.sum()), "clusters": len(multi),
+            "cross_domain_pairs": cross, "cross_domain_share": round(cross / max(1, int(emask.sum())), 4),
             "sample_pairs": [
                 {"a": dom_locs[dom_loc(u)[0]][dom_loc(u)[1]][0] + ":" + str(dom_locs[dom_loc(u)[0]][dom_loc(u)[1]][1]),
                  "b": dom_locs[dom_loc(v)[0]][dom_loc(v)[1]][0] + ":" + str(dom_locs[dom_loc(v)[0]][dom_loc(v)[1]][1]),
-                 "j": round(j, 3)} for u, v, j in samples],
+                 "est": round(e, 3)} for u, v, e in samples],
         }
+        rr = round(time.perf_counter() - t0)
+        print(f"  est>=th{th}: rate {rate:.5f} (CI {round(p_hat-half,5)},{round(p_hat+half,5)}), {int(emask.sum())} edges ({rr // 60}m{rr % 60}s)", flush=True)
+
+    # exact verify: random sample of est>=BAND_HI top pairs, fixed seed
+    topmask = est >= BAND_HI
+    top = pv[topmask]
+    top_est = est[topmask]
+    rng = random.Random(3)
+    sample_idx = rng.sample(range(top.shape[0]), min(VERIFY_N, top.shape[0])) if top.shape[0] else []
+    verify = {}
+    if sample_idx:
+        sv = [(int(u), int(v)) for u, v in top[sample_idx].tolist()]
+        with Pool(a.pool, initializer=_init_verify, initargs=(dom_bound, dom_locs)) as pool:
+            jexact = pool.map(_exact_jac, sv, chunksize=16)
+        samp_est = top_est[sample_idx]
+        jex = np.asarray(jexact)
+        diff = (jex - samp_est)
+        mean_diff = float(diff.mean())
+        mae = float(np.abs(diff).mean())
+        sd = float(diff.std(ddof=1)) if diff.size > 1 else 0.0
+        verify = {"sample_n": int(len(sample_idx)), "sample_of": int(top.shape[0]),
+                  "mean_est": float(samp_est.mean()), "mean_exact": float(jex.mean()),
+                  "mean_diff_exact_minus_est": round(mean_diff, 4), "mae": round(mae, 4),
+                  "diff_sd": round(sd, 4), "est_approx_exact": bool(abs(mean_diff) < 0.05)}
+        print(f"verify: n={len(sample_idx)} est>={BAND_HI}, mean est {samp_est.mean():.3f} vs exact {jex.mean():.3f}, mae {mae:.3f}", flush=True)
+    out["exact_verify"] = verify
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     rr = round(time.perf_counter() - t0)

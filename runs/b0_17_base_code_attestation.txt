@@ -1,0 +1,93 @@
+# b0-17 base-code attestation (one-off, until b0-20 makes this mechanical)
+
+b0-17's two untied arms are compared against a base checkpoint they did not train:
+
+    ckpt_ab_shapelr_base.pt        written 2026-09-02 18:19Z on the pod (pod clock is UTC)
+    arms                           launched 2026-09-02 22:06Z and later, same lane (cards 3,4,5,6)
+
+`SKIP_BASE=1` asks the caller to declare four things match -- world size, steps, mix, seed --
+because a base at a different world has a different tokens/step, so the same step number is a
+different token position (this bit A/B (3) vs (2a): world 5 against world 4). All four match:
+
+    world 4 | 500 steps | data/mix_200m_4b.json | seed 42
+
+CODE VERSION IS A FIFTH VARIABLE AND SKIP_BASE DOES NOT COVER IT. Nothing in the launcher, the
+drift gate, or the exp row records which train.py trained the base, so a future reuse could span
+a real change to the training math and no check would fire. b0-20 (pair de) makes this mechanical:
+the launcher writes each arm's train.py+model.py content hash, SKIP_BASE=1 refuses on mismatch,
+and `--allow_base_code_drift` requires naming the diff you read. Until it lands, this file is the
+attestation for b0-17 specifically.
+
+## Which code trained the base
+
+Bounded from both sides, and NEITHER bound is mtime arithmetic:
+
+  lower  2a0096c7 (2026-09-02 16:38Z) -- the commit that ADDED scripts/run_ab_speedrun.sh, and
+         the base is named ckpt_ab_shapelr_base.pt, i.e. it was produced BY this launcher, whose
+         `--name ab_${ARM}_$v` scheme is the only thing that writes that filename. So the base
+         cannot predate the launcher. This is a bound by construction; the 18:19Z mtime agrees
+         with it but is not what establishes it.
+  upper  a46c7bc4 (2026-09-02 19:13Z, "log every cfg field that differs from its default")
+         -- runs/ab_shapelr_base.log has NO `cfg non-default` line, and runs after that commit
+         do. Measured across the five speedrun logs on the pod rather than assumed:
+
+             log                              cfg non-default   per-group lr
+             ab_shapelr_base                        0                0        <- the base
+             ab_shapelr_shapelr                     0                0
+             ab_valueembed_valueembed               1                0
+             ab_untiehead_untiehead                 1               32
+
+         ab_valueembed is the useful row: it has the cfg line but NOT the per-group lr, so it
+         sits between a46c7bc4 (19:13Z) and 4c86dc71 (20:13Z) -- the two format markers bracket
+         runs independently, which is what makes them evidence rather than a coincidence.
+
+  2a0096c7..69d20bab is inside the lower bound's uncertainty, so the base may or may not carry
+  the value_embed code. It does not matter: that diff is `nn.Embedding` and a gate built only
+  `if getattr(cfg, "value_embed", False)`, plus a `_ve` that stays None otherwise. Inert without
+  the flag, which the base did not pass. Checked rather than waved at.
+
+Content hashes (md5 of the file as committed):
+
+    train.py  at 69d20bab  996e89b977c217e7514fd8cc7d4e2ea1
+    model.py  at 69d20bab  2ac7dce912f58bc95ac12e0788d314a0
+    train.py  at 6cee3204  98c31345a7142275b5f9a59b9884b497   <- the arms
+    model.py  at 6cee3204  494055e5c90b0e2aaedaeda5dc9de1bb   <- the arms
+
+## What changed in between, and why the base is still comparable
+
+`git diff 69d20bab HEAD -- train.py model.py`, every non-comment non-logging line classified
+(69d20bab is the tighter end of the bound above; the 2a0096c7..69d20bab window is handled there):
+
+  INERT WITHOUT THE FLAG (b0-17's own wiring, d7f16748)
+    model.py    `if not cfg.untie_head: self.head.weight = self.tok.weight` -- the tie is now
+                conditional. With untie_head False (the base's value, and the default) this is
+                byte-identical behaviour to the unconditional assignment.
+    model.py    tok's pad rows are zeroed too, but only `if self.head.weight is not self.tok.weight`
+                -- unreachable while tied.
+    train.py    the head optimizer group, gated on `untie_head and head_lr > 0`. The base has
+                neither, so build_optimizers returns the same three-or-four groups it always did.
+    train.py    Cfg.untie_head / Cfg.head_lr defaults, and their argparse flags.
+
+  RAISES OR DOES NOTHING (44-12, 6d664023)
+    train.py    the cursor-discard startup refusal. It either raises before step 0 or is a no-op;
+                it cannot alter a step's arithmetic. The base run completed, so it did not raise.
+
+  LOGGING ONLY (a46c7bc4, 4c86dc71)
+    train.py    the `cfg non-default` line; the per-group lr breakdown on the step line. These are
+                what date the base log above.
+
+  SAVE PATH ONLY (de-31, c9011022)
+    train.py    `save_checkpoint(..., opt_snapshot(optimizers), step)` -- the run-end save now
+                carries optimizer state and step. Affects what a checkpoint CONTAINS, not what
+                training computes. Relevant only in that the base predates it, so
+                ckpt_ab_shapelr_base.pt may lack the opt/step fields a resume would want; the
+                arms do not resume from it, they are scored beside it.
+
+NO CHANGE TO THE TRAINING MATH: no optimizer step, no lr schedule, no loss, no data order, no
+masking, no numerics. So the base is a valid A arm for both untied arms.
+
+THIS IS A DIFF I READ, NOT A CHECK THAT RAN. That is precisely the gap b0-20 closes, and the
+reason this file exists rather than a sentence in a commit message: the next person to pass
+SKIP_BASE needs to find the reasoning, not reconstruct it.
+
+Attested by b0 at 6cee3204, for experiment row `ab_untie_head`.
