@@ -47,20 +47,30 @@ WHAT THE WEIGHTS SAY, now with an artifact behind every figure:
     shape are identical -- the control the retracted embedding decomposition lacked (see
     scripts/embed_norm_sdr.py).
 
-  EVERY z DEPENDS ON THE WINDOW, AND THE PAIR ABOVE MIXES TWO. Both statistics were run on both
-  intervals (both rows are in the artifact), and they move in opposite directions:
+  EVERY z DEPENDS ON THE WINDOW, AND NEITHER WINDOW IS UNIFORMLY BETTER. Both statistics were run
+  on both intervals (both rows are in the artifact):
 
                           step832->3500 (n=2668)   step3000->3500 (n=500)
       mixer.o growth              z  -21.9                z -177.4
       mixer.o consistency         z   -7.9                z  -19.3
+      ffn.w2  growth              z   +0.2                z   -1.1
+      ffn.w2  consistency         z   -0.1                z   -1.5
 
-  Growth's z is 8x LARGER on the short window, because over 500 steps the peers cluster to MAD
-  sigma 0.0004 while layer 9 sits at 1.0047; the wide window lets the peers spread. Consistency's
-  z is larger on the short window for the opposite reason: the budget lr*32*n grows linearly
-  while realized displacement does not, so every layer's fraction compresses as n grows. This is
-  the same interval-length dependence that retracted the 1.71x depth term, and it is why the
-  cross-layer comparison is only made at EQUAL n. The figures quoted above are the ones the fact
-  quotes; the equal-n window is where growth's effect is actually largest.
+  Growth is 8x stronger at equal n, because over 500 steps the peers cluster to MAD sigma 0.0004
+  while layer 9 sits at 1.0047; the wide window lets the peers spread. So the -21.9 the fact
+  leads with paid twice: it used the window where the cross-layer comparison is NOT legitimate
+  (unequal n) AND threw away 8x of resolution, both losses in the same direction. Consistency
+  goes the other way -- equal n is stronger there too (-19.3 vs -7.9), but for the opposite
+  reason: the budget lr*32*n grows linearly while realized displacement does not, so the fraction
+  compresses as n grows. NO WINDOW IS CONSISTENTLY STRONGER; the two statistics prefer opposite
+  ends for opposite reasons, which is why a z quoted without its window is unreadable rather than
+  merely imprecise. Same interval-length dependence that retracted the 1.71x depth term.
+
+  ffn.w2 SITS AT ZERO IN BOTH WINDOWS, on both statistics (+0.2, -1.1, -0.1, -1.5). This is what
+  actually rules out "the whole block is changing and mixer.o is just the visible part": one
+  window could not, since a window is exactly what a confound would be free to pick. e1 pointed
+  this out during review, and it is worth more than a larger z -- it eliminates an alternative
+  explanation rather than strengthening the existing one.
 
 So the open question is consequence, not mechanism, which is what b0-16 asks for.
 """
@@ -119,6 +129,15 @@ def mad_sigma(vals, med=None):
 
     MAD and not sd because n=8 and the question is whether ONE layer is an outlier -- an
     outlier inflates sd, so a z against sd is shrunk by the very point being tested.
+
+    THE 1.4826 IS PART OF THE STATISTIC'S NAME HERE, NOT AN IMPLEMENTATION DETAIL. "MAD sigma"
+    without it is a different number by a factor of 1.48, and every z in this file and in
+    eff.l9_branch_split_p200m is divided by it. e1 recomputed all six figures independently and
+    matched to the digit -- with the same constant, which it noted was luck rather than a
+    convention we had agreed. Two people each implementing a named statistic and happening to
+    pick the same convention is the first half of eff.vocab_padding_softmax_defect's sibling
+    failure, where `eval_loss` meant two different things in two arms for a whole round. So the
+    constant is stated wherever the number is quoted.
     """
     m = median(vals) if med is None else med
     return 1.4826 * median([abs(x - m) for x in vals])
@@ -566,10 +585,25 @@ def main():
             s = r[k]
             z = f"{s['z']:+.1f}" if s["z"] is not None else "n/a (zero spread)"
             print(f"{k:22s} layer {s['layer']:.4f}  peer median {s['peer_median']:.4f}  "
-                  f"MAD sigma {s['peer_mad_sigma']:.4f}  z {z}")
+                  f"MAD sigma {s['peer_mad_sigma']:.4f} (1.4826*median|x-med|)  z {z}")
         print(f"\nz is against the WITHIN-RUN CROSS-LAYER spread over n="
               f"{r['mixer_o_growth']['peer_n']} peers, NOT a seed distribution -- one seed, "
-              f"one run.")
+              f"one run. It is also SPECIFIC TO THIS WINDOW (n={r['n']}): growth's z grows as n "
+              f"shrinks (peers cluster) while consistency's shrinks as n grows (the budget "
+              f"lr*ns_norm*n is linear, realized displacement is not), so no window is "
+              f"uniformly stronger and a z quoted without its n is unreadable.")
+        # THE CONTROL TENSOR'S VERDICT, stated rather than left for a reader to assemble from two
+        # runs. "Only mixer.o is involved" is the claim that rules out 'the whole block is moving
+        # and mixer.o is merely the visible part' -- and a single window cannot rule that out,
+        # because a window is exactly what such a confound would be free to pick.
+        ffn_flat = all(abs(r[f"ffn_w2_{k}"]["z"] or 0) < 3 for k in ("growth", "consistency"))
+        print(f"ffn.w2 in THIS window: growth z {r['ffn_w2_growth']['z']:+.1f}, consistency z "
+              f"{r['ffn_w2_consistency']['z']:+.1f} -- "
+              + ("flat, so the anomaly is confined to mixer.o here. Run the OTHER window too: "
+                 "one window cannot exclude 'the whole block is changing'."
+                 if ffn_flat else
+                 "NOT flat. The ffn is moving too, so 'only mixer.o is involved' does not hold "
+                 "in this window and the branch-ratio reading needs restating."))
         if a.out:
             with open(a.out, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(r) + "\n")   # JSONL, like the other two artifacts
