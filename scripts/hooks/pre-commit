@@ -619,6 +619,13 @@ def main():
         # like a dead branch when it is not (upstream grad is exactly 0 at step 0 by
         # construction and recovers at step 1). Pins both halves of that contract.
         "scripts/test_zero_init_out.py",
+        # A/B (4)'s row-norm reading, pre-registered in the exp row: did the VE table buy
+        # something, or did a few frequent rows? Its selftest pins the trap that would have made
+        # the answer meaningless -- value_embed is not the first Embedding drawn from the RNG, so
+        # reproducing it with a bare nn.Embedding under the seed yields tok's init and reports all
+        # 32832 rows moved on a table nobody touched. Also pins that an untouched row keeps norm
+        # ~sqrt(d)=32, so no norm threshold can separate touched from trained. CPU, seconds.
+        "scripts/ve_row_norms.py",
         # A/B (2a)'s arm: an inverted ratio shrinks exactly the matrices the record says to
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
