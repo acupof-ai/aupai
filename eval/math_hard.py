@@ -27,7 +27,7 @@ import fone  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from eval.math_zh import ANS_RE, check_steps  # noqa: E402
 from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
-from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer, prompt_fn  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "synthetic", "math_hard_eval_1k.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -71,6 +71,15 @@ def main():
     a = p.parse_args()
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
+    # The prompt format follows the CHECKPOINT, not this script's habit. A base checkpoint
+    # handed format_prompt's ChatML prefix continues a sequence absent from 168,000 sampled
+    # corpus rows (AGENTS.md:200) rather than answering: 1.6% of generations carried a code
+    # fence under ChatML against 94.4% under 1-shot continuation, same family
+    # (eval/score_code_exec.py:9-31). classify() reads cfg, never the filename.
+    from score_matrix import classify
+
+    _fmt = prompt_fn(classify(cfg, os.path.basename(a.ckpt)))
+    print(f"  prompt format: {_fmt.__name__}", flush=True)
     model = model.to(torch.bfloat16)
     tok = load_tokenizer(a.tokenizer, cfg)
     # A FoNE checkpoint writes numbers as [NUM] carrying a value, so prompt and
@@ -105,7 +114,7 @@ def main():
         out_path = f.name
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
-            texts_in = [format_prompt(r["instruction"]) for r in batch]
+            texts_in = [_fmt(r["instruction"]) for r in batch]
             if fone_on:
                 base, base_v = fone.encode_prompts(texts_in, tok, num_id)
             else:

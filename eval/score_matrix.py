@@ -526,6 +526,36 @@ def selftest():
     assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
     assert classify({"epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "sft"
     assert classify({"epochs": 1}, "ckpt_selftest_no_such_row.pt") == "base"
+
+    # e1-22: a metric a checkpoint type cannot carry must reach `skipped`, never a score.
+    # THE DISPATCH ITSELF, not a copy of it. My first draft reimplemented the four lines
+    # inside this selftest and asserted on the reimplementation -- which stays green while
+    # score() regresses, because the two share no code. A second copy of the logic is a
+    # second thing to keep in step, and the defect being fixed here WAS two lists
+    # disagreeing. So `dispatch` is a module-level function that score() calls, and these
+    # assertions exercise the same object the real path does.
+    #
+    # --metrics code_500 on a base checkpoint: the case that put a ChatML zero into the
+    # ledger as measured. code_500 hands the model <|im_start|>user...assistant, absent
+    # from 168,000 sampled corpus rows (AGENTS.md:200).
+    w, un, sk = dispatch("base", ["code_500"])
+    assert w == [], f"code_500 must not be scored on a base checkpoint, got {w}"
+    assert un == ["code_500"], un
+    assert "code_500" in sk and "REQUESTED" in sk["code_500"], sk
+    # --profile milestone: one list run across every type on purpose. base keeps the two
+    # it can carry and the generative ones are skipped, so the same command works on base
+    # and sft and the record says which metrics each could actually carry.
+    w, un, sk = dispatch("base", PROFILES["milestone"])
+    assert w == ["domain_loss"], f"base milestone should keep only domain_loss, got {w}"
+    assert {"mc_full", "math_500", "code_500", "code_500_v2"} <= set(sk), sk
+    # ...and an sft checkpoint carries the whole milestone list, or this check would be
+    # passing by refusing everything.
+    w, un, sk = dispatch("sft", PROFILES["milestone"])
+    assert w == PROFILES["milestone"], f"sft must carry the full milestone list, got {w}"
+    assert un == [], un
+    # The default path is untouched: no --metrics means APPLIES[kind], all applicable.
+    w, un, _ = dispatch("base", APPLIES["base"])
+    assert w == APPLIES["base"] and un == [], (w, un)
     # the ledger join is the only RL signal: rlvr in the producing command
     with tempfile.TemporaryDirectory() as d:
         log = os.path.join(d, "experiments.jsonl")
@@ -668,15 +698,64 @@ def _pick_card():
     return f"cuda:{best}"
 
 
+def dispatch(kind, requested):
+    """(metrics to score, metrics asked for but impossible, skipped -> reason).
+
+    ONE place decides what a checkpoint type can carry, because the defect this replaces
+    was two lists disagreeing: score() validated a requested metric name against the
+    UNION of all three types (every real name passes) and never against APPLIES[kind], so
+    `--metrics code_500` and `--profile milestone` routed a base checkpoint into the three
+    generative ChatML metrics. Worse, the skip bookkeeping keyed on the requested list, so
+    such a metric was missing from `skipped` -- it had been scored, and its zero entered
+    the ledger as measured. A base checkpoint reads zero on those because the prompt hands
+    it <|im_start|>user...<|im_start|>assistant, a prefix occurring 0 times in 168,000
+    sampled corpus rows (AGENTS.md:200); score_code_exec.py:9-31 measured 1.6% of
+    generations carrying a code fence under ChatML against 94.4% under 1-shot continuation
+    on the same checkpoint family. That zero is a format artifact, not a capability.
+
+    Skipped, never raised: `--profile milestone` is deliberately one list run across every
+    type, and the record is supposed to say which metrics each type could carry.
+
+    A module-level function rather than inline code, so selftest() can exercise the REAL
+    dispatch. My first draft reimplemented these lines inside the selftest and asserted on
+    the copy, which stays green while this regresses -- the exact shape of the bug above.
+    """
+    wanted = [m for m in requested if m in APPLIES[kind]]
+    unusable = [m for m in requested if m not in APPLIES[kind]]
+    skipped = {m: r for m, r in SKIP_REASON.items() if m not in APPLIES[kind]}
+    for m in unusable:
+        skipped[m] = (f"REQUESTED but does not apply to a {kind} checkpoint -- "
+                      + SKIP_REASON.get(m, f"{kind} accepts {APPLIES[kind]}"))
+    return wanted, unusable, skipped
+
+
 def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
-    wanted = metrics if metrics else APPLIES[kind]
+    requested = metrics if metrics else APPLIES[kind]
     known = set().union(*APPLIES.values())
-    bad = [m for m in wanted if m not in known]
+    bad = [m for m in requested if m not in known]
     if bad:
         raise ValueError(f"unknown metrics {bad}; choose from {sorted(known)}")
+    # APPLICABILITY, not just name validity. The check above asks whether a metric name
+    # exists ANYWHERE (the union of all three types), which every real metric name
+    # passes -- so `--metrics code_500` and `--profile milestone` (domain_loss, mc_full,
+    # math_500, code_500, code_500_v2) routed a BASE checkpoint into the three generative
+    # ChatML metrics. Those hand the model <|im_start|>user...<|im_start|>assistant, a
+    # prefix that occurs 0 times in 168,000 sampled corpus rows (AGENTS.md:200), so the
+    # zero they produce measures response to an unseen prefix rather than capability
+    # (score_code_exec.py:9-31: 1.6% of generations carry a fence under ChatML against
+    # 94.4% under 1-shot continuation, same checkpoint family).
+    #
+    # An inapplicable metric goes to `skipped` with its reason -- NOT raised, and not
+    # scored. That is this file's own contract eleven lines into the docstring: "an
+    # inapplicable 0 and a measured 0 must look different in the ledger". Raising would
+    # satisfy the letter of it by refusing to write either, but it also breaks
+    # `--profile milestone`, which is one list deliberately run across every checkpoint
+    # type; the profile's whole purpose is that the same command works on base and sft
+    # and the record says which metrics each could carry.
+    wanted, unusable, preskipped = dispatch(kind, requested)
     print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
@@ -753,9 +832,11 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
                           os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0.8, greedy=False,
                           after="pass_at_k")
 
-    for m, reason in SKIP_REASON.items():
-        if m not in wanted:
-            record["skipped"][m] = reason
+    # dispatch() already decided this, keyed on APPLIES[kind] rather than on `wanted`.
+    # Keying on wanted meant an EXPLICITLY requested inapplicable metric was absent from
+    # `skipped` -- it had been scored, so its ChatML-induced 0 entered the ledger as a
+    # measured value, which is what the docstring above forbids.
+    record["skipped"].update(preskipped)
     return record
 
 
