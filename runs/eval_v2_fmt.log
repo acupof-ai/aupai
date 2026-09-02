@@ -1,0 +1,27 @@
+math-hard: pass@1(greedy) 0.0% (0/1080)
+  L4: p@1 0% (n=1080)
+  avg gen tokens 309 | step-eq wrong 274/512
+OVERALL v2 pass@1 (family-aware): 0.0/1080 = 0.0%
+  stock reward_fn for reference:  0.0/1080 = 0.0%
+  cluster symbolic        : 0.0/660 = 0.0%
+  cluster geometry        : 0.0/180 = 0.0%
+  cluster elementary-gap  : 0.0/240 = 0.0%
+per-family:
+  abs_equation                 0/ 60 =  0.0%
+  cryptarithm                  0/ 60 =  0.0%
+  factorize                    0/ 60 =  0.0%
+  floor_gauss                  0/ 60 =  0.0%
+  fractional_eq                0/ 60 =  0.0%
+  hound_hare                   0/ 60 =  0.0%
+  inverse_prop                 0/ 60 =  0.0%
+  linear_func                  0/ 60 =  0.0%
+  number_array_cross           0/ 60 =  0.0%
+  number_line_moving           0/ 60 =  0.0%
+  perfect_square_pattern       0/ 60 =  0.0%
+  pythagoras                   0/ 60 =  0.0%
+  quadratic                    0/ 60 =  0.0%
+  quadratic_func               0/ 60 =  0.0%
+  right_triangle_3060          0/ 60 =  0.0%
+  similar_triangle             0/ 60 =  0.0%
+  system_2var                  0/ 60 =  0.0%
+  variance                     0/ 60 =  0.0%
