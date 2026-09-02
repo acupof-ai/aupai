@@ -29,6 +29,24 @@ def blob_sha(path):
                           capture_output=True, text=True, check=True).stdout.strip()
 
 
+def source_lines(page):
+    """The train.py the page's numbers describe -- the STAMPED BLOB, not the working tree.
+
+    Once the split lands in the worktree, train.py no longer contains the moved code and every
+    citation reads as broken. That is a true statement about the working tree and a useless one
+    about the page: the numbers were always about the pre-split file, which is exactly what the
+    stamp identifies. So read the blob by sha and keep the working tree out of it.
+    """
+    m = re.search(r"train\.py blob `([0-9a-f]{40})`", page)
+    if not m:
+        return None, None
+    sha = m.group(1)
+    r = subprocess.run(["git", "cat-file", "-p", sha], capture_output=True, text=True)
+    if r.returncode != 0:
+        return sha, None
+    return sha, r.stdout.split("\n")
+
+
 def citations(page):
     """(symbol, line, label) for every citation form the page uses."""
     for sym, a, b in re.findall(r"\| `(\w+)` \| (\d+)-(\d+) \|", page):
@@ -91,15 +109,23 @@ def main():
 
     bad = []
 
-    stamped = re.search(r"train\.py blob `([0-9a-f]{40})`", page)
-    actual = blob_sha(SRC)
-    if not stamped:
-        bad.append("page carries no train.py blob sha -- add one so a reader can tell drift from error")
-    elif stamped.group(1) != actual:
-        bad.append(f"stamp {stamped.group(1)[:12]} != actual {actual[:12]}: "
-                   f"train.py changed since the numbers were verified")
-
-    lines = SRC.read_text().split("\n")
+    sha, lines = source_lines(page)
+    actual = blob_sha(SRC) if SRC.exists() else None
+    if sha is None:
+        bad.append("page carries no train.py blob sha -- add one so a reader can tell drift "
+                   "from error")
+        lines = SRC.read_text().split("\n") if SRC.exists() else []
+    elif lines is None:
+        bad.append(f"stamped blob {sha[:12]} is not in this repository -- the numbers cite a "
+                   f"train.py nobody can read; re-stamp against a blob git holds")
+        lines = []
+    elif sha != actual:
+        # NOT a failure. The split moves the cited code out of train.py by design, so after it
+        # lands the working tree and the stamp differ forever. The page documents the pre-split
+        # file; the stamp is how it says which one. Report the divergence, verify against the
+        # blob (design page §6 step 6 deletes these numbers when the split merges).
+        print(f"note: working train.py is {actual[:12]}, page cites {sha[:12]} -- verifying "
+              f"against the stamped blob, which is the file the numbers describe")
     n_sym = 0
     for sym, line, label in citations(page):
         n_sym += 1
@@ -110,6 +136,32 @@ def main():
         # a definition, or a module-level assignment for constants like SOFTCAP
         if not re.match(rf"^(class|def) {sym}\b", first) and not first.startswith(sym):
             bad.append(f"{sym} {label}: line {line} is {first[:52]!r}")
+            continue
+        if "-" not in label:
+            continue
+        # THE END OF THE RANGE, which this script did not check and should have. The page gave
+        # HybridLM as 732-875 and GatedMLA as 358-414; they end at 862 and 408. Lines 865-873
+        # are the Muon section header plus POLAR_EXPRESS and 411-412 the FP8 header plus
+        # _FP8_MAX_E4M3 -- all belonging to code that STAYS. Both ranges passed here because
+        # 732 and 358 do hold the right definition. A range has two ends; only one was verified,
+        # and the split then moved two constants it must not touch (NameError: POLAR_EXPRESS,
+        # F821 _FP8_MAX_E4M3). Same family as the start-line defect it was written to prevent.
+        end = int(label.split("-")[1])
+        if end > len(lines):
+            bad.append(f"{sym} {label}: end {end} past EOF ({len(lines)} lines)")
+            continue
+        # `_?[A-Z_]{2,}` because the constant this missed is _FP8_MAX_E4M3: the first pattern
+        # demanded a leading capital, so GatedMLA 358-414 passed while swallowing it. A
+        # module-level constant is the exact thing a too-long range takes, and a leading
+        # underscore is the normal spelling for a private one.
+        nxt = next((k for k in range(line, len(lines))
+                    if re.match(r"^(class|def) \w|^_?[A-Z][A-Z0-9_]+ *=", lines[k])),
+                   len(lines))
+        if end > nxt:
+            bad.append(f"{sym} {label}: {sym} ends before line {nxt}, but the range runs to "
+                       f"{end} and so swallows {lines[nxt][:44]!r} -- which belongs to the next "
+                       f"symbol and must not move")
+
 
     quotes = 0
     for line, snip in quoted(page):
@@ -149,12 +201,12 @@ def main():
 
     if bad:
         print(f"FAIL {len(bad)} problem(s) across {n_sym} symbol + {quotes} quoted "
-              f"+ {ranges} range citations (+stamp):", file=sys.stderr)
+              f"+ {ranges} range citations (blob {(sha or actual or '?')[:12]}):", file=sys.stderr)
         for b in bad:
             print(f"  {b}", file=sys.stderr)
         return 1
     print(f"OK {n_sym} symbol + {quotes} quoted + {ranges} range citations verified "
-          f"by content; train.py blob {actual[:12]}")
+          f"by content against train.py blob {(sha or actual)[:12]}")
     return 0
 
 

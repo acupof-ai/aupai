@@ -9,6 +9,10 @@ experiment adds a class here and touches nothing in the training loop.
 DEPENDENCY DIRECTION IS ONE-WAY: this module must never import train. train re-exports
 these names so sft.py, sft_math.py and infer_local.py keep working unchanged.
 
+A re-export cannot be monkey-patched through train: `from model import chunk_kda` binds a
+SEPARATE name, so `train.chunk_kda = stub` does not reach the call sites here, which read this
+module's own globals. Patch model (test_arch_compat does both).
+
 BLOCK CONTRACT (design page §2):
   forward(x, cu) -> x of the same shape; a new block satisfying this drops into any slot of
   HybridLM.blocks. sublayers() is AttnRes's coupling point, and AttnRes raises on None
