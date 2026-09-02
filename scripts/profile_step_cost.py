@@ -170,6 +170,46 @@ def _selftest():
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
 
+    # The cfg handed to torch.save must be a plain dict WITH the dunder keys dropped. Two
+    # separate unpicklables live in a class's vars(): the mappingproxy itself, and the
+    # __dict__/__weakref__ getset_descriptors inside it -- so `dict(vars(cls))` still raises,
+    # and the underscore filter is load-bearing rather than cosmetic. This selftest found that
+    # second layer; the first draft of the fix asserted only dict() and would have shipped a
+    # save that raises exactly as before. train.py:964 does not hit either half because it
+    # already writes {k: v for k, v in cfg.items() if not k.startswith("_")}; copying train.py's
+    # save shape while dropping that comprehension is the whole bug.
+    #
+    # Two halves, because either alone passes for the wrong reason: pickle actually refusing
+    # both forms and accepting the filtered one (the known answer -- if a torch/python version
+    # starts pickling proxies, the hazard is gone and the AST half should be deleted with it),
+    # and main() not passing a bare vars() as the save's cfg (what would regress).
+    import pickle as _pickle
+
+    class _C:
+        a = 1
+
+    def _refuses(obj):
+        try:
+            _pickle.dumps(obj)
+            return False
+        except TypeError:
+            return True
+
+    filtered = {k: v for k, v in dict(vars(_C)).items() if not k.startswith("_")}
+    ok = (_refuses(vars(_C)) and _refuses(dict(vars(_C)))
+          and _pickle.loads(_pickle.dumps(filtered)) == {"a": 1})
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} pickle refuses vars(cls) AND dict(vars(cls)); the "
+          "underscore filter is what makes it picklable"
+          + ("" if ok else " -- the hazard is gone; drop the AST half too"))
+
+    save_cfgs = [d.get("'cfg'") for d in dicts if "'cfg'" in d]
+    ok = bool(save_cfgs) and not any(c.startswith("vars(") or c.startswith("dict(vars(")
+                                     for c in save_cfgs)
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} main() saves a filtered plain dict, not vars(train.Cfg)"
+          + ("" if ok else f" -- cfg is {save_cfgs}; torch.save raises after the run finishes"))
+
     # A step is `accum` micro-batches, not one. The first version ran a single forward per
     # timed step, so step_total did not depend on accum at all -- and the b32a1-vs-b16a2 A/B
     # is a comparison whose ONLY variable is accum, so the b16a2 arm would have reported half
@@ -223,7 +263,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 4 + 2
+    n = 6 + 3 + 2 + 2 + 4 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -428,11 +468,16 @@ def main():
                   f"-> python3 scripts/trace_classes.py {os.path.relpath(trace_path, ROOT)} "
                   f"--steps {a.trace_steps}", flush=True)
 
+    # vars() on a CLASS returns a mappingproxy, which pickle refuses -- train.py never hits
+    # this because train.py:964 passes vars(cfg) through a dict comprehension first. The save
+    # is the LAST thing this script does, so the timings and the trace were already complete
+    # and correct when it raised; the crash cost the record, not the measurement.
+    cfg_dict = {k: v for k, v in dict(vars(train.Cfg)).items() if not k.startswith("_")}
     saves = []
     if is_main:
         for _ in range(3):
             t0 = time.perf_counter()
-            torch.save({"model": raw.state_dict(), "cfg": vars(train.Cfg),
+            torch.save({"model": raw.state_dict(), "cfg": cfg_dict,
                         "opt": [o.state_dict() for o in optimizers]}, "/tmp/_prof_ckpt.pt")
             saves.append(time.perf_counter() - t0)
         os.remove("/tmp/_prof_ckpt.pt")
