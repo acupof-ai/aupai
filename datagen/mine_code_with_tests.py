@@ -6,11 +6,12 @@ de-28's code-execution reward ground truth. Per-pair format (aligned with de-28)
   {repo, impl_path, impl, test_path, tests, passed: true}
 
 Per repo:
-  1. test files by path heuristic (/tests/ or test_|_test stem); impl = the module
-     the test imports under the same name, found by ast-import analysis + stem match.
+  1. test files by path heuristic; impl = a same-repo file whose basename matches a
+     module the test imports (bare or dotted), found by ast-import analysis across
+     the repo's impl-file basenames.
   2. drop pairs importing third-party (sandbox is stdlib-only).
-  3. assemble sandbox blob = impl + module-alias (so `import <mod>` resolves to the
-     inlined impl via sys.modules) + the test.
+  3. assemble sandbox blob = impl + module-alias (sys.modules[mod]=__main__ so the
+     test's imported module resolves to the inlined impl) + the test source.
   4. run_sandboxed(blob); keep iff rc == 0 and the test actually calls unittest asserts.
   5. emit {repo, impl_path, impl, test_path, tests, passed: true}.
 
@@ -34,7 +35,7 @@ THIRD_PARTY = {"numpy", "pandas", "scipy", "sklearn", "torch", "tensorflow", "tq
 
 
 def imports(mod):
-    """Set of all module top-names a test file imports (stdlib + its target)."""
+    """All module names a test imports, with dotted parts (bare 'a' and full 'a.b')."""
     try:
         tree = ast.parse(mod)
     except SyntaxError:
@@ -42,11 +43,22 @@ def imports(mod):
     out = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
+            out.add(node.module)
             out.add(node.module.split(".")[0])
         elif isinstance(node, ast.Import):
             for n in node.names:
+                out.add(n.name)
                 out.add(n.name.split(".")[0])
     return out
+
+
+def impl_matches(imported, impl_by_base):
+    """Return an impl basename X such that 'X' or 'a.b.X' is imported."""
+    for base in impl_by_base:
+        for name in imported:
+            if name == base or name.endswith("." + base):
+                return base
+    return None
 
 
 def detects_unittest(src):
@@ -69,18 +81,6 @@ def stdlib_core_ok(src):
     return True
 
 
-def impl_stem_for_test(tp):
-    base = os.path.basename(tp)
-    if base.startswith("test_"):
-        return base[len("test_"):]
-    if base.endswith("_test.py"):
-        return base[:-len("_test.py")] + ".py"
-    # tests/test_x.py -> sibling x.py
-    if base.startswith("test") and base.endswith(".py") and base != "test.py":
-        return base[len("test"):]
-    return None
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("shard")
@@ -89,7 +89,7 @@ def main():
     a = ap.parse_args()
 
     pf = pq.ParquetFile(a.shard)
-    by_repo = defaultdict(lambda: defaultdict(str))  # repo -> {path: content}
+    by_repo = defaultdict(lambda: defaultdict(str))
     for batch in pf.iter_batches(batch_size=5000):
         d = batch.to_pydict()
         for i in range(len(d["path"])):
@@ -97,43 +97,45 @@ def main():
 
     os.makedirs(a.out_dir, exist_ok=True)
     out = os.path.join(a.out_dir, os.path.basename(a.shard).replace(".parquet", "_mined.jsonl"))
-    counts = {"repos": len(by_repo), "test_files": 0, "passed": 0}
+    counts = {"repos": len(by_repo), "test_files": 0, "stdlib_only": 0,
+              "matched_impl": 0, "passed": 0}
     npairs = 0
     with open(out, "w", encoding="utf-8") as fo:
         for repo, files in by_repo.items():
-            test_paths = [p for p in files if TEST_RE.search(p)]
-            impl_paths = [p for p in files if not TEST_RE.search(p)]
-            for tp in test_paths:
-                counts["test_files"] += 1
-                src = files[tp]
-                if not detects_unittest(src):
+            impl_by_base = {}
+            for p in files:
+                if not TEST_RE.search(p):
+                    impl_by_base.setdefault(os.path.basename(p), p)
+            for tp, src in files.items():
+                if not TEST_RE.search(tp):
                     continue
-                imported = imports(src) - {"unittest", "sys", "os"}
-                stem = impl_stem_for_test(tp)
-                target = (stem[:-3] if stem and stem.endswith(".py") else stem)
-                if not target or target not in imported:
+                counts["test_files"] += 1
+                if not detects_unittest(src):
                     continue
                 if not stdlib_core_ok(src):
                     continue
-                cands = [p for p in impl_paths if os.path.basename(p) == (target + ".py")]
-                for ip in cands:
-                    impl = files[ip]
-                    if impl is None or not stdlib_core_ok(impl):
-                        continue
-                    mod = target
-                    blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % mod + src
-                    rc, outt, err = sandbox_exec.run_sandboxed(blob, timeout=15)
-                    if rc == 0:
-                        fo.write(json.dumps({"repo": repo, "impl_path": ip, "impl": impl,
-                                             "test_path": tp, "tests": src, "passed": True},
-                                            ensure_ascii=False) + "\n")
-                        counts["passed"] += 1
-                        npairs += 1
-                        break
-                    if a.max_pairs and npairs >= a.max_pairs:
-                        fo.flush()
-                        print(json.dumps(counts)); print(f"WROTE {out} {npairs} pairs")
-                        return
+                counts["stdlib_only"] += 1
+                target = impl_matches(imports(src), impl_by_base)
+                if target is None:
+                    continue
+                counts["matched_impl"] += 1
+                ip = impl_by_base[target]
+                impl = files[ip]
+                if not impl or not stdlib_core_ok(impl):
+                    continue
+                blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % target + src
+                rc, outt, err = sandbox_exec.run_sandboxed(blob, timeout=15)
+                if rc == 0:
+                    fo.write(json.dumps({"repo": repo, "impl_path": ip, "impl": impl,
+                                         "test_path": tp, "tests": src, "passed": True},
+                                        ensure_ascii=False) + "\n")
+                    counts["passed"] += 1
+                    npairs += 1
+                if a.max_pairs and npairs >= a.max_pairs:
+                    fo.flush()
+                    print(json.dumps(counts))
+                    print(f"WROTE {out} {npairs} pairs")
+                    return
     print(json.dumps(counts))
     print(f"WROTE {out} {npairs} pairs")
 
