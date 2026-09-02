@@ -227,6 +227,10 @@ def selftest(model, tok, texts, seq, device):
     import random
 
     real, _ = domain_loss(model, tok, texts, seq, device)
+    if real is None:
+        # A None here means the probe packed to 0 rows; name it, do not let it reach
+        # the format string below (an empty float is a crash, not a verdict).
+        raise SystemExit(f"probe packs to 0 rows at seq {seq} -- nothing to score")
 
     # 1. SHUFFLED text must score far worse. Same tokens, same length, no structure:
     #    a scorer that reads its input at all cannot be indifferent to this.
@@ -274,14 +278,20 @@ def main():
 
     if a.selftest:
         # Pre-flight known answers, before the mix and cache machinery: this path needs
-        # only the checkpoint, so it runs on a fresh tree. _mix_for and the cache build
-        # below used to run first, so --selftest paid for a full mix it never scored.
+        # only the checkpoint, so it runs on a fresh tree -- but it DOES need one card:
+        # the KDA kernel has no CPU path (triton driver error with no visible device).
+        # _mix_for and the cache build below used to run first, so --selftest paid for
+        # a full mix it never scored.
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model, cfg = load_checkpoint(a.ckpt[0], device=device, dtype=torch.bfloat16)
         set_vocab_id(cfg)
         tok = load_tokenizer(a.tokenizer, cfg)
         model.eval()
-        ok = selftest(model, tok, _SELFT_PROBE, getattr(cfg, "seq", 4096), device)
+        # 256, not cfg.seq: the probe is ~400 tokens, so at the training seq (4096) it
+        # packs to ZERO rows and domain_loss returns (None, 0) -- the pre-flight would
+        # crash in the format string. Repeated x4 so the bs4/bs1 check has multiple rows.
+        # The metric is what is tested, not the training-length path.
+        ok = selftest(model, tok, _SELFT_PROBE * 4, 256, device)
         sys.exit(0 if ok else "selftest failed -- the metric is not measuring")
 
     # The mix is a property of the CHECKPOINT, and this CLI defaulted to the ladder's -- so

@@ -1069,3 +1069,33 @@ REFUSING: an eval must never rebuild a training token cache. 1 problem(s):
 - **`--selftest` 也需要一个真实 `--ckpt`。** `_mix_for(a.ckpt[0], ...)` 在 selftest 分支之前执行,所以 `--selftest --ckpt x` 死在 `FileNotFoundError: 'x'`。一个"不需要模型"的自检却必须先能打开一个模型文件。
 
 规则:**错误消息的每个插值位都要为"这个值是空/缺失"准备一句话**,否则守卫会把自己的未初始化印成对方的污染。判断法:把消息里每个 `{}` 依次置空,读一遍剩下的句子 —— 如果它仍然像在指控对方,措辞就是错的。
+
+## 76. fixture 从实现已处理的分支推出,证明不了实现忘了的那个分支(e1 当事人,1e 提,44 变异核验,2026-09-03)
+
+`scripts/eval_heldout.py` 的 `score()` 给三种返回形状打分:裸 tensor、transformers 的 `.logits` 对象、以及 `(logits, hidden)` 元组。生产上给我们自己的臂打分,死在 `AttributeError: 'tuple' object has no attribute 'logits'` —— `HybridLM.forward` 返回元组(model.py:534),而 `score()` 只处理了前两种。
+
+**自检全程是绿的。** 它的两个替身模型恰好返回 tensor 和 `.logits` —— 作者按"代码已经处理的两种形状"造的 fixture。从实现推出的 fixture,只能证明实现已经做对的事;实现**忘了**的那个分支,fixture 里天然不存在。同一天早上的加权 fixture 是同一个病:常数 logits 让行均值和 token 求和恰好相等,两种算法在 fixture 上分不开。
+
+修法是补 case 4d:替身返回 `(logits, None)`,断言它的和等于 tensor 路径。**变异核验过**:删掉 tuple 分支,case 4d 逐字复现生产上的 `AttributeError`(44 在本机实测)。一个 fixture 有没有牙,删一行代码就知道。
+
+规则:**fixture 必须从被测对象的真实行为推出,不能从实现已处理的分支推出。** 判断法:对实现的每个分支做一次变异(删掉/改坏),fixture 必须变红;不变红的 fixture 是实现的回声,不是检查。
+
+## 77. 检查要找的子串出现在它自己的说明文字里(e1 当事人,1e 提,44 变异核验,2026-09-03,与 §74 前的"注释引号吞 map"同族)
+
+同一个文件的 case 6 要守 `load_ours` 里的 bf16 强转(没有它,fp32 的 HybridLM 在 KDA kernel 上 CUDA misaligned address)。第一版在 `load_ours` 的源码文本里搜子串 `to(torch.bfloat16)` —— 而这个短语**在它自己的解释性注释里就有**(注释引用了 `eval/run_eval.py:274` 的同一写法),切分还会带到 `load_control` 的强转。把真代码那行删掉,自检照样绿。
+
+注释参与了它本该只描述的判定。这和 §74 之前那个"注释里的引号被解析器当成 map 条目,吞掉 20 条"是同一个形状:**说明文字和被说明的代码用了同一种表示,检查分不清谁是谁。**
+
+修法:按**语句**匹配 —— 剥掉注释行,再比对 `model = model.to(torch.bfloat16)` 整句。变异核验过:删掉真代码那行,case 6 具名 FAIL(44 在本机实测)。
+
+规则:**检查的 needle 不能出现在它自己的说明文字里;注释必须先剥掉再匹配。** 判断法:把被测代码删空只留注释,检查必须变红 —— 不变红,说明它在检查自己的散文。
+
+## 78. 一个从未被执行过的 selftest,在文件里存了四天(44/1e 当事人,2026-09-03)
+
+`eval/domain_loss.py` 的 `--selftest` 是 2026-08-30(d698b4f)加的,docstring 写着 "A metric without one is not a metric"。2026-09-03 第一次在 pod 上真跑(1e),rc=1:探针只有约 400 个 token,按 `cfg.seq=4096` 打包是 **0 行**,`domain_loss()` 返回 `(None, 0)`,None 进了格式化字符串。
+
+**它从来没有成功跑过一次。** 两道保护层都不存在:旧 `main()` 把全量 mix 加载放在 selftest 分支之前,跑一次自检要先付一整个 mix 的代价;而 `score_matrix.py:41` 只 import 库函数(`domain_loss_seqs, seqs_fp, val_seqs`),从不经过 `main()` 和 selftest —— 这期间 55 条 domain_loss 数字经 score_matrix 发出,没有一条走过这个自检。它存在,但它不在任何一条真实路径上。
+
+44-23 把它改成 pre-flight(只加载 checkpoint,先于 mix 机制),反而让它第一次变得"便宜可跑" —— 然后立刻暴露它一直是红的。修法:探针按 seq=256 打包并重复 4 份(844 token → 3 行,本机用真 tokenizer 核验;4096 下是 0 行),None 具名 `SystemExit`,不进格式化字符串。
+
+规则:**selftest 存在 ≠ selftest 跑过;一个从未执行过的自检是装饰,它的"已知答案"连自己都没验证过。** 判断法:每个带 `--selftest` 的文件,合入前必须有一次真实运行记录;藏在重加载路径之后、或不在任何生产路径上的 selftest,按没有处理。
