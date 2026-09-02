@@ -39,13 +39,13 @@ The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_s
 
 | run | config | steps | measured or estimated tok/s/gpu | wall |
 |---|---|---|---|---|
-| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 32 accum 1, `--no-grad_ckpt` (the 73K baseline's setting) | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
-| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), 293.05M built, batch 32 `--no-grad_ckpt` **does not fit**: 93.7-93.96 GiB allocated of 95.22 at fp8/bf16 (b0's probe, 11:46Z, real peak). Decided by an A/B in the 200M/300M gap: `--grad_ckpt` b32 a1 vs `--no-grad_ckpt` b16 a2, 20 steps each, tokens/step unchanged | 5,722 | unmeasured, ~50K | ~4 h |
+| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 16 accum 2, `--no-grad_ckpt`. The first launch (11:57Z) used batch 32 accum 1 and OOM'd in the first backward at 95.1 GiB on every rank, exactly as `facts/efficiency.json#eff.microbatch_32_oom` (2026-08-31, 200M shape, 93.8/95.2 GB) recorded; the 72-73K baseline was batch 16 accum 2. The line had been checked against argparse, not against the facts | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
+| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), 293.05M built, batch 32 `--no-grad_ckpt` **does not fit**: 93.7-93.96 GiB allocated of 95.22 at fp8/bf16 (b0's probe, 11:46Z, real peak). Decided by an A/B in the 200M/300M gap: `--grad_ckpt` b16 a2 vs `--no-grad_ckpt` b8 a4, 20 steps each, tokens/step unchanged (b16 without grad_ckpt is not expected to fit at L18 since b32 does not fit at L12) | 5,722 | unmeasured, ~50K | ~4 h |
 
 Order after the stop: merges as listed → a 60-minute throughput sprint on all eight cards with the 200M config (user, 10:07Z: every idle owner works on training speed) → launch the 200M with the sprint's best config → the 300M after it ends. Launch lines, every knob explicit (row 173's omission):
 
 ```
-setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 16 --accum 2 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
 setsid nohup bash scripts/supervise_run.sh p300m_6b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_300m_6b.json --name p300m_6b_0902 --dim 1024 --layers 18 --heads 8 --ffn_hidden 3072 <batch/accum/grad_ckpt from the gap A/B> --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
 ```
 
