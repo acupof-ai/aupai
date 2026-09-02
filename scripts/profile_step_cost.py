@@ -176,6 +176,13 @@ def main():
     ap.add_argument("--fp8", action="store_true", default=P200M["fp8"])
     ap.add_argument("--grad_ckpt", action="store_true", default=P200M["grad_ckpt"])
     ap.add_argument("--json", default=None)
+    ap.add_argument("--trace", default=None, metavar="PATH",
+                    help="write a chrome trace of N steps (--trace-steps) and print the "
+                         "kernel-class table; implies a short run")
+    ap.add_argument("--trace-steps", type=int, default=3)
+    ap.add_argument("--peak-only", action="store_true",
+                    help="memory probe: run --steps steps, report peak GiB and tok/s/gpu, "
+                         "skip save/val/nccl. For the L18 feasibility question.")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -211,12 +218,25 @@ def main():
     Xva, Yva = vseqs[:, :-1], vseqs[:, 1:]
 
     raw = train.HybridLM(train.Cfg).to(dev)
+    # --fp8 IS NOT JUST A FLAG TO RECORD (de, 2026-09-02). train.py:2016-2020 does two things
+    # under it -- casts the whole model to bf16 AND swaps the linears for FP8 -- and this file
+    # recorded fp8=True while doing neither, so the model stayed fp32 and activations doubled.
+    # de's 206M profiler OOMed at 93.3/95.22 GiB on a (131072, 3072) FFN buffer that way.
+    # The failure mode is what makes it worth a comment: it presents as "this shape does not
+    # fit", so an L18 probe with this gap would report a memory verdict about the wrong program
+    # and the conclusion written down would be "L18 is too big".
+    amp = True  # set before the cast below, which reads it exactly as train.py:2016 does
+    if a.fp8 and amp:
+        raw = raw.to(torch.bfloat16)
+        train.convert_to_fp8_compute(raw)
+    # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
+    # :2491 compile). Building the optimizers first would hand Muon fp32 parameter references
+    # that the cast then replaces, so the optimizer would step tensors the model no longer uses.
     optimizers = train.build_optimizers(raw, train.Cfg)
     model = raw
     if ddp:
         model = DDP(model, device_ids=[local], bucket_cap_mb=25, gradient_as_bucket_view=True,
                     static_graph=True)
-    amp = True
     if train.Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = max(64, 2 * train.Cfg.layers + 8)
         model = torch.compile(model, dynamic=False)
@@ -247,7 +267,32 @@ def main():
               f"fp8={a.fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
               flush=True)
 
-    for st in range(a.steps + a.warmup):
+    # Peak is measured over the TIMED steps only. Reset here, after warmup's allocations have
+    # already happened and been freed: including construction and compile would report a peak
+    # the steady-state run never sees, and the L18 question is whether the STEP fits.
+    n_steps = a.trace_steps if a.trace else a.steps
+
+    prof = None
+    if a.trace:
+        from torch.profiler import ProfilerActivity, profile  # noqa: PLC0415
+
+        # record_shapes MUST stay on: scripts/trace_classes.py derives each class's ideal time
+        # from the recorded shapes and reports "unknown" without them, which is the whole point
+        # of the table. But MEASURED (2026-09-02): with record_shapes and with_flops on, the
+        # 206M config OOMs in backward at 93.8/95.22 GiB -- the shape that trains at 73K
+        # tok/s/gpu in production -- so the profiler's own metadata is what does not fit.
+        # So the trace needs a smaller batch than the run, and the batch is therefore part of
+        # the trace's provenance: a share measured at batch 8 is not the run's share, and
+        # anything read off this trace must carry the batch it was traced at.
+        prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                       record_shapes=True, with_flops=True)
+
+    for st in range(n_steps + a.warmup):
+        if prof is not None and st == a.warmup:
+            prof.__enter__()
+        if st == a.warmup:
+            torch.cuda.reset_peak_memory_stats()
+            wall0 = time.perf_counter()
         idx = torch.arange(st * B, st * B + B) % len(X)
         torch.cuda.synchronize()
         t_step = time.perf_counter()
@@ -283,6 +328,34 @@ def main():
             torch.cuda.synchronize()
             nccl.append(time.perf_counter() - t0)
             del g
+
+    wall = time.perf_counter() - wall0
+    peak_gib = torch.cuda.max_memory_allocated() / 1024**3
+    peak_res_gib = torch.cuda.max_memory_reserved() / 1024**3
+    tok_s_gpu = n_steps * B * SEQ / wall
+    if is_main:
+        print(f"\nPEAK {peak_gib:.2f} GiB allocated, {peak_res_gib:.2f} GiB reserved | "
+              f"{tok_s_gpu / 1e3:.1f}K tok/s/gpu over {n_steps} timed steps "
+              f"(L={train.Cfg.layers} d={train.Cfg.dim} batch={B} accum={train.Cfg.accum} "
+              f"grad_ckpt={a.grad_ckpt} fp8={a.fp8} world={world})", flush=True)
+        print("  reserved is the number that decides whether it FITS -- allocated omits the "
+              "caching allocator's fragmentation, and OOM is raised against reserved.",
+              flush=True)
+
+    if prof is not None:
+        prof.__exit__(None, None, None)
+        if is_main:
+            prof.export_chrome_trace(a.trace)
+            print(f"trace -> {a.trace}", flush=True)
+            print("  analyse with: python3 scripts/trace_classes.py "
+                  f"{a.trace} --steps {n_steps}   (tilerl, main 9d96e02) -- per-class "
+                  "roofline from the RECORDED shapes, block kind from A_log rather than a "
+                  "layer index. This file emits the trace; it does not re-derive the table.",
+                  flush=True)
+    if a.peak_only or a.trace:
+        if ddp:
+            torch.distributed.destroy_process_group()
+        return 0
 
     saves = []
     if is_main:
