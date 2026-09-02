@@ -98,11 +98,44 @@ SCRUBS = [
     (re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"), "<EMAIL>"),
 ]
 
+#: Internal topology: URLs naming the org's own hosts. Not credentials and not the user's
+#: identity, which is why SCRUBS did not cover them -- but this pack becomes weights, and a
+#: 500M trained on 222 turns carrying internal doc URLs can emit one. fb's ruling
+#: (2026-09-02): replace the WHOLE URL, keep the sentence, because the training signal is
+#: "the assistant fetched a doc and continued from the result" and that survives redaction
+#: intact. Dropping the episodes instead would throw away 6% of the pack's real tool loops.
+#:
+#: A DOMAIN PREDICATE, not a list of the URLs I happened to see (fb's wording): any host
+#: ending in one of the internal suffixes, whatever the subdomain or path. A list would go
+#: stale the first time someone used a new subdomain, and it would look like it still worked.
+INTERNAL_HOSTS = ("larkoffice.com", "bytedance.net", "feishu.cn")
+INTERNAL_DOC_URL = re.compile(
+    r"https?://[A-Za-z0-9.-]*(?:" + "|".join(h.replace(".", r"\.") for h in INTERNAL_HOSTS)
+    + r")(?:/[^\s\"'>)\]},]*)?")
+#: github.com/<org>/... where <org> is one of the org's own. Deliberately narrow: this
+#: matched `bytedance-iaas` and `bytedance-inc` style paths in this corpus, and a public
+#: repo that merely mentions the name in its project title is not a path segment.
+INTERNAL_REPO_URL = re.compile(r"https?://(?:www\.)?github\.com/bytedance[A-Za-z0-9_-]*(?:/[^\s\"'>)\]},]*)?")
+#: Bare host references with no scheme -- `bits.bytedance.net/code/x` appears without
+#: https:// in shell output, and a scheme-anchored pattern would leave every one of them.
+INTERNAL_BARE = re.compile(
+    r"\b[A-Za-z0-9.-]*(?:" + "|".join(h.replace(".", r"\.") for h in INTERNAL_HOSTS)
+    + r")(?:/[^\s\"'>)\]},]*)?")
+
 
 def scrub(text):
-    """Paths and emails out. Returns the text; secrets are handled by find_secrets."""
+    """Paths, emails, and internal URLs out. Secrets are handled by find_secrets.
+
+    Order matters: the repo pattern runs before the doc patterns only because they cannot
+    overlap (github.com is not an internal host), but the BARE host pattern must run LAST --
+    it is a superset of the scheme-anchored one, and running it first would leave `https://`
+    dangling in front of the placeholder.
+    """
     for pat, repl in SCRUBS:
         text = pat.sub(repl, text)
+    text = INTERNAL_REPO_URL.sub("<INTERNAL_REPO>", text)
+    text = INTERNAL_DOC_URL.sub("<INTERNAL_DOC>", text)
+    text = INTERNAL_BARE.sub("<INTERNAL_DOC>", text)
     return text
 
 
@@ -689,6 +722,37 @@ def _selftest():
                   f"~/.claude/projects/-Users-{user}-code-x/y.jsonl"):
         if user in scrub(probe):
             fails.append(f"scrub leaves the username in the encoded form: {scrub(probe)!r}")
+    # INTERNAL URLS (fb's ruling, 2026-09-02). Both directions, because a pattern that eats
+    # public URLs is worse than one that leaks internal ones: it silently rewrites the
+    # corpus's factual content.
+    for probe, want in (
+        ('--doc "https://bytedance.larkoffice.com/docx/DvAZabc"', "<INTERNAL_DOC>"),
+        ("see https://open.feishu.cn/open-apis/auth/v3/tenant", "<INTERNAL_DOC>"),
+        ("remote: https://bits.bytedance.net/code/infcs/eic/merge_requests/4", "<INTERNAL_DOC>"),
+        # No scheme: shell output prints the bare host, and a scheme-anchored pattern
+        # would leave every one of these.
+        ("bits.bytedance.net/code/infcs/eic", "<INTERNAL_DOC>"),
+        ('{"detailsUrl":"https://github.com/bytedance-iaas/sglang/actions/runs/1"}',
+         "<INTERNAL_REPO>"),
+    ):
+        got = scrub(probe)
+        if want not in got:
+            fails.append(f"internal URL not redacted: {probe!r} -> {got!r}")
+        for leak in ("larkoffice", "bytedance.net", "feishu.cn", "bytedance-iaas"):
+            if leak in got:
+                fails.append(f"internal host survives redaction: {got!r}")
+        if "https://<" in got or "http://<" in got:
+            fails.append(f"a dangling scheme was left in front of the placeholder: {got!r}")
+    # MUST SURVIVE. The username on this machine equals the ORG name, so a substring check
+    # for it fires on public domains and git branch names -- 474 "leaks" in one pack, 0 of
+    # them real. These four are the shapes that false positive was made of.
+    for probe in ("https://github.com/sgl-project/sglang/pull/187",
+                  "https://docs.python.org/3/library/re.html",
+                  "origin/bytedance/deepseek_v4",
+                  "aupai-80 [535ae3] - interactive"):
+        if scrub(probe) != probe:
+            fails.append(f"scrub rewrote a public or non-topology string: "
+                         f"{probe!r} -> {scrub(probe)!r}")
 
     # 2. The scanner separates real secrets from prose. If it cannot, "0 hits" is
     #    meaningless -- scan_line reported 4 hits on "hello world, nothing here".
