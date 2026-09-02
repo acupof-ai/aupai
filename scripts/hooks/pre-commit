@@ -479,6 +479,13 @@ def main():
         # the gate. They are in the map so a train.py edit cannot land without them.
         "scripts/test_plan_length.py",
         "scripts/test_cursor_sum.py",
+        # de-33: the per-ledger predicate for runs/*.jsonl, on nine known-answer worlds -- the
+        # a59ac1f incident, 1e's two-commit fixture, 6018c62's key-fold, and mutations of the
+        # real ledger for the shapes no commit provides. It is registered BEFORE the hook uses
+        # the predicate on purpose: the predicate's home is b0's scripts/ledger_audit.py, and
+        # these worlds are what says whether that function is the right one. Reads git history
+        # only, ~20s.
+        "scripts/test_ledger_predicates.py",
         # A/B (3)'s arm: two ways it costs a run and reports nothing -- zeroing nothing after
         # a rename (a bit-exact copy of the baseline that still logs as the arm), and looking
         # like a dead branch when it is not (upstream grad is exactly 0 at step 0 by
