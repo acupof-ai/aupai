@@ -38,7 +38,7 @@ busy 拆成三块，后面所有推导都基于这个拆分：
 | 其余（fusion / KDA / elementwise / flash / FLCE） | 917.2 | L×d（每层每 token 的带宽流量） |
 
 **fp8 GEMM 那 493.1 ms 是地板。** cuBLASLt 实测 274.5 TFLOPS，而这块卡实测的
-fp8 峰值是 279.6 TFLOPS（probes/t59_fp8_peak.py，8192³，30 迭代），即
+fp8 峰值是 279.6 TFLOPS（probes/t59_fp8_peak.py@fa8cc81，8192³，30 迭代），即
 98.2%。换库最多回收 8.9 ms = 0.53%（`eff.fp8_gemm_at_realizable_peak`）。
 
 即使 head 和其余两组全部归零，上界也只有

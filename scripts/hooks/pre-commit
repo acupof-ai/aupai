@@ -313,13 +313,17 @@ def main():
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
+        "scripts/test_serve_history.py",
+        "scripts/test_tokenizer_fp_name.py",
+        "scripts/test_facts_olmes_urls.py",
+        "scripts/test_reachability_fresh.py",
+        "scripts/test_eval_load_only.py",
+        "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
-        "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
-        "probes/t67_self_repeat.py", "probes/t68_free_running.py",
-        "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
-        "probes/t66_depth_shape.py", "scripts/stale_claims.py",
+        "probes/t71_depth_lr_rule.py",
+        "scripts/stale_claims.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         "scripts/test_shard_glob.py",
@@ -327,12 +331,9 @@ def main():
         "scripts/test_spawned_fast.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
-        # Nine files the gate could not see until its predicate widened from
-        # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
-        # sys.argv instead of argparse. Five run clean at commit time and are gated
-        # here; the other four are in NEEDS_DATA with their reason (de, 2026-09-01).
-        "probes/t62_corpus_dup_rate.py", "probes/t63_cross_domain_dup.py",
-        "probes/t64_val_head_overlap.py",
+        # These dispatch on sys.argv instead of argparse, which the gate's old
+        # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
+        # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
         "scripts/eval_artifacts.py", "scripts/pod_drift.py",
         "eval/compare_fewshot_arms.py", "scripts/audit_population_universals.py",
         # Three mathbank selftests the gate could not see at all: its population is an
@@ -359,7 +360,6 @@ def main():
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
-        "probes/t65_near_dup_sweep.py": "imports build_corpus off sys.path; runner-only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         "eval/base_matrix.py": ("asserts data/tokenizer.json, which is gitignored; the "
                                 "partial flag runs ONLY _selftest_floor (the MC floor "
@@ -543,9 +543,17 @@ def main():
             try:
                 with open(tmp_py, "wb") as f:
                     f.write(staged_py.stdout)
+                # POD_DRIFT_ROOT: in a linked worktree tmp_py lives under
+                # <common>.git/worktrees/<name>/, so pod_drift's __file__-relative
+                # ROOT resolves to <common>.git/worktrees and the manifest is written
+                # to a phantom path while this hook's check below reads the
+                # unregenerated worktree manifest -- a false refusal on any commit
+                # that deletes a scoped file (measured 2026-09-02, 44-15). Pass the
+                # real root explicitly.
                 r = subprocess.run(
                     [sys.executable, tmp_py, "--write-index"],
                     capture_output=True, text=True,
+                    env={**os.environ, "POD_DRIFT_ROOT": repo},
                 )
                 if r.returncode == 0:
                     # Consistency: every manifest path must resolve in the index
