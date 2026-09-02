@@ -115,8 +115,7 @@ def _is_mount(path):
 #: The seven sessions in this round and each one's reviewer. A delivery gets a second
 #: reader who is not its author: the controller review with 44 caught four evidenced
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
-REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl",
-                "3b": "e1", "e1": "3b", "fb": "44"}
+REVIEW_PAIRS = {"de": "44", "44": "de", "tilerl": "b0", "b0": "tilerl", "3b": "b0", "fb": "44"}
 #: How long a dirty or untracked file may sit before the check names it. ONE constant
 #: for both: they measure the same thing (work parked in a tree others share) and split
 #: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
