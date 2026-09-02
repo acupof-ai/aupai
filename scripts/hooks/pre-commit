@@ -609,6 +609,10 @@ def main():
         # daily and an assertion against them would be red the moment someone pulls (the
         # de-35 shape, this morning). ~0.3s.
         "scripts/pod_pull_ledgers.py",
+        # de-36 follow-up: the adjudication registry the puller and the check both read. Its
+        # selftest is the fingerprint contract -- a ruling settles a key only while BOTH
+        # rows are unchanged -- on fabricated rows plus every recorded ruling. ~0.2s.
+        "scripts/ledger_resolutions.py",
         # de-33 acceptance: the five pre-registered readings, run by invoking BOTH hooks as
         # programs against temp repos built from real blobs. A green commit is not evidence for
         # a hook change -- .git/hooks/pre-commit resolves to MAIN's copy -- so this file is how

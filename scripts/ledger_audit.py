@@ -116,6 +116,12 @@ KEYS = {
     # over 65 rows -- different partitions, and only one of them is the writer's.
     "runs/score_matrix.jsonl":  lambda r: (r.get("ckpt"), r.get("profile", "full")),
     "runs/retro.jsonl":         lambda r: r.get("owner") or r.get("id") or r.get("name"),
+    # (ledger, key) -- the disagreement a ruling settles, which is what the row IS about.
+    # The key field is a JSON list, so it is tupled: an unhashable list would raise here and
+    # a str() of it would not compare to any other reader's key.
+    "runs/ledger_resolutions.jsonl": lambda r: (r.get("ledger"),
+                                                tuple(r["key"]) if isinstance(r.get("key"), list)
+                                                else r.get("key")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -133,6 +139,9 @@ WRITE_STYLE = {
     "runs/retro.jsonl":        "append",   # no in-repo writer; .gitattributes merge=union
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
+    # A ruling is REPLACED when re-issued (a fingerprint mismatch sends the key back for a
+    # second reading), so the file is current state, not history: open(..., "w").
+    "runs/ledger_resolutions.jsonl": "rewrite",
 }
 
 VALUE_FIELDS = ("result", "finding", "decision", "notes")   # the second reading's scope
@@ -162,6 +171,10 @@ PREDICATE = {
     # DESIGN -- ":574 the matrix is the current state, not a history". So a changed value is the
     # intended behaviour and only a vanished key is a fault.
     "runs/score_matrix.jsonl":  key_present,
+    # rewrite-style for the same reason as score_matrix: a re-issued ruling REPLACES the old
+    # one under the same (ledger, key), so a changed value is the intended behaviour and only
+    # a vanished key is a fault.
+    "runs/ledger_resolutions.jsonl": key_present,
 }
 
 
