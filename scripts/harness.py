@@ -4010,6 +4010,22 @@ def check_tasks_closed_by_commit(root):
     delivered and the register could not tell the difference. The rule dates from
     TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    # THE MAP MUST SEE MERGE COMMITS. `git log --name-only` prints no paths for a merge, so this
+    # check silently could not verify any delivery that landed in one -- 607 of main's 2755
+    # commits (22%) read as touching nothing, and closing de-30 against c889bc2 was refused with
+    # `touches []` while `git show --stat` listed 7 files. Asserted here rather than trusted,
+    # because the failure is invisible: the check stays green and simply cannot see a whole class
+    # of commit. A merge on main with zero paths means _main_touched lost its `-m` or its union.
+    touched = _main_touched(root)
+    if touched:
+        merges = subprocess.run(
+            ["git", "-C", root, "log", "main", "--merges", "--format=%H", "-40"],
+            capture_output=True, text=True).stdout.split()
+        blind = [s[:8] for s in merges if s in touched and not touched[s]]
+        if len(blind) > len(merges) // 2 and merges:
+            return FAIL, (f"_main_touched sees no paths for {len(blind)} of the last "
+                          f"{len(merges)} merges on main ({blind[:3]}) -- it lost `-m`, so any "
+                          f"delivery inside a merge cannot be verified")
     scope = [t for t in rows
              if t.get("state") == "done" and (t.get("closed") or "") >= TASK_COMMIT_FROM]
     if not scope:
@@ -5844,14 +5860,46 @@ def _main_touched(root):
 
     The per-task form ran cat-file, merge-base and show for each closed task: 32 tasks
     were 96 subprocesses and 4.9 s alone, over the 5 s deadline under hook contention,
-    so the check timed out three times running and became a permanent red (2026-09-02)."""
+    so the check timed out three times running and became a permanent red (2026-09-02).
+
+    `-m` IS THE FIX FOR MERGES, and `--first-parent` is NOT part of it. Plain
+    `git log --name-only` prints no paths at all for a merge commit -- git suppresses merge diffs
+    by default -- so a delivery that landed inside a merge read as `touches []` and could not
+    close its task, while a task closed against such a sha would equally never be caught.
+    MEASURED on main (de, 2026-09-03), three options:
+
+        plain               2756 commits, 616 seen as touching nothing (607 of them merges)
+        -m --first-parent   1471 commits,   2 -- but 1285 commits MISSING, a worse blind spot:
+                            --first-parent stops walking merged branches, so every commit that
+                            reached main THROUGH a merge disappears from the map entirely
+        -m alone            2756 commits,  10 -- all commits kept, nothing missing
+
+    So `-m` alone. The first attempt at this fix used `-m --first-parent`, which reads as an
+    improvement (2 empties beats 616) and silently drops nearly half the history; the count of
+    commits, not just the count of empties, is what separates them. `git show --stat` on one of
+    the 607 lists 7 files, which is how the disagreement surfaced -- closing de-30 against
+    c889bc2.
+
+    A merge under `-m` emits ONE BLOCK PER PARENT, each repeating the same %H, so the parse must
+    UNION rather than assign: `out[sha] = paths` keeps only the last block. Measured, 588 shas
+    have more than one block and 192 of the first 200 have a union larger than their last block --
+    the worst carries 4 paths across two 3-path blocks. A file delivered against the first parent
+    and absent from the second would read as not delivered.
+    """
     if root not in _MAIN_TOUCHED:
-        r = subprocess.run(["git", "-C", root, "log", "main", "--name-only", "--format=%x00%H"],
+        r = subprocess.run(["git", "-C", root, "log", "main", "-m",
+                            "--name-only", "--format=%x00%H"],
                            capture_output=True, text=True)
         out = {}
         for block in r.stdout.split("\x00")[1:]:
             lines = block.split("\n")
-            out[lines[0].strip()] = [p for p in lines[1:] if p.strip()]
+            sha = lines[0].strip()
+            paths = [p for p in lines[1:] if p.strip()]
+            if sha in out:
+                seen = set(out[sha])
+                out[sha].extend(p for p in paths if p not in seen)
+            else:
+                out[sha] = paths
         _MAIN_TOUCHED[root] = out
     return _MAIN_TOUCHED[root]
 
