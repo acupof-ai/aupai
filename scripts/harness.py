@@ -6041,21 +6041,40 @@ _FROZEN_PATHS = (
 )
 
 
-def _run_holds_the_block(root):
-    """(True, note) while a training run owns the cards, from the allocation file.
+_RUN_LOG_FRESH_S = 900
 
-    The grant is the state, not `nvidia-smi`: a run between its crash and its resume
-    still owns the block, and the cards read idle for that whole window."""
+
+def _run_holds_the_block(root):
+    """(True, note) while a training run owns the cards.
+
+    TWO SOURCES, because neither reaches both places. runs/card_assignment.json is the
+    grant and it is current in a git tree -- but pod_push skips runs/ by design
+    (pod_drift.py:270), so the pod's copy is whatever it was when someone last put it
+    there: on 2026-09-02 the pod still read a 09-01 grant saying `launch_block_granted:
+    false` while eight cards were training. A check keyed only on that file disarms
+    itself on the pod, which is the one place a mid-run edit actually lands.
+
+    So the pod's source is a run log still being written: mtime within
+    _RUN_LOG_FRESH_S. That is the same evidence a person uses (`tail` it and see it
+    move), it needs nothing synced, and it cannot claim a run that has stopped. The
+    grant is checked first because it is the authority where it is fresh, and it also
+    covers the window between a crash and its resume, when no log is being written."""
     try:
         with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as f:
             a = json.load(f)
+        if a.get("launch_block_granted") and \
+                (a.get("next_grant") or {}).get("blocked_on") == "the run itself":
+            return True, str(a.get("note", ""))[:60]
     except (OSError, ValueError):
-        return False, "no readable card_assignment.json"
-    if not a.get("launch_block_granted"):
-        return False, "no block grant"
-    if (a.get("next_grant") or {}).get("blocked_on") != "the run itself":
-        return False, "the block is granted but not to a running job"
-    return True, str(a.get("note", ""))[:60]
+        pass
+    now = time.time()
+    for p in glob.glob(os.path.join(root, "runs", "*.log")):
+        try:
+            if now - os.path.getmtime(p) < _RUN_LOG_FRESH_S:
+                return True, f"{os.path.basename(p)} written in the last {_RUN_LOG_FRESH_S // 60} min"
+        except OSError:
+            continue
+    return False, "no block grant and no run log written recently"
 
 
 def check_frozen_paths(root):
