@@ -559,7 +559,7 @@
         "blocker": "head and backbone checkpoints are pod-side only",
         "why_it_matters": "the ratio criterion's recall_home floor (>=0.5) should be evaluated on the component that makes the quality decision; if the head's operating-point recall is also <0.5 the floor binds on the real gate, not just the regex layer"
       },
-      "uncertainty": null,
+      "uncertainty": "CHECKPOINT STATUS 2026-09-02 (fb, 44-22): ckpt_k5_clean_0827.pt [absent] -- pre-0830v1 backbone, not in runs/pod_ckpt_candidates_2026-09-02.txt; the design was never run and cannot be run against this backbone. A measurement needs a post-reset backbone named in a new fact.",
       "status": "unmeasured",
       "claim": "the head's operating-point recall_home is measurable and should be >=0.5 for the criterion to pass web_hq's own gate",
       "audit": "not yet run; blocked on pod-side weights",
