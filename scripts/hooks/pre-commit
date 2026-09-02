@@ -358,7 +358,6 @@ def main():
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
-        "scripts/test_ckpt_mix_source.py",
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
         "algorithms/rollout.py",
