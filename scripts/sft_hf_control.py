@@ -80,9 +80,20 @@ sys.path.insert(0, HERE)
 import eval_heldout_ours  # noqa: E402  -- the shared supervised-byte denominator
 from loader import IM_END, format_example  # noqa: E402
 
-SEQ = 1024  # Pythia-160m's max_position_embeddings is 2048; 1024 halves the step cost and
-#: still holds the overwhelming majority of these examples whole. Reported, not silent:
-#: the drop count from this choice is printed and lands in the report.
+SEQ = 2048  # Pythia-160m's max_position_embeddings, i.e. the widest row this model can take
+#: without extrapolating -- not a choice, the model's own limit.
+#:
+#: WAS 1024, on the reasoning that it "halves the step cost and still holds the overwhelming
+#: majority of these examples whole". The second half was wrong, and measured wrong on the
+#: wrong quantity (2026-09-03, fb's ruling to move):
+#:
+#:   seq 1024 drops 62,554 of 521,386 train examples (12.00%) and 1,272 of 10,641 held-out
+#:   (11.95%). seq 2048 drops 2.18% / 2.07%. Our arm at seq 4096 drops 0.21%.
+#:
+#: And the count of examples understated it: the dropped ones are the LONG ones, so 12.0% of
+#: the examples carried 50.5% of the supervised BYTES. "Majority of examples whole" was true
+#: while "majority of the supervised text" was false, and the loss is over text. Reporting a
+#: drop count is not the same as checking it against the other arm's.
 
 
 def lr_mult_shape(step, total, warmup, warmdown, final_frac):
