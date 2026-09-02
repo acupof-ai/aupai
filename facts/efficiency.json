@@ -38,11 +38,14 @@
    "measured": "2026-08-30",
    "source": "aupai-fb briefing",
    "config": {
-    "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024"
+    "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024",
+    "batch": 16,
+    "accum": 2,
+    "batch_accum_source": "eff.microbatch_32_oom (t52 pair1, 2026-08-31, measured)"
    },
    "uncertainty": null,
-   "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing. 206.13M is the CORRECT 6ND count, not embedding wrongly included: head.weight is tok.weight (train.py:544), so 206.13M = 172.51M non-embedding + 33.62M shared matrix, and tying means the free input lookup and the LM head matmul are one matrix counted once. 166M (e7c55e5) was an unmeasured estimate and is superseded; it never entered the MFU, so 31% is unaffected.",
-   "status": "measured"
+   "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing. 206.13M is the CORRECT 6ND count, not embedding wrongly included: head.weight is tok.weight (train.py:544), so 206.13M = 172.51M non-embedding + 33.62M shared matrix, and tying means the free input lookup and the LM head matmul are one matrix counted once. 166M (e7c55e5) was an unmeasured estimate and is superseded; it never entered the MFU, so 31% is unaffected. batch 32 is a briefing statement refuted by eff.microbatch_32_oom; the measured 200M baseline is 72K tok/s/gpu at micro-batch 16 accum 2, no grad_ckpt, fp8, seq 4096, 7 cards. NOTE the two entries also differ in card count (this value says 8xH20, the measured baseline is 7), so 73K-at-8 and 72K-at-7 are not the same configuration and neither number transfers to the other's card count. p200m was launched at b32 on the strength of this line and OOMed twice (2026-09-02).",
+   "status": "recorded"
   },
   {
    "id": "eff.jamba_ratio",
