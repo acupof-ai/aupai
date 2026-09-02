@@ -3,16 +3,29 @@
 
 WHY THIS EXISTS (fb 2026-09-02): the trace shows ~1800 aten::add_ of [16,4096,1] and
 ~1950 of [16,4096,1024] per step, 90.7 ms. fb's hypothesis, for tilerl to confirm by
-External id: those add_ calls are NOT inductor-fused arithmetic but autograd's gradient
-accumulation for a multi-consumer tensor -- each Source.v is read by up to 13 later
-AttnRes calls, so backward produces 13 separate dV contributions that autograd adds into
-one buffer with add_. If that holds, an in-place `out.add_()` in forward changes nothing
-(it is not where the adds come from) and the fix is to make the whole mixing one autograd
-node, so autograd sees one dV per source instead of thirteen.
+External id: those add_ calls are autograd's gradient accumulation for multi-consumer
+tensors, not inductor-fused arithmetic. If so, an in-place `out.add_()` in forward changes
+nothing and the fix is to make the mixing one autograd node.
 
-This file is the MATH plus a pure-torch reference. It writes no kernel. tilerl writes the
-Triton kernel; parity is checked elementwise against `mix_reference` here plus a 20-step
-loss comparison.
+WHAT THIS FILE FOUND, WHICH ARGUES AGAINST THE ASSIGNED SHAPE (read before writing a
+kernel):
+
+ 1. The accumulation is at the SOURCE, across calls -- not inside one call. Within a call
+    the chain is out = out + a_i*v_i, and AddBackward passes grad through unchanged, so no
+    accumulation happens there. Source.v at position p is read by every AttnRes call from p
+    to 25 (at L=12, attn_res_blocks=0), so it collects 26-p separate dV tensors that
+    autograd add_s into one buffer. A PER-CALL fused node still emits one dV per source it
+    reads, so it leaves that count exactly where it is: 300 -> 300 per micro-batch.
+    Collapsing it needs ONE node over the whole stack, a much bigger change.
+ 2. The roofline ceiling does not reach the measured cost. Elementwise kernels are already
+    bandwidth-bound (1e, 13:5xZ), so the ceiling is bytes-removed / 4.0 TB/s
+    (eff.h20_specs). The per-call fusion removes intra-call temporaries only: 120.8 GB/step
+    = 30.2 ms against 90.7 ms. Attribution does not close.
+ 3. The counted add_ (300) is 6.5x short of the trace's ~1950, so the mechanism behind
+    those calls is still unidentified. That gap should be explained first.
+
+This file is the MATH plus a pure-torch reference. It writes no kernel. If a kernel is
+still wanted, parity is elementwise against `grads_analytic` plus a 20-step loss compare.
 
     python3 scripts/attnres_fused_reference.py          # derivation checks + parity
 """
@@ -95,12 +108,17 @@ def main():
     assert torch.allclose(logits.grad, da_soft, atol=1e-12), \
         f"dA through softmax max {(logits.grad - da_soft).abs().max()}"
 
-    # THE COUNT THE FUSION REMOVES. Each v[i] is read once here; in the real model source i
-    # is read by every later AttnRes call, and each read is a separate graph edge whose
-    # gradient autograd add_s into one buffer.
-    def reads(L):
+    # THE COUNT THE FUSION REMOVES, and a retraction. `attn_res_blocks` defaults to 0
+    # (train.py:219) and model.py:330 reads it as `min(n_sub, blocks or n_sub)` -- the `or`
+    # makes 0 a SENTINEL meaning Full, so n_blocks = n_sub = 2L and EVERY sublayer is a block
+    # boundary that promotes immediately. So eff.grad_ckpt_inverts_with_depth's 325/2145 (peak
+    # 65/25) is the shipped configuration and is correct. An earlier version of this file
+    # asserted 181/1121 was "the real call" on the strength of the argument being named
+    # `blocks=0`; blocks=L is a configuration no run has ever used. Retracted d4a0f78.
+    def reads(L, blocks=0):
         n_sub = 2 * L
-        ends = {round((j + 1) * n_sub / L) for j in range(L)}
+        nb = min(n_sub, blocks or n_sub)  # same expression as model.py:330
+        ends = {round((j + 1) * n_sub / nb) for j in range(nb)}
         done, partial, k, tot = [0], [], 0, 0
         for _ in range(L):
             for _s in range(2):
@@ -113,23 +131,48 @@ def main():
         return tot + len(done) + len(partial)
 
     r12, r32 = reads(12), reads(32)
-    assert (r12, r32) == (181, 1121), (r12, r32)
-    # eff.grad_ckpt_inverts_with_depth records 325 and 2145, and "65 live [B,T,D] tensors at
-    # peak against 25". ROOT CAUSE, found not guessed: probes/t71_depth_lr_rule.py:130 is
-    # `source_reads(L, blocks=0)`, and blocks=0 sets nb = n_sub = 2L, making EVERY sublayer a
-    # block boundary that promotes its own output to `done` immediately. The recorded figures
-    # are that default-argument call; the real model passes blocks=L, where model.py:399 keeps
-    # `partial` out of the source list until a block boundary. Verified by calling t71's own
-    # function both ways: blocks=0 -> 325/2145 exactly, blocks=L -> 181/1121, matching `reads`
-    # here. The O(L^2) conclusion survives (6.19x for 2.67x depth, against its 6.60x); the
-    # constant and the peak count (33 vs 13, not 65 vs 25) are wrong.
-    assert (25 * 26) // 2 == 325 and (65 * 66) // 2 == 2145  # = the blocks=0 closed form
+    assert (r12, r32) == (325, 2145), (r12, r32)  # the default = Full = what runs
+    assert (reads(12, 12), reads(32, 32)) == (181, 1121)  # blocks=L, which nothing runs
+    # (n+1)(n+2)/2 at n=2L is the closed form of the Full count, so O(L^2) is exact here,
+    # not empirical: 6.60x reads for 2.67x depth.
+    assert r12 == (25 * 26) // 2 and r32 == (65 * 66) // 2
+
+    # SOURCES AND BYTES (1e's roofline question, 13:5xZ). Elementwise kernels are already at
+    # the bandwidth roofline, so the fusion's ceiling is bytes-removed / 4.0 TB/s
+    # (eff.h20_specs). Shape from the trace: bf16 [16, 4096, 1024].
+    B, T, Dm, el = 16, 4096, 1024, 2
+    vb = B * T * Dm * el / 1e9  # GB per [B,T,D] tensor = 0.134
+    calls = list(range(1, 2 * 12 + 1)) + [2 * 12 + 1]  # sources per call: 1..24, then 25
+    assert sum(calls) == r12
+
+    # WHAT THE PER-CALL FUSION ACTUALLY REMOVES -- and it is NOT the cross-call accumulation.
+    # Inside one call the chain is out = a0*v0; out = out + ai*vi. AddBackward passes the grad
+    # through unchanged, so there is no accumulation WITHIN a call; every mul node just emits
+    # its own dV_i. What accumulates is at the SOURCE: s.v at position p is read by every call
+    # from p to 25, so it collects (26-p) separate dV tensors that autograd add_s into one
+    # buffer. A per-call fused node still emits one dV contribution per source it reads, so it
+    # leaves that count EXACTLY where it was. Removing it needs one node over the whole stack,
+    # which is a far larger change than the one assigned.
+    accum_now = r12 - len(calls)  # 300 add_ of [B,T,D] per micro-batch
+    accum_fused = accum_now       # unchanged -- this is the finding
+    # So the saving is intra-call temporaries only: forward's k-1 intermediate out
+    # read/write pairs, and backward's per-branch materialisation.
+    fwd_saved = sum(2 * (k - 1) for k in calls) * vb   # out reads + out writes removed
+    bwd_saved = sum((k - 1) for k in calls) * vb       # dV temporaries kept in registers
+    saved_gb = fwd_saved + bwd_saved
+    ms_ceiling = saved_gb / 4000 * 1000
 
     print(f"OK reference matches model.py:250-252 bitwise; dV and dA match autograd to 1e-12 "
-          f"(n={n} sources, fp64). Source reads: L12 {r12}, L32 {r32} -- O(L^2) with ratio "
-          f"{r32 / r12:.2f}x for 2.67x depth. The fact's 325/2145 is t71's source_reads called "
-          f"with its DEFAULT blocks=0, which makes every sublayer a block boundary; the real "
-          f"call is blocks=L.")
+          f"(n={n} sources, fp64). Source reads at Full (attn_res_blocks=0, what runs): "
+          f"L12 {r12}, L32 {r32}, {r32 / r12:.2f}x for 2.67x depth -- the fact's 325/2145 is "
+          f"CORRECT; my 181/1121 'correction' is retracted.\n"
+          f"ROOFLINE: the per-call fusion removes {saved_gb:.1f} GB/step = {ms_ceiling:.1f} ms "
+          f"at 4.0 TB/s, against the trace's 90.7 ms of add_. ATTRIBUTION DOES NOT CLOSE.\n"
+          f"AND THE add_ COUNT DOES NOT MOVE: {accum_now} -> {accum_fused} per micro-batch, "
+          f"because a per-call node still emits one dV per source it reads; the accumulation "
+          f"is at the source, across calls. The trace's ~1950 is {1950 / accum_now:.1f}x my "
+          f"{accum_now}, so the mechanism is not yet identified -- that gap must be explained "
+          f"before a kernel is worth writing.")
     return 0
 
 

@@ -26,7 +26,7 @@ source: b0-12（`27ab188`，fb 裁定 2026-09-02，pair tilerl）。**前身 b0-
 | 块布局 | **32 块 = 24 KDA + 8 MLA，MLA 在 3/7/11/…/31** | `blocks.<i>.mixer.A_log` 在不在 |
 | KDA 参数占比 | mixer 126.2M + ffn 226.5M = **352.7M（块参数的 67%）** | 2D 权重逐个求和 |
 | 每块参数 | KDA 14.71M / MLA 13.38M（**近乎相等**） | 同上 |
-| KDA/MLA 范数增长比 | **3.74× → 3.43× → 7.96×**（三个区间，**不稳定，见 §3**） | `scripts/ckpt_health.py` 按块类拆 |
+| KDA/MLA 范数增长比 | **3.74× → 3.43× → 7.96×**（三个区间，**不稳定，见 §3**；`facts/efficiency.json#eff.kda_mla_growth_ratio_l32`） | `scripts/ckpt_health.py` 按块类拆 |
 | 张量范数中位 | **KDA 42.88 > MLA 33.77** | 同上 |
 | FP8 覆盖 | 块内 linear **全覆盖**；只有 LM head 不走（6.38%，已判决 no-ship） | `_fp8_ok` 逐个核 |
 
@@ -185,26 +185,45 @@ L=32 抄来的（那里 4 MLA 刚好 7:1）——**把一个只在 L=32 成立�
 **预注册读数**：0.02 nat 门（见 §4 的 sigma 说明）+ 吞吐差。**AttnRes OFF 必然更快**（少一路深度注意力），
 所以读的是**它换来多少 loss**，不是"哪个快"。
 
-### ON 臂的 source-read 计数：181 / 1121，不是 325 / 2145
+### ON 臂的 source-read 计数：**325 / 2145 是对的，我上一版的"更正"作废**
 
-`eff.grad_ckpt_inverts_with_depth` 记的 "325 at L=12 到 2145 at L=32、峰值 65 个
-[B,T,D] 活张量对 25 个" 是**默认参数的世界，不是模型的世界**。
-`probes/t71_depth_lr_rule.py:130` 的 `source_reads(L, blocks=0)` 在 `blocks=0` 时取
-`nb = n_sub = 2L`，于是**每个 sublayer 都是一个块边界、当场把自己的输出升进 `done`**；
-真实调用是 `blocks=L`，`model.py:399` 让 `partial` 一直挂到块边界才升。
-两套数并列（代码模拟为准，`scripts/attnres_fused_reference.py` 复算）：
+**这一节整段是一次自我更正的记录，留着是因为错法比数值有用。**
+
+`eff.grad_ckpt_inverts_with_depth` 记的 "325 at L=12 到 2145 at L=32、峰值 65 对 25"
+**没有错**。我在 `d4a0f78` 里把它"改"成 181 / 1121（峰值 33 对 13），**理由是
+`probes/t71_depth_lr_rule.py:130` 的 `source_reads(L, blocks=0)` 用了默认参数**，
+并断言"真实调用是 `blocks=L`"。**那个断言是我编的，我没有去读默认值是什么。**
+
+**实际的代码**：
+
+```
+train.py:219    attn_res_blocks = 0
+model.py:330    n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)  # 0 -> Full
+```
+
+`0 or n_sub` → `n_blocks = n_sub = 2L`，于是 `ar_block_ends = {1,2,…,2L}`，
+**每个 sublayer 都是块边界、当场把自己的输出升进 `done`**——
+**这正是 `blocks=0` 那一列，也正是生产 run 跑的东西**（fact 里
+`"attn_res": "Full (attn_res_blocks=0, 25 sources)"` 出现五次，说的就是这个）。
+**`blocks=L` 是一个没有任何 run 用过的配置**，我拿它当"真实"，
+所以 181 / 1121 是一个不存在的世界的读数。
 
 | | L=12 | L=32 | 比值 |
 |---|---|---|---|
-| `blocks=0`（被记下的） | 325 reads / 25 peak | 2145 / 65 | 6.60× |
-| `blocks=L`（真实） | **181 / 13** | **1121 / 33** | **6.19×** |
+| **`blocks=0` = Full = 生产（对的）** | **325 reads / 25 peak** | **2145 / 65** | **6.60×** |
+| `blocks=L`（我误当成真实的） | 181 / 13 | 1121 / 33 | 6.19× |
 
-**O(L²) 这个结论活着**：2.67× 深度换 6.19× 读数，只有常数错了，量级没错，
-所以 `eff.grad_ckpt_inverts_with_depth` 的"两个仪器一个机制"仍然成立
-（内存侧那半是独立测的，不依赖这个计数）。峰值那个数同样要减半读：33 对 13，不是 65 对 25。
-**这条错法的形状**：把一个函数的**默认参数值**当成**实测配置**记进 fact
-——与 `eff.fb_mfu` 的 "batch 32" 同形（`docs/lessons/gate_failure_shapes.md` §62），
-今天第二次。`facts/` 由 e1 改，我不动。
+**错法的形状，和我以为自己在抓的那个正好相反**：我以为看见的是"把默认值当实测配置"
+（`eff.fb_mfu` 的 batch 32，`gate_failure_shapes.md` §62）。**真实的错是
+"看见 `=0` 就断定它不是实际配置"**——`0` 在这里是**哨兵值**，
+`0 or n_sub` 把它翻译成"全开"。**我从一个参数名和一个字面量推出了语义，
+没有读那一行的 `or`。** 与 §62 同源但方向相反：§62 是把话当成测量，
+这一条是把**代码里读得到的事实**当成**可疑的默认值**——
+**两次都是没去读那一行**。
+
+**代价**：一条错的更正进了 commit（`d4a0f78`），并经 aupai-98 转给了 e1
+要求改 `facts/`。**已发撤回**。`facts/` 我本来就不改，这次也没改——
+**唯一实际损害是别人的时间**。
 
 **两种结果各触发什么**：
 - **OFF 的 loss 劣化 < 阈值** → **关掉**，把省下的吞吐写进 200M/300M 配置，
@@ -409,6 +428,9 @@ n=8 下同样的两层散开是 max z 3300（六个正常层把 sigma 钉住）�
   上读到的比值接近 1，0.28 就没有来源了"。**不必等 B0：p200m 自己就是 L12，实测 1.63×。**
   `ckpt_p200m_4b_0902` step500→step832，9 KDA + 3 MLA：KDA 中位 **1.2069**、
   MLA 中位 **1.1270**，**比值 1.63×**，对着 500M/L32 的 3.43×–7.96×。
+  （已进 `facts/efficiency.json#eff.kda_mla_growth_ratio_l12`，boundary 写明
+  **单窗、warmup 后第一窗、不作系数来源**——44 复核指出这个数原先只活在
+  commit message 和本页里。）
   **R3-lr 要等化的那个差距，在它要跑的规模上只有 500M 的一半到四分之一。**
   裁定请求（**我不自裁自己的实验**）：要么撤 R3-lr（1.63× 不值一个 run），
   要么保留 §3 已改过的读数（只看 val loss），**现在多一条理由：靶不仅不固定，而且变小了**。
