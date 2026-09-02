@@ -7787,6 +7787,7 @@ EVIDENCE = {
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
     # local side to compare against.
     "pod_ledger_rows_home": "both",
+    "keep_claim_reasons_live": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
