@@ -6691,6 +6691,122 @@ def _broken_frozen_paths():
     return d
 
 
+def _cfg_known_names(root):
+    """Every name a `cfg`/`Cfg` object can legitimately carry -> (body, published).
+
+    Two sources, and leaving either out makes the check useless in opposite directions:
+    the Cfg class body (48 names), and every `cfg.x = ` / `Cfg.x = ` assignment anywhere in
+    the tree (25 more) -- build_mix publishes _row_cursor, _plan_domains and friends onto Cfg
+    at runtime, so a body-only reading would flag all of them."""
+    train_py = os.path.join(root, "train.py")
+    if not os.path.exists(train_py):
+        return None, None
+    try:
+        tree = ast.parse(open(train_py, encoding="utf-8", errors="replace").read())
+    except SyntaxError as e:
+        return None, f"train.py does not parse: {e}"
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Cfg"), None)
+    if cls is None:
+        return None, "train.py has no class Cfg"
+    body = {x.id for s in cls.body if isinstance(s, ast.Assign)
+            for x in s.targets if isinstance(x, ast.Name)}
+    body |= {s.target.id for s in cls.body
+             if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)}
+    published = set()
+    for p, txt in walk_tracked(root, (".py",)):
+        try:
+            t2 = ast.parse(txt)
+        except SyntaxError:
+            continue
+        for n in ast.walk(t2):
+            if isinstance(n, (ast.Assign, ast.AnnAssign)):
+                tg = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for x in tg:
+                    if isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) \
+                            and x.value.id in ("cfg", "Cfg"):
+                        published.add(x.attr)
+    return (body, published), None
+
+
+def check_getattr_cfg_names_exist(root):
+    """`getattr(cfg, "name", <non-None>)` names a field cfg can actually carry.
+
+    getattr returns the SAME value when the name is absent as when it is present and equal
+    to the default, so the call site cannot tell "read it" from "did not find it". 62's
+    probe read `getattr(cfg, "logit_softcap", 0.0)` -- softcap is the module constant
+    SOFTCAP at model.py:63, so the field does not exist, 0.0 came back silently, and
+    post-softcap logits were reported as pre. The three values (14.62/14.69/14.54) were
+    perfect evidence for the conclusion being argued, so nothing looked wrong; what gave it
+    away was 14.62 sitting 0.4 under a hard ceiling of 15.0.
+
+    The benign and the fatal spelling are IDENTICAL in source -- train.py:756's
+    `getattr(cfg, "attn_res_lr", 0.01)` names a real field at :221 with a matching default
+    -- which is why a human reading the line cannot separate them and a name check can.
+
+    WHICH POSITIVES THIS DELIBERATELY MISSES, asked before writing it rather than after
+    (the rule from docs/lessons/fact_and_inference.md):
+      - a None default is a presence PROBE, not a value read: `getattr(cfg, "x", None)`
+        followed by an `is None` branch is the correct way to ask, so it is skipped.
+      - a non-literal name (`getattr(cfg, key, d)`) is not statically decidable; skipped.
+      - objects other than a bare `cfg`/`Cfg` name (`self.cfg`, `ck["cfg"]`) are not
+        followed, so this covers the spelling that has bitten us and not every reader.
+      - a checkpoint's cfg DICT legitimately lacks fields added after it was written; those
+        go through `.get()`, not getattr, so they are outside this check by construction."""
+    known, err = _cfg_known_names(root)
+    if err:
+        return FAIL, err
+    body, published = known
+    allow = body | published
+    bad = []
+    for p, txt in walk_tracked(root, (".py",)):
+        try:
+            tree = ast.parse(txt)
+        except SyntaxError:
+            continue
+        rel = os.path.relpath(p, root)
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "getattr" and len(n.args) == 3):
+                continue
+            obj, nm, dflt = n.args
+            if not (isinstance(obj, ast.Name) and obj.id in ("cfg", "Cfg")):
+                continue
+            if not (isinstance(nm, ast.Constant) and isinstance(nm.value, str)):
+                continue
+            if isinstance(dflt, ast.Constant) and dflt.value is None:
+                continue
+            if nm.value in allow:
+                continue
+            bad.append(f"{rel}:{n.lineno} getattr({obj.id}, {nm.value!r}, ...)")
+    if bad:
+        return FAIL, (f"{len(bad)} getattr site(s) name a field Cfg does not carry, so the "
+                      f"default comes back silently and reads as a measurement: "
+                      f"{'; '.join(bad[:4])}")
+    return PASS, f"every getattr(cfg, ...) name is one of {len(allow)} Cfg fields"
+
+
+def _broken_getattr_cfg_names():
+    """The REAL train.py with one getattr name misspelled -- mutated, not hand-written.
+
+    `attn_res_lr` at :756 is the benign instance the docstring cites, so breaking exactly
+    it makes the broken world the same shape as the defect: a real field name, off by a
+    suffix, with a plausible default beside it."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    real_train = os.path.join(d, "train.py")
+    if os.path.islink(real_train):
+        os.unlink(real_train)
+    shutil.copy(os.path.join(ROOT, "train.py"), real_train)
+    src = open(real_train, encoding="utf-8").read()
+    needle = 'getattr(cfg, "attn_res_lr", 0.01)'
+    assert needle in src, "the benign getattr the broken world mutates has moved"
+    open(real_train, "w", encoding="utf-8").write(
+        src.replace(needle, 'getattr(cfg, "attn_res_lr_MISSING", 0.01)', 1))
+    return d
+
+
 def check_no_conflict_markers(root):
     """No tracked source or doc holds a merge/stash conflict marker.
 
@@ -7269,6 +7385,13 @@ CHECKS = [
         _broken_no_conflict_markers,
     ),
     (
+        "getattr_cfg_names_exist",
+        "every getattr(cfg, \"name\", <non-None>) names a field Cfg can carry",
+        "getattr(cfg, 'logit_softcap', 0.0) on a nonexistent field reported post-softcap logits as pre, and the numbers matched the expected conclusion (lessons-62, 2026-09-03)",
+        check_getattr_cfg_names_exist,
+        _broken_getattr_cfg_names,
+    ),
+    (
         "dirty_aged",
         f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
@@ -7317,6 +7440,7 @@ EVIDENCE = {
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",

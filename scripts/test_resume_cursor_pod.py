@@ -18,7 +18,8 @@ Four things are checked, and the fourth is the one the other three cannot see:
   1. a cursor SEEDS used[]           -- the planned ROWS move, measured by content overlap
   2. no domain silently discards it  -- "cursor discarded" must not appear (tilerl)
   3. a mismatched seed IS refused    -- the guard fires when it should, so 2 is not vacuous
-  4. Cfg._plan_trimmed becomes true  -- what the LR compensation at train.py:2428 reads
+  4. Cfg._cursor_seeded becomes true  -- what the LR compensation at train.py:2230 reads
+     (renamed from _plan_trimmed in 8c61642; this file reads either name)
 
 Check 1 was "the plan shrinks" on the first run and that was wrong. Row count comes from
 total_tokens (:1919 want = int(rows * frac * weight)); the cursor only moves the window
@@ -54,7 +55,15 @@ def build(mix_path, tok, **kw):
     rows = out[0] if isinstance(out, tuple) else out
     if isinstance(rows, tuple):
         rows = rows[0]
-    return rows, buf.getvalue(), bool(getattr(Cfg, "_plan_trimmed", False))
+    # Either name: _plan_trimmed was renamed to _cursor_seeded in 8c61642 because the old
+    # name asserted the plan had been trimmed, which the code did not do. Reading only the
+    # old name here made this return False on every build after that commit -- assertion 4
+    # below could never fire and its partner fired always, so this file was permanently red
+    # on a correct tree. Found by the getattr-name check, not by running it.
+    seeded = getattr(Cfg, "_cursor_seeded", None)
+    if seeded is None:
+        seeded = getattr(Cfg, "_plan_trimmed", None)
+    return rows, buf.getvalue(), bool(seeded)
 
 
 def fingerprints(rows):
@@ -112,12 +121,12 @@ def main():
     fp_base = fingerprints(rows_base)
     used_after = dict(getattr(Cfg, "_row_cursor", {}) or {})
     print(f"  baseline, no cursor : {len(rows_base)} rows, _row_cursor={used_after}, "
-          f"_plan_trimmed={trimmed0}")
+          f"_cursor_seeded={trimmed0}")
     if not used_after.get(dom):
         print(f"  FAIL: build_mix left no _row_cursor for {dom}; nothing could be saved")
         return 1
     if trimmed0:
-        bad.append("_plan_trimmed is true with NO cursor -- the flag cannot mean 'trimmed'")
+        bad.append("_cursor_seeded is true with NO cursor -- the flag cannot mean 'a cursor seeded used[]'")
 
     # The overlap metric's own broken world, and it needs no mutation: a build that
     # IGNORES the cursor plans exactly what the baseline planned, so a second baseline
@@ -139,7 +148,7 @@ def main():
     resumed = [ln.strip() for ln in log.splitlines() if "resuming at row" in ln]
     discarded = [ln.strip() for ln in log.splitlines() if "cursor discarded" in ln]
     shared = len(fp_base & fp_res) / max(len(fp_base), 1)
-    print(f"  cursor={half[dom]:>8} : {len(rows_res)} rows, _plan_trimmed={trimmed1}, "
+    print(f"  cursor={half[dom]:>8} : {len(rows_res)} rows, _cursor_seeded={trimmed1}, "
           f"{shared:.1%} of the baseline's rows re-planned")
     for ln in resumed + discarded:
         print("      ", ln)
@@ -154,7 +163,7 @@ def main():
         bad.append(f"{shared:.1%} of the baseline's rows are planned again: the cursor did "
                    f"not move the window, consumed rows are being re-read")
     if not trimmed1:
-        bad.append("_plan_trimmed stayed false, so the LR compensation at 2428 will not fire")
+        bad.append("_cursor_seeded stayed false, so the LR compensation at 2230 will not fire")
 
     # 3: the seed guard must FIRE on a mismatch. Without this, check 2 is vacuous --
     # if the guard never looks, "no discard line" holds just as well. (fb: this test IS
@@ -181,7 +190,7 @@ def main():
         print("resume cursor: DEFECT PRESENT")
         return 1
     print(f"  ok: cursor moves the planned rows ({shared:.1%} overlap, not ~100%), no silent "
-          f"discard, _plan_trimmed true, and the seed guard fires and restores row 0")
+          f"discard, _cursor_seeded true, and the seed guard fires and restores row 0")
     print("resume cursor: OK -- de-13's premise does not hold on this code")
     return 0
 
