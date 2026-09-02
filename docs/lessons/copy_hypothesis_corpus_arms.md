@@ -1,7 +1,7 @@
 ---
 question: 模型学会了复制、而 val 因为语料从未去重所以看不见——这个假设成立吗
 status: recorded
-source: b0 P0（fb 转达用户，2026-09-01）。重复率 probes/t62_corpus_dup_rate.py 与 t63_cross_domain_dup.py；val 头部错位 probes/t64_val_head_overlap.py；样板率为 12-word n-gram / DF≥3 / 0.53% 文档抽样。判读规则在 docs/lessons/copy_hypothesis_prereg.md，写于全部测量之前
+source: b0 P0（fb 转达用户，2026-09-01）。重复率 probes/t62_corpus_dup_rate.py@381d922 与 t63_cross_domain_dup.py；val 头部错位 probes/t64_val_head_overlap.py@381d922；样板率为 12-word n-gram / DF≥3 / 0.53% 文档抽样。判读规则在 docs/lessons/copy_hypothesis_prereg.md，写于全部测量之前
 ---
 
 # 复制假设：语料侧的三次测量
@@ -23,7 +23,7 @@ train.py 的顺序是：把域内文档 `random.Random(_sample_seed()).shuffle`
 "按文件名排序的第一个 shard"的头部会被均匀打散到整个池子里，注释断言的那个
 对应关系不存在。
 
-在 cot 上按文档下标复现这次洗牌（`probes/t64_val_head_overlap.py`，不需要
+在 cot 上按文档下标复现这次洗牌（`probes/t64_val_head_overlap.py@381d922`，不需要
 tokenizer 也不需要 GPU）：
 
 | 量 | 数 | 占被打分的 4000 篇 |

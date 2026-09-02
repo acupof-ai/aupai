@@ -165,7 +165,7 @@ what defeats a comparison.
 One line, and it precedes every other check on this page. It is last here only
 because it was found last.
 
-`probes/t60_weight_cache.py` measured a **39.4 ms/step** saving from caching the
+`probes/t60_weight_cache.py@8491325` measured a **39.4 ms/step** saving from caching the
 head weight's fp8 bytes. The measurement was correct. But `_fp8_mm` exists only on
 the FLCE path installed by `patch_liger_flce_fp8`, which runs **only under
 `FP8_HEAD=1`** (train.py:2143) — and `FP8_HEAD=1` is itself no-ship at −3.91%
@@ -438,7 +438,7 @@ if the answer is unknown, the clean result is not yet evidence of soundness
 Different enough from the printf and join tells to name separately, and it is the
 one that survives careful measurement — because the measurement itself is fine.
 
-`probes/t58_quant_tax.py` reported the fp8 head's epilogue ceiling at **75.5 ms,
+`probes/t58_quant_tax.py@b15d348` reported the fp8 head's epilogue ceiling at **75.5 ms,
 the pre-correction figure**. Its bf16 arm ran `torch.mm(Gt,A).float()` — a bf16
 write plus an fp32 cast — while
 **both** fp8 arms passed `out_dtype=torch.float32` and never paid it. About

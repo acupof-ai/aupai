@@ -304,7 +304,7 @@ SKIP 变 PASS，FAIL 数都是 0。基线里本来有一个与本次无关的
 `datagen/scan_math_contamination.py`），不是候选路径的活引用。
 **门二必须按全路径查，basename 会把活文件的引用记到候选头上。**
 
-**`t66.py` 附带一处必须同时改的引用**：`probes/t66_depth_shape.py:14` 的 usage
+**`t66.py` 附带一处必须同时改的引用**：`probes/t66_depth_shape.py@849026e:14` 的 usage
 行写着 `python3 t66.py`，而那是它自己的前身。**删文件不修这行，就造出一条指向
 不存在文件的文档引用**——今晚在 `recipe_provenance` 修过的同一类断引用。已改为
 指向自身路径。
