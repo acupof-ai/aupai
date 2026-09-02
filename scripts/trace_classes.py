@@ -181,7 +181,9 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
     """Per-class device time, share, ideal time and the ratio."""
     per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0})
     ops = _shape_index(events)
-    counted: set = set()
+    per_id_us: dict = defaultdict(lambda: defaultdict(float))
+    per_id_n: dict = defaultdict(int)
+    per_id_op: dict = {}
     spans: list[tuple[float, float]] = []
     sum_us = 0.0
     tmin, tmax = None, None
@@ -216,18 +218,29 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         rec["us"] += dur
         rec["n"] += 1
         sum_us += dur
-        # One op can launch many kernels (up to 32 here: split-k, epilogues).
-        # Its FLOPs are the op's, not each kernel's -- charging them per kernel
-        # inflated the GEMM ideal 12x and produced a 0.1x ratio, i.e. measured
-        # "faster than peak", which is the arithmetic reporting its own error.
-        ext = args.get("External id")
-        first = ext is None or ext not in counted
-        if ext is not None:
-            counted.add(ext)
         ts = float(e.get("ts", 0.0))
         spans.append((ts, ts + dur))
         tmin = ts if tmin is None else min(tmin, ts)
         tmax = ts + dur if tmax is None else max(tmax, ts + dur)
+        # An op's ideal is charged ONCE, to the class holding most of that op's device time --
+        # decided after the pass, not by a flag on whichever kernel arrived first. That flag was
+        # shared across classes, so the Memset aten::_scaled_mm emits before its GEMM came first,
+        # carried the full 2*M*N*K into `other` (580 ms ideal at 0.1x) and left the real GEMM
+        # kernel skipped as already counted: gemm's ideal collapsed from 636 to 21.85 ms and read
+        # 37.8x. Charging per kernel instead multiplies the ideal by the launch count. Both are
+        # wrong in opposite directions and neither is visible in the output.
+        ext = args.get("External id")
+        if ext is None:
+            rec["unknown"] += 1
+            continue
+        per_id_us[ext][cls] += dur
+        per_id_n[ext] += 1
+        per_id_op[ext] = (op_name, shapes, width)
+    for ext, cls_us in per_id_us.items():
+        op_name, shapes, width = per_id_op[ext]
+        # Ties go to the first class, which only matters when two are exactly equal.
+        cls = max(cls_us, key=lambda c: cls_us[c])
+        rec = per[cls]
         ideal = None
         if op_name in MATMUL_OPS:
             fl = _shape_flops(shapes)
@@ -239,20 +252,23 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
             if by is not None:
                 ideal = by / HBM_BYTES_PER_S * 1e6
         if ideal is None:
-            rec["unknown"] += 1
-        elif first:
+            rec["unknown"] += per_id_n[ext]
+        else:
             rec["ideal_us"] += ideal
     wall_us = (tmax - tmin) if (tmin is not None and tmax is not None) else 0.0
     busy_us = _busy_us(spans)
     rows = []
     for cls, r in sorted(per.items(), key=lambda kv: -kv[1]["us"]):
-        covered = r["n"] - r["unknown"]
         rows.append({
             "class": cls,
             "gpu_ms_per_step": r["us"] / 1000.0 / steps,
             "share": r["us"] / sum_us if sum_us else 0.0,
             "kernels": r["n"],
-            "ideal_ms_per_step": (r["ideal_us"] / 1000.0 / steps) if covered else None,
+            # None when nothing in this class was priced. The predicate is the ideal itself, not
+            # `n - unknown`: an op's ideal now goes to whichever class holds most of its time, so
+            # a class can hold kernels of a priced op and still have no ideal of its own -- and
+            # `n - unknown > 0` then reported 0.0 ms, which reads as "priced, and free".
+            "ideal_ms_per_step": (r["ideal_us"] / 1000.0 / steps) if r["ideal_us"] > 0 else None,
             "ratio": (r["us"] / r["ideal_us"]) if r["ideal_us"] > 0 else None,
             "shapes_missing": r["unknown"],
         })
@@ -386,6 +402,26 @@ def _selftest() -> None:
     gdr = [{"ph": "X", "cat": "kernel", "name": "chunk_gated_delta_rule_bwd_kernel_dhu",
             "ts": 0.0, "dur": 4.0, "args": {"External id": 14}}]
     assert next(r for r in analyse(gdr, steps=1)["rows"])["class"] == "fla_kda"
+
+    # One op's kernels can land in DIFFERENT classes -- aten::_scaled_mm emits a Memset (`other`)
+    # before its GEMM -- and the ideal belongs to the class holding most of the op's time. A flag
+    # on the first kernel seen charged the Memset instead: on p200m's trace that put 580 ms of
+    # GEMM ideal into `other` (0.1x) and left gemm with 21.85 of its 636 (37.8x). Both classes
+    # were wrong and the table looked as plausible as any other.
+    split = [{"ph": "X", "cat": "cpu_op", "name": "aten::_scaled_mm", "ts": 0.0, "dur": 1.0,
+              "args": {"External id": 15, "Input Dims": [[100, 100], [100, 100]],
+                       "Input type": ["float8_e4m3fn", "float8_e4m3fn"]}},
+             {"ph": "X", "cat": "gpu_memset", "name": "Memset (Device)", "ts": 0.0, "dur": 0.1,
+              "args": {"External id": 15}},
+             {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "ts": 1.0, "dur": 9.9,
+              "args": {"External id": 15}}]
+    rows = {r["class"]: r for r in analyse(split, steps=1)["rows"]}
+    want = flops / PEAK["fp8"] * 1e6 / 1e3
+    assert rows["gemm"]["ideal_ms_per_step"] is not None, \
+        f"the op's ideal went to another class; gemm holds 9.9 of its 10.0 ms: {rows}"
+    assert abs(rows["gemm"]["ideal_ms_per_step"] - want) < 1e-9, rows["gemm"]
+    assert rows["other"]["ideal_ms_per_step"] is None, \
+        f"the Memset must not carry the GEMM's FLOPs: {rows['other']}"
     print("trace_classes selftest OK: classes, A_log split, roofline, idle, join, "
           "matmul-only pricing, per-op precision, opaque KDA names")
 
