@@ -638,6 +638,14 @@ def main():
         # version of this comment said ~sqrt(d)=32, which is torch's N(0,1) default, not ours.
         # CPU, seconds.
         "scripts/ve_row_norms.py",
+        # b0-16's layer-9 branch probe. Four checks, each verified red on its own broken world;
+        # a fifth was DELETED for being unfalsifiable (an explicit `if k not in model: raise
+        # KeyError` whose next line raises the same KeyError, so no fixture could tell the two
+        # apart -- the selftest now asserts the behaviour instead of the line). The load-bearing
+        # one is that the rescale really changes exactly one tensor: a silent no-op reports "no
+        # consequence" for every factor, which is the failure that looks like a finding. CPU
+        # for --selftest; the table and rescale need a card. 
+        "scripts/l9_branch_probe.py",
         # The embed-norm same-direction-rate reading, and the two comparisons it REFUSES. The
         # rate is a within-interval-length statistic (linear `predicted` against compounding real
         # growth moves it ~2000x from n=10 to n=1000) and it moves 4.1x with step position at
