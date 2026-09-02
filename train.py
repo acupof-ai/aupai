@@ -268,6 +268,12 @@ class Cfg:
     scalar_wd = 0.0
 
 
+# The class-body defaults, snapshotted BEFORE any flag is applied. This is what the cfg-diff
+# line at :2187 compares against, and it must be taken here rather than recomputed later:
+# argparse writes onto Cfg in place, so after that point the "default" is gone.
+_CFG_DEFAULTS = {k: v for k, v in vars(Cfg).items() if not k.startswith("_")}
+
+
 
 
 # --- FP8 compute: e4m3 for both forward and backward (e5m2 backward was unstable without grad_ckpt) ---
@@ -2197,6 +2203,19 @@ def main():
             + f" warmdown {Cfg.warmdown} anneal_frac {Cfg.anneal_frac} "
             f"val_every {Cfg.val_every} attn_every {Cfg.attn_every}"
         )
+        # EVERY field that differs from the class-body default, named. The line above prints a
+        # hand-picked list, and the picking is the defect: A/B (2a)'s arm flag (--muon_shape_lr)
+        # appears in NO log line, so its arm identity could only be recovered from the
+        # checkpoint's cfg after the fact, and a renamed or silently-dropped flag would have run
+        # the BASELINE while every log line said "arm". Same shape as the --seed truthiness bug
+        # noted just above, which stayed invisible for weeks because the log did not print the
+        # seed -- fixed there by adding one field, which leaves the next field uncovered. This
+        # prints the DIFF, so a future arm's flag needs nobody to remember it.
+        _diff = {k: getattr(Cfg, k) for k, v in _CFG_DEFAULTS.items()
+                 if getattr(Cfg, k, None) != v}
+        runlog("cfg non-default: "
+               + (", ".join(f"{k}={v!r}" for k, v in sorted(_diff.items()))
+                  or "NONE (every field is at its class-body default)"))
 
     master = MasterWeights(raw_model) if args.fp32_master else None
     optimizers = build_optimizers(raw_model, Cfg, master.map if master else None)
