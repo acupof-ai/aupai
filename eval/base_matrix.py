@@ -437,8 +437,14 @@ def main():
     ap.add_argument("--mc", action="store_true", help="also score the MC tripwire")
     ap.add_argument("--summarize", nargs="+", metavar="JSON", help="resolution summary over ladder runs")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--selftest-nodata", action="store_true",
+                    help="the assertions that need no tokenizer and no dataset (hook-runnable)")
     a = ap.parse_args()
 
+    if a.selftest_nodata:
+        _selftest_floor()
+        print("base_matrix nodata self-test OK")
+        return
     if a.selftest:
         _selftest()
         return
