@@ -95,3 +95,35 @@ chunk count) and every A/B queues behind the run. The resume line is the 200M li
 with `--resume ckpt_p200m_4b_0902.pt.interrupt.step832`, eight cards, batch 16 accum 2, no
 grad checkpointing. Blocking at 14:15Z: GPU7 holds the user's own tileRL GRPO
 (`tilerl.cli train --recipe grpo-gsm8k-27b`, 27.7 GB); the user decides whether it stops.
+
+## b0-14: the log prints only Muon's lr, so the embedding's lr is invisible (b0, 15:3xZ)
+
+**The defect.** `train.py:2401` prints `optimizers[0].param_groups[0]['lr']`, which is
+**Muon's**. There are four optimizer groups with three distinct learning rates:
+
+| group | optimizer | lr | wd | params |
+|---|---|---|---|---|
+| `opt[0]` | Muon | 0.01 | 0.0476 (decaying) | 63 |
+| **`opt[1]`** | **AdamW** | **0.1** | **0.001 (never decays)** | **1** (tied `tok`/`head`) |
+| `opt[2]` | AdamW | 0.15 | 0.0 | 77 |
+| `opt[3]` | AdamW | 0.01 | 0.0 | 34 |
+
+**So every log line reading `lr 1.00e-02` is one of four, and the embedding runs at 10x it.**
+
+**Why this earned a task rather than a note.** Both 1e and b0 read `lr 1.00e-02` as the
+embedding's lr on 2026-09-02 while investigating why the embedding norm grows 1.43x per
+500-step interval — the mechanism hypothesis was built on it ("no wd, lr 1e-2"), and both
+of its premises were wrong. A log that shows one group's lr and labels it `lr` does not
+merely omit information; it supplies a wrong value for the reading a person is doing.
+
+**b0-14: log every optimizer group's lr.** Trigger = the next launch, when someone reads
+the log. `train.py` is not touched before then (frozen path while the run holds cards).
+Shape: one line per group with its name, or a single line `lr muon/embed/scalar/arq`.
+
+**Related, recorded as open, not judged.** `train.py:783`'s wd decay-to-zero is guarded by
+`isinstance(opt, Muon)`, so `muon_wd` 0.10 decays linearly to 0 while the embed group's
+0.001 stays flat for the whole run. Measured consequence: the embed group's Adam update
+overwhelms its wd term by **108x at L12 / 90x at L32**, so wd is not restraining the
+embedding at either scale. Whether that guard is right is a recipe question, not a defect
+report — nanochat's own recipe decays only Muon's — so it is logged here for whoever owns
+the recipe, with the numbers attached.
