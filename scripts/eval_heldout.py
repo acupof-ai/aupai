@@ -186,6 +186,20 @@ def load_ours(ckpt, device):
                          f"model's loss")
     if unexpected:
         print(f"note: {len(unexpected)} unexpected key(s) ignored, e.g. {unexpected[:3]}")
+    # bf16, matching eval/run_eval.py:274 (`return model.to(torch.bfloat16), cfg`) and
+    # eval/domain_loss.py:286. NOT cosmetic and NOT an optimisation:
+    #
+    # the checkpoint's tensors are bf16 (tok.weight, blocks.0.mixer.A_log -- verified on
+    # ckpt_control_ours.pt), HybridLM(Cfg) builds fp32 parameters, and load_state_dict
+    # casts each loaded tensor to its parameter's dtype -- so the weights come back UP to
+    # fp32 and every eval path in this repo then casts the model back down. Leaving it fp32
+    # made the KDA triton kernel raise `CUDA error: misaligned address` inside its
+    # autotuner. Excluded first, in this order: row width (64 fails as readily as 4096),
+    # cu=None vs doc_cu_seqlens (both fail), FLA_FLASH_KDA=0 set before any import (still
+    # fails), grad checkpointing (model.eval() already disables it).
+    #
+    # The dtype is the one thing that differed from every path that works.
+    model = model.to(torch.bfloat16)
     model.eval()
     return model, ck.get("vocab_id")
 
