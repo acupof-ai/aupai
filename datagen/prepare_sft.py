@@ -289,6 +289,13 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
         "packer_fp": _fp_file(os.path.abspath(__file__)),
         "sources_fp": _fp_sources(sources),
         "holdout_fp": _fp_file(os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")),
+        # Printed since the beginning and never persisted, which made a question like "how
+        # many examples did seq 4096 drop on this pack?" answerable only from the build's
+        # scrollback. A pack outlives its log: the control comparison's report header needs
+        # both arms' drop counts side by side, and one of them was unrecoverable.
+        "build_stats": {"examples": len(examples), "dropped_overlong": n_drop,
+                        "rows": n_rows, "row_len": row_len, "pad_tokens": n_pad,
+                        "prefix_mismatches": n_mismatch, "seq": seq},
     }
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)

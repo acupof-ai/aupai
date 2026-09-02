@@ -398,6 +398,9 @@ def main():
         # lands in the supervised half -- none of which touch a model or a card.
         "datagen/build_control_sft_text.py",
         "scripts/sft_hf_control.py",
+        # The ours-side half. Its selftest asserts both arms split a shared row into the
+        # same (prompt, completion) pair -- the one thing that must not drift between them.
+        "datagen/pack_control_sft_ours.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
