@@ -1,17 +1,25 @@
 {
   "at_risk": [
     "algorithms/rlvr_data.py",
+    "datagen/data_verify.py",
     "datagen/distil_traces.py",
+    "datagen/fable5/analyse_fable5.py",
+    "datagen/fable5/clean_fable5.py",
     "datagen/gen_code.py",
     "datagen/gen_knowledge.py",
     "datagen/gen_knowledge2.py",
+    "datagen/holdout_split.py",
+    "datagen/make_mixed.py",
+    "datagen/prepare_sft.py",
     "datagen/quality_clf.py",
     "datagen/score_web_27b.py",
     "datagen/train_quality_head.py",
     "eval/base_matrix.py",
+    "eval/domain_loss.py",
     "eval/lambada_zh.py",
     "eval/math_hard.py",
     "eval/math_v2_like.py",
+    "eval/score_matrix.py",
     "mathbank/eval_hard_v2_gen.py",
     "mathbank/make_v11.py",
     "mathbank/make_v11_band.py",
@@ -19,14 +27,8 @@
     "mathbank/run_math_short.py",
     "mathbank/run_short_sol.py",
     "scripts/build_tokenizer.py",
-    "datagen/data_verify.py",
-    "eval/domain_loss.py",
     "scripts/fit_scaling.py",
     "scripts/harness.py",
-    "datagen/holdout_split.py",
-    "datagen/make_mixed.py",
-    "scripts/pod_drift.py",
-    "datagen/prepare_sft.py",
-    "eval/score_matrix.py"
+    "scripts/pod_drift.py"
   ]
 }
