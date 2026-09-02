@@ -77,3 +77,12 @@ performance sprint's numbers comparable:
 | 3b | 3b-8 near-dedup pass, code and tests on the sample now, full pass after de's trace; 3b-9 fetch and admission | task-set survey stays in 3b-9 |
 | 44 | 44-20 launch-line check, reviews as they land | 44-17 post-pretrain plan |
 | 98 | 98-1 per-owner queue on the progress page | — |
+
+## No pod push while a card job runs (13:34Z)
+
+44 pushed a9c5952 while arm 1 of de's 300M A/B was on cards 0-3 under stamp 7660c00. The
+diff (AGENTS.md, the manifest, facts/efficiency.json, harness.py, trace_classes.py) lies
+outside the profiler's import path, so the A/B stands, and its report carries each arm's
+stamp. The rule that the launch-window freeze already implied: while any job holds a card,
+nobody pushes unless every changed file is outside that job's import path and the push is
+named in the job's report; during a two-arm A/B nobody pushes at all.
