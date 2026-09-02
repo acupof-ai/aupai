@@ -1068,29 +1068,48 @@ def selftest():
         bad.append(f"a mention of {_probe[0]!r} reads as a dead citation -- the extension "
                    "was truncated, so a tracked file looks missing (jsonl before json)")
 
-    # @rev: one live commit, four judgements. The live pair comes from the tree, not from a
-    # constant: a hardcoded sha is itself a citation that rots, and this file would then be
-    # asserting against a rev it can no longer reach.
-    _del = subprocess.run(["git", "log", "--diff-filter=D", "--format=%H", "-1",
-                           "--name-only", "--", "probes/", "bench_eff/"],
-                          cwd=ROOT, capture_output=True, text=True).stdout.split()
-    if len(_del) < 2:
-        bad.append("no deleted probe in history to test an @rev citation with")
-    else:
-        _sha, _gone = _del[0], _del[1]
-        for text, want_dead, what in (
-            (f"measured in {_gone}@{_sha}~1.", False,
-             "a retired path at the commit before its deletion must RESOLVE"),
-            (f"measured in {_gone}.", True,
-             "a deleted path with no @rev must stay DEAD, or @rev support has "
-             "silently retired the tracked test for every bare path"),
-            (f"measured in {_gone}@0000000000000000000000000000000000000000.", True,
-             "@ a rev that does not exist must be DEAD (fb's world)"),
-            (f"measured in probes/never_existed_xyz.py@{_sha}.", True,
-             "@ a real rev that never held the path must be DEAD"),
-        ):
-            if bool(dead_citations(ROOT, text, _tracked)) != want_dead:
-                bad.append(f"citation {text!r}: {what}")
+    # @rev: one live commit, four judgements, on MANUFACTURED history. The history this
+    # test needs is built in a temp repo -- commit a probe, delete it -- not read from
+    # this tree: a branch behind at the moment this gate landed had no deleted probe at
+    # its HEAD, and the merge that brought the deletions was the very commit the gate
+    # then blocked (b0, 2026-09-02, 76 commits behind, deadlock). A selftest whose
+    # premise is the repo's branch state fails on exactly the trees that need it.
+    with tempfile.TemporaryDirectory(prefix="rev_selftest_") as _tmp:
+        def _git(*args):
+            r = subprocess.run(["git", *args], cwd=_tmp, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()[:160]}")
+            return r.stdout.strip()
+
+        try:
+            _git("init", "-q")
+            _gone = "probes/selftest_retired_probe.py"
+            os.makedirs(os.path.join(_tmp, "probes"), exist_ok=True)
+            with open(os.path.join(_tmp, _gone), "w") as f:
+                f.write("# manufactured by launch_gate --selftest; never tracked in the real repo\n")
+            _git("add", _gone)
+            _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "add probe")
+            _git("rm", "-q", _gone)
+            _git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "retire probe")
+            _sha = _git("rev-parse", "HEAD")
+            _tmp_tracked = set(_git("ls-files").split())
+        except (OSError, RuntimeError) as e:
+            bad.append(f"@rev world build failed ({e}); a world that fails before the "
+                       "stage under test proves nothing")
+        else:
+            for text, want_dead, what in (
+                (f"measured in {_gone}@{_sha}~1.", False,
+                 "a retired path at the commit before its deletion must RESOLVE"),
+                (f"measured in {_gone}.", True,
+                 "a deleted path with no @rev must stay DEAD, or @rev support has "
+                 "silently retired the tracked test for every bare path"),
+                (f"measured in {_gone}@0000000000000000000000000000000000000000.", True,
+                 "@ a rev that does not exist must be DEAD (fb's world)"),
+                (f"measured in probes/never_existed_xyz.py@{_sha}.", True,
+                 "@ a real rev that never held the path must be DEAD"),
+            ):
+                if bool(dead_citations(_tmp, text, _tmp_tracked)) != want_dead:
+                    bad.append(f"citation {text!r}: {what}")
 
     for name, (d, mixp, restore) in reversible.items():
         fn = dict(GATES)[name]
