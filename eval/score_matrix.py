@@ -522,6 +522,35 @@ def selftest():
     assertion is a case with a known right answer."""
     import tempfile
 
+    # _mix_for: the mix comes from the CHECKPOINT unless --mix was named. Worlds are real
+    # torch.save files, because the bug being guarded is a type assumption -- cfg is a dict on
+    # every real checkpoint, and a getattr-only read returns the fallback for all of them while
+    # looking like it consulted the checkpoint.
+    import torch
+    with tempfile.TemporaryDirectory() as _td:
+        _mixp = os.path.join(_td, "mix_probe.json")
+        with open(_mixp, "w", encoding="utf-8") as fh:
+            json.dump({"total_tokens": 1, "domains": {}}, fh)
+        _dictck = os.path.join(_td, "ckpt_dictcfg.pt")
+        torch.save({"cfg": {"mix": _mixp, "epochs": 1}, "model": {}}, _dictck)
+        _fb = os.path.join(ROOT, "data/mix_scale_3.24b.json")
+        assert _mix_for(_dictck, _fb) == _mixp, "a dict cfg's mix must be used"
+        assert _mix_for(_dictck, _fb, explicit=True) == _fb, "--mix must win when named"
+
+        # A cfg naming an absent mix falls back, and SAYS so -- silently scoring against the
+        # ladder's mix is how a record acquires a basis nobody chose.
+        _gonck = os.path.join(_td, "ckpt_goneMix.pt")
+        torch.save({"cfg": {"mix": "data/mix_that_does_not_exist.json", "epochs": 1},
+                    "model": {}}, _gonck)
+        assert _mix_for(_gonck, _fb) == _fb, "an absent mix must fall back"
+
+        # No mix in cfg at all: fall back rather than raise.
+        _nock = os.path.join(_td, "ckpt_noMix.pt")
+        torch.save({"cfg": {"epochs": 1}, "model": {}}, _nock)
+        assert _mix_for(_nock, _fb) == _fb, "a cfg without a mix must fall back"
+        # An unreadable checkpoint must not take down a scoring run.
+        assert _mix_for(os.path.join(_td, "nope.pt"), _fb) == _fb, "unreadable ckpt must fall back"
+
     # kind stamp wins over sft epochs; epochs>1 is sft; no stamp, no ledger row -> base
     assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
     assert classify({"epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "sft"
@@ -729,6 +758,39 @@ def dispatch(kind, requested):
     return wanted, unusable, skipped
 
 
+def _mix_for(ckpt_path, fallback, explicit=False):
+    """The mix this CHECKPOINT was trained on, from its own cfg. --mix wins when named.
+
+    The mix is a property of the checkpoint, not of the invocation. --mix defaulted to the
+    ladder's mix_scale_3.24b.json, so scoring a non-ladder checkpoint read domain rows for
+    domains it never trained on and cache_guard refused -- correctly, since the seqs
+    fingerprint belongs to another corpus. run_ddp.sh's end-of-run scoring passes no --mix at
+    all, so EVERY non-ladder run would fail its own automatic scoring and exit nonzero with a
+    good checkpoint (fb hit this on p500m step2500 and again on p200m_4b_0902, 2026-09-02).
+
+    cfg is a DICT on every real checkpoint -- verified on ckpt_p200m_4b_0902.pt.step500:
+    type dict, cfg['mix'] = 'data/mix_200m_4b.json'. A getattr-only read would return the
+    fallback for all of them while looking like it consulted the checkpoint.
+    """
+    if explicit:
+        return fallback
+    try:
+        cfg, _ = read_cfg(ckpt_path)
+    except Exception:
+        return fallback
+    mix = cfg.get("mix") if isinstance(cfg, dict) else getattr(cfg, "mix", None)
+    if not mix:
+        return fallback
+    p = mix if os.path.isabs(mix) else os.path.join(ROOT, mix)
+    # A cfg naming a mix that is gone must not silently score against the ladder's: say so and
+    # fall back, so the record's basis is visible in the log rather than inferred.
+    if not os.path.exists(p):
+        print(f"note: {os.path.basename(ckpt_path)} names mix {mix!r}, which is absent here; "
+              f"falling back to {os.path.basename(fallback)}", flush=True)
+        return fallback
+    return p
+
+
 def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
@@ -859,6 +921,10 @@ def main():
         return
     if not a.ckpt:
         ap.error("--ckpt is required")
+    # Whether the caller NAMED a mix, not whether a.mix is set -- argparse fills the default
+    # in either case, so `a.mix != default` cannot tell an explicit `--mix <the default>` from
+    # a silent fallback. sys.argv is the only place that distinction survives.
+    mix_given = any(x == "--mix" or x.startswith("--mix=") for x in sys.argv[1:])
 
     metrics = PROFILES[a.profile] if a.profile else a.metrics
 
@@ -867,7 +933,8 @@ def main():
     failed = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics, a.profile or "full")
+            rec = score(ck, _mix_for(ck, a.mix, explicit=mix_given), a.tokenizer, device,
+                        a.ngpu, metrics, a.profile or "full")
         except Exception as e:
             # "SKIPPED (OutOfMemoryError: ...)" read as "the checkpoint OOMed when
             # saving", which would be a large conclusion -- training fits but writing
