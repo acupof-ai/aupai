@@ -168,14 +168,27 @@ def _worlds():
         if o:
             grp[exp_key(o)].append(n)
 
-    multi = [k for k, ix in grp.items() if len(ix) >= 2]
-    assert multi, "no multi-row key on main: the rollback world cannot be built"
-    ix = grp[multi[-1]]
+    # The rollback world needs a key whose LAST row is unique under it. multi[-1] was picked
+    # blindly and stopped working when ab_shapelr grew several byte-identical `done` rows: drop
+    # one and the others still subsume it, so the predicate was correctly quiet and the WORLD was
+    # the bug (de, 2026-09-03). Pick deliberately, and assert the property the world depends on.
+    roll_key = None
+    for k in [k for k, ix in grp.items() if len(ix) >= 2]:
+        ix = grp[k]
+        last_body = json.dumps(obj(real[ix[-1]]), sort_keys=True, ensure_ascii=False)
+        copies = sum(
+            1 for i in ix if json.dumps(obj(real[i]), sort_keys=True, ensure_ascii=False) == last_body
+        )
+        if copies == 1:
+            roll_key = k
+            break
+    assert roll_key, "no multi-row key whose last row is unique: the rollback world cannot be built"
+    ix = grp[roll_key]
     roll = list(real)
     roll[ix[-1]] = roll[ix[0]]
     W.append(
         (
-            f"content rollback under {multi[-1][0]!r}",
+            f"content rollback under {roll_key[0]!r}",
             real,
             roll,
             True,
@@ -257,6 +270,49 @@ def selftest():
             print(f"       {why}")
             for k, ln in hits[:2]:
                 print(f"       {k} {str(obj(ln))[:110]}")
+
+    # EVERY LEDGER'S KEY FUNCTION MUST RESOLVE ON REAL ROWS. A keyfn reading a field the file
+    # does not have returns None for every row, and then BOTH predicates go quiet rather than
+    # loud: with one key holding the whole file, subsume asks only "is the last row preserved
+    # somewhere" and key_present asks only "is the file non-empty". review.jsonl could lose 57
+    # records and pass. Two of ledger_audit's seven keyfns were in exactly that state when this
+    # check was written (de, 2026-09-03): milestones read (name, at|ts) against rows carrying
+    # ckpt/milestone/measured -- 13 of 13 rows keyed to None -- and review read `id` against rows
+    # carrying ts/reviewer/task -- 58 of 67. Measured replacements: ("ckpt", "milestone") gives 8
+    # keys over 13 rows with no None, ("ts", "reviewer", "task") gives 62 over 67.
+    #
+    # This is the check that makes the class un-reintroducible, which is why it lives here rather
+    # than being a one-time fix to the table.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import ledger_audit as _la
+    except Exception as e:  # noqa: BLE001 -- absent or unimportable is a SKIP, not a failure
+        print(f"\n  SKIP keyfn resolution: ledger_audit not importable ({e})")
+    else:
+        print()
+        for path in sorted(_la.KEYS):
+            rows_txt = lines("main", path)
+            if rows_txt is None:
+                print(f"  SKIP {path}: absent on main")
+                continue
+            parsed = [obj(ln) for ln in rows_txt]
+            parsed = [o for o in parsed if o is not None]
+            nones = 0
+            for o in parsed:
+                try:
+                    k = _la.KEYS[path](o)
+                except (AttributeError, TypeError):
+                    nones += 1
+                    continue
+                if k is None or (isinstance(k, tuple) and all(x is None for x in k)):
+                    nones += 1
+            ok = nones == 0 and len(parsed) > 0
+            bad += not ok
+            print(
+                f"  {'ok  ' if ok else 'BUG '} {path:28} keyfn resolves on "
+                f"{len(parsed) - nones}/{len(parsed)} rows"
+                + ("" if ok else "  <-- INERT: both predicates go blind on this file")
+            )
 
     # key_present must be STRICTLY weaker: whatever it flags, subsume flags too.
     real = lines("main")
