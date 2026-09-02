@@ -89,11 +89,11 @@ def main():
     a = ap.parse_args()
 
     pf = pq.ParquetFile(a.shard)
-    docs = pf.to_pydict()
-    nrows = len(docs["path"])
-    by_repo = defaultdict(dict)
-    for i in range(nrows):
-        by_repo[docs["repo_name"][i]][docs["path"][i]] = docs["content"][i]
+    by_repo = defaultdict(lambda: defaultdict(str))  # repo -> {path: content}
+    for batch in pf.iter_batches(batch_size=5000):
+        d = batch.to_pydict()
+        for i in range(len(d["path"])):
+            by_repo[d["repo_name"][i]][d["path"][i]] = d["content"][i]
 
     os.makedirs(a.out_dir, exist_ok=True)
     out = os.path.join(a.out_dir, os.path.basename(a.shard).replace(".parquet", "_mined.jsonl"))
