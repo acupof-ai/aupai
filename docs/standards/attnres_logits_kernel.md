@@ -177,30 +177,61 @@ The `sum` backward is a broadcast-multiply; its reads are already inside b0's
 
 **The gradient wrt `v_i` has a second term the mixing does not own**: each `v`
 is read by its own logit too, so autograd's `v.grad` is the mixing term *plus*
-the logits term. A fused kernel that computes both paths owns both terms —
-which is a change from the mixing-only design, where the logits residue stays
-in autograd. **This is the parity trap**: b0's `known_answer()` deliberately
-reports that residue as expected. A logits+mixing kernel must match the
-**total**, so the check inverts, and copying b0's tolerance without noticing
-would let a wrong kernel pass.
+the logits term:
+
+```
+dV_i = a[i]·dout  +  (dlogit[i]·scale_i)·gq
+```
+
+A fused kernel owns both terms. Omitting the second is the failure mode gate 1
+is built around, and it is not subtle once measured: **relative error 1.01**,
+i.e. the answer is wrong by its own magnitude.
 
 ## Correctness gates
 
-1. **Known-answer against the real module.** `known_answer()` from
-   `scripts/attnres_fused_reference.py` — builds a real `model.AttnRes` with
-   randomized `q` and `g` (both are identity elements at their init values, so
-   a wrong weighting is invisible without this), fp32, `atol=1e-6`. Forward
-   must match; `dV` must match the **total** (see the trap above).
-2. **Gradient check** on `dA` through the softmax, at the logits, where both
-   sides have the same variable — `a` is not a leaf.
-3. **`add_count(L)` regression.** The closed form `n(n+1)` at L=2/3/4/12 is a
-   cheap structural check that the AttnRes wiring did not change. A fused
-   forward changes this count; the new expected values go in the same
-   assertion rather than the assertion being deleted.
+b0's review of `7899ea1` (`b0-review-7899ea1`) rewrote three of these. The
+originals are kept as struck reasoning where the correction is the point.
+
+1. **`dV` against autograd's total, relative, ≤ 1e-5.**
+
+   ```
+   max|dV_kernel − v.grad| / max|v.grad| ≤ 1e-5
+   ```
+
+   Against the **total**, subtracting nothing. Measured separation: a correct
+   implementation (mixing term + logits term) reads **4.6e-08** at D=1024,
+   n=25; one that drops the logits term reads **1.01** — seven orders apart,
+   so the gate is nowhere near the edge.
+
+   Two corrections behind this. **`known_answer()` has no `dV` assertion at
+   all** — it asserts the forward (`:131`), computes `gaps`, prints them, and
+   `main()` discards the return value. An earlier version of this page said the
+   check "inverts" for a fused kernel; there was nothing to invert. And
+   **`atol=1e-6` was calibrated at D=32**: a correct implementation at D=1024
+   reads 6.3e-6 and that absolute bar would reject it. Hence relative.
+
+2. **`dA` through the softmax, against the fp32 mathematical definition — not
+   the module.** `model.py:270` casts the softmax back to `v.dtype`
+   unconditionally, so in training the module carries ~6.4e-3 of its own bf16
+   rounding. **fp64/1e-12 against the real module is unreachable by
+   construction**; the reference is the math, in fp32.
+
+3. **`add_count(L)` is a wiring check only, and is exempt from gate 5.** The
+   post-fusion closed form is **`n(n+1)/2` = 325 at L=12** (b0 derived it,
+   measured the same value). But that equals the count from the
+   `detach_logits` arm, so **it cannot see a kernel that drops the logits
+   gradient term** — the exact bug gate 1 exists to catch. It stays as a cheap
+   check that the AttnRes wiring did not change, and nothing more.
+
 4. **20-step loss delta ≤ 1e-3** against the unfused arm, same seed.
-5. **Negative control.** Run every gate above against a deliberately wrong
-   kernel (e.g. `scale` folded into the mixing) and confirm each fails. A gate
-   never seen red is a hypothesis about a gate.
+
+5. **Negative control.** Run gates 1, 2 and 4 against a deliberately wrong
+   kernel (drop the logits term; fold `scale` into the mixing) and confirm each
+   fails. A gate never seen red is a hypothesis about a gate. **Gate 3 is
+   exempt** — it is structurally blind to this class of error, which is why
+   it is documented as a wiring check rather than a correctness gate.
+
+b0 independently reproduced the bf16 rescaling result: no clamp needed.
 
 ## Constraints
 
