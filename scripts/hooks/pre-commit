@@ -484,7 +484,7 @@ def main():
         # real ledger for the shapes no commit provides. It is registered BEFORE the hook uses
         # the predicate on purpose: the predicate's home is b0's scripts/ledger_audit.py, and
         # these worlds are what says whether that function is the right one. Reads git history
-        # only, ~20s.
+        # only, 0.3s measured.
         "scripts/test_ledger_predicates.py",
         # A/B (3)'s arm: two ways it costs a run and reports nothing -- zeroing nothing after
         # a rename (a bit-exact copy of the baseline that still logs as the arm), and looking
