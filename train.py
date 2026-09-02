@@ -2008,6 +2008,23 @@ def setup_ddp():
 def main():
     import argparse
 
+    # The twelve knobs runs/recipe_provenance.json argues for. Omitting one of these is
+    # what four launches on 2026-09-02 did while all nine gates stayed green, because an
+    # omitted flag lands on a default -- and five of those defaults EQUAL the recipe
+    # value, so no check that reads the effective config could see them missing at all.
+    # required=True removes the failure class instead of detecting it.
+    #
+    # Spelled here rather than imported from scripts/launch_gate.py: train.py is the
+    # training entry point and must not grow a dependency on the gate that audits it
+    # (the gate imports nothing from train.py either). scripts/test_recipe_required.py
+    # reads RECIPE_FLAGS from launch_gate and asserts every one of them is refused when
+    # omitted, so the two lists cannot drift without that test going red -- e1-9's whole
+    # finding was two lists disagreeing and the gate going blind to four keys.
+    RECIPE_REQUIRED = {
+        "dim", "layers", "heads", "ffn_hidden", "batch", "accum",
+        "lr_scale", "warmdown", "anneal_frac", "warmup", "save_every", "grad_ckpt",
+    }
+
     parser = argparse.ArgumentParser(description="Pretrain HybridLM; any --flag below overrides Cfg.<flag>")
     for name, help_ in {
         "seq": "sequence length",
@@ -2028,19 +2045,22 @@ def main():
         "layers": "number of blocks",
         "ffn_hidden": "FFN inner width",
     }.items():
-        parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
+        parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
+                            help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "warmdown": "fraction of total steps for the cosine warmdown tail (WSD; 0 keeps lr at stable for a stage-1 join)",
         "anneal_frac": "fraction of tokens using each domain's anneal weight (0 = no anneal, for a WSD stage-1)",
     }.items():
-        parser.add_argument(f"--{name}", type=float, default=None, help=f"{help_} (default: Cfg.{name})")
+        parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
+                            help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
     }.items():
-        parser.add_argument(f"--{name}", action="store_true", help=help_)
+        parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
+                            default=None, required=name in RECIPE_REQUIRED, help=help_)
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
@@ -2064,7 +2084,7 @@ def main():
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
     parser.add_argument(
-        "--save_every", type=int, default=1000,
+        "--save_every", type=int, required=True,
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
@@ -2092,13 +2112,20 @@ def main():
     parser.add_argument("--no_bucket_view", action="store_true", help="disable DDP gradient_as_bucket_view (A/B: 5K overhead hunt)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
-    parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
+    parser.add_argument("--lr_scale", type=float, required=True, help="multiplier on every optimizer lr")
     args = parser.parse_args()
     # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
     # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
     # despite its help text saying "0 = epoch end only", and --attn_res_blocks 0 landed
     # only because the Cfg default was already 0. Ten int flags were affected; the
     # warmdown/anneal_frac rescue loop this replaces was the same fix for two of them.
+    #
+    # BooleanOptionalAction switches (grad_ckpt, attn_res, attn_res_dyn_q, fone) now
+    # default to None, so absence IS expressible and `is not None` is finally the right
+    # test for them too -- False from --no-grad_ckpt writes False, absent writes nothing.
+    # That is why the store_true exclusion below no longer needs to name them: the class
+    # it protected against is gone for the four that moved. Any store_true still in the
+    # parser keeps the old handling, because for those absent and False remain one value.
     #
     # store_true flags are excluded and handled below: argparse gives them False when
     # absent, not None, so is-not-None would overwrite the Cfg default on every run --
