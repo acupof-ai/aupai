@@ -1,0 +1,23 @@
+{
+  "arm": "control",
+  "ckpt": "pythia160m_lr1e-3.hf",
+  "seq": 2048,
+  "text": "data/sft/control_sft_text_heldout.jsonl",
+  "examples_in_text": 10641,
+  "examples_scored": 10421,
+  "dropped_overlong": 220,
+  "evaluated_ids_sha256": "cae4daf7ad59388c",
+  "restricted_to_ids": "ids_shared.txt",
+  "total_nll": 3721813.98487854,
+  "supervised_tokens": 3658306,
+  "supervised_bytes": 10554038,
+  "nll_per_supervised_byte": 0.3526436028445738,
+  "nll_per_supervised_token": 1.0173599433394964,
+  "note": "nll_per_supervised_byte is the cross-arm number, and only when both arms report the same evaluated_ids_sha256. per_supervised_token is arm-internal: the tokenizers segment the same text into different counts.",
+  "ln_vocab_sentinel": {
+    "alarm": false,
+    "note": "sanity: 1.0174 nat/token = 9.4% of ln(V)=10.8253 (V=50,279) -- below the no-information baseline, so the alignment is carrying signal"
+  },
+  "skip_one_nll_per_token": 12.595703822808058,
+  "next_token_nll_per_token": 1.0173599433394964
+}
