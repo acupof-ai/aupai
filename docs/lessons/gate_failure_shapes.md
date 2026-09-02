@@ -338,6 +338,22 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 附带同次发现:re-export 不能被 monkey-patch——`from X import name` 是另一个绑定,test_arch_compat 给 `train.chunk_kda` 打桩不再到达调用点;修测试(两边都打桩)不改模型。
 
+## 36. 扫描器的五个可信错答案:能引用别人的文件是哪些,不能用文件名回答(de,2026-09-02)
+
+一个「谁引用谁」的扫描器,五个看似合理的版本各打印一个自信的错数字。规则:扫描器打印任何数字前先过 known-answer——4 个必被 loader 到达、2 个必在 hook map、3 个必不被到达(含 harness.py 与 arch.html)。
+
+实例(de 的 de-5 清单,fb 转达):
+
+1. 无 runtime-loader 步 → 63 文件 41,955 行「可删」,含 23 个 glob 装载的 math 生成器——装载它们的代码在,文件名扫描看不见。
+2. loader 修过头 → 225/236 全成 loaded——判据从「太严」摆到「太松」,与 §31 过度修正同族。
+3. 裸 `*.py` 当注册表 → harness.py 自己进 LOADED——扫描器正在扫的文件被算成被引用。
+4. hook 不算 reader → 前 24 条里 17 条是每次提交都跑的 selftest——它们的 reader 是 hook,不是 import。
+5. `scripts/hooks/pre-commit` 无扩展名,被 TEXT_EXT 过滤,HOOK 集合为空——④的修复看起来生效,实际没有:修了判据,但判据的输入被另一个过滤器清空。
+
+附:arch.html 的 reader 是 `.github/workflows/pages.yml`——.yml 也是 reader。「reader 是哪些文件」同样不能用扩展名回答。
+
+规则合一句:引用关系是运行时/装载时的事实,不是文件名的事实;扫描器的 known-answer 夹具必须同时含正例(必到达)和反例(必不到达)——少一边就是 §29 的盲区。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -357,3 +373,4 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
 - fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
 - b0-8(2026-09-02):5add1c8 model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
+- de 的 de-5 清单(fb 转达,2026-09-02):引用扫描器五个可信错版本;known-answer 规则 4 loader-reached/2 hook-map/3 not-reached;arch.html 的 reader 是 pages.yml
