@@ -337,7 +337,7 @@ def _demo_keys():
     import re
 
     names = {}
-    for f in ("train.py", "infer_local.py"):
+    for f in ("model.py", "infer_local.py"):
         if not os.path.exists(os.path.join(ROOT, f)):
             # infer_local.py is the local-Mac copy and is not shipped to the pod.
             print(f"HybridLM key check SKIP ({f} not present here)")
@@ -347,9 +347,9 @@ def _demo_keys():
         cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "HybridLM")
         body = ast.get_source_segment(src, cls)
         names[f] = set(re.findall(r"self\.([a-z_][a-z0-9_]*)\s*=\s*nn\.", body))
-    a, b = names["train.py"], names["infer_local.py"]
+    a, b = names["model.py"], names["infer_local.py"]
     assert a == b, (
-        f"HybridLM diverged: train.py only {sorted(a - b)}, infer_local.py only {sorted(b - a)}. "
+        f"HybridLM diverged: model.py only {sorted(a - b)}, infer_local.py only {sorted(b - a)}. "
         "A checkpoint saved by one will not load in the other."
     )
     print(f"HybridLM submodules agree across both copies ({len(a)}): {sorted(a)}")
