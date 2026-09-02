@@ -154,11 +154,32 @@ class GatedMLA(nn.Module):
         self.kv_up = nn.Linear(self.latent, 2 * cfg.d, bias=False)  # fused k_up|v_up
         self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate
         self.o = nn.Linear(cfg.d, cfg.d, bias=False)
+        # A/B (4): the GATE is per layer (3 * 12 * d params, negligible); the TABLE is ONE
+        # [vocab, d] shared by every MLA layer and owned by HybridLM. Three separate tables
+        # would be +48.9% parameters at this config against +16.3% for one, and the mechanism
+        # (token identity reaching V, gated, only in attention layers) is intact either way.
+        # `_ve` is the per-forward lookup, stashed by HybridLM.forward; None means the arm is off.
+        self._ve = None
+        self.ve_gate = nn.Linear(12, cfg.d, bias=True) if getattr(cfg, "value_embed", False) else None
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
         latent = self.kv_down(x)
         k, v = self.kv_up(latent).chunk(2, dim=-1)
+        # A/B (4) value embeddings: a token-indexed vector added to V, gated per position.
+        #
+        # AFTER kv_up, never into the latent: the latent is shared by K and V (one kv_down, one
+        # kv_up producing both), so adding there would put token identity into the KEYS too and
+        # this would stop being a value embedding. 1e's ruling 2026-09-03.
+        #
+        # The gate reads the first 12 dims of the residual (speedrun's shape) and spans [0, 3):
+        # 3*sigmoid can amplify as well as suppress, which is the published form, and at init
+        # ve_gate is zero-init so sigmoid(0)=0.5 gives a gate of 1.5 -- NOT zero. That is
+        # deliberate and it is why this arm is not parameter-free at step 0: a zero gate would
+        # make the table invisible and the arm would need many steps just to discover it.
+        if self._ve is not None:
+            g = 3.0 * torch.sigmoid(self.ve_gate(x[..., :12]))
+            v = v + g * self._ve.to(v.dtype)
         q, gate = self.qg(x).chunk(2, dim=-1)
         k = k.view(B, T, self.h, self.hd)
         v = v.view(B, T, self.h, self.hd)
@@ -318,6 +339,23 @@ class HybridLM(nn.Module):
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1)) for i in range(cfg.layers)]
         )
         self.norm = RMSNorm(cfg.d)
+        # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
+        #
+        # getattr WITH a default here, unlike Muon's `assert hasattr` for muon_shape_lr, and the
+        # difference is not inconsistency. Muon is only ever constructed from the live train.Cfg,
+        # so a missing field there means a rename and must be loud. This constructor is also
+        # called with a Cfg from BEFORE the field existed: test_split_bitwise.py builds the same
+        # architecture from the pre-split train.py to prove the split changed no bit, and an
+        # assert here turned that test red for a field the old code cannot have. A historical Cfg
+        # legitimately means "off".
+        #
+        # What still has to be loud is the RENAME, and it is caught by test_value_embed.py's
+        # check 0, which asserts train.Cfg carries the field BY THAT NAME. Not by the parameter
+        # delta, which was this comment's first claim and was wrong: every other check in that
+        # file sets cfg.value_embed on the object itself, so none of them can see a rename in
+        # Cfg. Verified by renaming the field -- only check 0 goes red.
+        self.value_embed = (nn.Embedding(self.padded_vocab, cfg.d)
+                            if getattr(cfg, "value_embed", False) else None)
         self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
         self.head.weight = self.tok.weight
         # FoNE: [NUM] carries no value in its identity; injected from Fourier features, read per digit
@@ -361,6 +399,16 @@ class HybridLM(nn.Module):
         # is asserted rather than assumed: a rename of `o` or `w2` would silently zero nothing
         # and the arm would be an exact copy of the baseline that still reports as the arm --
         # the most expensive way for this to fail, since it costs a full run to learn nothing.
+        # A/B (4): the gate's WEIGHT is zero so the gate starts uniform at 1.5 (3*sigmoid(0)),
+        # not at zero. Zero-init the weight and leave the bias at zero: the gate then begins as a
+        # constant 1.5 for every token and every position, and learns to differentiate. A gate
+        # that started at 0 would make the table invisible and the arm would spend its 500 steps
+        # discovering the table exists rather than using it.
+        if self.value_embed is not None:
+            for m in self.modules():
+                if isinstance(m, GatedMLA) and m.ve_gate is not None:
+                    nn.init.zeros_(m.ve_gate.weight)
+                    nn.init.zeros_(m.ve_gate.bias)
         if getattr(cfg, "zero_init_out", False):
             n_zeroed = 0
             with torch.no_grad():
@@ -450,11 +498,29 @@ class HybridLM(nn.Module):
         num_vals: (B, T) float, the value at each [NUM] position; elsewhere masked out, not trusted.
         return_hidden: FoNE sampling needs the state that predicted [NUM] to read its digits from."""
         emb = self.tok(idx)
+        # A/B (4): ONE lookup for the whole forward, stashed on each MLA layer. The table is
+        # shared, so all three layers want the identical [B, T, d] gather -- doing it once here
+        # rather than per layer saves two gathers and, more importantly, keeps the block
+        # signatures untouched (threading a new arg through Block.forward / sublayers / _body
+        # would also change the AttnRes path, which has nothing to do with this arm).
+        if self.value_embed is not None:
+            ve = self.value_embed(idx)
+            for m in self.modules():
+                if isinstance(m, GatedMLA) and m.ve_gate is not None:
+                    m._ve = ve
         if self.fone and num_vals is not None:
             mask = (idx == self.cfg.num_id).unsqueeze(-1)
             feat = fone.encode_tensor(num_vals.masked_fill(~mask.squeeze(-1), 0.0)).to(emb.dtype)
             emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
         hidden = self.norm(self._body(emb, cu))
+        if self.value_embed is not None:
+            # Cleared HERE, not in a finally: the reference must not outlive the forward that
+            # made it. A stale _ve would pin a [B, T, d] activation between steps AND would be
+            # reused by any forward that reached an MLA layer without going through this method
+            # (a decoder calling _body directly), which would be a wrong number, not a crash.
+            for m in self.modules():
+                if isinstance(m, GatedMLA):
+                    m._ve = None
         if targets is None:
             # no_head: a decoder reads ONE position per row while the head ran over all T.
             # At B=64, T=557, V=32832 the fp32 logits alone are 4.7GB and the softcap chain
