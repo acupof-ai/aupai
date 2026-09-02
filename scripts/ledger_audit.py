@@ -378,6 +378,31 @@ def _selftest():
             fails.append("(ckpt, profile) and (ckpt, measured) partition score_matrix.jsonl "
                          "identically here, so this check no longer distinguishes them")
 
+    # 4d. THE MISSING `profile` FIELD MUST DEFAULT TO "full" (1e, on 44's b0-15 fold). Read
+    #     literally, a row without the field keys as (ckpt, None) and can never collide with
+    #     (ckpt, "full") -- so duplicates() sees NOTHING. Measured on the pre-fold blob
+    #     (3422731^): 65 rows, 65 distinct keys under a literal read and 43 under the default,
+    #     which is exactly the 22 duplicates 44 folded. A literal keyfn would have reported that
+    #     file clean while every one of the 22 sat in it.
+    KF = KEYS["runs/score_matrix.jsonl"]
+    if KF({"ckpt": "c.pt"}) != KF({"ckpt": "c.pt", "profile": "full"}):
+        fails.append("score_matrix's keyfn does not default a missing `profile` to 'full', so a "
+                     "row written before the field existed can never collide with an equivalent "
+                     "row that has it and duplicates() goes blind")
+    pre = _blob("3422731^", "runs/score_matrix.jsonl")
+    if pre:
+        n_rows = len(_rows("runs/score_matrix.jsonl", pre))
+        n_dup = len(duplicates("runs/score_matrix.jsonl", pre))
+        if n_dup != 22:
+            fails.append(f"duplicates() finds {n_dup} duplicated key(s) in the pre-fold blob, "
+                         f"expected the 22 that 44 folded in 3422731 (rows {n_rows})")
+        if not duplicates("runs/score_matrix.jsonl", pre):
+            fails.append("duplicates() is blind on the blob it was written for")
+    post = _blob("3422731", "runs/score_matrix.jsonl")
+    if post and duplicates("runs/score_matrix.jsonl", post):
+        fails.append("duplicates() still reports duplicates AFTER 44's fold; either the fold is "
+                     "incomplete or the predicate is wrong")
+
     # 5. Pretty-printed blocks are not rows.
     if regressions(P, base + '  {"when": "x",\n   "evidence": "y"}\n', base):
         fails.append("a pretty-printed block is treated as a row; it is not")
@@ -419,8 +444,11 @@ def _selftest():
           "key is shared with the rows it amends -- invisible to merges-only, default history "
           "simplification, and key presence), clean on c3a5a23 (appending a done event), "
           "accepts filling blanks and rejects changed/cleared/dropped values without any "
-          "length heuristic, returns declared rewrites as manifests, and the second reading "
-          "sees values leaving the file when no key regresses")
+          "length heuristic, per-file dispatch verified to differ (subsume vs key_present), "
+          "score_matrix keyed on the writer's (ckpt, profile) with a missing profile defaulted "
+          "to 'full' -- measured 22 duplicates on the pre-fold blob against 0 under a literal "
+          "read, and 0 after 44's fold -- returns declared rewrites as manifests, and the "
+          "second reading sees values leaving the file when no key regresses")
     return 0
 
 
