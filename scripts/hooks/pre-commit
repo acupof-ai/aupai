@@ -361,7 +361,8 @@ def main():
             with open(dst, "wb") as fh:
                 fh.write(blob.stdout)
             r = subprocess.run([sys.executable, dst, "--selftest"], capture_output=True,
-                               text=True, cwd=repo_root())
+                               text=True, cwd=repo_root(),
+                               env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
                 print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
@@ -491,6 +492,13 @@ def main():
 def _selftest():
     """Prove the integration-tree guard both fires and lets a merge through.
 
+    Runs with every GIT_* variable removed from the environment first. git exports
+    GIT_DIR (on merge) and GIT_INDEX_FILE to hooks, and a `git init` in a temp
+    directory that inherits GIT_DIR re-initialises the SHARED repo instead: core.bare
+    flipped to true and the fixture f.txt landed in the real index, twice on
+    2026-09-02 (02:49Z and 04:4xZ), taking every session's git down until someone
+    unset it. pod_drift.py:61 recorded the mechanism a day earlier, inside one script.
+
     Two worlds, and the second is the one that mattered: on 2026-09-02 `git merge
     --no-edit e1` on main was REFUSED and left a half-finished merge in the shared
     tree, because git calls this script as pre-merge-commit BEFORE writing
@@ -510,6 +518,9 @@ def _selftest():
     flag to be set -- a plain repo's GIT_DIR does not do it, which is why a casual test
     of this looks safe.
     """
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(k)
+
     hook = os.path.realpath(__file__)
     fails = []
     # Same list as pod_drift._GIT_ENV_VARS, for the same reason.
