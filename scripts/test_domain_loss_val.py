@@ -50,9 +50,15 @@ def main():
     os.makedirs(corpus)
     # Enough documents to pack into several sequences at a short seq length. Distinct
     # text per row so a row's identity is visible in the tokens.
+    # "content", not "text". train.py:1197 `_jsonl_content` reads ["content"] and raises
+    # KeyError on anything else -- the same KeyError('content') that killed the 20B launch
+    # at step 0. This test wrote "text" and so died in its own setup, which is why it read
+    # as an unrunnable candidate for deletion (de-5, 2026-09-02): a stale fixture key, not
+    # a dead test. Measured on the pod after the fix: OK, val_seqs returns train.py's
+    # held-out rows, disjoint from the training pool.
     with open(os.path.join(corpus, "shard_000.jsonl"), "w", encoding="utf-8") as f:
         for i in range(4000):
-            f.write(json.dumps({"text": f"document number {i} " + ("alpha beta gamma " * 8)}) + "\n")
+            f.write(json.dumps({"content": f"document number {i} " + ("alpha beta gamma " * 8)}) + "\n")
 
     from scripts.loader import load_tokenizer
 
