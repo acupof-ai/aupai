@@ -326,10 +326,19 @@ SYNTHETIC_USER = re.compile(
     r"system-reminder|cross-session-message|user-prompt-submit-hook)>"
     r"|Caveat: The messages below"
     r"|Another Claude session sent a message"
-    r"|\[SYSTEM NOTIFICATION")
+    r"|\[SYSTEM NOTIFICATION"
+    # The harness's own nudges, delivered as a user turn in square brackets: "[Your
+    # previous response had no visible output. Please continue...]". 19 of 4814 rows
+    # (0.4%) opened on one. Caught while redacting three samples for 3b -- the first
+    # sample I picked started with it, so a hand-read of three rows found what a filter
+    # measuring 23,466 episodes had missed. The bracket form is the discriminator: a
+    # person does not open a request with "[Your ...".
+    r"|\[(?:Your|The|This) [a-z]")
 
 
 CHATML_LITERAL = re.compile(r"<\|im_(?:start|end)\|>")
+UNACTIONABLE_OPENER = re.compile(r"\s*(?:\[Image:[^\]]*\]\s*)+$|\s*/[a-z][a-z-]{1,20}\s*$")
+NON_ANSWER = re.compile(r"\s*(?:No response requested\.?|\(no response\)|)\s*$")
 
 
 def is_synthetic_user(text, window=600):
@@ -369,6 +378,20 @@ def usable(messages):
     # from one session that was debugging the packer. 11 of 5264 episodes (0.21%) carry a
     # literal marker; they leave. This repo's own transcripts discuss ChatML constantly,
     # which is exactly why the rate is not zero.
+    # An opener the model cannot act on. Three shapes, all found by hand-reading the three
+    # samples I was redacting for 3b -- reading three rows caught what filters measuring
+    # 23,466 episodes had passed:
+    #   image-only    "[Image: source: <HOME>/.claude/image-cache/...]" and nothing else.
+    #                 201 of 4798 rows (4.2%). block_text() drops image blocks by design, so
+    #                 the model is asked to respond to input it cannot see, and it learns to
+    #                 invent an answer for an empty request.
+    #   slash command "/compact" alone: an instruction to the CLI, not to the model.
+    #   non-answer    the assistant replying "No response requested." -- 84 rows (1.8%)
+    #                 whose only supervised text teaches the model to decline.
+    if UNACTIONABLE_OPENER.match(messages[0]["content"]):
+        return False, "opener the model cannot act on (image-only / slash command)"
+    if all(NON_ANSWER.match(m["content"]) for m in messages if m["role"] == "assistant"):
+        return False, "every assistant turn is a non-answer"
     if any(CHATML_LITERAL.search(m["content"]) for m in messages):
         return False, "text contains a literal ChatML marker (tokenizes as the real token)"
     if is_synthetic_user(messages[0]["content"]):
@@ -656,7 +679,20 @@ def _selftest():
         fails.append("an episode quoting <|im_start|> was accepted; the tokenizer maps the "
                      "quote to the real special token and it becomes a fake role boundary")
 
-    # 6. A tool result with no preceding assistant turn must be refused, not repaired.
+    # 6. Unactionable openers and pure non-answers.
+    for msgs, what in (
+        ([{"role": "user", "content": "[Image: source: <HOME>/x/1.png]"},
+          {"role": "assistant", "content": "ok"}], "an image-only opener"),
+        ([{"role": "user", "content": "/compact"},
+          {"role": "assistant", "content": "ok"}], "a bare slash command"),
+        ([{"role": "user", "content": "do the thing"},
+          {"role": "assistant", "content": "No response requested."}], "a pure non-answer"),
+    ):
+        ok, why = usable(msgs)
+        if ok:
+            fails.append(f"{what} was accepted; there is nothing here to learn")
+
+    # 7. A tool result with no preceding assistant turn must be refused, not repaired.
     bad = [{"role": "tool", "content": "orphan"}, {"role": "assistant", "content": "x"}]
     ok, why = usable(bad)
     if ok:
