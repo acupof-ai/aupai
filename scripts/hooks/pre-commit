@@ -473,6 +473,11 @@ def main():
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
         "scripts/test_muon_shape_lr.py",
+        # A/B (4)'s arm: a zero gate makes the table invisible (the arm would measure how fast
+        # it finds the table), an add into the latent puts token identity into K too, three
+        # tables instead of one is +48.9% not +16.3%, and a leaked per-forward stash is a wrong
+        # number rather than a crash. Five broken worlds verified red.
+        "scripts/test_value_embed.py",
         # These dispatch on sys.argv instead of argparse, which the gate's old
         # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
         # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
