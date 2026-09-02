@@ -448,6 +448,29 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 实例(fb 当事人):fb 对 tilerl 说「看到 0 字节 .vocab 就是 de 测试的指纹」——pod 上有七个 09-01 的 0 字节 stamp 早于该测试。空 stamp 观察本身没错(§43 的指纹),错的是把「这次的空 stamp 来自 de 测试」推广成「空 stamp ⇒ de 测试」。判据看不见被问的性质(stamp 为什么空),只看得见样本的特征(0 字节)。
 
+## 49. 规则条件在一个人做决定时不可观测(de-25,2026-09-02,与 §38 同族)
+
+一次测量在自己的分支形状里全对,被写成通例。写下的规则读起来可操作,实际条件是执行者在动手前无法观测的量——于是规则在它不适用的形状里把人推向它说不会发生的拒绝。
+
+实例:AGENTS.md 写着「merge 不介意脏树,只介意路径重叠」,四格测量。我的 11 个 staged 文件所在路径 main 自 merge-base 起一个都没碰,`git merge --no-edit main` 仍然拒绝并逐个点名;`git reset` 取消 staging 后同一个 merge 立刻成功。两次测量都对,变量是**这次 merge 能不能 fast-forward**,而原测量在 fast-forward 下取的。八格复现(`/tmp/merge_ff.sh`):
+
+| 形状 | staged | 重叠 | rc | 结果 |
+|---|---|---|---|---|
+| 三方 | no | no | 0 | Merge made by the 'ort' strategy |
+| 三方 | **yes** | **no** | **2** | 拒绝,点名那个不相干的文件 |
+| 三方 | no | yes | 2 | 拒绝 |
+| 三方 | yes | yes | 2 | 拒绝 |
+| fast-forward | no | no | 0 | Updating .. |
+| fast-forward | yes | no | 0 | Updating .. |
+| fast-forward | no | yes | 1 | 拒绝 |
+| fast-forward | yes | yes | 1 | 拒绝 |
+
+下四行逐格等于 AGENTS.md 原来那四行。机制:fast-forward 更新工作树像一次 checkout,只要求它要动的路径干净;三方合并必须写 index,index 里存在任何与 HEAD 不同的记录就拒绝,与那条记录的路径是否参与合并无关。
+
+改法不是加「除非是三方合并」:一个人在终端里动手前判断不出自己面对哪种形状,两个分支都有提交时——也就是每次真正需要 merge 的时候——三方是常态。规则改成不依赖该区分的形式:**merge 前 index 必须与 HEAD 一致(先 commit,或 `git reset`)**。
+
+一般形:规则的条件必须是执行者在决定的那一刻能观测的量。条件不可观测时,把规则收紧到不需要该条件的形式,而不是把条件写进文档让人猜。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -482,3 +505,4 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - 44 本机 `date -u` 06:27 UTC:第三只钟,与 98 容器一致
 - tilerl(2026-09-02,1e 转达 06:4x):train.py:1647 读侧 / :1686 写侧共享 `VOCAB_ID or ""` 兜底值,空 stamp 被无 vocab 读者判为 same_vocab——指纹检查按构造永远过;修法进 de-23 train 半(None 即 raise/不写空 stamp/空 stamp 即 stale),tilerl review
 - fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族
+- de-25(2026-09-02,fb 裁定接受,reviewer 3b):AGENTS.md 的 merge 四格测量取自 fast-forward,三方合并下 staged 改动一律被拒(路径不相干也拒);八格复现脚本 `/tmp/merge_ff.sh`,规则改为「merge 前 index 必须与 HEAD 一致」

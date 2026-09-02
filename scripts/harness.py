@@ -228,10 +228,13 @@ _MANUAL_RULES = {
     "pod_drift.py --write regenerates from HEAD, --write-index from the index":
         "which flag a session typed is not recoverable from the manifest it produced -- both "
         "write the same file, and a manifest built from the wrong side is well-formed",
-    "The behind-main gate does not want a clean tree, so merge directly":
-        "a measured property of git merge, not a rule a check can assert: nothing in the "
-        "repo records which order a session ran merge and add in",
-    "Only a conflicting path needs a commit first, and read which path it is":
+    "The index must equal HEAD before you merge: commit your paths, or `git reset`":
+        "which order a session ran merge and add in is not recoverable from the repo. What "
+        "IS checked is the consequence: a wip commit lands on the branch where dirty_aged "
+        "and the behind-main hook see it. The rule's own history is why it stays prose -- "
+        "the version before it was a correct measurement of the wrong branch shape "
+        "(fast-forward, not three-way), and no artifact records which shape a merge had",
+    "A conflicting path needs a commit first, and read which path it is":
         "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
         "commit lands on the branch where dirty_aged and the behind-main hook see it",
 }
