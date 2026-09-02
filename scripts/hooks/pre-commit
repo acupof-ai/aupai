@@ -516,17 +516,19 @@ def _selftest():
     was already written down in pod_drift.py:61-66 and I did not apply it. Reproduced
     since: GIT_DIR must point at a WORKTREE gitdir (.git/worktrees/<name>) for the bare
     flag to be set -- a plain repo's GIT_DIR does not do it, which is why a casual test
-    of this looks safe.
+    of this looks safe, and why the destructive form only appears from a worktree, where
+    every session except the controller works.
     """
     for k in [k for k in os.environ if k.startswith("GIT_")]:
         os.environ.pop(k)
 
     hook = os.path.realpath(__file__)
     fails = []
-    # Same list as pod_drift._GIT_ENV_VARS, for the same reason.
-    GIT_ENV = ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
-               "GIT_OBJECT_DIRECTORY", "GIT_CONFIG", "GIT_CONFIG_GLOBAL")
-    clean = {k: v for k, v in os.environ.items() if k not in GIT_ENV}
+    # os.environ is already GIT_*-free four lines up, so `clean` is it. Named anyway,
+    # because every git call below reads as deliberate rather than as inheriting
+    # whatever the caller held -- and the seven-name list this replaced was narrower
+    # than the prefix sweep for no reason.
+    clean = dict(os.environ)
 
     def run(cwd, argv0, env_extra):
         dst = os.path.join(cwd, argv0)
