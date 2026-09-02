@@ -400,7 +400,31 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 修法:给它一行 AGENTS 入口表作为 reader,而不是豁免。规则:删除清单发到每个可能手跑它的人,24 小时无人认领再删。
 
-同族(fb 转达):vet_programs.py:37 的 glob——运行时依赖,扫描同样看不见。
+同族:`mathbank/vet_programs.py:37`(main 上在)的 glob——运行时依赖,扫描同样看不见。
+
+## 42. commit message 里的 HOLD 约束的是人不是 merge(tilerl,2026-09-02)
+
+文字 HOLD 对自动化合并且无摩擦力——它约束读到它的人,不约束 merge。
+
+实例(tilerl 自报):f82ca46 首行写 `HOLD: do not merge to main while p500m_20b_0902 is training`,随整条 tilerl 分支被合进 main;两分钟后 3bc18f8 只回退 train.py(diff 0,pod 0 命中)。修法:tilerl-17 `frozen_paths` 检查进 hook——机器判据,不是文字约定。
+
+## 43. eval 复用训练的数据路径而不带训练的身份变量,「重建」是默认动作(fb 当事人,2026-09-02,de-23)
+
+复用路径的人必须复用身份变量;身份对不上时正确动作是拒绝,不是重建。
+
+实例(fb 一手):用户要 step1500 的 benchmark,起 `eval/ppl.py --mix data/mix_500m.json`,2 分钟后日志 `cache was built by another vocabulary, retokenizing`。ppl.py 从不设 `train.VOCAB_ID`(只有 train.py:1462 设);build_mix:1647 拿 `(VOCAB_ID or "")` 比 stamp 必假——/data00 九个活缓存会被重 tokenize 并以空 stamp 覆盖。按精确 PID 杀,缓存 mtime 未动。
+
+## 44. 守卫对路径错:无 checkpoint 名的产物路径(fb 当事人,2026-09-02,de-24)
+
+守卫本身是对的(拒绝覆盖),但它守的路径把两个 checkpoint 的产物映射到同一个名字——守卫在守一个错误的身份。
+
+实例(同一次):score_matrix 的 l1_fewshot 写 `data/eval/preds_l1_d3.jsonl`,路径无 checkpoint 名,第二个 checkpoint 被 ArtifactExists 正确拒绝。产物路径必须带生成者身份(checkpoint/step),否则守卫越正确越锁死错误。
+
+## 45. 判据用退出码不用 stdout 文本(e1,2026-09-02,86e1917,与 §40 同族)
+
+工具的结论在退出码里,stdout 文本是给人看的副产物——拿副产物当判据,工具的失败模式(跑不起来、无法解析)全部落进过滤器的盲区。
+
+实例(e1 一手,86e1917):ruff 跑了但失败(exit 127、stdout 空)被 "F821 in line" 文本匹配读成 GREEN;invalid-syntax 被 F821 过滤丢掉读成「无未定义名」。修法(e1 已落):rc not in (0,1) = no-verdict;invalid-syntax 计入。
 
 ## Sources
 
@@ -427,3 +451,7 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - b0 原话 + A/B(2026-09-02,fb 转达):核验成本远低于事故成本;「先 merge 再 stage」在目标场景不成立,变量是 main 是否动了 hook 重生成的 manifest
 - de-5(5c2cb9c,2026-09-02):test_domain_loss_val fixture key 过期=20B step0 KeyError,跑一次才分得出死活;test_eval_rescore.sh 归 CI——hook 的 sys.executable 跑不了 .sh,门只检查它碰巧能跑的
 - de-5(5c2cb9c,2026-09-02)+ 98(fb 转达,UTC 12:3x):progress_feed.py 以「operational 非 reader 证据」被删,98 每 5–20 分钟手跑它写进展页,页面冻结——手跑运维工具按构造逃过一切仓库扫描;修法=AGENTS 入口行 + 删除清单 24h 认领制
+- mathbank/vet_programs.py:37(main,2026-09-02 sed 核验):glob 运行时依赖,shape 41 锚点
+- tilerl(f82ca46/3bc18f8,2026-09-02):HOLD 文字随分支合进 main,约束人不约束 merge;tilerl-17 frozen_paths 进 hook
+- fb 当事人(2026-09-02):ppl.py 不设 VOCAB_ID→build_mix:1647 必假→九活缓存险被重 tokenize(de-23);preds_l1_d3.jsonl 无 checkpoint 名被 ArtifactExists 拒(de-24)
+- e1-16(86e1917,2026-09-02):exit 127 空 stdout 读成 GREEN、invalid-syntax 被 F821 过滤丢掉;rc not in (0,1)=no-verdict
