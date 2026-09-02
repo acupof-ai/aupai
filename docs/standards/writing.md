@@ -51,6 +51,10 @@ Rules, each bought with a case from 2026-09-02:
   correctly from a fact that said the run stops 78 steps short; the fact was wrong and the
   loop bound (`train.py:2508`, `len(Xtr)`) could be counted in thirty seconds. A fact's
   `uncertainty` field is an instruction to verify, not a note that someone else will.
+- **A retraction retires a claim, not every number in the artifact that carried it.**
+  `eff.dynamo_recompile_not_a_lever` was retracted; the gap distribution it measured
+  (138,460 gaps, largest 20 = 164.9 ms) is still a measurement and stays cited. Mark the
+  claim retracted next to the number; do not delete or move the number (de, 2026-09-02).
 - **Say what you cannot see.** Every message that reports state names its view (host,
   container, main, worktree) and its time in UTC.
 
