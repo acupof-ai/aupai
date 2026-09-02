@@ -26,6 +26,13 @@ jobs:
       - run: python scripts/test_score_exit.py
       - run: python scripts/launch_tests.py --selftest
       - run: python algorithms/test_rlvr_reward_suite.py
+      # A shell test, so the hook cannot gate it: the hook runs every gated file through
+      # sys.executable and `python foo.sh` dies on `set -euo pipefail`. CI is where it can
+      # actually run. A de-5 DELETABLE candidate that passes and asserts a live property --
+      # 0.4s, no data, no card: eval_math.sh/eval_code.sh refuse a bare rescore, allow
+      # FORCE=1 and RUN=<name>, and version their shards before merging (fb's ruling,
+      # 2026-09-02: run it before judging it).
+      - run: bash scripts/test_eval_rescore.sh
       - run: python scripts/eqcheck.py
       - run: python datagen/holdout.py
       - run: python scripts/tokenizer_report.py --selftest
