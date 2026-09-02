@@ -159,7 +159,24 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             sys.path.insert(0, os.path.join(ROOT, "datagen"))
             from sandbox_exec import run_sandboxed
 
-            rc, out, err = run_sandboxed(code, timeout=timeout)
+            # Multi-file when the caller gave one: the reward writes an implementation and a
+            # test module into workdir and runs a test runner over them. sandbox_exec took
+            # only a single code string until de-28a, which is why this path raised
+            # `write() argument must be str, not None` on the pod while the Mac's seatbelt
+            # path was green -- a defect only the pod could surface (2026-09-02).
+            files = {n: open(os.path.join(workdir, n), encoding="utf-8").read()
+                     for n in sorted(os.listdir(workdir))
+                     if n.endswith(".py") and n != "code.py"}
+            if files:
+                # /work/<name> inside the chroot, and site-packages bound read-only only
+                # when the runner is third-party (pytest); unittest is stdlib.
+                inner = ["/work/" + os.path.basename(a) if os.path.isabs(a) or a.endswith(".py")
+                         else a for a in (argv[1:] if argv else [])]
+                inner = [a for a in inner if a not in ("-I",)]
+                rc, out, err = run_sandboxed(code, timeout=timeout, files=files,
+                                            argv=inner, site="pytest" in inner)
+            else:
+                rc, out, err = run_sandboxed(code, timeout=timeout)
             return {"level": lvl, "rc": rc, "stdout": out, "stderr": err,
                     "timed_out": err == "TIMEOUT", "isolates": ISOLATES[lvl]}
 
