@@ -25,7 +25,6 @@ import signal
 import shutil
 import tempfile
 import time
-from typing import NamedTuple
 
 import numpy as np
 import torch
@@ -124,48 +123,30 @@ SHARD_RE = re.compile(r"_\d{3,}\.jsonl$")
 # neither this nor SHARD_RE stops the run (see _domain_seqs).
 NON_SHARD_RE = re.compile(r"^holdout_slice_")
 
-try:  # CUDA-only kernels; absent on Mac where only checkpoint tooling imports this module
-    from fla.ops.kda import chunk_kda
+try:  # CUDA-only kernel; the FLCE loss path that uses it stays here
     from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
 except ImportError:
-    chunk_kda = LigerFusedLinearCrossEntropyLoss = None
-try:
-    from flash_attn import flash_attn_func, flash_attn_varlen_func
+    LigerFusedLinearCrossEntropyLoss = None
 
-    HAS_FA = True
-except ImportError:
-    try:
-        # flash-attn 4 keeps the same two names under .cute with a DIFFERENT positional
-        # order: its fourth positional is `qv`, not cu_seqlens_q. Every call below passes
-        # cu and the max lengths by keyword, which is correct for both versions and is the
-        # only thing standing between this import and a silently mis-bound mask.
-        from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
-
-        HAS_FA = True
-    except ImportError:
-        HAS_FA = False
-
-if HAS_FA:
-    # flash's varlen wrapper validates argument SHAPES against a Python int -- `assert
-    # cu_seqlens_k.shape == (batch_size + 1,)` and siblings at cute/interface.py:376/381/384,
-    # where batch_size is cu_seqlens_q.shape[0] - 1, i.e. the document count. Dynamo must burn
-    # that count into a guard to prove the assert, and the count is drawn from a distribution:
-    # 45 distinct values over 60 steps, range 43-116, against recompile_limit 64. The variant
-    # set never closes, so eviction and recompilation are PERMANENT -- 70 flash recompiles in
-    # 110 steps, 20 of them after step 50, costing 54.9 ms/step of gap at the rms_norm -> flash
-    # seam (eff.recompile_recurrence_explained, eff.steady_state_composition).
-    #
-    # The specialisation buys nothing: flash's own compile_key (interface.py:678-702) contains
-    # no batch_size at all -- only dtypes, head dims, causal, mod hashes, and `x is None`
-    # presence booleans -- so the document count cannot select or compile a different kernel.
-    # Disabling tracing here discards a guard with no consumer. Measured 70 -> 0 flash
-    # recompiles, 218 -> 33 total, tok/s unchanged, loss deltas inside the twin floor at 2 of 3
-    # sampled steps (eff.seam_dynamo_disable).
-    flash_attn_varlen_func = torch._dynamo.disable(flash_attn_varlen_func)
-
-
-# Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
-SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
+# The model lives in model.py (b0-8, docs/standards/model_module_split.md). Re-exported
+# rather than left to each caller: sft.py, sft_math.py and infer_local.py import these from
+# train, and the split is meant to be invisible to them. Direction is one-way -- model.py
+# never imports train. F401: re-exports are consumed by importers, not by this file.
+from model import (  # noqa: E402,F401
+    HAS_FA,
+    SOFTCAP,
+    AttnRes,
+    Block,
+    DeltaRecurrence,
+    GatedMLA,
+    HybridLM,
+    RMSNorm,
+    Source,
+    SwiGLU,
+    chunk_kda,
+    remap_legacy_state_dict,
+    rms_scale,
+)
 
 
 class Cfg:
@@ -275,137 +256,6 @@ class Cfg:
     scalar_wd = 0.0
 
 
-class RMSNorm(nn.Module):
-    def __init__(self, d, eps=1e-6):
-        super().__init__()
-        self.g = nn.Parameter(torch.ones(d))
-        self.eps = eps
-
-    def forward(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.g
-
-
-def rms_scale(x, eps=1e-6):
-    """The [B,T,1] factor of a gain-free RMSNorm, without applying it: rms_hat(x) . gq ==
-    rsqrt(mean(x^2)) * (x . gq), so AttnRes stores this instead of a normalized [B,T,D] copy
-    per source -- 1024x less memory at d=1024."""
-    return torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
-
-
-class DeltaRecurrence(nn.Module):
-    """Kimi Delta Attention: bounded decay + ShortConv + QK-norm, via fla.ops.kda.chunk_kda."""
-
-    def __init__(self, cfg):
-        super().__init__()
-        self.h, self.hd = cfg.heads, cfg.d // cfg.heads
-        self.chunk_size = cfg.chunk_size
-        self.qkv = nn.Linear(cfg.d, 3 * cfg.d, bias=False)
-        self.o = nn.Linear(cfg.d, cfg.d, bias=False)
-        # fused gate|beta GEMM; beta padded to a multiple of 16 output rows so FP8 (_scaled_mm) applies
-        self.beta_pad = (-cfg.heads) % 16
-        self.gb = nn.Linear(cfg.d, cfg.d + cfg.heads + self.beta_pad, bias=False)
-        self.A_log = nn.Parameter(torch.zeros(cfg.heads))
-        # fla KDA init: dt ~ logU[1e-3, 0.1] -> mean retention ~0.9 per token. Zero init gave
-        # softplus(0)=0.69 log-decay per token (retention ~0.1), erasing the recurrent state.
-        dt = torch.exp(torch.rand(cfg.heads * self.hd) * (math.log(0.1) - math.log(1e-3)) + math.log(1e-3))
-        self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
-        self.short_conv = nn.Conv1d(cfg.d, cfg.d, kernel_size=4, padding=0, groups=cfg.d)
-
-    def forward(self, x, cu=None):
-        B, T, D = x.shape
-        # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
-        # K shifted multiply-adds, not nn.Conv1d: ATen routes a depthwise k=4 conv to
-        # conv_depthwise2d_generic at ~6% of bandwidth; inductor fuses the arithmetic form
-        # (3.44x compiled, the training path). Weights stay on self.short_conv, so
-        # checkpoints load unchanged. Eager is 0.61x -- this only wins under torch.compile.
-        w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
-        h = F.pad(x.transpose(1, 2), (K - 1, 0))
-        y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
-        for i in range(1, K):
-            y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
-        h = F.silu((y + self.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
-        q, k, v = self.qkv(h).chunk(3, dim=-1)
-        q = q.reshape(B, T, self.h, self.hd).contiguous()
-        k = k.reshape(B, T, self.h, self.hd).contiguous()
-        v = v.reshape(B, T, self.h, self.hd).contiguous()
-        gb = self.gb(x)
-        g = gb[..., :D].reshape(B, T, self.h, self.hd).contiguous()
-        beta = gb[..., D : D + self.h].contiguous()  # raw logits, sigmoid in kernel
-        if cu is not None:  # varlen: fla wants a single flattened sequence + cu_seqlens
-            q, k, v, g = (t.reshape(1, B * T, self.h, self.hd) for t in (q, k, v, g))
-            beta = beta.reshape(1, B * T, self.h)
-        out, _ = chunk_kda(
-            q,
-            k,
-            v,
-            g=g,
-            beta=beta,
-            cu_seqlens=cu,
-            A_log=self.A_log,
-            dt_bias=self.dt_bias,
-            use_qk_l2norm_in_kernel=True,
-            use_gate_in_kernel=True,
-            use_beta_sigmoid_in_kernel=True,
-            safe_gate=True,
-            lower_bound=-5.0,
-            state_v_first=True,  # unblocks FlashKDA at inference (zero training cost)
-            disable_recompute=True,  # save w/u/qg/kg/v_new rather than recompute: +3GB, 8-15% faster
-            chunk_size=self.chunk_size,
-        )
-        return self.o(out.reshape(B, T, D).to(x.dtype))
-
-
-class GatedMLA(nn.Module):
-    """Gated MLA: latent KV compression + full causal attention (NoPE, KDA handles position)."""
-
-    def __init__(self, cfg):
-        super().__init__()
-        self.h, self.hd = cfg.heads, cfg.d // cfg.heads
-        self.latent = cfg.d // 4
-        self.kv_down = nn.Linear(cfg.d, self.latent, bias=False)
-        self.kv_up = nn.Linear(self.latent, 2 * cfg.d, bias=False)  # fused k_up|v_up
-        self.qg = nn.Linear(cfg.d, 2 * cfg.d, bias=False)  # fused q|gate
-        self.o = nn.Linear(cfg.d, cfg.d, bias=False)
-
-    def forward(self, x, cu=None):
-        B, T, D = x.shape
-        latent = self.kv_down(x)
-        k, v = self.kv_up(latent).chunk(2, dim=-1)
-        q, gate = self.qg(x).chunk(2, dim=-1)
-        k = k.view(B, T, self.h, self.hd)
-        v = v.view(B, T, self.h, self.hd)
-        q = q.view(B, T, self.h, self.hd)
-        q = F.rms_norm(q, (self.hd,))
-        k = F.rms_norm(k, (self.hd,))
-        if HAS_FA and cu is not None:
-            q, k, v = (t.reshape(B * T, self.h, self.hd) for t in (q, k, v))
-            y = flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                                       max_seqlen_q=T, max_seqlen_k=T, causal=True)
-        elif HAS_FA:
-            y = flash_attn_func(q, k, v, causal=True)
-        else:
-            # No flash_attn: SDPA with an explicit block-diagonal causal mask built from cu.
-            # This branch used to take cu and ignore it, so doc_mask=True trained with every
-            # document attending across every boundary and nothing in the log looked wrong.
-            # Correct but ~20x slower per step -- a correctness fallback, not a training path.
-            # cu indexes the flat B*T stream and every row start is a boundary (documents do
-            # not span rows), so a per-row mask is exact. Every query sees at least itself, so
-            # no row is fully masked and no NaN appears.
-            if cu is not None:
-                pos = torch.arange(B * T, device=q.device)
-                doc = torch.bucketize(pos, cu[1:].to(pos.dtype), right=True).view(B, T)
-                mask = (doc[:, :, None] == doc[:, None, :]) & torch.ones(
-                    T, T, dtype=torch.bool, device=q.device).tril()
-                mask = mask[:, None]
-            else:
-                mask = None
-            q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-            y = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, is_causal=mask is None)
-            y = y.transpose(1, 2)
-        if isinstance(y, tuple):
-            y = y[0]  # flash-attn 4 returns (out, lse); v2 and the fallback return a tensor
-        y = y.reshape(B, T, D)
-        return self.o(y * torch.sigmoid(gate))
 
 
 # --- FP8 compute: e4m3 for both forward and backward (e5m2 backward was unstable without grad_ckpt) ---
@@ -628,238 +478,6 @@ def _convert_to_fp8_legacy(model):
     return model
 
 
-class SwiGLU(nn.Module):
-    """K3 SiTU-GLU: bounded activation, tracks SwiGLU near zero."""
-
-    def __init__(self, cfg):
-        super().__init__()
-        self.w13 = nn.Linear(cfg.d, 2 * cfg.ffn_hidden, bias=False)  # fused w1|w3
-        self.w2 = nn.Linear(cfg.ffn_hidden, cfg.d, bias=False)
-        self.beta1 = 4.0
-        self.beta2 = 25.0
-
-    def forward(self, x):
-        a, b = self.w13(x).chunk(2, dim=-1)
-        gate = self.beta1 * torch.tanh(a / self.beta1) * torch.sigmoid(b)
-        up = self.beta2 * torch.tanh(self.w2(gate) / self.beta2)
-        return up
-
-
-class Source(NamedTuple):
-    """A source of the depth attention: the raw layer output, and its gain-free RMS factor."""
-
-    v: torch.Tensor
-    scale: torch.Tensor
-
-    @staticmethod
-    def of(v):
-        return Source(v, rms_scale(v))
-
-    def normed(self):
-        return self.v * self.scale
-
-
-class AttnRes(nn.Module):
-    """Attention Residuals (Kimi, arXiv 2603.15031): h_l = sum_i softmax_i(q_l . RMSNorm(v_i)) v_i over
-    previous layer outputs (v_0 = embedding). One zero-init pseudo-query per layer -> uniform mean.
-    Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form.
-    The gain folds into the query ((v_hat * g) . q == v_hat . (g * q)); rms_scale has the rest."""
-
-    def __init__(self, d, dyn_q=False, rank=64):
-        super().__init__()
-        self.g = nn.Parameter(torch.ones(d))  # the RMSNorm gain, applied to the query side
-        self.q = nn.Parameter(torch.zeros(d))
-        # Input-dependent query (paper Table 4: 1.731 vs 1.737 Full); B zero-init.
-        self.dyn = (
-            nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
-        )
-
-    def forward(self, srcs):
-        q = self.q if self.dyn is None else self.q + self.dyn(srcs[-1].normed() * self.g)
-        gq = self.g * q
-        # logits [n,B,T] only; never an [n,B,T,D] stack of the values (that copy dominates at L=24)
-        logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])
-        a = logits.float().softmax(0).to(srcs[0].v.dtype)
-        out = a[0].unsqueeze(-1) * srcs[0].v
-        for i in range(1, len(srcs)):
-            out = out + a[i].unsqueeze(-1) * srcs[i].v
-        return out
-
-
-class Block(nn.Module):
-    def __init__(self, cfg, is_attn=False):
-        super().__init__()
-        self.n1 = RMSNorm(cfg.d)
-        self.mixer = GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg)
-        self.n2 = RMSNorm(cfg.d)
-        self.ffn = SwiGLU(cfg)
-        attn_res = getattr(cfg, "attn_res", False)
-        dyn_q = getattr(cfg, "attn_res_dyn_q", False)
-        self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-mixer / pre-ffn depth attention
-        self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None
-
-    def forward(self, x, cu=None):
-        x = x + self.mixer(self.n1(x), cu)
-        return x + self.ffn(self.n2(x))
-
-    def sublayers(self, cu=None):
-        return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))
-
-
-def remap_legacy_state_dict(sd):
-    """Old unfused keys -> fused: w1|w3 -> w13, k_up|v_up -> kv_up, q|gate -> qg, gate_proj|beta_proj -> gb."""
-    sd = dict(sd)
-    for k in list(sd):
-        if k.endswith("ffn.w1.weight"):
-            p = k[: -len("w1.weight")]
-            sd[p + "w13.weight"] = torch.cat([sd.pop(k), sd.pop(p + "w3.weight")])
-        elif k.endswith("mixer.k_up.weight"):
-            p = k[: -len("k_up.weight")]
-            sd[p + "kv_up.weight"] = torch.cat([sd.pop(k), sd.pop(p + "v_up.weight")])
-        elif k.endswith("mixer.gate_proj.weight"):
-            p = k[: -len("gate_proj.weight")]
-            beta = sd.pop(p + "beta_proj.weight")
-            pad = torch.zeros((-beta.shape[0]) % 16, beta.shape[1], dtype=beta.dtype, device=beta.device)
-            sd[p + "gb.weight"] = torch.cat([sd.pop(k), beta, pad])
-        elif k.endswith("ar1.norm.g") or k.endswith("ar2.norm.g") or k.endswith("final_ar.norm.g"):
-            sd[k[: -len("norm.g")] + "g"] = sd.pop(k)  # AttnRes gain moved onto the query side
-        elif k.endswith("mixer.q.weight"):
-            p = k[: -len("q.weight")]
-            sd[p + "qg.weight"] = torch.cat([sd.pop(k), sd.pop(p + "gate.weight")])
-    return sd
-
-
-class HybridLM(nn.Module):
-    def __init__(self, cfg):
-        super().__init__()
-        self.cfg = cfg
-        self.grad_ckpt = cfg.grad_ckpt
-        self.padded_vocab = ((cfg.vocab + 63) // 64) * 64
-        self.tok = nn.Embedding(self.padded_vocab, cfg.d)
-        # GatedMLA is NoPE (position comes from KDA's recurrent state). Zero KDA layers
-        # = no position information = not a valid model (attn_every=1 gave 21-sigma worse
-        # val loss, 2026-08-30). Refuse rather than produce a plausible-looking wrong number.
-        n_kda = sum(1 for i in range(cfg.layers) if i % cfg.attn_every != cfg.attn_every - 1)
-        if n_kda == 0:
-            raise ValueError(
-                f"attn_every={cfg.attn_every} produces 0 KDA layers, but GatedMLA is NoPE "
-                f"(KDA handles position). The model would have no position information. "
-                f"Use attn_every >= 2, or add RoPE to GatedMLA first."
-            )
-        self.blocks = nn.ModuleList(
-            # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
-            [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1)) for i in range(cfg.layers)]
-        )
-        self.norm = RMSNorm(cfg.d)
-        self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
-        self.head.weight = self.tok.weight
-        # FoNE: [NUM] carries no value in its identity; injected from Fourier features, read per digit
-        self.fone = getattr(cfg, "fone", False)
-        if self.fone:
-            self.num_proj = nn.Linear(fone.NUM_DIMS, cfg.d, bias=False)
-            self.num_head = nn.Linear(cfg.d, fone.NUM_DIMS, bias=False)
-        self.attn_res = getattr(cfg, "attn_res", False)
-        n_sub = 2 * cfg.layers
-        n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)  # 0 -> Full (every sublayer)
-        self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
-        self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
-        self.apply(self._init)
-        for m in self.modules():
-            if isinstance(m, AttnRes) and m.dyn is not None:
-                nn.init.zeros_(m.dyn[1].weight)  # after _init, or it starts non-uniform
-        # Alignment padding (vocab_real:vocab) must stay neutral in the softmax. The training
-        # path slices head.weight[:vocab] into Liger FLCE, which has no per-class mask, so
-        # random-init padding logits steal denominator mass: 11 columns spiked the vocab A/B
-        # to |delta| 1.8 (eff.vocab_padding_softmax_defect). Zero keeps their logits at 0;
-        # they are never targets, so CE gradient only pushes them down. The tied embedding
-        # rows are zeroed too -- their ids never appear as inputs. After _init, or _init
-        # re-fills them.
-        _real = getattr(cfg, "vocab_real", cfg.vocab)
-        if _real < cfg.vocab:
-            with torch.no_grad():
-                self.head.weight[_real : cfg.vocab].zero_()
-
-    def load_state_dict(self, sd, strict=True):
-        """Load old checkpoints (fused-key remap); disable AttnRes if the ckpt predates it."""
-        sd = remap_legacy_state_dict(sd)
-        if self.attn_res and not any(k.startswith("final_ar.") for k in sd):
-            print("checkpoint has no AttnRes params: disabling AttnRes for this model", flush=True)
-            self.attn_res = False
-            self.cfg.attn_res = False
-            self.final_ar = None
-            for b in self.blocks:
-                b.ar1 = b.ar2 = None
-        return super().load_state_dict(sd, strict)
-
-    @staticmethod
-    def _init(m):
-        if isinstance(m, (nn.Linear, nn.Embedding)):
-            nn.init.normal_(m.weight, std=0.02)
-        elif isinstance(m, nn.Conv1d):
-            nn.init.normal_(m.weight, std=0.02)  # not PyTorch's kaiming default
-
-    def _body(self, x, cu=None):
-        ckpt = self.grad_ckpt and self.training
-        if not self.attn_res:
-            for b in self.blocks:
-                x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
-            return x
-        # Block AttnRes (Fig. 2): `done` = completed block reps, `partial` = intra-block running sum
-        done, partial, n = [Source.of(x)], [], 0
-        for b in self.blocks:
-            for ar, norm, f in b.sublayers(cu):
-                h = ar(done + partial)
-                # AttnRes stays outside the checkpoint: only [B,T] logits on the tape, never [B,T,D]
-                fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
-                out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
-                partial = [Source.of(partial[0].v + out if partial else out)]
-                n += 1
-                if n in self.ar_block_ends:
-                    done, partial = done + partial, []
-        return self.final_ar(done + partial)
-
-    def lm_logits(self, hidden):
-        """The vocabulary head plus the softcap, split out so a decoder can apply it to the
-        handful of positions it actually reads instead of to the whole prefix. Columns at or
-        past vocab_real are alignment padding (never targets): set to the dtype's most negative
-        finite value AFTER the softcap, since tanh would compress it to -SOFTCAP. Finite, not
-        -inf: the E2E asserts every logit is finite, and a real -inf must stay distinguishable
-        from padding."""
-        logits = self.head(hidden)[..., : self.cfg.vocab].float()
-        out = SOFTCAP * torch.tanh(logits / SOFTCAP) if SOFTCAP else logits
-        real = getattr(self.cfg, "vocab_real", self.cfg.vocab)
-        if real < out.shape[-1]:
-            out[..., real:] = torch.finfo(out.dtype).min
-        return out
-
-    def num_logits(self, hidden):
-        """Per-digit logits (..., digits, 10) at every position; the caller masks to [NUM]. Runs
-        outside autocast, so cast to the weight dtype and back to fp32."""
-        return fone.digit_logits(self.num_head(hidden.to(self.num_head.weight.dtype)).float())
-
-    def forward(self, idx, targets=None, cu=None, num_vals=None, return_hidden=False, no_head=False):
-        """cu: int32 cu_seqlens over the flattened (B*T) stream (see doc_cu_seqlens); None = no doc mask.
-        num_vals: (B, T) float, the value at each [NUM] position; elsewhere masked out, not trusted.
-        return_hidden: FoNE sampling needs the state that predicted [NUM] to read its digits from."""
-        emb = self.tok(idx)
-        if self.fone and num_vals is not None:
-            mask = (idx == self.cfg.num_id).unsqueeze(-1)
-            feat = fone.encode_tensor(num_vals.masked_fill(~mask.squeeze(-1), 0.0)).to(emb.dtype)
-            emb = emb + torch.where(mask, self.num_proj(feat), emb.new_zeros(()))
-        hidden = self.norm(self._body(emb, cu))
-        if targets is None:
-            # no_head: a decoder reads ONE position per row while the head ran over all T.
-            # At B=64, T=557, V=32832 the fp32 logits alone are 4.7GB and the softcap chain
-            # allocates several more copies, all freed immediately -- 17% of per-position
-            # forward FLOPs, 99.8% of it discarded, and the transient is what pins the eval
-            # batch size. The caller gathers its B positions and calls lm_logits on those.
-            # Slicing [:, -1:] here would be WRONG: rows are right-padded from different
-            # prompt lengths, so each row decodes from its own column, not the last one.
-            if no_head:
-                return None, hidden
-            return self.lm_logits(hidden), (hidden if return_hidden else None)
-        # Training: the loss is computed in the loop -- Liger FLCE is compile-incompatible
-        return hidden, None
 
 
 # --- Muon optimizer (from karpathy/nanochat, simplified per-param) ---
@@ -2067,6 +1685,23 @@ def setup_ddp():
 def main():
     import argparse
 
+    # The twelve knobs runs/recipe_provenance.json argues for. Omitting one of these is
+    # what four launches on 2026-09-02 did while all nine gates stayed green, because an
+    # omitted flag lands on a default -- and five of those defaults EQUAL the recipe
+    # value, so no check that reads the effective config could see them missing at all.
+    # required=True removes the failure class instead of detecting it.
+    #
+    # Spelled here rather than imported from scripts/launch_gate.py: train.py is the
+    # training entry point and must not grow a dependency on the gate that audits it
+    # (the gate imports nothing from train.py either). scripts/test_recipe_required.py
+    # reads RECIPE_FLAGS from launch_gate and asserts every one of them is refused when
+    # omitted, so the two lists cannot drift without that test going red -- e1-9's whole
+    # finding was two lists disagreeing and the gate going blind to four keys.
+    RECIPE_REQUIRED = {
+        "dim", "layers", "heads", "ffn_hidden", "batch", "accum",
+        "lr_scale", "warmdown", "anneal_frac", "warmup", "save_every", "grad_ckpt",
+    }
+
     parser = argparse.ArgumentParser(description="Pretrain HybridLM; any --flag below overrides Cfg.<flag>")
     for name, help_ in {
         "seq": "sequence length",
@@ -2087,19 +1722,22 @@ def main():
         "layers": "number of blocks",
         "ffn_hidden": "FFN inner width",
     }.items():
-        parser.add_argument(f"--{name}", type=int, default=None, help=f"{help_} (default: Cfg.{name})")
+        parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
+                            help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "warmdown": "fraction of total steps for the cosine warmdown tail (WSD; 0 keeps lr at stable for a stage-1 join)",
         "anneal_frac": "fraction of tokens using each domain's anneal weight (0 = no anneal, for a WSD stage-1)",
     }.items():
-        parser.add_argument(f"--{name}", type=float, default=None, help=f"{help_} (default: Cfg.{name})")
+        parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
+                            help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
     }.items():
-        parser.add_argument(f"--{name}", action="store_true", help=help_)
+        parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
+                            default=None, required=name in RECIPE_REQUIRED, help=help_)
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
@@ -2123,7 +1761,7 @@ def main():
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
     parser.add_argument(
-        "--save_every", type=int, default=1000,
+        "--save_every", type=int, required=True,
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
@@ -2151,13 +1789,20 @@ def main():
     parser.add_argument("--no_bucket_view", action="store_true", help="disable DDP gradient_as_bucket_view (A/B: 5K overhead hunt)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
-    parser.add_argument("--lr_scale", type=float, default=1.0, help="multiplier on every optimizer lr")
+    parser.add_argument("--lr_scale", type=float, required=True, help="multiplier on every optimizer lr")
     args = parser.parse_args()
     # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
     # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
     # despite its help text saying "0 = epoch end only", and --attn_res_blocks 0 landed
     # only because the Cfg default was already 0. Ten int flags were affected; the
     # warmdown/anneal_frac rescue loop this replaces was the same fix for two of them.
+    #
+    # BooleanOptionalAction switches (grad_ckpt, attn_res, attn_res_dyn_q, fone) now
+    # default to None, so absence IS expressible and `is not None` is finally the right
+    # test for them too -- False from --no-grad_ckpt writes False, absent writes nothing.
+    # That is why the store_true exclusion below no longer needs to name them: the class
+    # it protected against is gone for the four that moved. Any store_true still in the
+    # parser keeps the old handling, because for those absent and False remain one value.
     #
     # store_true flags are excluded and handled below: argparse gives them False when
     # absent, not None, so is-not-None would overwrite the Cfg default on every run --

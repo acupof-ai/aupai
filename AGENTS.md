@@ -257,18 +257,18 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 6 | §8 §14 §18 §37 §38 §46 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 11 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 9 | §8 §14 §18 §37 §38 §46 §49 §52 §57 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 13 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
-| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 4 | §7 §13 §25 §27 |
-| State the vision before the number; outside it, label unmeasured, not absent | 9 | §3 §5 §6 §17 §19 §28 §30 §32 §36 |
-| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 5 | §1 §11 §12 §20 §21 |
-| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 3 | §16 §22 §42 |
-| Shared resources are explicitly exclusive; sharing rules name IO and memory, not metric class | 4 | §15 §33 §49† §50† |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 6 | §7 §13 §25 §27 §51 §59 |
+| State the vision before the number; outside it, label unmeasured, not absent | 10 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 |
+| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 7 | §1 §11 §12 §20 §21 §50 §55 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 4 | §16 §22 §42 §58 |
+| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §33 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
 
-†§49/§50 pending de's landing; sources: `af02a5a` (ppl_v2 IO footprint), `frozen_paths` commits (supervisor window). Full cases live in the shapes doc.
+Full cases live in the shapes doc; new shapes land there first and this table follows.
 
 ## Rule coverage
 
@@ -379,7 +379,7 @@ Three rules from the day one session's `git checkout` erased another session's u
 - Run `ruff format` over a whole file only if you created it. On a shared file, format the lines you touched; a 61-line reformat buries someone else's work and invites the checkout that deletes it.
 - Commit as soon as a change works, and never later than 30 minutes after touching a file — path-scoped, `wip:` in the message if unfinished. A commit is not a pod push; nothing runs it until `pod_push.sh`. The working tree protects nothing — `git fsck` cannot recover what was never staged — and in a shared tree a file left dirty for hours blocks every other session's move of it and gets swept into their commits (2026-08-31: three files, four incidents in one afternoon). User ruling 2026-08-31: nothing stays uncommitted.
 - Stage by path, never `git add -A` / `git add .` / `git commit -a` in a shared tree. 2026-08-31: a `git add -A` under the message "pod manifest: refresh" swept 26 files and 533K insertions — including 234MB under `data/_corpus_unsanitized/` and five other sessions' uncommitted work — into one commit (d535674). The pre-commit hook (`scripts/hooks/pre-commit`, installed by `harness install-hooks`) refuses staged files >5MB and new `data/` paths not in the allow-list, so the blob never enters history.
-- **A hook edit made in a branch worktree does not run until it is merged.** `.git/hooks/pre-commit` is a symlink to `../../scripts/hooks/pre-commit` resolved against **main's** worktree, so every worktree executes main's copy. The consequence, not the mechanism, is what bites: edit a hook in your worktree, commit, watch it not fire, and conclude your change is broken — it is not, it was never loaded. Verify a hook change by running its logic directly against a deliberately-broken input before trusting it (2026-09-01: a readout commit landed with its own selftest red under five green hook lines, and the fix for that ran the old hook too).
+- **A hook edit made in a branch worktree does not run until it is merged.** `.git/hooks/pre-commit` is a symlink to `../../scripts/hooks/pre-commit` resolved against **main's** worktree, so every worktree executes main's copy. The consequence, not the mechanism, is what bites: edit a hook in your worktree, commit, watch it not fire, and conclude your change is broken — it is not, it was never loaded. Verify a hook change by running its logic directly against a deliberately-broken input before trusting it (2026-09-01: a readout commit landed with its own selftest red under five green hook lines, and the fix for that ran the old hook too). **This includes the `SELFTEST_FILES` registration, not just hook logic**: adding your file to that set in your own worktree gates nothing, and the hook still prints a `selftests` timing line — a small number reads as "ran, fast" when it means "ran zero of them" (e1, 2026-09-02: `build_agentic_sft.py` was registered on the e1 branch, every commit printed `selftests 0.03s`, and the selftest had never run at a single commit). The test is one line — `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"`, then grep that file for your own filename; a timing line cannot tell you whether the run was empty.
 - The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map. A file carrying a selftest that is not in the map is unguarded: the hook checks what it happens to check, not what the commit changed. Add the path when you add a selftest.
 - A commit that touches a file in `data/pod_head_manifest.txt` is pushed to the pod by its committer in the same step (`scripts/pod_push.sh <file>`; it regenerates the manifest and refuses if that changed — commit the manifest and push again). The pod runs the pushed copy, not HEAD; 2026-08-31 the drift gate stopped the A/B launch twice on files another session had committed and not pushed.
 - Corpus directories named by any ladder mix (`data/mix_scale_*.json`) are frozen: they carry `build_corpus`'s stamp and every ladder point and A/B reads them. New corpus goes to a new directory that the 30B mix names (`data/corpus/code_rp1t/`, not `data/corpus/code/`). 2026-08-31: ten new shards written into `data/corpus/code/` changed its fingerprint and `_assert_mix_domains` stopped the A/B at startup — correctly.

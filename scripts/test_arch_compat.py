@@ -14,6 +14,7 @@ Run: python scripts/test_arch_compat.py
 """
 
 import contextlib
+import copy
 import os
 import sys
 
@@ -22,10 +23,14 @@ import torch.nn as nn
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datagen"))
+import model  # noqa: E402
 import train  # noqa: E402
 
 if train.chunk_kda is None:  # no fla on this machine: shape-preserving stand-in
-    train.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)
+    # Patch model, not just train: DeltaRecurrence reads its OWN module global, and after the
+    # b0-8 split train.chunk_kda is a re-exported SEPARATE binding -- setting only that no
+    # longer reaches the call site. Both are set so a caller reading either sees the stand-in.
+    model.chunk_kda = train.chunk_kda = lambda q, k, v, **kw: (q * 0 + v, None)
     DEV = "cpu"
 elif torch.cuda.is_available():
     if "CUDA_VISIBLE_DEVICES" in os.environ:
@@ -671,3 +676,42 @@ if _train.HAS_FA:
     print("flash_attn_varlen_func is dynamo-disabled OK")
 else:
     print("flash dynamo-disable SKIP (no flash_attn)")
+
+
+# attn_res=True with a block that cannot supply sublayers() must RAISE AT CONSTRUCTION, not
+# run with depth attention silently off. The condition is statically decidable -- which blocks
+# implement sublayers() is fixed once the model is built -- so a forward-time throw would
+# crash at step 1 at best and, for a block on a conditional branch, not until step 8000
+# (tilerl, design page §2). Verified to FAIL with the guard removed from HybridLM.__init__.
+_sub_cfg = copy.copy(Cfg)
+_sub_cfg.d, _sub_cfg.layers, _sub_cfg.vocab, _sub_cfg.fone = 128, 2, 256, False
+_sub_cfg.attn_res = True
+
+
+class _NoSublayers(nn.Module):
+    """A plausible new block: right forward contract, no sublayers()."""
+
+    def __init__(self, cfg, **kw):
+        super().__init__()
+        self.lin = nn.Linear(cfg.d, cfg.d)
+
+    def forward(self, x, cu=None):
+        return x + self.lin(x)
+
+
+_real_block = model.Block
+model.Block = _NoSublayers
+try:
+    model.HybridLM(_sub_cfg)
+    raise AssertionError(
+        "attn_res=True with a block lacking sublayers() constructed successfully -- depth "
+        "attention would be silently OFF while the config says it is on"
+    )
+except TypeError as _e:
+    assert "sublayers" in str(_e) and "_NoSublayers" in str(_e), _e
+finally:
+    model.Block = _real_block
+model.HybridLM(_sub_cfg)  # the real Block still constructs under attn_res=True
+_sub_cfg.attn_res = False
+model.HybridLM(_sub_cfg)
+print("attn_res sublayers() contract: raises at construction, real Block unaffected OK")
