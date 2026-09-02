@@ -86,3 +86,12 @@ outside the profiler's import path, so the A/B stands, and its report carries ea
 stamp. The rule that the launch-window freeze already implied: while any job holds a card,
 nobody pushes unless every changed file is outside the set of files the job reads at runtime (code it imports, the mix and config it loads, the stamp and manifest, its shell wrapper) and the push is
 named in the job's report; during a two-arm A/B nobody pushes at all.
+
+## All eight cards back to the 200M (user, 14:10Z)
+
+The user's word: "八卡你都用吧，直接 200M 的预训练开起来". The card split of 12:35Z ends; the
+performance sprint continues off-card (KDA roofline, AttnRes fused backward design, FLCE
+chunk count) and every A/B queues behind the run. The resume line is the 200M line above
+with `--resume ckpt_p200m_4b_0902.pt.interrupt.step832`, eight cards, batch 16 accum 2, no
+grad checkpointing. Blocking at 14:15Z: GPU7 holds the user's own tileRL GRPO
+(`tilerl.cli train --recipe grpo-gsm8k-27b`, 27.7 GB); the user decides whether it stops.
