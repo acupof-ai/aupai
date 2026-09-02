@@ -8862,22 +8862,56 @@ def cmd_clean(rest):
     return 0
 
 
-def _allocation_cards(training):
-    """Card set from the controller's allocation file, never from the caller.
+def _expand_cards(spec):
+    """Card spec to a sorted index list. Accepts "0,1,2", "0-7", and both mixed.
 
-    Training jobs get the block (all cards in mix_scale_run_config.json).
-    Non-training jobs get the lane (the card not in the block)."""
-    config_path = os.path.join(ROOT, "data", "mix_scale_run_config.json")
-    if os.path.isfile(config_path):
-        config = json.load(open(config_path, encoding="utf-8"))
-        block = config.get("cards", "")
-        if training:
-            return block
-        block_set = {c.strip() for c in block.split(",") if c.strip()}
-        all_cards = {str(i) for i in range(8)}
-        lane = sorted(all_cards - block_set)
-        return ",".join(lane) if lane else block
-    return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    The grant file writes ranges ("block_cards": "0-7") and the ladder config writes
+    lists, so a reader that splits on commas turns eight cards into one -- and NGPU is
+    len(cards.split(",")), which would launch a one-rank job under an eight-card grant."""
+    out = set()
+    for part in str(spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.update(range(int(a), int(b) + 1))
+        else:
+            out.add(int(part))
+    return sorted(out)
+
+
+def _allocation_cards(training):
+    """Card set from the controller's grant, never from the caller and never from a recipe.
+
+    runs/card_assignment.json is the authority: it is where the controller records a
+    decision, and launch_gate.py:360 already reads the same file for the same purpose.
+    The ladder config is a RECIPE -- its `cards` describes what the six budget points
+    ran on, and its own _comment says card identity changes no computation. Reading it
+    as the allocation forced world=7 under an eight-card grant, so the 500M launch
+    bypassed `harness launch` entirely and silently lost --auto-resume with it: 40
+    minutes unsupervised, and scripts/supervise_run.sh exists only because of that.
+
+    No grant is a refusal, not a default. A defaulted card set is how a launch proceeds
+    on cards nobody granted; returning None makes the caller say so."""
+    grant_path = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(grant_path):
+        return None
+    try:
+        grant = json.load(open(grant_path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if training:
+        if not grant.get("launch_block_granted"):
+            return None
+        block = _expand_cards(grant.get("block_cards"))
+        return ",".join(str(c) for c in block) if block else None
+    lane = grant.get("lane_card")
+    if lane is not None:
+        return ",".join(str(c) for c in _expand_cards(lane))
+    # lane_card null with the block granted: the grant took every card, so there is no
+    # lane. Distinct from "no grant" -- the controller decided this, and said so.
+    return "" if grant.get("launch_block_granted") else None
 
 
 def _lane_occupant(card):
@@ -8913,7 +8947,7 @@ def cmd_free_card(argv):
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
     a = ap.parse_args(argv)
-    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    lane = [c.strip() for c in (_allocation_cards(False) or "").split(",") if c.strip()]
     if not lane:
         print("no lane card in the allocation", file=sys.stderr)
         return 1
@@ -9147,6 +9181,8 @@ def cmd_launch(rest):
     ap.add_argument("--auto-resume", type=int, default=0, metavar="N",
                     help="on a non-zero exit, relaunch with --resume <latest step ckpt>, up to N times "
                          "(blocks: detach the whole command with setsid nohup)")
+    ap.add_argument("--dry", action="store_true",
+                    help="print the allocation and exit: no ledger row, no process, no card touched")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
     if "--" not in rest:
         ap.error("no command given after --")
@@ -9160,7 +9196,7 @@ def cmd_launch(rest):
     # have killed tonight's healthy 15B run, whose first step came 6m26s in.
     gate_note = None
     if args.gate_timeout is None:
-        if args.training:
+        if args.training and not args.dry:
             derived, gate_note = _derive_gate_timeout(cmd)
             if derived is None and gate_note and "no token caches" in gate_note:
                 # REFUSE rather than fall back. The fallback was backwards: the emptier
@@ -9179,7 +9215,8 @@ def cmd_launch(rest):
         else:
             args.gate_timeout = 300 if "--resume" in cmd else 120
     if args.training:
-        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)"))
+        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)")
+              if not args.dry else "startup gate: derived at launch from the cache size (not read by --dry)")
 
     # Popen does not use a shell: a bare foo.py fails with Permission denied.
     # Prepend the interpreter when the command is a .py file in the repo.
@@ -9198,6 +9235,28 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
+        if cards is None:
+            # Before the ledger row: a refused launch leaves no trace. Refusing rather
+            # than defaulting is the point -- the 500M bypass happened because a recipe
+            # supplied a card count nobody granted, and a default is indistinguishable
+            # from a decision once the job is running.
+            print(f"REFUSED: {args.name} - no card grant in runs/card_assignment.json"
+                  f"{' with launch_block_granted' if args.training else ''}. "
+                  f"Card ownership is a controller decision; ask for a grant. "
+                  f"No ledger row written.", file=sys.stderr)
+            return 1
+
+    if args.dry:
+        # After allocation, before the lane check and the ledger row: the question --dry
+        # answers is "which cards, how many ranks", and answering it must touch no card
+        # and write no row. The refusal above still applies, so --dry reports a missing
+        # grant as a refusal instead of printing a plausible default.
+        ngpu = len(cards.split(",")) if (args.training and cards) else 0
+        print(f"cards {cards or '(none)'}"
+              + (f" world {ngpu}" if ngpu else "")
+              + (f" auto-resume {args.auto_resume}" if args.auto_resume else "")
+              + f"\ncmd {' '.join(cmd)}")
+        return 0
 
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
