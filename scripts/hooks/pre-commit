@@ -44,6 +44,7 @@ ALLOWED = [
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
+    "data/rl_tasks/*",
     "data/sft_contamination_baseline.json",
 ]
 
