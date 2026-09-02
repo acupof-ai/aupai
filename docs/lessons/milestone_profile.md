@@ -2,7 +2,7 @@
 question: "milestone profile: fixed-subset eval at every stage-1/stage-2 milestone, <60 min"
 status: recorded
 source: "t53 2026-08-31; runs/milestone_p324_v2.jsonl; eval/score_matrix.py --profile milestone"
-cadence_corrected: "e1-10 2026-09-02: 532K tok/s and the 1.7-4 h cadence were p324 (200M) figures; 500M measures 94.9K, so 9.5-22.4 h and ~6 milestones. Wall times below are still p324's and are NOT rescaled."
+cadence_corrected: "e1-10 2026-09-02: 532K tok/s and the 1.7-4 h cadence were p324 (200M) figures -- 76K/card x the 7-card block, never measured as an aggregate. 500M measures 94.9K, so 9.5-22.4 h and ~6 milestones. Wall times below are still p324's and are NOT rescaled."
 ---
 
 # Milestone profile
@@ -15,9 +15,18 @@ and none holds for the 500M run:
 
 | sized against | measured for 500M |
 |---|---|
-| 532K tok/s = 66.5K/card | 11,857 tok/s/gpu = 94.9K total |
+| 532K tok/s = 76K/card x 7 cards | 11,857 tok/s/gpu x 8 = 94.9K total |
 | milestone every 1.7-4 h | every 9.5-22.4 h, ~6 in the run, not 28 |
 | runs on GPU 7, the lane card | no lane card: `lane_card: null`, `block_cards: 0-7` |
+
+532K was never measured or logged as an aggregate: `git log --all -S "532000"`
+returns nothing, and the string enters the history only as prose. It is
+76,000 x 7 = 532,000 exactly, the per-card figure from `README.md:21` ("Measured
+2026-08-31 on 7xH20 at the 0.2B point: 76K tok/s/GPU") times the 7-card block of
+that era, with GPU 7 held out as the lane. Two independent confirmations of the
+x7: both cadence endpoints fall out of the milestone grid at 532K
+(3.24e9/532K = 1.69 h -> "1.7"; 8e9/532K = 4.18 h -> "4"), and `harness
+milestone` hard-codes "3.24B ~= 3531 at 16x2x4096x7" -- the same 7.
 
 Throughput from `runs/p500m_20b_0902.log:57-63` on the pod, steps 170-230, b32
 accum1 seq4096 world=8 grad_ckpt fp8 d1024 L32, 2026-09-02. Cards from
