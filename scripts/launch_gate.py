@@ -243,7 +243,20 @@ def gate_arch_tests(root, mix_path, world):
        machine without fla, having replaced chunk_kda with a lambda; that green is the
        most misleading artifact in this directory, because it is all-clear on exactly
        the question the gate is asking. A row must say a real kernel ran.
+
+    And a fourth, which is the same shape one field over (de-10). The row carries `mix`
+    and this gate read only `shape`, so a pass on data/mix_sample.json cleared a launch
+    on data/mix_500m.json. That is not hypothetical: the 20B launch died at step 0 on
+    KeyError('content') from a holdout slice, and e2e had gone green because the sample
+    mix's corpus dir holds zero holdout slices. record_launch_test does print
+    "[NOT THE LAUNCH MIX]", but a printed warning is not a gate -- nothing reads stdout at
+    launch time, and the row it wrote was accepted here unread. `mix_path` was already a
+    parameter of this function and was never referenced in its body.
     """
+    # The mix asked about, relative to the tree, because rows record a repo-relative path
+    # while run() passes os.path.join(root, mix_rel). Falling back to LAUNCH_MIX rather
+    # than to "" keeps the comparison meaningful when a caller passes no mix.
+    want_mix = os.path.relpath(mix_path, root) if mix_path else LAUNCH_MIX
     missing = [n for n in ARCH_TESTS if not os.path.exists(os.path.join(root, n))]
     if missing:
         return NOGO, f"absent: {', '.join(missing)}"
@@ -280,6 +293,18 @@ def gate_arch_tests(root, mix_path, world):
         elif not row.get("real_kernel"):
             problems.append(f"{name}: real_kernel is not true -- a stand-in chunk_kda "
                             f"passes every case without touching a KDA kernel")
+        elif row.get("mix") is None:
+            # UNRECORDED and WRONG are separate problems for the same reason absence and
+            # failure are separate outcomes above: a row predating the mix field cannot be
+            # shown to have touched the launch data either way, and saying "ran on None"
+            # would read as a mix named None.
+            problems.append(f"{name}: the row records no mix, so it cannot be shown to "
+                            f"have run on {want_mix} -- a pass on the sample mix is what "
+                            f"this field exists to distinguish")
+        elif row.get("mix") != want_mix:
+            problems.append(f"{name}: ran on {row['mix']}, launch is {want_mix} -- "
+                            f"the sample mix's corpus dir holds no holdout slices, so a "
+                            f"pass there cannot see the launch mix's step-0 failures")
         else:
             # The row must describe the test that is here now. Without this the record
             # survives an edit to the test, which is the failure this repo has bought
@@ -296,7 +321,8 @@ def gate_arch_tests(root, mix_path, world):
     if problems:
         return NOGO, "; ".join(problems[:3])
     return GO, (f"{len(ARCH_TESTS)} shape test(s) passed at "
-                f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel")
+                f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel, "
+                f"on {want_mix}")
 
 
 CITATION = re.compile(
@@ -953,12 +979,39 @@ def selftest():
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         with open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8") as f:
             json.dump({n: {"result": "pass", "shape": dict(LAUNCH_SHAPE),
-                           "real_kernel": True,
+                           "real_kernel": True, "mix": mix_rel,
                            "test_sha256": _sha256(os.path.join(d, n))}
                        for n in ARCH_TESTS}, f)
     dg = world(_good)
     st, why = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
     assert st == GO, f"arch_tests refuses the record it is written to accept: {why}"
+    assert mix_rel in why, (f"the GO line does not name the mix it cleared: {why!r}. A gate "
+                            f"that reads a field must say what it read, or a reader cannot "
+                            f"tell this version from the one that ignored it")
+
+    # THE MIX HALF (de-10), and the first world is the incident: e2e passed on the sample
+    # mix while the launch mix died at step 0 on KeyError('content'), because the sample
+    # mix's corpus dir holds zero holdout slices. Both worlds mutate the record the gate
+    # is written to ACCEPT, so the only thing that differs is the field under test -- an
+    # empty tree would fail for the absence of everything and prove nothing (de's rule).
+    for label, mutate, want_phrase in (
+        ("a pass recorded on the sample mix", lambda rows: rows[ARCH_TESTS[0]].update(
+            {"mix": "data/mix_sample.json"}), "data/mix_sample.json"),
+        ("a row predating the mix field", lambda rows: rows[ARCH_TESTS[0]].pop("mix"),
+         "records no mix"),
+    ):
+        def _mixed(d, mutate=mutate):
+            _good(d)
+            p = os.path.join(d, "runs", "launch_tests.json")
+            rows = json.load(open(p, encoding="utf-8"))
+            mutate(rows)
+            json.dump(rows, open(p, "w", encoding="utf-8"))
+        dm = world(_mixed)
+        st, why = gate_arch_tests(dm, os.path.join(dm, mix_rel), 7)
+        assert st != GO, f"arch_tests passed on {label}: {why}"
+        assert want_phrase in why, (f"{label} failed for the wrong reason: {why!r} does not "
+                                    f"name {want_phrase!r}, so this world cannot show the "
+                                    f"mix check is what refused it")
 
     # and a row recorded against a different version of the test must not pass
     def _stale(d):

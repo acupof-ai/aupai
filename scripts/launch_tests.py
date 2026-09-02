@@ -170,22 +170,42 @@ def _selftest():
 
         for n in ARCH_TESTS:
             record_launch_test(os.path.join(d, n), "pass", dict(LAUNCH_SHAPE),
-                               real_kernel=True, path=p, root=d)
+                               real_kernel=True, mix=LAUNCH_MIX, path=p, root=d)
         # The join, which is the only thing worth asserting here: what this writes must
         # be what the gate accepts. Two files agreeing on a format by hand is how the
         # format drifts -- sft_math.py read "vocab" for a year while the packer wrote
         # "vocab_id", and the assert that was the sole enforcer of vocabulary identity
         # was unreachable the whole time.
-        st, why = gate_arch_tests(d, os.path.join(d, "mix.json"), 7)
+        st, why = gate_arch_tests(d, os.path.join(d, LAUNCH_MIX), 7)
         assert st == "GO", f"the gate refuses what this writer produces: {why}"
+
+        # THE MIX HALF OF THE SAME JOIN (de-10). This assertion is why the mix field was
+        # not a one-line addition: gate_arch_tests began reading `mix`, and this selftest
+        # went red because the world above wrote no mix -- the writer and the gate had
+        # drifted the moment the gate learned the field. Recording it above closes that,
+        # and the world below is the other direction: a row without the field must be
+        # refused, or "the gate accepts what the writer produces" is satisfied by a gate
+        # that reads nothing.
+        record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                           real_kernel=True, mix=None, path=p, root=d)
+        st, why = gate_arch_tests(d, os.path.join(d, LAUNCH_MIX), 7)
+        assert st != "GO", f"a row recording no mix passed the gate: {why}"
+        assert "no mix" in why, f"it refused for another reason: {why}"
+        record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                           real_kernel=True, mix="data/mix_sample.json", path=p, root=d)
+        st, why = gate_arch_tests(d, os.path.join(d, LAUNCH_MIX), 7)
+        assert st != "GO", f"a pass on the sample mix cleared the launch mix: {why}"
+        assert "mix_sample" in why, f"it refused for another reason: {why}"
+        record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                           real_kernel=True, mix=LAUNCH_MIX, path=p, root=d)
 
         # rerun replaces, never appends a second verdict
         record_launch_test(os.path.join(d, ARCH_TESTS[0]), "fail", dict(LAUNCH_SHAPE),
-                           real_kernel=True, path=p, root=d)
+                           real_kernel=True, mix=LAUNCH_MIX, path=p, root=d)
         rows = json.load(open(p, encoding="utf-8"))
         assert len(rows) == len(ARCH_TESTS), f"rerun appended: {sorted(rows)}"
         assert rows[ARCH_TESTS[0]]["result"] == "fail", "rerun did not replace the verdict"
-        st, why = gate_arch_tests(d, os.path.join(d, "mix.json"), 7)
+        st, why = gate_arch_tests(d, os.path.join(d, LAUNCH_MIX), 7)
         assert st != "GO", f"a recorded fail must not pass the gate: {why}"
 
         # an incomplete shape is refused at write time, not discovered at read time
