@@ -235,8 +235,23 @@ def score(model, arm, kept, device, batch, pad_id):
             x = torch.tensor(xs, dtype=torch.long, device=device)
             y = torch.tensor(ys, dtype=torch.long, device=device)
             logits = model(x[:, :-1])
-            if not torch.is_tensor(logits):
+            # THREE shapes, one per model family, and getting this wrong is a crash at
+            # result time rather than a wrong number:
+            #   our HybridLM     -> (logits, hidden)   model.py:534
+            #   transformers     -> ModelOutput with .logits
+            #   a plain module   -> a tensor
+            # My first version handled only the last two, so it died on the arm it was
+            # written for. The selftest's stand-in models returned a tensor and a
+            # .logits object -- exactly the two cases that worked -- which is why it
+            # stayed green: a fixture covering only the shapes I had thought of.
+            if isinstance(logits, tuple):
+                logits = logits[0]
+            elif not torch.is_tensor(logits):
                 logits = logits.logits
+            if logits is None:
+                raise SystemExit(
+                    "the model returned no logits (our HybridLM returns (None, hidden) "
+                    "when called with a target -- score() must call it with input only)")
             loss = torch.nn.functional.cross_entropy(
                 logits.reshape(-1, logits.shape[-1]).float(), y[:, 1:].reshape(-1),
                 ignore_index=-100, reduction="sum")
@@ -605,6 +620,31 @@ def selftest():
         fails.append(f"an HF-shaped output scored differently: {w_loss:.6f}/{w_tok} vs "
                      f"{a2:.6f}/{t2} -- score() mishandles .logits unwrapping")
 
+    # 4d. THE TUPLE SHAPE, which is what OUR arm actually returns: HybridLM.forward gives
+    #     (logits, hidden) (model.py:534). Case 4c covered a tensor and a .logits object --
+    #     the two shapes I had thought of -- and score() died on the third at result time,
+    #     after the card was claimed and the model loaded. A fixture built from the shapes
+    #     you already handle proves only that you handle them.
+    class Tupled(torch.nn.Module):
+        """Same logits as Ramp, returned the way HybridLM returns them."""
+
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, x):
+            return self.inner(x), None
+
+    try:
+        t_loss, t_tok = score(Tupled(m), "ours", [short, long], "cpu", 2, 0)
+    except Exception as e:  # noqa: BLE001
+        t_loss, t_tok = None, None
+        fails.append(f"a (logits, hidden) tuple raised instead of scoring: "
+                     f"{type(e).__name__}: {e} -- this is OUR arm's return shape")
+    if t_loss is not None and (abs(t_loss - a2) > 1e-4 or t_tok != t2):
+        fails.append(f"a tuple-shaped output scored differently: {t_loss:.6f}/{t_tok} vs "
+                     f"{a2:.6f}/{t2}")
+
     # 5. THE NAMES load_ours AND load_control IMPORT MUST EXIST. No checkpoint needed: import
     #    the symbols and check they are constructible types. The first version of load_ours
     #    imported `Transformer` from train.py, which has no such class -- copied from the file
@@ -634,6 +674,35 @@ def selftest():
               f"this case did NOT run; run it where train.py imports")
     if checked_symbols:
         print("  checked: train.Cfg and train.HybridLM exist, sft_math.py builds HybridLM")
+
+    # 6. THE MODEL MUST BE CAST TO bf16. Our checkpoints store bf16 tensors while
+    #    HybridLM(Cfg) builds fp32 parameters, and load_state_dict casts loaded tensors UP
+    #    to the parameter dtype -- so a load without the cast runs fp32 and the KDA triton
+    #    kernel raises `CUDA error: misaligned address`. Isolated one case per process
+    #    (fp32 fails sliced AND contiguous; bf16 passes both), so it is dtype, not layout.
+    #
+    #    No card and no checkpoint here: this reads load_ours' source for the cast, which
+    #    proves the line is present, NOT that a forward pass works. Stated because the two
+    #    are different claims and only a real card can make the second -- the forward is
+    #    covered by actually scoring an arm, which is what found this.
+    #
+    #    Matched as a STATEMENT, not a substring. My first version searched load_ours' text
+    #    for "to(torch.bfloat16)" and stayed green when the line was deleted, because the
+    #    span also contains the phrase inside this very comment (and the split reached
+    #    load_control's own cast). A check whose needle occurs in its own explanation cannot
+    #    fail -- the same shape as a fixture that cannot tell two algorithms apart.
+    try:
+        src_lines = open(os.path.join(HERE, "eval_heldout.py"), encoding="utf-8").read()
+        body = src_lines.split("\ndef load_ours", 1)[1].split("\ndef ", 1)[0]
+        code = [l for l in body.splitlines() if not l.lstrip().startswith("#")]
+        if not any(l.strip() == "model = model.to(torch.bfloat16)" for l in code):
+            fails.append("load_ours no longer casts to bf16 -- an fp32 HybridLM raises "
+                         "CUDA misaligned address in the KDA kernel")
+        else:
+            print("  checked: load_ours casts to bf16 (source-level; a forward pass needs "
+                  "a card)")
+    except (OSError, IndexError) as e:
+        fails.append(f"could not read load_ours to check the bf16 cast: {e}")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
