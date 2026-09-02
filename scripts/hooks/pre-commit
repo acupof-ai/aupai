@@ -227,6 +227,7 @@ def main():
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
+        "scripts/test_eval_load_only.py",
         "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
