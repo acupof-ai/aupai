@@ -584,6 +584,42 @@ git reset,同一个 merge      →  成功,1 file changed
 
 与 §51 同族:那条是检查按构造不能报警,这条是**被检查的属性按构造一直被绕过**——测试跑在 root 下,于是每一条关于权限的结论都只对 root 成立。
 
+## 54. 守卫的条件比它防的危险更宽,于是能用的调用者变成拒绝(de-23/de-26,2026-09-02,fb 裁定收)
+
+一个守卫写对了要防的事,却把条件设在比危险面更宽的位置。它不会漏报,它误报——把一个到不了危险区的调用者变成拒绝。**代价和它防的那个 bug 一样**:两者都让一件本该成功的事失败,而误报还多一层伤害,因为它长得像"守卫在工作"。
+
+同一天三个实例,前两个是我自己的:
+
+| 守卫 | 危险面 | 我设的条件 | 后果 |
+|---|---|---|---|
+| `build_mix` VOCAB_ID | 会读写 `.vocab` stamp 的那条路径(即 `tok` 非空) | 整个函数 | `test_arch_compat:208` 用 `tok=None` 建四个 rank 分片查计划切分,不编码、不碰 stamp——**打挂一道 CI 门,也是 relaunch 前三道门之一** |
+| `domain_loss` 的 mix | `cfg` 里真的没有 mix | `getattr(cfg, "mix")` | `cfg` 在本仓库每个 checkpoint 里都是 **dict**,getattr 返回 None,于是**每一个真 checkpoint 都被拒**;一个看似正确的守卫把"错的默认值"换成"假拒绝",比原 bug 更糟 |
+| stamp 读侧 | 空 stamp 与非空指纹不等 | 若只去掉 `or ""` | 空 stamp 仍等于空文件;必须 `bool(VOCAB_ID)` 才让未设的指纹拒绝等于任何东西 |
+
+第二个只有**拿真 artifact 跑一遍**才看得出来:合成 `cfg` 对象的测试全绿,而 `ckpt_p500m_20b_0902.pt.step2500` 一跑就拒。我差点提交了那个版本。
+
+修法都不是放松守卫,是**把条件收到危险面上**:`tok is not None and not VOCAB_ID`、两种 cfg 形状都读。判据要两个方向都验:危险路径必须 raise,安全路径必须放过。只验前者,就是这条形状。
+
+规则:**写守卫时同时写下"哪些调用者应当不受影响",并逐个验证它们仍然通过。** 一个只验证"坏输入被拒"的守卫,无法区分"条件正好"和"条件太宽"——两者对坏输入的行为完全一致。这与 §51 同族但反向:§51 是检查按构造不能报警(永远绿),这条是检查按构造过度报警(该绿的也红),而**两者的自测都会通过**,因为自测通常只喂坏输入。
+
+## 55. 一个数只在它自己的前提下成立,而我给数时没给前提(de,2026-09-02,fb 追查后结案)
+
+我算出 `19,999,997,952 / 1,048,576 = 19,073` 步,和日志打印的 19,151 差 78,报给 fb 时写成"总步 19,073,与日志不一致"。fb 据此怀疑 LR 表与循环用了两个不同的总步,尾部 78 步 lr 越界,并准备开一条 defect-fix。**没有缺陷。** 两个数回答的是两个不同问题:
+
+```
+19,073 = total_tokens/seq/256          一个 FRESH plan 的理想步数
+19,151 = 19,068 + 83                   一个被游标裁过的 stage 计划 + resume 偏移
+```
+
+run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游标把已消耗的行从计划里裁掉,所以 stage 计划**更小**:19,068 < 19,073,方向正确。`total_steps += resume_step` 在 `train.py:2503-2504`,是既定行为。
+
+结构上也不可能分叉:`lr_mult` 没有独立的总步来源,它只接收调用方传的那个数(`train.py:2495` → `:2511`/`:2644` 是同一个变量),而进度条打印的也是它。
+
+还有一个能不看日志就定向的事实:每域每相 `int()` 向下取整,**截断只会减少行数**(anneal_frac 0.1 下实测只丢 8 行 = 0.0 步)。所以任何**大于** `total_tokens/seq/256` 的打印值不可能来自截断,必然来自加法——这一条本身就指向 `+= resume_step`。
+
+我的错误不在算术,在**把一个带前提的数说成无前提的**。"总步 19,073"隐含"fresh plan",而这个 run 不是。代价是别人按我的措辞去查一条不存在的缺陷。规则:**给一个数的同时给它的前提,尤其当它和别人手上的数不一致时——不一致的第一假设应当是两个数在回答不同问题,而不是其中一个错。** 与 §11(每个数带它的分辨率)、§20(每个数带它的基础)同族;这条补的是"前提"这一维,而前提最容易漏,因为它在算的人心里是显然的。
+
+
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
 - 44-7/44-8 分流夜:/tmp/hcheck.txt、tilerl 零漂移复跑记录
 - lrprobe_0.85.log(pod,2026-09-02):871 行 saved、880 行 OOM、评分器自分配 94.65 GiB
@@ -618,5 +654,7 @@ git reset,同一个 merge      →  成功,1 file changed
 - fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族
 - de-25(2026-09-02,fb 裁定接受,reviewer 3b):AGENTS.md 的 merge 四格测量取自 fast-forward,三方合并下 staged 改动一律被拒(路径不相干也拒);八格复现脚本 `/tmp/merge_ff.sh`,规则改为「merge 前 index 必须与 HEAD 一致」
 - de-27(2026-09-02,fb 复核并撤回自己 07:29 的归因):p500m_20b_0902.log 每 10 步速率序列 + ckpt/eval 日志 mtime 锚点反推;run 自带对照组 step 500/1000/1500/2000 四次 7K 无 eval(2000 那次在 ppl 被杀之后,是干净的第四点);1990 步累计掉档 10.3 分钟 = 2.8%;ETA 单区间外推放大 29h/54s;成本脚本 /tmp/cost.py、/tmp/attrib.py、/tmp/eta.py
+- de-13/de-20/de-23 停窗口(2026-09-02,52aec31):游标写入点加计划起始基线,`.interrupt.step83` 13,056 vs 真实 21,248,差 8,192 = 第一段;`test_resume_accumulates` 只认两种修法而我的是第三种(测试只能按作者想到的方式变绿),补上后用三个变异真实文件验证仍拒坏世界;`build_mix` 守卫未门控时打挂 `test_arch_compat:208`(tok=None 的计划切分路径);`domain_loss` 的 `getattr` 对 dict 返回 None,拿 `ckpt_p500m_20b_0902.pt.step2500`(47 键,mix='data/mix_500m.json')实测才发现每个真 checkpoint 都被拒
+- 步数 19,073 vs 19,151(2026-09-02,fb 追查后结案):`total_steps` 与 `lr_mult` 同一变量(train.py:2495 → :2511/:2644),19,151 = 19,068 裁过的计划 + 83 resume 偏移(日志第 40 行);截断只减不增(anneal_frac 0.1 实测丢 8 行),故大于理想值的打印必来自加法
 - de-28a 第二轮(2026-09-02,fb 裁定 survey A.3/C.5):chroot 内 uid 0 = mknod 宿主块设备 + RLIMIT_NPROC 不生效 + chdir-then-chroot;`setpriv` 降权后 pod 16/16 known answer(含 uid=65534、mknod EPERM、setsid 双 fork、/proc environ 三进程无泄漏);降权暴露 chroot 根 0700(报错指向 /usr bind)与 cwd 在 chroot 根(报错指向隔离过严);互锁三格表 `/tmp/deadlock.sh` `/tmp/ff_tracked.sh`——只有「ff + main 也改该路径」是真互锁;union 脚本按不存在的字段比较,报 re-applying 0 而计数自相矛盾;Landlock 内核 5.4 结构性缺失(444/445/446 ENOSYS),seccomp 与 userns 可用
 - de-28a 第一轮(2026-09-02,fb 内容接受并纠正流程):探针在 impl 里 print 被 pytest 捕获→`escaped:False` 按构造成立,10/10 绿含两次真逃逸;改成 test 内 assert 后在 rlimits_only 实测会红(reward 0.0/escaped true/点出 `/Users/bytedance/.ssh`);`/dev` 三次测量(ro bind→Errno 30、逐设备 bind→null/zero/full/tty 未进 chroot、mknod 固定主次号);死锁判定被 fb 推翻——`/tmp/deadlock.sh` 实测 `git reset` 后三方合并成功且工作树完好,出路在 de-25 自己的表里

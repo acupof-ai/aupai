@@ -361,6 +361,7 @@ def main():
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
         "algorithms/rollout.py",
+        "algorithms/seccomp.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
@@ -371,6 +372,9 @@ def main():
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
         "scripts/test_artifact_path_ckpt.py",
+        "scripts/test_cache_dir_knob.py",
+        "scripts/test_vocab_stamp.py",
+        "scripts/profile_step_cost.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
@@ -412,6 +416,15 @@ def main():
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        # The sandbox itself. 17 known answers, every one of which needs root plus unshare,
+        # so none can run on a dev box or in CI -- run by hand on the pod, and the commit
+        # that changes this file records the result. It was legitimately absent from both
+        # maps until now: the file ran its checks as `_self_check()` under `if __name__`
+        # with no `--selftest` string anywhere, so the gate's scan had nothing to match
+        # (VERIFIED against HEAD before writing this). The seccomp commit added the string
+        # in a docstring, which is what pulled it into scope (de, 2026-09-02).
+        "datagen/sandbox_exec.py": "17 known answers, all needing root + unshare for the "
+                                   "chroot and namespaces; pod only, run by hand",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         # Two more de-5 candidates that PASS and assert live properties, but only where the
