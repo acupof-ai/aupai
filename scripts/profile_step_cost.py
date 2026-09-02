@@ -94,6 +94,63 @@ def _selftest():
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} no samples reports None, never 0")
 
+    # tok/s/gpu must count the WHOLE step -- batch * accum * seq -- and the peak must be reset
+    # before the loop. Both read from main()'s AST, never by substring: a needle like
+    # "tok_step = B * train.Cfg.accum * SEQ" written into this check's own table MATCHES ITSELF,
+    # so the check stays green after the code is broken. That is the same self-satisfying shape
+    # as the first fp8 check below, and it happened again here -- caught only because the
+    # mutation harness reported GREEN on a real regression.
+    #
+    # The A/B's two arms differ ONLY in how batch*accum is split, so a rate over the micro-batch
+    # reports the b8a4 arm at 4x its real throughput and picks the wrong config outright. And a
+    # peak that includes setup carries the plan, the optimizers and the pinned buffers -- which
+    # both arms pay identically -- so the number deciding "does this arm fit" would be mostly
+    # cost that is not the arm's.
+    import ast as _a0
+
+    with open(os.path.abspath(__file__), encoding="utf-8") as fh:
+        src_me = fh.read()
+    _me_tree = _a0.parse(src_me)
+    _me_main = next((n for n in _me_tree.body
+                     if isinstance(n, _a0.FunctionDef) and n.name == "main"), None)
+    tok_expr = reset_line = loop_line = None
+    for n in _a0.walk(_me_main) if _me_main else ():
+        if isinstance(n, _a0.Assign) and any(
+                isinstance(t, _a0.Name) and t.id == "tok_step" for t in n.targets):
+            tok_expr = _a0.unparse(n.value).replace(" ", "")
+        elif isinstance(n, _a0.Call) and isinstance(n.func, _a0.Attribute) \
+                and n.func.attr == "reset_peak_memory_stats":
+            reset_line = n.lineno
+        elif isinstance(n, _a0.For) and _a0.unparse(n.iter).replace(" ", "") \
+                == "range(a.steps+a.warmup)":
+            loop_line = n.lineno
+    for ok, why, hint in (
+        (tok_expr == "B*train.Cfg.accum*SEQ", "tok/s/gpu counts batch*accum*seq",
+         f"tok_step is {tok_expr!r}; a rate over one micro-batch reports the b8a4 arm at 4x"),
+        (reset_line is not None, "the peak is reset in main()",
+         "the peak would carry setup both arms pay identically, not the step's own cost"),
+        (None not in (reset_line, loop_line) and reset_line < loop_line,
+         "the peak reset comes BEFORE the timed loop",
+         f"reset at line {reset_line}, loop at {loop_line} -- resetting after measures nothing"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} {why}" + ("" if ok else f" -- {hint}"))
+
+    # A loss recorded per step, warmup INCLUDED. The arms' equivalence check compares them step
+    # by step, and they diverge earliest -- if at all -- in the steps the timing window drops.
+    # AST again: the append must NOT sit inside the `if st >= a.warmup` gate.
+    gated, appends = set(), []
+    for n in _a0.walk(_me_main) if _me_main else ():
+        if isinstance(n, _a0.If) and _a0.unparse(n.test).replace(" ", "") == "st>=a.warmup":
+            gated.update(x.lineno for b in n.body for x in _a0.walk(b) if hasattr(x, "lineno"))
+        elif isinstance(n, _a0.Call) and isinstance(n.func, _a0.Attribute) \
+                and n.func.attr == "append" and _a0.unparse(n.func.value) == "losses":
+            appends.append(n.lineno)
+    ok = bool(appends) and not (set(appends) & gated)
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} the loss is recorded before the warmup gate"
+          + ("" if ok else " -- the arms' first steps, where a divergence is largest, are dropped"))
+
     line = fmt_row("nccl_floor", None, 1)
     ok = "NOT MEASURED" in line and "0.0" not in line
     bad += 0 if ok else 1
@@ -263,7 +320,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 2 + 4 + 2
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -375,6 +432,7 @@ def main():
     assert eos is not None, "the tokenizer has no <eos>; the document mask would be wrong"
 
     loader, steps, nccl = [], [], []
+    losses = []
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
         print(f"built {n_par / 1e6:.2f}M params, compile={train.Cfg.compile and amp}, "
@@ -396,12 +454,18 @@ def main():
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                        record_shapes=True, with_flops=False, with_stack=False)
 
+    # Reset before the loop, not after setup: the peak must describe the STEP, and building the
+    # model, the optimizers and the pinned buffers all allocate. An arm that OOMs is decided by
+    # this number, so it may not carry setup that both arms pay identically.
+    torch.cuda.reset_peak_memory_stats()
+
     for st in range(a.steps + a.warmup):
         if prof is not None and st == trace_from:
             prof.start()
         torch.cuda.synchronize()
         t_step = time.perf_counter()
         t_fwd = None
+        step_loss = torch.zeros((), device=dev)
         # ACCUM micro-batches per optimizer step, as train.py:2212 does: its loop strides by
         # Cfg.batch and steps the optimizer every Cfg.accum-th iteration, so one "step" is
         # accum forward/backward passes. Timing a single pass and calling it a step made
@@ -426,6 +490,7 @@ def main():
             weight = raw.head.weight[: raw.cfg.vocab]
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             loss = loss / train.Cfg.accum
+            step_loss += loss.detach()
             # train.py:2246 -- no_sync on every micro-batch but the last, or DDP all-reduces
             # accum times per step and the NCCL cost of the b16a2 arm doubles for no reason.
             if ddp and train.Cfg.accum > 1 and micro + 1 != train.Cfg.accum:
@@ -439,6 +504,10 @@ def main():
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
         torch.cuda.synchronize()
+        # EVERY step's loss, warmup included. The A/B's correctness condition is that the two
+        # arms compute the same thing, and the arms differ from step 0 -- comparing only the
+        # timed window would skip the steps where a divergence is largest and easiest to see.
+        losses.append(round(float(step_loss.item()), 6))
         if st >= a.warmup:
             loader.append(t_fwd - t_step)
             steps.append(time.perf_counter() - t_step)
@@ -491,21 +560,35 @@ def main():
         torch.cuda.synchronize()
         vals.append(time.perf_counter() - t0)
 
+    # tok/s/gpu from the MEDIAN step, and peak from the loop only. These two are the A/B's whole
+    # output: a config that is faster per GPU and fits is better, and nothing else in this record
+    # decides that. Per-GPU, so an arm run on a different card count is still comparable -- the
+    # 300M A/B runs on 4 while the p200m numbers came from 4 and the ladder from 7.
+    med = _stats(steps)
+    tok_step = B * train.Cfg.accum * SEQ
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.dim,
            "fp8": fp8, "grad_ckpt": a.grad_ckpt,
            "compile": bool(train.Cfg.compile and amp), "steps_timed": len(steps),
-           "step_total": _stats(steps), "loader_wait": _stats(loader),
+           "tokens_per_step_per_gpu": tok_step,
+           "tok_s_per_gpu": round(tok_step / (med["median_ms"] / 1000.0)) if med else None,
+           "peak_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2),
+           "loss_per_step": losses,
+           "step_total": med, "loader_wait": _stats(loader),
            "nccl_floor": _stats(nccl) if ddp else None,
            "save": _stats(saves) if is_main else None, "val": _stats(vals)}
     if is_main:
         tot = rec["step_total"]["median_ms"] if rec["step_total"] else None
-        print(f"\n200M host-side per-step cost  (mix {a.mix}, world {world}, "
-              f"{rec['params_m']}M, batch {B} x accum {train.Cfg.accum} x seq {SEQ}, "
+        print(f"\n{rec['params_m']}M host-side per-step cost  (mix {a.mix}, world {world}, "
+              f"batch {B} x accum {train.Cfg.accum} x seq {SEQ}, "
               f"fp8={fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
         for k in ("step_total", "loader_wait", "nccl_floor", "save", "val"):
             print("  " + fmt_row(k, rec[k], world, tot))
+        print(f"  {'tok/s/gpu':16s} {rec['tok_s_per_gpu']:,}   "
+              f"({tok_step:,} tok/step/gpu over the median step)")
+        print(f"  {'peak':16s} {rec['peak_gib']:.2f} GiB   (loop only; setup excluded)")
+        print(f"  {'loss':16s} first {losses[:3]} last {losses[-3:]}")
         if a.json:
             with open(a.json, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec) + "\n")
