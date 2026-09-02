@@ -407,6 +407,10 @@ def main():
         # The ours-side half. Its selftest asserts both arms split a shared row into the
         # same (prompt, completion) pair -- the one thing that must not drift between them.
         "datagen/pack_control_sft_ours.py",
+        # Our arm's held-out reader. sft_math.py does not evaluate a held-out set, so without
+        # this the two arms' headline numbers would be a held-out loss on one side and nothing
+        # on the other. Its selftest needs no card and no checkpoint.
+        "scripts/eval_heldout_ours.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
