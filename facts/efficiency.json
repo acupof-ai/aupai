@@ -977,10 +977,13 @@
    "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
    "config": {
     "mix": "mix_scale_0.2b",
+    "dim": 1024,
+    "layers": 12,
+    "batch": 32,
+    "accum": 1,
     "seq": 4096,
     "fp8": true,
     "cards": 7,
-    "variant": "batch 32 accum 1",
     "baseline": "batch 16 accum 2 = 72K tok/s",
     "result": "CUDA OOM 93.8/95.2 GB"
    },
