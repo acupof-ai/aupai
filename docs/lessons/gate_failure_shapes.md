@@ -320,6 +320,24 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 修法两层:规则改为「直接 merge、永不 stash」(merge 能带未提交改动走;带不动就先提交到自己的分支);加 `no_shared_stash` 检查(tilerl 在做)。
 
+第二条理由(b0,2026-09-02):`git stash` 对未跟踪文件静默不收,而新拆出的文件必然未跟踪——b0 的 model.py 留在盘上、train.py 切割进了 stash,一个动作把一次改动劈成两半。禁 stash 的理由从「共享全局状态」再加一条「未跟踪文件静默丢失」。
+
+## 34. 区间有两端,只验一端(b0,2026-09-02,与 §29 同族)
+
+一个区间有两端;校验只验起始端,结束端就是盲区——而结束端多带走的东西,正是拆分类改动里最贵的错误。
+
+实例(b0-8,5add1c8):model_module_split 设计页给 HybridLM 732-875、GatedMLA 358-414;实际结束在 862 和 408——865-873 是 Muon 段头加 POLAR_EXPRESS(Muon 的,留下)、411-412 是 FP8 段头加 `_FP8_MAX_E4M3`(FP8 的,留下)。按页面切走后 `NameError: POLAR_EXPRESS` + 四个 `F821 Undefined name _FP8_MAX_E4M3`。防这件事的校验脚本只核每个区间的起始行是那个定义,从不核结束行——`| HybridLM | 732-875 |` 过,因为 732 是 `class HybridLM`。b0 原话:"A range has two ends and I validated one."
+
+与 §29 同族:判据按构造只表达了「起始对不对」,表达不了「结束对不对」。
+
+## 35. 动态验收只作用于搬走的代码,照不到留下但丢了名字的代码(b0,2026-09-02)
+
+拆分类改动的动态验收(跑一遍、加载、前向比对)只覆盖被搬走的代码;留在原地但丢了名字的代码,动态用例不进去就无话可说。修法:拆分类改动的验收必须含一道静态检查——这个缺口动态用例补不上。
+
+实例(b0-8,5add1c8):四条动态验收全绿——test_arch_compat(移动后跑通)、legacy ckpt strict=True 键集一致、同进程 torch.equal 逐位相同、构造期抛错——而 `_FP8_MAX_E4M3` 未定义:没有一条动态用例进 FP8 路径。hook 的 ruff F821 一秒抓到。b0 原话:"Four dynamic conditions on the moved code say nothing about code that stayed and lost a name -- the acceptance set needed a static pass, and the hook supplied it."
+
+附带同次发现:re-export 不能被 monkey-patch——`from X import name` 是另一个绑定,test_arch_compat 给 `train.chunk_kda` 打桩不再到达调用点;修测试(两边都打桩)不改模型。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -338,3 +356,4 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
 - be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
 - fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
+- b0-8(2026-09-02):5add1c8 model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
