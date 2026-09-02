@@ -44,6 +44,7 @@ ALLOWED = [
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
+    "data/rl_tasks/*",
     "data/sft_contamination_baseline.json",
 ]
 
@@ -343,6 +344,21 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
+        # and the row splitter, both pure string logic -- so it belongs here and not in
+        # NEEDS_DATA. It caught two defects in its own file before that file's first commit:
+        # a `required=True` on --ckpt that made `--selftest` itself un-runnable, and a
+        # comment claiming the hyphen was a word boundary while the set omitted it.
+        "eval/lambada_en.py",
+        # humaneval gold BPB: its selftest needs no data and no model -- a uniform-distribution
+        # stand-in has a known answer (log2(V) bits/byte exactly), which is what pins the bit
+        # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
+        # truncate a solution. All four verified red on their broken worlds.
+        "eval/humaneval_bpb.py",
+        # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
+        # first-token exclusion via chunk-invariance and the decode round-trip measure that
+        # certifies both arms score the same bytes. Four broken worlds verified red.
+        "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
@@ -371,6 +387,12 @@ def main():
         "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Added in the same commit as the file itself: selftests_are_gated refuses to
+        # register a path that does not exist, so registering from main first would have
+        # been red until the file landed, and landing the file first is red the other way.
+        # The two halves of that deadlock only cancel inside one commit.
+        "scripts/check_sft_ready.py",
         # e1-23: the twelve recipe knobs are required=True as of this commit, so this
         # file's 14 reds are green and it can be gated. It takes --strict rather than
         # --selftest: without it the file exits 0 while red BY DESIGN (that is what let
@@ -385,6 +407,31 @@ def main():
         # tokenizer -- it builds a fixture transcript and asserts the turn shape,
         # format_agentic's contract, and that the redaction leaves no username.
         "scripts/build_agentic_sft.py",
+        # The control comparison (Pythia-160m vs ours on one shared pack). Both run
+        # cardless: the builder's selftest uses a temp-dir fixture, and the trainer's
+        # asserts its LR schedule equals train.lr_mult, its mask, and that the stop token
+        # lands in the supervised half -- none of which touch a model or a card.
+        "datagen/build_control_sft_text.py",
+        "scripts/sft_hf_control.py",
+        # The ours-side half. Its selftest asserts both arms split a shared row into the
+        # same (prompt, completion) pair -- the one thing that must not drift between them.
+        "datagen/pack_control_sft_ours.py",
+        # Our arm's held-out reader. sft_math.py does not evaluate a held-out set, so without
+        # this the two arms' headline numbers would be a held-out loss on one side and nothing
+        # on the other. Its selftest needs no card and no checkpoint.
+        #
+        # SUPERSEDED by scripts/eval_heldout.py, which scores BOTH arms. Two implementations
+        # of one number is what let three defects through: different populations per arm
+        # (12.0% dropped vs 0.26%), a denominator over the whole file while half was scored,
+        # and one arm row-weighting what the other token-weighted. Kept as a redirect until
+        # the report's numbers are in, then deleted.
+        "scripts/eval_heldout_ours.py",
+        # The one evaluator both arms are scored with. Its selftest is mutation-checked: each
+        # case was confirmed to fail when the defect it names is reintroduced (whole-file
+        # denominator, row-weighted mean, skipped-instead-of-refused id, off-by-one drop rule,
+        # a local copy of the template). Needs no card -- the drop rule takes an injectable
+        # encoder, and score() runs against a fixture module on CPU.
+        "scripts/eval_heldout.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
@@ -405,6 +452,27 @@ def main():
         #                              k>1 at t=0 refuses
         "scripts/test_monitor_exit.py",
         "scripts/test_math_passk.py",
+        # de, 2026-09-02, registered in the SAME commit as the files (the deadlock above).
+        # Both stub train._domain_seqs, so they need no corpus, no tokenizer and no card:
+        #   test_plan_length   ~6s  a resume allocates the REMAINDER, the two paths end and
+        #                           warm down at the same absolute step, and the fresh plan
+        #                           is bit-identical to a sha recorded on the PRE-fix code.
+        #                           11/11 mutations of train.py go red naming an assertion.
+        #   test_cursor_sum    ~4s  sum(row_cursor) == as_of_step x batch x accum x world,
+        #                           against three real p200m_4b_0902 checkpoints. 8/8 red.
+        # Neither takes a --selftest flag: the file IS the test, and its default path is
+        # the gate. They are in the map so a train.py edit cannot land without them.
+        "scripts/test_plan_length.py",
+        "scripts/test_cursor_sum.py",
+        # A/B (3)'s arm: two ways it costs a run and reports nothing -- zeroing nothing after
+        # a rename (a bit-exact copy of the baseline that still logs as the arm), and looking
+        # like a dead branch when it is not (upstream grad is exactly 0 at step 0 by
+        # construction and recovers at step 1). Pins both halves of that contract.
+        "scripts/test_zero_init_out.py",
+        # A/B (2a)'s arm: an inverted ratio shrinks exactly the matrices the record says to
+        # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
+        # hoisted to the group gives every shape the first shape's number. Both still train.
+        "scripts/test_muon_shape_lr.py",
         # These dispatch on sys.argv instead of argparse, which the gate's old
         # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
         # Three probes in this set were deleted in the 44-13 pass; the scripts remain.

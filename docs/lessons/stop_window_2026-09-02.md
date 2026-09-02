@@ -25,7 +25,7 @@ In the window: torch.profiler over 3 steps at the live shape; A/B of 40 steps ea
 
 ## Code that merges, in order, each behind `test_arch_compat`
 
-de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split. Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
+de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split → b0-14 (step line logs every optimizer group's lr; the embedding group runs at 0.1 while the line prints Muon's 1e-2) → de-31 (run-end save passes step; today ckpt_p200m_4b_0902.pt claims 0.87B unread tokens and only .ep1 is a valid resume target). Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
 
 Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change. `eval/score_matrix.py:765` still defaults `--mix` to the ladder mix (44's challenge on d57273f, 09:52Z): correct as a fact, deferred to de-26 because the file is in the frozen set and `cache_guard` turns the defect into a refusal, not a wrong number.
 
@@ -39,7 +39,7 @@ The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_s
 
 | run | config | steps | measured or estimated tok/s/gpu | wall |
 |---|---|---|---|---|
-| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 16 accum 2, `--no-grad_ckpt`. The first launch (11:57Z) used batch 32 accum 1 and OOM'd in the first backward at 95.1 GiB on every rank, exactly as `facts/efficiency.json#eff.microbatch_32_oom` (2026-08-31, 200M shape, 93.8/95.2 GB) recorded; the 72-73K baseline was batch 16 accum 2. The line had been checked against argparse, not against the facts | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
+| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 16 accum 2, `--no-grad_ckpt`. The first launch (11:57Z) used batch 32 accum 1 and OOM'd in the first backward at 95.1 GiB on every rank, exactly as `facts/efficiency.json#eff.microbatch_32_oom` (2026-08-31, 200M shape, 93.8/95.2 GB) recorded; the 72-73K baseline was batch 16 accum 2. The line had been checked against argparse, not against the facts | 3,814 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
 | p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), 293.05M built, batch 32 `--no-grad_ckpt` **does not fit**: 93.7-93.96 GiB allocated of 95.22 at fp8/bf16 (b0's probe, 11:46Z, real peak). Decided by an A/B in the 200M/300M gap: `--grad_ckpt` b16 a2 vs `--no-grad_ckpt` b8 a4, 20 steps each, tokens/step unchanged (b16 without grad_ckpt is not expected to fit at L18 since b32 does not fit at L12) | 5,722 | unmeasured, ~50K | ~4 h |
 
 Order after the stop: merges as listed → a 60-minute throughput sprint on all eight cards with the 200M config (user, 10:07Z: every idle owner works on training speed) → launch the 200M with the sprint's best config → the 300M after it ends. Launch lines, every knob explicit (row 173's omission):
@@ -86,3 +86,44 @@ outside the profiler's import path, so the A/B stands, and its report carries ea
 stamp. The rule that the launch-window freeze already implied: while any job holds a card,
 nobody pushes unless every changed file is outside the set of files the job reads at runtime (code it imports, the mix and config it loads, the stamp and manifest, its shell wrapper) and the push is
 named in the job's report; during a two-arm A/B nobody pushes at all.
+
+## All eight cards back to the 200M (user, 14:10Z)
+
+The user's word: "八卡你都用吧，直接 200M 的预训练开起来". The card split of 12:35Z ends; the
+performance sprint continues off-card (KDA roofline, AttnRes fused backward design, FLCE
+chunk count) and every A/B queues behind the run. The resume line is the 200M line above
+with `--resume ckpt_p200m_4b_0902.pt.interrupt.step832`, eight cards, batch 16 accum 2, no
+grad checkpointing. Blocking at 14:15Z: GPU7 holds the user's own tileRL GRPO
+(`tilerl.cli train --recipe grpo-gsm8k-27b`, 27.7 GB); the user decides whether it stops.
+
+## b0-14: the log prints only Muon's lr, so the embedding's lr is invisible (b0, 15:3xZ)
+
+**The defect.** `train.py:2401` prints `optimizers[0].param_groups[0]['lr']`, which is
+**Muon's**. There are four optimizer groups with three distinct learning rates:
+
+| group | optimizer | lr | wd | params |
+|---|---|---|---|---|
+| `opt[0]` | Muon | 0.01 | 0.0476 (decaying) | 63 |
+| **`opt[1]`** | **AdamW** | **0.1** | **0.001 (never decays)** | **1** (tied `tok`/`head`) |
+| `opt[2]` | AdamW | 0.15 | 0.0 | 77 |
+| `opt[3]` | AdamW | 0.01 | 0.0 | 34 |
+
+**So every log line reading `lr 1.00e-02` is one of four, and the embedding runs at 10x it.**
+
+**Why this earned a task rather than a note.** Both 1e and b0 read `lr 1.00e-02` as the
+embedding's lr on 2026-09-02 while investigating why the embedding norm grows 1.43x per
+500-step interval — the mechanism hypothesis was built on it ("no wd, lr 1e-2"), and both
+of its premises were wrong. A log that shows one group's lr and labels it `lr` does not
+merely omit information; it supplies a wrong value for the reading a person is doing.
+
+**b0-14: log every optimizer group's lr.** Trigger = the next launch, when someone reads
+the log. `train.py` is not touched before then (frozen path while the run holds cards).
+Shape: one line per group with its name, or a single line `lr muon/embed/scalar/arq`.
+
+**Related, recorded as open, not judged.** `train.py:783`'s wd decay-to-zero is guarded by
+`isinstance(opt, Muon)`, so `muon_wd` 0.10 decays linearly to 0 while the embed group's
+0.001 stays flat for the whole run. Measured consequence: the embed group's Adam update
+overwhelms its wd term by **108x at L12 / 90x at L32**, so wd is not restraining the
+embedding at either scale. Whether that guard is right is a recipe question, not a defect
+report — nanochat's own recipe decays only Muon's — so it is logged here for whoever owns
+the recipe, with the numbers attached.

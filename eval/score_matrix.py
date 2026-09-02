@@ -77,7 +77,21 @@ SKIP_REASON = {
 # Source: facts/base_eval.json (be.*_seed_variance), runs/score_matrix.jsonl.
 NOISE_THRESHOLDS = {
     "minimal_pairs": {"sd_pt": 2.47, "readable_move_pt": 11.5, "source": "be.minimal_pairs_seed_variance"},
-    "math_v2_like": {"sd_pt": 3.11, "readable_move_pt": 14.5, "source": "be.math_v2_like_seed_variance"},
+    # SATURATED at >=200M/4B, and this is the row that says so rather than a note elsewhere.
+    # Measured on runs/score_matrix.jsonl: 2-way with a 50% floor, so headroom is 100 - score.
+    #   0.2b seeds  76.69 / 77.22 / 83.53 / 78.75   headroom 16.5-23.3pt   sd 3.11pt (the source)
+    #   p324 3.24B  95.05                            headroom  4.95pt
+    #   15b_s1      97.41 | p200m_4b 97.44 | rehearse 97.54   headroom 2.46-2.59pt
+    # Headroom 2.56pt against a readable move of 14.5pt is a ratio of 0.177: even an arm that
+    # took ALL the remaining headroom would move less than this metric can resolve. And the
+    # three checkpoints above sit inside 0.13pt of each other -- below the binomial se of
+    # 0.288pt at n=3012 (95% CI +-0.56pt) -- so a 15B model, a 200M@4B model and a rehearse
+    # run are ONE POINT here. The metric still discriminates at 0.2b (76.7 -> 83.5 across
+    # seeds, p03/p04 87.7/87.9, p08 94.7); what it has is a scale ceiling, not broken noise.
+    # So: do not put it in an A/B reading at 200M or above. b0, 2026-09-03, at 1e's request.
+    "math_v2_like": {"sd_pt": 3.11, "readable_move_pt": 14.5, "source": "be.math_v2_like_seed_variance",
+                     "saturated_at_or_above": "200M/4B",
+                     "headroom_pt_at_200m": 2.56, "headroom_over_readable_move": 0.177},
     "lambada_zh": {"sd_pt": 1.02, "readable_move_pt": 4.8, "source": "be.panel_expressive_seed_variance"},
     "mc_ceval": {"sd_pt": 1.27, "readable_move_pt": 5.9, "source": "be.panel_expressive_seed_variance"},
     # domain_loss: sd=0.0516 nat (ds.seed_variance_0p2b), readable_move=0.24 nat
