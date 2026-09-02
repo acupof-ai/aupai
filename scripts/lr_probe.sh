@@ -43,6 +43,7 @@ for lr in 0.85 1.2; do
     --mix data/mix_probe_lr.json --name "lrprobe_${lr}" \
     --dim 1024 --layers 32 --heads 8 --ffn_hidden 3072 \
     --batch 32 --accum 1 --grad_ckpt \
+    --warmup 20 --warmdown 0.65 --anneal_frac 0.1 \
     --lr_scale "$lr" \
     --max_steps 500 --save_every 100000 --val_every 0 \
     > "runs/lrprobe_${lr}.log" 2>&1

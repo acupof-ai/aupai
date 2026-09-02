@@ -70,7 +70,7 @@ else
   # actually drew, in rows, with per-domain integer epoch caps (fb ruling 2026-08-31).
   NAME=pretrain_30b_s2; MIX=data/mix_30b_stage2.json; WARMDOWN=0.10
   [ -n "$RESUME" ] || { echo "refusing: stage 2 needs --resume <stage-1 ckpt>" >&2; exit 2; }
-  EXTRA="--warmdown $WARMDOWN --resume $RESUME"
+  EXTRA="--warmdown $WARMDOWN --anneal_frac 0.1 --resume $RESUME"
 fi
 
 # --seed 42, not 0. train.py:1733 applies flags with `if hasattr(Cfg,k) and v` and 0 is
@@ -78,8 +78,18 @@ fi
 # 42. Stage 1 ran under 42 (b0 audit 2026-08-31); stage 2 states it so the two stages share
 # one documented seed and the value in the command is the value in effect. de fixes the
 # apply after stage 1 ends; until then no flag whose valid value is 0 or "" can be trusted.
+# The six flags on the last line are not new decisions: they are the values this script was
+# ALREADY running, spelled out. train.py made the twelve recipe knobs required (ead2d2b), and
+# every knob this line was missing was one it had been taking from Cfg silently. Read from
+# Cfg at 32a7a4a (the last commit before ead2d2b) and confirmed identical at HEAD.
+# --layers 12 IS THE OPEN QUESTION, not an endorsement: a script named for a 15B->30B run has
+# been running L12, because Cfg.layers was 12 both today and on 2026-08-31 when stage 1
+# actually ran, and neither scale_36b_plan.md nor readout_30b_prereg.md states a depth. The
+# depth is a recipe decision and belongs to the user; this line preserves today's behaviour
+# until that ruling lands (gate_failure_shapes §64).
 FLAGS="--mix $MIX --seq 4096 --warmup 300 --save_every 500 --attn_res_blocks 0 --attn_every 4 \
---batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 42 $EXTRA --name $NAME"
+--batch 16 --accum 2 --vocab 32784 --bucket_cap_mb 50 --seed 42 $EXTRA --name $NAME \
+--dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --lr_scale 1.0 --no-grad_ckpt"
 
 # Readiness: the mix contract + nothing still _blocked, read from THIS stage's own mix so
 # the line a person reads at launch names the mix being launched (not always mix_30b.json).
