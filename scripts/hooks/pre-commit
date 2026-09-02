@@ -366,8 +366,23 @@ def main():
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
         "scripts/stale_claims.py",
+        "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        # e1-23: the twelve recipe knobs are required=True as of this commit, so this
+        # file's 14 reds are green and it can be gated. It takes --strict rather than
+        # --selftest: without it the file exits 0 while red BY DESIGN (that is what let
+        # it be committed against a frozen train.py), and a gate that accepts exit 0
+        # from a red test is not a gate. See SELFTEST_FLAG below.
+        "scripts/test_recipe_required.py",
+        # e1-22: no eval script may hand a base checkpoint a ChatML prompt. Runs on the
+        # default --selftest path because it is green today and has no reason to exit 0
+        # while red -- unlike test_recipe_required, which needed --strict.
+        "scripts/test_eval_base_prompt_format.py",
+        # e1-24: the transcript parser. Its --selftest needs neither ~/.claude nor a
+        # tokenizer -- it builds a fixture transcript and asserts the turn shape,
+        # format_agentic's contract, and that the redaction leaves no username.
+        "scripts/build_agentic_sft.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
@@ -523,6 +538,13 @@ def main():
     # Files whose exemption is partial: run the flag that names the assertions which DO
     # work here, instead of skipping the file entirely.
     PARTIAL = {f: v[1] for f, v in NEEDS_DATA.items() if isinstance(v, tuple)}
+    # Files that run fully but whose pass/fail verdict is not on the default flag. Kept
+    # separate from PARTIAL: that map means "exempt, run the subset that works here",
+    # and its entries are NEEDS_DATA rows. This one means "runs everything, but say
+    # which flag makes a failure fatal" -- putting scripts/test_recipe_required.py in
+    # PARTIAL would have recorded it as data-exempt, which is false and would mislead
+    # the next reader of NEEDS_DATA.
+    SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict"}
     # Measured per selftest, not once around the loop, so the refusal can name WHICH
     # one did it (e1-14). A single before/after pair would say "something changed".
     state_before = _shared_repo_state(repo_root())
@@ -537,7 +559,7 @@ def main():
             staged_copies.append(dst)
             with open(dst, "wb") as fh:
                 fh.write(blob.stdout)
-            flag = PARTIAL.get(f, "--selftest")
+            flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             r = subprocess.run([sys.executable, dst, flag], capture_output=True,
                                text=True, cwd=repo_root(),
                                env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})

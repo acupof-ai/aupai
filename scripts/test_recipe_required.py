@@ -135,6 +135,17 @@ def build_parser():
                  if "parse_args" in ast.unparse(s)), None)
     if start is None or stop is None or stop <= start:
         return None, "could not delimit the parser region in main()"
+    # Back the start up over the plain assignments that precede the ArgumentParser call,
+    # because the region needs the names it READS, not just the add_argument calls.
+    # e1-23 introduced RECIPE_REQUIRED above the parser and passes `name in
+    # RECIPE_REQUIRED` as each flag's `required`; a region starting at ArgumentParser
+    # raised NameError, and this file correctly reported CANNOT REACH THE PARSER rather
+    # than a finding. Walking back over Assign statements is the smallest fix that keeps
+    # the region self-contained: it picks up the literal tables the parser is built from
+    # and stops at the first statement that is not one (a call, an import, a branch),
+    # which is where a region that needs more than argparse would begin.
+    while start > 0 and isinstance(main.body[start - 1], (ast.Assign, ast.AnnAssign)):
+        start -= 1
     region = ast.Module(body=main.body[start:stop], type_ignores=[])
     ns = {"argparse": argparse}
     try:

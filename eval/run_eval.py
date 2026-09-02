@@ -33,7 +33,7 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 
 import fone
-from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer, prompt_fn  # noqa: E402
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 LETTERS = ["A", "B", "C", "D"]
@@ -237,12 +237,22 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
 # --- GSM8K: the only generation benchmark (batched greedy decoding) ---
 
 @torch.no_grad()
-def run_gsm8k(model, tok, device, batch_size=GEN_BATCH, temperature=0.0):
+def run_gsm8k(model, tok, device, batch_size=GEN_BATCH, temperature=0.0, fmt=None):
     """Greedy generation, exact match on the last number. Reuses gsm8k.py's
-    generator/extractor; prompts are pre-tokenized here before decoding."""
+    generator/extractor; prompts are pre-tokenized here before decoding.
+
+    fmt is REQUIRED in practice: it comes from prompt_fn(classify(cfg, name)) at the call
+    site, the one place holding the cfg. It has no default of format_prompt because that
+    default is precisely the defect -- a base checkpoint scored in ChatML reads zero on an
+    unseen prefix rather than on capability (AGENTS.md:200; 1.6% vs 94.4% fence rate,
+    eval/score_code_exec.py:9-31). Passing None raises rather than guessing.
+    """
+    if fmt is None:
+        raise ValueError("run_gsm8k needs fmt=prompt_fn(classify(cfg, name)); a default "
+                         "would silently score a base checkpoint in ChatML")
     m = _load_module("gsm8k")
     rows = list(m.load_dataset())
-    prompts = [tok.encode(format_prompt(r["question"])).ids for r in rows]
+    prompts = [tok.encode(fmt(r["question"])).ids for r in rows]
     golds = [
         float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in rows
     ]
@@ -310,7 +320,11 @@ def main():
                 continue
             display = f"GSM8K (t={args.temperature})"
             t0 = time.perf_counter()
-            acc = run_gsm8k(model, tok, device, temperature=args.temperature)
+            from score_matrix import classify
+
+            _fmt = prompt_fn(classify(cfg, os.path.basename(args.ckpt)))
+            print(f"  GSM8K prompt format: {_fmt.__name__}", flush=True)
+            acc = run_gsm8k(model, tok, device, temperature=args.temperature, fmt=_fmt)
         else:
             display, loader = MC_BENCHMARKS[key]
             t0 = time.perf_counter()

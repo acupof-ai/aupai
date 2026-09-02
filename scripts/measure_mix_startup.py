@@ -2,37 +2,28 @@
 # restartable: read-only timing report; re-running is idempotent and does not write the corpus or caches
 """fb: throughput push — measure build_mix startup for the 200M@4B retrain.
 
-For a 2-hour run, 10 min of startup is 8%. Two loads dominate:
-  1. build_mix's per-domain `_domain_seqs` pre-load overhead: glob shards +
-     `_corpus_fp` (a corpus-dir walk) + the cache-freshness checks.
-  2. `torch.load(map_location='cpu')` of `data00/tokens_<domain>.pt`: bytes -> seconds.
+For a 2-hour run, startup cost is dominated by torch.load of the token caches.
+_corpus_fp (dir fingerprint) is a separate cost, measured here by calling the real
+train._corpus_fp (train.py:1355-1376) directly, NOT a re-implementation.
 
 This measures, per domain cache: file bytes, torch.load seconds (one read), and the
-pre-load `_corpus_fp` walk seconds (if the corpus dir is present). Reports per row
-and a summed startup estimate. Host-side, no GPU, read-only.
+pre-load `_corpus_fp` fingerprint seconds (if the corpus dir is present). Reports
+per row and a summed startup estimate. Host-side, no GPU, read-only.
 
-Usage (pod, after the run-pause window):
+CORRECTION (2026-09-02, de + fb): the earlier version hashed every byte of every
+shard; the real _corpus_fp reads only first/last 64KB per shard. That version timed
+a function startup never calls. This one calls train._corpus_fp directly.
+
+Usage (pod):
   python3 scripts/measure_mix_startup.py data/mix_200m_4b.json
 """
 import argparse
-import glob
 import json
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-
-def corpus_fp_walk(corpus_dir):
-    """Mirror of train.py's _corpus_fp (content hash over shards) enough to time it."""
-    import hashlib
-    h = hashlib.sha256()
-    for p in sorted(glob.glob(os.path.join(corpus_dir, "*.jsonl"))):
-        with open(p, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-    return h.hexdigest()[:16]
 
 
 def main():
@@ -71,17 +62,18 @@ def main():
         del obj
     # corpus_fp overlaps with the cache load (it runs BEFORE, so they're sequential)
     if not a.rows_only:
+        import train  # 3b: call the real fingerprint, not a re-implementation
         for name, b, load_s, n in rows:
             corpus_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                       "data", "corpus", name)
             if os.path.isdir(corpus_dir):
                 t0 = time.perf_counter()
-                corpus_fp_walk(corpus_dir)
+                train._corpus_fp(corpus_dir)
                 ws = time.perf_counter() - t0
                 total_walk_s += ws
-                print(f"  {name}: walk {ws:.2f}s fp")
+                print(f"  {name}: fp {ws:.2f}s (train._corpus_fp)")
             else:
-                print(f"  {name}: corpus dir absent (skip walk)")
+                print(f"  {name}: corpus dir absent (skip fp)")
 
     print(json.dumps({"mix": a.mix_path, "n_domains_cached": len(rows),
                       "total_cache_bytes_GB": total_bytes / 1e9,

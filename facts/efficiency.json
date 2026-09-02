@@ -2013,7 +2013,7 @@
   {
    "id": "eff.grad_ckpt_inverts_with_depth",
    "claim": "whether gradient checkpointing is worth it at the ruled 500M shape (d1024 L32), given it lost at 12 layers",
-   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2374-2379): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
+   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2557; the probe and this entry both cited 2374-2379, which has never held that call at any commit -- corrected 2026-09-02, e1, the measurement is unaffected): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
    "measured": "2026-09-01",
    "source": "probes/t66_depth_shape.py@4016bdc on GPU2; cross-reference b0 t71 (c13fdc8) for the O(L^2) AttnRes source-read count",
    "config": {
@@ -2248,6 +2248,23 @@
    },
    "boundary": "Rate per WINDOW, not per step: each log line covers 10 steps, so a 1-step stall is smeared over 10 and the true worst instant is lower than 5.65K. Also only the first 10% of the run: these 190 lines are steps 90-1980 of 19,151, all at constant LR before warmdown, so the median is a same-conditions baseline and not a whole-run figure.",
    "uncertainty": "The attribution is by TIME COINCIDENCE plus a named artifact, not by a scheduler record -- no eval in this window appears in runs/experiments.jsonl, so nothing states which cards a job took. The step wall-clocks are reconstructed from one mtime and a constant rate, so each carries roughly a minute of drift over the reconstructed span; that is far inside the gap between these dips but it is not a timestamp. A DATELESS MTIME IS NOT A TIMESTAMP: the first version of this entry attributed 1900-1910 to two 08-31 files because the listing showed only HH:MM. Same family as reading a +0800 git log against a UTC pod clock. Every mtime here is now read with an explicit date. The val attribution is solid on its own (exactly steps 500/1000/1500, and val_every=500).",
+   "status": "measured"
+  },
+  {
+   "id": "eff.m4b_startup",
+   "value": "est_startup 316.05s = 4.39% of 2h run for the 200M@4B retrain mix; torch.load 88.68s + corpus_fp walk 227.36s (72%); zh_web single-domain walk 163.4s = 52% of all startup",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/measure_mix_startup.py data/mix_200m_4b.json on pod (/work/aupai), host-side IO, 1 pass",
+   "config": {
+    "mix": "data/mix_200m_4b.json",
+    "n_domains": 9,
+    "total_tokens": "3999997952",
+    "cache_bytes_GB": 166.17,
+    "run_len": "2h reference",
+    "method": "per-domain torch.load(map_location=cpu,weights_only=True) + _corpus_fp shard-content-hash walk"
+   },
+   "uncertainty": "single pass, cold cache; subsequent runs re-read the OS page cache and will be faster",
+   "boundary": "does not measure other startup costs (model init, optimizer alloc, rank setup); startup scales with corpus dir size, not cache size",
    "status": "measured"
   }
  ]
