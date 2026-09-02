@@ -1960,14 +1960,22 @@ def _noted_gone(entry, name):
     `.pt` matches the note; tails under 5 chars (`ep1`) must appear in full, since
     `ep1` is a substring of `step1000` and friends. The gone-word list includes the
     check's own tier labels (`absent`, `zero`ed, `delet`ion-candidate): a note that
-    says "[absent] -- not in the listing" is speaking this check's language."""
+    says "[absent] -- not in the listing" is speaking this check's language.
+    Name and gone-word must sit in the SAME sentence: concatenating the fields lets
+    "measured on X. Y was pruned" disclose a death X never had (de, review of
+    9420c8b, measured True). Semicolons stay inside a sentence -- they join an aside
+    to the disclosure that owns it (e1's recal note names the ckpt, then "; its
+    siblings ARE listed", then the pruning). ASCII "." is no boundary: checkpoint
+    names are built from it."""
     note = f"{entry.get('uncertainty') or ''} {entry.get('boundary') or ''}"
     if not note.strip():
         return False
     tail = name.split(".pt", 1)[-1].lstrip(".")
-    named = name in note or (len(tail) >= 5 and tail in note)
-    return bool(named and re.search(
-        r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", note, re.I))
+    for seg in re.split(r"[。！？!?]+", note):
+        if (name in seg or (len(tail) >= 5 and tail in seg)) and re.search(
+                r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
+            return True
+    return False
 
 
 def check_ckpt_facts_sources_present(root):
@@ -1985,7 +1993,11 @@ def check_ckpt_facts_sources_present(root):
     entry's uncertainty/boundary already names it as gone: then WARN -- the
     fact is honest about its dead source, and source keeps its provenance.
     A listing is a snapshot: a checkpoint newer than it reads absent until the
-    listing is refreshed, which the FAIL message says. Only source/config fields
+    listing is refreshed, which the FAIL message says. A FAIL on such a checkpoint
+    (de's interrupt.step1192, written 14:31Z against a 13:58Z listing) means REFRESH
+    THE LISTING -- re-scan the pod -- not KEEP-claim: a checkpoint that was never a
+    candidate needs no claim. The interim unblock is an uncertainty note naming the
+    write time, which WARNs. Only source/config fields
     are scanned -- a ckpt mentioned in a value or uncertainty is prose, not a
     source claim. Names match exactly: a fact that shortens a name is a DEFECT
     IN THE FACT (b0's step832), never resolved away here."""
@@ -8871,6 +8883,18 @@ def _demo():
     assert score_from("math-hard 37/1032 = 3.6%") == 3.6, "took the numerator, not the percentage"
     assert score_from("math-hard deferred to the bench stage") is None, "invented a score"
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
+
+    # _noted_gone: name and gone-word must share a sentence; the tier vocabulary counts.
+    # The cross-sentence case is de's review finding (9420c8b): concatenating the fields
+    # read "measured on X. Y was pruned" as X's own death disclosure.
+    assert _noted_gone({"uncertainty": "ckpt_k5_clean_0827.pt [absent] -- not in the listing"},
+                       "ckpt_k5_clean_0827.pt")
+    assert _noted_gone({"uncertainty": "step1500 pruned before this reading"},
+                       "ckpt_p500m_20b_0902.pt.step1500")
+    assert not _noted_gone({"uncertainty": "在 ckpt_x.pt.step1500 上测的。step2000 被剪了"},
+                           "ckpt_x.pt.step1500")
+    assert not _noted_gone({"uncertainty": "step1000 was fine"}, "ckpt_x.pt.ep1")
+    assert not _noted_gone({"uncertainty": "nothing here"}, "ckpt_x.pt.step1500")
 
     # run dispatch: a missing or unknown step is a usage error, not a silent exit 0
     assert run_dispatch([]) == 2 and run_dispatch(["bogus"]) == 2
