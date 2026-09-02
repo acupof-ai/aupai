@@ -499,15 +499,29 @@ def _selftest():
 
     Runs the real hook as a subprocess in a temp repo whose path is declared the
     integration tree, so the guard is live rather than simulated.
+
+    EVERY git call here strips the caller's git environment. The hook runs with GIT_DIR
+    set to the committing worktree's gitdir, and `git init` in a fresh directory with
+    GIT_DIR inherited reconfigures the SHARED repo instead -- it sets core.bare=true,
+    which breaks every git command for every session until someone unsets it. I did
+    exactly that at 02:49Z on 2026-09-02 and blocked main for two minutes; the mechanism
+    was already written down in pod_drift.py:61-66 and I did not apply it. Reproduced
+    since: GIT_DIR must point at a WORKTREE gitdir (.git/worktrees/<name>) for the bare
+    flag to be set -- a plain repo's GIT_DIR does not do it, which is why a casual test
+    of this looks safe.
     """
     hook = os.path.realpath(__file__)
     fails = []
+    # Same list as pod_drift._GIT_ENV_VARS, for the same reason.
+    GIT_ENV = ("GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+               "GIT_OBJECT_DIRECTORY", "GIT_CONFIG", "GIT_CONFIG_GLOBAL")
+    clean = {k: v for k, v in os.environ.items() if k not in GIT_ENV}
 
     def run(cwd, argv0, env_extra):
         dst = os.path.join(cwd, argv0)
         shutil.copyfile(hook, dst)
         os.chmod(dst, 0o755)
-        env = dict(os.environ, AUPAI_INTEGRATION_TREE=cwd)
+        env = dict(clean, AUPAI_INTEGRATION_TREE=cwd)
         env.pop("AUPAI_CONTROLLER", None)
         env.update(env_extra)
         r = subprocess.run([sys.executable, dst], cwd=cwd, capture_output=True,
@@ -518,11 +532,12 @@ def _selftest():
     try:
         for a in (["init", "-q", "-b", "main", "."], ["config", "user.email", "t@t"],
                   ["config", "user.name", "t"]):
-            subprocess.run(["git"] + a, cwd=d, capture_output=True)
+            subprocess.run(["git"] + a, cwd=d, capture_output=True, env=clean)
         with open(os.path.join(d, "f.txt"), "w") as fh:
             fh.write("base\n")
-        subprocess.run(["git", "add", "f.txt"], cwd=d, capture_output=True)
-        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=d, capture_output=True)
+        subprocess.run(["git", "add", "f.txt"], cwd=d, capture_output=True, env=clean)
+        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=d, capture_output=True,
+                       env=clean)
 
         # WORLD 1 (must REFUSE): an ordinary commit in the integration tree on main.
         rc, out = run(d, "pre-commit", {})
@@ -560,7 +575,8 @@ def _selftest():
     d2 = tempfile.mkdtemp()
     try:
         def git(*a, cwd=d2):
-            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True, text=True)
+            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
+                                  text=True, env=clean)
         for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
                   ("config", "user.name", "t")):
             git(*a)
@@ -586,13 +602,13 @@ def _selftest():
         with open(os.path.join(wt, "d.txt"), "w") as fh:
             fh.write("d\n")
         git("add", "d.txt", cwd=wt)
-        env = dict(os.environ, AUPAI_BEHIND_MAIN_OK="1")
+        env = dict(clean, AUPAI_BEHIND_MAIN_OK="1")
         subprocess.run(["git", "commit", "-q", "-m", "feat"], cwd=wt,
                        capture_output=True, env=env)
         behind = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
         r = subprocess.run(["git", "merge", "--no-edit", "main"], cwd=wt,
                            capture_output=True, text=True,
-                           env={k: v for k, v in os.environ.items()
+                           env={k: v for k, v in clean.items()
                                 if k != "AUPAI_BEHIND_MAIN_OK"})
         out = r.stdout + r.stderr
         if behind == "0":
