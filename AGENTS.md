@@ -241,6 +241,7 @@ Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json
 pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null >/dev/null 2>&1 &"
 ```
 
+- **Card claims live where the job runs.** `scripts/card_claim.py` reads and writes `runs/claims/` in the tree it is invoked from, so a claim acquired on the pod is released on the pod; a `release` typed on the laptop prints `no claim` and changes nothing (b0, 2026-09-03). `harness launch` acquires for the job's python/torchrun descendant and the monitor releases when it sees the job end (de-30); a claim bound to a shell pid is refused (de-34).
 - **`CUDA_VISIBLE_DEVICES`, not `cuda:N`**: fla/Triton kernels launch on the current device; `cuda:1` raises illegal memory access.
 - **File transfer into the container: `podput <local> <remote-abs-path>`** (gzip+base64, 100KB cap — the real limit is the remote argv, not a constant). `tn push` lands on the HOST filesystem and is invisible inside the container — never use it to deliver code or data to the repo.
 - **Push code via `scripts/pod_push.sh <files>`, never bare `podput`.** It refuses to push a file with uncommitted changes, and re-runs the drift gate after. **It does not pull, and no workflow here should.** Every session shares this tree and this `.git`, so another session's commit is already in HEAD the moment it is made — there is nothing to fetch from them, and `origin` is not how they reach each other. The `--autostash` that used to accompany the pull stashed and restored the *whole* dirty tree, i.e. five other sessions' uncommitted edits, on every push: `git checkout` on a file you did not write, automated. A push copies one session's local state into the pod's global state; in a multi-session tree that state is stale by default (2026-08-30: a push rolled back 3b's `datagen/build_corpus.py` row-group feature, commit e39146e, and its new launcher died on `unrecognized arguments: --rg_mod`).
@@ -299,6 +300,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
+| Card claims live where the job runs | manual: the claim files sit in the tree the job runs from and no check reads the pod's runs/claims from here; scripts/test_launch_claims.py asserts the launch path acquires and the monitor releases, card_claim.py --selftest asserts a shell pid is refused |
 | `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
 | File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
@@ -329,7 +331,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-47 rules: 15 checked, 32 manual. The count is regenerated from `harness check`'s
+51 rules: 17 checked, 34 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.

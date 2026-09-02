@@ -176,6 +176,10 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "Card claims live where the job runs":
+        "the claim files sit in runs/claims/ of the tree the job runs from and no check "
+        "here reads the pod's; scripts/test_launch_claims.py asserts the launch path acquires "
+        "and the monitor releases, card_claim.py --selftest asserts a shell pid is refused",
     "A hook edit made in a branch worktree does not run until it is merged":
         "a fact about how git resolves .git/hooks symlinks across worktrees; no artifact "
         "records which hook BODY executed for a given commit, which is exactly why the "
@@ -321,7 +325,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 33
+_MANUAL_BASELINE = 34
 
 
 def _norm_rule(text):
