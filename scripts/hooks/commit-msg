@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""commit-msg hook: a ledger loss allowed by AUPAI_LEDGER_REWRITE must say so in the message.
+
+WHY THIS FILE EXISTS AT ALL. The ledger guard lives in pre-commit, and pre-commit cannot read
+the commit message: git passes the message path only to prepare-commit-msg and commit-msg, and
+.git/COMMIT_EDITMSG at pre-commit time still holds the PREVIOUS commit's message. Measured four
+ways in a real repo (de, 2026-09-03) -- the first commit sees no file at all, and a plain commit
+right after a marked one reads the marker it did not write. So the exception is granted by an
+env var, which names the intent of this invocation, and the REASON is required here, where
+argv[1] is this commit's message and nothing else.
+
+The split is deliberate: AUPAI_LEDGER_REWRITE is a pass, `ledger-rewrite: <why>` is the record.
+An env var leaves no trace in history; six weeks later the only thing a reader has is the
+message.
+
+THE MARKER IS CONSUMED ON EVERY PATH, pass or fail. A file left behind would refuse the NEXT
+commit for a loss it did not cause -- which is the exact stale-state bug that put the exception
+here rather than in COMMIT_EDITMSG. Repeating it inside the fix would be its own joke.
+"""
+
+import os
+import subprocess
+import sys
+
+MARKER = "ledger-rewrite:"
+
+
+def marker_path():
+    return subprocess.run(["git", "rev-parse", "--git-path", "AUPAI_LEDGER_REGRESSED"],
+                          capture_output=True, text=True).stdout.strip()
+
+
+def main():
+    if "--selftest" in sys.argv:
+        return _selftest()
+    if len(sys.argv) < 2:
+        return 0
+    p = marker_path()
+    if not p or not os.path.exists(p):
+        return 0
+    try:
+        with open(p, encoding="utf-8") as fh:
+            lost = [ln for ln in fh.read().splitlines() if ln.strip()]
+    except OSError:
+        lost = []
+    finally:
+        # Consumed here, before the verdict, so no path can leave it behind.
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+    try:
+        with open(sys.argv[1], encoding="utf-8", errors="replace") as fh:
+            msg = fh.read()
+    except OSError:
+        return 0
+    body = "\n".join(ln for ln in msg.splitlines() if not ln.lstrip().startswith("#"))
+    if MARKER in body:
+        print(f"hook: ledger-rewrite declared, {len(lost)} record(s)", file=sys.stderr)
+        return 0
+    print(f"REFUSING: this commit drops {len(lost)} ledger record(s) and "
+          f"AUPAI_LEDGER_REWRITE allowed it, but the message does not say why.",
+          file=sys.stderr)
+    for ln in lost[:4]:
+        print(f"    - {ln}", file=sys.stderr)
+    if len(lost) > 4:
+        print(f"    ... and {len(lost) - 4} more", file=sys.stderr)
+    print(f"Add a line to the commit message: `{MARKER} <why>`. The env var is a pass, not a "
+          f"record -- it is gone the moment the shell exits, and the message is the only place "
+          f"a reader six weeks from now can find the reason.", file=sys.stderr)
+    return 1
+
+
+def _selftest():
+    """Four worlds, each a real message file plus a real marker file.
+
+    The property that matters most is not "refuses without the marker" -- it is that the marker
+    file is GONE afterwards on every path. A leftover would refuse the next commit for someone
+    else's loss, which is the stale-state failure this whole design exists to avoid.
+    """
+    import tempfile
+
+    fails = []
+    p = marker_path()
+    if not p:
+        print("SKIP: not in a git repo")
+        return 0
+
+    def world(msg, lost=("runs/experiments.jsonl ('x', 'y')",)):
+        d = tempfile.mkdtemp(prefix="commitmsg_")
+        mf = os.path.join(d, "MSG")
+        with open(mf, "w", encoding="utf-8") as fh:
+            fh.write(msg)
+        if lost is not None:
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lost))
+        return mf
+
+    def run(mf):
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), mf],
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    # 1. A loss with no marker in the message: refuse, and name what was lost.
+    mf = world("exp: close a row\n")
+    rc, out = run(mf)
+    if not (rc != 0 and "REFUSING" in out and "runs/experiments.jsonl" in out):
+        fails.append(f"1: loss without marker should refuse and name it (rc={rc})")
+    if os.path.exists(p):
+        fails.append("1: marker file was left behind after a refusal")
+
+    # 2. Same loss, marker present: pass.
+    mf = world("sync: reconcile duplicate rows\n\nledger-rewrite: pod sync, 3 dupes\n")
+    rc, out = run(mf)
+    if rc != 0:
+        fails.append(f"2: a declared rewrite must pass (rc={rc}, {out.strip()[:120]})")
+    if os.path.exists(p):
+        fails.append("2: marker file was left behind after a pass")
+
+    # 3. No marker file at all -- an ordinary commit must not be touched, marker or not.
+    mf = world("ordinary commit\n", lost=None)
+    rc, out = run(mf)
+    if rc != 0 or "REFUSING" in out:
+        fails.append(f"3: an ordinary commit must pass untouched (rc={rc})")
+
+    # 4. The marker inside a COMMENT line does not count: git strips those, so a reader of the
+    #    landed commit would never see the reason.
+    mf = world("plain subject\n\n# ledger-rewrite: this line is stripped by git\n")
+    rc, out = run(mf)
+    if rc == 0:
+        fails.append("4: a marker in a stripped comment line must not satisfy the rule")
+    if os.path.exists(p):
+        fails.append("4: marker file was left behind")
+
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+    for f in fails:
+        print(f"BUG {f}", file=sys.stderr)
+    print(f"commit-msg selftest: {'PASS (4 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
