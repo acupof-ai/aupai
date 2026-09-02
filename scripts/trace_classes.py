@@ -11,8 +11,14 @@ WHAT IS MEASURED VS ASSUMED, because the ratio is only as good as its ideal:
   * measured   kernel name, device duration, input shapes -- all from the trace
   * derived    FLOPs for a GEMM of known shapes = 2*M*N*K, bytes for an
                elementwise op = sum(input) + sum(output) at its dtype width
-  * assumed    the peak it is divided by: H20 SXM FP8 296 TFLOPS dense / BF16
-               148 / 4.0 TB/s HBM (facts/efficiency.json#eff.h20_peak)
+  * measured   the FLOP peak it is divided by: THIS pod's, 279.6 TFLOPS fp8 and
+               136.7 bf16 (facts/efficiency.json#eff.fp8_gemm_at_realizable_peak,
+               #eff.gpu4_peak_flops). NOT the H20 sheet's 296/148, which this
+               silicon reaches 94.5% and 92.4% of -- dividing by the sheet is how
+               a GEMM already at 100% of the machine reads as "93%, 7% to gain".
+  * assumed    the BANDWIDTH peak: 4.0 TB/s is the sheet figure and nothing here
+               has measured achievable HBM, so an elementwise ratio against it is
+               a lower bound on how close to bandwidth-bound a kernel already is.
 
 A kernel whose shapes the trace does not carry gets NO ideal time and is
 reported as unknown rather than given a guessed one -- an ideal computed from a
@@ -36,8 +42,18 @@ import re
 import sys
 from collections import defaultdict
 
-#: facts/efficiency.json#eff.h20_peak. Dense, not sparse.
-PEAK = {"fp8": 296e12, "bf16": 148e12, "fp16": 148e12, "fp32": 44e12}
+#: MEASURED on this pod, not the vendor sheet. facts/efficiency.json#eff.fp8_gemm_at_realizable_peak
+#: (probes/t59_fp8_peak.py: 8192^3, 30 iters, 279.6 TFLOPS fp8 / 136.7 bf16) and
+#: #eff.gpu4_peak_flops (137.0 and 137.3 on two cards). The sheet says 296 / 148, which this
+#: silicon does not reach: 94.5% and 92.4% of it. Pricing against the sheet is what produced the
+#: familiar "93% of peak" and its "7% headroom" -- headroom against a number no kernel can hit.
+#: The fp8 linears' 274.5 TFLOPS is 98.2% of the measured peak, so the real headroom is 1.8%.
+#: fp32 stays a sheet figure, labelled: nothing here measured it, and no kernel in these traces
+#: runs in fp32.
+PEAK = {"fp8": 279.6e12, "bf16": 136.7e12, "fp16": 136.7e12, "fp32": 44e12}
+#: Also measured, same file: 4.0 TB/s is the sheet. Kept as the sheet value and named as such --
+#: nothing in this repo has measured achievable HBM bandwidth, so an elementwise ratio computed
+#: against it is a bound, not a measurement.
 HBM_BYTES_PER_S = 4.0e12
 
 DTYPE_BYTES = {"float": 4, "float32": 4, "f32": 4, "double": 8,
@@ -113,15 +129,37 @@ def _shape_flops(shapes: list) -> int | None:
 
 
 def _shape_bytes(shapes: list, width: int) -> int | None:
-    total = 0
+    """Bytes an elementwise op moves: every input READ, plus one output WRITTEN.
+
+    The write was missing, and the docstring above already claimed it was counted (44 found the
+    disagreement by reading the two against each other). Its absence halves the ideal for a
+    two-input op and understates it by a third for the common in-place case, so the
+    elementwise ratio printed 1.6x -- "room to fuse" -- when the corrected figure is at or near
+    the bandwidth roofline and there is none.
+
+    The output shape is INFERRED as the largest input, not read: this profiler's traces carry
+    Input Dims and Input Strides and no Output Dims at all (checked across all 55,512 shaped
+    cpu_ops in the p200m trace). An elementwise op writes one tensor whose shape is the
+    broadcast of its inputs, and the broadcast of a set of shapes has the element count of the
+    largest -- so the inference is exact for elementwise and is why this function is only ever
+    called for that class. It is wrong for a reduction, which writes less: those land in `other`
+    or `fla_kda`, where this is not called.
+
+    In-place is counted correctly by the same rule without a special case: aten::add_(a, b)
+    records both operands as inputs and writes a, so 2 reads + 1 write = 3 tensor-sized
+    transfers, which is what sum(inputs) + max(input) gives.
+    """
+    sizes = []
     for s in shapes:
-        if not isinstance(s, list):
+        if not isinstance(s, list) or not s:
             continue
         n = 1
         for d in s:
             n *= d
-        total += n
-    return total * width if total else None
+        sizes.append(n)
+    if not sizes:
+        return None
+    return (sum(sizes) + max(sizes)) * width
 
 
 def _shape_index(events: list[dict]) -> dict:
@@ -321,6 +359,21 @@ def _selftest() -> None:
     assert _shape_flops([[4, 8], [8, 16]]) == 2 * 4 * 8 * 16
     assert _shape_flops([[2, 4, 8], [8, 16]]) == 2 * 2 * 4 * 8 * 16
     assert _shape_flops([[4, 8]]) is None, "one operand is not a matmul"
+
+    # _shape_bytes had NO known answer at all, which is how its docstring ("sum(input) +
+    # sum(output)") and its code (inputs only) disagreed unmeasured until 44 read them against
+    # each other. Every case below is one tensor of 100 elements at 2 bytes = 200 B.
+    assert _shape_bytes([[10, 10]], 2) == 400, "one input: read it, write one output"
+    assert _shape_bytes([[10, 10], [10, 10]], 2) == 600, "two inputs read, one output written"
+    # A broadcast writes the LARGER shape, and the output is inferred as the largest input --
+    # this trace format carries no Output Dims, checked over all 55,512 shaped cpu_ops.
+    assert _shape_bytes([[10, 10], [10, 1]], 2) == (100 + 10 + 100) * 2
+    # aten::add_(a, b) records both operands and writes a: 3 tensor-sized transfers.
+    assert _shape_bytes([[10, 10], [10, 10]], 2) == 3 * 200
+    assert _shape_bytes([], 2) is None and _shape_bytes([[]], 2) is None, \
+        "no shapes means no ideal, never zero bytes"
+    # The width matters and is the dtype's, not a constant: bf16 and fp32 differ 2x.
+    assert _shape_bytes([[10, 10]], 4) == 800
     assert _shape_flops([[4, 8], [16, 32]]) is None, "no shared dim -> no guess"
     # One 1 TFLOP-ish GEMM at exactly peak must read 1.0x, and a kernel with no
     # shapes must land in shapes_missing rather than distorting the ratio.

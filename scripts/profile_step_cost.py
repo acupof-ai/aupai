@@ -151,6 +151,51 @@ def _selftest():
     print(f"  {'ok  ' if ok else 'BUG '} the loss is recorded before the warmup gate"
           + ("" if ok else " -- the arms' first steps, where a divergence is largest, are dropped"))
 
+    # Every --flag this file promises to apply must name a REAL Cfg field, and every train.Cfg.X
+    # it reads must exist. Both halves come from train.py's own class body, so a rename there
+    # fails here rather than 8 minutes into a compile on four cards.
+    #
+    # This is the arm-a crash, and it had two layers. Cfg's width field is `d`, the CLI flag is
+    # --dim, and the old loop skipped unknown names behind hasattr -- so --dim 1024 set NOTHING
+    # silently, and only the record's train.Cfg.dim raised, after the run. A flag that configures
+    # nothing while the record claims it did is two different programs wearing one number. The
+    # torch.save crash fixed earlier was masking this one: both are in the same tail block.
+    import ast as _a1
+
+    with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as fh:
+        _tsrc = fh.read()
+    _cfg_cls = next((n for n in _a1.parse(_tsrc).body
+                     if isinstance(n, _a1.ClassDef) and n.name == "Cfg"), None)
+    _cfg_fields = {t.id for n in (_cfg_cls.body if _cfg_cls else [])
+                   if isinstance(n, _a1.Assign) for t in n.targets if isinstance(t, _a1.Name)}
+    _nodes = list(_a1.walk(_me_main)) if _me_main else []
+    _cfg_reads = {n.attr for n in _nodes
+                  if isinstance(n, _a1.Attribute) and isinstance(n.value, _a1.Attribute)
+                  and n.value.attr == "Cfg"}
+    _missing_reads = sorted(r for r in _cfg_reads if r not in _cfg_fields)
+    ok = bool(_cfg_fields) and not _missing_reads
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} every train.Cfg.X this file reads exists in Cfg"
+          + ("" if ok else f" -- MISSING {_missing_reads}; it raises after the run, not before"))
+
+    # The flag->field map must be literal pairs, and every field in it must be a real Cfg field.
+    # Reading the pairs from the AST rather than restating them: a restated copy is green while
+    # the code guesses `getattr(a, k)` into `setattr(Cfg, k)`, which is the bug being guarded.
+    _pairs = set()
+    for n in _nodes:
+        if isinstance(n, _a1.For) and isinstance(n.iter, _a1.Tuple):
+            for el in n.iter.elts:
+                if isinstance(el, _a1.Tuple) and len(el.elts) == 2 \
+                        and all(isinstance(x, _a1.Constant) for x in el.elts):
+                    _pairs.add((el.elts[0].value, el.elts[1].value))
+    _bad_fields = sorted({f for _, f in _pairs if f not in _cfg_fields})
+    ok = bool(_pairs) and not _bad_fields and ("dim", "d") in _pairs
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} every --flag maps to a REAL Cfg field "
+          f"({len(_pairs)} pairs)"
+          + ("" if ok else f" -- {_bad_fields or 'no literal pairs found'}; --dim would set "
+                           "nothing while the record claims it did"))
+
     line = fmt_row("nccl_floor", None, 1)
     ok = "NOT MEASURED" in line and "0.0" not in line
     bad += 0 if ok else 1
@@ -320,7 +365,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -367,9 +412,20 @@ def main():
     # Cfg first, before anything reads it: the model, the plan and the loss all take their
     # shape from it, and setting it after construction would time a different model than the
     # flags say.
-    for k in ("dim", "layers", "heads", "ffn_hidden", "batch", "accum"):
-        if hasattr(train.Cfg, k):
-            setattr(train.Cfg, k, getattr(a, k))
+    #
+    # The CLI name is --dim; Cfg's field is `d`. The hasattr guard turned that mismatch into
+    # SILENCE: --dim 1024 set nothing, the model built at Cfg.d whatever was asked, and the record
+    # then read train.Cfg.dim and raised AttributeError after 8 minutes of compile -- the arm-a
+    # crash at 13:37Z. A guard that skips an unknown flag is the wrong shape here: every name in
+    # this map is one THIS file promises to apply, so an absent one is a bug in the map, and the
+    # assert says which. Same class as the EOS_ID default that was always taken.
+    for flag, field in (("dim", "d"), ("layers", "layers"), ("heads", "heads"),
+                        ("ffn_hidden", "ffn_hidden"), ("batch", "batch"), ("accum", "accum")):
+        assert hasattr(train.Cfg, field), (
+            f"Cfg has no {field!r}, which --{flag} is supposed to set. The model would build at "
+            f"Cfg's own value while the record claims the flag's -- two different programs."
+        )
+        setattr(train.Cfg, field, getattr(a, flag))
     train.Cfg.grad_ckpt = a.grad_ckpt
 
     ddp, rank, world, local = train.setup_ddp()
@@ -568,7 +624,7 @@ def main():
     tok_step = B * train.Cfg.accum * SEQ
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
-           "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.dim,
+           "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.d,
            "fp8": fp8, "grad_ckpt": a.grad_ckpt,
            "compile": bool(train.Cfg.compile and amp), "steps_timed": len(steps),
            "tokens_per_step_per_gpu": tok_step,
