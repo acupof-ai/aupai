@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
-# restartable: one card, one checkpoint per invocation; --steps resumes by skipping done rows.
+# restartable: one card for --steps/--rescale, ZERO cards for --weights; one checkpoint per
+# invocation; --steps resumes by skipping done rows.
 """b0-16: does layer 9's branch split have a measured consequence, or is it bounded below the bar?
 
     python3 scripts/l9_branch_probe.py --steps 832,1192,2500,3000,3500 --out runs/b0_16_l9.json
     python3 scripts/l9_branch_probe.py --rescale --step 3500 --out runs/b0_16_l9_rescale.json
+    CUDA_VISIBLE_DEVICES= python3 scripts/l9_branch_probe.py --weights \
+        --from_step 832 --to_step 3500 --layer 9 --out runs/b0_16_weights.json
     python3 scripts/l9_branch_probe.py --selftest
 
-TWO HALVES, per b0-16's pre-registered reading:
+--weights TAKES NO CARD. It is torch.load(map_location="cpu", mmap=True) plus tensor norms, so
+it must not queue behind a lane job -- on 2026-09-03 it would have waited ~95 min for a card it
+never touches. The other two modes score domain_loss and do need one.
+
+THREE READINGS, of which b0-16 pre-registered the first two:
 
   (a) the table -- layer-9 branch ratio against per-domain domain_loss across the five
       checkpoints. Answers "does the split coincide with anything".
@@ -16,11 +23,16 @@ TWO HALVES, per b0-16's pre-registered reading:
       domain_loss by more than 0.24 nat, the split matters; if it does not, the split is bounded
       below the bar and the finding is closed as a correlate.
 
-WHAT IS ALREADY MEASURED (zero card, weights only), so the eval is not asked to rediscover it:
+  (c) --weights, added after review: the growth and direction-consistency numbers below, as a
+      JSONL artifact (runs/b0_16_weights.json). They were quoted in a fact, this docstring and a
+      review row with nothing behind them -- e1 caught it -- and a number that lives only in
+      prose cannot be recomputed by a reader or checked against a later run.
+
+WHAT THE WEIGHTS SAY, now with an artifact behind every figure:
 
   - Only mixer.o is anomalous. Growth step832->3500: layer 9's mixer.o 1.2037 against the other
     eight KDA layers' median 1.7334 (MAD sigma 0.0241, z -21.9), while its ffn.w2 grows 1.6440
-    against their 1.6417 (z +0.18). The ffn is normal; the KDA output projection is not.
+    against their 1.6417 (z +0.2). The ffn is normal; the KDA output projection is not.
   - It is not a dead branch. All twelve Muon momenta are live (4.8e-04 .. 2.1e-02).
   - It is not weight decay. Muon's step is w -= lr*NS(m) + lr*wd*w*mask; ||NS(m)||_F ~ sqrt(1024)
     = 32 by construction, so the push is lr*32 = 0.32 per step against lr*wd*|w| = 0.0051, i.e.
@@ -29,9 +41,26 @@ WHAT IS ALREADY MEASURED (zero card, weights only), so the eval is not asked to 
     far above both.)
   - What IS different is direction consistency. Displacement over step3000->3500 against the
     fully-aligned budget lr*32*n = 160: layer 9 realizes 6.85%, the other eight KDA layers
-    13.29% (MAD sigma 0.33pp, z -19.3). Same statistic as the embedding same-direction rate, and
-    here it is comparable across layers because n, lr and shape are identical -- the control the
-    retracted embedding decomposition lacked (see scripts/embed_norm_sdr.py).
+    13.29% (MAD sigma 0.33pp -- 0.0033 as the fraction the artifact stores, same number in the
+    units of its neighbours; z -19.3), while ffn.w2's consistency reads z -1.5. Same statistic
+    as the embedding same-direction rate, and comparable across layers here because n, lr and
+    shape are identical -- the control the retracted embedding decomposition lacked (see
+    scripts/embed_norm_sdr.py).
+
+  EVERY z DEPENDS ON THE WINDOW, AND THE PAIR ABOVE MIXES TWO. Both statistics were run on both
+  intervals (both rows are in the artifact), and they move in opposite directions:
+
+                          step832->3500 (n=2668)   step3000->3500 (n=500)
+      mixer.o growth              z  -21.9                z -177.4
+      mixer.o consistency         z   -7.9                z  -19.3
+
+  Growth's z is 8x LARGER on the short window, because over 500 steps the peers cluster to MAD
+  sigma 0.0004 while layer 9 sits at 1.0047; the wide window lets the peers spread. Consistency's
+  z is larger on the short window for the opposite reason: the budget lr*32*n grows linearly
+  while realized displacement does not, so every layer's fraction compresses as n grows. This is
+  the same interval-length dependence that retracted the 1.71x depth term, and it is why the
+  cross-layer comparison is only made at EQUAL n. The figures quoted above are the ones the fact
+  quotes; the equal-n window is where growth's effect is actually largest.
 
 So the open question is consequence, not mechanism, which is what b0-16 asks for.
 """
@@ -494,7 +523,11 @@ def main():
     ap.add_argument("--claim", action="store_true", help="claim the lane card for this pid")
     ap.add_argument("--weights", action="store_true",
                     help="the zero-card reading: growth + direction consistency per KDA layer, "
-                         "with the peer median, MAD sigma and z that the fact quotes")
+                         "with the peer median, MAD sigma and z that the fact quotes. NEEDS NO "
+                         "CARD -- it is torch.load(map_location='cpu', mmap=True) and tensor "
+                         "norms, nothing else, so run it with CUDA_VISIBLE_DEVICES= rather than "
+                         "queueing behind a lane job (2026-09-03: it would have waited ~95min "
+                         "for a card it never touches)")
     ap.add_argument("--from_step", type=int, help="--weights interval start")
     ap.add_argument("--to_step", type=int, help="--weights interval end")
     ap.add_argument("--lr", type=float, default=0.01, help="Muon lr for the consistency budget")
