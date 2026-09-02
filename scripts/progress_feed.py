@@ -15,6 +15,7 @@ run (a job's state), warn (something needs attention), note (everything else).
 
 # restartable: appends one JSONL line; the page is rewritten from the store.
 
+import calendar
 import html
 import json
 import os
@@ -25,6 +26,7 @@ STORE = os.path.expanduser("~/.aupai-progress.jsonl")
 STATUS = os.path.expanduser("~/.aupai-status.json")
 PAGE = os.path.expanduser("~/aupai-progress.html")
 PATROL = os.path.expanduser("~/.aupai-patrol")
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = 60
 SHOWN = 10
 
@@ -37,6 +39,19 @@ KINDS = {
     "warn": ("注意", "#d97706"),
     "note": ("", "#6b7280"),
 }
+
+BJ = 8 * 3600
+
+
+def bj_epoch(epoch):
+    return time.strftime("%H:%M", time.gmtime(epoch + BJ))
+
+
+def bj_str(utc):
+    t = _parse_ts(utc)
+    if t is None:
+        return "?"
+    return time.strftime("%m-%d %H:%M", time.gmtime(t + BJ))
 
 CSS = """
 :root{--bg:#fff;--fg:#1a1a19;--dim:#6b7280;--line:#e7e5e4;--card:#fff}
@@ -75,6 +90,21 @@ li:last-child{border-bottom:0}
 details{margin-top:10px}
 summary{font-size:12px;color:var(--dim);cursor:pointer}
 details li{font-size:12.5px;color:var(--dim)}
+table{border-collapse:collapse;font-size:12.5px;margin:2px 0 18px}
+th{font-size:10px;color:var(--dim);letter-spacing:.06em;text-align:left;
+ font-weight:600;padding:2px 14px 4px 0;border-bottom:1px solid var(--line)}
+td{padding:3px 14px 3px 0;border-bottom:1px solid var(--line);
+ font-variant-numeric:tabular-nums;white-space:nowrap}
+td.n{font-weight:700}
+td.zero{color:#d97706;font-weight:700}
+td.ex{color:var(--dim)}
+tr.stale td{opacity:.5}
+.head{background:var(--card);border:1px solid var(--line);border-top:3px solid #2563eb;
+ border-radius:8px;padding:11px 13px;margin-bottom:18px}
+.head .bi{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.head .su{font-size:12.5px;color:var(--dim);margin-top:2px}
+.card.stale{opacity:.5}
+.card .as{font-size:10px;color:var(--dim);margin-top:6px}
 """
 
 
@@ -88,41 +118,123 @@ def _row(r):
         stag = f'<span class=s style="color:{c}" title="{src}">{t}</span>'
     return (
         "<li>"
-        f'<span class=t>{html.escape(r["at"])}</span>'
+        f'<span class=t>{html.escape(bj_epoch(calendar.timegm(time.strptime(r["at"], "%H:%M"))))}</span>'
         f"{stag}{chip}"
         f'<span class=m>{html.escape(r["text"])}</span>'
         "</li>"
     )
 
 
+def _parse_ts(s):
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return calendar.timegm(time.strptime(s, fmt))
+        except ValueError:
+            continue
+    return None
+
+
+def _age(opened, now):
+    t = _parse_ts(opened)
+    if t is None:
+        return "?"
+    mins = int((now - t) / 60)
+    if mins < 60:
+        return f"{mins}m"
+    if mins < 60 * 24:
+        return f"{mins // 60}h"
+    return f"{mins // (60 * 24)}d"
+
+
+def queue_section():
+    tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
+    roster_p = os.path.join(REPO, "runs", "roster.json")
+    if not (os.path.exists(tasks_p) and os.path.exists(roster_p)):
+        return ""
+    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]]
+    exempt = {"fb", "98"}
+    tasks = [json.loads(ln) for ln in open(tasks_p, encoding="utf-8") if ln.strip()]
+    latest = {}
+    for t in tasks:
+        latest[t["id"]] = t
+    now = time.time()
+    stat = {m: {"open": 0, "oldest": None, "closed": None} for m in members}
+    for t in latest.values():
+        s = stat.get(t.get("owner"))
+        if s is None:
+            continue
+        if t.get("state") == "open":
+            if not (t.get("blocked_on") or "").strip():
+                s["open"] += 1
+            if s["oldest"] is None or t.get("opened", "") < s["oldest"]:
+                s["oldest"] = t.get("opened")
+        elif t.get("state") == "done" and t.get("closed"):
+            if s["closed"] is None or t["closed"] > s["closed"]:
+                s["closed"] = t["closed"]
+    out = ["<h2>每人队列</h2><table>",
+           "<tr><th></th><th>open 未阻塞</th><th>最老 open</th><th>最近关闭</th></tr>"]
+    for m in members:
+        s = stat[m]
+        cls = "ex" if m in exempt else ("zero" if s["open"] == 0 else "n")
+        open_cell = "—" if m in exempt else str(s["open"])
+        oldest = _age(s["oldest"], now) if s["oldest"] else "—"
+        closed = bj_str(s["closed"]) if s["closed"] else "—"
+        tag = " 豁免" if m in exempt else ""
+        out.append(f'<tr><td>{html.escape(m)}{tag}</td><td class={cls}>{open_cell}</td>'
+                   f'<td>{oldest}</td><td>{closed}</td></tr>')
+    out.append("</table>")
+    return "".join(out)
+
+
 def render(rows):
-    now = time.strftime("%H:%M:%S", time.gmtime())
+    now = time.time()
+    now_bj = time.strftime("%H:%M:%S", time.gmtime(now + BJ))
+    now_utc = time.strftime("%H:%M:%S", time.gmtime(now))
     patrol = ""
     if os.path.exists(PATROL):
         with open(PATROL, encoding="utf-8") as fh:
-            patrol = f' · 最后巡检 {html.escape(fh.read().strip())}'
+            stamp = fh.read().strip()
+            patrol = f' · 最后巡检 {html.escape(bj_epoch(calendar.timegm(time.strptime(stamp, "%H:%M"))))} (+0800)'
     parts = [
         "<!doctype html><html lang=zh><head><meta charset=utf-8>",
         '<meta http-equiv="refresh" content="15">',
         '<meta name="viewport" content="width=device-width,initial-scale=1">',
         "<title>aupai 进展</title><style>", CSS, "</style></head><body>",
         "<header><h1>aupai 进展</h1>",
-        f'<span class=live><i></i>每 15 秒自动刷新 · 生成于 {now}{patrol}</span></header>',
+        f'<span class=live><i></i>北京时间 {now_bj}（+0800）· UTC {now_utc}{patrol} · 每 15 秒自动刷新</span></header>',
     ]
     if os.path.exists(STATUS):
         with open(STATUS, encoding="utf-8") as fh:
-            cards = json.load(fh).get("cards", [])
-        parts.append('<div class=cards>')
-        for c in cards:
-            _, colour = KINDS.get(c.get("tone", ""), KINDS["note"])
-            parts.append(f'<div class=card style="border-top-color:{colour}">')
-            parts.append(f'<div class=ti>{html.escape(c["title"])}</div>')
-            parts.append(f'<div class=bi>{html.escape(c["big"])}</div>')
-            if c.get("bar") is not None:
-                pct = round(100 * float(c["bar"]))
-                parts.append(f'<div class=bar><i style="width:{pct}%;background:{colour}"></i></div>')
-            parts.append(f'<div class=su>{html.escape(c["sub"])}</div></div>')
-        parts.append('</div>')
+            status = json.load(fh)
+        h = status.get("headline")
+        if h:
+            pct = round(100 * h["step"] / h["total"])
+            parts.append('<div class=head>')
+            parts.append(f'<div class=bi>{html.escape(h["run"])}：step {h["step"]}/{h["total"]}（{pct}%）'
+                         f' · loss {h["loss"]} · {html.escape(h["tps"])} tok/s/gpu'
+                         f' · ETA {html.escape(h["eta"])} · 最新 ckpt {html.escape(h["ckpt"])}</div>')
+            parts.append(f'<div class=su>截至 {bj_str(h["asof"])} (+0800)，来自 pod 训练日志</div></div>')
+        cards = status.get("cards", [])
+        if cards:
+            parts.append('<div class=cards>')
+            for c in cards:
+                _, colour = KINDS.get(c.get("tone", ""), KINDS["note"])
+                stale = ""
+                asof_html = ""
+                if c.get("asof"):
+                    age_h = (now - calendar.timegm(time.strptime(c["asof"], "%Y-%m-%d %H:%M"))) / 3600
+                    if age_h > 2:
+                        stale = " stale"
+                    asof_html = f'<div class=as>截至 {bj_str(c["asof"])} (+0800)</div>'
+                parts.append(f'<div class="card{stale}" style="border-top-color:{colour}">')
+                parts.append(f'<div class=ti>{html.escape(c["title"])}</div>')
+                parts.append(f'<div class=bi>{html.escape(c["big"])}</div>')
+                if c.get("bar") is not None:
+                    pct = round(100 * float(c["bar"]))
+                    parts.append(f'<div class=bar><i style="width:{pct}%;background:{colour}"></i></div>')
+                parts.append(f'<div class=su>{html.escape(c["sub"])}</div>{asof_html}</div>')
+            parts.append('</div>')
+    parts.append(queue_section())
     rest = rows
     parts.append("<h2>时间线</h2><ol>")
     parts.extend(_row(r) for r in rest[:SHOWN])
