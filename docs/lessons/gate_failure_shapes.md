@@ -8,6 +8,8 @@ source: fb 裁定 + 44-7/44-8 分流夜实测 + 2026-09-01/02 夜。44-6 草稿,
 
 每一条:一句话表述 + 实例。完整展开等发车后。
 
+> 整表说明(b0,2026-09-02,不进表):b0 提交前又用 `git diff --name-only HEAD main` 判「main 动过我的文件」——正确判据是 `git log HEAD..main -- <path>`,他自己提出、AGENTS 已写的规则,第三次踩。**能说出病名不等于免疫。**
+
 ## 1. 观察值 vs 外推值(fb 2026-09-02 裁定,原文)
 
 > 一个 token 数必须说明它是从缓存数出来的,还是从 stamp 外推的。外推值和实测值在文本上完全一样,差 0.48% 时看起来像舍入,而 0.48% 在 8.7B 上是 4200 万 token。和「亲历/重建」是同一原则的两个面:前者管来源,后者管数字。一个产物必须说明它是被观察到的还是被推算出来的。
@@ -274,6 +276,8 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 
 三条合为一句(e1-15 修复时的表述):**门禁认不出仓库自己的引用格式。** `path@sha` 是 44-13 立下的退休约定,gate_recipe_provenance 的模式停在扩展名、`@sha` 被丢掉、裸路径再死在 ls-files 上——每条退休引用都被读成死链(1a4be21 修成一个判断 `git cat-file -e <rev>:<path>`,三种失败同一个返回码)。
 
+尾注(正例,2026-09-02):问「这个提交是哪棵 worktree 敲的」——作者字段全是 `t`、七个分支全 contains,两者按构造答不了;reflog 的 `commit:` 创建事件能(tilerl 从 `worktrees/aupai-de/HEAD@{46} commit: de-16…` 读出 c0a5e6a 是 de 早先那轮的提交)。判据要能表达被问的性质:这次是选对了工具的例子。
+
 ## 30. 审计认不出门的字面量引用——「没有引用」只是「没有我扫的那种引用」(de,2026-09-02)
 
 §29 的镜像:§29 是门禁认不出仓库的引用格式,这条是审计认不出门禁的引用格式。一个扫描说「没有引用」时,它说的只是「没有我这个判据能表达的那种引用」。
@@ -330,6 +334,8 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 与 §29 同族:判据按构造只表达了「起始对不对」,表达不了「结束对不对」。
 
+补注(b0,2026-09-02):校验脚本补上「核结束行」后,常量正则 `[A-Z_]{2,} *=` 要求首字母大写,`_FP8_MAX_E4M3` 仍放行——改 `_?[A-Z][A-Z0-9_]+ *=` 才抓住。修一个漏检又漏一半,还是 29 族:判据修了一处,没修「判据按构造漏一半」这个性质。
+
 ## 35. 动态验收只作用于搬走的代码,照不到留下但丢了名字的代码(b0,2026-09-02)
 
 拆分类改动的动态验收(跑一遍、加载、前向比对)只覆盖被搬走的代码;留在原地但丢了名字的代码,动态用例不进去就无话可说。修法:拆分类改动的验收必须含一道静态检查——这个缺口动态用例补不上。
@@ -337,6 +343,24 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 实例(b0-8,5add1c8):四条动态验收全绿——test_arch_compat(移动后跑通)、legacy ckpt strict=True 键集一致、同进程 torch.equal 逐位相同、构造期抛错——而 `_FP8_MAX_E4M3` 未定义:没有一条动态用例进 FP8 路径。hook 的 ruff F821 一秒抓到。b0 原话:"Four dynamic conditions on the moved code say nothing about code that stayed and lost a name -- the acceptance set needed a static pass, and the hook supplied it."
 
 附带同次发现:re-export 不能被 monkey-patch——`from X import name` 是另一个绑定,test_arch_compat 给 `train.chunk_kda` 打桩不再到达调用点;修测试(两边都打桩)不改模型。
+
+补注(b0,2026-09-02):`ruff F821` 只查新文件时 All checks passed——常量搬进了新文件,六个使用点留在 train.py,报错的是留下的一半。e1 的表述:「加多少动态用例都补不上,差的是检查的种类不是覆盖率」。b0 自报一个假数字:坏 model.py 量到 89 条 F821,是复现脚本只取 body 不带 header 的产物;真缺陷 8 条,全在 train.py。
+
+## 36. 扫描器的五个可信错答案:能引用别人的文件是哪些,不能用文件名回答(de,2026-09-02)
+
+一个「谁引用谁」的扫描器,五个看似合理的版本各打印一个自信的错数字。规则:扫描器打印任何数字前先过 known-answer——4 个必被 loader 到达、2 个必在 hook map、3 个必不被到达(含 harness.py 与 arch.html)。
+
+实例(de 的 de-5 清单,fb 转达):
+
+1. 无 runtime-loader 步 → 63 文件 41,955 行「可删」,含 23 个 glob 装载的 math 生成器——装载它们的代码在,文件名扫描看不见。
+2. loader 修过头 → 225/236 全成 loaded——判据从「太严」摆到「太松」,与 §31 过度修正同族。
+3. 裸 `*.py` 当注册表 → harness.py 自己进 LOADED——扫描器正在扫的文件被算成被引用。
+4. hook 不算 reader → 前 24 条里 17 条是每次提交都跑的 selftest——它们的 reader 是 hook,不是 import。
+5. `scripts/hooks/pre-commit` 无扩展名,被 TEXT_EXT 过滤,HOOK 集合为空——④的修复看起来生效,实际没有:修了判据,但判据的输入被另一个过滤器清空。
+
+附:arch.html 的 reader 是 `.github/workflows/pages.yml`——.yml 也是 reader。「reader 是哪些文件」同样不能用扩展名回答。
+
+规则合一句:引用关系是运行时/装载时的事实,不是文件名的事实;扫描器的 known-answer 夹具必须同时含正例(必到达)和反例(必不到达)——少一边就是 §29 的盲区。
 
 ## Sources
 
@@ -357,3 +381,5 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
 - fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
 - b0-8(2026-09-02):5add1c8 model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
+- de 的 de-5 清单(fb 转达,2026-09-02):引用扫描器五个可信错版本;known-answer 规则 4 loader-reached/2 hook-map/3 not-reached;arch.html 的 reader 是 pages.yml
+- b0 补注(849993f,fb 转达,2026-09-02):F821 只查新文件的盲区 + 89 条假数字(真 8 条全在 train.py);结束行正则漏下划线开头常量;`git diff --name-only HEAD main` 第三次踩自己立的规则
