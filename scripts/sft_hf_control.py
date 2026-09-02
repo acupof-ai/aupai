@@ -92,17 +92,29 @@ def lr_mult_shape(step, total, warmup, warmdown, final_frac):
     return final_frac + (1 - final_frac) * 0.5 * (1 + math.cos(math.pi * progress))
 
 
-def read_pack(path):
-    """The shared pack -> [(prompt, completion)] through OUR template."""
-    out = []
+def read_pack(path, holdout_every=0):
+    """The shared pack -> [(prompt, completion)] through OUR template.
+
+    holdout_every=N reserves every Nth EXAMPLE as a validation split and returns
+    (train, val). The split is by example index in the shared text, not by packed row: row
+    boundaries depend on the tokenizer, so a row-level split would put different content in
+    each arm's validation set and the two numbers would not be comparable.
+
+    An lr scan MUST be selected on held-out loss. The training loss of the last step rewards
+    whichever lr memorised the most, which is precisely the artefact the scan exists to rule
+    out ("we won because the control was undertuned" would just become "the control's lr was
+    picked to overfit").
+    """
+    train, val = [], []
     with open(path, encoding="utf-8") as f:
-        for line in f:
+        for i, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
             d = json.loads(line)
-            out.append(format_example(d["question"], d["answer"]))
-    return out
+            pair = format_example(d["question"], d["answer"])
+            (val if holdout_every and i % holdout_every == 0 else train).append(pair)
+    return (train, val) if holdout_every else (train, [])
 
 
 def pack_rows(pairs, tok, eos_id, seq):
@@ -149,6 +161,23 @@ def pack_rows(pairs, tok, eos_id, seq):
             torch.tensor(rows_l, dtype=torch.long), stats)
 
 
+def eval_loss(model, ids, lab, batch, device):
+    """Mean loss over the validation rows. The number an lr scan is selected on."""
+    import torch
+
+    model.eval()
+    tot = n = 0.0
+    with torch.no_grad():
+        for lo in range(0, ids.shape[0], batch):
+            bi = ids[lo:lo + batch].to(device)
+            bl = lab[lo:lo + batch].to(device)
+            out = model(input_ids=bi[:, :-1], labels=bl[:, 1:])
+            tot += out.loss.item() * bi.shape[0]
+            n += bi.shape[0]
+    model.train()
+    return tot / max(n, 1)
+
+
 def sha256_of(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -177,6 +206,9 @@ def main():
     ap.add_argument("--device", default="cuda",
                     help="'cpu' runs the real forward/backward without a card -- the only way "
                          "to prove this loop executes before it holds one")
+    ap.add_argument("--holdout_every", type=int, default=50,
+                    help="reserve every Nth EXAMPLE for validation (default 50 = 2%%). The lr "
+                         "scan is selected on this loss, never on training loss")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -209,8 +241,13 @@ def main():
     print(f"tokenizer {vocab_before} -> {len(tok)} entries (+{added} ChatML specials) "
           f"{chatml_ids}", flush=True)
 
-    pairs = read_pack(pack_path)
+    pairs, val_pairs = read_pack(pack_path, holdout_every=a.holdout_every)
     ids, lab, st = pack_rows(pairs, tok, tok.eos_token_id, a.seq)
+    v_ids, v_lab, v_st = (pack_rows(val_pairs, tok, tok.eos_token_id, a.seq)
+                          if val_pairs else (None, None, {}))
+    if val_pairs:
+        print(f"validation {len(val_pairs):,} examples -> {v_st['rows']:,} rows "
+              f"(every {a.holdout_every}th example, held out of training)", flush=True)
     tokens = st["rows"] * (a.seq + 1)
     print(f"examples {len(pairs):,} -> rows {st['rows']:,} x {a.seq+1} = {tokens:,} tokens\n"
           f"  dropped over-length {st['dropped_overlong']:,}   pad {st['pad_tokens']:,}\n"
@@ -259,6 +296,12 @@ def main():
 
     # Same order both arms see: prepare_sft shuffles with seed 0 at pack time, and this pack
     # is already in that order, so read it straight through.
+    # Measured BEFORE any step: an lr scan compares deltas, and a scan whose arms started
+    # from different baselines would compare two different quantities.
+    val_before = eval_loss(model, v_ids, v_lab, a.batch, a.device) if val_pairs else None
+    if val_before is not None:
+        print(f"held-out loss before training {val_before:.4f}", flush=True)
+
     t0 = time.time()
     step = 0
     losses = []
@@ -288,6 +331,11 @@ def main():
                 print(f"  step {step}/{total}  loss {acc_loss:.4f}  lr {opt.param_groups[0]['lr']:.2e}"
                       f"  {el:.0f}s  eta {el/step*(total-step)/60:.0f}min", flush=True)
 
+    val_after = eval_loss(model, v_ids, v_lab, a.batch, a.device) if val_pairs else None
+    if val_after is not None:
+        print(f"\nheld-out loss {val_before:.4f} -> {val_after:.4f} "
+              f"(this is the number an lr scan is selected on)", flush=True)
+
     out_path = a.out if os.path.isabs(a.out) else os.path.join(ROOT, a.out)
     model.save_pretrained(out_path + ".hf")
     tok.save_pretrained(out_path + ".hf")
@@ -309,8 +357,15 @@ def main():
         "optimizer": "AdamW (our arm uses Muon on 2D matrices -- NOT the same optimizer)",
         "lr": a.lr, "lr_note": "set by CPU smoke test on this model, NOT matched to our arm -- 1e-2 diverges here", "warmup": a.warmup, "warmdown": a.warmdown,
         "final_lr_frac": a.final_lr_frac,
-        "final_loss": losses[-1] if losses else None,
-        "first_loss": losses[0] if losses else None,
+        "final_train_loss": losses[-1] if losses else None,
+        "first_train_loss": losses[0] if losses else None,
+        # The selection number. Training loss is deliberately NOT it: selecting an lr on
+        # training loss picks whichever lr memorised hardest, which is the artefact the scan
+        # exists to rule out.
+        "held_out_loss": val_after,
+        "held_out_loss_before": val_before,
+        "held_out_examples": len(val_pairs),
+        "holdout_every": a.holdout_every,
         "wall_s": round(time.time() - t0),
     }
     with open(out_path + ".meta.json", "w", encoding="utf-8") as f:
@@ -388,12 +443,35 @@ def selftest():
     if IM_END in p.split("<|im_start|>assistant")[-1]:
         fails.append("the prompt's trailing assistant marker is followed by a stop token")
 
+    # 4. the held-out split must be disjoint from training, deterministic, and by EXAMPLE.
+    #    A scan selected on a validation set that leaked into training measures memorisation,
+    #    which is the whole reason the scan exists.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as d:
+        pp = os.path.join(d, "p.jsonl")
+        with open(pp, "w", encoding="utf-8") as f:
+            for i in range(20):
+                f.write(json.dumps({"question": f"q{i}", "answer": f"a{i}"}) + "\n")
+        tr, va = read_pack(pp, holdout_every=5)
+        if len(tr) + len(va) != 20:
+            fails.append(f"split lost or duplicated examples: {len(tr)} + {len(va)} != 20")
+        if len(va) != 4:
+            fails.append(f"expected 4 held-out of 20 at every-5th, got {len(va)}")
+        if set(tr) & set(va):
+            fails.append("the held-out split overlaps training")
+        if read_pack(pp, holdout_every=5) != (tr, va):
+            fails.append("the split is not deterministic across calls")
+        tr0, va0 = read_pack(pp)
+        if va0 or len(tr0) != 20:
+            fails.append(f"holdout_every=0 must hold nothing back: {len(tr0)}, {len(va0)}")
+
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
     if fails:
         print(f"\n{len(fails)} selftest failure(s)")
         return 1
-    print("sft_hf_control selftest OK (schedule == train.lr_mult, mask exact, stop supervised)")
+    print("sft_hf_control selftest OK (schedule == train.lr_mult, mask exact, stop supervised, "
+          "held-out split disjoint and deterministic)")
     return 0
 
 
