@@ -9707,7 +9707,7 @@ _FROZEN_KEYS = (
     # segments of one run that disagree on it are not comparable -- and because it only acts
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
     # exists to catch (the arm's own weights carry the init; the flag does not).
-    "zero_init_out", "muon_shape_lr",
+    "zero_init_out", "muon_shape_lr", "value_embed",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )

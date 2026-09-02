@@ -227,6 +227,10 @@ class Cfg:
     zero_init_out = False
     # A/B (2a): Muon lr scaled by max(1, out/in)^0.5 per parameter shape (modded-nanogpt).
     muon_shape_lr = False
+    # A/B (4): ONE shared [vocab, d] value-embedding table added to V in every MLA layer, gated
+    # per position by 3*sigmoid over the residual's first 12 dims. One table, not three: three
+    # would be +48.9% parameters at 200M against +16.3% (1e's ruling 2026-09-03).
+    value_embed = False
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
@@ -1871,6 +1875,10 @@ def main():
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    parser.add_argument(
+        "--value_embed", action="store_true",
+        help="A/B (4): one shared token-indexed table added to V in every MLA layer, gated by "
+             "3*sigmoid over 12 residual dims (+33.6M params at 200M)")
     parser.add_argument(
         "--muon_shape_lr", action="store_true",
         help="A/B (2a): Muon lr x max(1, out/in)^0.5 per parameter shape (modded-nanogpt)")
