@@ -302,6 +302,14 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 尾注(44-16,2026-09-02):b0 撞上的死锁——@rev selftest 的前提(仓库里有删除历史)是外部状态,落后分支上没有,而能满足它的正是被它挡住的那次合并。修法不是回答「合并中途判据是否成立」,是把前提改成自制的(临时仓里 commit 一个 probe 再删,四条判断跑在临时仓上):**依赖外部状态的前提改成自制前提,问题类消失,而不是被回答。**
 
+## 32. pod 侧的缺失不是关于仓库的陈述(de,2026-09-02)
+
+在 pod 上量到的「没有」,说的是 pod,不是仓库。两个视图(AGENTS.md:`tn exec` 是宿主机、`~/bin/pod` 是容器,同一路径两个目录)之间,缺席不传递。
+
+实例(be81192):de-16 的一遍把三条 `runs/*.log` 引用当「不存在」删了——pod 上 find 没有它们。但三条都被 git 跟踪、每个 checkout 都在(`t57_pad_ab.log` 自 fa43fed、`t57_twin.log` 自 233afca,均 2026-09-01,`git log --diff-filter=D` 为空):测量在 pod 上做,而那些是本地单卡 run 写的,pod 的 `/work/aupai/runs/` 只有 pod 作业写的东西。pod 侧缺席被读成仓库陈述,三个 fact 丢了一手证据,只剩探针(本身已被删、退成 @rev)或设计文档这些派生来源;原始日志一直在 runs/ 里跟踪着。
+
+规则:一个测量必须说明它在哪个视图上做的;把一个视图的缺席读成另一个视图的陈述,与 §17(参照物来自被检查侧)同族——参照物和被检查物必须在同一侧。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -318,3 +326,4 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - de 审计更正(2026-09-02):9209cde 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
 - de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
 - fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
+- be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
