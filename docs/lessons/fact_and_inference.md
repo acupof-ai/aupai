@@ -1,7 +1,7 @@
 ---
 question: "why does a sentence that states a measurement and then draws a conclusion from it get read as all-measurement, and what makes the pair separable"
 status: recorded
-source: "de, 2026-09-02 and 2026-09-03. Six instances: train.py:189 (a bisect number plus a ratio inferred from it), train.py:217 (the inference alone, contradicting :189 by an order of magnitude), Cfg._plan_trimmed (a name asserting what the code did not do), scripts/harness.py:1955 _noted_gone (two facts sharing one field), the `step N/N` completion criterion (correct at every layer, measuring total_steps mod 10 rather than completion), and train.py:1034 (a run-end save inferring plan-complete from a missing step, and storing the inference as a cursor -- 213,164 rows overstated). Three of the six were written by someone who already knew the rule, including this document's own first draft quoting 2.27x as grad_ckpt's cost. tilerl asked for the entry after the first."
+source: "de, 2026-09-02 and 2026-09-03, plus one from lessons-62. Seven instances: train.py:189 (a bisect number plus a ratio inferred from it), train.py:217 (the inference alone, contradicting :189 by an order of magnitude), Cfg._plan_trimmed (a name asserting what the code did not do), scripts/harness.py:1955 _noted_gone (two facts sharing one field), the `step N/N` completion criterion (correct at every layer, measuring total_steps mod 10 rather than completion), train.py:1034 (a run-end save inferring plan-complete from a missing step, and storing the inference as a cursor -- 213,164 rows overstated), and lessons-62's getattr(cfg, 'logit_softcap', 0.0) on a field that does not exist, which reported post-softcap values as pre and produced perfect evidence for a conclusion that was independently correct. Four of the seven were written by someone who already knew the rule, including this document's own first draft quoting 2.27x as grad_ckpt's cost. tilerl asked for the entry after the first."
 ---
 
 # 事实和推断不能共处一句
@@ -10,10 +10,11 @@ source: "de, 2026-09-02 and 2026-09-03. Six instances: train.py:189 (a bisect nu
 ——测过、还是推过——在传递中丢失。丢失不是因为读者粗心:一个句子只有一个
 可信度,而句子的可信度由它最强的部分决定。
 
-作者也是读者。本文初稿就犯了它要讲的错(第 2 节),而第 5、6 两条是在本文落地
-之后一小时内发现的,一条在我自己写的 fact 里、一条在存盘路径上——不是谦辞,是这一类最短的证据:知道这条规则不足以遵守它。
+作者也是读者。本文初稿就犯了它要讲的错(第 2 节),第 5、6 两条是在本文落地之后
+一小时内发现的——一条在我自己写的 fact 里,一条在存盘路径上——第 7 条是 lessons-62
+同一天在另一个文件里踩的。不是谦辞:知道这条规则不足以遵守它,这是最短的证据。
 
-## 六个实例
+## 七个实例
 
 ### 1. `train.py:189` — 测量后面跟一个推断,同一个注释
 
@@ -139,6 +140,34 @@ plan。`--max_steps` 用来约束 resume 之后就不真了。
 
 这一条是在本文落地一小时后发现的,在同一个 repo 的存盘路径上。
 
+### 7. `getattr(cfg, "logit_softcap", 0.0)` — 数字是错的,结论碰巧是对的
+
+lessons-62 的实例,方向和第 5 条相反,严重程度更高。第 5 条是判据量错对象;
+这一条是**测量是错的,而它得出的结论是对的**。
+
+脚本读 `getattr(cfg, "logit_softcap", 0.0)` 想知道 softcap 关没关。这个字段
+**不存在**——softcap 是 `model.py:63` 的模块常量 `SOFTCAP`,来自环境变量,默认
+15.0(核对过:全树 `logit_softcap` 零命中)。`getattr` 静默返回 0.0,于是
+post-softcap 的值被当成 pre 报了出来:
+
+```
+pre_absmax: 14.62 / 14.69 / 14.54     ← 三点全平
+```
+
+**这三个数是它要证的那个结论(logit 尺度稳定)的完美证据。** 符合预期、符合前
+一节的猜想、没有任何东西会红。当场收工就是「错的测量 + 对的结论」,而两者之间
+没有因果关系。
+
+**露出来只因为 14.62 平在离硬上限 15.0 只有 0.4 的地方**——自然平的分布不会平
+在那儿。这个数字自己就是自己的反例。改成从 raw head 直接算之后真实值是
+32.75/34.25/31.25,结论不变,而原来那份「证据」和结论无关。
+
+`getattr(obj, name, default)` 在 name 不存在时和 name 存在且等于 default 时
+**返回同一个值**,调用点无法区分「读到了」和「没读到」。同一形状在本 repo 是
+良性的一次:`train.py:756` 的 `getattr(cfg, "attn_res_lr", 0.01)`,字段在
+`:221` 真实存在且默认值一致——**良性和致命的写法完全一样**,这是为什么它不能靠
+读代码分辨。
+
 ## 为什么这一类不会被发现
 
 | 机制 | 后果 |
@@ -149,8 +178,17 @@ plan。`--max_steps` 用来约束 resume 之后就不真了。
 | 拼接消灭位置 | 两个各自为真的事实,合成一个假的结论 |
 | 判据在每个 broken world 上都对 | 它量错了对象,而错法不会露出破绽(第 5 条) |
 | 推断被存成数据 | 后来的读者拿到的是一个数字,不是一个当时为真的推理(第 6 条) |
+| 结果符合预期 | 「符合预期」正是我们停止检查的信号,所以错的测量在这里最安全(第 7 条) |
+| 判据的样本是判据的一部分 | 隐含前提把反例筛掉,而它不在判据的任何一行字里(第 5 条) |
 
-六条都不需要任何人犯错,后三条(初稿的 2.27x、第 5、第 6)还是知道规则的人当天写的。
+七条都不需要任何人犯错,后四条(初稿的 2.27x、第 5、第 6、第 7)还是知道规则的人
+当天写的。
+
+**最后两行是同一根。** 第 5 条那 35 个 `step N/N` 符合预期(有 run 跑完了),第 7 条
+那三个 14.6 符合预期(尺度稳定)。两个都不是靠「不对劲」露的——是靠一个**不该长
+成这样的细节**:第 5 条是 3810/3814 那个不该缺席的 run,第 7 条是 14.62 离硬上限
+15.0 只有 0.4 这个不该出现的间距。**一个数字符合预期时,唯一还能推翻它的是它自己
+的形状。**
 
 ## 规则
 
@@ -158,6 +196,17 @@ plan。`--max_steps` 用来约束 resume 之后就不真了。
 - **名字只能断言代码做到的事**。`_plan_trimmed` → `_cursor_seeded`:后者是标志位真正知道的。名字改了要重判每个消费点——`:2235` 的 `i0 = 0` 重判后不变,理由写进注释,因为「不变」和「没看」在代码里长得一样。
 - **一个字段一个事实**。判据要在拼接前工作:按句切分,要求名字和词在**同一句**里。跨字段拼接后做 AND,等于承认位置不重要。
 - **检测法**:一个注释或 value 里出现两个数字,而只有一个能追到命令或 artifact——另一个是推断。同一文件里两处描述同一个量而数字不同,两处都不可信,去测。
+- **一个结果符合预期时,检查它的形状,不是它的方向**。第 7 条的 14.62 方向全对、
+  三点全平,而它平在离硬上限 0.4 的地方——自然平的分布不会平在那儿。方向对是最弱
+  的证据,因为错的测量最容易伪造的就是方向。
+- **`getattr(obj, name, default)` 读一个可能不存在的配置字段时,要先断言它存在**。
+  `name` 不存在和 `name == default` 返回同一个值,调用点分不出「读到了」和「没读
+  到」。良性写法和致命写法完全一样(`train.py:756` 的 `attn_res_lr` 在 `:221` 真实
+  存在,默认值一致),所以读代码分辨不出来——要么 `assert hasattr`,要么读那个真正
+  持有它的对象。
+- **判据的样本是判据的一部分**。第 5 条的隐含前提是 `total_steps ≡ 0 (mod 10)`,
+  它不在判据的任何一行字里,却把唯一的反例筛掉了。写完判据要问:**什么样的正例
+  会被我漏掉**,而不只是「什么样的反例会被我抓到」。
 - **引用一个数之前确认它有 fact 条目**。本文初稿引了 2.27x,而 `grep 2.27 facts/` 命中的是两条 `nccl_version: 2.27.3`——数在我脑子里,不在 fact store 里。一份引用自己的文档和一份引用测量的文档,在读者眼里长得一样。
 
 ## 已做与未做
