@@ -48,7 +48,17 @@ from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 # the English three do not, same model same scale -- b0's finding), so base
 # gets ceval only as a z-score tripwire.
 APPLIES = {
-    "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like", "l1_fewshot"],
+    "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like",
+             "l1_fewshot", "domain_bpb", "lambada_en", "humaneval_bpb"],
+    # A FOURTH TYPE, for a foreign-tokenizer control (Pythia-160m). Only the per-BYTE metrics
+    # are DEFINED here -- not "not run", defined. minimal_pairs is Chinese minimal pairs whose
+    # premise is that the edit does not change tokenization, which is a statement about OUR
+    # BPE; under a NeoX BPE the pairs are not token-aligned and the metric has no meaning.
+    # lambada_zh and math_v2_like score option likelihoods over Chinese text a 50k English
+    # BPE fragments differently, and mc_ceval is Chinese MC. So the control panel is the three
+    # byte-denominated metrics, and the 2x2 table says "undefined for this tokenizer" in the
+    # other cells rather than "unmeasured" (1e's ruling 2026-09-03, option 3).
+    "control": ["domain_bpb", "lambada_en", "humaneval_bpb"],
     "sft": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
     "rl": ["domain_loss", "minimal_pairs", "mc_full", "math_hard", "math_500", "code_500", "code_500_v2", "pass_at_k"],
 }
@@ -58,6 +68,9 @@ APPLIES = {
 # consume the record.
 PROFILES = {
     "milestone": ["domain_loss", "mc_full", "math_500", "code_500", "code_500_v2"],
+    # The control comparison: the three metrics that mean the same thing under two different
+    # tokenizers. Run it on OUR checkpoint and on the control with --hf; the pair is the panel.
+    "control": ["domain_bpb", "lambada_en", "humaneval_bpb"],
 }
 SKIP_REASON = {
     "math_hard": "generative; a base checkpoint reads zero (ckpt_0830v1_0.8b: math-500 0/500)",
@@ -69,6 +82,29 @@ SKIP_REASON = {
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
     "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); few-shot continuation math",
+}
+
+# Per-KIND skip reasons, consulted before SKIP_REASON. Keyed by (kind, metric) because
+# SKIP_REASON is keyed by metric alone: writing control's reasons into it replaced the base
+# panel's reason for the same metric name. ruff caught that one as a duplicate literal, but the
+# collision is real independent of the literal -- a base checkpoint would have been told
+# "undefined for this tokenizer" about its own panel metric.
+#
+# UNDEFINED is not UNMEASURED, and that distinction is the whole point of this table. Each of
+# these metrics has a premise that is a statement about OUR vocabulary, so under a foreign
+# tokenizer there is no number to not-have-measured (1e's ruling 2026-09-03, option 3).
+KIND_SKIP_REASON = {
+    ("control", "minimal_pairs"):
+        "undefined for this tokenizer: the pair bank's premise is that the edit does not change "
+        "tokenization, which is a property of OUR BPE, not a property of the sentences",
+    ("control", "lambada_zh"):
+        "undefined for this tokenizer: Chinese option likelihoods under a 50k English BPE are "
+        "not on a comparable scale to ours",
+    ("control", "mc_ceval"): "undefined for this tokenizer: Chinese MC under an English BPE",
+    ("control", "math_v2_like"): "undefined for this tokenizer: Chinese math options",
+    ("control", "domain_loss"):
+        "undefined ACROSS tokenizers: nats per TOKEN is not comparable when the same text is a "
+        "different number of tokens per side -- domain_bpb is the comparable reading",
 }
 
 # Seed variance (sd) per metric at 0.2b, df=3, from ckpt_p02_s0..s3.
@@ -134,8 +170,29 @@ def classify(cfg, ckpt_name, log=None):
     return "base"
 
 
+def is_hf_dir(path):
+    """True for a HuggingFace checkpoint DIRECTORY, by structure and never by name.
+
+    config.json plus at least one weight file. Structure, not the name, for the reason
+    classify() already gives about names: a directory called "pythia-160m" proves nothing, and a
+    control checkpoint could be named anything. torch.load on a directory raises IsADirectoryError
+    (a confusing one, from inside torch), so this has to be answered before read_cfg."""
+    if not os.path.isdir(path):
+        return False
+    if not os.path.exists(os.path.join(path, "config.json")):
+        return False
+    return any(os.path.exists(os.path.join(path, f)) for f in
+               ("model.safetensors", "pytorch_model.bin", "model.safetensors.index.json",
+                "pytorch_model.bin.index.json"))
+
+
 def read_cfg(ckpt_path):
-    """cfg only, no model load."""
+    """cfg only, no model load. An HF directory carries no cfg of ours -- that is not an error."""
+    if is_hf_dir(ckpt_path):
+        # NOT {} silently: the record must be able to say this checkpoint is foreign, and a
+        # vocab_id of None would otherwise read as "an old checkpoint of ours that predates the
+        # stamp". "hf" is a value, absence is not.
+        return {"kind": "control", "hf": True}, "hf"
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     return ck.get("cfg", {}), ck.get("vocab_id")
 
@@ -218,6 +275,31 @@ def _run_eval_json(script, ckpt_path, extra_args=None, timeout=3600):
         return json.load(open(out, encoding="utf-8")), None
     finally:
         os.unlink(out)
+
+
+def metric_domain_bpb(ckpt_path, mix_path, hf=False):
+    """eval/domain_bpb.py: per-domain bits per UTF-8 byte over the same held-out bytes.
+
+    THE CONTROL ARM'S DOMAIN METRIC, and not a replacement for domain_loss. domain_loss is
+    nats per TOKEN over our own ids, which is (a) unreadable by a foreign tokenizer's model and
+    (b) not comparable across tokenizers at all. Every existing record and threshold is in
+    domain_loss's units, so both live side by side."""
+    extra = ["--mix", mix_path] + (["--hf"] if hf else [])
+    return _run_eval_json("domain_bpb.py", ckpt_path, extra, timeout=5400)
+
+
+def metric_lambada_en(ckpt_path, hf=False):
+    """eval/lambada_en.py: greedy last-word accuracy plus per-byte NLL of the target."""
+    return _run_eval_json("lambada_en.py", ckpt_path, ["--hf"] if hf else None, timeout=5400)
+
+
+def metric_humaneval_bpb(ckpt_path, hf=False):
+    """eval/humaneval_bpb.py: gold BPB of the 164 canonical solutions, teacher-forced.
+
+    Gold BPB and NOT pass@k, because at 200M pass@k is 0 on both arms and 0 == 0 is not a
+    comparison (be.gold_bpb_falls_while_generation_scores_zero: code_500 generative accuracy
+    sat at 0.0 across a ladder while gold BPB fell 1.087 -> 0.918)."""
+    return _run_eval_json("humaneval_bpb.py", ckpt_path, ["--hf"] if hf else None, timeout=5400)
 
 
 def metric_lambada_zh(ckpt_path):
@@ -537,6 +619,55 @@ def selftest():
     assertion is a case with a known right answer."""
     import tempfile
 
+    # --control: an HF DIRECTORY is recognised by structure, the control panel is exactly the
+    # three byte-denominated metrics, and the other cells say UNDEFINED rather than unmeasured.
+    import tempfile as _tf2
+    with _tf2.TemporaryDirectory() as _hd:
+        assert not is_hf_dir(_hd), "an empty directory is not an HF checkpoint"
+        # BOTH conditions, each isolated. Asserting only "config.json alone is not enough" cannot
+        # catch a dropped config.json check, because the weight-file half still rejects the
+        # directory -- verified: removing the config check left this selftest green. So each half
+        # gets a world where it is the ONLY thing standing between the input and a wrong answer.
+        open(os.path.join(_hd, "model.safetensors"), "wb").write(b"")
+        assert not is_hf_dir(_hd), "a weight file WITHOUT config.json is not an HF checkpoint"
+        os.remove(os.path.join(_hd, "model.safetensors"))
+        open(os.path.join(_hd, "config.json"), "w").write("{}")
+        assert not is_hf_dir(_hd), "config.json ALONE is not enough; a weight file is required"
+        open(os.path.join(_hd, "model.safetensors"), "wb").write(b"")
+        assert is_hf_dir(_hd), "config.json + a weight file IS an HF checkpoint"
+        # By STRUCTURE, never by name: a name-based check would call this one HF too.
+        _named = os.path.join(_hd, "pythia-160m-step2000")
+        os.makedirs(_named)
+        assert not is_hf_dir(_named), "is_hf_dir matched on the NAME, not the structure"
+        # read_cfg must not torch.load a directory, and "foreign" must be a VALUE, not absence:
+        # vocab_id None would read as "an old checkpoint of ours predating the stamp".
+        _cfg, _vid = read_cfg(_hd)
+        assert _cfg.get("kind") == "control" and _cfg.get("hf") is True, _cfg
+        assert _vid == "hf", f"vocab_id {_vid!r} for a foreign checkpoint must be a value"
+        assert classify(_cfg, os.path.basename(_hd)) == "control", classify(_cfg, "x")
+
+    # The per-KIND skip reason must not collide with the per-metric one. SKIP_REASON is keyed by
+    # metric alone, so control's reasons written there replaced the BASE panel's reason for the
+    # same metric -- a base checkpoint would have been told "undefined for this tokenizer" about
+    # its own panel metric. ruff caught that as a duplicate literal; the collision itself is
+    # silent, so it gets an assertion.
+    # The panel is named EXPLICITLY, not compared to PROFILES["control"] -- the first version
+    # asserted `_cw == PROFILES["control"]`, which is true for whatever that list happens to hold,
+    # so dropping a metric from the panel stayed green. A test that reads its expectation from the
+    # thing under test has no expectation.
+    _want = ["domain_bpb", "lambada_en", "humaneval_bpb"]
+    assert PROFILES["control"] == _want, PROFILES["control"]
+    _cw, _, _csk = dispatch("control", PROFILES["control"])
+    _bw, _, _bsk = dispatch("base", PROFILES["control"])
+    assert _cw == _want and _bw == _want, (_cw, _bw)
+    assert APPLIES["control"] == _want, APPLIES["control"]
+    assert "undefined for this tokenizer" in (_csk.get("minimal_pairs") or ""), _csk
+    assert "nats per TOKEN" in (_csk.get("domain_loss") or ""), _csk.get("domain_loss")
+    # ...and the SAME metric must NOT carry that reason for a base checkpoint.
+    assert "undefined for this tokenizer" not in (_bsk.get("lambada_zh") or ""), _bsk["lambada_zh"] if "lambada_zh" in _bsk else None
+    # domain_loss is absent from the control panel by construction, not by a runtime guard.
+    assert "domain_loss" not in APPLIES["control"], APPLIES["control"]
+
     # _mix_for: the mix comes from the CHECKPOINT unless --mix was named. Worlds are real
     # torch.save files, because the bug being guarded is a type assumption -- cfg is a dict on
     # every real checkpoint, and a getattr-only read returns the fallback for all of them while
@@ -849,10 +980,16 @@ def dispatch(kind, requested):
     """
     wanted = [m for m in requested if m in APPLIES[kind]]
     unusable = [m for m in requested if m not in APPLIES[kind]]
-    skipped = {m: r for m, r in SKIP_REASON.items() if m not in APPLIES[kind]}
+    def reason(m):
+        """The per-kind reason if there is one, else the metric's general one."""
+        return KIND_SKIP_REASON.get((kind, m)) or SKIP_REASON.get(m)
+
+    skipped = {m: reason(m) for m in set(SKIP_REASON) | {k[1] for k in KIND_SKIP_REASON
+                                                        if k[0] == kind}
+               if m not in APPLIES[kind] and reason(m)}
     for m in unusable:
         skipped[m] = (f"REQUESTED but does not apply to a {kind} checkpoint -- "
-                      + SKIP_REASON.get(m, f"{kind} accepts {APPLIES[kind]}"))
+                      + (reason(m) or f"{kind} accepts {APPLIES[kind]}"))
     return wanted, unusable, skipped
 
 
@@ -927,7 +1064,11 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
         "skipped": {},
         "noise_thresholds": {k: v for k, v in NOISE_THRESHOLDS.items() if k in wanted},
     }
-    needs_model = "domain_loss" in wanted
+    hf = bool(cfg.get("hf")) if isinstance(cfg, dict) else False
+    # domain_loss uses OUR loader and OUR ids, so it can never run on a foreign checkpoint. It is
+    # already absent from APPLIES["control"], so dispatch() has skipped it -- this line only keeps
+    # the model load from being attempted if someone forces it with --metrics.
+    needs_model = "domain_loss" in wanted and not hf
     model = tok = seq = None
     if needs_model:
         print(f"  {'model':15s} ... loading", flush=True)
@@ -958,6 +1099,15 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
         _metric("lambada_zh", metric_lambada_zh, record, ckpt_path)
     if "math_v2_like" in wanted:
         _metric("math_v2_like", metric_math_v2_like, record, ckpt_path)
+    # The three cross-tokenizer metrics. Each takes `hf` so the SAME code path scores both arms:
+    # one implementation, two tokenizers, which is what makes the pair comparable. A second
+    # implementation per arm is how two arms end up measuring two different things.
+    if "domain_bpb" in wanted:
+        _metric("domain_bpb", metric_domain_bpb, record, ckpt_path, mix_path, hf)
+    if "lambada_en" in wanted:
+        _metric("lambada_en", metric_lambada_en, record, ckpt_path, hf)
+    if "humaneval_bpb" in wanted:
+        _metric("humaneval_bpb", metric_humaneval_bpb, record, ckpt_path, hf)
     if "l1_fewshot" in wanted:
         _metric("l1_fewshot", metric_l1_fewshot, record, ckpt_path)
     if "mc_full" in wanted:
