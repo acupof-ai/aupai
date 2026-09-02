@@ -54,3 +54,26 @@ Sprint split: tilerl profiles (3-step trace, compile on/off, batch 32/64, fla ch
 ## Card split (user, 12:35Z): cards 4-7 belong to the user, aupai works on 0-3, performance first
 
 p200m_4b_0902 was stopped by fb at 12:35:57Z with SIGTERM to the torchrun leader (verified cmdline); `ckpt_p200m_4b_0902.pt.interrupt.step832` (959,435,257 bytes) is the resume point, later on four cards as `--batch 16 --accum 4` (tokens/step unchanged). The supervisor had already been removed at 12:29Z so that run_ddp's end-of-run scoring, which used the ladder default `--mix`, could not trigger a spurious resume; 3415e9e now reads the mix from the checkpoint. Cards 4, 5, 6, 7 are the user's until further notice: no aupai process touches them. On 0-3, one job at a time, announced to fb first, in this order: de's 3-step trace at b16a2 (busy vs idle, per-class measured vs roofline) → 300M A/B (`--grad_ckpt` b16a2 vs `--no-grad_ckpt` b8a4) → kernel and computation A/Bs (tilerl: kernels, b0: model-level), each 20 steps with loss parity ≤ 1e-3 per step. The user allows replacing or hand-writing kernels and changing the computation.
+
+## Stop window open for engineering (user, 12:57Z): idle owners take the train-path items and the surveys with demand
+
+No run lives on the cards: the 500M is stopped and the 200M is paused at step 832. The user's
+word was that whoever is idle does the engineering work, and that surveys with a stated demand
+are done too. So the stop-window list is released, under three conditions that keep the
+performance sprint's numbers comparable:
+
+| condition | reason |
+|---|---|
+| train-path edits are staged on the owner's branch with tests, merged in batches between card jobs, never while a trace or A/B is on a card | an A/B whose two arms ran under different sync stamps measures the merge, not the variable |
+| every A/B row records the pod sync stamp it ran under | the stamp is the only identity of "the code that ran" |
+| the step-832 interrupt checkpoint of p200m_4b_0902 must still load after every merge; `test_arch_compat`'s legacy round-trip is the gate | the resume is the next training job and a checkpoint that stops loading is a lost 832 steps |
+
+| owner | engineering, off-card, now | survey with demand |
+|---|---|---|
+| de | trace (on 0-3), then the 300M A/B, then de-13 cursor, domain_loss CLI default + `APPLIES["sft"]`, de-20 cache knob | none new: de-26 eval matrix v2 |
+| tilerl | tilerl-14 one writer per log, tilerl-15 resume total_steps, roofline table when the trace lands | kernel inventory: every GPU kernel class the trace names, its source (fla / torch / torchao / Triton), replacement candidate, effort, and the parity test; tilerl-10 |
+| b0 | b0-10 offline checkpoint health read on the step-832 interrupt (CPU), facts-join re-report of the computation list | MLA layer count and latent at 200M, selective FFN recompute: what the literature measured, joined with `facts/efficiency.json` before any run is proposed |
+| e1 | e1-23 then e1-16 required flags (train.py, staged on e1), e1-22 base-prompt audit, v11 diff | none new: e1-21 |
+| 3b | 3b-8 near-dedup pass, code and tests on the sample now, full pass after de's trace; 3b-9 fetch and admission | task-set survey stays in 3b-9 |
+| 44 | 44-20 launch-line check, reviews as they land | 44-17 post-pretrain plan |
+| 98 | 98-1 per-owner queue on the progress page | — |
