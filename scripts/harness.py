@@ -155,6 +155,7 @@ _RULE_CHECKS = {
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
+    "Check a launch line's shape against `facts/efficiency.json` before it reaches a card": "launch_line_vs_oom_facts",
     "setsid, not nohup": "no_foreground_pod_training",
     "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
@@ -219,10 +220,6 @@ _MANUAL_RULES = {
         "pod and a push from a laptop -- and nothing records the second. pod_drift sees the "
         "drift that results, which is the consequence; whether a push landed inside someone "
         "else's startup window is not recoverable from any artifact",
-    "Check a launch line's shape against `facts/efficiency.json` before it reaches a card":
-        "44-20: the check is assigned and not yet written. Both sides ARE static -- the launch "
-        "line's (batch, accum, seq, layers) and the fact store's config blocks -- so this is "
-        "manual only until that lands, not manual by nature",
     "Stage by path, never `git add -A`": "git history cannot show which command staged a commit",
     "Never run `git checkout` / `git restore` on a file you did not write":
         "no record of who wrote an uncommitted change",
@@ -320,7 +317,10 @@ _MANUAL_RULES = {
 #:   44-20 lands. Both sides are static -- the launch line's (batch, accum, seq, layers)
 #:   and the fact store's config blocks -- so it is fully checkable; it just is not
 #:   written yet. When 44-20 lands this returns to 33.
-_MANUAL_BASELINE = 34
+#: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
+#: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
+#: only until written, not manual by nature -- both sides are static.
+_MANUAL_BASELINE = 33
 
 
 def _norm_rule(text):
@@ -1678,6 +1678,90 @@ def _broken_mix():
     d = _tmp_repo({"total_tokens": 1e9, "domains": {"web": {"weight": 0.5}, "gone": {"weight": 0.5}}})
     os.makedirs(os.path.join(d, "data", "corpus", "web"))
     open(os.path.join(d, "data", "corpus", "web", "a.jsonl"), "w").write("{}\n")
+    return d
+
+
+def check_launch_line_vs_oom_facts(root):
+    """A launch line whose shape exactly matches a recorded OOM config is a refusal.
+    p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had
+    recorded that exact OOM (93.8/95.2 GB, ranks 3/6 first): the line had been checked
+    against argparse, not against the facts. Exact match on (dim, layers, batch, accum,
+    seq) only -- partial matches skip, no fuzzy matching. seq defaults to Cfg.seq
+    (train.py:187, 4096; launch lines carry no --seq flag). grad_ckpt and world are
+    printed in the FAIL message, never joined on: the fact store does not record them
+    consistently, and a guard that silently assumes equality invents data."""
+    key = ("dim", "layers", "batch", "accum", "seq")
+    oom = []
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            cfg = e.get("config")
+            if not isinstance(cfg, dict) or not all(k in cfg for k in key):
+                continue  # incomplete config blocks skip: no fuzzy matching
+            if "OOM" not in str(e.get("value", "")) + str(cfg.get("result", "")):
+                continue
+            oom.append((e.get("id", os.path.basename(fp)), cfg))
+    if not oom:
+        return FAIL, ("no OOM fact with a complete (dim, layers, batch, accum, seq) config "
+                      "block -- the facts side of this check is empty")
+    flag_re = re.compile(r"--(dim|layers|batch|accum)\s+(\d+)")
+    bad = []
+
+    def adjudicate(where, line):
+        if "run_ddp.sh" not in line:
+            return
+        flags = {k: int(v) for k, v in flag_re.findall(line)}
+        if not all(k in flags for k in ("dim", "layers", "batch", "accum")):
+            return  # partial launch line: skip, no fuzzy matching
+        flags.setdefault("seq", 4096)  # Cfg.seq, train.py:187
+        for fid, cfg in oom:
+            if all(flags[k] == cfg[k] for k in key):
+                grad = ("--no-grad_ckpt" if "--no-grad_ckpt" in line else
+                        "--grad_ckpt" if "--grad_ckpt" in line else "grad_ckpt unstated")
+                m = re.search(r"NGPU=(\d+)", line)
+                world = f"NGPU={m.group(1)}" if m else "world unstated"
+                fgrad = cfg["grad_ckpt"] if "grad_ckpt" in cfg else "fact did not record grad_ckpt"
+                fworld = f"cards={cfg['cards']}" if "cards" in cfg else "fact did not record world"
+                bad.append(f"{where} matches OOM fact {fid} on "
+                           f"dim/layers/batch/accum/seq={tuple(flags[k] for k in key)}; "
+                           f"launch {grad}, {world}; fact {fgrad}, {fworld}")
+
+    for doc in sorted(glob.glob(os.path.join(root, "docs", "lessons", "stop_window_*.md"))):
+        try:
+            lines = open(doc).read().splitlines()
+        except OSError:
+            continue
+        for ln, line in enumerate(lines, 1):
+            adjudicate(f"{os.path.basename(doc)}:{ln}", line)
+    exp = os.path.join(root, "runs", "experiments.jsonl")
+    if os.path.exists(exp):
+        for e in _exp_events(root) or []:
+            if e.get("status") == "running" and isinstance(e.get("cmd"), str):
+                adjudicate(f"experiments.jsonl running row {e.get('name')} ({e.get('started')})",
+                           e["cmd"])
+    if bad:
+        return FAIL, "; ".join(bad)
+    return PASS, f"{len(oom)} joinable OOM fact(s); no launch line or running row matches"
+
+
+def _broken_launch_line_oom():
+    """The real stop-window doc with the 200M line set back to --batch 32 --accum 1:
+    the exact shape eff.microbatch_32_oom records as OOM, and the shape p200m_4b_0902
+    launched twice on 2026-09-02. docs/ is a symlink in a shaped world, so it is copied
+    before the mutation -- writing through the link would write into the repo."""
+    import shutil
+    d = _tmp_repo_shaped()
+    os.remove(os.path.join(d, "docs"))
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    doc = os.path.join(d, "docs", "lessons", "stop_window_2026-09-02.md")
+    text = open(doc).read()
+    mutated = re.sub(r"(run_ddp\.sh[^\n]*?--batch )16( --accum )2\b",
+                     r"\g<1>32\g<2>1", text, count=1)
+    assert mutated != text, "broken world found no run_ddp.sh --batch 16 --accum 2 line to mutate"
+    open(doc, "w").write(mutated)
     return d
 
 
@@ -6387,6 +6471,13 @@ CHECKS = [
         _broken_mix,
     ),
     (
+        "launch_line_vs_oom_facts",
+        "no stop-window launch line or running experiments row matches a recorded OOM config on (dim, layers, batch, accum, seq)",
+        "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
+        check_launch_line_vs_oom_facts,
+        _broken_launch_line_oom,
+    ),
+    (
         "no_oversized_blob",
         f"no file over {MAX_TRACKED_MB}MB is tracked by git",
         "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
@@ -6838,6 +6929,7 @@ EVIDENCE = {
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo",
+    "launch_line_vs_oom_facts": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
