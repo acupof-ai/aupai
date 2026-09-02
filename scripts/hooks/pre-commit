@@ -484,8 +484,18 @@ def main():
         # real ledger for the shapes no commit provides. It is registered BEFORE the hook uses
         # the predicate on purpose: the predicate's home is b0's scripts/ledger_audit.py, and
         # these worlds are what says whether that function is the right one. Reads git history
-        # only, 0.3s measured.
+        # only, ~20s.
         "scripts/test_ledger_predicates.py",
+        # The predicate's home, and the history scan built on it. Its selftest asserts the two
+        # known cases -- a59ac1f flagged (a plain commit that reverted an amendment whose key is
+        # SHARED with the rows it amends, so merges-only, default history simplification, and
+        # key-presence all miss it) and c3a5a23 clean -- plus that the per-file dispatch really
+        # differs, since one predicate for both write styles is a false-alarm generator on the
+        # rewrite-style files. Six earlier versions of this scan each reported the ledgers clean
+        # or raised false alarms; the assertions are what separates them. Reads git history,
+        # measured 15.4s (the first version of this line guessed ~30s -- same overstatement de
+        # just corrected two lines up, so it is measured here rather than estimated).
+        "scripts/ledger_audit.py",
         # A/B (3)'s arm: two ways it costs a run and reports nothing -- zeroing nothing after
         # a rename (a bit-exact copy of the baseline that still logs as the arm), and looking
         # like a dead branch when it is not (upstream grad is exactly 0 at step 0 by
