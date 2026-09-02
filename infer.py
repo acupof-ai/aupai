@@ -11,7 +11,7 @@ model, cfg = load_checkpoint("/work/aupai/ckpt.pt.step2000", device="cuda:0")
 for p in model.parameters():
     p.data = p.data.contiguous()
 
-ids = json.loads(open(sys.argv[1]).read())
+ids = json.loads(open(sys.argv[1], encoding="utf-8").read())
 x = torch.tensor([ids], device="cuda:0")
 with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
     for _ in range(256):

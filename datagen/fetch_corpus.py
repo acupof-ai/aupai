@@ -28,7 +28,6 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, "data", "raw")
-CHUNK = 1 << 20
 
 
 def ensure_raw_location():
@@ -67,14 +66,6 @@ def disk_ok(target_bytes):
         f"{'ok' if ok else 'REFUSE'}"
     )
     return ok
-
-
-def _sha1(path):
-    h = hashlib.sha1()
-    with open(path, "rb") as f:
-        for b in iter(lambda: f.read(CHUNK), b""):
-            h.update(b)
-    return h.hexdigest()
 
 
 # ---------------------------------------------------------------- sources
