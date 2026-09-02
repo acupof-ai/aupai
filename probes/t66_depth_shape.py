@@ -11,7 +11,7 @@ The question is throughput and memory at a shape, and neither depends on which t
 Every candidate runs AttnRes ON (decided, not retested) and head_dim 128 (FlashKDA), so
 heads = d/128 and d is a multiple of 128.
 
-    python3 t66.py <A|B|C> [--seq N] [--batch N] [--steps N] [--find-batch]
+    python3 probes/t66_depth_shape.py <A|B|C> [--seq N] [--batch N] [--steps N] [--find-batch]
 """
 import argparse
 import json
