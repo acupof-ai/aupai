@@ -588,6 +588,9 @@ def main():
         #                           11/11 mutations of train.py go red naming an assertion.
         #   test_cursor_sum    ~4s  sum(row_cursor) == as_of_step x batch x accum x world,
         #                           against three real p200m_4b_0902 checkpoints. 8/8 red.
+        #                           Also (de-31) every save_checkpoint call site passes opt
+        #                           and step, by AST: a call that omits step writes no cursor,
+        #                           so the identity above passes VACUOUSLY on that path.
         # Neither takes a --selftest flag: the file IS the test, and its default path is
         # the gate. They are in the map so a train.py edit cannot land without them.
         "scripts/test_plan_length.py",
