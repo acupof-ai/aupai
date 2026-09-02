@@ -28,6 +28,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build_corpus as B  # noqa: E402
+from build_corpus import _NORM  # noqa: E402
 import near_dedup_postpass as ND  # noqa: E402
 
 THRESHOLDS = (0.7, 0.8, 0.9)
@@ -76,7 +77,10 @@ def _shingles(g):
     if g in _SHL:
         _SHL.move_to_end(g)
         return _SHL[g]
-    sh = frozenset(ND.word_shingles(ND.normalise_code(_read_doc(g))))
+    s = _NORM.sub("", _read_doc(g))
+    # char 5-gram — the SAME shingle the MinHash signature uses (build_corpus.MinHashLSH.signature 168-169),
+    # so exact Jaccard and the est metric measure the SAME J (fb: verify failed on definition mismatch).
+    sh = frozenset(s[i:i + 5] for i in range(max(1, len(s) - 4)))
     _SHL[g] = sh
     if len(_SHL) > _SHL_MAX:
         _SHL.popitem(last=False)
@@ -160,7 +164,7 @@ def main():
         return d, g - (0 if d == 0 else dom_bound[d - 1])
 
     out = {"domains": a.domains, "docs_total": n, "sample": "FULL (all shards)",
-           "method": "MinHash-J estimate + top-pair exact verify (n_perm=%d, bands=%d(%d/band)); est=MinHash-J" % (PERMS, BANDS, BAND_ROWS),
+           "method": "MinHash-J estimate + top-pair exact verify (n_perm=%d, bands=%d(%d/band), char 5-gram; est and exact use the same shingle, so J is J of that shingle)" % (PERMS, BANDS, BAND_ROWS),
            "candidate_pairs": len(pairs),
            "near_threshold_band": {"range": [BAND_LO, BAND_HI], "pairs": int(((est >= BAND_LO) & (est < BAND_HI)).sum())},
            "thresholds": {}}
