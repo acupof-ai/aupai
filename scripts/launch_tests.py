@@ -64,8 +64,32 @@ def _launch_shape():
         return None
 
 
-def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=ROOT):
-    """Write this test's verdict. `test_file` is __file__; the key is its repo path."""
+def _launch_mix():
+    """The mix the gate expects, imported for the same reason as the shape above.
+
+    Returns None when launch_gate cannot be imported OR does not define LAUNCH_MIX, and
+    never raises: a row must still land when this cannot be answered, and "mix unknown"
+    is reported rather than guessed. Deliberately does NOT fall back to a literal --
+    _launch_shape's docstring says a second copy would drift invisibly in exactly the case
+    the warning exists for, and a hardcoded mix path here would be that copy."""
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from launch_gate import LAUNCH_MIX
+        return LAUNCH_MIX
+    except Exception:
+        return None
+
+
+def record_launch_test(test_file, result, shape, real_kernel, mix=None, path=PATH, root=ROOT):
+    """Write this test's verdict. `test_file` is __file__; the key is its repo path.
+
+    `mix` is the data the test ran on, and it is the third field a row needs beside shape
+    and real_kernel. A row without it cannot answer the gate's question: the 20B launch
+    died at step 0 on a KeyError('content') while e2e was green, because e2e ran
+    data/mix_sample.json, whose corpus dir holds zero holdout slices. The shape was
+    pinned and the DATA was a different question (de-10). Optional only so an older row
+    keeps parsing -- a row that omits it is reported as mix unknown, never as the launch
+    mix."""
     missing = [k for k in SHAPE_KEYS if k not in shape]
     if missing:
         raise ValueError(f"shape is missing {missing}: a row that does not state its "
@@ -82,6 +106,7 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
         "result": result,
         "shape": {k: shape[k] for k in SHAPE_KEYS},
         "real_kernel": bool(real_kernel),
+        "mix": mix,
         "recorded": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "host": os.uname().nodename,
         # The fingerprint of what produced it. Without this the row stays valid after
@@ -112,9 +137,18 @@ def record_launch_test(test_file, result, shape, real_kernel, path=PATH, root=RO
         warn = ("  [NOT THE LAUNCH SHAPE: " +
                 ", ".join(f"{k} is {got}, launch is {want}"
                           for k, (want, got) in sorted(off.items())) + "]") if off else ""
+    # The mix, said here for the same reason as the shape: a pass on the sample mix is a
+    # real pass and must still be written, but it must not read as evidence for a launch
+    # whose data it never touched.
+    want_mix = _launch_mix()
+    if mix is None:
+        warn += "  [MIX UNRECORDED: this row cannot clear any launch mix]"
+    elif want_mix and mix != want_mix:
+        warn += f"  [NOT THE LAUNCH MIX: ran {mix}, launch is {want_mix}]"
     print(f"  recorded {key}: {result} at "
           f"d{shape['d']} L{shape['layers']} "
-          f"{'real kernel' if real_kernel else 'STAND-IN kernel'} -> "
+          f"{'real kernel' if real_kernel else 'STAND-IN kernel'}"
+          f"{' mix ' + mix if mix else ''} -> "
           f"{os.path.relpath(path, root)}{warn}")
     return rows[key]
 
@@ -124,7 +158,7 @@ def _selftest():
     import tempfile
 
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
-    from launch_gate import ARCH_TESTS, LAUNCH_SHAPE, gate_arch_tests
+    from launch_gate import ARCH_TESTS, LAUNCH_MIX, LAUNCH_SHAPE, gate_arch_tests
 
     d = tempfile.mkdtemp()
     try:
@@ -204,6 +238,31 @@ def _selftest():
                                    path=p2, root=d)
             assert "launch shape unknown" in buf.getvalue(), (
                 f"a missing launch_gate must warn, not raise: {buf.getvalue()!r}")
+
+        # The mix half of the same rule (de-10). Three cases, and the first is the one the
+        # 20B launch actually hit: e2e passed on data/mix_sample.json while the launch mix
+        # died at step 0, and the row said nothing either way because it had no mix field.
+        for mix_arg, want in ((None, "MIX UNRECORDED"),
+                              ("data/mix_sample.json", "NOT THE LAUNCH MIX")):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                                   real_kernel=True, mix=mix_arg, path=p2, root=d)
+            out = buf.getvalue()
+            assert want in out, f"mix={mix_arg!r} did not warn {want!r}: {out!r}"
+            with open(p2, encoding="utf-8") as f:
+                row = json.load(f)[ARCH_TESTS[0]]
+            assert "mix" in row, ("the row has no mix field at all: a record that cannot "
+                                  "say which data it ran on counts as no record (de-10)")
+            assert row["mix"] == mix_arg, f"the row lost its mix: {row['mix']!r} != {mix_arg!r}"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            record_launch_test(os.path.join(d, ARCH_TESTS[0]), "pass", dict(LAUNCH_SHAPE),
+                               real_kernel=True, mix=LAUNCH_MIX, path=p2, root=d)
+        out = buf.getvalue()
+        assert "NOT THE LAUNCH MIX" not in out and "MIX UNRECORDED" not in out, (
+            f"the launch mix itself was flagged; a warning that fires on the good case "
+            f"gets ignored on the bad one: {out!r}")
 
     print("launch_tests selftest OK: what the writer writes is what the gate accepts, "
           "a wrong-shape pass says so, and a missing launch_gate warns instead of raising")
