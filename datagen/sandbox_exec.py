@@ -28,6 +28,14 @@ import tempfile
 _SETUP = r"""set -e
 ROOT="$1"
 mount --make-rprivate /
+# The chroot root must be TRAVERSABLE by the unprivileged uid the test drops to. mkdtemp
+# creates it 0700 root-owned, and the failure that causes is completely misdirected:
+# every binary inside dies with `error while loading shared libraries: libc.so.6`, which
+# reads as a broken /usr bind. MEASURED on the pod (2026-09-02): as root `ls libm.so.6`
+# works and shows 644, as 65534 even /bin/sh cannot load libc -- because 65534 cannot
+# traverse $ROOT itself, so nothing under it resolves. Confining is the chroot's job, not
+# this mode bit's; /work and /tmp below are the only writable paths.
+chmod 755 "$ROOT"
 mkdir -p "$ROOT/usr" "$ROOT/dev" "$ROOT/proc" "$ROOT/tmp" "$ROOT/work"
 mount --bind /usr "$ROOT/usr"
 mount -o remount,ro,bind "$ROOT/usr"
@@ -76,18 +84,38 @@ mount -t proc proc "$ROOT/proc"
 mount -t tmpfs -o size=64m tmpfs "$ROOT/tmp"
 # /work is the per-run mkdtemp with code.py already written by the runner;
 # a tmpfs here would shadow it. chroot confines visibility to this tree.
+#
+# The workdir and /tmp must be writable BY THE UNPRIVILEGED UID the test runs as, and
+# they are owned by root because the runner created them. 65534 is the kernel's own
+# overflow uid, present on every Linux, so it needs no /etc/passwd inside the chroot.
+chown -R 65534:65534 "$ROOT/work" "$ROOT/tmp"
 ulimit -t 5 -v 2097152 -c 0
+# nproc caps the fork bomb, and ONLY WORKS ON A NON-ROOT UID: RLIMIT_NPROC is not
+# enforced for uid 0 (fb, survey A.3). It is set here, in the shell that is about to
+# setuid, because a limit set after the drop cannot be raised back.
+ulimit -u 64 2>/dev/null || true
 # /usr/bin/python3 is a symlink through /etc/alternatives, which the chroot
 # deliberately does not contain; resolve to the real binary on the host.
 PY=$(readlink -f /usr/bin/python3)
 shift
-# The command, from argv rather than baked in: a test runner needs to invoke
-# `-m pytest <file>` in a directory holding several files, not one hardcoded
-# path. Defaults to code.py when no command is given, so every existing caller
-# is unchanged (de-28a, 2026-09-02).
+# THE TEST NEVER RUNS AS UID 0. chroot alone leaves the process root inside the tree,
+# and root in a chroot is a well-known escape: it can mknod a block device for the host
+# disk, it ignores every DAC bit on the bind-mounted /usr, RLIMIT_NPROC does not apply
+# to it, and the classic chdir-then-chroot trick walks straight out. `setpriv --reuid
+# --regid --clear-groups --no-new-privs` drops to 65534 after the namespaces and the
+# chroot are in place -- that order matters, because each of those steps needs the
+# privilege it is dropping. --no-new-privs makes the drop irreversible through setuid
+# binaries (fb ruling, 2026-09-02, survey A.3).
+DROP="setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs"
+# cwd is /work, not the chroot root. Under uid 0 the cwd was `/` and a test writing a
+# relative path silently wrote into the chroot root -- which is root-owned, so the same
+# test failed with EACCES the moment the uid drop landed. The rollout marker test caught
+# it, though its assertion message blamed the wrong cause: the record read as "a peer's
+# workdir was visible" when the write had simply been denied. A relative write from a test
+# belongs in the workdir; -C puts it there (2026-09-02).
 if [ "$#" -eq 0 ]; then
-  exec chroot "$ROOT" /usr/bin/env -i PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
-    "$PY" -I /work/code.py
+  exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
+    $DROP "$PY" -I /work/code.py
 fi
 # NOT -I and NOT -E for the multi-file form. Both ignore PYTHONPATH, so the test
 # could not import the implementation beside it and `-m pytest` could not find
@@ -96,9 +124,9 @@ fi
 # everything this form needs (2026-09-02). Isolation here comes from the
 # namespaces and the chroot, not from python's flags; `env -i` already gives a
 # clean environment, and PYTHONNOUSERSITE keeps ~/.local out.
-exec chroot "$ROOT" /usr/bin/env -i PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
+exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
   PYTHONPATH="/work:$SITE" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
-  HOME=/work TMPDIR=/tmp "$PY" "$@"
+  HOME=/work TMPDIR=/tmp $DROP "$PY" "$@"
 """
 
 
@@ -180,9 +208,15 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
 
 
 def _no_sandbox_survivors():
-    """True if no sandbox python3 process is running on the host."""
+    """True if no sandbox python3 process is running on the host.
+
+    Matches on the /work paths the sandbox uses, not on one hardcoded cmdline: the setsid
+    double-fork probe runs `/work/code.py` through a different argv shape, and the old
+    single-string match would have reported no survivors while one slept for 300s.
+    """
     out = subprocess.run(["ps", "aux"], capture_output=True, text=True).stdout
-    return "python3 -I /work/code.py" not in out
+    return not [ln for ln in out.splitlines()
+                if "/work/code.py" in ln or "/work/test_solution.py" in ln]
 
 
 def _self_check():
@@ -201,6 +235,39 @@ def _self_check():
          1, "", "filesystem isolation (eval answers invisible)"),
         ("import os\nprint(os.listdir('/work'))", 0, "code.py", "only the tmpfs workdir is visible"),
         ("import sys\nprint(sys.stdin.read().strip())", 0, "hello", "stdin passthrough (example-based tests)"),
+        # The uid drop, as an assertion rather than a claim in a comment. Everything below
+        # depends on it: RLIMIT_NPROC is not enforced for uid 0, and root inside a chroot can
+        # mknod the host disk and walk out with chdir-then-chroot.
+        ("import os\nprint(os.getuid(), os.geteuid())", 0, "65534 65534",
+         "the test runs as an unprivileged uid, NOT root (fb ruling, survey A.3)"),
+        # Root's chroot escape, tried directly: mknod a block device for the host disk. As
+        # 65534 this is EPERM, so the code cannot manufacture a path to the raw disk.
+        ("import os\ntry:\n"
+         "    os.mknod('/tmp/disk', 0o600 | 0o060000, os.makedev(8, 0))\n"
+         "    print('REACHED made a block device')\n"
+         "except Exception as e:\n    print('blocked', type(e).__name__)\n",
+         0, "blocked", "cannot mknod a host block device (the classic chroot escape)"),
+        # fb's probe 1: setsid + double fork to leave the process group the runner kills.
+        # The pid namespace is what actually stops this -- every descendant dies with the
+        # namespace's init, whatever its pgid.
+        ("import os, sys, time\n"
+         "if os.fork():\n    print('parent done'); sys.exit(0)\n"
+         "os.setsid()\n"
+         "if os.fork():\n    os._exit(0)\n"
+         "time.sleep(300)\n", 0, "parent done",
+         "setsid double fork: the escapee dies with the pid namespace, checked below"),
+        # fb's probe 2: read the harness's own environment through /proc. The chroot's /proc
+        # is a fresh mount in a new pid namespace, so the harness is not even numbered there.
+        ("import glob\n"
+         "hits = [p for p in glob.glob('/proc/*/environ')]\n"
+         "leaked = []\n"
+         "for p in hits:\n"
+         "    try:\n"
+         "        leaked += [p for k in (b'AWS', b'TOKEN', b'KEY', b'SSH')\n"
+         "                   if k in open(p, 'rb').read()]\n"
+         "    except Exception:\n        pass\n"
+         "print('REACHED ' + str(leaked) if leaked else f'blocked, {len(hits)} procs visible')\n",
+         0, "blocked", "cannot read a secret out of another process's environ"),
     ]
     fails = 0
     for code, exp_rc, exp_out, label in cases:
