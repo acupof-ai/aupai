@@ -3531,8 +3531,16 @@ def check_facts_well_formed(root):
     Source standard: a fact's source is the command that produced it PLUS a durable
     artifact (score_matrix record / preds file / commit sha). runs/*.log is NOT a
     qualified source -- logs are deleted, overwritten, or replaced by the next
-    same-named run. A fact that cites only a log becomes unreproducible the moment
-    the log is cleaned.
+    same-named run: four facts cited logs a full-disk find on the pod could not produce
+    (de-16, 2026-09-02). Committing a log makes the path RESOLVE, not the source qualify.
+    Measured: overwriting runs/ab_vocab.log in the working tree left
+    `git show HEAD:runs/ab_vocab.log` byte-identical at sha256 923862e4 -- so what a
+    commit preserves is the blob, reachable only by sha, while the cited path now holds
+    the next run's bytes. A citation naming the path still reads the wrong content, and
+    this check cannot see the difference. Enforcing tracked-ness was tried and dropped:
+    `git ls-files` returns nothing usable in a broken world with no real .git, so the
+    branch could not be made to FAIL, and a check that cannot fail is an assertion.
+    The remedy stays a durable artifact per fact.
 
     Three-state source check (same shape as corpus_filters_fp):
     - path exists -> OK
