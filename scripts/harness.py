@@ -2090,13 +2090,17 @@ def check_pod_ledger_rows_home(root):
     except Exception as e:
         return SKIP, f"could not read the pod's ledgers: {type(e).__name__}: {e}"
     behind = [(rel, len(missing)) for rel, _np, _nl, missing, _c, _n in rows if missing]
-    onpod = sum(len([c for c in coll if c[1] == "result_only_on_pod"])
-                for _r, _np, _nl, _m, coll, _n in rows)
-    if not behind and not onpod:
+    # A key whose CURRENT rows disagree is the other half of "the pod's record did not come
+    # home": the row is present but says something else. It cannot be auto-applied -- which
+    # of two closes is right is a human's call -- so it WARNs like the missing case rather
+    # than passing silently. Counting only `missing` here would have reported PASS on the
+    # 14 disagreements the pull found on 2026-09-03.
+    disagree = sum(len(coll) for _r, _np, _nl, _m, coll, _n in rows)
+    if not behind and not disagree:
         return PASS, f"{len(rows)} ledger(s): every pod row's key is present locally"
     parts = [f"{rel} is missing {n} pod row(s)" for rel, n in behind]
-    if onpod:
-        parts.append(f"{onpod} row(s) carry a result on the pod and none locally")
+    if disagree:
+        parts.append(f"{disagree} key(s) whose current row differs between the pod and here")
     return WARN, "; ".join(parts) + " -- run scripts/pod_pull_ledgers.py"
 
 
