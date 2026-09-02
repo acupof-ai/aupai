@@ -8005,6 +8005,7 @@ def _selftest_auto_resume():
         "if '--resume' in sys.argv:\n"
         "    open(os.path.join(sys.argv[2], 'resumed.txt'), 'a').write(' '.join(sys.argv[3:]) + '\\n')\n"
         "    sys.exit(0)\n"
+        "print('traceback: the crash scene', flush=True)\n"
         "open(os.path.join(sys.argv[2], 'ckpt_arts.pt.step500'), 'w').write('x')\n"
         "sys.exit(rc)\n"
     )
@@ -8041,10 +8042,25 @@ def _selftest_auto_resume():
         rc, resumed = run(_KILL_CRITERION_EXIT)
         assert resumed == "", f"the kill criterion must NOT resume: {resumed!r}"
         assert rc == _KILL_CRITERION_EXIT, f"the kill-criterion code is returned as-is, got {rc}"
+
+        # The crash scene survives the resume that appends over the live log, and a
+        # newer interrupt save is preferred over the older periodic one.
+        for f in glob.glob(os.path.join(d, "runs", "arts.log.died_*")):
+            os.remove(f)
+        rc, resumed = run(1)
+        died = glob.glob(os.path.join(d, "runs", "arts.log.died_*"))
+        assert len(died) == 1, f"one crash, one archive: {died!r}"
+        with open(died[0]) as f:
+            assert "the crash scene" in f.read(), "the archive is the scene, not an empty file"
+        with open(os.path.join(d, "ckpt_arts.pt.interrupt.step900"), "w") as f:
+            f.write("x")
+        ck, step = _latest_step_ckpt("arts")
+        assert step == 900 and "interrupt" in ck, f"an interrupt save at a later step wins: {ck!r}"
     finally:
         ROOT, time.sleep = real_root, real_sleep
         shutil.rmtree(d, ignore_errors=True)
-    print("  auto-resume: crash resumes once, clean exit and kill criterion do not")
+    print("  auto-resume: crash resumes once, clean exit and kill criterion do not; "
+          "the scene is archived and a newer interrupt save wins")
 
 
 def _demo():
@@ -9539,12 +9555,25 @@ _KILL_CRITERION_EXIT = 42
 
 
 def _latest_step_ckpt(name):
-    """(path, step) of the newest ckpt_<name>.pt.step<N>, or (None, None)."""
-    best, best_step = None, None
-    for p in glob.glob(os.path.join(ROOT, f"ckpt_{name}.pt.step*")):
+    """(path, step) of the newest resumable checkpoint, or (None, None).
+
+    Two names are resumable: ckpt_<name>.pt.step<N> from the periodic save and
+    ckpt_<name>.pt.interrupt.step<N> from train.py's SIGTERM handler (:2479). The
+    interrupt file is by construction the newest thing on disk when a signal arrives --
+    written at the step the signal hit, after the last periodic save -- so matching only
+    `.pt.step*` resumes from up to save_every steps earlier and silently discards the
+    save whose whole purpose was to keep them. p500m_20b_0902 resumed from
+    .interrupt.step83 on 2026-09-02; this glob would have taken step0 or nothing.
+    Ties go to the interrupt file: it is the later write."""
+    best, best_step, best_int = None, None, False
+    for p in glob.glob(os.path.join(ROOT, f"ckpt_{name}.pt.step*")) + \
+             glob.glob(os.path.join(ROOT, f"ckpt_{name}.pt.interrupt.step*")):
         m = re.search(r"\.step(\d+)$", p)
-        if m and (best_step is None or int(m.group(1)) > best_step):
-            best, best_step = p, int(m.group(1))
+        if not m:
+            continue
+        step, is_int = int(m.group(1)), ".interrupt.step" in p
+        if best_step is None or (step, is_int) > (best_step, best_int):
+            best, best_step, best_int = p, step, is_int
     return best, best_step
 
 
@@ -9588,6 +9617,20 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None):
             return rc
         print(f"auto-resume {attempt + 1}/{args.auto_resume}: exit {rc}, resuming from step {step} in 60s",
               flush=True)
+        # Copy the crash scene before the resume appends over it. `cp`, not `mv`: the
+        # dead run's fd is gone but the resumed child inherits log_f by the same path,
+        # and moving the file out from under a live writer leaves it on an unlinked
+        # inode with the visible log empty. The step-83 scene survived only because a
+        # person remembered to archive it by hand at 01:38.
+        try:
+            import shutil
+
+            died = f"{log_path}.died_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+            shutil.copy2(log_path, died)
+            print(f"crash scene archived: {os.path.basename(died)}", flush=True)
+        except OSError as e:
+            print(f"crash scene NOT archived ({type(e).__name__}) -- the resume will append over it",
+                  file=sys.stderr, flush=True)
         time.sleep(60)
         resumes.append(step)
         rcmd = [c for c in cmd if not c.startswith("--resume")] + ["--resume", ckpt]
