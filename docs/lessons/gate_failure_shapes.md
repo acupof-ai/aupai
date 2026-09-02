@@ -8,6 +8,8 @@ source: fb 裁定 + 44-7/44-8 分流夜实测 + 2026-09-01/02 夜。44-6 草稿,
 
 每一条:一句话表述 + 实例。完整展开等发车后。
 
+> 整表说明(b0,2026-09-02,不进表):b0 提交前又用 `git diff --name-only HEAD main` 判「main 动过我的文件」——正确判据是 `git log HEAD..main -- <path>`,他自己提出、AGENTS 已写的规则,第三次踩。**能说出病名不等于免疫。**
+
 ## 1. 观察值 vs 外推值(fb 2026-09-02 裁定,原文)
 
 > 一个 token 数必须说明它是从缓存数出来的,还是从 stamp 外推的。外推值和实测值在文本上完全一样,差 0.48% 时看起来像舍入,而 0.48% 在 8.7B 上是 4200 万 token。和「亲历/重建」是同一原则的两个面:前者管来源,后者管数字。一个产物必须说明它是被观察到的还是被推算出来的。
@@ -274,6 +276,8 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 
 三条合为一句(e1-15 修复时的表述):**门禁认不出仓库自己的引用格式。** `path@sha` 是 44-13 立下的退休约定,gate_recipe_provenance 的模式停在扩展名、`@sha` 被丢掉、裸路径再死在 ls-files 上——每条退休引用都被读成死链(1a4be21 修成一个判断 `git cat-file -e <rev>:<path>`,三种失败同一个返回码)。
 
+尾注(正例,2026-09-02):问「这个提交是哪棵 worktree 敲的」——作者字段全是 `t`、七个分支全 contains,两者按构造答不了;reflog 的 `commit:` 创建事件能(tilerl 从 `worktrees/aupai-de/HEAD@{46} commit: de-16…` 读出 c0a5e6a 是 de 早先那轮的提交)。判据要能表达被问的性质:这次是选对了工具的例子。
+
 ## 30. 审计认不出门的字面量引用——「没有引用」只是「没有我扫的那种引用」(de,2026-09-02)
 
 §29 的镜像:§29 是门禁认不出仓库的引用格式,这条是审计认不出门禁的引用格式。一个扫描说「没有引用」时,它说的只是「没有我这个判据能表达的那种引用」。
@@ -302,6 +306,62 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 尾注(44-16,2026-09-02):b0 撞上的死锁——@rev selftest 的前提(仓库里有删除历史)是外部状态,落后分支上没有,而能满足它的正是被它挡住的那次合并。修法不是回答「合并中途判据是否成立」,是把前提改成自制的(临时仓里 commit 一个 probe 再删,四条判断跑在临时仓上):**依赖外部状态的前提改成自制前提,问题类消失,而不是被回答。**
 
+## 32. pod 侧的缺失不是关于仓库的陈述(de,2026-09-02)
+
+在 pod 上量到的「没有」,说的是 pod,不是仓库。两个视图(AGENTS.md:`tn exec` 是宿主机、`~/bin/pod` 是容器,同一路径两个目录)之间,缺席不传递。
+
+实例(be81192):de-16 的一遍把三条 `runs/*.log` 引用当「不存在」删了——pod 上 find 没有它们。但三条都被 git 跟踪、每个 checkout 都在(`t57_pad_ab.log` 自 fa43fed、`t57_twin.log` 自 233afca,均 2026-09-01,`git log --diff-filter=D` 为空):测量在 pod 上做,而那些是本地单卡 run 写的,pod 的 `/work/aupai/runs/` 只有 pod 作业写的东西。pod 侧缺席被读成仓库陈述,三个 fact 丢了一手证据,只剩探针(本身已被删、退成 @rev)或设计文档这些派生来源;原始日志一直在 runs/ 里跟踪着。
+
+规则:一个测量必须说明它在哪个视图上做的;把一个视图的缺席读成另一个视图的陈述,与 §17(参照物来自被检查侧)同族——参照物和被检查物必须在同一侧。
+
+## 33. 规则把人推向共享全局状态:stash 是仓库级单 ref(fb 核对,2026-09-02)
+
+与 §29 族不同:不是判据看不见性质,是门禁的正确要求经由一个错误习惯,诱导出按构造不安全的动作。
+
+事实(fb 对两棵树核对):`.git/refs/stash` 在多 worktree 布局下是仓库级单一 ref——所有 worktree 共享一个 stash 栈。e1 与 b0 同时 stash→merge→pop,各自取到对方的改动。核对后无内容丢失:b0 树上保有更新版本,e1 的测试文件完整在 b0 树里未跟踪。
+
+链条:门禁要求「behind-main 先 merge」(对)→ 习惯「merge 前树要干净」(错)→ 动作「stash 再 merge」(按构造不安全:stash 是共享全局状态,两个 worktree 同时用就串)。
+
+修法两层:规则改为「直接 merge、永不 stash」(merge 能带未提交改动走;带不动就先提交到自己的分支);加 `no_shared_stash` 检查(tilerl 在做)。
+
+第二条理由(b0,2026-09-02):`git stash` 对未跟踪文件静默不收,而新拆出的文件必然未跟踪——b0 的 model.py 留在盘上、train.py 切割进了 stash,一个动作把一次改动劈成两半。禁 stash 的理由从「共享全局状态」再加一条「未跟踪文件静默丢失」。
+
+## 34. 区间有两端,只验一端(b0,2026-09-02,与 §29 同族)
+
+一个区间有两端;校验只验起始端,结束端就是盲区——而结束端多带走的东西,正是拆分类改动里最贵的错误。
+
+实例(b0-8,5add1c8):model_module_split 设计页给 HybridLM 732-875、GatedMLA 358-414;实际结束在 862 和 408——865-873 是 Muon 段头加 POLAR_EXPRESS(Muon 的,留下)、411-412 是 FP8 段头加 `_FP8_MAX_E4M3`(FP8 的,留下)。按页面切走后 `NameError: POLAR_EXPRESS` + 四个 `F821 Undefined name _FP8_MAX_E4M3`。防这件事的校验脚本只核每个区间的起始行是那个定义,从不核结束行——`| HybridLM | 732-875 |` 过,因为 732 是 `class HybridLM`。b0 原话:"A range has two ends and I validated one."
+
+与 §29 同族:判据按构造只表达了「起始对不对」,表达不了「结束对不对」。
+
+补注(b0,2026-09-02):校验脚本补上「核结束行」后,常量正则 `[A-Z_]{2,} *=` 要求首字母大写,`_FP8_MAX_E4M3` 仍放行——改 `_?[A-Z][A-Z0-9_]+ *=` 才抓住。修一个漏检又漏一半,还是 29 族:判据修了一处,没修「判据按构造漏一半」这个性质。
+
+## 35. 动态验收只作用于搬走的代码,照不到留下但丢了名字的代码(b0,2026-09-02)
+
+拆分类改动的动态验收(跑一遍、加载、前向比对)只覆盖被搬走的代码;留在原地但丢了名字的代码,动态用例不进去就无话可说。修法:拆分类改动的验收必须含一道静态检查——这个缺口动态用例补不上。
+
+实例(b0-8,5add1c8):四条动态验收全绿——test_arch_compat(移动后跑通)、legacy ckpt strict=True 键集一致、同进程 torch.equal 逐位相同、构造期抛错——而 `_FP8_MAX_E4M3` 未定义:没有一条动态用例进 FP8 路径。hook 的 ruff F821 一秒抓到。b0 原话:"Four dynamic conditions on the moved code say nothing about code that stayed and lost a name -- the acceptance set needed a static pass, and the hook supplied it."
+
+附带同次发现:re-export 不能被 monkey-patch——`from X import name` 是另一个绑定,test_arch_compat 给 `train.chunk_kda` 打桩不再到达调用点;修测试(两边都打桩)不改模型。
+
+补注(b0,2026-09-02):`ruff F821` 只查新文件时 All checks passed——常量搬进了新文件,六个使用点留在 train.py,报错的是留下的一半。e1 的表述:「加多少动态用例都补不上,差的是检查的种类不是覆盖率」。b0 自报一个假数字:坏 model.py 量到 89 条 F821,是复现脚本只取 body 不带 header 的产物;真缺陷 8 条,全在 train.py。
+
+## 36. 扫描器的五个可信错答案:能引用别人的文件是哪些,不能用文件名回答(de,2026-09-02)
+
+一个「谁引用谁」的扫描器,五个看似合理的版本各打印一个自信的错数字。规则:扫描器打印任何数字前先过 known-answer——4 个必被 loader 到达、2 个必在 hook map、3 个必不被到达(含 harness.py 与 arch.html)。
+
+实例(de 的 de-5 清单,fb 转达):
+
+1. 无 runtime-loader 步 → 63 文件 41,955 行「可删」,含 23 个 glob 装载的 math 生成器——装载它们的代码在,文件名扫描看不见。
+2. loader 修过头 → 225/236 全成 loaded——判据从「太严」摆到「太松」,与 §31 过度修正同族。
+3. 裸 `*.py` 当注册表 → harness.py 自己进 LOADED——扫描器正在扫的文件被算成被引用。
+4. hook 不算 reader → 前 24 条里 17 条是每次提交都跑的 selftest——它们的 reader 是 hook,不是 import。
+5. `scripts/hooks/pre-commit` 无扩展名,被 TEXT_EXT 过滤,HOOK 集合为空——④的修复看起来生效,实际没有:修了判据,但判据的输入被另一个过滤器清空。
+
+附:arch.html 的 reader 是 `.github/workflows/pages.yml`——.yml 也是 reader。「reader 是哪些文件」同样不能用扩展名回答。
+
+规则合一句:引用关系是运行时/装载时的事实,不是文件名的事实;扫描器的 known-answer 夹具必须同时含正例(必到达)和反例(必不到达)——少一边就是 §29 的盲区。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -318,3 +378,8 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - de 审计更正(2026-09-02):9209cde 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
 - de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
 - fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
+- be81192(2026-09-02):pod 侧 find 缺席被读成仓库陈述,三条被跟踪的 runs/*.log 引用误删后恢复
+- fb 转达并核对(2026-09-02):e1/b0 并发 stash 互串——refs/stash 仓库级单 ref;规则改「直接 merge、永不 stash」+ no_shared_stash 检查(tilerl)
+- b0-8(2026-09-02):5add1c8 model.py 拆分——区间结束行错带走 POLAR_EXPRESS/_FP8_MAX_E4M3、四动态全绿 F821 抓到未定义名;fb 转达 stash 不收未跟踪文件
+- de 的 de-5 清单(fb 转达,2026-09-02):引用扫描器五个可信错版本;known-answer 规则 4 loader-reached/2 hook-map/3 not-reached;arch.html 的 reader 是 pages.yml
+- b0 补注(849993f,fb 转达,2026-09-02):F821 只查新文件的盲区 + 89 条假数字(真 8 条全在 train.py);结束行正则漏下划线开头常量;`git diff --name-only HEAD main` 第三次踩自己立的规则
