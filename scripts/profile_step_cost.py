@@ -240,9 +240,27 @@ def main():
     ap.add_argument("--fp8", action="store_true", default=P200M["fp8"])
     ap.add_argument("--grad_ckpt", action="store_true", default=P200M["grad_ckpt"])
     ap.add_argument("--json", default=None)
+    ap.add_argument("--trace", nargs="?", const=True, default=None,
+                    metavar="PATH",
+                    help="export a Chrome trace of the last --trace-steps steps for "
+                         "scripts/trace_classes.py (default runs/trace_step_cost.json)")
+    ap.add_argument("--trace-steps", type=int, default=3,
+                    help="how many steps the trace covers. Keep it small: record_shapes holds "
+                         "per-kernel shape metadata for the whole window and OOMed the 206M "
+                         "shape at 93.8/95.2 GiB over a longer one")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
+    # Argument validation BEFORE any setup. This guard first sat beside the profiler
+    # construction, after setup_ddp and build_mix -- so a bad flag pair would have refused
+    # only after ~2.5 min of loading 156 GB of token caches, on cards someone else is queued
+    # for. A refusal that costs the queue what a run costs is not a refusal.
+    if a.trace and a.trace_steps > a.steps:
+        print(f"FAIL: --trace-steps {a.trace_steps} exceeds --steps {a.steps}. The trace window "
+              f"must fit inside the timed steps, or prof.start() is never reached and the "
+              f"export writes an empty trace -- a silent nothing that reads as 'traced'.",
+              file=sys.stderr)
+        return 1
 
     import torch
     from torch.nn.parallel import DistributedDataParallel as DDP
@@ -323,7 +341,24 @@ def main():
               f"fp8={fp8}, grad_ckpt={a.grad_ckpt}, warmup {a.warmup} steps discarded",
               flush=True)
 
+    # A Chrome trace of the LAST --trace-steps timed steps, for scripts/trace_classes.py.
+    # record_shapes is REQUIRED by trace_classes: it derives a GEMM's ideal time from
+    # 2*M*N*K, and a kernel whose shapes the trace does not carry is reported as unknown
+    # rather than given a guessed ideal. It is also what OOMed b0's trace at the 206M shape
+    # -- per-kernel shape metadata is held for the whole profiled window, 93.8 of 95.2 GiB on
+    # a config that trains fine. So the window is the last few steps only, and with_flops
+    # stays OFF: trace_classes computes FLOPs itself from the shapes, so with_flops buys a
+    # column nothing reads and pays for it in the same memory (b0, measured).
+    prof = None
+    trace_from = a.steps + a.warmup - a.trace_steps
+    if a.trace:
+        from torch.profiler import ProfilerActivity, profile
+        prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                       record_shapes=True, with_flops=False, with_stack=False)
+
     for st in range(a.steps + a.warmup):
+        if prof is not None and st == trace_from:
+            prof.start()
         torch.cuda.synchronize()
         t_step = time.perf_counter()
         t_fwd = None
@@ -376,6 +411,22 @@ def main():
             torch.cuda.synchronize()
             nccl.append(time.perf_counter() - t0)
             del g
+
+    trace_path = None
+    if prof is not None:
+        prof.stop()
+        # Rank 0 only: eight ranks writing eight traces of the same step answers nothing
+        # extra and the files are large. trace_classes.py consumes one.
+        if is_main:
+            trace_path = a.trace if isinstance(a.trace, str) else "runs/trace_step_cost.json"
+            if not os.path.isabs(trace_path):
+                trace_path = os.path.join(ROOT, trace_path)
+            os.makedirs(os.path.dirname(trace_path), exist_ok=True)
+            prof.export_chrome_trace(trace_path)
+            sz = os.path.getsize(trace_path) / 1e6
+            print(f"trace: {trace_path} ({sz:.1f} MB, {a.trace_steps} steps, record_shapes=True) "
+                  f"-> python3 scripts/trace_classes.py {os.path.relpath(trace_path, ROOT)} "
+                  f"--steps {a.trace_steps}", flush=True)
 
     saves = []
     if is_main:

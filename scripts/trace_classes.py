@@ -120,10 +120,49 @@ def _shape_bytes(shapes: list, width: int) -> int | None:
     return total * width if total else None
 
 
+def _shape_index(events: list[dict]) -> dict:
+    """External id -> the cpu_op that launched it, for its recorded shapes.
+
+    A CUDA kernel event carries no Input Dims of its own; the shapes live on the
+    aten op that launched it, joined by "External id". Reading them off the
+    kernel returns nothing, which is why the first run of this script reported
+    every ideal time as unknown.
+    """
+    ops = {}
+    for e in events:
+        if e.get("cat") != "cpu_op":
+            continue
+        a = e.get("args") or {}
+        x = a.get("External id")
+        if x is not None and a.get("Input Dims") and x not in ops:
+            ops[x] = e
+    return ops
+
+
+def _busy_us(spans: list[tuple[float, float]]) -> float:
+    """Union of the spans, not their sum.
+
+    Kernels on different streams overlap, so summing durations double-counts
+    and can exceed the wall clock -- the first run reported a NEGATIVE idle,
+    which is the arithmetic saying so.
+    """
+    total, cur_s, cur_e = 0.0, None, None
+    for s, e in sorted(spans):
+        if cur_e is None or s > cur_e:
+            if cur_e is not None:
+                total += cur_e - cur_s
+            cur_s, cur_e = s, e
+        else:
+            cur_e = max(cur_e, e)
+    return total + (cur_e - cur_s if cur_e is not None else 0.0)
+
+
 def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
     """Per-class device time, share, ideal time and the ratio."""
     per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0})
-    busy_us = 0.0
+    ops = _shape_index(events)
+    spans: list[tuple[float, float]] = []
+    sum_us = 0.0
     tmin, tmax = None, None
     for e in events:
         if e.get("ph") != "X":
@@ -135,14 +174,16 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         name = e.get("name", "")
         cls = classify(name)
         args = e.get("args") or {}
-        shapes = args.get("Input Dims") or args.get("Input dims") or []
-        types = args.get("Input type") or []
+        op = (ops.get(args.get("External id")) or {}).get("args") or {}
+        shapes = op.get("Input Dims") or []
+        types = op.get("Input type") or []
         width = next((DTYPE_BYTES[t] for t in types if t in DTYPE_BYTES), None)
         rec = per[cls]
         rec["us"] += dur
         rec["n"] += 1
-        busy_us += dur
+        sum_us += dur
         ts = float(e.get("ts", 0.0))
+        spans.append((ts, ts + dur))
         tmin = ts if tmin is None else min(tmin, ts)
         tmax = ts + dur if tmax is None else max(tmax, ts + dur)
         ideal = None
@@ -159,13 +200,14 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         else:
             rec["ideal_us"] += ideal
     wall_us = (tmax - tmin) if (tmin is not None and tmax is not None) else 0.0
+    busy_us = _busy_us(spans)
     rows = []
     for cls, r in sorted(per.items(), key=lambda kv: -kv[1]["us"]):
         covered = r["n"] - r["unknown"]
         rows.append({
             "class": cls,
             "gpu_ms_per_step": r["us"] / 1000.0 / steps,
-            "share": r["us"] / busy_us if busy_us else 0.0,
+            "share": r["us"] / sum_us if sum_us else 0.0,
             "kernels": r["n"],
             "ideal_ms_per_step": (r["ideal_us"] / 1000.0 / steps) if covered else None,
             "ratio": (r["us"] / r["ideal_us"]) if r["ideal_us"] > 0 else None,
@@ -221,8 +263,10 @@ def _selftest() -> None:
     # shapes must land in shapes_missing rather than distorting the ratio.
     flops = 2 * 100 * 100 * 100
     us = flops / PEAK["fp8"] * 1e6
-    ev = [{"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "dur": us, "ts": 0,
-           "args": {"Input Dims": [[100, 100], [100, 100]]}},
+    ev = [{"ph": "X", "cat": "cpu_op", "name": "aten::mm", "dur": 1.0, "ts": 0,
+           "args": {"External id": 1, "Input Dims": [[100, 100], [100, 100]]}},
+          {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "dur": us, "ts": 0,
+           "args": {"External id": 1}},
           {"ph": "X", "cat": "kernel", "name": "mystery", "dur": 5.0, "ts": us,
            "args": {}}]
     rep = analyse(ev, steps=1)
@@ -232,7 +276,25 @@ def _selftest() -> None:
     assert other["ratio"] is None and other["shapes_missing"] == 1, other
     # idle is wall minus busy, and the two kernels here are back to back.
     assert abs(rep["idle_ms_per_step"]) < 1e-9, rep
-    print("trace_classes selftest OK: classes, A_log split, roofline, idle")
+    # Overlapping kernels on two streams: busy is the UNION, so idle never goes
+    # negative. Summing durations here would give 3.0 busy against 2.0 wall.
+    assert _busy_us([(0.0, 2.0), (1.0, 2.0)]) == 2.0
+    assert _busy_us([(0.0, 1.0), (2.0, 3.0)]) == 2.0
+    over = [{"ph": "X", "cat": "kernel", "name": "a", "dur": 2.0, "ts": 0.0, "args": {}},
+            {"ph": "X", "cat": "kernel", "name": "b", "dur": 1.0, "ts": 1.0, "args": {}}]
+    r2 = analyse(over, steps=1)
+    assert r2["busy_ms_per_step"] <= r2["wall_ms_per_step"], r2
+    assert r2["idle_ms_per_step"] >= 0.0, r2
+    # Shapes come from the launching cpu_op, joined by External id -- a kernel
+    # carries none of its own, and reading them off it yields no ideal at all.
+    joined = [{"ph": "X", "cat": "cpu_op", "name": "aten::mm", "ts": 0.0, "dur": 1.0,
+               "args": {"External id": 9, "Input Dims": [[4, 8], [8, 16]]}},
+              {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "ts": 0.0, "dur": 5.0,
+               "args": {"External id": 9}}]
+    r3 = analyse(joined, steps=1)
+    g = next(r for r in r3["rows"] if r["class"] == "gemm")
+    assert g["shapes_missing"] == 0 and g["ratio"] is not None, g
+    print("trace_classes selftest OK: classes, A_log split, roofline, idle, join")
 
 
 def main() -> None:

@@ -1,7 +1,7 @@
 ---
 question: RL 阶段 4(b) 的成对评委协议——27B 对同一任务两条 rollout 的评分规则、位置交换去偏、弃权与平局处理、验收测试
 status: open
-source: 用户裁定(无训练奖励模型,docs/lessons/claude_code_rl.md Ruling);sandbox_env_survey §C(main f04ef2e);44-19, pair tilerl;tilerl 一审(2026-09-02):验收集与生产集解耦、tie 不进分母、subgroup 字段;tilerl 二审(2026-09-02):参与下限 15/20 预登记——0.8 防判错,参与门防不判
+source: 用户裁定(无训练奖励模型,docs/lessons/claude_code_rl.md Ruling);sandbox_env_survey §C(main f04ef2e);44-19, pair tilerl;tilerl 一审(2026-09-02):验收集与生产集解耦、tie 不进分母、subgroup 字段;tilerl 二审(2026-09-02):参与下限 15/20 预登记——0.8 防判错,参与门防不判;tileRL 半落地(a702c9a,2026-09-02):奖励映射见 §5b
 ---
 
 # 成对评委协议(pairwise judge protocol)
@@ -69,6 +69,18 @@ RL 阶段 4(b) 的奖励来源。用户裁定不做训练奖励模型,所以**�
 
 输出:每对判定(A/B/tie/abstain)+ 验收报告(一致率、弃权率、tie 率、n、验收集/生产集行数)。
 
+## 5b. 奖励映射(tileRL 侧,a702c9a,2026-09-02)
+
+评委判定到 GRPO 优势的映射在 tileRL 仓库 `src/tilerl/judge.py`。三条规则在代码里执行,不靠文档:
+
+1. **前置条件是执行的**:rollout 先按测试结果分组,评委只在 all-pass 或 all-fail 子组内被调用——测试能区分的对**根本到不了评委**。测试用一个会 raise 的假评委验证:被调用即红。
+2. **只用序,不用置信度**:verdict → Copeland 胜场数 → 子组带内均匀映射。用 Copeland 不用 Elo/Bradley-Terry:成对 LLM 判定不保证传递性,a>b、b>c、c>a 的环在 Copeland 下是三个相等的胜场数,即「无信号」;评分模型会从自相矛盾的判定里造出一个序。
+3. **两个带不相接**:pass (0.6, 1.0) / fail (0.0, 0.4)。selftest 抓出过真 bug——最初写 (0.5,1.0)/(0.0,0.5) 共用端点,最差的 pass 和最好的 fail 打平,而那正是测试已经判定过的唯一一个序。
+
+负对照(tilerl 自测):把带改回相接 → `test_tests_outrank_the_judge_whatever_it_says` 变红;去掉位置交换只信第一次判定 → 另两个变红。
+
+接口:`judgement_rows` 直接产出 §5 评分器吃的行,`subgroup` 逐行带上,生产行 `test_winner=null`,`pair_id` 形如 `task7:0v1`。「生产侧不喂 mixed 对」的断言在 `judge_rewards` 的分组逻辑里,不是事后检查。44 端到端验过:tileRL 行 → `eval/pairwise_judge.py` score(),生产世界 n_production=2、验收世界 16/20 → agreement 0.8、accepted=true。
+
 ## 6. 参考文献(sandbox_env_survey §C,2026-09-02 fetch 核验)
 
 - J1(2505.10320):双序一致,奖励一致性——本协议 §2 的直接依据。
@@ -82,3 +94,4 @@ RL 阶段 4(b) 的奖励来源。用户裁定不做训练奖励模型,所以**�
 1. 20 个双任务的来源(de-28 沙箱里的 impl+test 对,或 3b 挖的 code_supply)——tilerl 接 API 时定。
 2. 评委 prompt 的最终措辞(本文件 §1 是规格,tilerl 实现时可微调,rubric 优先级不动)。
 3. 一致率 0.8 是预登记值;首次实测后若在 0.7-0.8 之间,不调线,报「不可用」并记失败模式。
+4. 真正的 27B 评委调用:tileRL 侧 `judge` 是 callable,没写死任何模型;跨族评委准入(27B 策略 → 27B 不能当评委)是调用方的事。27B serving 已在 pod(两张卡,见 `eff.qwen38_27b_scoring_service`)。
