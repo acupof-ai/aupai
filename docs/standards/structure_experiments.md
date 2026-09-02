@@ -185,6 +185,27 @@ L=32 抄来的（那里 4 MLA 刚好 7:1）——**把一个只在 L=32 成立�
 **预注册读数**：0.02 nat 门（见 §4 的 sigma 说明）+ 吞吐差。**AttnRes OFF 必然更快**（少一路深度注意力），
 所以读的是**它换来多少 loss**，不是"哪个快"。
 
+### ON 臂的 source-read 计数：181 / 1121，不是 325 / 2145
+
+`eff.grad_ckpt_inverts_with_depth` 记的 "325 at L=12 到 2145 at L=32、峰值 65 个
+[B,T,D] 活张量对 25 个" 是**默认参数的世界，不是模型的世界**。
+`probes/t71_depth_lr_rule.py:130` 的 `source_reads(L, blocks=0)` 在 `blocks=0` 时取
+`nb = n_sub = 2L`，于是**每个 sublayer 都是一个块边界、当场把自己的输出升进 `done`**；
+真实调用是 `blocks=L`，`model.py:399` 让 `partial` 一直挂到块边界才升。
+两套数并列（代码模拟为准，`scripts/attnres_fused_reference.py` 复算）：
+
+| | L=12 | L=32 | 比值 |
+|---|---|---|---|
+| `blocks=0`（被记下的） | 325 reads / 25 peak | 2145 / 65 | 6.60× |
+| `blocks=L`（真实） | **181 / 13** | **1121 / 33** | **6.19×** |
+
+**O(L²) 这个结论活着**：2.67× 深度换 6.19× 读数，只有常数错了，量级没错，
+所以 `eff.grad_ckpt_inverts_with_depth` 的"两个仪器一个机制"仍然成立
+（内存侧那半是独立测的，不依赖这个计数）。峰值那个数同样要减半读：33 对 13，不是 65 对 25。
+**这条错法的形状**：把一个函数的**默认参数值**当成**实测配置**记进 fact
+——与 `eff.fb_mfu` 的 "batch 32" 同形（`docs/lessons/gate_failure_shapes.md` §62），
+今天第二次。`facts/` 由 e1 改，我不动。
+
 **两种结果各触发什么**：
 - **OFF 的 loss 劣化 < 阈值** → **关掉**，把省下的吞吐写进 200M/300M 配置，
   并撤掉 `Block.sublayers()` 的必要性（**但 b0-8 的 `AttnRes` 构造期守卫保留**——
