@@ -1,6 +1,6 @@
 {
  "probe": "t65_gold_bpb",
- "tokenizer_fp": "db1025e19d15401b",
+ "tokenizer_file_fp": "db1025e19d15401b",
  "limit": 200,
  "sets": {
   "code_500": 200,

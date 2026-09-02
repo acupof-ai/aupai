@@ -9,7 +9,7 @@ import torch
 from flask import Flask, Response, jsonify, request
 
 from sampling import top_p_sample
-from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
+from scripts.loader import load_checkpoint, load_tokenizer
 
 # ── load model ──
 
@@ -54,25 +54,15 @@ def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
 
 
 def format_history(history):
-    """The format the SFT data is actually in: 问：/答：, one turn at a time.
+    """ChatML multi-turn via loader.format_history (the format the SFT data is in),
+    truncated to the last 800 chars as a context guard. The previous body called
+    format_prompt (ChatML) and then appended the literal answer-prompt the docstring
+    claimed -- a hybrid the model was never trained on; the docstring described
+    neither the code nor the data."""
+    from scripts.loader import format_history as _chatml
 
-    ChatML specials appear zero times in any SFT pack (they hold slots 32768-32771
-    against a multi-turn SFT not yet built). Prior turns stay as context in the same
-    shape: trained on single-turn <eos>-separated examples, so this is mild extrapolation.
-    """
-    parts = []
-    for msg in history:
-        if msg["role"] == "user":
-            parts.append(format_prompt(msg["content"]))
-        else:
-            parts.append(f"{msg['content']}\n")
-    text = "".join(parts)
-    if not text.endswith("答："):
-        parts.append("答：")
-        text = "".join(parts)
-    if len(text) > 800:
-        text = text[-800:]
-    return text
+    text = _chatml(history)
+    return text[-800:] if len(text) > 800 else text
 
 
 # ── flask ──

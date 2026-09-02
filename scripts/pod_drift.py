@@ -30,7 +30,14 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# POD_DRIFT_ROOT: the hook runs a STAGED COPY of this file from the gitdir
+# (<common>.git/worktrees/<name>/pod_drift_staged.py in a linked worktree), where
+# __file__-relative ROOT resolves to <common>.git/worktrees -- not the worktree.
+# The manifest then writes to a phantom path and the hook's check reads the
+# unregenerated worktree manifest, refusing a commit that deletes scoped files
+# (measured 2026-09-02, 44-15). The hook passes the real root explicitly.
+ROOT = os.environ.get("POD_DRIFT_ROOT") or os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 
 # Files that execute on the pod (pretrain -> score flow), plus the files that DECIDE
