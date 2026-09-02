@@ -84,5 +84,5 @@ performance sprint's numbers comparable:
 diff (AGENTS.md, the manifest, facts/efficiency.json, harness.py, trace_classes.py) lies
 outside the profiler's import path, so the A/B stands, and its report carries each arm's
 stamp. The rule that the launch-window freeze already implied: while any job holds a card,
-nobody pushes unless every changed file is outside that job's import path and the push is
+nobody pushes unless every changed file is outside the set of files the job reads at runtime (code it imports, the mix and config it loads, the stamp and manifest, its shell wrapper) and the push is
 named in the job's report; during a two-arm A/B nobody pushes at all.
