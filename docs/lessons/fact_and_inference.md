@@ -1,7 +1,7 @@
 ---
 question: "why does a sentence that states a measurement and then draws a conclusion from it get read as all-measurement, and what makes the pair separable"
 status: recorded
-source: "de, 2026-09-02. Five instances, four found in one day while fixing train.py's resume path and the fifth in this document's own first draft: train.py:189 (a bisect number plus a ratio inferred from it), train.py:217 (the inference alone, contradicting :189), Cfg._plan_trimmed (a name asserting what the code did not do), scripts/harness.py:1955 _noted_gone (two facts sharing one field), and this file's first draft quoting 2.27x as grad_ckpt's cost when its two arms differ in two variables. tilerl asked for the entry after the first."
+source: "de, 2026-09-02 and 2026-09-03. Six instances: train.py:189 (a bisect number plus a ratio inferred from it), train.py:217 (the inference alone, contradicting :189 by an order of magnitude), Cfg._plan_trimmed (a name asserting what the code did not do), scripts/harness.py:1955 _noted_gone (two facts sharing one field), the `step N/N` completion criterion (correct at every layer, measuring total_steps mod 10 rather than completion), and train.py:1034 (a run-end save inferring plan-complete from a missing step, and storing the inference as a cursor -- 213,164 rows overstated). Three of the six were written by someone who already knew the rule, including this document's own first draft quoting 2.27x as grad_ckpt's cost. tilerl asked for the entry after the first."
 ---
 
 # 事实和推断不能共处一句
@@ -10,10 +10,10 @@ source: "de, 2026-09-02. Five instances, four found in one day while fixing trai
 ——测过、还是推过——在传递中丢失。丢失不是因为读者粗心:一个句子只有一个
 可信度,而句子的可信度由它最强的部分决定。
 
-作者也是读者。本文初稿就犯了它要讲的错,记在第 2 节里——不是谦辞,是这一类
-最短的证据:知道这条规则不足以遵守它。
+作者也是读者。本文初稿就犯了它要讲的错(第 2 节),而第 5、6 两条是在本文落地
+之后一小时内发现的,一条在我自己写的 fact 里、一条在存盘路径上——不是谦辞,是这一类最短的证据:知道这条规则不足以遵守它。
 
-## 五个实例,四个在同一天
+## 六个实例
 
 ### 1. `train.py:189` — 测量后面跟一个推断,同一个注释
 
@@ -95,6 +95,50 @@ return bool(named and re.search(r"prun|delet|zero|...", note, re.I))
 不是句子共处,是**字段**共处;拼接把两个事实变成一个字符串,判据在字符串上
 做 AND,位置信息在拼接那一步就没了。
 
+### 5. `step N/N` — 每一层都对,而量的不是那件事
+
+这一条不是句子也不是名字,是**判据**,而它是这一类里最难发现的形态。
+
+`eff.resume_inflates_total_steps` 写过:415 个 log 里 35 个打出 `step N/N`,
+所以「有 run 跑到过终点」。2026-09-03 200M 那个 resume 真的跑完了,而它对这个
+scan **完全不可见**——最后一条 step 行是 `3810/3814`,因为 step 行每 10 步打
+一次,而 3814 不是 10 的倍数。
+
+回头看那 35 条:**total_steps 全部 ≡ 0 (mod 10)**。
+
+```
+step N/N 量的是:total_steps 是日志间隔的倍数
+它声称量的是:run 跑到了终点
+```
+
+每一层都对。正例上全中,反例上会红,连细节都是对的——`grep -oE 'step
+([0-9]+)/\1'` 会把 `step 1460/14606` 读成跑完,换成 awk 逐字段比较是必要的修
+正。**而整体量错了对象**,并且它的样本恰好排除了唯一能推翻它的那个 run。
+
+改成收尾行判据后:51 个 log 有 `ep N/M train`,其中 **49 个训练了非零 loss**。
+另 2 个(`rehearse_resume`、`e2e_tmp`)在**零步之后照样打收尾行并存盘**——就是
+16000/7998 那个。所以判据必须两半都要,而这一半只有在见到反例之后才写得出来。
+
+和前四条的关系:前四条是一个句子里事实与推断不分,这一条是**判据与它声称的
+属性不是同一件事**,而两者的后果一样——读者拿走结论,来源丢失。区别在于判据
+不会露出破绽:它在能构造的每个 broken world 上都表现正确。
+
+### 6. `:1034` — 同一个形状,写进了 artifact
+
+`train.py:2561` 存 run-end checkpoint 时不传 `step`;`:1034` 把「没有 step」读成
+`no step (run-end save): the plan is complete`,于是写 plan-complete 计数。
+
+**一个事实(没传 step)和一个从它推出的结论(所以 plan 跑完了),在同一行,而
+结论被当成数据存进了文件。** 那个推断在写下时是真的——跑完循环就等于跑完
+plan。`--max_steps` 用来约束 resume 之后就不真了。
+
+代价是可量的:同一个 run 的两个 ckpt 相差几秒,`.ep1` 的 cursor 和是
+976,384 = 3814 × 256(实读行数),裸 `.pt` 是 1,189,548,**多 213,164 行 =
+0.87B token 这个 run 从没训过**。从裸 ckpt resume 会静默跳过它们。
+`facts/efficiency.json#eff.run_end_cursor_overstates_under_max_steps`。
+
+这一条是在本文落地一小时后发现的,在同一个 repo 的存盘路径上。
+
 ## 为什么这一类不会被发现
 
 | 机制 | 后果 |
@@ -103,8 +147,10 @@ return bool(named and re.search(r"prun|delet|zero|...", note, re.I))
 | 推断比测量短、更好用 | 引用时被优先抄走,`2.4x` 比一整句 bisect 结果好放进表格 |
 | 消费点照名字/结论用 | 名字错而两个消费点都对,没人有理由回去查 |
 | 拼接消灭位置 | 两个各自为真的事实,合成一个假的结论 |
+| 判据在每个 broken world 上都对 | 它量错了对象,而错法不会露出破绽(第 5 条) |
+| 推断被存成数据 | 后来的读者拿到的是一个数字,不是一个当时为真的推理(第 6 条) |
 
-五条都不需要任何人犯错,第五条还是知道规则的人当天写的。
+六条都不需要任何人犯错,后三条(初稿的 2.27x、第 5、第 6)还是知道规则的人当天写的。
 
 ## 规则
 
