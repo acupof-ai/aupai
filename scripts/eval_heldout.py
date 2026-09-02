@@ -163,13 +163,19 @@ def ids_sha(ids):
 def load_ours(ckpt, device):
     import torch
 
-    from train import Cfg, Transformer
+    # HybridLM, not "Transformer": the first version of this imported a class name that does
+    # not exist in train.py -- carried over from the file this replaces without being run.
+    # ImportError at load time, i.e. AFTER the arm had trained. Caught by loading the PRE-SFT
+    # checkpoint on CPU before the arms finished; the selftest cannot cover this because it
+    # would need a real checkpoint, so the load is probed against an existing one instead.
+    # sft_math.py:25-38 is the authority on how our model is constructed.
+    from train import Cfg, HybridLM
 
     ck = torch.load(ckpt, map_location="cpu", weights_only=False)
     for k, v in (ck.get("cfg") or {}).items():
         if hasattr(Cfg, k):
             setattr(Cfg, k, v)
-    model = Transformer(Cfg).to(device)
+    model = HybridLM(Cfg).to(device)
     sd = ck.get("model") or ck.get("state_dict") or ck
     missing, unexpected = model.load_state_dict(
         {k.replace("_orig_mod.", "").replace("module.", ""): v for k, v in sd.items()},
@@ -555,6 +561,65 @@ def selftest():
     if abs(a4 - 2 * s_long) > 1e-4 or t4 != 2 * n_long:
         fails.append(f"the same row twice did not double the sum ({s_long:.6f} -> {a4:.6f}): "
                      f"score() is not summing")
+
+    # 4c. THE HF OUTPUT SHAPE. A transformers model returns a ModelOutput, not a tensor, and
+    #     score() unwraps .logits. That branch is only taken by the control arm, so it would
+    #     first execute at result time -- after two hours of training, with nothing to show.
+    #     Exercised here with a stand-in that returns an object rather than a tensor: the sum
+    #     must equal the tensor-returning model's exactly.
+    class Wrapped(torch.nn.Module):
+        """Same logits as Ramp, returned the way transformers returns them."""
+
+        class Out:
+            def __init__(self, logits):
+                self.logits = logits
+
+        def __init__(self, inner):
+            super().__init__()
+            self.inner = inner
+
+        def forward(self, x):
+            return self.Out(self.inner(x))
+
+    try:
+        w_loss, w_tok = score(Wrapped(m), "control", [short, long], "cpu", 2, 0)
+    except Exception as e:  # noqa: BLE001 -- an unwrap that stops working raises here
+        w_loss, w_tok = None, None
+        fails.append(f"an HF-shaped output raised instead of scoring: "
+                     f"{type(e).__name__}: {e} -- score() no longer unwraps .logits")
+    if w_loss is not None and (abs(w_loss - a2) > 1e-4 or w_tok != t2):
+        fails.append(f"an HF-shaped output scored differently: {w_loss:.6f}/{w_tok} vs "
+                     f"{a2:.6f}/{t2} -- score() mishandles .logits unwrapping")
+
+    # 5. THE NAMES load_ours AND load_control IMPORT MUST EXIST. No checkpoint needed: import
+    #    the symbols and check they are constructible types. The first version of load_ours
+    #    imported `Transformer` from train.py, which has no such class -- copied from the file
+    #    this replaces without ever being executed, so it would have raised ImportError at
+    #    result time, after the arm had trained. sft_math.py:25-38 is the authority.
+    #
+    #    SPEAKS ON SUCCESS TOO. Every other case here is silent when it passes, which is fine
+    #    while they cannot be skipped. This one CAN be skipped (train.py needs torch), and a
+    #    silent pass then reads identically to a skipped check -- so it prints which branch
+    #    ran. That is the same defect as a criterion evaluated on an empty population: the log
+    #    looks the same whether the check happened or not.
+    checked_symbols = False
+    try:
+        import train
+        for name in ("Cfg", "HybridLM"):
+            if not hasattr(train, name):
+                fails.append(f"train.{name} does not exist, but load_ours imports it")
+        src = open(os.path.join(ROOT, "sft_math.py"), encoding="utf-8").read()
+        if "HybridLM" not in src:
+            fails.append("sft_math.py no longer builds HybridLM -- load_ours may be "
+                         "constructing a class our arm does not train")
+        checked_symbols = True
+    except ImportError as e:
+        # train.py imports torch and builds at module scope; on a box without it this case
+        # cannot run, and says so rather than passing.
+        print(f"  SELFTEST SKIP load_ours symbols: train.py not importable here ({e}) -- "
+              f"this case did NOT run; run it where train.py imports")
+    if checked_symbols:
+        print("  checked: train.Cfg and train.HybridLM exist, sft_math.py builds HybridLM")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")

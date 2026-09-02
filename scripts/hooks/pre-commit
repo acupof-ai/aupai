@@ -432,6 +432,21 @@ def main():
         # a local copy of the template). Needs no card -- the drop rule takes an injectable
         # encoder, and score() runs against a fixture module on CPU.
         "scripts/eval_heldout.py",
+        # Which CUDA_VISIBLE_DEVICES forms device_set_honoured accepts. Pure string
+        # matching against harness's own regex -- no card, no torch. Registered in the
+        # same commit that widened that regex to accept the empty (no-device) value,
+        # because the widening had no way to show it had not also let an opaque variable
+        # through.
+        #
+        # NO DOUBLE QUOTES IN THIS COMMENT, deliberately -- not even inside a regex or a
+        # code span. check_selftests_are_gated parses this map by pairing quote characters
+        # positionally, and cannot tell a comment's quoted text from an entry. Two versions
+        # of this comment broke it: the first quoted two shell assignments, the second
+        # quoted the very regex being described (an ODD number of quotes, which shifts every
+        # pairing below it). Each silently swallowed 20-26 real entries -- including this
+        # file's own -- and the check then reported 16 ungated selftests that were all
+        # sitting right here. Describe quoting in prose; never demonstrate it.
+        "scripts/test_cvd_pattern.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",

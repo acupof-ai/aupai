@@ -654,10 +654,35 @@ def check_selftests_are_gated(root):
         return FAIL, ("scripts/hooks/pre-commit has no SELFTEST_FILES map, so no staged "
                       "file's selftest runs at commit time")
     gated = set(re.findall(r'"([^"]+)"', m.group(1)))
+    # THE PARSE MUST NOT BE SHIFTED BY A COMMENT. Quotes are paired positionally, so a
+    # comment inside either map that contains an odd number of double quotes re-pairs every
+    # quote below it and silently drops the entries that follow. Measured 2026-09-03: a
+    # comment quoting the regex on this very line cost 20 entries, and the check then
+    # reported 16 ungated selftests that were all present in the map -- a false FAIL that
+    # reads exactly like a real one, and sent me through nine probes looking for the wrong
+    # cause. The comment explaining the first version of this bug caused the second.
+    #
+    # Cross-check the positional parse against a line-shaped one: a real entry is a quoted
+    # path alone on its line, ending in a comma. If the two disagree, the map is being
+    # misread and the counts below are meaningless -- so it refuses instead of reporting.
+    for label, block in (("SELFTEST_FILES", m.group(1)),
+                         ("NEEDS_DATA", nd.group(1) if (
+                             nd := re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
+                         ) else "")):
+        line_shaped = set(re.findall(r'^\s+"([^"]+)"\s*[,:]', block, re.M))
+        positional = set(re.findall(r'"([^"]+)"', block))
+        missed = sorted(x for x in line_shaped if x not in positional)
+        if missed:
+            return FAIL, (
+                f"{len(missed)} entry(ies) in {label} are invisible to this check's parse, "
+                f"so nothing runs their selftests while the map appears to list them: "
+                f"{', '.join(missed[:4])}. Cause is almost always a comment inside the map "
+                f"containing an odd number of double-quote characters, which re-pairs every "
+                f"quote below it. Remove the quotes from the comment."
+            )
     # A file the hook cannot run here is still accounted for, with the reason recorded.
     # "not in the map" and "cannot run at commit time" are different facts, and only
     # the second is acceptable -- silence about the first is how a selftest goes unrun.
-    nd = re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
     gated |= set(re.findall(r'"([^"]+)":', nd.group(1))) if nd else set()
     # The map's other direction, which nothing watched: an entry naming a file that no
     # longer exists. Found by measurement, not by reasoning -- main deleted
@@ -6317,8 +6342,17 @@ def _broken_lane_respected():
 # eval/_devs.sh builds (${_DEVS[...]}) or defers to the caller
 # (${CUDA_VISIBLE_DEVICES:-...}). Anything else -- a literal, a bare $i, a seq
 # expansion -- is a physical index that REPLACES the caller's restriction.
-_CVD_SAFE = re.compile(r"^\$\{_DEVS\[|^\$\{CUDA_VISIBLE_DEVICES:-")
+_CVD_SAFE = re.compile(r"^\$\{_DEVS\[|^\$\{CUDA_VISIBLE_DEVICES:-|^(?:\"\"|''|-1)$")
 _CVD_ASSIGN = re.compile(r"(?:^|\s)(?:export\s+)?CUDA_VISIBLE_DEVICES=(\S+)")
+# `=""` and `=-1` are ACCEPTED: they mean NO device, which cannot escape a lane. Measured
+# on the pod 2026-09-03: with CUDA_VISIBLE_DEVICES="" torch.cuda.device_count() is 0 and
+# is_available() False (unset gives 8; -1 also gives 0). Added because the rule this check
+# enforces is "never take a card the caller did not give you", and asking for none is the
+# strongest possible compliance -- while the syntax alone reads identically to writing a
+# physical index. Without this, the only way to pass was to leave the variable inherited,
+# i.e. a pure-CPU script stays able to open every visible card; that ambiguity is what
+# turned a CPU counting job into a card-ownership investigation (2026-09-03). Empty is the
+# idiom because it is what makes "this step uses no card" visible in the process's env.
 # Known false positive, left in on purpose: this matches the TEXT, so a script that
 # names the variable inside an error message ("set CUDA_VISIBLE_DEVICES=<n> first")
 # reads as an assignment. Hit once, 2026-09-01, on run_sampled_arm.sh's usage string.
