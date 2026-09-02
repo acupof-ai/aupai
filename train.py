@@ -2644,7 +2644,8 @@ def main():
         # downstream check passes. test_e2e stage 4 measures the postcondition; this makes
         # the simplest form of it impossible.
         assert step > 0, "refusing to save: the training loop ran zero optimizer steps"
-        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID)
+        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID,
+                        opt_snapshot(optimizers), step)
         print(f"saved {ckpt_path}")
         runlog.plot()
     if ddp:

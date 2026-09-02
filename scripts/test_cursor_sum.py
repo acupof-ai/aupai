@@ -100,9 +100,90 @@ def _save(tmp, as_of, origin, base, discarded=None, world=WORLD):
     return p, torch.load(p, map_location="cpu", weights_only=False), None
 
 
+def _call_sites(src):
+    """(lineno, arg-count) for every save_checkpoint call in `src`, by AST.
+
+    A grep cannot do this: `save_checkpoint(` matches its own `def` at train.py:986, so a
+    text test stays green on a tree where the call site was deleted (de, 2026-09-03, de-30
+    shipped exactly that defect and read 9/9).
+    """
+    import ast
+
+    return sorted(
+        (n.lineno, len(n.args) + len(n.keywords))
+        for n in ast.walk(ast.parse(src))
+        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "save_checkpoint"
+    )
+
+
+def _short_sites(src, want=6, expect=4):
+    """The predicate: which save_checkpoint calls pass fewer than `want` args, and is one missing."""
+    sites = _call_sites(src)
+    if len(sites) < expect:
+        return sites, f"{len(sites)} call sites, expected {expect}"
+    return sites, [ln for ln, n in sites if n < want]
+
+
+def _check_call_sites(bad):
+    """Every save_checkpoint call passes opt and step -- 6 args, not 4.
+
+    The identity above cannot fire on a call that omits `step`: save_checkpoint skips the
+    whole row_cursor block when step is None, so the checkpoint is written with no cursor at
+    all and every assertion in this file passes vacuously. The run-end save at train.py:2647
+    was that call until de-31. Two silent consequences, and neither raises:
+
+      no step  the .pt carries no row_cursor, so a resume restarts every domain at row 0 and
+               re-reads the corpus. Resuming had to use .ep1, which is why it survived.
+      no opt   ck["opt"] is never set, and resume's `if args.resume and "opt" in ck` then
+               skips restoring it without saying so -- a fresh optimizer, Muon momentum and
+               Adam second moments gone, which reads as a training anomaly.
+
+    The negative cases run on the real source with the fix textually reverted, in memory. A
+    temp copy of train.py cannot be used: it is unimportable outside the repo root, so the
+    broken world dies at `import fone` and reports rc=1 for the wrong reason -- a red that
+    proves nothing (measured, de-31).
+    """
+    with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as fh:
+        src = fh.read()
+    sites, short = _short_sites(src)
+    if short:
+        bad.append(f"save_checkpoint at train.py:{short} passes fewer than 6 args, so it "
+                   f"omits opt and/or step. A call without `step` writes no row_cursor, and "
+                   f"every assertion in this file then passes vacuously on that path")
+        return
+    print(f"  call sites    : {len(sites)} in train.py, all pass opt+step "
+          f"({', '.join(f'{ln}:{n}' for ln, n in sites)})")
+
+    reverted = src.replace(
+        "        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID,\n"
+        "                        opt_snapshot(optimizers), step)",
+        "        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID)",
+    )
+    if reverted == src:
+        bad.append("the run-end save no longer matches the text this check reverts to build "
+                   "its negative case, so the negative case is inert -- re-derive it")
+        return
+    _, short_rev = _short_sites(reverted)
+    if not short_rev:
+        bad.append("the pre-de-31 run-end save (4 args) did NOT report short: the predicate "
+                   "cannot see the defect it exists for")
+        return
+    deleted = reverted.replace(
+        "        save_checkpoint(ckpt_path, raw_model.state_dict(), Cfg, VOCAB_ID)\n", "")
+    _, short_del = _short_sites(deleted)
+    if not isinstance(short_del, str):
+        bad.append(f"deleting the run-end call site left {len(_call_sites(deleted))} sites "
+                   f"and the check stayed green: it counts args at the sites that remain, so "
+                   f"a removed save path is invisible -- the de-30 shape")
+        return
+    print(f"  negative cases: pre-de-31 4-arg call reported short at {short_rev}; "
+          f"deleting the site reported '{short_del}'")
+
+
 def main():
     bad = []
     tmp = tempfile.mkdtemp()
+    _check_call_sites(bad)
 
     # POSITIVE: the three real numbers. base is what earlier segments consumed, split
     # evenly, so sum(base) + this segment's rows == as_of x 256 exactly.
