@@ -17,6 +17,24 @@ DEV=${DEVICE:-cuda}
 EXTRA=${EXTRA:-}
 mkdir -p "$OUT"
 
+# Claim the card for the WHOLE scan, not per point: three serial runs on one card are one
+# occupancy, and releasing between them would let another job in mid-scan and make the three
+# points' wall times incomparable. Card comes from CUDA_VISIBLE_DEVICES, which is how this arm
+# is pointed at a card (fb's allocation: control arm on card 1).
+CLAIM_NAME=${CLAIM_NAME:-control_lr_scan}
+CLAIM_CARDS=${CUDA_VISIBLE_DEVICES:-}
+if [ -n "$CLAIM_CARDS" ] && [ "$DEV" != "cpu" ]; then
+  python3 scripts/card_claim.py acquire --name "$CLAIM_NAME" --cards "$CLAIM_CARDS" \
+    --note "control lr scan, 3 points serial" --wait "${CLAIM_WAIT:-0}" || {
+    echo "REFUSING to launch: could not claim card(s) $CLAIM_CARDS (card_claim.py status)"
+    exit 1
+  }
+  trap 'python3 scripts/card_claim.py release --name "$CLAIM_NAME" >/dev/null 2>&1 || true' EXIT
+elif [ "$DEV" != "cpu" ]; then
+  echo "NOTE: CUDA_VISIBLE_DEVICES is unset, so this scan claims nothing and will use every"
+  echo "      visible card. Set it (fb's allocation puts the control arm on card 1)."
+fi
+
 # Three points a factor of ~3 apart, bracketing the 1e-4 the smoke test found. A scan whose
 # best point is at an endpoint has not bracketed the optimum -- the summary says so rather
 # than reporting the endpoint as if it were a minimum.

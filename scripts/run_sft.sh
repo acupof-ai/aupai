@@ -11,7 +11,19 @@ cd "$(dirname "$0")/.."
 NAME=$1; RESUME=$2; DATA=$3; shift 3
 OUT="ckpt_${NAME}.pt"
 NGPU=${NGPU:-8}
-CMD="torchrun --nproc_per_node=$NGPU sft_math.py --resume $RESUME --sft_path $DATA --out $OUT $*"
+# Which cards, not just how many. `seq 0 NGPU-1` always started at card 0, so an NGPU=1 run
+# took card 0 no matter what else held it -- and two single-card jobs meant to run
+# concurrently (the control comparison's two arms) would have landed on the same card while
+# seven sat idle. CARDS overrides; the default reproduces the old behaviour exactly.
+# Built with tr, not `seq -s,`: BSD seq APPENDS the separator (GNU does not), so on this Mac
+# `seq -s, 0 7` is "0,1,...,7," with a trailing comma. The original line passed that straight
+# to CUDA_VISIBLE_DEVICES, where a trailing comma is tolerated -- which is why it never
+# showed. Counting fields with awk -F, on the same string returns 9 for eight cards, so the
+# rank count derived below would have launched nine ranks on eight cards.
+CARDS=${CARDS:-$(seq 0 $((NGPU - 1)) | tr '\n' ',' | sed 's/,$//')}
+# One rank per listed card, so CARDS and NGPU cannot silently disagree.
+NGPU=$(printf '%s' "$CARDS" | tr ',' '\n' | grep -c .)
+CMD="CUDA_VISIBLE_DEVICES=$CARDS torchrun --nproc_per_node=$NGPU sft_math.py --resume $RESUME --sft_path $DATA --out $OUT $*"
 
 python3 scripts/exp.py start --name "$NAME" --cmd "$CMD" --notes "$(python3 - "$DATA" <<'PY'
 import sys, torch
@@ -21,9 +33,24 @@ print(f"{n} rows x 4097 tok = {n * 4097 / 1e6:.1f}M tokens")
 PY
 )" >/dev/null
 
+# DECLARE the cards before taking them. scripts/card_claim.py has existed for a while and
+# nothing called it -- `card_claim.py status` on the pod reports all eight cards as ORPHAN
+# (memory held, no claim) because the live run never claimed either, and runs/claims/ had
+# never been created. With six jobs about to share eight cards that is the case it was
+# written for. --wait 0: a clash must fail the launch loudly, not queue behind a card
+# someone else is mid-way through taking.
+python3 scripts/card_claim.py acquire --name "$NAME" --cards "$CARDS"   --note "run_sft.sh $DATA" --wait "${CLAIM_WAIT:-0}" || {
+  echo "REFUSING to launch: could not claim cards $CARDS (see card_claim.py status)"
+  python3 scripts/exp.py done --name "$NAME" --status fail --result "card claim refused"
+  exit 1
+}
+# Released on every exit path, including the two `exit`s below and a kill: a stale claim
+# blocks the next job and reads as a card that is busy.
+trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
+
 set +e
-CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NGPU - 1))) torchrun --nproc_per_node="$NGPU" \
-  --master_port="${PORT:-29520}" sft_math.py --resume "$RESUME" --sft_path "$DATA" --out "$OUT" "$@"
+CUDA_VISIBLE_DEVICES=$CARDS torchrun --nproc_per_node="$NGPU" \
+  --master_port="${PORT:-$((29520 + $(printf '%s' "$CARDS" | cut -d, -f1)))}" sft_math.py --resume "$RESUME" --sft_path "$DATA" --out "$OUT" "$@"
 TRAIN_RC=$?
 set -e
 if [ $TRAIN_RC -ne 0 ]; then
@@ -38,6 +65,11 @@ set +e
 # TOKENIZER travels with the checkpoint: ids do not survive a rebuild of
 # data/tokenizer.json, and scoring against the wrong file yields noise, not an error.
 TOKENIZER=${TOKENIZER:-data/tokenizer.json}
+# EXPORT the cards, not just the count. eval_all.sh takes its devices FROM the caller's
+# CUDA_VISIBLE_DEVICES (eval/_devs.sh, added because a lane-card launch once landed on
+# physical GPU 0 -- a training-block card). Passing only NGPU would have sent the eval to
+# cards 0..N-1 regardless of which card this run was given.
+export CUDA_VISIBLE_DEVICES=$CARDS
 NGPU=$NGPU bash eval/eval_all.sh "$OUT" "$TOKENIZER"
 ALL_RC=$?
 ALL_LOG=runs/evalall_$(basename "$OUT" .pt).log
