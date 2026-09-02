@@ -956,14 +956,23 @@ def check_shapes_table_covers_doc(root):
     a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
     belongs to is a judgement only a person re-reading the pair can make.
 
+    A heading number written twice is also FAIL: two sessions appending shapes in
+    parallel collided on §62, §63, §69, and §70, and a merge conflict only catches a
+    collision on the same line, not the same NUMBER.
+
     §65's own subject, applied to §65: the table and the doc must agree, and until this
     check existed nothing verified it."""
     p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
     if not os.path.exists(p):
         return FAIL, "docs/lessons/gate_failure_shapes.md missing"
-    doc = {int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)}
-    if not doc:
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)]
+    if not nums:
         return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
+    dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
+    if dupes:
+        return FAIL, "shape heading number(s) used more than once: " + ", ".join(
+            f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
+    doc = set(nums)
 
     a = os.path.join(root, "AGENTS.md")
     if not os.path.exists(a):
@@ -1057,6 +1066,33 @@ def _broken_shapes_table_doc_grew():
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
         text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
+
+
+def _broken_shapes_table_duplicate_heading():
+    """The REAL docs with one heading number duplicated -- what happened four times
+    (§62, §63, §69, §70) when two sessions appended shapes in parallel. A merge
+    conflict catches a collision on the same LINE, not two sessions writing the same
+    NUMBER."""
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = re.findall(r"^## (\d+)\.", text, re.M)
+    if not nums:
+        raise SelftestSkip("no shape headings to duplicate; update _broken_shapes_table_duplicate_heading")
+    # Same symlink hazard as _broken_shapes_table_doc_grew: docs/ is a link into the repo.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        text + f"\n\n## {nums[-1]}. a duplicate heading number (fixture)\n")
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -9193,6 +9229,21 @@ def _demo():
                                 f"bullet ({_why[:60]})")
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
+
+    # shapes_table_covers_doc has two halves its registered world does not exercise: a
+    # shape that reaches the doc but not the table, and a heading number written twice.
+    # _broken_shapes_table_doc_grew existed but nothing ran it -- a broken world nobody
+    # runs is the §71 shape itself.
+    for _w, _label in ((_broken_shapes_table_doc_grew, "doc grew, table stood still"),
+                       (_broken_shapes_table_duplicate_heading, "duplicate heading number")):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_shapes_table_covers_doc(_d)
+                if _st != FAIL:
+                    untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
