@@ -719,6 +719,8 @@ def pod_attribution(root):
 
 
 def main():
+    for _k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(_k)
     ap = argparse.ArgumentParser()
     ap.add_argument("--mix", default=os.path.join(ROOT, LAUNCH_MIX))
     ap.add_argument("--world", type=int, default=7)
