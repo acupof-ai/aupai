@@ -7684,6 +7684,7 @@ EVIDENCE = {
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
+    "keep_claim_reasons_live": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
