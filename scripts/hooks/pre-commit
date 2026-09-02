@@ -374,6 +374,7 @@ def main():
         "scripts/test_artifact_path_ckpt.py",
         "scripts/test_cache_dir_knob.py",
         "scripts/test_vocab_stamp.py",
+        "scripts/profile_step_cost.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
