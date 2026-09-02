@@ -37,6 +37,7 @@ So the open question is consequence, not mechanism, which is what b0-16 asks for
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -82,6 +83,86 @@ def median(vals):
     v = sorted(vals)
     n = len(v)
     return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
+
+def mad_sigma(vals, med=None):
+    """MAD-based sigma: 1.4826 * median(|x - median|), the normal-consistent scaling.
+
+    MAD and not sd because n=8 and the question is whether ONE layer is an outlier -- an
+    outlier inflates sd, so a z against sd is shrunk by the very point being tested.
+    """
+    m = median(vals) if med is None else med
+    return 1.4826 * median([abs(x - m) for x in vals])
+
+
+def weights_reading(step_a, step_b, layer, lr, ns_norm=None):
+    """The zero-card half of b0-16: growth and direction consistency, per KDA layer.
+
+    THIS EXISTS BECAUSE THE NUMBERS DID NOT. z -21.9, the 1.7334 peer median, the 0.0241 MAD
+    sigma and the 6.85%/13.29% pair were quoted in a fact, a docstring and a review row with NO
+    artifact behind any of them (e1 caught it during review). A number that lives only in prose
+    cannot be recomputed by a reader and cannot be checked against a later run -- and these are
+    the numbers the fact leads with.
+
+    Two statistics, and they answer different questions:
+
+      growth        |w_b| / |w_a| per tensor. Says the norm stopped rising.
+      consistency   ||w_b - w_a||_F / (lr * ns_norm * n), the realized displacement over the
+                    budget if every Muon step had pushed the same direction. Says WHY: a layer
+                    can hold its norm because it stopped moving, or because it moves and cancels.
+
+    The consistency denominator uses ||NS(m)||_F ~ sqrt(d) = 32, which is Newton-Schulz's design
+    property (the whole point of the orthogonalization), not a measurement of this run's updates.
+    That is the reading's main soft spot and the fact's uncertainty field says so.
+
+    COMPARABLE ACROSS LAYERS ONLY AT EQUAL n. The same-direction rate is a within-interval-length
+    statistic -- `predicted` is linear in n while real growth compounds -- so it moves ~2000x
+    between n=10 and n=1000, and comparing two layers read over different intervals produced the
+    retracted 1.71x depth term (scripts/embed_norm_sdr.py). Here n, lr and shape are identical
+    for every layer by construction, which is what makes the cross-layer z legitimate.
+    """
+    import torch
+    if ns_norm is None:
+        raise ValueError("ns_norm must be passed explicitly: it is sqrt(d) for the tensor's "
+                         "output dim, and defaulting it hides which d the budget assumed")
+    pa, pb = ckpt_path(step_a), ckpt_path(step_b)
+    if pa is None or pb is None:
+        raise FileNotFoundError(f"need checkpoints for both step {step_a} and step {step_b}; "
+                                f"got {pa} and {pb}")
+    n = step_b - step_a
+    sda = torch.load(pa, map_location="cpu", weights_only=False, mmap=True)["model"]
+    sdb = torch.load(pb, map_location="cpu", weights_only=False, mmap=True)["model"]
+    kda = sorted(int(k.split(".")[1]) for k in sda if k.endswith("mixer.A_log"))
+    rows = {}
+    for L in kda:
+        r = {}
+        for tag, key in (("mixer_o", f"blocks.{L}.mixer.o.weight"),
+                         ("ffn_w2", f"blocks.{L}.ffn.w2.weight")):
+            wa, wb = sda[key].float(), sdb[key].float()
+            r[tag] = {
+                "norm_a": wa.norm().item(),
+                "norm_b": wb.norm().item(),
+                "growth": (wb.norm() / wa.norm()).item(),
+                # Realized displacement over the fully-aligned budget. lr*ns_norm is one step's
+                # push; times n is the most a monotone walk could travel.
+                "consistency": (wb - wa).norm().item() / (lr * ns_norm * n),
+            }
+        rows[L] = r
+    peers = [L for L in kda if L != layer]
+    out = {"step_a": step_a, "step_b": step_b, "n": n, "layer": layer, "lr": lr,
+           "ns_norm": ns_norm, "kda_layers": kda, "per_layer": rows}
+    for tag in ("mixer_o", "ffn_w2"):
+        for stat in ("growth", "consistency"):
+            pv = [rows[L][tag][stat] for L in peers]
+            med, sig = median(pv), mad_sigma(pv)
+            lv = rows[layer][tag][stat]
+            out[f"{tag}_{stat}"] = {
+                "layer": lv, "peer_median": med, "peer_mad_sigma": sig, "peer_n": len(pv),
+                # z is against the WITHIN-RUN CROSS-LAYER spread, not a seed distribution. One
+                # seed, one run: the run-to-run spread of a per-layer ratio is unmeasured.
+                "z": (lv - med) / sig if sig else None,
+            }
+    return out
 
 
 def rescaled_checkpoint(path, layer, factor, dest):
@@ -298,6 +379,91 @@ def _selftest():
     if median([3.0, 1.0, 2.0]) != 2.0:
         fails.append("median does not sort its input")
 
+    # 5. mad_sigma must NOT be shrunk by the outlier it is measuring. The whole reason the fact
+    #    quotes z against MAD and not sd: with n=8 peers plus one outlier, sd absorbs the
+    #    outlier and divides the z by it, so the more extreme the layer the smaller its z. MAD
+    #    is computed from the PEERS only here, but the property is what makes that choice
+    #    matter, so it is asserted rather than assumed.
+    tight = [1.70, 1.72, 1.73, 1.735, 1.74, 1.75, 1.76, 1.78]
+    sig = mad_sigma(tight)
+    if not (0.005 < sig < 0.06):
+        fails.append(f"mad_sigma of a tight peer cluster is {sig:.4f}; the fact quotes 0.0241 "
+                     f"for exactly this shape, so a scaling error here rescales every z")
+    import statistics
+    with_outlier = tight + [1.20]
+    if mad_sigma(with_outlier) > 2 * sig:
+        fails.append(f"mad_sigma more than doubled when one outlier was added "
+                     f"({sig:.4f} -> {mad_sigma(with_outlier):.4f}) -- it is behaving like sd, "
+                     f"and a z computed with it shrinks as the outlier gets more extreme")
+    if statistics.stdev(with_outlier) <= statistics.stdev(tight) * 2:
+        fails.append("the fixture's outlier does not even inflate sd, so this check cannot "
+                     "show MAD's advantage -- make the outlier more extreme")
+
+    # 6. THE CONSISTENCY STATISTIC MUST DISTINGUISH 'STOPPED MOVING' FROM 'MOVED AND CANCELLED'.
+    #    This is the whole reason the fact reports it alongside growth: both a frozen layer and a
+    #    thrashing layer hold their norm, and only this statistic tells them apart. A version
+    #    that divided by ||w_b - w_a|| itself, or normalized by the realized displacement, would
+    #    return ~1 for both and the reading would say "layer 9 stopped moving" when what it does
+    #    is move and cancel. Two synthetic layers, same norm growth, opposite mechanism.
+    with tempfile.TemporaryDirectory() as td:
+        torch.manual_seed(0)
+        d, n, lr, nsn = 8, 100, 0.01, 8.0
+        base = torch.randn(d, d)
+        step = lr * nsn                       # ONE Muon step's displacement: w -= lr*NS(m), and
+        #                                       ||NS(m)||_F is ns_norm, so this is already the
+        #                                       whole tensor's move. Dividing by sqrt(d) here (my
+        #                                       first draft) made the fixture walk 0.32 of the
+        #                                       budget while claiming 0.9, and check 6's second
+        #                                       assertion is what caught it.
+        # layer 0: FROZEN. Ends where it started, having barely moved.
+        # layer 1: THRASHING. Takes n full-sized steps that cancel, ending at the same place.
+        walk = torch.randn(d, d)
+        walk = walk / walk.norm() * step * n * 0.9
+        sda = {"blocks.0.mixer.A_log": torch.zeros(d), "blocks.1.mixer.A_log": torch.zeros(d),
+               "blocks.0.mixer.o.weight": base.clone(), "blocks.0.ffn.w2.weight": base.clone(),
+               "blocks.1.mixer.o.weight": base.clone(), "blocks.1.ffn.w2.weight": base.clone()}
+        sdb = {k: v.clone() for k, v in sda.items()}
+        sdb["blocks.0.mixer.o.weight"] = base + walk * 0.02     # small net move
+        sdb["blocks.1.mixer.o.weight"] = base + walk            # large net move, same n
+        pa, pb = os.path.join(td, "c.pt.step100"), os.path.join(td, "c.pt.step200")
+        torch.save({"model": sda}, pa)
+        torch.save({"model": sdb}, pb)
+        _orig_ckpt = globals()["CKPT"]
+        globals()["CKPT"] = os.path.join(td, "c.pt")
+        try:
+            r = weights_reading(100, 200, 0, lr, ns_norm=nsn)
+            c0 = r["per_layer"][0]["mixer_o"]["consistency"]
+            c1 = r["per_layer"][1]["mixer_o"]["consistency"]
+            if not (c1 > 10 * c0):
+                fails.append(f"consistency does not separate a frozen layer from a moving one "
+                             f"({c0:.4f} vs {c1:.4f}) -- both hold their norm, and if this "
+                             f"statistic cannot tell them apart the reading's 'why' is guesswork")
+            # And it must be a FRACTION OF THE BUDGET, not a normalized direction: the moving
+            # layer took 0.9 of a fully-aligned walk, so it must read near 0.9, not near 1.0.
+            if not (0.5 < c1 < 1.2):
+                fails.append(f"the moving layer reads {c1:.4f} of its budget; the fixture walks "
+                             f"0.9 of it, so the denominator is not lr*ns_norm*n")
+            if r["mixer_o_growth"]["z"] is not None and r["mixer_o_growth"]["peer_n"] != 1:
+                fails.append(f"peer_n is {r['mixer_o_growth']['peer_n']}, expected 1 for a "
+                             f"two-KDA-layer fixture -- the layer under test is in its own peers")
+        except Exception as e:                                    # noqa: BLE001
+            fails.append(f"weights_reading raised on a real two-checkpoint fixture: {e!r}")
+        finally:
+            globals()["CKPT"] = _orig_ckpt
+
+    # 7. ns_norm has NO DEFAULT inside weights_reading: the budget depends on sqrt(d), and a
+    #    silently-defaulted 32 would report a d1024 budget for any width.
+    try:
+        weights_reading(100, 200, 0, 0.01)
+        fails.append("weights_reading accepted a missing ns_norm; the consistency denominator "
+                     "would then assume d1024 for any model")
+    except ValueError:
+        pass
+    except Exception:                                            # noqa: BLE001
+        # FileNotFoundError etc. means it got past the ns_norm check -- which is the bug.
+        fails.append("weights_reading reached checkpoint loading with ns_norm unset, so the "
+                     "guard is downstream of the work and a wrong budget is only caught by luck")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
@@ -326,6 +492,14 @@ def main():
                     help="layer for the same-factor control arm (default: a near-median KDA layer)")
     ap.add_argument("--out", help="json for the eval rows")
     ap.add_argument("--claim", action="store_true", help="claim the lane card for this pid")
+    ap.add_argument("--weights", action="store_true",
+                    help="the zero-card reading: growth + direction consistency per KDA layer, "
+                         "with the peer median, MAD sigma and z that the fact quotes")
+    ap.add_argument("--from_step", type=int, help="--weights interval start")
+    ap.add_argument("--to_step", type=int, help="--weights interval end")
+    ap.add_argument("--lr", type=float, default=0.01, help="Muon lr for the consistency budget")
+    ap.add_argument("--ns_norm", type=float, default=32.0,
+                    help="||NS(m)||_F, sqrt(d)=32 at d1024 -- Newton-Schulz's design property")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
 
@@ -339,6 +513,35 @@ def main():
                         "acquire", "--name", "b0_16_l9", "--cards", "7",
                         "--note", "b0-16 layer-9 branch probe", "--pid", str(os.getpid())],
                        cwd=ROOT, check=False)
+
+    if a.weights:
+        if not (a.from_step and a.to_step):
+            ap.error("--weights needs --from_step and --to_step")
+        r = weights_reading(a.from_step, a.to_step, a.layer, a.lr, ns_norm=a.ns_norm)
+        print(f"=== weights-only reading, step {r['step_a']} -> {r['step_b']} (n={r['n']}), "
+              f"layer {r['layer']} against {len(r['kda_layers']) - 1} peer KDA layers ===")
+        print(f"{'L':>3} {'mixer.o growth':>15} {'consistency':>12} {'ffn.w2 growth':>14} "
+              f"{'consistency':>12}")
+        for L in r["kda_layers"]:
+            p = r["per_layer"][L]
+            mark = "  <-- " if L == r["layer"] else ""
+            print(f"{L:>3} {p['mixer_o']['growth']:>15.4f} "
+                  f"{100 * p['mixer_o']['consistency']:>11.2f}% "
+                  f"{p['ffn_w2']['growth']:>14.4f} "
+                  f"{100 * p['ffn_w2']['consistency']:>11.2f}%{mark}")
+        for k in ("mixer_o_growth", "mixer_o_consistency", "ffn_w2_growth", "ffn_w2_consistency"):
+            s = r[k]
+            z = f"{s['z']:+.1f}" if s["z"] is not None else "n/a (zero spread)"
+            print(f"{k:22s} layer {s['layer']:.4f}  peer median {s['peer_median']:.4f}  "
+                  f"MAD sigma {s['peer_mad_sigma']:.4f}  z {z}")
+        print(f"\nz is against the WITHIN-RUN CROSS-LAYER spread over n="
+              f"{r['mixer_o_growth']['peer_n']} peers, NOT a seed distribution -- one seed, "
+              f"one run.")
+        if a.out:
+            with open(a.out, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(r) + "\n")   # JSONL, like the other two artifacts
+            print(f"appended to {a.out}")
+        return 0
 
     if a.rescale:
         if not a.step:
