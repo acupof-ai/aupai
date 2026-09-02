@@ -25,7 +25,13 @@ HF transformers 的 `modeling_*.py` 一个文件一个架构、torchtitan 的 `m
 
 ## 1. 搬什么：符号清单与行号
 
-**行号是本次读取时的，做 diff 前重新确认**——train.py 在 run 期间不动，但合并会移动它。
+**行号只在 train.py blob `ad0f6e130083379a309c0ea43577fef61fd8e0e9` 上有效**
+（`git hash-object train.py`；该 blob = `fb45450:train.py`，2,751 行）。
+**sha 对不上就不要信下面的数字，按符号名重新定位**（`grep -n '^class RMSNorm'`
+之类；分支 `b0` 上有一个三通道校验脚本，但它按 fb 的裁定不进 main——这页的行号
+在 split 落地时会一起删掉，见 §6）——train.py 在 run 期间不动，但**合并会移动它，今晚已经移动过一次**
+（见 §7）。**没有 sha 的行号等于没有行号**：它无法区分"漂移了"和"一开始就错"
+（fb 要求，2026-09-02）。
 
 ### 进 `model.py`（纯模型，不 import 训练器）
 
@@ -171,8 +177,17 @@ ddp_even_len, doc_cu_seqlens, opt_snapshot, save_checkpoint, set_schedule, setup
 
 1. tilerl 读这页 → 对 §2 的三条接口契约和 §3 的四条覆盖点表态
 2. **tilerl 把本页合进 main**（roster：integration 持有 main 的合并权；b0 不自合）
-3. b0 在自己的 worktree 里做 diff（**main 的 train.py 零编辑**）
-4. run 结束那一刻，`test_arch_compat` 四条全过 + 59 门 diff IDENTICAL → 合
+3. **做 diff 前，在分支 `b0` 上跑 `python3 scripts/check_split_page_lines.py`**
+   ——按行内容核 §1／§2 的 25 处行号 + 比对 stamp 的 blob sha，8 个破坏世界全抓。
+   **不是可选步骤**：本页行号已经被一次合并改错过，而那次合并是我自己做的。
+   **脚本只在 b0 上，按 fb 裁定不进 main**（一个脚本守一份一次性文档是新增表面）。
+4. b0 在自己的 worktree 里做 diff（**main 的 train.py 零编辑**）
+5. run 结束那一刻，`test_arch_compat` 四条全过 + 59 门 diff IDENTICAL → 合
+6. **合入的同一个提交里，删掉 §1／§2 的行号和 stamp**，页面改为按符号名引用
+   （`RMSNorm`、`DeltaRecurrence.forward`），脚本一并删除。
+   **行号的寿命到 diff 落地为止**——之后 `model.py` 就是权威，本页是历史。
+   放在同一个提交，是因为分两步就会有一段时间页面上的行号指向已经不存在的
+   train.py 区间（§1 的十个符号那时已经在 model.py 里）。
 
 **run 活着期间不合、不推、不动 main 的 train.py。** 训练路径在 `pod_head_manifest.txt`
 里被运行读取，改它等于在飞行中换发动机。
