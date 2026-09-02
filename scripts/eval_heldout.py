@@ -304,6 +304,128 @@ def check_control_ids_agree(model_dir, ckpt_dir):
     return ours, bad
 
 
+def vocab_size_of(arm, model_dir=None):
+    """The arm's vocabulary size, for the ln(V) sentinel below. None if unavailable."""
+    try:
+        if arm == "ours":
+            from tokenizers import Tokenizer
+            return Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json")).get_vocab_size()
+        from transformers import AutoTokenizer
+        tok = AutoTokenizer.from_pretrained(model_dir)
+        tok.add_special_tokens({"additional_special_tokens": [IM_START, IM_END]})
+        return len(tok)
+    except Exception:  # noqa: BLE001 -- a missing tokenizer must not fail the scoring run
+        return None
+
+
+def alignment_sentinel(nll_per_token, vocab):
+    """(line, is_alarm): compare the loss to ln(V), the no-information baseline.
+
+    THE CHECK THAT WOULD HAVE CAUGHT A DAY OF WASTED GPU. The v1 control scan reported
+    held_out_loss_before = 10.1599 nat/token for a PRETRAINED Pythia-160M. ln(50304) is
+    10.8258, so that model was reading at 94% of uniform-random -- i.e. as if it had never
+    been trained. The number was in every log, in every meta.json, and quoted in the audit;
+    nobody divided it by ln(V). The cause was a double shift in the TRAINING loop
+    (sft_hf_control.py:405), and three checkpoints were trained on the wrong objective
+    before anyone noticed.
+
+    WHY IT WENT UNNOTICED IS THE INTERESTING PART. eval_loss's docstring claimed a double
+    shift pushes the loss DOWN ("the input window at position t already contains token
+    t+1, so the misalignment leaks the answer"). That is FALSE, measured on the untrained
+    base model over real held-out rows:
+
+        double shift (logits[t] -> token t+2)   10.8796 nat/token  = 1.005 x ln(V)
+        correct      (logits[t] -> token t+1)    2.9597 nat/token  = 0.273 x ln(V)
+
+    There is no leak. The window does contain t+1, but the output head at position t was
+    only ever trained to predict t+1, so scoring it against t+2 reads a distribution that
+    is not predicting that position at all -- it degrades to no-information, not to easier.
+    A double-shifted number reads LOW only when the model was TRAINED with the same wrong
+    shift, because then training and scoring agree.
+
+    So the wrong mechanism in that docstring did not merely mis-explain: it made the real
+    alarm look irrelevant. 10.16 was too HIGH, and a bug believed to push losses DOWN does
+    not explain a number that is too high -- so 10.16 got filed as "an untrained model is
+    just bad". A wrong causal model reclassifies correct evidence as noise.
+
+    WHAT THIS CHECK DOES **NOT** COVER, measured against ln(50279) = 10.8253:
+
+        100.5%  untrained, scored with a double shift    10.8796   FIRES
+         93.9%  v1's held_out_loss_before, the missed alarm 10.1599  FIRES
+         64.6%  v1's TRAINED wrong-objective ckpt         6.9885   quiet   <- BLIND
+         67.9%  the same ckpt on its own metric           7.3505   quiet   <- BLIND
+         27.3%  untrained, scored correctly               2.9597   quiet
+         10.1%  our arm, trained                          1.0908   quiet
+
+    It covers the evaluation BEFORE training and nothing after it. One epoch on the wrong
+    objective pulls the loss from ~100% of ln(V) down to 65%, and 65% is not distinguishable
+    by any threshold from a merely weak model on hard data -- lowering the bar to 0.6 would
+    refuse honest runs instead. This is a resolution limit of the metric, not a tuning
+    problem. score_skip_one() is what covers the 65% row.
+    """
+    import math
+    if not vocab or nll_per_token <= 0:
+        return None, False
+    lnv = math.log(vocab)
+    frac = nll_per_token / lnv
+    # 0.80 is a REFUSAL threshold (1e's ruling, 2026-09-03Z), not a warning line. Set below
+    # the 0.94 that was actually missed and far above the 0.27 a correctly-aligned untrained
+    # model reads, so the gap it must discriminate is ~3.5x wide. A number in between is
+    # ambiguous and refusing is the right answer there too: no honest run lands at 0.8.
+    if frac > 0.80:
+        return (f"  ALARM: {nll_per_token:.4f} nat/token is {frac:.1%} of ln(V)={lnv:.4f} "
+                f"(V={vocab:,}), i.e. near no-information. A trained LM on ordinary text "
+                f"reads far below this. Suspect a label-alignment defect (a shift applied "
+                f"twice reads ~uniform) BEFORE reading this number as a result."), True
+    return (f"  sanity: {nll_per_token:.4f} nat/token = {frac:.1%} of ln(V)={lnv:.4f} "
+            f"(V={vocab:,}) -- below the no-information baseline, so the alignment is "
+            f"carrying signal"), False
+
+
+def score_skip_one(model, arm, kept, device, batch, pad_id):
+    """(total NLL, tokens) for the SKIP-ONE objective: logits[t] scored against token t+2.
+
+    THE CHECK THAT ACTUALLY CATCHES A WRONGLY-TRAINED CHECKPOINT. The ln(V) sentinel only
+    covers the pre-training evaluation; once a model has trained an epoch on the wrong
+    objective its loss leaves the no-information band entirely (measured: 64.6% of ln(V),
+    which no threshold can separate from a merely weak model). What does separate them is
+    asking the model BOTH questions: a correctly-trained model is much better at next-token,
+    and a model trained through a double shift is much better at skip-one.
+
+    Measured on the three discarded v1 checkpoints, over 25,215 supervised held-out tokens:
+        next-token (t+1)   7.2494 nat/token
+        skip-one   (t+2)   2.7663 nat/token   <- 2.6x BETTER at the wrong objective
+    """
+    import torch
+
+    order = sorted(range(len(kept)), key=lambda i: len(kept[i][1]) + len(kept[i][2]))
+    tot, ntok = 0.0, 0
+    with torch.no_grad():
+        for lo in range(0, len(order), batch):
+            chunk = [kept[i] for i in order[lo:lo + batch]]
+            width = max(len(p) + len(c) for _, p, c in chunk)
+            if width < 3:
+                continue                      # needs two positions to shift by two
+            xs, ys = [], []
+            for _, p, c in chunk:
+                row, lab = p + c, [-100] * len(p) + list(c)
+                pad = width - len(row)
+                xs.append(row + [pad_id] * pad)
+                ys.append(lab + [-100] * pad)
+            x = torch.tensor(xs, dtype=torch.long, device=device)
+            y = torch.tensor(ys, dtype=torch.long, device=device)
+            logits = model(x[:, :-2])
+            if isinstance(logits, tuple):
+                logits = logits[0]
+            elif not torch.is_tensor(logits):
+                logits = logits.logits
+            tot += torch.nn.functional.cross_entropy(
+                logits.reshape(-1, logits.shape[-1]).float(), y[:, 2:].reshape(-1),
+                ignore_index=-100, reduction="sum").item()
+            ntok += int((y[:, 2:] != -100).sum())
+    return tot, ntok
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--arm", choices=("ours", "control"))
@@ -461,6 +583,56 @@ def main():
     print(f"  NLL / supervised BYTE    {out['nll_per_supervised_byte']:.6f}   <- compare "
           f"across arms")
     print(f"  NLL / supervised token   {out['nll_per_supervised_token']:.6f}   (arm-internal)")
+    # The ln(V) sentinel. Printed on every run, not only when it fires: a check nobody sees
+    # pass is a check nobody notices missing.
+    line, alarm = alignment_sentinel(out["nll_per_supervised_token"],
+                                     vocab_size_of(a.arm, a.model_dir))
+    if line:
+        print(line)
+        out["ln_vocab_sentinel"] = {"alarm": alarm, "note": line.strip()}
+    if alarm:
+        # REFUSE, not warn (1e's ruling 2026-09-03Z). A printed warning is what the v1 scan
+        # effectively had: 10.1599 was visible in every log and got read past. The number
+        # this refusal protects is the CROSS-ARM one, so it must not be produced at all --
+        # a written-down wrong number outlives the log line that qualified it.
+        print("\nREFUSING to report a cross-arm number: this arm scores at or near the "
+              "no-information baseline, so the label alignment is broken. Fix the alignment "
+              "and re-score; do not quote nll_per_supervised_byte from this run.")
+        if a.json_out:
+            # Written on purpose: the refusal is evidence too, and a missing file would look
+            # like the run never happened.
+            out["REFUSED"] = "alignment broken -- nll_per_supervised_byte must not be quoted"
+            with open(a.json_out, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+            print(f"wrote {a.json_out} (marked REFUSED)")
+        return 1
+
+    # THE SKIP-ONE COMPARISON. Both arms, always (1e's ruling): the arms share this scorer,
+    # so exempting ours would mean the check that certifies a number is not the check the
+    # other arm passed. ~50% more scoring time, three minutes -- not worth saving.
+    sk_loss, sk_tok = score_skip_one(model, a.arm, kept, a.device, a.batch, pad_id)
+    if sk_tok:
+        sk_per_tok = sk_loss / sk_tok
+        nx_per_tok = out["nll_per_supervised_token"]
+        out["skip_one_nll_per_token"] = sk_per_tok
+        out["next_token_nll_per_token"] = nx_per_tok
+        print(f"  skip-one  (t+2)          {sk_per_tok:.6f}   (alignment check)")
+        if sk_per_tok < nx_per_tok:
+            ratio = nx_per_tok / max(sk_per_tok, 1e-12)
+            print(f"\nREFUSING: training alignment broken (skip-one beats next-token by "
+                  f"{ratio:.2f}x). This model predicts token t+2 better than t+1, which is "
+                  f"what a label double shift in the TRAINING loop produces -- the model "
+                  f"learned the wrong objective, so its loss is not a result to compare. "
+                  f"See sft_hf_control.py's training-loop comment.")
+            out["REFUSED"] = (f"training alignment broken -- skip-one beats next-token by "
+                              f"{ratio:.2f}x")
+            if a.json_out:
+                with open(a.json_out, "w", encoding="utf-8") as f:
+                    json.dump(out, f, indent=2)
+                print(f"wrote {a.json_out} (marked REFUSED)")
+            return 1
+        print(f"  alignment OK: next-token beats skip-one by "
+              f"{sk_per_tok / max(nx_per_tok, 1e-12):.2f}x")
     if a.json_out:
         with open(a.json_out, "w", encoding="utf-8") as f:
             json.dump(out, f, indent=2)
@@ -835,6 +1007,94 @@ def selftest():
 
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    # 8. THE ln(V) SENTINEL MUST FIRE ON THE NUMBER IT MISSED. Known-answer, using the
+    #    actual v1 measurements rather than invented ones -- a fixture built from values I
+    #    chose would only prove the threshold matches my choice.
+    #      10.1599 nat/token at V=50,304 was in every v1 log, unquestioned (94% of ln V)
+    #       2.9597 is the same untrained model scored with the CORRECT alignment (27%)
+    #       0.2940 is our arm's real result per byte-adjacent token scale (well under)
+    #    If the first stops alarming, the guard is gone; if either other one starts
+    #    alarming, every honest run gets a false alarm and the alarm becomes noise.
+    V1_MISSED, CORRECT_UNTRAINED, V = 10.1599, 2.9597, 50304
+    _, a_missed = alignment_sentinel(V1_MISSED, V)
+    if not a_missed:
+        fails.append(f"the ln(V) sentinel does NOT fire on {V1_MISSED} nat/token at "
+                     f"V={V:,} -- that is the exact number three wrong-objective "
+                     f"checkpoints were trained past")
+    _, a_ok = alignment_sentinel(CORRECT_UNTRAINED, V)
+    if a_ok:
+        fails.append(f"the ln(V) sentinel falsely alarms on {CORRECT_UNTRAINED} nat/token "
+                     f"at V={V:,}, the untrained model scored CORRECTLY -- an alarm that "
+                     f"fires on healthy runs will be ignored when it matters")
+    _, a_trained = alignment_sentinel(1.0908, V)   # our arm's measured per-token result
+    if a_trained:
+        fails.append("the ln(V) sentinel alarms on our arm's real per-token result 1.0908")
+    # And it must not alarm merely because a vocabulary is small: the threshold is a
+    # FRACTION of ln(V), not an absolute loss. 2.0 nat/token is healthy at V=50,304 and
+    # near-uniform at V=8.
+    _, a_bigv = alignment_sentinel(2.0, 50304)
+    _, a_smallv = alignment_sentinel(2.0, 8)
+    if a_bigv or not a_smallv:
+        fails.append(f"the sentinel is not scaling with V: 2.0 nat/token alarms="
+                     f"{a_bigv} at V=50,304 and alarms={a_smallv} at V=8; expected "
+                     f"False then True (ln 8 = 2.079)")
+    if not fails:
+        print("  checked: ln(V) sentinel fires on the missed 10.1599 and stays quiet on "
+              "2.9597 / 1.0908, and scales with V")
+
+    # 8b. THE ALARM MUST REACH A REFUSAL, not just a print. Case 8 checks the predicate;
+    #     a predicate that returns True while main() prints it and returns 0 anyway is
+    #     exactly what v1 had -- 10.1599 was visible in every log and got read past. So this
+    #     asserts the refusal is WIRED: main() must return 1 and the wiring must sit after
+    #     the number is computed (returning 1 before scoring would also "pass" a naive check,
+    #     hence the assertion that the json still carries the loss it refused on).
+    src = open(os.path.join(HERE, "eval_heldout.py"), encoding="utf-8").read()
+    body = src.split("\n    line, alarm = alignment_sentinel", 1)
+    if len(body) < 2:
+        fails.append("could not find the sentinel call in main() -- case 8b cannot check "
+                     "that the alarm is wired to a refusal")
+    else:
+        after = body[1].split("\n    if a.json_out:", 1)[0]
+        code = "\n".join(l for l in after.splitlines() if not l.lstrip().startswith("#"))
+        if "return 1" not in code:
+            fails.append("the ln(V) alarm does not reach a `return 1` in main() -- it only "
+                         "prints, which is what the v1 scan effectively did with 10.1599")
+        elif "REFUSED" not in code:
+            fails.append("the refusal does not mark the json output REFUSED -- a written "
+                         "number outlives the log line that qualified it")
+        else:
+            print("  checked: the ln(V) alarm is wired to a refusal (return 1) that marks "
+                  "its json REFUSED")
+
+    # 8c. THE SKIP-ONE REFUSAL IS WHAT COVERS THE 65% ROW. Known answer from the real
+    #     checkpoints (see score_skip_one's docstring): the discarded v1 model read 2.7663
+    #     skip-one against 7.2494 next-token and MUST be refused; a healthy model reads
+    #     skip-one WORSE and must pass. Checked as a decision, not by re-deriving the
+    #     comparison -- a mutant that flips the operator flips this too.
+    def refuses(next_tok, skip_one):
+        return skip_one < next_tok
+    for label, nx, sk, want in (
+            ("v1 wrong-objective ckpt (must refuse)", 7.2494, 2.7663, True),
+            ("untrained Pythia, correct alignment", 2.9597, 10.8796, False),
+            ("our arm, trained", 1.0908, 4.0, False)):
+        if refuses(nx, sk) != want:
+            fails.append(f"the skip-one check {'passed' if want else 'refused'} the wrong "
+                         f"way on {label}: next={nx} skip={sk}")
+    # And the wiring: the comparison must reach a refusal in main(), same reason as 8b.
+    sk_seg = src.split("\n    sk_loss, sk_tok = score_skip_one", 1)
+    if len(sk_seg) < 2:
+        fails.append("could not find the score_skip_one call in main() -- case 8c cannot "
+                     "check that its comparison is wired to a refusal")
+    else:
+        seg = "\n".join(l for l in sk_seg[1].split("\n        print(f\"  alignment OK", 1)[0]
+                        .splitlines() if not l.lstrip().startswith("#"))
+        if "sk_per_tok < nx_per_tok" not in seg or "return 1" not in seg:
+            fails.append("the skip-one comparison does not reach a `return 1` in main() -- "
+                         "it must REFUSE, not warn")
+        else:
+            print("  checked: skip-one refuses the v1 wrong-objective pair (2.7663 < 7.2494) "
+                  "and is wired to return 1")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
