@@ -344,12 +344,23 @@ def main():
 
         # record_shapes MUST stay on: scripts/trace_classes.py derives each class's ideal time
         # from the recorded shapes and reports "unknown" without them, which is the whole point
-        # of the table. But MEASURED (2026-09-02): with record_shapes and with_flops on, the
-        # 206M config OOMs in backward at 93.8/95.22 GiB -- the shape that trains at 73K
-        # tok/s/gpu in production -- so the profiler's own metadata is what does not fit.
-        # So the trace needs a smaller batch than the run, and the batch is therefore part of
-        # the trace's provenance: a share measured at batch 8 is not the run's share, and
-        # anything read off this trace must carry the batch it was traced at.
+        # of the table.
+        #
+        # I FIRST WROTE THAT record_shapes COSTS THE MEMORY, AND THAT WAS AN UNSOUND ATTRIBUTION
+        # (fb, 2026-09-02). The trace OOMed at 93.8/95.22 GiB with batch 32 accum 1, and I
+        # blamed the profiler because "batch 32 is the production shape". It is not:
+        # eff.microbatch_32_oom measured b32a1 OOMing at 93.8/95.2 GB on 2026-08-31, with
+        # b16a2 as the baseline at 72K tok/s/gpu, and p200m itself OOMed at the same
+        # 95.1 GiB with no profiler attached at all. Three OOMs at the same number, one of
+        # them with no profiler in the process: the batch is the variable, not record_shapes.
+        # eff.fb_mfu's "batch 32" is a briefing line, never measured, and contradicted the next
+        # day -- the p200m launch lines say --batch 16 --accum 2.
+        #
+        # SO THE COST OF record_shapes IS UNKNOWN, not measured. Trace at the RUN's shape
+        # (b16a2) first; if that fits, no batch reduction is needed and no provenance caveat
+        # applies. Only if it does not fit is the batch reduced -- and then the batch becomes
+        # part of the trace's provenance, because a share measured at a smaller batch is not
+        # the run's share.
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                        record_shapes=True, with_flops=True)
 
