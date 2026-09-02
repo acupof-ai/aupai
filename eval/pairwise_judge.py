@@ -5,6 +5,10 @@ Consumes judge outputs (two position-swapped judgements per pair) and optional
 test winners, emits per-pair verdicts and the acceptance report. Protocol:
 docs/lessons/pairwise_judge_protocol.md.
 
+Precondition (protocol section 1): pairs reaching the judge are within the
+all-pass or all-fail subgroup -- tests decide first, the judge only breaks
+ties. The judge must be a different model family from the policy (section 1b).
+
 Input JSONL, one line per pair:
   {"pair_id": "task01", "order_ab": "A", "order_ba": "B", "test_winner": "A"}
 test_winner is null for tasks without tests (reward issued, not validated).
