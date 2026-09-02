@@ -38,7 +38,6 @@ ALLOWED = [
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
     "data/t2s_table.json",
-    "data/CORPUS_V3_CARD.md",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
     "data/sft_contamination_baseline.json",
