@@ -2312,10 +2312,10 @@
    "id": "eff.kda_mla_growth_ratio_l12",
    "value": "1.63x at L=12 (KDA excess 0.2069 / MLA excess 0.1270), against 3.43x-7.96x at L=32 (eff.kda_mla_growth_ratio_l32). THE GAP R3-lr WAS BUILT TO EQUALIZE IS HALF TO A QUARTER AS LARGE AT THE SCALE THE ARM WOULD RUN. This reading is what fired b0-12's invalidation condition and withdrew R3-lr: the condition was written as 'if B0 reads a ratio near 1 at L=12, the 0.28 coefficient has no source', and p200m is itself L=12, so B0 was never needed. The equalizing coefficient implied here is 0.61, NOT the 0.28 derived from L=32 -- and 0.28 was already dead on its own (the L=32 ratio drifts 3.43->7.96 within one run, so it has no fixed target). Medians are over 9 KDA and 3 MLA blocks, of per-block mean weight-norm ratios.",
    "measured": "2026-09-02",
-   "source": "python3 scripts/ckpt_health.py ckpt_p200m_4b_0902.pt.step500 ckpt_p200m_4b_0902.pt.step832 (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 2322032",
+   "source": "python3 scripts/ckpt_health.py ckpt_p200m_4b_0902.pt.step500 ckpt_p200m_4b_0902.pt.interrupt.step832 (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 2322032. The later file is the INTERRUPT checkpoint (959,435,257 B): the run was stopped at 832, so there is no plain .pt.step832 and this entry first cited one that never existed (1e, 2026-09-02). 44's ckpt_facts_sources_present joins on the exact name.",
    "config": {
     "run": "p200m_4b_0902",
-    "ckpt_pair": "step500 -> step832 (332 steps)",
+    "ckpt_pair": "step500 -> interrupt.step832 (332 steps)",
     "model": "206M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, seq 4096, fp8",
     "launch": "--batch 16 --accum 2 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --save_every 500",
     "block_split": "KDA = blocks with mixer.A_log present; MLA = the rest; 9 KDA, 3 MLA",
@@ -2327,6 +2327,43 @@
    },
    "uncertainty": "ONE window, n=3 on the MLA side. No seed replicate, so the run-to-run spread of this ratio is unmeasured -- the 0.02 nat sigma work (b0-12 B0-seed2) does not cover it. The MLA median at n=3 has a measured blind spot: two of three blocks diverging together collapses every robust-z toward 1 (z 1.06) where n=8 flags at z>3000, so a two-block MLA divergence inside this window would not have been visible.",
    "boundary": "NOT A COEFFICIENT SOURCE. Single window, and the FIRST window after warmup (--warmup 300 ends at step 300, this pair starts at 500), so it carries whatever transient the lr and Muon-momentum ramps leave behind -- train.py:1160 ramps momentum to step 150 and the pair opens 350 steps later. Deriving any lr multiplier from it repeats exactly the error that killed 0.28: taking one unstabilized ratio as a constant. What it CAN answer is directional and that is all it was used for: the L=32 gap does not transfer to L=12 at anything like its L=32 size. Says nothing about whether the ratio is stable at L=12 -- that needs a second interval, which is pending p200m's resume.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.step_class_breakdown_p200m_4card",
+   "value": "Per-class GPU time for one 200M training step, 4 cards, from a 3-step Chrome trace. wall 1613.47 ms/step, busy (union of kernel spans) 1593.52, IDLE 19.94 = 1.2%. gemm 825.04 ms (50.8% of kernel time), elementwise_cast 497.24 (30.6%), fla_kda 171.94 (10.6%), other 46.51 (2.9%), flash_mla 46.39 (2.9%), nccl 36.85 (2.3%), optimizer 0.28 (0.0%). One stream carries 98.6% of the wall (stream 7); the second stream is 33 ms. THE BOTTLENECK IS OPERATOR COMPOSITION ON THE GPU, NOT THE HOST: at 1.2% idle there is no launch-gap or loader stall worth attacking, so every remaining lever is inside a kernel class. That is the finding this trace was run for, and it does not depend on any roofline ratio.",
+   "measured": "2026-09-02",
+   "source": "CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/profile_step_cost.py --mix data/mix_200m_4b.json --batch 16 --accum 2 --steps 8 --warmup 5 --trace runs/trace_p200m_3step.json --trace-steps 3; then python3 scripts/trace_classes.py runs/trace_p200m_3step.json --steps 3 at pod stamp cd1f9e6",
+   "config": {
+    "model": "206.13M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, NoPE",
+    "launch": "--batch 16 --accum 2, seq 4096, fp8, compile on, grad_ckpt off",
+    "cards": "4 (indices 0-3); tokens/step/gpu 131,072",
+    "mix": "data/mix_200m_4b.json",
+    "trace": "torch.profiler CPU+CUDA, record_shapes=True, with_flops=False, window = the last 3 of 8 timed steps, rank 0 only",
+    "pod_stamp": "cd1f9e6",
+    "tool": "scripts/trace_classes.py (selftest OK; 6 mutations of the real file red)"
+   },
+   "uncertainty": "3 steps, one window, one rank. Shape-stable steps, so the per-class split is not noisy in the way a loss is, but no seed or window replicate exists. Class shares are of KERNEL time (sum of durations, which double-counts overlap across streams); busy/idle use the UNION of spans, which is why busy 1593.52 is less than the class sum 1624.25 and idle is positive. An earlier version of the tool summed durations for busy and printed idle -10.78 ms, i.e. the arithmetic reporting its own error.",
+   "boundary": "SHARES ONLY -- this entry deliberately carries no roofline ratio; those are in eff.step_roofline_p200m_4card with their own coverage caveats. NOT A 7-CARD OR 8-CARD NUMBER: nccl 36.85 ms is the 4-card floor and grows with world; the ladder runs 7 and p500m ran 8. NOT A 300M NUMBER: this is L12 d1024. The 300M A/B is a separate measurement. The --dim FLAG WAS SILENTLY IGNORED when this trace ran (Cfg's field is `d`, and the old setattr loop skipped unknown names behind hasattr, fixed at c7be89a). --dim's default 1024 equals Cfg.d, so THIS trace ran at the shape it reports and its numbers stand; audited on 2026-09-02, --dim was the only affected flag, and --fp8 never went through that map. Any profile_step_cost run before c7be89a that passed a --dim other than 1024 profiled a model of Cfg.d's width while reporting the flag's.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.step_roofline_p200m_4card",
+   "value": "Roofline ratio per class for the same step, measured/ideal over THE SAME kernels. gemm 1.17x (713.18 of its 825.04 ms priced, against 608.80 ideal). elementwise_cast 1.30x (494.73 of 497.24 priced, against 381.10). other 1.00x (46.48 of 46.51, against 46.84). fla_kda, flash_mla, nccl, optimizer: NO RATIO -- no priced ideal at all. Splitting the true matmuls by their own dtype gives 92.8% MFU on both halves independently: fp8 aten::_scaled_mm 493.43 ms measured / 457.98 ideal, bf16 aten::mm 192.34 / 178.39. The two halves agreeing to 0.1 point is the main evidence the pricing is right, since nothing forced them to.",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/trace_classes.py runs/trace_p200m_3step.json --steps 3 at pod stamp cd1f9e6; peaks from facts/efficiency.json#eff.fp8_gemm_at_realizable_peak and #eff.gpu4_peak_flops",
+   "config": {
+    "model": "206.13M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON",
+    "launch": "--batch 16 --accum 2, seq 4096, fp8, compile on, grad_ckpt off",
+    "cards": "4 (indices 0-3)",
+    "flop_peak": "MEASURED on this pod: 279.6 TFLOPS fp8, 136.7 bf16 (eff.fp8_gemm_at_realizable_peak, eff.gpu4_peak_flops). NOT the H20 sheet's 296/148, which this silicon reaches 94.5% and 92.4% of.",
+    "bandwidth_peak": "4.0 TB/s, the H20 SHEET figure -- assumed, not measured",
+    "matmul_pricing": "2*M*N*K from the launching aten op's Input Dims, charged once per External id to the class holding the op's work; aten::_scaled_mm at the fp8 peak, aten::mm/bmm/addmm/baddbmm at bf16",
+    "bytes_pricing": "sum(inputs) + one output, the output shape inferred as the largest input (the trace carries no Output Dims across all 55,512 shaped cpu_ops); width from the first TENSOR operand's dtype",
+    "pod_stamp": "cd1f9e6"
+   },
+   "uncertainty": "The gemm ratio's basis is 86% of its class (713 of 825 ms): 1,686 of 3,918 gemm-classified kernels carry no matmul op, so 112 ms/step has no roofline basis. That gap is UNPRICED TIME, not time at ratio 1. elementwise's basis is 99.5% (495 of 497), so the two ratios do not deserve equal confidence. Bandwidth is a sheet figure, so every byte-based ratio (elementwise, other) is a LOWER BOUND on how close to bandwidth-bound the kernel already is -- the real achievable HBM is lower than 4.0 TB/s, which makes the true ratio closer to 1.",
+   "boundary": "fla_kda IS THE LARGEST BLANK, NOT A CLEAN RESULT: all 918 of its kernels are unpriced, so 171.94 ms/step -- 10.6% of the step -- has no roofline basis at all. This table cannot say whether KDA has room; it says the question is open. Next step belongs to tilerl's kernel inventory. Same for flash_mla (46.39) and nccl (36.85). RETRACTS AN EARLIER NUMBER FROM THIS SAME TRACE: elementwise was reported at 1.6x, read as 'room to fuse'. _shape_bytes counted reads and not the write, and byte widths came from whichever Input type string was recognised first -- often a Scalar's `float` or `double`, pricing 2-byte traffic at 4x or 8x, while 3,720 bf16 kernels got no width because the trace writes `c10::BFloat16` and the table held `bfloat16`. Both fixed (8a52353); 1.6x is withdrawn, the figure is 1.30x, and the direction of the correction is toward the roofline, not away. A gemm ratio of 1.36x from the same tool is also withdrawn: it divided the class's whole time by its partial ideal (54d1277). THE fp8 CAST IS INVESTIGATED AND HAS NOTHING TO RECOVER: what looked like a double fp8 cast is ONE cast with TWO stores (inductor num_store=2, kernel u2/cu2do4vu...py, activation [65536,6144]) -- row-major and transposed. Both are consumed: caller cczfn5uf...py:1038-1074 feeds the row-major one to the forward _scaled_mm as mat1 and the transposed one to the backward X^T@dY as mat1, and _scaled_mm requires mat1 row-major, so a view cannot replace the second store (tilerl, 2026-09-02). An earlier 'ceiling 17 ms/step' framing is withdrawn -- a ceiling on work that cannot be removed reads as 17 ms available.",
    "status": "measured"
   }
  ]
