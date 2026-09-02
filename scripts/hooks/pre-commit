@@ -347,7 +347,7 @@ def main():
         "eval/cache_guard.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
-        "scripts/write_mix_500m.py",
+        "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
@@ -368,6 +368,7 @@ def main():
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
         "scripts/test_artifact_path_ckpt.py",
+        "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
         # de-5 candidates that turned out to assert live properties. Each was in the
