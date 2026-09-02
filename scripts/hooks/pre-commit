@@ -653,6 +653,17 @@ def main():
         # consequence" for every factor, which is the failure that looks like a finding. CPU
         # for --selftest; the table and rescale need a card. 
         "scripts/l9_branch_probe.py",
+        # b0-17's row-class reading: the 11 alignment-padding rows [vocab_real, vocab) are never
+        # an input id and never a target, so they are reachable ONLY through the head and their
+        # movement IS the head gradient path rather than a proxy for it. That is what refutes
+        # b0-17's hypothesis -- the untied arm's tok pad rows read exactly 0.0000 (path fully
+        # removed) while its HEAD pad rows read 7.1036 against the tied base's 6.6575 (path not
+        # weakened), and tok grew MORE anyway. Five checks, all verified red. The subtle one is
+        # #5: deleting the vocab-ordering guard does NOT turn it red by itself, because the empty
+        # slice reaches .max() and torch raises RuntimeError -- so the check asserts the exception
+        # TYPE, since a crash reports "the tool is broken" where the truth is "this checkpoint's
+        # vocab fields are inconsistent". ZERO cards: mmap load plus tensor norms.
+        "scripts/head_path_rows.py",
         # The embed-norm same-direction-rate reading, and the two comparisons it REFUSES. The
         # rate is a within-interval-length statistic (linear `predicted` against compounding real
         # growth moves it ~2000x from n=10 to n=1000) and it moves 4.1x with step position at
