@@ -144,9 +144,14 @@ there is exactly zero rather than an init-scale number.
 **uncertainty** — One run per arm, one seed, one depth, 500 steps. The 0.0000 is a fact about
 reachability plus that init zeroing, so it is not a statistical claim; the 1.067x on the head's pad
 rows IS a one-sample comparison with no replicate. Arm 3's head is barely trained (2.4x init), so
-its tok figure of 19.8118 (input+head class) conflates the lr change with an untrained head -- the monotone
-"lower head lr -> more tok growth" reads across only two untied points, one of which is not at
-steady state.
+its tok figure of 19.8118 (input+head class) conflates the lr change with an untrained head. AND
+"LOWER HEAD LR -> MORE TOK GROWTH" IS NOT A TREND, NOR EVEN MONOTONE: there are exactly TWO
+untied points, and two points admit no monotonicity -- any two values are ordered. Calling it
+monotone (as an earlier draft of this line did) borrows the word's implication of a direction
+that would persist. One of the two is also not at steady state. The honest statement is a
+single comparison: the arm with the lower head lr had the larger tok growth, and its head was
+undertrained, which is a candidate explanation for that ordering rather than evidence against
+it. A third head_lr would be needed before direction is a claim.
 
 **boundary** — Excludes ONE mechanism for b0-10's uniform growth; does not explain it. Says
 nothing about why untying makes tok grow more, beyond ruling out that the head path was doing the
