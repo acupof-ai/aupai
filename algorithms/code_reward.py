@@ -58,7 +58,8 @@ sys.path.insert(0, os.path.join(ROOT, "algorithms"))
 
 # The default executor. Injectable: tileRL passes its own.
 try:
-    from isolate import Unisolated, detect_level, run as _isolate_run
+    from isolate import Unisolated, detect_level
+    from isolate import run as _isolate_run
 except ImportError:  # pragma: no cover - only when called from outside the repo
     _isolate_run = None
     detect_level = None
@@ -108,6 +109,77 @@ def _runner_argv(tests):
         return [sys.executable, "-I", "-m", "unittest", "-q", TEST_NAME.removesuffix(".py")]
 
 
+# pytest's last summary line. TWO SHAPES, and the first version of this regex only knew one:
+#   default   `===== 1 failed, 2 passed, 1 skipped in 0.31s =====`
+#   -q        `1 passed in 0.00s`                  <- no `=` decoration at all
+# `-q` is what _runner_argv passes, so requiring the `=` matched NOTHING in production while
+# every case in the suite passed -- because I wrote all of them with the decoration. The
+# suite caught it on the pod (every genuine pass scored 0.0), which is the only reason this
+# comment exists. MEASURED raw stdout: '.  [100%]\n1 passed in 0.00s\n' (2026-09-02).
+# The `=` is therefore optional, and the count regex does the real work.
+_SUMMARY = re.compile(r"^=*\s*(?P<body>[^=\n]*?\d+\s+\w+[^=\n]*?)\s+in\s+[\d.]+s[^=\n]*=*\s*$",
+                      re.M)
+_NOTESTS = re.compile(r"^=*\s*no tests ran\s+in\s+[\d.]+s.*$", re.M)
+_COUNT = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed|deselected)")
+
+
+def parse_summary(stdout):
+    """{kind: n} from pytest's summary line, or None when there is no parseable line.
+
+    None is "cannot tell", and verdict() scores it 0 rather than reading it as "nothing
+    failed" -- an unparseable run is not evidence of a pass. A line carrying no counts also
+    answers None, because the regex requires at least one `<n> <word>`; that requirement is
+    what keeps `-q`'s progress line (`. [100%]`) from matching.
+    """
+    m = None
+    for m in _SUMMARY.finditer(stdout):  # noqa: B007 -- the LAST match is what we want
+        pass
+    if m is None:
+        return None
+    return {kind: int(n) for n, kind in _COUNT.findall(m.group("body"))}
+
+
+def verdict(rc, timed_out, stdout):
+    """(passed: bool, reason: str). fb's ruling (c), 2026-09-02.
+
+    PASS = rc 0 AND at least one `passed` AND no failed/error. The exit code stays the
+    authority for FAILURE -- a reward that greps stdout for "ok" is a reward the model games
+    by printing "ok" -- and the summary is read only to catch the shapes where rc 0 is a LIE
+    about a pass having happened:
+
+        2 skipped in 0.30s      rc 0, nothing ran. The exploit I measured and reported: a
+                                wrong implementation earns 1.0 when every test skips, and it
+                                survives the write-order defence because the model never has
+                                to touch the test file.
+        no tests ran            rc 5 already, but belt and braces.
+
+    `summary_mismatch` is reserved for genuinely unreadable or self-contradictory output --
+    rc 0 with a failure counted, an INTERNALERROR, or no summary line at all -- and it scores
+    0. The asymmetry is deliberate: an unparseable run is not evidence of a pass.
+
+    What this does NOT do is treat rc-vs-summary disagreement as the criterion. It cannot:
+    `1 passed, 1 skipped` at rc 0 is a real pass and `2 skipped` at rc 0 is not, and both
+    "agree" with their exit code. The question is whether a test actually passed.
+    """
+    if timed_out:
+        return False, "timeout"
+    counts = parse_summary(stdout)
+    if "INTERNALERROR" in stdout:
+        return False, "summary_mismatch: pytest INTERNALERROR"
+    if rc != 0:
+        return False, f"rc {rc}"
+    if counts is None:
+        return False, "summary_mismatch: rc 0 but no pytest summary line"
+    bad = counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0)
+    if bad:
+        return False, f"summary_mismatch: rc 0 but summary counts {bad} failed/error"
+    if not counts.get("passed", 0):
+        skipped = counts.get("skipped", 0)
+        return False, (f"rc 0 with no test passed ({skipped} skipped)" if skipped
+                       else "rc 0 with no test passed")
+    return True, f"{counts['passed']} passed"
+
+
 def reward_fn(code, tests, timeout=30, executor=None, level=None, workdir=None):
     """1.0 if every test passes, else 0.0. See the module docstring for the contract."""
     return score(code, tests, timeout=timeout, executor=executor, level=level,
@@ -140,10 +212,9 @@ def score(code, tests, timeout=30, executor=None, level=None, workdir=None):
         with open(os.path.join(workdir, TEST_NAME), "w", encoding="utf-8") as f:
             f.write(tests)
         r = ex(None, workdir=workdir, timeout=timeout, level=level, argv=_runner_argv(tests))
-        # rc 5 is pytest's "no tests collected". Zero tests cannot pass, so it is 0.0 --
-        # otherwise a rollout that deletes every test earns full reward.
-        passed = r["rc"] == 0 and not r["timed_out"]
+        passed, reason = verdict(r["rc"], r["timed_out"], r["stdout"])
         return {"reward": 1.0 if passed else 0.0, "level": r["level"], "rc": r["rc"],
+                "reason": reason,
                 "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
                 "timed_out": r["timed_out"], "risk": nondeterminism_risk(tests)}
     finally:
@@ -197,40 +268,111 @@ SHOULD = [
      "import sys\nfrom solution import add\n\n\n"
      "def test_add():\n    assert add(2, 3) == 5\n\n\nsys.exit(0)\n",
      0.0, "sys.exit(0) at test-module level: pytest INTERNALERRORs, rc 3, no tests ran"),
-]
-
-GAP = [
-    (_GOOD_IMPL,
-     "from solution import add\n\n\n"
-     "def test_add():\n    assert add(2, 3) == 5\n\n\n"
-     "def test_skipped():\n    import pytest\n    pytest.skip('not implemented')\n",
-     1.0, 1.0,
-     "one test passes, one skips: rc 0, reward 1.0. Defensible -- nothing failed"),
-    # The same mechanism with nothing left standing, which is the actual exploit. MEASURED:
-    # `2 skipped in 0.30s`, rc 0, so a WRONG implementation earns full reward by skipping
-    # every test. This is the one case in this file where the reward can be gamed by editing
-    # the tests -- and it survives the write-order defence, because the model does not need
-    # to edit the test file at all if the task ships tests that skip.
+    # THE EXPLOIT, closed by fb ruling (c) 2026-09-02 and kept as a SHOULD so it cannot come
+    # back. It was a GAP documenting reward 1.0: every test skipping gives `2 skipped in
+    # 0.30s` at rc 0, so a WRONG implementation earned full reward -- and it survived the
+    # write-order defence entirely, because the model never has to touch the test file if the
+    # task ships tests that skip. rc alone cannot see it; the summary line can.
     ("def add(a, b):\n    return a - b\n",
      "from solution import add\n\n\n"
      "def test_a():\n    import pytest\n    pytest.skip('hard')\n\n\n"
      "def test_b():\n    import pytest\n    pytest.skip('also hard')\n",
-     1.0, 0.0,
-     "EVERY test skipped -> rc 0 -> reward 1.0 on a WRONG implementation. The exploit is "
-     "real and this is the reward's one known hole. NOT fixed here because the fix has to "
-     "be chosen, not improvised: either the miner refuses pairs whose tests can skip (3b's "
-     "side, and it keeps this function output-parsing-free), or the runner passes "
-     "-p no:skipping / --runxfail, which changes semantics for tests that skip on a real "
-     "platform condition. Raise it with fb before the first RL step; until then a pair "
-     "whose tests skip is a pair whose reward is a lie"),
+     0.0, "EVERY test skipped -> rc 0 but nothing passed -> 0.0, not 1.0"),
+    # And the other side of that line, which is why the criterion is "at least one passed"
+    # and not "no skips": a real pass beside a skip is a pass.
+    (_GOOD_IMPL,
+     "from solution import add\n\n\n"
+     "def test_add():\n    assert add(2, 3) == 5\n\n\n"
+     "def test_skipped():\n    import pytest\n    pytest.skip('not implemented')\n",
+     1.0, "1 passed, 1 skipped -> 1.0: a skip beside a real pass does not void it"),
+]
+
+GAP = [
+    # Both former entries moved to SHOULD when fb's ruling (c) closed the all-skip hole.
+    # This class must stay non-empty (the suite asserts it), and this is a real one: a test
+    # that passes for a reason the implementation did not earn. xfail/xpass is the shape --
+    # `1 xpassed` is not counted as `passed`, so an implementation that unexpectedly satisfies
+    # an xfail-marked test scores 0.0. Defensible (the task declared it expected to fail) and
+    # arguably wrong (the code worked). NOT decided here: whether a miner should keep such
+    # pairs at all is 3b's call, and inventing a rule for it in the reward would be the
+    # improvisation fb's ruling on the skip hole deliberately avoided.
+    (_GOOD_IMPL,
+     "import pytest\nfrom solution import add\n\n\n"
+     "@pytest.mark.xfail\ndef test_add():\n    assert add(2, 3) == 5\n",
+     0.0, 0.0,
+     "an xfail-marked test that PASSES reports `1 xpassed`, not `1 passed`, so the reward "
+     "is 0.0 on a correct implementation. Defensible -- the task declared the test expected "
+     "to fail -- but a miner shipping xfail markers would silently zero good rollouts. "
+     "Raise with 3b before the first RL step rather than special-casing it here"),
+    (_GOOD_IMPL,
+     "from solution import add\n\n\n"
+     "def test_add():\n    assert add(2, 3) == 5\n\n\n"
+     "def test_deselected():\n    assert add(1, 1) == 2\n",
+     1.0, 1.0,
+     "a plain two-test file passes; recorded beside the xfail case as the control that the "
+     "summary parser is not simply rejecting multi-test files"),
 ]
 
 
 def _detector_cases():
-    """The non-determinism detector on its own known answers. No sandbox, no subprocess."""
+    """The non-determinism detector and the summary parser on their own known answers.
+
+    No sandbox, no subprocess: both are pure functions over text, so the commit hook can run
+    this half on any host.
+    """
+    print("== summary parser + verdict (fb ruling c) ==")
+    bugs = 0
+    # (rc, stdout, want_pass, note).
+    #
+    # THE FIRST HALF ARE REAL `-q` OUTPUT, captured from the pod, because the first version of
+    # this list was entirely invented with `===== ... =====` decoration -- which `-q` does not
+    # print. Every case passed and the parser matched nothing in production, scoring 0.0 on
+    # every genuine pass. Invented fixtures test the fixture writer's assumptions; the shape
+    # that reaches the code has to come from the code.
+    vcases = [
+        (0, ".                                     [100%]\n1 passed in 0.00s\n", True,
+         "REAL -q output: no `=` decoration at all"),
+        (0, "..                                    [100%]\n2 passed in 0.01s\n", True,
+         "REAL -q, two tests"),
+        (0, "ss                                    [100%]\n2 skipped in 0.30s\n", False,
+         "REAL -q, ALL skipped at rc 0 -> NOT a pass"),
+        (1, ".F                                    [100%]\n1 failed, 1 passed in 0.12s\n",
+         False, "REAL -q, rc 1 -> fail"),
+        (0, ".s                                    [100%]\n1 passed, 1 skipped in 0.02s\n",
+         True, "REAL -q, a skip beside a real pass is still a pass"),
+        # And the decorated shape, which is what pytest prints without -q -- kept so the
+        # parser kegs working if _runner_argv ever drops -q.
+        (0, "===== 1 passed in 0.01s =====", True, "decorated (non-q) shape still parses"),
+        (0, "===== 2 passed, 1 skipped in 0.31s =====", True, "decorated, passed beside skip"),
+        (0, "===== 1 failed, 1 passed in 0.12s =====", False,
+         "rc 0 contradicting its own summary -> summary_mismatch"),
+        (5, "no tests ran in 0.01s\n", False, "no tests ran -> fail"),
+        (0, "nothing that looks like a summary", False,
+         "rc 0 with no summary line -> summary_mismatch, never an implied pass"),
+        (0, "INTERNALERROR> boom\n1 passed in 0.01s\n", False,
+         "INTERNALERROR outweighs a passed count"),
+        (0, "1 xpassed in 0.01s\n", False, "xpassed is not passed"),
+    ]
+    for rc, out, want, note in vcases:
+        got, reason = verdict(rc, False, out)
+        ok = got == want
+        bugs += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} pass={got!s:5} want={want!s:5} {note} [{reason}]")
+    got, reason = verdict(0, True, "===== 1 passed in 0.01s =====")
+    ok = got is False and reason == "timeout"
+    bugs += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a timeout is a failure even with a passed count")
+    # A summary line with no counts no longer parses at all, because the regex now REQUIRES
+    # at least one `<n> <word>` -- that is what stops `-q`'s progress line from matching. So
+    # the distinction that matters is None (no line) vs a dict with counts; both no-line and
+    # countless-line answer None, and neither is ever read as "nothing failed" because
+    # verdict() treats None as summary_mismatch and scores 0.
+    ok = parse_summary("no summary here") is None and parse_summary("==== in 0.1s ====") is None
+    bugs += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} an unparseable summary is None, and None scores 0")
+
     print("== nondeterminism detector ==")
-    det = [
-        ("def test_x():\n    assert 1 == 1\n", [], "clean"),
+    det = [        ("def test_x():\n    assert 1 == 1\n", [], "clean"),
         ("import time\ndef test_x():\n    assert time.time() > 0\n", 1, "wall clock"),
         ("import random\ndef test_x():\n    assert random.random() < 1\n", 1, "unseeded random"),
         ("import random\nrandom.seed(0)\ndef test_x():\n    assert True\n", 0,
@@ -244,7 +386,7 @@ def _detector_cases():
         ok = (n == 0) if want == 0 or want == [] else (n >= 1)
         bugs += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {n} risk(s)  {note}")
-    return bugs
+    return bugs, len(vcases) + 2 + len(det)
 
 
 def _run_suite(level=None):
@@ -256,13 +398,14 @@ def _run_suite(level=None):
         bugs += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {got:.1f} want {exp:.1f}  {note}")
     print("== GAP (change = flag) ==")
-    for code, tests, cur, should, note in GAP:
+    for code, tests, cur, _should, note in GAP:
         got = reward_fn(code, tests, timeout=20, level=level)
         ok = got == cur
         flags += 0 if ok else 1
         print(f"  {'as-documented' if ok else 'CHANGED      '} {got:.1f} "
               f"(documented {cur:.1f}) {note[:70]}")
-    return bugs + _detector_cases(), flags
+    dbugs, dn = _detector_cases()
+    return bugs + dbugs, flags, dn
 
 
 def _selftest(detector_only=False):
@@ -272,21 +415,21 @@ def _selftest(detector_only=False):
         # HAS isolation and a refusal on one that does not, so the hook can run this half
         # everywhere. The exemption belongs to the assertions that need a sandbox, not to
         # the file -- the same granularity the hook's own NEEDS_DATA comment argues for.
-        bugs = _detector_cases()
-        print(f"5 detector cases: {bugs} bug(s) (reward cases skipped: they need "
+        bugs, n = _detector_cases()
+        print(f"{n} sandbox-free cases: {bugs} bug(s) (reward cases skipped: they need "
               f"process isolation)")
         return 1 if bugs else 0
     lvl = None
     if detect_level is not None:
         lvl = detect_level()
         print(f"executor level: {lvl}\n")
-    bugs, flags = _run_suite(level=lvl)
+    bugs, flags, dn = _run_suite(level=lvl)
     # A suite where nothing ever fails is not a suite: both classes must be non-empty and
     # the negative cases must actually have produced 0.0 above.
     assert any(e == 0.0 for *_, e, _ in ((c, t, e, n) for c, t, e, n in SHOULD)), \
         "SHOULD has no negative case"
     assert len(SHOULD) >= 10 and len(GAP) >= 2, "the suite shrank"
-    print(f"\n{len(SHOULD)} SHOULD, {len(GAP)} GAP, 5 detector cases: "
+    print(f"\n{len(SHOULD)} SHOULD, {len(GAP)} GAP, {dn} sandbox-free cases: "
           f"{bugs} bug(s), {flags} flag(s)")
     if bugs:
         print("FAIL: a SHOULD case did not match. The reward is what the model optimises "
