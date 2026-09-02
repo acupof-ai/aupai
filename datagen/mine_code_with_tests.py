@@ -34,8 +34,21 @@ THIRD_PARTY = {"numpy", "pandas", "scipy", "sklearn", "torch", "tensorflow", "tq
                "pytest", "requests", "flask", "django", "matplotlib", "sympy", "click", "yaml"}
 
 
+STDLIB = set("""argparse ast asyncio base64 bisect builtins collections contextlib copy csv
+dataclasses datetime decimal difflib enum errno fractions functools gc glob hashlib heapq io
+itertools json keyword linecache logging math operator os pathlib pickle random re shutil
+signal socket sqlite3 statistics string struct subprocess sys tempfile textwrap threading
+time traceback types typing unicodedata unittest urllib uuid warnings weakref xml zipfile
+abc array cmath codecs collections.abc configparser contextvars dataclasses dis doctest
+gettext gzip html http importlib inspect io ipaddress itertools json marshal mmap numbers
+optparse posix pprint profile pstats pwd queue random re reprlib rlcompleter select selectors
+shelve shlex smtplib socket ssl statistics string stringprep struct subprocess sys tempfile
+threading time token tokenize traceback tracemalloc types typing urllib uu uuid warnings
+weakref xml zipimport zlib""".split())
+
+
 def imports(mod):
-    """All module names a test imports, with dotted parts (bare 'a' and full 'a.b')."""
+    """All module names a test/impl imports, with dotted parts (bare 'a' and full 'a.b')."""
     try:
         tree = ast.parse(mod)
     except SyntaxError:
@@ -52,6 +65,11 @@ def imports(mod):
     return out
 
 
+def imports_ok(src, allowed):
+    """True if every imported top-name is in `allowed` (stdlib + the inlined target)."""
+    return imports(src) <= allowed
+
+
 def impl_matches(imported, impl_by_base):
     """Return an impl basename X such that 'X' or 'a.b.X' is imported."""
     for base in impl_by_base:
@@ -65,20 +83,39 @@ def detects_unittest(src):
     return "unittest." in src or "assertTrue" in src or "self.assertEqual" in src
 
 
-def stdlib_core_ok(src):
+def has_unskippable_assert(src):
+    """True iff some test method has a real assert and is not skip-decorated.
+    de-28b: a fully-skippable/assert-free test returns rc 0 even with a wrong impl
+    (reward 1.0). Guard at the miner (cheapest), not in the reward parse."""
     try:
         tree = ast.parse(src)
     except SyntaxError:
         return False
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            if node.module.split(".")[0] in THIRD_PARTY:
-                return False
-        elif isinstance(node, ast.Import):
-            for n in node.names:
-                if n.name.split(".")[0] in THIRD_PARTY:
-                    return False
-    return True
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test"):
+            continue
+        if any(isinstance(d, ast.Name) and d.id == "skip" for d in node.decorator_list):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Assert):
+                return True
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and \
+               sub.func.attr in ("assertEqual", "assertTrue", "assertIs", "assertIn"):
+                return True
+    return False
+
+
+def test_runner_suffix():
+    """Appended to the blob so the test ACTUALLY RUNS (not just imports/parses).
+    Runs unittest-discovered TestCases in the inlined module; exit 1 on failure
+    so a wrong impl cannot yield rc 0. Mirrors de-28's pytest semantics for the
+    unittest-pattern tests this miner accepts."""
+    return (
+        "\n\nimport unittest as _un\n"
+        "_suite = _un.defaultTestLoader.loadTestsFromModule(__import__('__main__'))\n"
+        "_res = _un.TextTestRunner(verbosity=0).run(_suite)\n"
+        "raise SystemExit(0 if _res.wasSuccessful() else 1)\n"
+    )
 
 
 def main():
@@ -105,25 +142,27 @@ def main():
             impl_by_base = {}
             for p in files:
                 if not TEST_RE.search(p):
-                    impl_by_base.setdefault(os.path.basename(p), p)
+                    impl_by_base.setdefault(os.path.basename(p)[:-3], p)  # strip .py
             for tp, src in files.items():
                 if not TEST_RE.search(tp):
                     continue
                 counts["test_files"] += 1
-                if not detects_unittest(src):
+                if not detects_unittest(src) or not has_unskippable_assert(src):
                     continue
-                if not stdlib_core_ok(src):
-                    continue
-                counts["stdlib_only"] += 1
-                target = impl_matches(imports(src), impl_by_base)
+                imported = imports(src)
+                target = impl_matches(imported, impl_by_base)
                 if target is None:
                     continue
-                counts["matched_impl"] += 1
+                allowed = STDLIB | {target}
+                if not imports_ok(src, allowed):
+                    continue
+                counts["stdlib_only"] += 1
                 ip = impl_by_base[target]
                 impl = files[ip]
-                if not impl or not stdlib_core_ok(impl):
+                if not impl or not imports_ok(impl, allowed):
                     continue
-                blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % target + src
+                counts["matched_impl"] += 1
+                blob = impl + "\n\nimport sys as _s; _s.modules[%r] = _s.modules['__main__']\n\n" % target + src + test_runner_suffix()
                 rc, outt, err = sandbox_exec.run_sandboxed(blob, timeout=15)
                 if rc == 0:
                     fo.write(json.dumps({"repo": repo, "impl_path": ip, "impl": impl,
