@@ -33,6 +33,21 @@ print(f"{n} rows x 4097 tok = {n * 4097 / 1e6:.1f}M tokens")
 PY
 )" >/dev/null
 
+# DECLARE the cards before taking them. scripts/card_claim.py has existed for a while and
+# nothing called it -- `card_claim.py status` on the pod reports all eight cards as ORPHAN
+# (memory held, no claim) because the live run never claimed either, and runs/claims/ had
+# never been created. With six jobs about to share eight cards that is the case it was
+# written for. --wait 0: a clash must fail the launch loudly, not queue behind a card
+# someone else is mid-way through taking.
+python3 scripts/card_claim.py acquire --name "$NAME" --cards "$CARDS"   --note "run_sft.sh $DATA" --wait "${CLAIM_WAIT:-0}" || {
+  echo "REFUSING to launch: could not claim cards $CARDS (see card_claim.py status)"
+  python3 scripts/exp.py done --name "$NAME" --status fail --result "card claim refused"
+  exit 1
+}
+# Released on every exit path, including the two `exit`s below and a kill: a stale claim
+# blocks the next job and reads as a card that is busy.
+trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
+
 set +e
 CUDA_VISIBLE_DEVICES=$CARDS torchrun --nproc_per_node="$NGPU" \
   --master_port="${PORT:-$((29520 + $(printf '%s' "$CARDS" | cut -d, -f1)))}" sft_math.py --resume "$RESUME" --sft_path "$DATA" --out "$OUT" "$@"
