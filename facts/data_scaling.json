@@ -528,6 +528,30 @@
    },
    "uncertainty": "repo 双全是上界;runnable-pair(import 匹配、能跑)过滤会显著缩,未测真实配对数;采样 n=1 文件",
    "status": "measured"
+  },
+  {
+   "id": "ds.second_resume_rereads_one_segment",
+   "value": "The row cursor counts ONE SEGMENT and does not accumulate, so the SECOND and every later resume re-reads rows the run has already trained on. train.py:1387 computes rows_done = (step - _origin) * batch * accum, and :2309 sets _origin = resume_step, so a checkpoint written after a resume describes only the rows THAT resume drew -- not the run's total. Measured on p500m_20b_0902 (de and tilerl, independently, same hour): the nine domain cursors in .interrupt.step32 sum to 8,192 = 32x256, correct because that segment started at origin 0; the cursors in .interrupt.step83 sum to 13,056 = 51x256, while step 83 had truly consumed 21,248 = 83x256. Neither checkpoint records the total, and nothing raises. Relaunching from .interrupt.step83 seeded used[] with 13,056 against FULL pools, so rows 13,056..21,248 were read a SECOND time: 8,192 rows, 33.5M tokens, 0.168% of the 20B budget. Those rows are at epoch 2.0 while the corpus around them is at 1.0. Nine srcfp fingerprints matched and no domain reset to row 0, so de-13's discard fix is confirmed working in production by the same artifact.",
+   "measured": "2026-09-02",
+   "source": "train.py:1387,2309; ckpt_p500m_20b_0902.pt.interrupt.step32 and .step83 row_cursor fields",
+   "config": {
+    "run": "p500m_20b_0902",
+    "batch": 32,
+    "accum": 1,
+    "world": 8,
+    "rows_per_step": 256,
+    "cursor_sum_step32": 8192,
+    "cursor_sum_step83": 13056,
+    "true_consumption_at_step83": 21248,
+    "reread_rows": 8192,
+    "reread_tokens": 33554432,
+    "reread_frac_of_20B": 0.00168,
+    "corpus_rows": 4882812,
+    "how_it_happened": "segment 1 fresh -> SIGTERM at 32; segment 2 --resume step32 -> SIGTERM at 83; segment 3 --resume step83, hand-written, is the second resume. supervise_run.sh allows exactly one automatic resume for this reason; the second was a human relaunch, which is how the cost came to be measured rather than assumed."
+   },
+   "boundary": "The FIRST resume is immune -- its origin is 0, so its segment count is the run total. From the second resume on, the rows re-read equal the length of the FIRST segment, whatever that was. Here: 8,192 rows = 33.5M tokens = 0.168%. The quantity does not grow with later resumes; it is re-paid once per resume beyond the first.",
+   "uncertainty": "A single occurrence, and the arithmetic is exact rather than sampled, so there is no spread to report. NOT verified: whether the re-read rows are the same rows in the same order -- the plan is rebuilt under the same seed 42, so they should be, but that was not checked row-by-row. The check that would catch a recurrence does not exist yet: assert sum(row_cursor) == row_cursor_as_of_step * batch * accum * world at save time. The checkpoints on disk are a real broken world for that assertion, so it needs no constructed fixture (de-13).",
+   "status": "measured"
   }
  ]
 }
