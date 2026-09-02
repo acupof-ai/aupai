@@ -48,7 +48,11 @@ DTYPE_BYTES = {"float": 4, "float32": 4, "f32": 4, "double": 8,
 #: Matched in order; first hit wins. Names are substrings of the CUDA kernel.
 CLASS_PATTERNS = [
     ("nccl", ("nccl", "allreduce", "all_reduce", "reduce_scatter", "all_gather")),
-    ("fla_kda", ("chunk_kda", "fused_recurrent", "chunk_gla", "fla_", "chunk_delta")),
+    # kda / delta_rule / recompute_w_u added from p200m's real trace: chunk_gated_delta_rule_*
+    # (25 ms/step), recompute_w_u_fwd_kda_* (9), kda_gate_* (6) all matched none of the five
+    # patterns below and sat in `other`, so fla_kda read 61 ms/step against a real 172.
+    ("fla_kda", ("chunk_kda", "kda", "fused_recurrent", "chunk_gla", "fla_", "chunk_delta",
+                 "delta_rule", "recompute_w_u")),
     ("flash_mla", ("flash", "fmha", "attention_kernel", "mha_")),
     ("optimizer", ("adam", "muon", "newton_schulz", "foreach_", "zero_grad", "clip_")),
     ("gemm", ("gemm", "cutlass", "sgemm", "hgemm", "s16816", "nvjet", "matmul",
@@ -157,6 +161,22 @@ def _busy_us(spans: list[tuple[float, float]]) -> float:
     return total + (cur_e - cur_s if cur_e is not None else 0.0)
 
 
+#: aten ops whose Input Dims ARE a matmul's operands. A GEMM-classified kernel launched by
+#: anything else -- a fused triton epilogue, a cast -- has dims describing its inputs but not a
+#: multiply, and 2*M*N*K over them is a number with no basis. MEASURED on p200m:
+#: triton_poi_fused__scaled_mm reports [[16,4096,6144],[65536,6144],[6144,65536]] and yields an
+#: ideal of 59.43 ms/step against 0.374 ms measured, and a handful of those ids outweighed every
+#: real GEMM combined -- which is why gemm still read 0.1x after the per-op pricing fix. They go
+#: to shapes_missing, which is what that column is for.
+MATMUL_OPS = {"aten::mm", "aten::bmm", "aten::addmm", "aten::baddbmm", "aten::matmul",
+              "aten::_scaled_mm", "aten::linear", "aten::_int_mm"}
+
+#: fp8 only when the op says so. One trace holds both: p200m ran aten::_scaled_mm for the
+#: converted linears and aten::mm for everything else, and pricing the bf16 half at the fp8 peak
+#: halves its apparent MFU.
+FP8_OPS = {"aten::_scaled_mm"}
+
+
 def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
     """Per-class device time, share, ideal time and the ratio."""
     per = defaultdict(lambda: {"us": 0.0, "n": 0, "ideal_us": 0.0, "unknown": 0})
@@ -173,11 +193,24 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
             continue
         dur = float(e.get("dur", 0.0))
         name = e.get("name", "")
-        cls = classify(name)
         args = e.get("args") or {}
-        op = (ops.get(args.get("External id")) or {}).get("args") or {}
+        op_ev = ops.get(args.get("External id")) or {}
+        op = op_ev.get("args") or {}
+        op_name = op_ev.get("name") or ""
         shapes = op.get("Input Dims") or []
         types = op.get("Input type") or []
+        # The launching op names the work when the kernel name does not: `kernel_kernel` is
+        # 58 ms/step of ChunkKDAFunctionBackward, and with kda_gate_*, chunk_gated_delta_rule_*
+        # and recompute_w_u_* also landing in `other`, fla_kda read 61 against a real 172 --
+        # understating by 64% the block whose cost the 300M A/B is about.
+        #
+        # KDA only, NOT a general "classify by the op when the kernel is opaque". MEASURED on
+        # this trace: a generic fallback moves 2.72 ms/step and what it moves is wrong -- a
+        # Memset launched by aten::_scaled_mm becomes gemm, a DtoD memcpy becomes elementwise. A
+        # rule earning 0.2% of a step by labelling memory traffic as compute is worse than none.
+        cls = classify(name)
+        if op_name and ("kda" in op_name.lower() or "delta_rule" in op_name.lower()):
+            cls = "fla_kda"
         width = next((DTYPE_BYTES[t] for t in types if t in DTYPE_BYTES), None)
         rec = per[cls]
         rec["us"] += dur
@@ -196,11 +229,12 @@ def analyse(events: list[dict], steps: int, precision: str = "fp8") -> dict:
         tmin = ts if tmin is None else min(tmin, ts)
         tmax = ts + dur if tmax is None else max(tmax, ts + dur)
         ideal = None
-        if cls in ("gemm", "fla_kda", "flash_mla"):
+        if op_name in MATMUL_OPS:
             fl = _shape_flops(shapes)
             if fl is not None:
-                ideal = fl / PEAK.get(precision, PEAK["bf16"]) * 1e6
-        elif width is not None:
+                peak = PEAK["fp8"] if op_name in FP8_OPS else PEAK.get(precision, PEAK["bf16"])
+                ideal = fl / peak * 1e6
+        elif cls not in ("gemm", "fla_kda", "flash_mla") and width is not None:
             by = _shape_bytes(shapes, width)
             if by is not None:
                 ideal = by / HBM_BYTES_PER_S * 1e6
@@ -245,8 +279,10 @@ def render(rep: dict) -> str:
     out.append(f"{'busy':<18}{rep['busy_ms_per_step']:>12.2f}")
     out.append(f"{'idle (wall-busy)':<18}{rep['idle_ms_per_step']:>12.2f}")
     out.append(f"{'wall':<18}{rep['wall_ms_per_step']:>12.2f}")
-    out.append(f"\nratio = measured / ideal at {rep['precision_assumed']} peak; "
-               "'-' = the trace carried no shapes, so no ideal was invented.")
+    out.append(f"\nratio = measured / ideal at {rep['precision_assumed']} peak "
+               "(aten::_scaled_mm always at the fp8 peak); 'no-shape' counts kernels with no "
+               "priced ideal: no cpu_op shapes, or a launching op that is not a matmul, whose "
+               "dims do not describe the multiply.")
     return "\n".join(out)
 
 
@@ -280,6 +316,10 @@ def _selftest() -> None:
            "args": {}}]
     rep = analyse(ev, steps=1)
     gemm = next(r for r in rep["rows"] if r["class"] == "gemm")
+    # The ideal must EXIST before the ratio is compared. Comparing None to 1.0 raises TypeError,
+    # and a crash is not a caught defect: the first mutation run of the join fix exited nonzero
+    # with a TypeError and read as "the guard fired" while naming nothing.
+    assert gemm["ratio"] is not None, f"a priced aten::mm produced no ideal: {gemm}"
     assert abs(gemm["ratio"] - 1.0) < 1e-6, gemm
     other = next(r for r in rep["rows"] if r["class"] == "other")
     assert other["ratio"] is None and other["shapes_missing"] == 1, other
@@ -303,7 +343,51 @@ def _selftest() -> None:
     r3 = analyse(joined, steps=1)
     g = next(r for r in r3["rows"] if r["class"] == "gemm")
     assert g["shapes_missing"] == 0 and g["ratio"] is not None, g
-    print("trace_classes selftest OK: classes, A_log split, roofline, idle, join")
+
+    # A GEMM-classified kernel whose op is NOT a matmul gets no ideal. p200m's
+    # triton_poi_fused__scaled_mm reports [[16,4096,6144],[65536,6144],[6144,65536]]: 2*M*N*K
+    # over that is 59.43 ms/step against 0.374 measured, and a few such ids outweighed every
+    # real GEMM, which is why gemm read 0.1x -- an MFU over 1000% -- even after per-op pricing.
+    fused = [{"ph": "X", "cat": "cpu_op", "name": "triton_poi_fused__scaled_mm", "ts": 0.0,
+              "dur": 1.0, "args": {"External id": 11,
+                                   "Input Dims": [[16, 4096, 6144], [65536, 6144],
+                                                  [6144, 65536]],
+                                   "Input type": ["bfloat16", "bfloat16", "bfloat16"]}},
+             {"ph": "X", "cat": "kernel", "name": "nvjet_fused", "ts": 0.0, "dur": 3.0,
+              "args": {"External id": 11}}]
+    f = next(r for r in analyse(fused, steps=1)["rows"])
+    assert f["class"] == "gemm" and f["ratio"] is None and f["shapes_missing"] == 1, f
+
+    # Each op at its own peak: one trace holds fp8 and bf16 matmuls, and pricing aten::mm at the
+    # fp8 peak halves its MFU while pricing _scaled_mm at bf16 doubles its ideal.
+    def _one(op, dtype, prec):
+        e = [{"ph": "X", "cat": "cpu_op", "name": op, "ts": 0.0, "dur": 1.0,
+              "args": {"External id": 12, "Input Dims": [[100, 100], [100, 100]],
+                       "Input type": [dtype, dtype]}},
+             {"ph": "X", "cat": "kernel", "name": "nvjet_gemm", "ts": 0.0, "dur": 1.0,
+              "args": {"External id": 12}}]
+        r = next(x for x in analyse(e, steps=1, precision=prec)["rows"])
+        assert r["ideal_ms_per_step"] is not None, f"the join is broken: {r}"
+        return r["ideal_ms_per_step"]
+
+    assert abs(_one("aten::mm", "bfloat16", "bf16") - flops / PEAK["bf16"] * 1e6 / 1e3) < 1e-9
+    assert abs(_one("aten::_scaled_mm", "float8_e4m3fn", "bf16")
+               - flops / PEAK["fp8"] * 1e6 / 1e3) < 1e-9, \
+        "aten::_scaled_mm must keep the fp8 peak even under --precision bf16"
+
+    # The launching op names the class when the kernel name cannot: `kernel_kernel` was 58 ms/step
+    # of KDA backward sitting in `other`.
+    opaque = [{"ph": "X", "cat": "cpu_op", "name": "ChunkKDAFunctionBackward", "ts": 0.0,
+               "dur": 1.0, "args": {"External id": 13, "Input Dims": [[8, 8]],
+                                    "Input type": ["bfloat16"]}},
+              {"ph": "X", "cat": "kernel", "name": "kernel_kernel", "ts": 0.0, "dur": 4.0,
+               "args": {"External id": 13}}]
+    assert next(r for r in analyse(opaque, steps=1)["rows"])["class"] == "fla_kda"
+    gdr = [{"ph": "X", "cat": "kernel", "name": "chunk_gated_delta_rule_bwd_kernel_dhu",
+            "ts": 0.0, "dur": 4.0, "args": {"External id": 14}}]
+    assert next(r for r in analyse(gdr, steps=1)["rows"])["class"] == "fla_kda"
+    print("trace_classes selftest OK: classes, A_log split, roofline, idle, join, "
+          "matmul-only pricing, per-op precision, opaque KDA names")
 
 
 def main() -> None:
