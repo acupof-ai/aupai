@@ -1198,6 +1198,24 @@
    "boundary": "This was found while sizing a measurement, not by measuring: the cheapest decidable seed arm was costed at 2.4 h and a ten-minute read of the ledger produced a better bound for free, with n=4 twice instead of the single gap 2.4 h would have bought. Worth stating because the search was proposed as a long shot and returned more evidence than the run it replaced.",
    "status": "measured",
    "refuted_by": "a third four-seed family at the same scale whose sd lands within 10% of either, which would suggest the 2x gap is specific to these two rather than characteristic"
+  },
+  {
+   "id": "be.math_v2_like_saturated_200m",
+   "value": "math_v2_like (2-way, n=3012, floor 50%) is SATURATED on the 4B-token 200M ladder and must not carry an A/B vote there. Three checkpoints, all 206.1M params: 97.41 (ckpt_pretrain_15b_s1) / 97.44 (ckpt_p200m_4b_0902) / 97.54 (ckpt_rehearse_resume). Spread across the three 0.13pt, against a binomial se of 0.288pt at p=0.974 -- the three are indistinguishable. Total headroom to the 100% ceiling is 2.56pt, i.e. SMALLER than the 14.5pt readable move the metric's own seed variance demands (be.math_v2_like_seed_variance): no reachable improvement can clear its own noise floor, so the metric cannot report a win OR a loss at this point on the ladder. It stays READABLE further down the token axis, where the same architecture reads 76.69-83.53 across four seeds at 0.2b and climbs monotonically with tokens (0.2b 79.05 4-seed mean, 0.3b 87.75, 0.4b 87.88, 0.8b 94.69, 1.6b 94.49, 3.24b 95.05, 4b 97.44). The saturation is an axis position, not a property of the metric.",
+   "measured": "2026-09-03",
+   "source": "runs/score_matrix.jsonl (math_v2_like.overall for ckpt_pretrain_15b_s1, ckpt_p200m_4b_0902, ckpt_rehearse_resume, ckpt_p02_s0..s3, p03, p04, p08, p16, p324); eval/math_v2_like.py",
+   "config": {
+    "metric": "math_v2_like.overall, 2-way discrimination (gold vs digit-perturbed gold), floor 50% by construction",
+    "n_items": 3012,
+    "n_families": 18,
+    "denominator": "3012 = 3161 source rows minus 149 tok_len skips; n_items is len(items) AFTER skipping (eval/math_v2_like.py:165), so a skipped row is EXCLUDED, not scored wrong -- the ceiling is 100%, not 95.05%",
+    "params_all_points": 206.1282,
+    "binomial_se_at_p0.974": "0.288pt",
+    "readable_move_required": "14.5pt (be.math_v2_like_seed_variance, t-based df=3)"
+   },
+   "uncertainty": "se is binomial on 3012 items and ignores seed variance, which at 0.2b is an order larger (sd 3.11pt). No 4-seed replicate exists at 4b, so the 0.13pt spread across the three 4b-scale checkpoints is a 3-point spread of DIFFERENT runs, not a seed estimate: it bounds the metric's movement here, it does not measure this scale's seed sd.",
+   "status": "measured",
+   "boundary": "APPLIES to >=200M params at >=4B tokens, where headroom < the readable move. DOES NOT apply at 0.2b-0.8b, where the metric still separates (79.05 -> 94.69) and stays in the panel. The claim is about the ladder's TOKEN axis at fixed 206.1M params -- every point cited has the same parameter count, so nothing here says anything about a param sweep. Do not read saturation as 'the model solves this math': it is 2-way discrimination with a 50% floor, and the surviving errors are concentrated, not spread -- floor_gauss 78-82% and number_line_moving 91-95% carry nearly all the residual while 15 of 18 families sit at 100%. A metric can be saturated in aggregate and still have two families with room."
   }
  ]
 }

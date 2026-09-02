@@ -26,6 +26,7 @@ source: extracted 2026-08-30 from docs/audits/audit_cosmopedia.md, docs/audits/a
 16. [Token counting](#16-token-counting)
 17. [Using literature bounds](#17-using-literature-bounds)
 18. [Failed and unmeasured cells](#18-failed-and-unmeasured-cells)
+19. [Instruments answer one question, not the adjacent one](#19-instruments-answer-one-question-not-the-adjacent-one)
 
 ## 1. Published quality scores
 
@@ -179,3 +180,10 @@ Two categories the literature measures, and the test that assigns a source:
 - Report a failed measurement as failed. A title-matching subset test that pairs mostly spurious matches measures the matcher, not the data; publishing its overlap figure would be quoting the instrument.
 - Every audit ends with "what could not be measured": the unheld seed corpora, the unsampled shards, the cross-shard number, the rate that needs a larger hand read. A rate measured on four shards of sixty-two is labelled as such.
 - A permanent red CI is the same as no signal; a check that cannot fail is not a check. (Standing rule, restated because these audits' selftests depend on it.)
+
+## 19. Instruments answer one question, not the adjacent one
+
+- **Compile-time probe** (`triton.compile` + `cuobjdump -res-usage`): answers "can occupancy be changed", not "is it faster". Register count and theoretical occupancy are compile-time facts; wall time is not. (tilerl, 2026-09-02.)
+- The two questions came apart in the same measurement they were taken in: 4 warps cut registers 255 → 91 and roughly tripled occupancy, while the autotuner, choosing among [1,2,4,8] on measured time, picked **1 warp** (`chunk_intra.py:388`). The measurement overruled the higher occupancy, so a recoverable-time bound derived from occupancy was withdrawn. Correlation across kernels (r = −0.60, occupancy vs the measured/ideal ratio) is not the causal handle it looks like.
+- Generalisation: before quoting an instrument's number as a bound, name the question it answers and check that it is the question being asked. An instrument measuring the adjacent quantity gives a real number about the wrong thing, which is harder to catch than a wrong number.
+- Same shape, different instrument: a criterion evaluated on the wrong population (`gate_failure_shapes.md` §64), and a fixture whose input makes two candidate algorithms coincide — a selftest distinguishing "sum over tokens" from "mean over rows" is blind if every token carries equal loss. Make the fixture assert its own discriminating power.
