@@ -348,13 +348,24 @@ def main():
         # git never invokes that name, and the temp repo has no hooks installed.
         "scripts/hooks/pre-commit",
     }
+    # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
+    # part of it CAN: the exemption belongs to the assertions that need the data, not to
+    # the file. base_matrix.py earned this -- its floor assertions need neither tokenizer
+    # nor dataset, and an exemption written for a different reason was keeping a runnable
+    # check out of the gate. Same failure as this map's own rule that a selftest missing
+    # from it is unguarded, one level down: a correct judgement applied at the wrong
+    # granularity, silently not checking.
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "probes/t65_near_dup_sweep.py": "imports build_corpus off sys.path; runner-only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
-        "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
+        "eval/base_matrix.py": ("asserts data/tokenizer.json, which is gitignored; the "
+                                "partial flag runs ONLY _selftest_floor (the MC floor "
+                                "arithmetic, 0.05s), NOT the minimal-pair construction or "
+                                "the stub-scorer plumbing, which both need the tokenizer",
+                                "--selftest-nodata"),
         "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
         # NOT "harness check is its selftest" -- that was false. `check` runs
@@ -397,11 +408,14 @@ def main():
     # so a refusal that returns early would leave a .hookstaged_* file behind for the
     # next session to find dirty. The parallel tree could be left to rot; this cannot.
     staged_copies = []
+    # Files whose exemption is partial: run the flag that names the assertions which DO
+    # work here, instead of skipping the file entirely.
+    PARTIAL = {f: v[1] for f, v in NEEDS_DATA.items() if isinstance(v, tuple)}
     # Measured per selftest, not once around the loop, so the refusal can name WHICH
     # one did it (e1-14). A single before/after pair would say "something changed".
     state_before = _shared_repo_state(repo_root())
     try:
-        for f in sorted(SELFTEST_FILES & set(staged("AM"))):
+        for f in sorted((SELFTEST_FILES | set(PARTIAL)) & set(staged("AM"))):
             blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
             if blob.returncode != 0:
                 print(f"REFUSING: cannot read staged {f}", file=sys.stderr)
@@ -411,12 +425,13 @@ def main():
             staged_copies.append(dst)
             with open(dst, "wb") as fh:
                 fh.write(blob.stdout)
-            r = subprocess.run([sys.executable, dst, "--selftest"], capture_output=True,
+            flag = PARTIAL.get(f, "--selftest")
+            r = subprocess.run([sys.executable, dst, flag], capture_output=True,
                                text=True, cwd=repo_root(),
                                env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
-                print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
+                print(f"REFUSING: {f} {flag} failed (staged version):\n" + "\n".join(tail),
                       file=sys.stderr)
                 sys.exit(1)
             # A selftest that PASSED can still have written to the shared repo, and that
