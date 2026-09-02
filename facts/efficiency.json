@@ -2258,7 +2258,7 @@
   },
   {
    "id": "eff.m4b_startup",
-   "value": "est_startup 316.05s = 4.39% of 2h run for the 200M@4B retrain mix; torch.load 88.68s + corpus_fp walk 227.36s (72%); zh_web single-domain walk 163.4s = 52% of all startup",
+   "value": "est_startup 86.72s = 1.2% of 2h (200M@4B, 9 domains); torch.load 86.51s (99.8% of startup); corpus_fp 0.22s (train._corpus_fp, zh_web 0.13s, rest <=0.04s)",
    "measured": "2026-09-02",
    "source": "python3 scripts/measure_mix_startup.py data/mix_200m_4b.json on pod (/work/aupai), host-side IO, 1 pass",
    "config": {
@@ -2266,12 +2266,14 @@
     "n_domains": 9,
     "total_tokens": "3999997952",
     "cache_bytes_GB": 166.17,
-    "run_len": "2h reference",
-    "method": "per-domain torch.load(map_location=cpu,weights_only=True) + _corpus_fp shard-content-hash walk"
+    "run_len_ref": "2h",
+    "method": "per-domain torch.load(map_location=cpu,weights_only=True) + train._corpus_fp (real fn), host IO",
+    "io": "hot cache (a prior 316s run already read all 166GB)"
    },
-   "uncertainty": "single pass, cold cache; subsequent runs re-read the OS page cache and will be faster",
-   "boundary": "does not measure other startup costs (model init, optimizer alloc, rank setup); startup scales with corpus dir size, not cache size",
-   "status": "measured"
+   "uncertainty": "hot-cache, possibly-contended single pass; cold cache and de-trace-free value would differ (likely higher)",
+   "boundary": "hot cache; the run may have co-occurred with de's 0-3 trace so the torch.load net value is not isolated; corpus_fp 0.22s and torch.load-dominance are competition-independent. Does not measure model init/optimizer/rank-setup.",
+   "status": "measured",
+   "refuted_by": "the earlier 316s value (9cc966b) was measured by a walk that hashed every shard byte; de + fb showed startup calls train._corpus_fp (train.py:1355-1376) which reads first/last 64KB per shard => 0.22s. This row now carries the corrected value."
   }
  ]
 }

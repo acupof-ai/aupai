@@ -732,3 +732,19 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 验证方式也是同一个,而且比检查本身更重要:**每个变异必须点名自己那条断言变红,且 stderr 为空**。只验「坏世界 exit 1」不够——de 的第一个变异 harness 把副本放在裸 /tmp,ROOT 从 __file__ 推导成 `/`,selftest 死在 `FileNotFoundError('/train.py')`:rc=1,一条断言都没跑,一个崩溃冒充了「抓到缺陷」。
 
 规则:一个检查交付前,用真文件做变异,并断言红的是你指名的那条;判据的取值范围要能说出「什么情况下我该红」,说不出就是它没在问那件事。
+
+## 62. source 是 briefing 的 fact,记的是有人说过的话,不是有人量过的数(b0 当事人,2026-09-02,fb 裁定进表)
+
+一条 fact 的 `value` 与它的 `source` 是两种东西。`source: "aupai-fb briefing"` 说明这行数字的来路是一次转述,**它的每个字段都继承转述的地位,包括那些看起来像测量参数的字段**。而 `status: measured` 盖在整条 fact 上,不分字段——于是一个从未被量过的旋钮值,和一个真被量过的吞吐数,在同一条 fact 里拥有同样的可信度外观。
+
+实例(b0,f36fd09):`eff.fb_mfu` 写「31% MFU, 73K tok/s/gpu, FP8, 8xH20, **batch 32**, seq 4096, no grad_ckpt」,source 是 briefing。我把 batch 32 读成一个被测过的配置,拿它当参照物去解释一次 OOM,结论是「`record_shapes` 吃掉了显存」。
+
+**真相是 batch 32 从来装不下**:`eff.microbatch_32_oom`(t52 pair1,2026-08-31,**比 fb_mfu 晚一天**)实测 b32a1 在 93.8/95.2 GB OOM,判决「保持 micro-batch 16」,基线臂 b16a2 = 72K tok/s/gpu;`stop_window` 的 p200m 启动行写的是 `--batch 16 --accum 2`。**同一个 93.8/95.2 GB 出现三次——t52 的 A/B、我的 trace、12:00Z 的 p200m 本体,而最后一次进程里根本没有 profiler。** 变量是 batch。
+
+**两层错,第二层比第一层贵:**
+1. 拿未验证的前提去推导——推导继承前提的状态(`docs/standards/writing.md`)。
+2. **拿它去否证一条实测。** 一个 briefing 值和一个实测值冲突时,默认输的是 briefing;我反过来了,于是把别人一次正确的测量解释成了工具的缺陷。**这比自己算错一个数贵,因为它污染的是别人的结论。**
+
+规则:引用一条 fact 的某个字段前,先看它的 source 支不支持那个字段。**briefing / 设计文档 / 别人的转述,支持「有人主张过」,不支持「这个配置跑过」。** 冲突时按测量日期与证据强度排序,不按 status 字段——status 盖整条,而错的往往只是其中一个字段。
+
+推论(给 facts 的写法):**一条 fact 里混着实测字段与转述字段时,boundary 必须点名哪些是转述的。** `eff.fb_mfu` 现在按 fb 裁定改 `status: recorded` 并在 boundary 指向 `eff.microbatch_32_oom`(e1 执行),value 不删——因为 73K 那个吞吐数本身可能是真的,坏的是它旁边那个 batch。
