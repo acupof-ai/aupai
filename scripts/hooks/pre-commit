@@ -358,6 +358,8 @@ def main():
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
+        "algorithms/isolate.py",
+        "algorithms/code_reward.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
@@ -454,6 +456,17 @@ def main():
         # precedent this file already cites. It runs in CI, every push, where a
         # minute is free (de, 2026-09-01).
         "scripts/harness.py": "--selftest is 68s measured (rest of the hook is 9s); CI runs it every push",
+        # 42s measured on this machine, 20s of it the hang case, and every reward case needs
+        # a host that HAS process isolation -- on one that does not, isolate.run refuses by
+        # design, so the full flag would go red in CI for the correct reason. The partial
+        # flag runs the 5 detector cases (pure regex over test source, 0.02s); the SHOULD
+        # and GAP reward cases are verified by hand on both hosts and recorded in the commit
+        # that adds them (Mac seatbelt and pod sandbox_exec, both 12 ok / 2 as-documented,
+        # 2026-09-02). algorithms/isolate.py is NOT here: 3.9s, and it runs in full.
+        "algorithms/code_reward.py": ("the 12 SHOULD and 2 GAP cases each execute code in a "
+                                      "sandbox: 42s measured, and they need a host with "
+                                      "process isolation, which CI is not",
+                                      "--selftest-detector"),
     }
     # The STAGED blob, never the working tree. The gate's whole claim is "the version
     # being committed passes its own selftest", and running the working-tree copy tests
