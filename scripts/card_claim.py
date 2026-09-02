@@ -53,11 +53,26 @@ def _cmdline(pid):
 
     A PID is only meaningful in the namespace that read it -- the host sees a rank as
     1738493 while the container sees 1382917 -- so the claim records BOTH the pid and the
-    cmdline, and cross-boundary readers match on the cmdline (AGENTS, Pod)."""
+    cmdline, and cross-boundary readers match on the cmdline (AGENTS, Pod).
+
+    /proc FIRST, `ps -o args=` SECOND. The /proc-only version returned "" on macOS, where there
+    is no /proc and where the selftest runs -- so every claim written on a laptop recorded an
+    empty cmdline, and the cmdline is the half of the identity that survives a namespace
+    crossing. `_alive` already carried the note "this also has to work on a Mac"; its neighbour
+    did not. Measured 2026-09-03: /proc raises FileNotFoundError here, `ps -o args=` returns the
+    full `bash -lc env ... ; true`.
+    """
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as fh:
-            return fh.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+            got = fh.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        if got:
+            return got
     except OSError:
+        pass
+    try:
+        r = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True)
+        return r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
         return ""
 
 
@@ -69,6 +84,96 @@ def _alive(pid):
     except OSError as e:
         return e.errno == errno.EPERM  # exists, not ours to signal
     return True
+
+
+SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "-bash", "-sh", "-zsh"}
+# The pod's tree is wrapper bash -> torchrun -> 4 ranks. 6 is that plus slack, and it is a cap
+# rather than a guess: a cycle in a ppid table would otherwise loop forever (CLAUDE.md's
+# iteration-cap rule).
+MAX_DEPTH = 6
+
+
+def _ps_table():
+    """[(pid, ppid, args)] for every process THIS namespace can see, or [] if ps cannot run.
+
+    `ps -eo pid,ppid,args` is the one reader that works on both sides: /proc does not exist on
+    macOS (where the selftest runs) and the pod's container has both. Called once per question
+    rather than per pid -- a 900-row table is one fork, and pgrep -P per level is not.
+    """
+    try:
+        r = subprocess.run(["ps", "-eo", "pid,ppid,args"], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    out = []
+    for line in r.stdout.splitlines()[1:]:
+        parts = line.split(None, 2)
+        if len(parts) < 2:
+            continue
+        try:
+            out.append((int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else ""))
+        except ValueError:
+            continue
+    return out
+
+
+def _argv0_is_shell(args):
+    """Is this cmdline's argv[0] a shell?
+
+    NOT "does the cmdline mention python". The pod's wrapper is
+        bash -lc cd /work/aupai && setsid env CUDA_VISIBLE_DEVICES=3,4,5,6 torchrun ... train.py
+    so it CONTAINS `torchrun`, `python`-adjacent words and the master_port -- measured locally
+    too: the wrapper's args gave contains_python=True while argv0 was bash. Every substring test
+    matches the wrapper first, which is exactly how both of tonight's claims bound to a shell.
+    """
+    parts = (args or "").split()
+    if not parts:
+        return False
+    return os.path.basename(parts[0]) in SHELLS
+
+
+def _descendants(pid, table=None, max_depth=MAX_DEPTH):
+    """[(pid, args)] beneath pid, by the real ppid chain, breadth-first, depth-capped."""
+    table = _ps_table() if table is None else table
+    kids = {}
+    for p, ppid, args in table:
+        kids.setdefault(ppid, []).append((p, args))
+    out, frontier, seen = [], [pid], {pid}
+    for _ in range(max_depth):
+        nxt = []
+        for parent in frontier:
+            for child, args in kids.get(parent, []):
+                if child in seen:
+                    continue
+                seen.add(child)
+                out.append((child, args))
+                nxt.append(child)
+        if not nxt:
+            break
+        frontier = nxt
+    return out
+
+
+def _job_descendants(pid, table=None):
+    """The descendants that are the JOB: a python or torchrun process, not another shell.
+
+    CASE-INSENSITIVE, and matched on argv0's basename as well as the whole cmdline. macOS reports
+    the interpreter as
+        /Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python
+    with a capital P, so `"python" in args` was False and the selftest's world reported zero
+    descendants -- which read as "the negative case passes" for the ORPHAN-SHELL check while
+    actually meaning the world had no job in it at all. The positive case still passed, so only
+    the world assertions caught it (de, 2026-09-03).
+    """
+    out = []
+    for p, a in _descendants(pid, table):
+        if _argv0_is_shell(a):
+            continue
+        low = a.lower()
+        parts = a.split()
+        base = os.path.basename(parts[0]).lower() if parts else ""
+        if "python" in low or "torchrun" in low or base.startswith(("python", "torchrun")):
+            out.append((p, a))
+    return out
 
 
 def _read(path):
@@ -165,6 +270,30 @@ def acquire(name, cards, wait=0, note="", pid=None):
             # the normal caller is a launcher script that outlives this command and dies with
             # the job.
             holder = pid if pid else os.getppid()
+            # REFUSE A SHELL. Two claims tonight bound to one, in opposite directions:
+            # shapelr bound the launching shell, which exited and left the card ORPHAN; the VE
+            # arm bound the pod's wrapper bash (2878732, while torchrun was 2878734), which
+            # OUTLIVED nothing but kept the claim alive after training ended, so the card looked
+            # held and a rebind was refused with "already holds a live claim". One root cause:
+            # `pgrep -f <port>` matches the calling shell first, because the wrapper's own argv
+            # contains the port and the word torchrun.
+            #
+            # The claim must name the process that dies WITH the job. A shell is either about to
+            # exec away or about to outlive it, and neither is that process.
+            if _argv0_is_shell(_cmdline(holder)):
+                kids = _job_descendants(holder)
+                msg = (f"pid {holder} is a shell, not the job: "
+                       f"{_cmdline(holder)[:90]!r}\n"
+                       f"A claim on a shell fails both ways -- the shell exits and the card "
+                       f"reads ORPHAN, or it lingers and the card reads held after the job is "
+                       f"gone (both happened 2026-09-03).")
+                if kids:
+                    msg += "\nIts python/torchrun descendants -- claim one of these:\n" + "\n".join(
+                        f"    --pid {p}  {a[:96]}" for p, a in kids[:6])
+                else:
+                    msg += ("\nIt has no python/torchrun descendant yet. Claim after the job "
+                            "starts, or pass --pid explicitly.")
+                return False, msg
             claim = {"name": name, "cards": list(cards), "pid": holder,
                      "cmdline": _cmdline(holder), "acquired": _now(), "note": note}
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
@@ -172,8 +301,21 @@ def acquire(name, cards, wait=0, note="", pid=None):
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 existing = _read(mine)
-                if existing and _alive(int(existing.get("pid", -1))):
-                    return False, f"{name} already holds a live claim (pid {existing['pid']})"
+                old = int(existing.get("pid", -1)) if existing else -1
+                if existing and _alive(old):
+                    # REBIND, not refuse, when the new pid is a DESCENDANT of the recorded one.
+                    # The VE arm hit this: the claim held the wrapper bash and the rebind wanted
+                    # torchrun, its own child, so "already holds a live claim" refused the
+                    # correction of the very defect above. A descendant is the same job by
+                    # construction -- the recorded process is its ancestor -- so this cannot
+                    # hand a card to an unrelated claimant.
+                    if holder != old and holder in {p for p, _ in _descendants(old)}:
+                        os.unlink(mine)
+                        continue
+                    return False, (f"{name} already holds a live claim (pid {existing['pid']}"
+                                   f"{', a shell' if _argv0_is_shell(existing.get('cmdline', '')) else ''})"
+                                   f". If pid {holder} is the real job and not a descendant of "
+                                   f"{old}, release first.")
                 os.unlink(mine)
                 continue
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -200,6 +342,25 @@ def status():
     mem = card_memory()
     held = held_cards(live)
     lines = []
+    # ORPHAN-SHELL: the claim's pid is alive, so nothing else here reports a problem, and it is a
+    # SHELL with no python/torchrun descendant -- meaning the job it was claimed for has ended
+    # while the claim reads healthy. This is the state the VE arm sat in: card looks held, no
+    # training on it, and a rebind refused. Judged on argv0 plus the real ppid chain, never on
+    # whether the cmdline mentions python -- the pod's wrapper bash mentions torchrun and the
+    # master port, which is what made every substring test bind to it.
+    table = _ps_table()
+    orphan_shells = []
+    for c in live:
+        p = c.get("pid")
+        if not isinstance(p, int):
+            continue
+        args = c.get("cmdline") or _cmdline(p)
+        if _argv0_is_shell(args) and not _job_descendants(p, table):
+            orphan_shells.append((c.get("name"), p))
+    for name, p in orphan_shells:
+        lines.append(f"ORPHAN-SHELL {name} holds pid {p}, a shell with no live python/torchrun "
+                     f"descendant -- the job ended and the claim did not. "
+                     f"`card_claim.py release --name {name}`")
     for c in live:
         lines.append(f"CLAIM {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
                      f"pid {c.get('pid')} since {c.get('acquired')}")
@@ -223,6 +384,14 @@ def status():
                              f"({m} MiB) -- starting up, or the job died without releasing")
     if not lines:
         lines.append("no claims, no orphans")
+    # An ORPHAN-SHELL goes in `dup`, not `orphans`: `orphans` is (card, MiB) and one caller
+    # asserts its exact contents, while both callers exit nonzero on either. Printing a state
+    # nobody exits on is the print-and-continue shape -- a card that looks held with no job on it
+    # needs a person, same as memory held by nobody.
+    if orphan_shells:
+        dup = dict(dup)
+        for name, p in orphan_shells:
+            dup[f"orphan-shell:{name}"] = [f"pid {p}"]
     return orphans, dup, lines
 
 
@@ -322,6 +491,122 @@ def _selftest():
     good = not orphans and any("not measured" in x for x in lines)
     _case(good, "no nvidia-smi reports 'not measured', never zero orphans")
     card_memory = real
+
+    # ------------------------------------------------------------------ de-34
+    # A claim must name the process that dies WITH the job, never a shell. Two claims on
+    # 2026-09-03 bound to a shell in opposite directions: shapelr bound the launching shell,
+    # which exited and left the card reading ORPHAN; the VE arm bound the pod's wrapper bash
+    # (2878732, torchrun was 2878734), which kept the claim alive after training ended, so the
+    # card read held and the rebind was refused. One cause: `pgrep -f <port>` matches the calling
+    # shell first, because the wrapper's own argv carries the port and the word torchrun.
+    #
+    # BUILDING THE WORLD IS THE HARD PART, and getting it wrong reads as "there is no bug":
+    #
+    #   `bash -lc '<single command>'` EXECS it rather than forking, so the wrapper pid BECOMES
+    #   python and there is no shell layer at all -- the first attempt measured argv0='Python'
+    #   and the positive case could not exist. The pod's wrapper survives because its command is
+    #   a LIST (`cd ... && setsid env ... torchrun`). A trailing `; true` forces the fork.
+    #
+    #   With the fork, bash waits, and the child inherits the caller's stdout -- so a pipeline
+    #   reading this selftest never sees EOF and hangs to its timeout. That is the runaway shape
+    #   CLAUDE.md names, produced by the fixture itself. Every layer gets DEVNULL and its own
+    #   session.
+    #
+    #   macOS has no setsid, so the local tree is bash -> python where the pod's is
+    #   bash -> torchrun -> ranks. Accepted deliberately: setsid changes process-GROUP membership,
+    #   which affects how a kill propagates, while these predicates read argv0 and the ppid chain.
+    #   A world that silently substituted an equivalent would be the worse choice.
+    tree = None
+    try:
+        inner = 'python3 -c "import time; time.sleep(30)"'
+        if shutil.which("setsid"):
+            inner = f"setsid env DE34=1 {inner}"
+        tree = subprocess.Popen(
+            ["bash", "-lc", f"{inner}; true"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True)
+        time.sleep(1.5)
+        shell_pid = tree.pid
+        table = _ps_table()
+        kids = _job_descendants(shell_pid, table)
+
+        # The world must actually BE the pod's shape, or the cases below prove nothing.
+        _case(_argv0_is_shell(_cmdline(shell_pid)),
+              f"world: pid {shell_pid} really is a shell (argv0), not exec'd away")
+        _case(bool(kids), f"world: it really has a python descendant ({len(kids)} found)")
+        # And the discriminator has to be argv0, because the substring test is TRUE here.
+        _case("python" in _cmdline(shell_pid),
+              "world: the shell's own argv mentions python -- why a substring test binds to it")
+
+        ok, msg = acquire("de34_shell", ["7"], pid=shell_pid)
+        _case(not ok and "is a shell" in msg and "--pid" in msg,
+              "acquire refuses a shell pid and lists its python descendants")
+        if ok:
+            release("de34_shell")
+
+        # The job itself is accepted.
+        job_pid = kids[0][0] if kids else None
+        if job_pid:
+            ok, msg = acquire("de34_job", ["7"], pid=job_pid)
+            _case(ok, f"acquire accepts the python descendant (pid {job_pid})")
+
+            # A live same-name claim yields to a DESCENDANT of the recorded pid -- the VE rebind.
+            # Recorded pid is the shell here (written directly, since acquire now refuses it),
+            # and the rebind target is its child.
+            #
+            # RELEASE de34_job FIRST. Card 7 is still held by it, and held_cards excludes only
+            # claims of the SAME name, so a different name holding the card makes the next
+            # acquire a CLASH and it never reaches the rebind branch at all. Both rebind cases
+            # failed that way while the behaviour was correct -- verified in isolation before
+            # touching the code. A world that leaves the previous case's state behind tests the
+            # clash check twice and the rebind never.
+            release("de34_job")
+            with open(os.path.join(CLAIM_DIR, "de34_rebind.json"), "w", encoding="utf-8") as fh:
+                json.dump({"name": "de34_rebind", "cards": ["7"], "pid": shell_pid,
+                           "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
+            ok, msg = acquire("de34_rebind", ["7"], pid=job_pid)
+            _case(ok, f"a live claim on an ancestor rebinds to the job (the VE case): {msg[:60]}")
+
+            # An UNRELATED live pid must still be refused: rebinding is justified only because a
+            # descendant is the same job by construction.
+            release("de34_rebind")
+            with open(os.path.join(CLAIM_DIR, "de34_unrel.json"), "w", encoding="utf-8") as fh:
+                json.dump({"name": "de34_unrel", "cards": ["7"], "pid": job_pid,
+                           "cmdline": _cmdline(job_pid), "acquired": _now()}, fh)
+            ok, msg = acquire("de34_unrel", ["7"], pid=os.getpid())
+            _case(not ok and "already holds a live claim" in msg,
+                  f"an unrelated live pid is still refused, not rebound: {msg[:60]}")
+            release("de34_unrel")
+
+        # status reports ORPHAN-SHELL once the job is gone but the shell lives.
+        with open(os.path.join(CLAIM_DIR, "de34_orphan.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "de34_orphan", "cards": ["7"], "pid": shell_pid,
+                       "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
+        _, dup_now, lines_now = status()
+        _case(not any("ORPHAN-SHELL" in x for x in lines_now),
+              "no ORPHAN-SHELL while the job is still running (the negative case)")
+
+        for p, _a in kids:
+            try:
+                os.kill(p, 9)
+            except OSError:
+                pass
+        time.sleep(1.0)
+        _, dup_now, lines_now = status()
+        said = [x for x in lines_now if "ORPHAN-SHELL" in x]
+        _case(bool(said) and any("de34_orphan" in x for x in said),
+              "status reports ORPHAN-SHELL when the shell lives and the job is gone")
+        _case(any(k.startswith("orphan-shell:") for k in dup_now),
+              "and it drives a nonzero exit, not a printed line nobody acts on")
+    finally:
+        if tree is not None:
+            for p, _a in _descendants(tree.pid):
+                try:
+                    os.kill(p, 9)
+                except OSError:
+                    pass
+            tree.kill()
+            tree.wait()
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")
