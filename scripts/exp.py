@@ -30,21 +30,52 @@ def set_root(root):
     MD = os.path.join(root, "EXPERIMENTS.md")
 
 
-def rows(raw=False):
-    """The log, folded by (name, started): the last event for a run wins.
+def fold(evs):
+    """The events for one ledger reduced to one row per run. THE fold, stdlib only.
 
-    The file is an event log, not a table -- `done` appends rather than rewriting,
-    so union-merging two branches cannot produce a running row and a done row for
-    the same run. raw=True yields every event."""
+    Keyed by (name, started) -- the pair, never the name alone. Folding by name
+    collapses two runs that shared a name at different times, and harness.py:4458
+    did exactly that, so a re-run of a name silently replaced the earlier run's row.
+
+    A CLOSE IS TERMINAL, REGARDLESS OF POSITION, and that is the whole reason this
+    is one function rather than five. Last-write-wins on file order reopens a
+    finished run whenever a duplicate start event lands after its close -- which
+    this ledger CONTAINS: (sft_p324_v3, 2026-08-31 03:44) has an `ok` event at line
+    44 and a `running` event at line 132, and order-only folding reported a run that
+    finished in 32 minutes as 26 hours stale. A union merge concatenates two
+    branches' rows in whatever order it likes, so position is not evidence of
+    sequence. A run does not reopen; only `task reopen` does that, and it is a
+    different ledger. Two terminal events for one run: the later one wins.
+
+    Until e1-18 this file's rows() folded on position while harness.py:2386 folded
+    terminal-wins, and rows()'s docstring asserted the divergent shape was
+    impossible -- "union-merging two branches cannot produce a running row and a
+    done row for the same run" -- in a repo whose harness.py:2396 records it
+    happening. The two readers agreed on today's ledger (0 of 175 keys differ) and
+    would have diverged on the next merge that ordered those events the other way.
+    Reasoning from de and e1 independently, 2026-09-01; kept where the fold lives.
+    """
+    out = {}
+    for r in evs:
+        key = (r.get("name"), r.get("started"))
+        prev = out.get(key)
+        if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
+            continue
+        out[key] = r
+    return list(out.values())
+
+
+def rows(raw=False):
+    """The log, folded by (name, started) with a close beating a later start.
+
+    The file is an event log, not a table -- `done` appends rather than rewriting.
+    raw=True yields every event, unfolded. The fold itself is fold(), which
+    scripts/harness.py reads through so the ledger has one reduction and not five.
+    """
     if not os.path.exists(LOG):
         return []
     evs = [json.loads(l) for l in open(LOG, encoding="utf-8") if l.strip()]
-    if raw:
-        return evs
-    folded = {}
-    for r in evs:
-        folded[(r.get("name"), r.get("started"))] = r
-    return list(folded.values())
+    return evs if raw else fold(evs)
 
 
 def append(row):
