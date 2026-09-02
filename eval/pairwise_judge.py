@@ -16,6 +16,9 @@ is a real gold standard -- a within-subgroup pair has no distinguishable gold,
 so validating on it measures nothing (a tie-everything judge scores 1.0).
 Agreement is measured only on mixed rows where the judge took a side; ties and
 abstentions are reported beside it, never counted in the denominator.
+Acceptance also requires the judge to have sided on at least MIN_VALIDATED of
+the 20 pairs -- a 1.0 agreement on 2/20 sided is not a judge
+(tilerl review, 2026-09-02).
 
 Input JSONL, one line per pair:
   {"pair_id": "task01", "order_ab": "A", "order_ba": "B",
@@ -32,6 +35,12 @@ import json
 import sys
 
 VALID = {"A", "B", "tie"}
+
+# Pre-registered 2026-09-02 (protocol section 4): of the 20 mixed validation
+# pairs, the judge must take a side on at least 15. The 0.8 gate stops a judge
+# that judges wrong; this floor stops a judge that does not judge -- 2/20
+# sided with both right would otherwise pass with agreement 1.0.
+MIN_VALIDATED = 15
 
 
 def verdict(order_ab, order_ba):
@@ -86,7 +95,7 @@ def score(rows):
         "n_validated": n_validated,
         "n_production": n_production,
         "n_unknown_subgroup": unknown,
-        "accepted": (agree / judged >= 0.8) if judged else False,
+        "accepted": (agree / judged >= 0.8 and n_validated >= MIN_VALIDATED) if judged else False,
     }
 
 
@@ -121,14 +130,28 @@ def _selftest():
     _, rep_d = score(degenerate)
     assert rep_d["agreement"] is None and rep_d["accepted"] is False, rep_d
     assert rep_d["tie_rate"] == 1.0, rep_d
-    # A world that DOES pass the bar: 4 agree, 1 disagree -> 0.8 exactly.
+    # A world that DOES pass the bar: 16 agree, 4 disagree -> 0.8 exactly,
+    # n_validated 20 >= MIN_VALIDATED.
     ok = [{"pair_id": str(i), "order_ab": "A", "order_ba": "A",
-           "test_winner": "A", "subgroup": "mixed"} for i in range(4)]
-    ok.append({"pair_id": "x", "order_ab": "B", "order_ba": "B",
-               "test_winner": "A", "subgroup": "mixed"})
+           "test_winner": "A", "subgroup": "mixed"} for i in range(16)]
+    ok += [{"pair_id": f"d{i}", "order_ab": "B", "order_ba": "B",
+            "test_winner": "A", "subgroup": "mixed"} for i in range(4)]
     _, rep2 = score(ok)
     assert rep2["agreement"] == 0.8 and rep2["accepted"] is True, rep2
-    print("selftest OK: verdict, abstention, tie-exclusion, agreement and the 0.8 bar all behave")
+    # The participation hole (tilerl 2026-09-02): a judge that only sides on
+    # 2/20 pairs, both right, must NOT pass -- agreement 1.0 means nothing
+    # when the judge judged almost nothing.
+    shy = [{"pair_id": "s0", "order_ab": "A", "order_ba": "A",
+            "test_winner": "A", "subgroup": "mixed"},
+           {"pair_id": "s1", "order_ab": "B", "order_ba": "B",
+            "test_winner": "B", "subgroup": "mixed"}]
+    shy += [{"pair_id": f"a{i}", "order_ab": "A", "order_ba": "B",
+             "test_winner": "A", "subgroup": "mixed"} for i in range(18)]
+    _, rep3 = score(shy)
+    assert rep3["agreement"] == 1.0 and rep3["accepted"] is False, rep3
+    assert rep3["n_validated"] == 2 and rep3["abstain_rate"] == 0.9, rep3
+    print("selftest OK: verdict, abstention, tie-exclusion, agreement, the 0.8 bar "
+          "and the participation floor all behave")
 
 
 def main():
