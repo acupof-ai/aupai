@@ -3989,7 +3989,15 @@ def _broken_entrypoints_table():
 DOCS_SUBDIRS = ("lessons", "audits")
 FRONTMATTER_KEYS = ("question", "status", "source")
 FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
-FACT_REF_RE = re.compile(r"facts/([\w.-]+)\.json#([\w.]+)")
+#: A trailing `.` is sentence punctuation, not part of the id. Fact ids contain dots
+#: (`dq.audit.protocol_400`), so the id class has to accept them -- but `[\w.]+` is greedy
+#: and swallows the period that ends the sentence, turning a live citation into
+#: `be.math_v2_likelihood_twin.` and a FAIL that names an id nobody wrote. Latent when
+#: found, not live: zero of the 72 current doc citations end a sentence, so the check would
+#: have gone wrong on the first one that did (de-16, 2026-09-02, after writing the same bug
+#: into a one-off scanner and getting a false positive out of it -- the repo's own
+#: greedy-regex-over-JSONL lesson, one field over).
+FACT_REF_RE = re.compile(r"facts/([\w.-]+)\.json#([\w.]*[\w])")
 CMD_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.S)
 CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
 
@@ -4072,9 +4080,11 @@ def check_fact_refs(root):
                 n += 1
                 fname, fid = m.group(1) + ".json", m.group(2)
                 if fname not in index:
-                    bad.append(f"docs/{sub}/{f}: facts/{fname}.json does not exist")
+                    # fname already carries .json; appending it again printed
+                    # "facts/base_eval.json.json does not exist", a path nobody can act on.
+                    bad.append(f"docs/{sub}/{f}: facts/{fname} does not exist")
                 elif fid not in index[fname]:
-                    bad.append(f"docs/{sub}/{f}: {fid} not in facts/{fname}.json")
+                    bad.append(f"docs/{sub}/{f}: {fid} not in facts/{fname}")
                 elif index[fname][fid].get("status") == "retracted":
                     retracted.append(f"docs/{sub}/{f} cites retracted {fname}#{fid}")
     if bad:

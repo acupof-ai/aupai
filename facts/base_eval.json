@@ -4,7 +4,7 @@
    "id": "be.generative_zero",
    "value": "generative evals read zero on 200M-scale base models: 0/500 math-500 on 0830v1-0.8b (pretraining), 0/1080 math-hard v2 with 0.8% boxed rate and degenerate output (165-colon repetition loops, token salad) on ckpt_k8_proc_replay, which simultaneously scores 2.8% on math-500",
    "measured": "2026-08-30",
-   "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2.resolution_probe",
+   "source": "pod run eval_v2_procreplay (2026-08-30, pod-only, not in repo); facts/contamination.json#cont.math_hard_v2 (its value's resolution_probe key)",
    "config": {
     "checkpoints": "ckpt_0830v1_0.8b.pt (pretraining), ckpt_k8_proc_replay.pt (best remaining instructed)",
     "evals": "math-500, math_hard_eval_v2_1k (1080 problems, 18 families)"
@@ -16,7 +16,7 @@
    "id": "be.probe_degeneration",
    "value": "a zero from a degenerate probe carries no difficulty information: the v2 zero is compatible with both 'problems too hard' and 'model cannot attempt this surface form'. A probe that reads the same under opposite facts is not a probe (aupai-fb standard). Resolution: inconclusive(退化), not 'no resolution'; the pre-registered score-threshold criterion lacked a generation-validity precondition",
    "measured": "2026-08-30",
-   "source": "facts/contamination.json#cont.math_hard_v2.resolution_probe (criterion_lesson, audit); aupai-fb ruling 2026-08-30",
+   "source": "facts/contamination.json#cont.math_hard_v2 (its value's resolution_probe key: criterion_lesson, audit); aupai-fb ruling 2026-08-30",
    "config": {
     "evidence": "9/1080 boxed, 8/1080 coherent-attempt, colon repetition loops; math-500 control 2.8% same checkpoint"
    },
