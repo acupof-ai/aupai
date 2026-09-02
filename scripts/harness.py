@@ -9891,6 +9891,11 @@ _FROZEN_KEYS = (
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
     # exists to catch (the arm's own weights carry the init; the flag does not).
     "zero_init_out", "muon_shape_lr", "value_embed",
+    # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
+    # architecture and a resume silently ignores the flag, which is the drift this set catches.
+    # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
+    # 2026-09-03), and it moves into this set the day an untied head ships in the recipe.
+    "untie_head",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )
@@ -9928,6 +9933,9 @@ _UNFROZEN_ALLOWLIST = {
     # _FROZEN_KEYS the day the A/B says fp32 masters ship -- a decided setting left here
     # is one a launch can silently omit.
     "fp32_master",
+    # b0-17's lr knob, same reasoning as fp32_master: freezing it would declare settled the very
+    # thing arms 2 and 3 are run to settle. MOVE IT INTO _FROZEN_KEYS if an untied head ships.
+    "head_lr",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the

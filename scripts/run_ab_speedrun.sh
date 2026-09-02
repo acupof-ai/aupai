@@ -61,13 +61,30 @@ case "$ARM" in
   zeroinit)   ARM_FLAG="--zero_init_out" ;;
   shapelr)    ARM_FLAG="--muon_shape_lr" ;;
   valueembed) ARM_FLAG="--value_embed" ;;
-  *) echo "refusing: ARM must be zeroinit, shapelr or valueembed, got '$ARM'" >&2; exit 1 ;;
+  # b0-17 is TWO arms against one base, not one: --untie_head alone adds +33,619,968 params
+  # (+16.3%) at the unchanged embed lr, isolating CAPACITY; adding --head_lr 0.003464 (nanochat
+  # 0.004*(d/768)^-0.5 at d1024, against the embed group's 0.1) isolates the LR MECHANISM at
+  # identical parameter count. Reporting only one of them would leave the other explanation open,
+  # which is exactly what A/B (4) could not close.
+  untiehead)     ARM_FLAG="--untie_head" ;;
+  untieheadlr)   ARM_FLAG="--untie_head --head_lr 0.003464" ;;
+  *) echo "refusing: ARM must be zeroinit, shapelr, valueembed, untiehead or untieheadlr, got '$ARM'" >&2; exit 1 ;;
 esac
+
+# SKIP_BASE reuses an existing base checkpoint instead of retraining it. Only valid when that
+# checkpoint's world size, steps, mix and seed all match this launch -- a base at a different
+# world has a different tokens/step, so the same step number is a different token position and
+# the comparison silently changes its x-axis (this bit A/B (3) vs (2a): world 5 against world 4).
+# The caller states which checkpoint it is reusing; nothing here can verify a claim about a file
+# that another run produced.
+SKIP_BASE=${SKIP_BASE:-0}
 
 trap 'python3 scripts/card_claim.py release --name "ab_$ARM" || true' EXIT
 python3 scripts/card_claim.py acquire --name "ab_$ARM" --cards "$CARDS"
 
-for v in base "$ARM"; do
+ARMS="base $ARM"
+[ "$SKIP_BASE" = "1" ] && ARMS="$ARM"
+for v in $ARMS; do
   extra=""
   [ "$v" = "$ARM" ] && extra="$ARM_FLAG"
   echo "=== arm $v (cards $CARDS, $STEPS steps) $(date -u +%Y-%m-%dT%H:%M:%SZ)"
