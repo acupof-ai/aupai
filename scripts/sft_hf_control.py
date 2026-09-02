@@ -6,8 +6,9 @@
 
     python3 scripts/sft_hf_control.py \
         --model data/controls/pythia-160m-step2000 \
-        --pack data/sft/control_sft_text.jsonl \
+        --pack data/sft/control_sft_text_train.jsonl \
         --out ckpt_sft_pythia160m_control.pt
+    (the held-out file is found beside it: control_sft_text_heldout.jsonl)
     python3 scripts/sft_hf_control.py --selftest      # no card, no model needed
 
 WHY THIS FILE EXISTS. sft_math.py reads our own checkpoint format and builds our own model;
@@ -16,7 +17,9 @@ family, this reproduces the parts of it that must be IDENTICAL for the compariso
 anything, and states plainly the parts that cannot be.
 
 IDENTICAL to our arm, by construction:
-  the example set and its order   -- the same control_sft_text.jsonl, same sha256
+  the example set and its order   -- the same _train.jsonl, same sha256
+  the held-out set                -- the same _heldout.jsonl, split ONCE at the text level
+                                     so both arms hold out the same example ids
   the ChatML template             -- scripts.loader.format_example, imported not copied
   the loss mask                   -- prompt masked to -100, completion supervised
                                      including its <|im_end|> (the stop token must be
@@ -92,29 +95,41 @@ def lr_mult_shape(step, total, warmup, warmdown, final_frac):
     return final_frac + (1 - final_frac) * 0.5 * (1 + math.cos(math.pi * progress))
 
 
-def read_pack(path, holdout_every=0):
-    """The shared pack -> [(prompt, completion)] through OUR template.
+def read_pack(path):
+    """One shared text file -> ([(prompt, completion)], [example id]) through OUR template.
 
-    holdout_every=N reserves every Nth EXAMPLE as a validation split and returns
-    (train, val). The split is by example index in the shared text, not by packed row: row
-    boundaries depend on the tokenizer, so a row-level split would put different content in
-    each arm's validation set and the two numbers would not be comparable.
+    The train/held-out split is NOT made here. build_control_sft_text.py writes
+    <name>_train.jsonl and <name>_heldout.jsonl, and BOTH arms read BOTH files (fb's ruling
+    2026-09-02). Each arm splitting for itself was the bug: our arm would have trained on the
+    2% the control holds out, so it would both train on more data and see the control's
+    validation set.
+
+    The returned ids are the "id" field the builder stamps -- the example's index in the
+    deduped set. They make "the two arms held out the same examples" checkable from the
+    artifacts, instead of a claim that two scripts implement the same rule.
 
     An lr scan MUST be selected on held-out loss. The training loss of the last step rewards
     whichever lr memorised the most, which is precisely the artefact the scan exists to rule
     out ("we won because the control was undertuned" would just become "the control's lr was
     picked to overfit").
     """
-    train, val = [], []
+    pairs, ids = [], []
     with open(path, encoding="utf-8") as f:
         for i, line in enumerate(f):
             line = line.strip()
             if not line:
                 continue
             d = json.loads(line)
-            pair = format_example(d["question"], d["answer"])
-            (val if holdout_every and i % holdout_every == 0 else train).append(pair)
-    return (train, val) if holdout_every else (train, [])
+            pairs.append(format_example(d["question"], d["answer"]))
+            ids.append(d.get("id", i))
+    return pairs, ids
+
+
+def held_out_path(train_path):
+    """The _heldout.jsonl beside a _train.jsonl. One naming rule, used by both arms."""
+    if train_path.endswith("_train.jsonl"):
+        return train_path[: -len("_train.jsonl")] + "_heldout.jsonl"
+    return None
 
 
 def pack_rows(pairs, tok, eos_id, seq):
@@ -189,7 +204,7 @@ def sha256_of(path):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default="data/controls/pythia-160m-step2000")
-    ap.add_argument("--pack", default="data/sft/control_sft_text.jsonl")
+    ap.add_argument("--pack", default="data/sft/control_sft_text_train.jsonl")
     ap.add_argument("--out", default="ckpt_sft_pythia160m_control.pt")
     ap.add_argument("--epochs", type=int, default=1, help="sft_math.py's default")
     ap.add_argument("--batch", type=int, default=8)
@@ -206,9 +221,10 @@ def main():
     ap.add_argument("--device", default="cuda",
                     help="'cpu' runs the real forward/backward without a card -- the only way "
                          "to prove this loop executes before it holds one")
-    ap.add_argument("--holdout_every", type=int, default=50,
-                    help="reserve every Nth EXAMPLE for validation (default 50 = 2%%). The lr "
-                         "scan is selected on this loss, never on training loss")
+    ap.add_argument("--heldout", default=None,
+                    help="the held-out text file. Defaults to the _heldout.jsonl beside the "
+                         "--pack file; BOTH arms read the same two files so the held-out set "
+                         "is one object, not two implementations of one rule")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -241,13 +257,27 @@ def main():
     print(f"tokenizer {vocab_before} -> {len(tok)} entries (+{added} ChatML specials) "
           f"{chatml_ids}", flush=True)
 
-    pairs, val_pairs = read_pack(pack_path, holdout_every=a.holdout_every)
+    pairs, train_ids = read_pack(pack_path)
+    hp = a.heldout or held_out_path(pack_path)
+    val_pairs, val_ids = ([], [])
+    if hp and os.path.exists(hp):
+        val_pairs, val_ids = read_pack(hp)
+    elif hp:
+        print(f"CANNOT RUN: {hp} does not exist. The held-out file is written beside the train "
+              f"file by build_control_sft_text.py; without it there is nothing to select an lr "
+              f"on but training loss, which picks whichever lr memorised hardest.")
+        return 2
     ids, lab, st = pack_rows(pairs, tok, tok.eos_token_id, a.seq)
     v_ids, v_lab, v_st = (pack_rows(val_pairs, tok, tok.eos_token_id, a.seq)
                           if val_pairs else (None, None, {}))
     if val_pairs:
-        print(f"validation {len(val_pairs):,} examples -> {v_st['rows']:,} rows "
-              f"(every {a.holdout_every}th example, held out of training)", flush=True)
+        overlap = set(train_ids) & set(val_ids)
+        if overlap:
+            print(f"REFUSING: {len(overlap)} example id(s) appear in BOTH the train and "
+                  f"held-out files, so the held-out loss is measured on trained data.")
+            return 1
+        print(f"validation {len(val_pairs):,} examples -> {v_st['rows']:,} rows, "
+              f"{len(overlap)} overlap with training", flush=True)
     tokens = st["rows"] * (a.seq + 1)
     print(f"examples {len(pairs):,} -> rows {st['rows']:,} x {a.seq+1} = {tokens:,} tokens\n"
           f"  dropped over-length {st['dropped_overlong']:,}   pad {st['pad_tokens']:,}\n"
@@ -365,7 +395,12 @@ def main():
         "held_out_loss": val_after,
         "held_out_loss_before": val_before,
         "held_out_examples": len(val_pairs),
-        "holdout_every": a.holdout_every,
+        "held_out_ids_sha256": hashlib.sha256(
+            ",".join(str(i) for i in val_ids).encode()).hexdigest()[:16],
+        # Per supervised BYTE, so the two arms' held-out losses are comparable despite
+        # different tokenizers: loss-per-token is not a shared unit when the tokenizers
+        # segment the same text into different counts.
+        "held_out_supervised_bytes": sum(len(c.encode()) for _, c in val_pairs),
         "wall_s": round(time.time() - t0),
     }
     with open(out_path + ".meta.json", "w", encoding="utf-8") as f:
@@ -443,27 +478,37 @@ def selftest():
     if IM_END in p.split("<|im_start|>assistant")[-1]:
         fails.append("the prompt's trailing assistant marker is followed by a stop token")
 
-    # 4. the held-out split must be disjoint from training, deterministic, and by EXAMPLE.
-    #    A scan selected on a validation set that leaked into training measures memorisation,
-    #    which is the whole reason the scan exists.
+    # 4. the split is now made ONCE by the builder, so what this arm must get right is
+    #    reading it: the id field, and the _train -> _heldout name mapping. The old version of
+    #    this case tested an in-arm holdout_every split, which no longer exists -- a test of a
+    #    deleted code path passes forever and proves nothing.
     import tempfile as _tf
     with _tf.TemporaryDirectory() as d:
-        pp = os.path.join(d, "p.jsonl")
-        with open(pp, "w", encoding="utf-8") as f:
-            for i in range(20):
-                f.write(json.dumps({"question": f"q{i}", "answer": f"a{i}"}) + "\n")
-        tr, va = read_pack(pp, holdout_every=5)
-        if len(tr) + len(va) != 20:
-            fails.append(f"split lost or duplicated examples: {len(tr)} + {len(va)} != 20")
-        if len(va) != 4:
-            fails.append(f"expected 4 held-out of 20 at every-5th, got {len(va)}")
-        if set(tr) & set(va):
-            fails.append("the held-out split overlaps training")
-        if read_pack(pp, holdout_every=5) != (tr, va):
-            fails.append("the split is not deterministic across calls")
-        tr0, va0 = read_pack(pp)
-        if va0 or len(tr0) != 20:
-            fails.append(f"holdout_every=0 must hold nothing back: {len(tr0)}, {len(va0)}")
+        tp = os.path.join(d, "pack_train.jsonl")
+        hp = os.path.join(d, "pack_heldout.jsonl")
+        with open(tp, "w", encoding="utf-8") as f:
+            for i in (1, 2, 3, 4):
+                f.write(json.dumps({"id": i, "question": f"q{i}", "answer": f"a{i}"}) + "\n")
+        with open(hp, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": 0, "question": "q0", "answer": "a0"}) + "\n")
+        if held_out_path(tp) != hp:
+            fails.append(f"held_out_path({tp}) gave {held_out_path(tp)}, expected {hp}")
+        tr, tr_ids = read_pack(tp)
+        va, va_ids = read_pack(hp)
+        if tr_ids != [1, 2, 3, 4] or va_ids != [0]:
+            fails.append(f"ids read wrong: train {tr_ids}, held-out {va_ids}")
+        if set(tr_ids) & set(va_ids):
+            fails.append("the two files share an example id")
+        if len(tr) != 4 or len(va) != 1:
+            fails.append(f"pair counts wrong: {len(tr)}, {len(va)}")
+        # a file with no id field must fall back to line order, not crash
+        np_ = os.path.join(d, "noid_train.jsonl")
+        with open(np_, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"question": "q", "answer": "a"}) + "\n")
+        if read_pack(np_)[1] != [0]:
+            fails.append("a row without an id field did not fall back to line order")
+        if held_out_path("/x/plain.jsonl") is not None:
+            fails.append("held_out_path invented a path for a non-_train filename")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
@@ -471,7 +516,7 @@ def selftest():
         print(f"\n{len(fails)} selftest failure(s)")
         return 1
     print("sft_hf_control selftest OK (schedule == train.lr_mult, mask exact, stop supervised, "
-          "held-out split disjoint and deterministic)")
+          "shared held-out file read with matching ids)")
     return 0
 
 
