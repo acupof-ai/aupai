@@ -253,6 +253,23 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **Reachability changes without notice, so a fetcher carries a mirror chain.** 2026-08-31 from ~14:30: `hf-mirror.com` rc=28 (timeout) for the rest of the day; `www.modelscope.cn` 200 in 0.08 s and `/datasets/AI-ModelScope/<name>/resolve/master/<file>` serves HF datasets; `data.together.xyz` 200 all day. The math and CoT fetches stalled for hours on the one dead host. Rule: every HF-hosted source lists `[hf-mirror, modelscope, huggingface.co]` with a verified name map; a 10 s `curl -4` probe per host before fetching and on any timeout/403; failover continues from the same `.part`; `fetch_stats.json` records which host served each file (`t37`).
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 
+## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
+
+| Rule | Shapes | §refs |
+|---|---|---|
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 6 | §8 §14 §18 §37 §38 §46 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 11 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 |
+| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 4 | §7 §13 §25 §27 |
+| State the vision before the number; outside it, label unmeasured, not absent | 9 | §3 §5 §6 §17 §19 §28 §30 §32 §36 |
+| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 5 | §1 §11 §12 §20 §21 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 3 | §16 §22 §42 |
+| Shared resources are explicitly exclusive; sharing rules name IO and memory, not metric class | 4 | §15 §33 §49† §50† |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
+| What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
+
+†§49/§50 pending de's landing; sources: `af02a5a` (ppl_v2 IO footprint), `frozen_paths` commits (supervisor window). Full cases live in the shapes doc.
+
 ## Rule coverage
 
 Every rule below maps to a check that enforces it or an explicit reason none can.
@@ -278,15 +295,14 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
-| A deletion needs a per-file check for glob and runtime loaders | manual: no static analysis sees a runtime glob; reachability.py is a citation graph and its header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators a name scan reads as unreferenced (near-miss, 2026-08-31) |
-| Derived artifacts carry the fingerprint of what produced them | `corpus_fp_matches` |
+| Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
+| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
+| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
 | `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
-| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
-| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
-| Never `git stash` in this repository | `no_shared_stash` |
+| Never `git stash` in this repository ->R8 | `no_shared_stash` |
 | The index must equal HEAD before you merge: commit your | manual: which order a session ran merge and add in is not recoverable from the repo. What IS checked is the consequence: a wip commit lands on the branch where dirty_aged and the behind-main hook see it. The rule's own history is the reason it stays prose -- the previous version was a correct measurement of the wrong branch shape, and no artifact records which shape a merge had |
 | A conflicting path needs a commit first, and read which | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
 | `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
@@ -303,7 +319,6 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
-| Never run git checkout / git restore on a file you did not w | manual: no record of who wrote an uncommitted change |
 | Run ruff format over a whole file only if you created it. On | manual: reformat scope is a review judgement |
 | Commit as soon as a change works, and never later than 30 mi | manual: dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement |
 | Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
