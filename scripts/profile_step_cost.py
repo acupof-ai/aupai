@@ -196,6 +196,22 @@ def _selftest():
           + ("" if ok else f" -- {_bad_fields or 'no literal pairs found'}; --dim would set "
                            "nothing while the record claims it did"))
 
+    # The RNG must be seeded BEFORE the model is built, as train.py:1835 does. Without it two
+    # arms of an A/B get different initial weights and their loss-parity gate fires on the
+    # harness rather than on the variable -- measured, 1.53 nat apart at step 5. Line order is
+    # the whole assertion: seeding after construction leaves the init already drawn.
+    seed_line = model_line = None
+    for n in _nodes:
+        if isinstance(n, _a1.Call) and _a1.unparse(n.func) == "torch.manual_seed":
+            seed_line = n.lineno
+        elif isinstance(n, _a1.Call) and _a1.unparse(n.func) == "train.HybridLM":
+            model_line = n.lineno
+    ok = None not in (seed_line, model_line) and seed_line < model_line
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} the RNG is seeded before the model is built"
+          + ("" if ok else f" -- manual_seed at {seed_line}, HybridLM at {model_line}; two arms "
+                           "would init differently and the loss-parity gate would test nothing"))
+
     line = fmt_row("nccl_floor", None, 1)
     ok = "NOT MEASURED" in line and "0.0" not in line
     bad += 0 if ok else 1
@@ -365,7 +381,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -448,6 +464,13 @@ def main():
     vseqs = va[0] if train.Cfg.fone else va
     Xva, Yva = vseqs[:, :-1], vseqs[:, 1:]
 
+    # train.py:1835 seeds before building the model, and this file did not -- so two arms of an
+    # A/B initialized DIFFERENT weights and their per-step losses diverged by up to 1.53 nat,
+    # failing the <=1e-3 parity gate for a reason that has nothing to do with the variable under
+    # test (grad_ckpt and the batch/accum split). MEASURED 2026-09-02: the b16a2 and b8a4 arms
+    # read 10.596 vs 10.580 at step 0, already 0.016 apart before any of the arms' own arithmetic
+    # could differ. A parity gate that fires on an unseeded init tests the harness, not the arms.
+    torch.manual_seed(train.Cfg.seed)
     raw = train.HybridLM(train.Cfg).to(dev)
     # train.py:2016-2020 -- fp8 is `args.fp8 and amp`, and it does TWO things: casts the
     # module to bf16 and then converts the linears. Recording fp8=True while doing neither
