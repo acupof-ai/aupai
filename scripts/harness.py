@@ -2043,6 +2043,89 @@ def _noted_gone(entry, name):
     return False
 
 
+def check_pod_ledger_rows_home(root):
+    """A ledger row written on the pod is invisible to every other check (de-36).
+
+    pod_push only ever pushes, and pod_drift only asserts that the files it LISTS match --
+    so an appended row on the pod's emptyDir is seen by nothing here. Five score_matrix rows
+    behind the closed A/Bs lived only on the pod until someone moved them by hand, and two
+    more (p500m_20b_0902 step1500/step2500, the live run's own measurements) had accumulated
+    again by 2026-09-03.
+
+    WARN, not FAIL: the rows are recoverable by running the puller, and a FAIL on a
+    condition whose fix is one command trains people to bypass the gate. The count and the
+    ledger are named so the WARN says what to run it for.
+
+    This check runs where the REPOSITORY is and reads the pod, which is the opposite of the
+    'pod-only, SKIP elsewhere' the task asked for -- the question is 'does the repo lack a
+    row the pod has', and the repo is the side that must be present to answer it. On the pod
+    itself there is no .git and the comparison has no local side, so it SKIPs there."""
+    import pod_drift
+    fake = os.environ.get("HARNESS_POD_LEDGERS")
+    # is_pod is "this tree has no .git", and a _tmp_repo() world has none either -- so the
+    # pod gate must come AFTER the injection, or every broken world reads as "we are on the
+    # pod" and SKIPs. The selftest caught exactly that (de-36): SKIP on its own world, which
+    # is the shape where a check cannot be made to fail.
+    if not fake and pod_drift.is_pod(root):
+        return SKIP, "on the pod: no local ledger to compare against (this check runs on main)"
+    if not fake and not os.path.exists(os.path.expanduser("~/bin/pod")):
+        return SKIP, "needs ~/bin/pod to read the pod's ledgers"
+    try:
+        sys.path.insert(0, os.path.join(root, "scripts"))
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import pod_pull_ledgers as ppl
+        if fake:
+            # Selftest injection, same shape as HARNESS_POD_PS: the broken world is a repo
+            # whose ledger is short, and reading the REAL pod would make the world's verdict
+            # depend on whether the pod is reachable from wherever the selftest runs -- a
+            # world that passes for the wrong reason on a laptop with no tunnel.
+            def _reader(rel, _pod_root, _dir=fake):
+                p = os.path.join(_dir, os.path.basename(rel))
+                if not os.path.exists(p):
+                    return None, "empty or absent on the pod"
+                return open(p, encoding="utf-8").read(), None
+            rows = ppl.survey(root=root, reader=_reader)
+        else:
+            rows = ppl.survey(root=root)
+    except Exception as e:
+        return SKIP, f"could not read the pod's ledgers: {type(e).__name__}: {e}"
+    behind = [(rel, len(missing)) for rel, _np, _nl, missing, _c, _n in rows if missing]
+    onpod = sum(len([c for c in coll if c[1] == "result_only_on_pod"])
+                for _r, _np, _nl, _m, coll, _n in rows)
+    if not behind and not onpod:
+        return PASS, f"{len(rows)} ledger(s): every pod row's key is present locally"
+    parts = [f"{rel} is missing {n} pod row(s)" for rel, n in behind]
+    if onpod:
+        parts.append(f"{onpod} row(s) carry a result on the pod and none locally")
+    return WARN, "; ".join(parts) + " -- run scripts/pod_pull_ledgers.py"
+
+
+def _broken_pod_ledger_rows_home():
+    """A repo whose experiments ledger is EMPTY while the pod's holds rows: every pod row's
+    key is then absent locally, so the check must WARN.
+
+    Both sides are the REAL ledger -- copied, then one side emptied -- not hand-written, and
+    the pod side is injected through HARNESS_POD_LEDGERS so the world's verdict does not
+    depend on the pod being reachable from wherever the selftest runs. A world that reports
+    the right state because the tunnel is down is a world that proves nothing."""
+    import shutil
+
+    d = _tmp_repo()
+    fake = os.path.join(d, "_fake_pod")
+    os.makedirs(fake, exist_ok=True)
+    for rel in ("runs/score_matrix.jsonl", "runs/experiments.jsonl"):
+        src = os.path.join(ROOT, rel)
+        if not os.path.exists(src):
+            raise SelftestSkip(f"{rel} absent; nothing real to build the world from")
+        dst = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        shutil.copy(src, os.path.join(fake, os.path.basename(rel)))
+    open(os.path.join(d, "runs", "experiments.jsonl"), "w").close()
+    os.environ["HARNESS_POD_LEDGERS"] = fake
+    return d
+
+
 def check_ckpt_facts_sources_present(root):
     """A measured fact whose only recomputable source is a checkpoint that is
     doomed or gone must be red at write time, not at prune time.
@@ -7209,6 +7292,13 @@ CHECKS = [
         _broken_ckpt_facts_sources,
     ),
     (
+        "pod_ledger_rows_home",
+        "every row in the pod's runs/*.jsonl has its key present in the repository's copy",
+        "five score_matrix rows behind the closed A/Bs existed only on the pod's emptyDir; pod_push only pushes and pod_drift only asserts listed files match, so a pod-only ledger row is invisible to every check",
+        check_pod_ledger_rows_home,
+        _broken_pod_ledger_rows_home,
+    ),
+    (
         "keep_claim_reasons_live",
         "no KEEP claim in the candidates listing cites a fact whose status is retracted",
         "step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment'; that fact was retracted the same day by 52aec31 and the claim stood",
@@ -7692,6 +7782,11 @@ EVIDENCE = {
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
+    # "both": the question joins two filesystems -- the pod holds the rows, the repository
+    # holds what it is missing -- so neither side alone can answer it. It runs wherever a
+    # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
+    # local side to compare against.
+    "pod_ledger_rows_home": "both",
     "keep_claim_reasons_live": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
@@ -9430,7 +9525,7 @@ def _demo():
     # force the tier back. What its world must still prove is that removing a review row
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
-                 "no_shared_stash", "keep_claim_reasons_live"}
+                 "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -9458,6 +9553,7 @@ def _demo():
             shutil.rmtree(root, ignore_errors=True)
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
             os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
+            os.environ.pop("HARNESS_POD_LEDGERS", None)  # same: a temp dir of pod ledgers
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
