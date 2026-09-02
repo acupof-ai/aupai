@@ -9823,7 +9823,7 @@ _UNFROZEN_ALLOWLIST = {
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "fp8",                # training precision, not architecture
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
-    "allow_corpus_drift", "allow_pod_drift", "allow_env_drift",  # safety overrides
+    "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
     "val_every", "val_batches",  # validation cadence, not architecture
