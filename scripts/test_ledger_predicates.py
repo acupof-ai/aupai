@@ -3,7 +3,7 @@
 
     python3 scripts/test_ledger_predicates.py --selftest
 
-# restartable: reads git history only, no writes; an interrupt costs 20s
+# restartable: reads git history only, no writes; an interrupt costs 0.3s (measured, 10 worlds)
 
 WHAT THIS GUARDS. `runs/*.jsonl` merge by union, so a row that leaves is a record disappearing:
 a59ac1f staged an experiments.jsonl one line shorter than its parent and dropped b0's
