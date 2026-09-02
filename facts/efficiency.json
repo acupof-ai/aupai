@@ -2465,6 +2465,47 @@
    "boundary": "THIS IS A THROUGHPUT ANSWER ONLY. It says clipping and its sync are not where step time goes at this shape; it says nothing about whether clip=1.0 helps or hurts the loss, and nothing about stability at a shape where gradients spike. The 1.8 ms member of each pair is not attributed to a caller here -- only the 125 ms member was checked against GPU occupancy.\n\nOne shape, 4 cards, 3 steps. The sync's cost DEPENDS on device occupancy, which is the one quantity that changes with shape and card count: at a shape where the GPU goes idle waiting on the host, the same sync would cost real step time. Do not carry 0.092% or 'the sync is free' to the 500M run without re-reading its idle fraction (2026-08-30's grad_ckpt 2.4x-at-12-layers became 1.116x at 32 layers -- a constant measured at one shape and carried to another is this repo's recurring shape).",
    "uncertainty": "The 99.2% figure is GPU busy time inside the sync window, computed by clipping kernel intervals to the window; overlapping kernels on different streams are summed, so a window with two concurrent streams could read above 100% and this one does not, which is weak evidence that concurrency is low rather than proof the arithmetic is exclusive. What would settle it is per-stream occupancy, not measured. NOT MEASURED AT ALL: isfinite has no matching cpu_op in the trace, so its cost is unknown rather than zero -- it is fused into a triton kernel whose name the needle did not match, and the needle was not widened to find it.",
    "status": "measured"
+  },
+  {
+   "id": "eff.grad_ckpt_300m_two_arm",
+   "value": "2.27x THROUGHPUT FOR 1.82x MEMORY at 293.05M, and THE TWO ARMS DIFFER IN TWO VARIABLES, so this number is not attributable to grad_ckpt alone. Measured: grad_ckpt=True at batch 16 x accum 2 gives 22,544 tok/s/gpu at 21.19 GiB peak; grad_ckpt=False at batch 8 x accum 4 gives 51,238 tok/s/gpu at 38.59 GiB. 51238/22544 = 2.2728, 38.59/21.19 = 1.8211. Effective batch is 32 on both sides, but the MICRO-batch is 16 against 8 -- so the freed activation memory was spent on a different micro-batch rather than held constant, and the 2.27x is the joint effect of turning grad_ckpt off AND halving the micro-batch. This repo has paid for that exact confound before: the 36%-vs-5% ablation, where the freed 31% went to web and the verdict was web's.\n\nWHAT IT IS STILL GOOD FOR: it bounds the ORDER OF MAGNITUDE of grad_ckpt's cost at this shape, and that is enough to adjudicate two contradicting comments in train.py. :189 says 2.4x (measured at 12 layers, per eff.grad_ckpt_inverts_with_depth); :217 says 25% wall-clock with no cited source. 2.27x supports :189's order of magnitude and refutes :217's. A second, independent path agrees: the depth extrapolation gives 2.40x. Neither says 25%.\n\nAND IT DOES NOT TRANSFER TO 32 LAYERS. At d1024 L32 the same comparison at EQUAL batch is 1.116x (eff.grad_ckpt_inverts_with_depth) -- grad_ckpt inverts with depth, so 2.27x is a 12-layer figure and the 500M recipe's grad_ckpt=ON ruling stands on the L32 measurement, not on this one.",
+   "measured": "2026-09-02",
+   "source": "CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/profile_step_cost.py --mix data/mix_200m_4b.json --dim 1024 --layers 12 --batch 16 --accum 2 --steps 8 --warmup 8 (arm a2, grad_ckpt on), and the same command with --batch 8 --accum 4 and grad_ckpt off (arm b)",
+   "config": {
+    "params_M": 293.05,
+    "world": 4,
+    "seq": 4096,
+    "fp8": true,
+    "compile": true,
+    "mix": "data/mix_200m_4b.json",
+    "warmup_steps_discarded": 8,
+    "statistic": "median step",
+    "arm_a2": {
+     "grad_ckpt": true,
+     "batch": 16,
+     "accum": 2,
+     "tok_s_per_gpu": 22544,
+     "peak_gib": 21.19
+    },
+    "arm_b": {
+     "grad_ckpt": false,
+     "batch": 8,
+     "accum": 4,
+     "tok_s_per_gpu": 51238,
+     "peak_gib": 38.59
+    },
+    "throughput_ratio": 2.2728,
+    "memory_ratio": 1.8211,
+    "effective_batch_both_arms": 32,
+    "variables_that_differ": [
+     "grad_ckpt",
+     "micro_batch"
+    ],
+    "logs_pod_only": "ab300m_a2.log and ab300m_b.log under the pod's runs/ directory. Named here rather than in source because they do not resolve from main and facts_well_formed reads any runs/-prefixed path in source as a citation. The two numbers each log settles are restated in arm_a2/arm_b above, so nothing depends on reaching the files."
+   },
+   "boundary": "TWO VARIABLES, ONE RATIO. grad_ckpt and micro-batch both move between the arms, so no part of the 2.27x can be assigned to either alone from this pair. The clean version is a third arm -- grad_ckpt=False at batch 16 x accum 2 -- which was NOT run: it is the OOM-risk configuration this shape was being tested to avoid, and eff.microbatch_32_oom records the neighbouring failure. Until that arm exists, quote this as an order of magnitude, never as grad_ckpt's cost.\n\n12 layers only. The measurement that governs the 500M recipe is eff.grad_ckpt_inverts_with_depth's 1.116x at L32, which inverts the verdict.",
+   "uncertainty": "Median of one run per arm, not a repeated measurement, so there is no spread. The arms were launched from a profiler that at the time did NOT seed before building the model (fixed in 41c5cd8, and the arms initialized different weights 0.016 apart at step 0) -- that invalidated the LOSS-PARITY gate, which was retracted, and does NOT affect these two numbers: throughput is wall-clock over a fixed shape and peak is an allocator reading, neither of which depends on the values in the weights. Stated explicitly because a reader who knows the parity failure would reasonably suspect the whole pair.",
+   "status": "measured"
   }
  ]
 }
