@@ -450,7 +450,7 @@
    "claim": "KDA's chunk kernel is starved for parallelism at the training batch size",
    "value": "REFUTED at production batch. eval/kda_probe.py, direct chunk_kda with train.py's arguments, H20, bf16, hd=128, fwd+bwd, 10 iters, one layer: B=1 2.11 ms, B=2 2.15 (work-scaled 0.51), B=4 3.23 (0.75), B=8 6.18 (0.96), B=16 12.10 (0.98), B=32 23.68 (0.98). Sub-linear only up to B*h~32; flat linear from B=8 on.",
    "measured": "2026-08-30",
-   "source": "eval/kda_probe.py",
+   "source": "eval/kda_probe.py@3d2acd9",
    "config": {
     "gpu": "NVIDIA H20, single GPU, no DDP",
     "batch": 16,
@@ -483,7 +483,7 @@
    "claim": "KDA's chunk kernels are slow because of an inter-chunk serial dependency",
    "value": "REFUTED. Three independent measurements: (1) time scales LINEARLY with B*h (work-scaled 0.98 from B=8) -- a chain's latency does not grow with batch; (2) halving chunk_size to 32 DOUBLES the chain length and is 19% FASTER (T=4096: 12.12 -> 9.81 ms), the reverse of the chain prediction; (3) the genuinely sequential kernels (fwd_kernel_h grid 512, bwd_kernel_dhu grid 256) are 1.51 of 12.77 ms = 11.9% of KDA time. The real cause is OCCUPANCY: the four dominant kernels achieve 6-12% occupancy and run at 15-29% of HBM and 16-42% of SM, while every kernel above 80% occupancy runs at 85-93% of HBM peak. Grid size is ample (8192-131072 blocks on 78 SMs); the kernels burn too many registers/shared memory per block, leaving ~4-8 resident warps with nothing to hide memory latency. Latency-bound, not chain-bound, not bandwidth-bound, not grid-bound. Measured DRAM traffic: 14.79 GB in 12.77 ms = 1.16 TB/s, 29% of the 4 TB/s peak.",
    "measured": "2026-08-30",
-   "source": "eval/kda_probe.py plus ncu per-kernel counters",
+   "source": "eval/kda_probe.py@3d2acd9 plus ncu per-kernel counters",
    "config": {
     "gpu": "NVIDIA H20 GPU7",
     "batch": 16,
@@ -508,7 +508,7 @@
    "claim": "passing chunk_size=32 to chunk_kda is faster than the default 64",
    "value": "Measured -19.1% on the fla kernels at T=4096 (12.12 -> 9.81 ms), -17.8% at T=1024, -18.2% at T=2048. chunk_size is a supported fla kwarg accepting {32, 64}; train.py does not pass it, so it defaults to 64. Applied to the in-model fla group (~102 of the 128.1 ms DeltaRecurrence total; short_conv is unaffected) that is ~19.5 ms/step, 2.0% of the 978.5 ms step.",
    "measured": "2026-08-30",
-   "source": "eval/kda_probe.py",
+   "source": "eval/kda_probe.py@3d2acd9",
    "config": {
     "gpu": "NVIDIA H20 GPU7",
     "batch": 16,
@@ -2133,7 +2133,7 @@
    "id": "eff.w7_peak_memory_b32_fits",
    "value": "batch 32 FITS at world 7 for the 493.6M shape, with 25.6 GiB to spare, and the tool everyone had been reading could not have told us. Measured on cards 1-7, d1024/L32/h8/ffn3072, grad_ckpt on, compiled, seq 4096, accum 1, fp8: live-tensor peak 69.63 GiB on rank 0, identical at the step-10 and step-20 windows (the counter is reset each window, so those are two independent readings of a shape-stable step). loss 6.54 -> 5.90, gnorm 2.69 -> 1.40, no OOM.\n\nTHE INSTRUMENT WAS THE PROBLEM, NOT THE MARGIN. nvidia-smi reads 74.10 GiB at world=3 and 74.09 at world=7 -- a difference of -0.01 GiB. DDP bucket growth from 3 ranks to 7, the entire quantity this measurement existed to find, is INVISIBLE to it: the caching allocator never returns memory to the driver, so a larger bucket is served from cache and the reservation figure stays pinned. Every fits/does-not-fit judgement in this repo before 661e5ce came from that number. The earlier 'about 6 GiB headroom' was not merely conservative -- it was produced by an instrument with zero resolution on the question being asked. Same shape as the MFU-denominator error the same day: the arithmetic was correct and the quantity was not the one in dispute.\n\nThe allocator's cache is 4.47 GiB of the 74.10 (74.10 live-plus-cache against 69.63 live), so real headroom to the card's usable 95.22 GiB is 25.59 GiB, against the 21.12 GiB nvidia-smi implies.\n\nCORRECTED: the first version of this entry said 9.52 GiB, computed against an 80 GiB card. THE CARDS ARE 97,871 MiB (95.58 GiB, 95.22 usable). I never measured the capacity -- I took 'H20 = 80 GiB' from memory while insisting the numerator be measured rather than read off nvidia-smi. Second denominator error of the day, after comparing a 148-TFLOPS MFU against a 296-TFLOPS one. Care spent on the numerator does not transfer to the denominator, and the denominator is the half that gets filled in from what one already believes.\n\nTHE CONTROL ARM REPORTED AND THE PREDICTION HELD. b16+accum2, everything else identical: 36.29 GiB against b32's 69.63, a ratio of 1.92, stable across its own step-10 and step-20 windows. The prediction that it must read materially lower was written into this entry's uncertainty before the arm ran, so the peak field is confirmed to track configuration rather than printing a constant. Both arms move the same 917,504 tokens per step, so the 33.3 GiB between them is memory spent for no throughput.\n\nTHE PAIR YIELDS A MODEL, NOT TWO POINTS. Solving peak = F + k*A over the two arms gives activations of 33.34 GiB per batch-16 unit and a fixed cost of 2.95 GiB. That fixed term is independently predicted at 2.76 GiB by 493.6M params x 2 bytes x 3 copies (weights + Muon momentum + grads) -- agreement to 0.19 GiB, which is what makes the model trustworthy rather than a two-point fit. Peak is LINEAR in batch here; an initial reading that grad_ckpt made activations sub-linear was wrong and the arithmetic said so.\n\nSo the recipe is settled: b32 accum 1 world 7, and b32 is the ceiling for this card at seq 4096. The model extrapolates -- legitimately, because two points fix a line of KNOWN FORM rather than seeding a guess at a trend: seq 8192 puts b32 at ~136 GiB (does not fit) and b16a2 at ~70 GiB (fits); batch 64 at seq 4096 likewise does not fit. b16+accum2 is therefore not a fallback but a reserve -- it is where 33 GiB comes from if sequence length or mix complexity grows.",
    "measured": "2026-09-01",
-   "source": "scripts/w7_peak.sh + scripts/w7_driver.sh, cards 1-7; pod-only log w7_b32a1 (container /work/aupai/runs); train.py:2604 peak field added in 661e5ce",
+   "source": "scripts/w7_peak.sh@116f665 + scripts/w7_driver.sh@3a83593, cards 1-7; pod-only log w7_b32a1 (container /work/aupai/runs); train.py:2604 peak field added in 661e5ce",
    "config": {
     "d": 1024,
     "layers": 32,

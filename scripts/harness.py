@@ -3227,6 +3227,22 @@ FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
 CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
 
 
+def _rev_has_path(root, rev, path):
+    """Does `path` exist in the tree at `rev`? False when git cannot answer.
+
+    A `path@rev` citation is only durable if the rev actually holds the file. Accepting
+    the syntax without checking would turn the retirement form into a way to make any
+    dead citation pass -- which is the shape this repo keeps paying for (metadata is a
+    claim, not a fact about content). False on the pod, where there is no .git; the
+    caller only reaches this on a full checkout."""
+    try:
+        r = subprocess.run(["git", "cat-file", "-e", f"{rev}:{path}"],
+                           cwd=root, capture_output=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _is_gitignored(path, root):
     """True if path is covered by .gitignore. Tries `git check-ignore` (dev/CI);
     on the pod (no .git) falls back to a minimal .gitignore reader. The fallback
@@ -3615,8 +3631,21 @@ def check_facts_well_formed(root):
             # -- it was never there. CI and dev run this fully; the pod skips it. The config
             # half above runs everywhere.
             if not pod_drift.is_pod(root):
-                for m in FACT_SOURCE_PATH.findall(str(e["source"])):
+                src = str(e["source"])
+                for m in FACT_SOURCE_PATH.findall(src):
                     if os.path.exists(os.path.join(root, m)):
+                        continue
+                    # `path@rev` is the repo's retirement form for a deleted file: the
+                    # content is reachable at that sha, so the citation resolves even
+                    # though the path does not. launch_gate learned this in 1a4be21; this
+                    # check did not, and it FAILed on the seven retirements of de-21 while
+                    # 44's 22 in 3fb1946 passed only because `probes/` is absent from
+                    # FACT_SOURCE_PATH's directory list -- the same deletions in eval/ or
+                    # scripts/ would have failed. Verify the rev, do not just accept the
+                    # syntax: a sha that names nothing is a dead citation wearing the
+                    # durable form.
+                    rev = re.search(re.escape(m) + r"@([0-9a-f]{7,40})\b", src)
+                    if rev and _rev_has_path(root, rev.group(1), m):
                         continue
                     if _is_gitignored(m, root):
                         continue  # pod-only artifact; this machine doesn't have it
