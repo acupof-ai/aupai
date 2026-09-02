@@ -959,6 +959,8 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
     _origin = 0 if isinstance(cfg, dict) else (getattr(cfg, "_plan_step_origin", 0) or 0)
     _base = {} if isinstance(cfg, dict) else (getattr(cfg, "_row_cursor_base", None) or {})
+    _discarded = [] if isinstance(cfg, dict) else (getattr(cfg, "_cursor_discarded", None) or [])
+    _total_steps = None if isinstance(cfg, dict) else getattr(cfg, "_total_steps", None)
     _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
     _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
     cfg = cfg if isinstance(cfg, dict) else vars(cfg)
@@ -982,6 +984,13 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
         ck["opt"] = opt
     if step is not None:
         ck["step"] = step
+    # The schedule this checkpoint was written under. A resume recomputes total_steps from
+    # the plan it builds, and until 2026-09-02 nothing could compare the two: the field did
+    # not exist, so an inflated recomputation was silent by construction -- there was
+    # nothing to be inconsistent with. Writing it makes the next resume able to say the
+    # schedule moved, and makes a reader of the file able to say what the run was aiming at.
+    if _total_steps:
+        ck["total_steps"] = int(_total_steps)
     # The row cursor: how many rows of each domain's pool the plan has consumed, and the
     # corpus fingerprint each count is measured against. Stage 2 builds a NEW plan from
     # its own mix, so without this every domain restarts at row 0 and the tail is never
@@ -1030,6 +1039,40 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                 ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))
                                     for i, n in enumerate(names)}
                 ck["row_cursor_as_of_step"] = step
+                # The identity that would have caught the segment-only bug above the day it
+                # landed, and which ds.second_resume_rereads_one_segment's uncertainty named
+                # as the missing check: an ABSOLUTE cursor sums to exactly the rows the run
+                # has consumed, which is as_of_step x batch x accum x world.
+                #
+                # KNOWN ANSWERS, read off three real checkpoints of p200m_4b_0902 (rows/step
+                # = 16x2x8 = 256): step500 128,000; interrupt.step832 212,992;
+                # interrupt.step1192 305,152. Only the last has discriminating power -- it
+                # was written after a resume (origin 832), so absolute and segment-only
+                # disagree there (305,152 against 92,160) and the difference from step832 is
+                # 92,160 = 360x256, that segment added in whole. The other two sit at origin
+                # 0 where both implementations agree, so a known-answer set without a
+                # post-resume checkpoint is blind to exactly this defect.
+                #
+                # Skipped, not relaxed, when a domain's cursor was DISCARDED: that domain
+                # restarted at row 0 and contributes 0 to _base by design, so the sum is
+                # legitimately short and firing here would train an operator to ignore it.
+                _sum = sum(ck["row_cursor"].values())
+                _want = step * _batch * _accum * world
+                if _discarded:
+                    ck["row_cursor_sum_unchecked"] = (
+                        f"{len(_discarded)} domain(s) restarted at row 0, so the cursor sum "
+                        f"{_sum} is legitimately below {step}x{_batch}x{_accum}x{world} = "
+                        f"{_want}: {'; '.join(_discarded[:4])}"
+                    )
+                elif _sum != _want:
+                    raise AssertionError(
+                        f"refusing to write {path}: row_cursor sums to {_sum}, but step {step} "
+                        f"x batch {_batch} x accum {_accum} x world {world} = {_want} rows have "
+                        f"been consumed. A cursor that is not absolute makes the next resume "
+                        f"re-read {_want - _sum} rows silently (the defect measured as "
+                        f"ds.second_resume_rereads_one_segment and fixed in 52aec31). No "
+                        f"domain reported a discarded cursor, so this is not the discard path."
+                    )
         else:
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
@@ -1530,6 +1573,12 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
     pools, val, used = {}, [], {}
+    # Which domains had their cursor thrown away, and why. Published on Cfg because the
+    # cursor-sum equality asserted at save time is only exact when nothing was discarded:
+    # a discarded domain restarts at row 0 and contributes 0 to _row_cursor_base by design,
+    # so the sum falls legitimately short of as_of_step x rows_per_step. Without this the
+    # assert would have to be dropped or made inexact, and an inexact identity is not one.
+    discarded = []
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
@@ -1558,6 +1607,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                           f"{cursor_seed}, this run uses {_sample_seed()}; the pool is "
                           f"shuffled differently so the row count indexes other rows",
                           flush=True)
+                discarded.append(f"{name} (sample_seed {cursor_seed} != {_sample_seed()})")
                 continue
             want_fp = (cursor_srcfp or {}).get(name)
             ddir = os.path.join(DATA, "corpus", name)
@@ -1570,6 +1620,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                     print(f"mix: {name} cursor {row_cursor[name]} discarded -- corpus "
                           f"changed ({want_fp[:8]} -> {live_fp[:8]}), restarting at row 0",
                           flush=True)
+                discarded.append(f"{name} (corpus {want_fp[:8]} -> {live_fp[:8]})")
             else:
                 used[name] = int(row_cursor[name])
                 # The base the next save adds to. Set HERE, in the branch that actually
@@ -1585,10 +1636,23 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                     print(f"mix: {name} resuming at row {used[name]} "
                           f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
                           flush=True)
-    # True only when a cursor SEEDED used[] before the plan was built -- that is what
-    # trims it. Computed here, before the phase loop mutates used[] into post-plan
+    # True only when a cursor SEEDED used[] before the plan was built. Named for what it
+    # knows: the old name _plan_trimmed asserted the plan HAD been trimmed, which this code
+    # did not do -- :1597 allocated the full budget regardless -- and both consumers read
+    # the name (tilerl). Computed here, before the phase loop mutates used[] into post-plan
     # counts, which are non-zero on every run and would make the flag meaningless.
-    Cfg._plan_trimmed = any(v > 0 for v in used.values())
+    Cfg._cursor_seeded = any(v > 0 for v in used.values())
+    Cfg._cursor_discarded = list(discarded)
+    # NOW it is trimmed, and the flag above is the reason it can be: the budget already
+    # spent by earlier segments is subtracted, so a resume allocates the REMAINDER instead
+    # of the whole recipe a second time. Without this, `rows` is the full budget at :1528
+    # and :2140 turns the over-allocated plan into total_steps -- p200m_4b_0902 planned
+    # 976,556 rows = 4.00B in the fresh run AND in the resume from step 832, so the run
+    # would have ended 832 steps past its own recipe. Bounded below at 0: a spent budget
+    # must reach the refusal at :1615, not go negative and plan a garbage count.
+    spent = sum(used.values())
+    if spent:
+        rows = max(0.0, rows - spent)
     plan = []
     for frac, key in phases:
         parts = []
@@ -1610,6 +1674,21 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         if parts:
             ph = torch.cat(parts, dim=1)
             plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+    if not plan:
+        # Every domain allocated zero rows, so torch.cat below would raise
+        # `expected a non-empty list of Tensors` -- a message about a tensor library, for a
+        # condition about the training budget, which sends the reader to the wrong file.
+        # Reachable two ways, and the resume way is the one the remainder subtraction above
+        # creates: a cursor at or past the budget leaves nothing to allocate. The other is a
+        # mix whose weights sum to ~0 or whose pools are all empty.
+        raise RuntimeError(
+            f"refusing to train on an empty plan: {len(names)} domain(s) allocated 0 rows. "
+            f"budget {mix['total_tokens'] / Cfg.seq:.0f} rows, cursor already consumed "
+            f"{sum(int(v) for v in (row_cursor or {}).values())}, so "
+            f"{rows:.0f} remain. If the cursor equals the budget this checkpoint has "
+            f"finished its mix -- point --mix at the next stage instead of resuming into "
+            f"the same one."
+        )
     plan = torch.cat(plan, dim=1)
     if is_main:
         for name in names:
@@ -1904,11 +1983,16 @@ def main():
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
     _cursor = _cursor_fp = _cursor_seed = _pre_written = None
+    _prev_total_steps = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
             _cursor_seed = _pre.get("row_cursor_seed")
+            # The schedule the earlier segment ran under, for the comparison at :2231.
+            # Read here rather than off the full load below so the check does not depend on
+            # `ck` still being bound 180 lines later.
+            _prev_total_steps = _pre.get("total_steps")
             del _pre
             # The file's own mtime, for the message below: whether a missing cursor is
             # an old format or a live write bug turns on when the file was written, and
@@ -2138,17 +2222,40 @@ def main():
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
     good_opt = [None] * len(optimizers)
     total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))
-    # A trimmed plan holds only the rows THIS stage will read, so the count above is
-    # stage-2's steps alone -- but `step` stays absolute at the resume point because it
-    # drives the LR schedule, which the cursor does not relieve it of. Leaving them on
-    # different scales makes total_steps smaller than the resume step, and the loop
-    # exits without running: the rehearsal saw 16000/7998, zero steps (fb's ruling on
-    # tilerl's challenge). Rebasing `step` instead would restart the schedule and break
-    # the t47 join, so the totals are what move.
-    if getattr(Cfg, "_plan_trimmed", False) and resume_step:
+    # A cursor-seeded plan holds only the rows THIS segment will read -- true by
+    # construction since the remainder subtraction at :1600, and true before it only for
+    # domains the epoch cap happened to trim. Either way the count above is this segment's
+    # steps alone, while `step` stays absolute at the resume point because it drives the LR
+    # schedule, which the cursor does not relieve it of. Leaving them on different scales
+    # makes total_steps smaller than the resume step, and the loop exits without running:
+    # the rehearsal saw 16000/7998, zero steps (fb's ruling on tilerl's challenge).
+    # Rebasing `step` instead would restart the schedule and break the t47 join, so the
+    # totals are what move. With the subtraction in place this addition RESTORES the
+    # original total rather than inflating past it: segment steps + resume_step == the
+    # steps a fresh run would have had (scripts/test_plan_length.py, assertion 2).
+    if getattr(Cfg, "_cursor_seeded", False) and resume_step:
         total_steps += resume_step
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
+    # For save_checkpoint, and for the comparison below. Published on Cfg the same way
+    # build_mix publishes _row_cursor: save_checkpoint reads state off cfg rather than
+    # taking it through five call sites.
+    Cfg._total_steps = total_steps
+    # The schedule must not move across a resume. Loud and non-fatal on purpose: by the
+    # time this runs the cards are allocated and the plan is in memory, and an inflated
+    # total still trains -- it just trains a different recipe than the one the run started
+    # under, which is what p200m_4b_0902 did in silence (4.87B against a 4.00B budget).
+    # --max_steps is exempt: naming it IS asking for a different total.
+    _prev_total = _prev_total_steps
+    if _prev_total and not args.max_steps and int(_prev_total) != total_steps:
+        _d = total_steps - int(_prev_total)
+        runlog(
+            f"SCHEDULE MOVED: this resume computes total_steps {total_steps}, the checkpoint "
+            f"was written under {_prev_total} ({_d:+d}). The warmdown start and every lr_mult "
+            f"move with it, so the LR shape is not the one the earlier segment trained under. "
+            f"A positive delta is the plan being allocated for tokens already spent; pass "
+            f"--max_steps {_prev_total} to hold the original schedule."
+        )
     step = resume_step
     if args.resume and is_main:
         # WSD stage join: the resumed lr must continue from where stage 1 stopped. Print it
@@ -2195,17 +2302,24 @@ def main():
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
-        # 0 when the plan was TRIMMED by a row cursor, because the trim already removed
-        # every consumed row: build_mix indexes each domain from arange(used, used+want),
-        # so the plan holds only unread rows and seeking into it skips them a second
-        # time. The rehearsal saw exactly that -- 16000 * 16 * 2 = 512,000 into a
-        # 1,791,741-row trimmed plan, past the end, zero steps executed.
+        # 0 whenever a row cursor SEEDED the plan, because every row in it is already
+        # unread: build_mix indexes each domain from arange(used, used+want), so the plan
+        # starts past what earlier segments consumed and seeking into it would skip rows a
+        # second time. The rehearsal saw exactly that -- 16000 * 16 * 2 = 512,000 into a
+        # 1,791,741-row plan, past the end, zero steps executed.
+        #
+        # Re-judged with the remainder subtraction at :1600 (de, 2026-09-02): unchanged, and
+        # for the same reason. The subtraction changed HOW MANY rows the plan holds, never
+        # WHERE it starts -- that was always the cursor at :1607 -- so 0 was right before it
+        # and is right after. What the subtraction does fix is the count this 0 is paired
+        # with: previously the plan held the full budget from the cursor onward, so `i0 = 0`
+        # correctly read unread rows and there were simply too many of them.
         #
         # Without a cursor the seek is still required: the plan is then the WHOLE run's
         # rows and a resume must skip what it already read (the within-run case that has
         # always worked). `step` stays absolute either way -- it drives the LR schedule,
         # which the cursor does not relieve it of (tilerl's challenge, fb's ruling).
-        i0 = 0 if getattr(Cfg, "_plan_trimmed", False) else step * Cfg.batch * Cfg.accum
+        i0 = 0 if getattr(Cfg, "_cursor_seeded", False) else step * Cfg.batch * Cfg.accum
         t0 = time.time()
         last = 0.0
         t_log = time.time()
