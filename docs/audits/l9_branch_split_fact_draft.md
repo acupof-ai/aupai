@@ -68,7 +68,11 @@ Complete: all three rescale arms landed (b0-16 closed at efd171a2, review row b0
    has; reading a 0.05 effect would need paired per-domain deltas on a fixed batch (where A-vs-A is
    0 by construction), around 0.024. That is a different instrument, not more arms, and it is NOT
    offered as a re-reading of this result: on the pre-registered bar the answer is bounded and no
-   action follows at 200M. THE TABLE CANNOT UPGRADE IT EITHER:
+   action follows at 200M. WHERE THE 0.024 INSTRUMENT IS OWED (1e ruling 2026-09-03, no task
+   opened for it here): layer 9's delta is 7.5x the control's, so the asymmetry is real and the
+   paired per-domain instrument is what the NEXT ladder point should use -- the L32 layer-31 split
+   -- opened on demand at that point rather than retrofitted onto this one. Recorded so the
+   unopened task is a decision in the record and not an omission. THE TABLE CANNOT UPGRADE IT EITHER:
    domain_loss falls monotonically because the model is training and the ratio falls monotonically
    too, so the two correlate whatever the ratio means -- the five-point table is confounded by
    construction and is recorded for provenance, not as evidence of consequence. Says nothing about
