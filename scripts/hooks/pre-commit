@@ -371,6 +371,7 @@ def main():
         "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
         # e1-23: the twelve recipe knobs are required=True as of this commit, so this
         # file's 14 reds are green and it can be gated. It takes --strict rather than
         # --selftest: without it the file exits 0 while red BY DESIGN (that is what let
