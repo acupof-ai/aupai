@@ -329,6 +329,9 @@ SYNTHETIC_USER = re.compile(
     r"|\[SYSTEM NOTIFICATION")
 
 
+CHATML_LITERAL = re.compile(r"<\|im_(?:start|end)\|>")
+
+
 def is_synthetic_user(text, window=600):
     """True when this "user" turn is a machine event rather than a person.
 
@@ -357,6 +360,17 @@ def usable(messages):
         return False, "fewer than 2 turns"
     if messages[0]["role"] != "user":
         return False, "does not open with a user turn"
+    # A transcript DISCUSSING ChatML cannot be packed AS ChatML. The tokenizer maps a
+    # quoted "<|im_start|>" to the real special token (id 32768, verified) -- it has no way
+    # to tell a quotation from a delimiter -- so an episode whose text mentions the markers
+    # injects fake role boundaries into a supervised completion, and the model learns to
+    # emit turn delimiters mid-answer. Found by running the 5264-pair pack through
+    # format_agentic: 3 pairs in row 3311 had <|im_start|>tool INSIDE a completion, all
+    # from one session that was debugging the packer. 11 of 5264 episodes (0.21%) carry a
+    # literal marker; they leave. This repo's own transcripts discuss ChatML constantly,
+    # which is exactly why the rate is not zero.
+    if any(CHATML_LITERAL.search(m["content"]) for m in messages):
+        return False, "text contains a literal ChatML marker (tokenizes as the real token)"
     if is_synthetic_user(messages[0]["content"]):
         return False, "opens on a machine event, not a person (task-notification etc.)"
     if not any(m["role"] == "assistant" for m in messages):
@@ -633,7 +647,16 @@ def _selftest():
             fails.append("an episode with only a heuristic hit was discarded -- dropping every "
                          "heuristic hit empties the pack while removing nothing real")
 
-    # 5. A tool result with no preceding assistant turn must be refused, not repaired.
+    # 5. An episode quoting a ChatML marker must be refused: the tokenizer turns the quote
+    #    into the real special token, so it would inject a role boundary into a completion.
+    quoting = [{"role": "user", "content": "what does <|im_start|>tool look like?"},
+               {"role": "assistant", "content": "it is a role turn"}]
+    ok, why = usable(quoting)
+    if ok:
+        fails.append("an episode quoting <|im_start|> was accepted; the tokenizer maps the "
+                     "quote to the real special token and it becomes a fake role boundary")
+
+    # 6. A tool result with no preceding assistant turn must be refused, not repaired.
     bad = [{"role": "tool", "content": "orphan"}, {"role": "assistant", "content": "x"}]
     ok, why = usable(bad)
     if ok:
