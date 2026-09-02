@@ -294,6 +294,12 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 规则:一个谓词在两个方向上轮流过拟合时,不要继续调——把问题换成图上可判定的那个。自测的断言清单必须包含判决,不只是扫描。
 
+同节三例(fb 2026-09-02 转达,出处见 Sources):
+
+- **一致不是性质(e1-18,b002d91):** 自测断言两个 reader 结果相同,抓不到它们共用的 fold 的回归——盲化 fold 成 name-only 键,两个 reader 一起错、互相同、全绿。修法:盲化 fold 后逐 reader 直接查键宽;四种盲化各起进程,全红(shared fold→name-only 塌缩、shared fold→position last-wins 复活、只 exp.py 退化、只 harness 退化)。e1 原话:"AGREEMENT IS NOT THE PROPERTY, and I found that out by blinding rather than by reasoning."
+- **先疑探针再疑数据(b0,正面例子):** 查 mix_500m 指纹用错键名 corpus_fingerprint,得 0/9——数据没问题,判据的键名是错的。这是 §29 规则的正面实例:判据先在已知答案上试一次;0/9 这个极端值先怀疑工具,再怀疑产物。
+- **复合命令的失败不可定位(e1,与 §29 同族):** `merge-base --is-ancestor <sha> main && git show --stat <sha>` 写进一个 && 链,第二条读到 HEAD 的 diff,三条正确 sha 全报 NOT ancestor;逐条重跑才对。&& 链按构造只表达「全过/不过」,不表达「哪条不过」——要定位就拆开跑。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -309,3 +315,4 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - tilerl 配对实例(98 转达,2026-09-02):游标采用静默、丢弃大声——正确路径无仪表,与 b0 合成 shape 25
 - de 审计更正(2026-09-02):9209cde 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
 - de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
+- fb 转达三例(2026-09-02):e1-18 b002d91「AGREEMENT IS NOT THE PROPERTY」四盲化、b0 corpus_fingerprint 键名 0/9、e1 && 链读 HEAD diff 三条 sha 全报 NOT ancestor
