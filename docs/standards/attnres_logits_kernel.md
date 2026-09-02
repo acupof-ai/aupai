@@ -86,6 +86,21 @@ accumulator `out[R,D]`** plus the current tile.
 So **R ≤ 16**, and the accumulator stays in SMEM instead of round-tripping to
 HBM.
 
+**The accumulator must be fp32, and that is what sets R.** Measured against an
+fp64 reference with bf16 `v` (n=25, R=16, D=1024): fp32 accumulator gives
+relative error 1.7e-07, a bf16 accumulator gives **4.2e-03** — four orders
+worse, failing the 1e-6 parity bar outright. Since `out[R,D]` fp32 is 64 KB at
+R=16, precision and block size are two faces of one constraint: **raising R to
+cut launches means dropping accumulator precision, which breaks parity.** Do
+not "just widen R".
+
+The rescaling itself is safe in bf16 inputs. The factor is `exp(m_old − m_new)`
+with `m_new ≥ m_old`, so the exponent is always ≤ 0 and the factor always in
+(0,1] — the subtracted max bounds it structurally. Measured across logit
+spreads of ±1 / ±10 / ±40 / ±80: relative error 1.6e-07 to 8.9e-08, and it does
+**not** degrade with spread (wider spreads make the softmax closer to one-hot,
+so fewer terms contribute).
+
 **The single pass is only valid with an online softmax.** `a_i` needs every
 logit, so a kernel that streams sources cannot know `a_i` when it reads `v_i`.
 The kernel keeps a running max `m`, a running denominator `l`, and the
