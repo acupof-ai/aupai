@@ -264,14 +264,304 @@ def selftest(model, tok, texts, seq, device):
     return ok
 
 
+def paired_stats(rows_by_ckpt, a_name, b_name, c_name=None):
+    """Per-domain paired differences between checkpoints scored on IDENTICAL val rows.
+
+    b0-18. The unweighted mean is compared against 0.24 nat (ds.seed_variance_0p2b), which is the
+    seed-to-seed spread of a WHOLE RUN. A perturbation of one checkpoint measured against itself
+    has no seed in it, so that bar is the wrong noise model for it: b0-16's rescale moved 0.0487
+    nat and read "bounded" against a bar built for a quantity it does not contain.
+
+    Pairing is legitimate here only because every checkpoint is scored on the same rows. That is
+    ASSERTED, not assumed -- each row carries head_fp (sha1 of the exact val sequences), and a
+    mismatch means the two scores are over different inputs, in which case a per-domain difference
+    is not a paired difference and the sd below is meaningless. val_seqs is deterministic given a
+    vocabulary and a seed, so a mismatch is a real event (a rebuilt cache, a vocab change), not a
+    theoretical one.
+
+    WITH A CONTROL ARM (c_name), THE STATISTIC IS (B-A)-(C-A), NOT B-A. b0-16 measured B-A as 9/9
+    positive and nearly called that a result -- but C-A is also 9/9 positive, because ANY rescale
+    of trained weights hurts. B-A > 0 therefore does not isolate the tensor under test; the
+    control's own damage has to be subtracted. Without c_name this returns B-A and says so, which
+    is correct for an A/B of two independently trained arms (no shared perturbation to subtract).
+
+    Returns a dict with per-domain differences, mean, sd, t, sign counts and a one-sided sign-test
+    p. t uses the paired sd over n domains: this is a WITHIN-run statistic about consistency across
+    domains, NOT a claim about reseeding, and the caller must not read it as one.
+    """
+    import math
+
+    names = [n for n in (a_name, b_name, c_name) if n]
+    missing = [n for n in names if n not in rows_by_ckpt]
+    if missing:
+        raise KeyError(f"paired_stats needs rows for {missing}; got {sorted(rows_by_ckpt)}")
+    doms = [sorted(rows_by_ckpt[n]["domains"]) for n in names]
+    if len({tuple(d) for d in doms}) != 1:
+        raise ValueError(
+            "the checkpoints do not share a domain set: "
+            + "; ".join(f"{n} has {len(d)}" for n, d in zip(names, doms, strict=True))
+            + ". A paired difference needs the same domains on both sides, and taking the "
+              "intersection silently would change which quantity the mean is over.")
+    dom_list = doms[0]
+
+    fp_mismatch = []
+    for dom in dom_list:
+        fps = {n: rows_by_ckpt[n]["domains"][dom].get("head_fp") for n in names}
+        if len(set(fps.values())) != 1 or None in fps.values():
+            fp_mismatch.append((dom, fps))
+    if fp_mismatch:
+        detail = "; ".join(f"{d}: " + ", ".join(f"{n}={v}" for n, v in fps.items())
+                           for d, fps in fp_mismatch[:3])
+        raise ValueError(
+            f"{len(fp_mismatch)} domain(s) were scored on DIFFERENT val rows, so these are not "
+            f"paired measurements and the paired sd would be nonsense: {detail}. head_fp is the "
+            f"sha1 of the exact sequences each score ran over; val_seqs is deterministic, so a "
+            f"mismatch means the token cache was rebuilt or the vocabulary moved between scores.")
+
+    def loss(n, dom):
+        return rows_by_ckpt[n]["domains"][dom]["loss"]
+
+    if c_name:
+        diffs = {d: (loss(b_name, d) - loss(a_name, d)) - (loss(c_name, d) - loss(a_name, d))
+                 for d in dom_list}
+        stat = f"(B-A)-(C-A) with B={b_name}, C={c_name}, A={a_name}"
+    else:
+        diffs = {d: loss(b_name, d) - loss(a_name, d) for d in dom_list}
+        stat = f"B-A with B={b_name}, A={a_name}"
+
+    vals = [diffs[d] for d in dom_list]
+    n = len(vals)
+    mean = sum(vals) / n
+    if n > 1:
+        var = sum((v - mean) ** 2 for v in vals) / (n - 1)
+        sd = math.sqrt(var)
+    else:
+        sd = 0.0
+    t = mean / (sd / math.sqrt(n)) if sd else None
+    pos = sum(1 for v in vals if v > 0)
+    neg = sum(1 for v in vals if v < 0)
+    # One-sided sign test at p=0.5 per domain, on the majority direction. Reported alongside t
+    # because it assumes only independence and a direction, not normality of nine points.
+    k = max(pos, neg)
+    p = sum(math.comb(n, i) for i in range(k, n + 1)) / (2 ** n)
+    return {"statistic": stat, "domains": dom_list, "diffs": diffs, "n": n,
+            "mean": mean, "sd": sd, "t": t, "positive": pos, "negative": neg,
+            "sign_test_p_one_sided": p}
+
+
+def print_paired(ps, bar=0.24):
+    print(f"\n=== paired per-domain differences: {ps['statistic']} ===")
+    for d in ps["domains"]:
+        print(f"  {d:22s} {ps['diffs'][d]:+9.4f}")
+    t = f"{ps['t']:+.2f}" if ps["t"] is not None else "n/a (zero spread)"
+    print(f"  {'mean':22s} {ps['mean']:+9.4f}   sd {ps['sd']:.4f}  t {t}")
+    print(f"  same sign: {ps['positive']}/{ps['n']} positive, {ps['negative']}/{ps['n']} negative;"
+          f" sign-test one-sided p {ps['sign_test_p_one_sided']:.4f}")
+    print(f"  against the {bar} nat bar (ds.seed_variance_0p2b): "
+          f"{100 * abs(ps['mean']) / bar:.0f}% of it. THAT BAR IS SEED SPREAD ACROSS WHOLE RUNS; "
+          f"a perturbation of one checkpoint against itself contains no seed, so the bar is the "
+          f"wrong noise model for it and the paired sd above is the right one.")
+    if ps["mean"] == 0.0 and ps["sd"] == 0.0:
+        print("  ALL DIFFERENCES EXACTLY ZERO. What that proves depends on WHERE the two sides "
+              "came from. Two SEPARATE scoring runs reading 0.0 is evidence the eval is "
+              "deterministic. The same row compared with itself (--arms X X on one artifact) is "
+              "an IDENTITY -- it tests the arithmetic and the pairing plumbing, and it cannot "
+              "detect nondeterminism at all, because there is only one measurement in it. Do not "
+              "quote the second as 'the eval is deterministic'.")
+
+
+def _paired_selftest():
+    """Known answers for --paired, with NO card and NO model.
+
+    Runs against real b0-16 numbers rather than round fixtures, because the point of this mode is
+    that a new statistic's first run on new data reads as correct whatever it prints. These nine
+    values have an answer computed independently by e1 during b0-16's review, which makes them the
+    only input that can catch an implementation that is merely plausible.
+
+    Every check below was verified red on its own broken version.
+    """
+    fails = []
+    # The nine per-domain (B-A)-(C-A) values from runs/b0_16_l9_rescale.json, and their known
+    # statistics: mean +0.0422, sd 0.0225, t 5.62, 9/9 same sign, sign-test p 0.0020.
+    A = {"chat_qa": 3.0, "chatml": 3.0, "code_py_rp1t": 3.0, "code_py_starcoder": 3.0,
+         "cot": 3.0, "en_c4_stage2": 3.0, "math_owm_stage2": 3.0, "textbook_30b": 3.0,
+         "zh_web": 3.0}
+    BA = {"chat_qa": 0.0838, "chatml": 0.0703, "code_py_rp1t": 0.0247,
+          "code_py_starcoder": 0.0261, "cot": 0.0266, "en_c4_stage2": 0.0469,
+          "math_owm_stage2": 0.0351, "textbook_30b": 0.0512, "zh_web": 0.0730}
+    CA = {"chat_qa": 0.0055, "chatml": 0.0041, "code_py_rp1t": 0.0067,
+          "code_py_starcoder": 0.0061, "cot": 0.0029, "en_c4_stage2": 0.0059,
+          "math_owm_stage2": 0.0075, "textbook_30b": 0.0118, "zh_web": 0.0077}
+
+    def mk(base, delta, fp="same"):
+        return {"domains": {d: {"loss": round(base[d] + delta.get(d, 0.0), 4),
+                                "head_fp": fp if fp != "per" else f"fp_{d}"}
+                            for d in base}}
+
+    rows = {"A": mk(A, {}), "B": mk(A, BA), "C": mk(A, CA)}
+
+    # 1. THE CONTROL MUST BE SUBTRACTED. (B-A)-(C-A) is the statistic; B-A alone was b0-16's
+    #    near-miss, since C-A is also 9/9 positive (any rescale of trained weights hurts).
+    ps = paired_stats(rows, "A", "B", "C")
+    for lbl, got, want, tol in (("mean", ps["mean"], 0.0422, 5e-4),
+                                ("sd", ps["sd"], 0.0225, 5e-4),
+                                ("t", ps["t"], 5.62, 0.02),
+                                ("p", ps["sign_test_p_one_sided"], 1 / 512, 1e-9)):
+        if got is None or abs(got - want) > tol:
+            fails.append(f"(B-A)-(C-A) {lbl} is {got}, and b0-16's independently computed answer "
+                         f"is {want} -- this artifact is the only input with a known answer, so a "
+                         f"mismatch here is the implementation, not the data")
+    if ps["positive"] != 9:
+        fails.append(f"(B-A)-(C-A) is {ps['positive']}/9 positive, expected 9/9")
+
+    # 2. WITHOUT A CONTROL IT MUST BE B-A, and must differ. If the two modes agreed, the control
+    #    would be doing nothing and b0-16's whole correction would be undone silently.
+    ps2 = paired_stats(rows, "A", "B")
+    if abs(ps2["mean"] - 0.0486) > 5e-4:
+        fails.append(f"B-A mean is {ps2['mean']:.4f}, expected 0.0486 (the fact's unpaired figure)")
+    if abs(ps2["mean"] - ps["mean"]) < 1e-6:
+        fails.append("B-A and (B-A)-(C-A) returned the SAME mean, so the control arm is being "
+                     "ignored -- the exact defect b0-16's review corrected")
+
+    # 3. A-vs-A IS AN IDENTITY, and must read exactly zero. Not proof of determinism (one
+    #    measurement cannot disagree with itself), but a nonzero here is broken arithmetic.
+    ps3 = paired_stats(rows, "A", "A")
+    if ps3["mean"] != 0.0 or ps3["sd"] != 0.0:
+        fails.append(f"A-vs-A read mean {ps3['mean']}, sd {ps3['sd']}; must be exactly 0.0")
+
+    # 4. MISMATCHED val ROWS MUST REFUSE, by ValueError naming head_fp. Without this the paired sd
+    #    is computed over scores taken on different inputs, which is not a paired difference at
+    #    all -- and nothing about the output would look wrong.
+    bad = {"A": rows["A"], "B": mk(A, BA, fp="per")}
+    try:
+        paired_stats(bad, "A", "B")
+        fails.append("differing head_fp was accepted; the two sides were scored on DIFFERENT val "
+                     "rows and the paired sd is then meaningless, with no visible symptom")
+    except ValueError as e:
+        if "head_fp" not in str(e):
+            fails.append(f"head_fp mismatch raised ValueError without naming head_fp: {e!r}")
+    except Exception as e:                                       # noqa: BLE001
+        fails.append(f"head_fp mismatch raised {type(e).__name__}, not ValueError: {e!r} -- a "
+                     f"crash reports 'the tool is broken' where the truth is 'these scores are "
+                     f"not comparable'")
+
+    # 5. A DIFFERENT DOMAIN SET MUST REFUSE WITH ValueError, not crash downstream. Taking the
+    #    intersection would change which domains the mean is over while still printing a mean.
+    #    DELETING the explicit check does NOT make this red on its own: the head_fp loop below it
+    #    hits the missing domain and raises KeyError, which an `except ValueError` alone would
+    #    read as the guard working. So the type is asserted -- a KeyError says "the tool broke",
+    #    the ValueError says "these two checkpoints are not comparable", and only the second tells
+    #    the operator what to do. Third time this shape has appeared today (l9_branch_probe's
+    #    control check, head_path_rows' vocab ordering, and here).
+    short = {"domains": {d: v for d, v in rows["B"]["domains"].items() if d != "zh_web"}}
+    try:
+        paired_stats({"A": rows["A"], "B": short}, "A", "B")
+        fails.append("a checkpoint missing a domain was accepted; the mean would silently be over "
+                     "8 domains while the other side has 9")
+    except ValueError as e:
+        if "domain set" not in str(e):
+            fails.append(f"domain-set mismatch raised the wrong ValueError: {e!r}")
+    except Exception as e:                                       # noqa: BLE001
+        fails.append(f"domain-set mismatch raised {type(e).__name__}, not ValueError: {e!r}. The "
+                     f"explicit domain-set check is gone or unreachable -- the head_fp loop is "
+                     f"crashing on the missing domain instead, which reports a broken tool where "
+                     f"the truth is two checkpoints that cannot be paired")
+
+    # 6. THE SIGN TEST MUST BE ONE-SIDED ON THE MAJORITY: 9/9 gives C(9,9)/2^9 = 1/512.
+    #    My first version of this check asserted 2/512, which is the TWO-sided figure -- and the
+    #    code was right while the check was wrong, so it went red on a correct implementation. The
+    #    fact quotes 0.0020, which is 1/512 = 0.001953 rounded, and that is what pins it.
+    want_p = 1 / 512
+    if abs(ps["sign_test_p_one_sided"] - want_p) > 1e-9:
+        fails.append(f"sign-test p for 9/9 is {ps['sign_test_p_one_sided']}, expected {want_p} = "
+                     f"C(9,9)/2^9 one-sided (b0-16 quotes 0.0020, which is this rounded). 2/512 "
+                     f"would be the two-sided value.")
+    # And a split must NOT read as significant, or the test is not testing.
+    mixed = mk(A, {d: (0.05 if i % 2 else -0.05) for i, d in enumerate(A)})
+    ps4 = paired_stats({"A": rows["A"], "B": mixed}, "A", "B")
+    if ps4["sign_test_p_one_sided"] < 0.05:
+        fails.append(f"a 5/4 sign split gave p {ps4['sign_test_p_one_sided']:.4f} < 0.05; the sign "
+                     f"test is not discriminating")
+
+    if fails:
+        for f in fails:
+            print(f"FAIL: {f}", file=sys.stderr)
+        return 1
+    print("domain_loss --paired selftest OK: (B-A)-(C-A) reproduces b0-16's independently computed "
+          "answer to the digit (mean +0.0422, sd 0.0225, t 5.62, 9/9, p 0.0020 = 1/512 exactly), which is "
+          "the only input with an answer known by other means -- a new statistic's first run on "
+          "new data reads as correct whatever it prints. B-A without a control gives 0.0486 (the "
+          "fact's unpaired figure) and must DIFFER from the controlled statistic, or the control "
+          "arm is being ignored and b0-16's correction is silently undone. A-vs-A is exactly 0.0, "
+          "and is labelled an identity rather than proof of determinism. Mismatched head_fp and "
+          "mismatched domain sets both REFUSE with ValueError naming the cause, because a paired "
+          "sd over scores taken on different inputs has no visible symptom. And the sign test is "
+          "checked in both directions: 9/9 gives 1/512, a 5/4 split does not read as significant (my first version of that check asserted 2/512, the TWO-sided value, and went red on correct code).")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", action="append", required=True)
+    # NOT required=True. --paired_selftest and --paired_from need no checkpoint at all -- they
+    # read rows somebody already scored -- and argparse would reject them before main() could say
+    # so. The requirement is enforced below, per mode, where it is actually true.
+    ap.add_argument("--ckpt", action="append")
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
+    ap.add_argument("--paired_selftest", action="store_true",
+                    help="b0-18's known answers for --paired. NO CARD, NO MODEL, NO MIX -- it "
+                         "checks the statistic against b0-16's independently computed figures, so "
+                         "it runs on a fresh tree while every card is busy (unlike --selftest, "
+                         "which needs a card for the KDA kernel).")
+    ap.add_argument("--paired", action="store_true",
+                    help="b0-18: report per-domain PAIRED differences between the scored "
+                         "checkpoints, with the paired sd. Needs >=2 --ckpt, or --paired_from to "
+                         "read rows already scored. Asserts every checkpoint saw identical val "
+                         "rows (head_fp) rather than assuming it.")
+    ap.add_argument("--paired_from",
+                    help="JSONL of rows already scored (this script's or l9_branch_probe's --out) "
+                         "to compute paired differences from WITHOUT a card. The b0-16 rescale "
+                         "artifact is the one input with an answer known by other means, which is "
+                         "why it is the first test of this mode: a new statistic's first run on "
+                         "new data reads as correct whatever it prints.")
+    ap.add_argument("--arms", nargs="+",
+                    help="which ckpt names from --paired_from to use, as A B [C]. C is a CONTROL "
+                         "arm: with it the statistic becomes (B-A)-(C-A), because B-A alone does "
+                         "not isolate B when any perturbation of trained weights hurts.")
     a = ap.parse_args()
+
+    if a.paired_selftest:
+        sys.exit(_paired_selftest())
+
+    if not a.ckpt and not a.paired_from:
+        ap.error('--ckpt is required unless --paired_selftest or --paired_from is used')
+
+    if a.paired_from:
+        # NO CARD, NO MODEL. Reads rows somebody already scored, so the known-answer test costs
+        # nothing and can run while a lane job holds every card.
+        rows_by_ckpt = {}
+        with open(a.paired_from, encoding="utf-8") as fh:
+            for ln in fh:                      # JSONL -- these files carry a .json name and are
+                ln = ln.strip()                # NOT json.load-able (b0_16_l9.json, b0_16_weights.json)
+                if not ln:
+                    continue
+                r = json.loads(ln)
+                if "domains" in r:
+                    rows_by_ckpt[r.get("ckpt", f"row{len(rows_by_ckpt)}")] = r
+        if not rows_by_ckpt:
+            sys.exit(f"{a.paired_from} has no rows with a 'domains' key -- wrong file, or it is "
+                     f"one of the weights-only artifacts, which carry no per-domain losses")
+        if not a.arms or not (2 <= len(a.arms) <= 3):
+            sys.exit(f"--paired_from needs --arms A B [C]; available: {sorted(rows_by_ckpt)}")
+        ps = paired_stats(rows_by_ckpt, *a.arms)
+        print_paired(ps)
+        if a.json:
+            with open(a.json, "a", encoding="utf-8") as f:
+                f.write(json.dumps(ps, ensure_ascii=False) + "\n")
+            print(f"appended paired record to {a.json}")
+        return
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from cache_guard import set_vocab_id
