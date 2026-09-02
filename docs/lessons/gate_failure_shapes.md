@@ -274,6 +274,26 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 
 三条合为一句(e1-15 修复时的表述):**门禁认不出仓库自己的引用格式。** `path@sha` 是 44-13 立下的退休约定,gate_recipe_provenance 的模式停在扩展名、`@sha` 被丢掉、裸路径再死在 ls-files 上——每条退休引用都被读成死链(1a4be21 修成一个判断 `git cat-file -e <rev>:<path>`,三种失败同一个返回码)。
 
+## 30. 审计认不出门的字面量引用——「没有引用」只是「没有我扫的那种引用」(de,2026-09-02)
+
+§29 的镜像:§29 是门禁认不出仓库的引用格式,这条是审计认不出门禁的引用格式。一个扫描说「没有引用」时,它说的只是「没有我这个判据能表达的那种引用」。
+
+实例(de 核,9209cde):44 的删除审计把 `scripts/test_arch_L32.py` 判为 "run by nothing"——括号写「launch_tests.py 从 runs/launch_tests.json 读 test_file 字段、不点名它」。这对 launch_tests.py 成立,对 `launch_gate.py:196` 不成立:门在 `ARCH_TESTS` 元组里逐字点名它,文件缺席、无 pass 记录、sha 不匹配都返回 NO-GO。审计的引用扫描按自己的语法找引用,门的字面量元组不在它的语法里。1a 区最贵的一次漏判:它差点删掉的是发车门禁自己的证据——而那个门此刻正因两条 ARCH_TESTS 记录的 sha 过期而 NO-GO,即门在正常工作。
+
+同次更正另两例同形:`eval/l1_fewshot.py` 被 score_matrix.py 当记录在案的指标跑(12 处引用,行里自带 "verify before deleting" 警告,验一下就有答案);`test_parallel_encode.py` 是 `_encode_domain(workers>1)` 与 workers=1 逐元素相同的唯一断言,唯一的使用证据在一个 fact 的 value 散文里——source 扫描和名字扫描都看不见它,删了它就静默证伪了一次测量的方法。
+
+规则(9209cde 原话):"no reference" meant "no reference of the kind I scanned for"。与 §29 同一条规则,方向相反。
+
+## 31. 自测断言判决,不只断言扫描;谓词换不动时换问题(de-22,2026-09-02)
+
+de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selftest 教训:
+
+**verdict 与 scan 分开断言。** 自测断言了扫描命中该命中的 merge,但这个断言在 caller 把 FAIL/WARN 两类合并成一类时照样绿——而那正是要修的 bug。所以判决必须单独断言:每个 case 建真仓库、checkout 到那个 merge,断言状态和理由文本。只断言扫描,等于没断言判决。
+
+**过度修正方向:三个谓词各把一类误判换成另一类。** plain `-S` 两个都漏;`-m` 找到真的那个、但把事故报成故意、真 revert 反绿;`--diff-merges=first-parent` 两个都找不到。在谓词层面调,每修一个方向就破另一个方向。fb 的裁定是把问题换成可判定的那个:不问「删除是否故意」(图上不可判定——6d51c9c 与 ef27df0 结构逐字相同),问「哪个 merge 丢了它」——merge 只能丢它某个 parent 还持有的东西。ours 有、结果里没有 → FAIL(这个 merge 丢的);ours 没有、theirs 和 base 有 → WARN(ours 这一支早先丢的,本 merge 什么都没改)。不对称是故意的:丢失只发生一次,属于造成它的那个 merge;之后每个从旧分支合过来的 merge 都继承同一个缺席。
+
+规则:一个谓词在两个方向上轮流过拟合时,不要继续调——把问题换成图上可判定的那个。自测的断言清单必须包含判决,不只是扫描。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -287,3 +307,5 @@ de 的判据,原话:**"一个能中断它所注解之物的警告,比它报告�
 - fb 六条积压裁定(98 转达,2026-09-02):min 钳制形状、标识符立族、readout 分辨率、de cursor 判据、b0 第四处引用、tilerl 钉点分叉
 - b0 形状(98 转达,2026-09-02):验收路径避开缺陷分支,三实例(2374 守卫无 else/2699 少传参/顺路测试)
 - tilerl 配对实例(98 转达,2026-09-02):游标采用静默、丢弃大声——正确路径无仪表,与 b0 合成 shape 25
+- de 审计更正(2026-09-02):9209cde 三行误判——test_arch_L32 门点名、l1_fewshot 12 引用、test_parallel_encode 断言在 fact value 里
+- de-22(2026-09-02):9b0a890 merge_complete 按 first parent 拆分;三谓词轮流过拟合,fb 换成「哪个 merge 丢了它」
