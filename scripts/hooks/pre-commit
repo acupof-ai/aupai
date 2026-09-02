@@ -321,10 +321,8 @@ def main():
         "scripts/launch_tests.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
-        "probes/t65_gold_bpb.py", "probes/t66_gold_reachability.py",
-        "probes/t67_self_repeat.py", "probes/t68_free_running.py",
-        "probes/t69_copy_rate.py", "probes/t71_depth_lr_rule.py",
-        "probes/t66_depth_shape.py", "scripts/stale_claims.py",
+        "probes/t71_depth_lr_rule.py",
+        "scripts/stale_claims.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         "scripts/test_shard_glob.py",
@@ -332,12 +330,9 @@ def main():
         "scripts/test_spawned_fast.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
-        # Nine files the gate could not see until its predicate widened from
-        # '"--selftest" near add_argument' to '--selftest anywhere': these dispatch on
-        # sys.argv instead of argparse. Five run clean at commit time and are gated
-        # here; the other four are in NEEDS_DATA with their reason (de, 2026-09-01).
-        "probes/t62_corpus_dup_rate.py", "probes/t63_cross_domain_dup.py",
-        "probes/t64_val_head_overlap.py",
+        # These dispatch on sys.argv instead of argparse, which the gate's old
+        # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
+        # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
         "scripts/eval_artifacts.py", "scripts/pod_drift.py",
         "eval/compare_fewshot_arms.py", "scripts/audit_population_universals.py",
         # Three mathbank selftests the gate could not see at all: its population is an
@@ -357,7 +352,6 @@ def main():
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
-        "probes/t65_near_dup_sweep.py": "imports build_corpus off sys.path; runner-only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         "eval/base_matrix.py": "asserts data/tokenizer.json, which is gitignored",
         "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
