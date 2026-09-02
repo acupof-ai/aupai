@@ -93,8 +93,39 @@ def report(a_path, b_path, sigma_thresh):
         per_layer.setdefault(li, []).append(nb[k] / na[k])
     layers = sorted(per_layer)
     ratios = [sum(v) / len(v) for _, v in sorted(per_layer.items())]
+
+    # SPLIT BY BLOCK KIND FIRST. A KDA block and an MLA block are different populations:
+    # measured on this run, KDA layers grow 3.4-3.7x faster than MLA layers in every interval,
+    # so one pooled median puts every MLA layer near the low edge and the 3-sigma flag fires on
+    # whichever two happen to be lowest. The first read of step1500->step2000 flagged layers 7
+    # and 11 that way -- both MLA, both inside their own kind's spread. Flagging a layer for
+    # being the architecture it was configured to be is a false positive, and it hides a real
+    # one: if a single MLA layer ever diverges from the other MLAs, the pooled test cannot see
+    # it because the whole MLA group already sits at the edge.
+    kinds = {}
+    for k in ma:
+        m = re.match(r"blocks\.(\d+)\.mixer\.(\w+)", k)
+        if m:
+            kinds.setdefault(int(m.group(1)), set()).add(m.group(2))
+    groups = {}
+    for li, r in zip(layers, ratios):
+        groups.setdefault("KDA" if "A_log" in kinds.get(li, ()) else "MLA", []).append((li, r))
+
     med, sig, zs = robust_z(ratios)
     print(f"\n## per-layer weight-norm ratio (step{step_b}/step{step_a})")
+    if len(groups) > 1:
+        for kind, items in sorted(groups.items()):
+            g_med, g_sig, g_zs = robust_z([r for _, r in items])
+            print(f"{kind}: n={len(items)} median {g_med:.6f} sigma(MAD) {g_sig:.2e}")
+            for (li, r), z in zip(items, g_zs):
+                if abs(z) > sigma_thresh:
+                    print(f"  FLAG {kind} layer {li:2d}: ratio {r:.6f}  z {z:+.2f} (vs its own kind)")
+        kmed = robust_z([r for _, r in groups["KDA"]])[0] if "KDA" in groups else None
+        mmed = robust_z([r for _, r in groups["MLA"]])[0] if "MLA" in groups else None
+        if kmed and mmed and mmed != 1:
+            print(f"KDA/MLA growth ratio: {(kmed - 1) / (mmed - 1):.2f}x "
+                  f"(excess over 1.0, the quantity that is actually growing)")
+    print("pooled (kept for continuity, but the split above is the real read):")
     print(f"median {med:.6f}  sigma(MAD) {sig:.2e}  layers {len(layers)}")
     flagged = [(li, r, z) for li, r, z in zip(layers, ratios, zs) if abs(z) > sigma_thresh]
     for li, r, z in flagged:
