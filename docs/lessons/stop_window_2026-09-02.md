@@ -32,3 +32,21 @@ Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change.
 ## Token budget (user, 09:52Z: model unchanged, mix unchanged, fewer tokens)
 
 Candidate: `total_tokens` 19,999,997,952 → 9,999,998,976 in `data/mix_500m.json` at the relaunch, tokens/step unchanged at 1,048,576, steps 19,151 → 9,537; step 3000 = 3.1B is then 31% in and still in the constant-LR phase (warmdown 0.1 × total starts at step 8,583). Gated on de answering from `build_mix`: the cursor continues every domain without re-read under the halved plan, and the LR at step 3000 is bitwise the old value. Remaining time at 10B: 6.9B tokens / (8 × 16K) = 15 h, / (8 × 30K) = 8 h. The user's "3 hours" equals 2.6B tokens at 30K tok/s/gpu, less than the 3.1B already trained; it is not a budget the run can meet, and a Chinchilla-scale 10B is the smallest budget with a literature basis.
+
+## Decision (user, 10:06Z): 200M first, then 300M; the 500M is not resumed
+
+The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`; the resume line above is void. The token-budget section above is superseded by this one. Composition unchanged: `data/mix_200m_4b.json` and `data/mix_300m_6b.json` carry the 500M weights at 4B and 6B (`write_mix_500m.py --total`, generated on the pod, 863143b).
+
+| run | config | steps | measured or estimated tok/s/gpu | wall |
+|---|---|---|---|---|
+| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206M, batch 32 accum 1, no grad_ckpt | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
+| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), ~293M, batch 32, grad_ckpt decided by the probe | 5,722 | unmeasured, ~50K | ~4 h |
+
+Order after the stop: merges as listed → a 60-minute throughput sprint on all eight cards with the 200M config (user, 10:07Z: every idle owner works on training speed) → launch the 200M with the sprint's best config → the 300M after it ends. Launch lines, every knob explicit (row 173's omission):
+
+```
+setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+setsid nohup bash scripts/supervise_run.sh p300m_6b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_300m_6b.json --name p300m_6b_0902 --dim 1024 --layers 18 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+```
+
+Sprint split: tilerl profiles (3-step trace, compile on/off, batch 32/64, fla chunk size); b0 reads the trace per block kind and lists the matmuls not on FP8; de measures host side (loader wait, save, val, NCCL share); 3b measures the startup cost of `build_mix` and the token-cache read path for the 4B mix; e1 surveys industry methods with an expected gain and cost per item for this stack (`docs/lessons/throughput_survey.md`); 44 reviews every number's measurement config. Every probe is a `harness launch` row with a hypothesis.
