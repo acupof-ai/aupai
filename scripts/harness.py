@@ -158,6 +158,7 @@ _RULE_CHECKS = {
     "setsid, not nohup": "no_foreground_pod_training",
     "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
+    "Never git stash in this repository": "no_shared_stash",
     "Outbound network: curl -4, always": "curl_ipv4",
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
@@ -227,6 +228,12 @@ _MANUAL_RULES = {
     "pod_drift.py --write regenerates from HEAD, --write-index from the index":
         "which flag a session typed is not recoverable from the manifest it produced -- both "
         "write the same file, and a manifest built from the wrong side is well-formed",
+    "The behind-main gate does not want a clean tree, so merge directly":
+        "a measured property of git merge, not a rule a check can assert: nothing in the "
+        "repo records which order a session ran merge and add in",
+    "Only a conflicting path needs a commit first, and read which path it is":
+        "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
+        "commit lands on the branch where dirty_aged and the behind-main hook see it",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -263,7 +270,12 @@ _MANUAL_RULES = {
 #: stdout, and a `| tail -2` that ate the refusal leaves no trace of having done so.
 #: --write vs --write-index is not recoverable after the fact: both produce the same
 #: filename, and a manifest built from the pre-merge HEAD is well-formed and wrong.
-_MANUAL_BASELINE = 28
+#: 28 -> 30 on 2026-09-02, the two behind-main sequencing rules from tilerl-16. Both are
+#: orders a person types in a terminal -- merge before staging, wip-commit only a
+#: conflicting path -- and no artifact records the order. The rule they replace IS
+#: checked (no_shared_stash), which is why the pair is +1 checked and +2 manual rather
+#: than +3 manual: the enforceable half of "never stash" is the stack itself.
+_MANUAL_BASELINE = 30
 
 
 def _norm_rule(text):
@@ -625,8 +637,8 @@ def check_selftests_are_gated(root):
     # carries a selftest and was invisible here (de, 2026-09-02, MEASURED at 42 vs 43).
     for p, body in walk_tracked(root, (".py",)):
         rel = os.path.relpath(p, root)
-        # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
-        # narrow predicate assumed every selftest is wired through argparse; nine
+        # `--selftest` anywhere in the CODE, not `"--selftest"` next to `add_argument`.
+        # The narrow predicate assumed every selftest is wired through argparse; nine
         # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
         # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
         # gate reported "27 files, all gated" while those nine ran nowhere. A gate
@@ -634,7 +646,15 @@ def check_selftests_are_gated(root):
         # the files it already understood -- the check encoding an assumption about
         # where the interesting case lives, which is this repo's named class, in
         # the check written to catch that class (de, 2026-09-01, on 62's gate).
-        if "--selftest" in body:
+        #
+        # Docstrings blanked, because the widening reached one file too far: prose
+        # SAYING a file carries no `--selftest` matched as if it carried one. MEASURED
+        # 2026-09-02 at 44 raw vs 42 stripped -- scripts/test_resume_accumulates.py,
+        # whose docstring explains why it deliberately has no selftest flag, and
+        # scripts/test_serve_history.py, whose usage line quotes the flag its body never
+        # reads. Only the first was ever reported, because the second happens to be in
+        # the map: a false positive hides wherever the answer is right by accident.
+        if "--selftest" in strip_docstrings(body):
             have.add(rel)
     missing = sorted(have - gated)
     if missing:
@@ -2050,7 +2070,7 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
       loss belongs to whichever merge dropped it, and that merge's own check owned it.
       WARN naming that commit, because every later merge from an older branch inherits
       the same absence and calling inheritance a defect is what made the check unusable.
-      e73554b is here: _built_set was dropped in 6d51c9c's conflict resolution, which
+      c8a4578 is here: _built_set was dropped in d5aac3d's conflict resolution, which
       states its reason, and 117 merges after it inherited the red.
 
     Why plain `-S` still gates the FAIL branch and no flag was added: `git log -S` shows
@@ -2058,8 +2078,8 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
     it. `-m` sees that but then also matches a merge which merely CARRIED a deletion in
     from one side, which silences 21da619 -- a false PASS on the founding case, with
     merge_took_one_side returning [] there too. `--diff-merges=first-parent` finds
-    neither, because 6d51c9c took parent1 whole and its first-parent diff is empty.
-    6d51c9c and ef27df0 are structurally identical at the graph level, so no predicate
+    neither, because d5aac3d took parent1 whole and its first-parent diff is empty.
+    d5aac3d and ef27df0 are structurally identical at the graph level, so no predicate
     over the graph separates deliberate from accidental (de, MEASURED). The first-parent
     split above sidesteps the question instead of answering it: it asks which merge lost
     the definition, which is decidable, rather than whether someone meant to.
@@ -3328,7 +3348,7 @@ FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
-    # decision: 44's 22 probe deletions in 3fb1946 rewrote 39 refs to path@rev, and this
+    # decision: 44's 22 probe deletions in 30b9010 rewrote 39 refs to path@rev, and this
     # check would have passed them either way because it never looked in that directory.
     # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
     # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
@@ -3751,9 +3771,9 @@ def check_facts_well_formed(root):
                         continue
                     # `path@rev` is the repo's retirement form for a deleted file: the
                     # content is reachable at that sha, so the citation resolves even
-                    # though the path does not. launch_gate learned this in 1a4be21; this
+                    # though the path does not. launch_gate learned this in 4676118; this
                     # check did not, and it FAILed on the seven retirements of de-21 while
-                    # 44's 22 in 3fb1946 passed only because `probes/` is absent from
+                    # 44's 22 in 30b9010 passed only because `probes/` is absent from
                     # FACT_SOURCE_PATH's directory list -- the same deletions in eval/ or
                     # scripts/ would have failed. Verify the rev, do not just accept the
                     # syntax: a sha that names nothing is a dead citation wearing the
@@ -6008,6 +6028,71 @@ def _broken_dirty_aged():
     return d
 
 
+_STASH_GRACE_DAYS = 30
+
+
+def check_no_shared_stash(root):
+    """The stash stack is empty. There is exactly ONE of it per repository.
+
+    `.git/refs/stash` is not per-worktree, so every session shares one stack: e1 and b0
+    each ran push -> merge main -> pop within the same window on 2026-09-02 and each
+    popped the other's entry. Nothing was lost that time, and that is luck, not a
+    property -- a pop applies someone else's diff to your tree and the conflict, if any,
+    is reported against files you never touched. The reflex it comes from is the
+    behind-main gate, and that gate does not need a clean tree: a dirty `git merge main`
+    fast-forwards fine (measured on three trees), and only a local change on a CONFLICTING
+    path makes merge refuse. So the replacement is: merge directly, and when it refuses,
+    a path-limited `wip:` commit first.
+
+    Entries get an expiry rather than a whitelist, because a whitelist has no end. The
+    creation time comes from the stash reflog, and the message names the DATE the entry
+    turns from WARN to FAIL -- a relative "30 days" reads as "not yet" on every one of
+    those days, and `git stash list` does not show ages at all."""
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(["git", "stash", "list", "--format=%gd %ct %gs"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, f"git stash list failed: {r.stderr.strip()}"
+    entries = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    if not entries:
+        return PASS, "stash stack empty"
+    now, expired, pending = time.time(), [], []
+    for ln in entries:
+        parts = ln.split(" ", 2)
+        ref, stamp, rest = parts[0], parts[1], (parts[2] if len(parts) > 2 else "")
+        # %ct is a Unix timestamp, so there is nothing to parse and no local clock to
+        # get wrong. An unreadable stamp counts as expired, never as fresh.
+        created = int(stamp) if stamp.isdigit() else 0
+        exp = created + _STASH_GRACE_DAYS * 86400
+        item = f"{ref} {rest[:40]} (expires {time.strftime('%Y-%m-%d', time.gmtime(exp))})"
+        (expired if now > exp else pending).append(item)
+    if expired:
+        return FAIL, f"{len(expired)} stash entr(ies) past their {_STASH_GRACE_DAYS}-day grace: {'; '.join(expired[:3])}"
+    return WARN, (f"{len(pending)} stash entr(ies) on the SHARED stack -- pop them into a branch "
+                  f"or drop them: {'; '.join(pending[:3])}")
+
+
+def _broken_no_shared_stash():
+    """A real repo with a real stashed change. Not a fabricated ref: `git stash` is the
+    thing under test, so the broken world runs it."""
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
+           cwd=d, capture_output=True, env=env)
+    with open(os.path.join(d, "AGENTS.md"), "a") as f:
+        f.write("\n# stashed\n")
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "stash", "push",
+            "-m", "broken world"], cwd=d, capture_output=True, env=env)
+    return d
+
+
 CHECKS = [
     (
         "env_importable",
@@ -6414,6 +6499,13 @@ CHECKS = [
         _broken_untracked_aged,
     ),
     (
+        "no_shared_stash",
+        "the stash stack is empty; it is shared by every worktree in this repo",
+        "e1 and b0 each stashed, merged main and popped in the same window -- and each popped the other's entry",
+        check_no_shared_stash,
+        _broken_no_shared_stash,
+    ),
+    (
         "dirty_aged",
         f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
@@ -6460,6 +6552,7 @@ EVIDENCE = {
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
+    "no_shared_stash": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
@@ -7283,8 +7376,21 @@ def _selftest_killpg_reaps_children():
         assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
         # the group is what sees everything
         os.killpg(pgid, sig.SIGTERM)
-        time.sleep(1.5)
-        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        try:
+            proc.wait(timeout=5)
+        except sp.TimeoutExpired:
+            pass
+        deadline = time.time() + 5
+        while True:
+            pids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+            left = []
+            for k in pids:
+                st = sp.run(["ps", "-o", "stat=", "-p", k], capture_output=True, text=True).stdout.strip()
+                if st and not st.startswith("Z"):
+                    left.append(k)
+            if not left or time.time() > deadline:
+                break
+            time.sleep(0.2)
         assert not left, f"killpg must reap the whole group, {left} survived"
     finally:
         try:
@@ -7549,10 +7655,10 @@ def _selftest_merge_reverted_content():
     retiring a function on purpose must not be flagged, or every intentional deletion
     becomes a red and the check gets bypassed.
 
-    e73554b is the third case and the reason the return value grew a fourth field
-    (de-22, 2026-09-02): _built_set was dropped in 6d51c9c's conflict resolution, ours
+    c8a4578 is the third case and the reason the return value grew a fourth field
+    (de-22, 2026-09-02): _built_set was dropped in d5aac3d's conflict resolution, ours
     already lacked it when this merge ran, and calling that a defect put the same red on
-    117 merges. It must land in the ALREADY-DROPPED class, naming 6d51c9c, while 21da619
+    117 merges. It must land in the ALREADY-DROPPED class, naming d5aac3d, while 21da619
     stays a FAIL -- the two shapes are checked here together because a fix for either one
     alone is what the flag experiments produced."""
     import shutil
@@ -7566,9 +7672,9 @@ def _selftest_merge_reverted_content():
         assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
         # The inherited class, and the whole point of the fourth field: the same scan must
         # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
-        inh = merge_reverted_content(real, "e73554b")
-        assert any(n == "_built_set" and at == "6d51c9c" for _, n, _, at in inh), \
-            f"e73554b must report _built_set as already dropped by 6d51c9c, got {inh}"
+        inh = merge_reverted_content(real, "c8a4578")
+        assert any(n == "_built_set" and at == "d5aac3d" for _, n, _, at in inh), \
+            f"c8a4578 must report _built_set as already dropped by d5aac3d, got {inh}"
 
     d = tempfile.mkdtemp(prefix="delib_")
     try:
@@ -7603,7 +7709,7 @@ def _selftest_merge_reverted_content():
         w = tempfile.mkdtemp(prefix="mergecls_")
         try:
             for merge, want, needle in ((("21da619"), FAIL, "_selftest_gpu_descendants"),
-                                        (("e73554b"), WARN, "6d51c9c")):
+                                        (("c8a4578"), WARN, "d5aac3d")):
                 c = os.path.join(w, merge)
                 assert subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", real, c],
                                       capture_output=True).returncode == 0
@@ -7615,7 +7721,7 @@ def _selftest_merge_reverted_content():
         finally:
             shutil.rmtree(w, ignore_errors=True)
 
-    print("  merge revert: 21da619 FAIL, e73554b WARN naming 6d51c9c, 41294c1 clean, "
+    print("  merge revert: 21da619 FAIL, c8a4578 WARN naming d5aac3d, 41294c1 clean, "
           "deliberate deletion not flagged")
 
 
@@ -8123,7 +8229,8 @@ def _demo():
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
     # force the tier back. What its world must still prove is that removing a review row
     # is VISIBLE -- WARN is the signal, silence is the defect.
-    warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique"}
+    warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
+                 "no_shared_stash"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:

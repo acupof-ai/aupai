@@ -23,6 +23,7 @@ import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 
@@ -63,9 +64,19 @@ def val_seqs(domain, tok, cap=SEQ_CAP):
     .srcfp guards) and the seeded shuffle. Returns None when the domain has no shards --
     absent is not zero, and a domain that cannot be scored must be skipped rather than
     contribute a number.
+
+    The freshness guard is HERE rather than in each caller, because _domain_seqs does not
+    only read the cache -- it rebuilds and re-stamps one whose stamps disagree, and an
+    eval has no business doing that to a cache a training run is reading (fb, 2026-09-02:
+    ppl.py on card 7 was two minutes from retokenizing all nine of the live 20B run's
+    domains). Two callers reach _domain_seqs through this function; a guard each of them
+    had to remember is a guard one of them eventually will not.
     """
     import train
 
+    from cache_guard import assert_caches_fresh
+
+    assert_caches_fresh([domain])
     seqs = train._domain_seqs(domain, tok, True, False)
     seqs = seqs[0] if train.Cfg.fone else seqs
     if seqs is None or not len(seqs):

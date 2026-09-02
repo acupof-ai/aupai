@@ -1,10 +1,10 @@
 ---
 question: What in this repository can be deleted or merged, with per-file proof, so it gets smaller and reuses more?
 status: recorded
-source: read-only audit by a subagent, 2026-09-02, main 0622878; greps G1/G2/G3 per file are in the tables
+source: read-only audit by a subagent, 2026-09-02, main 6814a72; greps G1/G2/G3 per file are in the tables
 ---
 
-# Deletion / merge audit — aupai @ main 0622878, 2026-09-02 (read-only)
+# Deletion / merge audit — aupai @ main 6814a72, 2026-09-02 (read-only)
 
 Baseline: 645 tracked files; 91,142 py lines; `scripts/harness.py` 10,172; `mathbank/` 40,563; `scripts/` 22,657 (83 files); `datagen/` 10,163; `eval/` 7,467; `probes/` 4,311.
 
@@ -46,7 +46,7 @@ G3: grep -rn -E 'glob\(|importlib|__import__|import_module' --include='*.py' --i
 | `scripts/test_monitor_exit.py` | 145 | f292f53 09-01 | none | harness monitor test; not in CI, not in hook `SELFTEST_FILES` |
 | `scripts/test_domain_loss_val.py` | 137 | a153681 09-01 | none | same |
 | `scripts/test_math_passk.py` | 94 | 683496f 09-01 | none | same |
-| `scripts/test_resume_cursor_pod.py` | 181 | 6a456cb 09-02 | none | pod-only test; run by nothing |
+| `scripts/test_resume_cursor_pod.py` | 181 | b7ae780 09-02 | none | pod-only test; run by nothing |
 | `scripts/test_cursor_save.py` | 191 | 1c8f0c4 09-01 | none | same |
 | `scripts/test_rep_stop_flag.py` | 92 | bd1e005 09-01 | none | same |
 | `scripts/test_arch_L32.py` | 325 | e83fe5d 09-01 | none (`launch_tests.py` reads a `test_file` field from `runs/launch_tests.json`, does not name it) | run by nothing |
@@ -76,6 +76,14 @@ Excluded from 1a after the second grep (NOT deletable): `datagen/t2s_corpus.py` 
 
 The consequence for this audit's method: a file whose only evidence of use is a sentence in a fact's `value` reads as uncited under a `source`-field scan and as unreferenced under a name scan, while deleting it silently falsifies a measurement's stated method. That is the same class as the runtime-glob rule in AGENTS.md, one field over. It is not a checkable claim to add — a scan over `value` would match every path ever mentioned in prose, including retired ones — so it is a reading rule: before deleting, grep the whole facts tree, not the `source` fields.
 
+**1a correction (c), 2026-09-02 (tilerl, sustained). Two rows of 1a are wrong, and both errors have one shape: the reader is a person waiting, not a file citing.** `a477ad1` deleted `scripts/rehearse_cursor.py`; it is restored byte-identical from `a477ad1~1` (sha256 `52d42096`) and given an entry-point row.
+
+- **`scripts/rehearse_cursor.py` is not superseded by `scripts/replay_cursor.py` — they do opposite things.** `replay_cursor` RECONSTRUCTS a cursor a checkpoint never carried, by replaying the plan (`scripts/replay_cursor.py:1-7`). `rehearse_cursor` VERIFIES a cursor that exists, against the corpus fingerprint and shuffle seed the cursor was written at. Reconstructing is exactly when verification is wanted, so `replay_cursor` landing raises the need for `rehearse_cursor` rather than removing it. The word "superseded" in this table came from the two files sharing a commit, which is proximity, not substitution.
+- **Its remaining work is written in the ledger, not in the tree.** `runs/review.jsonl:19` `notes`: "rehearsal implements assertion 3 only; continuity/identity (assertions 1-2) deferred to the window 50-step block". The body confirms it — assertion 3 (srcfp + `.seed`) runs cardless and returns, then prints that continuity and fresh-run identity "require the block". Deleting the file deletes the two unrun assertions. **The table's own reader column said `runs/review.jsonl` only and that was read as weak evidence when it was the strongest kind**: a review row recording a deferred assertion is a person waiting on an output, which outranks any number of code citations. Assertion 3's logic is separately in `train.py:1883-1906` (`build_mix` discards a cursor on srcfp or seed mismatch), so the *check* survives the deletion — the two deferred assertions do not, and neither does the ability to run any of it before a launch instead of during one.
+- **`datagen/build_code_py_rp1t.py` is the builder of a domain the live run is training on.** `data/mix_500m.json` domains include `code_py_rp1t`, and `data/PROVENANCE.md:547` records `Build: python3 datagen/build_code_py_rp1t.py`. It was never in a delete list here, and is recorded so it does not enter one.
+
+The generalisable criterion, tilerl's and better than the scanner's: a file is live if **(1) its product is named in a live config**, regardless of who cites the builder, or **(2) someone is waiting on its output**, which is recorded in a ledger and not in code. Both are invisible to every reachability scan in this repo, and (2) is invisible to any scan that could be written, because waiting is not a property of the tree. `datagen/rebuild_corpus.sh` is kept on a weaker version of (1): `docs/standards/0830v1_gates.md:178` cites its `:37` to prove what the `en` domain name means, so deleting it dangles a live argument.
+
 ### 1b. Cited only by the pre-commit hook's `SELFTEST_FILES` map (run only when the file itself is staged)
 
 `scripts/hooks/pre-commit:218-249`. `check_selftests_are_gated` (`scripts/harness.py:562`) asserts every file *carrying* `--selftest` is in the map; it does not assert map entries exist, so deleting a file plus its map line is clean. These are tests nothing schedules: not CI (`.github/workflows/ci.yml`), not `harness check`.
@@ -88,7 +96,7 @@ The consequence for this audit's method: a file whose only evidence of use is a 
 | `scripts/test_drop_zombies.py` | 59 | 79dfda7 09-01 | harness kill path |
 | `scripts/test_num_id_resolve.py` | 62 | aef7dbb 09-01 | `[NUM]` id derivation |
 | `scripts/test_spawned_fast.py` | 87 | 8548ac8 09-01 | harness spawned-import resolver |
-| `scripts/read_lr_probe.py` | 200 | 81a53be 09-02 | reads `runs/lrprobe_*.log`; pairs with `lr_probe.sh` (1a) |
+| `scripts/read_lr_probe.py` | 200 | 32de3cf 09-02 | reads `runs/lrprobe_*.log`; pairs with `lr_probe.sh` (1a) |
 | `scripts/stale_claims.py` | 111 | df80b6b 09-01 | "claims older than the code they describe, as a reading queue" — a report generator nobody cites |
 | `scripts/audit_population_universals.py` | 131 | f588f2b 09-01 | one-shot audit of 11 harness checks |
 | `eval/score_code_exec.py` | 410 | 01fdc08 09-01 | cited in `docs/audits/harness_review_0901_de.md` prose; not called by `eval_code.sh`, `score_matrix.py`, or any runner (G1) |
@@ -160,15 +168,15 @@ Rule for the directory: a `t<NN>_*.py` probe is a one-shot whose number lives in
 
 Facts citing a path that does not exist (fix the fact, nothing to delete): `facts/base_eval.json#be.gold_bpb_method` → `eval/configs/task_suites.py` (no `eval/configs/` directory).
 
-**2c correction, measured 2026-09-02 (de). Three of the ten rows are not "cited by facts only", and all three are live code.** Seven of the ten were deleted in 850cf71. The three that stayed:
+**2c correction, measured 2026-09-02 (de). Three of the ten rows are not "cited by facts only", and all three are live code.** Seven of the ten were deleted in e0123b7. The three that stayed:
 
 | row | what the audit missed | live caller |
 |---|---|---|
 | `eval/l1_fewshot.py` | 12 references in `eval/score_matrix.py`, 3 in `eval/code_fewshot.py`, 2 in `scripts/test_fewshot_demos.py` | `eval/score_matrix.py:227` runs it as a metric of record; the row's own "ENTRY per reachability — verify before deleting" was the warning, and the verification would have answered it |
-| `eval/compare_fewshot_arms.py` | 8 references to its `constant_baseline` from `eval/base_matrix.py`, 8 from `eval/score_math_formatfree.py` | it is the reference implementation of 44's constant-baseline ruling. `eval/base_matrix.py` held a second copy of the counting until 850cf71 imported this one instead — deleting it would have left the ruling with no definition |
+| `eval/compare_fewshot_arms.py` | 8 references to its `constant_baseline` from `eval/base_matrix.py`, 8 from `eval/score_math_formatfree.py` | it is the reference implementation of 44's constant-baseline ruling. `eval/base_matrix.py` held a second copy of the counting until e0123b7 imported this one instead — deleting it would have left the ruling with no definition |
 | `scripts/test_parallel_encode.py` | — | the only assertion that `_encode_domain(workers>1)` is element-identical to `workers=1` (`train.py:1682`, the path that writes every run's `/data00` token cache). `.srcfp` fingerprints the source directory, not the encode path, so nothing else would notice a divergence |
 
-The shared error is treating "no importer" as "no reader". `l1_fewshot` and `compare_fewshot_arms` are both imported; the audit's own citation matrix matched basenames and stems, so an import of the module by name should have hit. `test_parallel_encode` genuinely has no importer and is still not deletable: a test's caller is a person, and the reason it is never run automatically is recorded in the hook's `NEEDS_DATA` map rather than being absent (850cf71 — it needs `data/tokenizer.json` and the math_seed corpus, both gitignored, and carries no `--selftest` flag, so the hook could not invoke it even where the data existed).
+The shared error is treating "no importer" as "no reader". `l1_fewshot` and `compare_fewshot_arms` are both imported; the audit's own citation matrix matched basenames and stems, so an import of the module by name should have hit. `test_parallel_encode` genuinely has no importer and is still not deletable: a test's caller is a person, and the reason it is never run automatically is recorded in the hook's `NEEDS_DATA` map rather than being absent (e0123b7 — it needs `data/tokenizer.json` and the math_seed corpus, both gitignored, and carries no `--selftest` flag, so the hook could not invoke it even where the data existed).
 
 ### 2d. Reached only through `scripts/restartability_baseline.json` — 21 files, 4,502 lines
 
@@ -254,7 +262,7 @@ Three defects found on the way, not line counts: (1) standalone `boolq/openbookq
 
 fb asked for the per-site list behind three rows of the 3b table, because the list decides whether unification is cleanup or a behaviour change. It is a behaviour change in all three, and each has a case where two sites give **different answers to the same question**. Method: AST classification of every call site (nearest enclosing loop, nearest enclosing `try` whose *body* holds the call, backwards balanced-paren scan for the governing `open()`), then the divergences re-executed rather than read.
 
-Measured at `33c332f`; `3fb1946` then deleted 26 files, so the census shrank — `json.loads` 190→180, `--device` 27→19, `--ckpt` 36→28, `--tokenizer` 26→21, `hashlib` 56→49, tracked `.py` 241→221. Every named `file:line` below survives at HEAD; the totals do not.
+Measured at `b0dd454`; `30b9010` then deleted 26 files, so the census shrank — `json.loads` 190→180, `--device` 27→19, `--ckpt` 36→28, `--tokenizer` 26→21, `hashlib` 56→49, tracked `.py` 241→221. Every named `file:line` below survives at HEAD; the totals do not.
 
 **Row a — 166 jsonl read sites (not 146+4).** The audit's 146 counted inline `json.loads` lines; 166 is the count after removing 14 non-jsonl parses (HTTP bodies, HF fields, subprocess stdout, a json round-trip deepcopy), 2 comment mentions, 2 inside a *generated* monitor script `harness.py` writes out, and 6 that parse an in-memory line list. Of the 166, 4 are the audit's named helpers and 162 inline in 85 files. Five policy axes, and **five bad-line policies, not three**:
 
@@ -262,7 +270,7 @@ Measured at `33c332f`; `3fb1946` then deleted 26 files, so the census shrank —
 |---|---|
 | malformed line | 120 raise · 40 skip-silently · 3 count-and-report · 2 abort-the-whole-read · 1 `SystemExit` |
 | blank line | 95 reach `json.loads` and raise · 71 skipped by an explicit guard |
-| encoding | 148 `encoding="utf-8"` · **18 no `encoding=` at all** (locale codec), of which 4 also swallow the error. My own AST recount at HEAD narrows this to **8 live text READS** that parse json with no `encoding=` — `fasttext_junk.py:98,123,124,140`, `fetch_corpus.py:253`, `rescore_code.py:69`, `base_matrix.py:337`, `infer.py:14` — the other 10 being writes or files `3fb1946` deleted. The 8 are the actionable set. |
+| encoding | 148 `encoding="utf-8"` · **18 no `encoding=` at all** (locale codec), of which 4 also swallow the error. My own AST recount at HEAD narrows this to **8 live text READS** that parse json with no `encoding=` — `fasttext_junk.py:98,123,124,140`, `fetch_corpus.py:253`, `rescore_code.py:69`, `base_matrix.py:337`, `infer.py:14` — the other 10 being writes or files `30b9010` deleted. The 8 are the actionable set. |
 | gz | 1 (`build_corpus.iter_jsonl`) · 165 no |
 | fold | 149 none · 17 fold, in **11 mutually different rules** |
 
@@ -279,7 +287,7 @@ One input — 1 good line, 1 blank, 1 malformed, 1 good — through five readers
 
 **Row d — 48 hash sites, 32 distinct policies, and unification would corrupt stored values.** Only 5 of the 32 are safely unifiable. Executed, not read: `corpus_fingerprint.fp_filters` and `fp_dir` on one directory of two 100-byte files give `1f3bb9e904e2cb71` vs `14f9e5d1647f7dfd` — same file, same sha1 outer, same `[:16]`, different line format (`name:size:sha256(head):sha256(tail)\n` vs `name\0sha256(bytes)`). They sit adjacent in the same `build_corpus_stats.json` as `fingerprint` and `filters_fp`; collapsing them makes a domain's content hash equal its filter hash, erasing the distinction the module docstring was written to draw. `holdout._fingerprint:38` omits the `\0` separator entirely, `prepare_sft._fp_sources:74` iterates in declaration order rather than sorted; both write digests that live in tracked artifacts, so "unify" means "rewrite recorded fingerprints", which is the one thing a fingerprint must not do. The genuinely mergeable set: `launch_gate._sha256:200` ⇄ `launch_tests._sha256:31` (differ only in missing-file behaviour — None vs raise) and the four `chunked-sha256-full` sites, if the shared helper keeps the None option. Two dead functions found: `fetch_corpus._sha1:72` (zero callers) and `domain_loss.head_fp:123` (zero callers, but its *key name* `head_fp` in `runs/score_matrix.jsonl` is written by `seqs_fp`, which hashes tensor bytes — the name in the artifact describes a function that never wrote it).
 
-**Row l — the audit's own counts are off, and one site is a type error.** Verified by `git grep` at HEAD: `--device` is `"cuda"` **11** / `"cuda:0"` **7** / conditional 1 / int 1, not the "18 vs 8" the row states (the 18 was the pre-deletion count). `ROOT = os.path.dirname(...)` boilerplate: 92 files (row says 96, also pre-deletion). `sys.path.insert`: **93 files / 146 lines**, not 71 — the row understates by 22 files. `probes/bench_gpu_probe.py@3fb1946~1:6` is `--device type=int required=True`, consumed as `torch.cuda.set_device(args.device)`, `f"cuda:{args.device}"` and `nvidia-smi -i <n>`: routing it through a str-defaulted `add_model_args` does not change a default, it raises. That file is itself one of the 26 `3fb1946` deleted — the row-l staleness this section reports applies to this section's own citation, so it carries `@sha` like every other retired ref. `datagen/prepare_sft.py:328` parses `--out` by hand out of `sys.argv` with no parser at all. `--out default=""` means "print to stdout" at `assemble_lambda_probe.py:43` and "write to the real tokenizer path" at `build_tokenizer.py:65` — the same spelling with opposite meanings. And two `--tokenizer` defaults are not path spellings but different *vocabularies* (`data/tokenizer_k5.json`, pre-reset) or a different *referent* (`score_web_27b.py:166` points at the 27B labeller's tokenizer, not the model's).
+**Row l — the audit's own counts are off, and one site is a type error.** Verified by `git grep` at HEAD: `--device` is `"cuda"` **11** / `"cuda:0"` **7** / conditional 1 / int 1, not the "18 vs 8" the row states (the 18 was the pre-deletion count). `ROOT = os.path.dirname(...)` boilerplate: 92 files (row says 96, also pre-deletion). `sys.path.insert`: **93 files / 146 lines**, not 71 — the row understates by 22 files. `probes/bench_gpu_probe.py@30b9010~1:6` is `--device type=int required=True`, consumed as `torch.cuda.set_device(args.device)`, `f"cuda:{args.device}"` and `nvidia-smi -i <n>`: routing it through a str-defaulted `add_model_args` does not change a default, it raises. That file is itself one of the 26 `30b9010` deleted — the row-l staleness this section reports applies to this section's own citation, so it carries `@sha` like every other retired ref. `datagen/prepare_sft.py:328` parses `--out` by hand out of `sys.argv` with no parser at all. `--out default=""` means "print to stdout" at `assemble_lambda_probe.py:43` and "write to the real tokenizer path" at `build_tokenizer.py:65` — the same spelling with opposite meanings. And two `--tokenizer` defaults are not path spellings but different *vocabularies* (`data/tokenizer_k5.json`, pre-reset) or a different *referent* (`score_web_27b.py:166` points at the 27B labeller's tokenizer, not the model's).
 
 **What this means for row 6 of the Top 10.** The 415 lines it claims from rows a+d+l are not available as a mechanical dedup. Unifying the bad-line policy is a behaviour change (five policies, and the two that abort are load-bearing: a gate that refuses on a torn line is not a bug), unifying the hashes rewrites recorded digests, and unifying the argparse defaults changes what 18 sites resolve to. What *is* safe, and worth doing separately: the 8 missing-`encoding=` json reads named above (a real portability defect, no stored value moves), the two dead hash functions, and the `launch_gate`/`launch_tests` `_sha256` pair. Everything else needs a per-site ruling, which is why this section is a list rather than a patch.
 
@@ -324,7 +332,7 @@ Dead code: `_broken_agents_rules_unmapped` (`:931`, 13 L) is referenced only by 
 **4b correction, measured 2026-09-02 (de). Not done: the merge is ≈94 lines at best, not 330, and three of the reasons are structural rather than arithmetic.**
 
 1. **The base predates de-12, so one row is already collected.** This audit reads main
-   `0622878`; `git merge-base --is-ancestor 34acbb9 0622878` is false, and `34acbb9` is
+   `6814a72`; `git merge-base --is-ancestor 897014e 6814a72` is false, and `897014e` is
    "harness: one tree walker for curl_ipv4 and timestamps_are_utc". The 20-line duplicate
    walk at 1109–1120 ≡ 1139–1150 is gone: both call `walk_tracked` (`:1122`, `:1145`), and
    the whole file now holds **2** `os.walk` sites — that helper and the selftest's
@@ -359,7 +367,7 @@ Dead code: `_broken_agents_rules_unmapped` (`:931`, 13 L) is referenced only by 
 
    The direction is also wrong. `CHECKS` holds one `broken()` per row, so a check with two
    independent failure modes cannot register both — `agents_rules_covered` needed 20 lines
-   of explicit post-loop wiring for its second world (`72ebbce`). Merging two checks makes
+   of explicit post-loop wiring for its second world (`408a3fb`). Merging two checks makes
    two rules share one world, tightening the constraint that just had to be worked around.
 
 **4a correction (de).** Both "dead code" calls in 4a are wrong, and the shape is worth

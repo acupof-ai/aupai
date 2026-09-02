@@ -165,8 +165,14 @@ def main():
         sys.exit(err)
     print(f"L1 few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
+    # The checkpoint's name is IN the path. Without it every checkpoint writes the same
+    # file, so open_artifact refuses the second one -- the guard firing correctly on a
+    # path that was wrong: score_matrix scored two checkpoints in one session and the
+    # second got ArtifactExists rather than a number (fb, 2026-09-02). --run also
+    # versions, but --run is a name a human remembers to pass and the checkpoint is not.
+    # Same shape as eval/math_zh.py:103 and eval/code_zh.py:160, which already do this.
     preds_path = os.path.join(ROOT, "data", "eval",
-                              f"preds_l1_d{args.demos}"
+                              f"preds_l1_d{args.demos}_{os.path.basename(args.ckpt)}"
                               + (f".t{args.temperature}" if args.temperature else "")
                               + ".jsonl")
     correct = total = 0
