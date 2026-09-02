@@ -344,6 +344,7 @@ def main():
     SELFTEST_FILES = {
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
+        "eval/cache_guard.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/write_mix_500m.py",
@@ -366,6 +367,7 @@ def main():
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
+        "scripts/test_artifact_path_ckpt.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
         # de-5 candidates that turned out to assert live properties. Each was in the
