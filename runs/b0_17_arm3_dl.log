@@ -1,0 +1,12 @@
+
+ckpt_ab_untieheadlr_untieheadlr.pt.ep1  (vocab 32784, seq 4096)
+  math_owm_stage2 2.4524   (262,144 tok)
+  en_c4_stage2 3.5387   (262,144 tok)
+  cot        1.5699   (262,144 tok)
+  textbook_30b 2.9166   (262,144 tok)
+  chatml     3.7424   (262,144 tok)
+  chat_qa    3.7658   (262,144 tok)
+  zh_web     5.1029   (262,144 tok)
+  code_py_starcoder 1.5745   (262,144 tok)
+  code_py_rp1t 1.5615   (262,144 tok)
+  MEAN       2.9139   (unweighted across domains)
