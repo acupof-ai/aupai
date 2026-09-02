@@ -79,8 +79,20 @@ esac
 # that another run produced.
 SKIP_BASE=${SKIP_BASE:-0}
 
-trap 'python3 scripts/card_claim.py release --name "ab_$ARM" || true' EXIT
-python3 scripts/card_claim.py acquire --name "ab_$ARM" --cards "$CARDS"
+# THE CLAIM MUST NAME torchrun, NOT THIS SHELL. card_claim.py:283 (de-34) refuses a shell pid
+# on sight, and acquiring before the job exists can only offer this script's own pid: PPID is
+# the default holder and there is nothing else to name yet. A shell either execs away or
+# outlives the job, so the card reads ORPHAN or stays held after training ended -- both
+# happened 2026-09-03, in opposite directions, on this very launcher's arms.
+#
+# So each arm's torchrun is backgrounded FIRST and claimed by pid immediately, inside the
+# sub-second window before CUDA init touches a card. The claim is per-arm, which also makes
+# `card_claim.py status` name the arm that holds the lane instead of just the A/B.
+#
+# The guard's own hint does not get you here: with no torchrun yet, the only python descendant
+# it can suggest is the `card_claim.py acquire` process asking the question.
+CLAIM=""
+trap '[ -n "$CLAIM" ] && python3 scripts/card_claim.py release --name "$CLAIM" >/dev/null 2>&1 || true' EXIT
 
 ARMS="base $ARM"
 [ "$SKIP_BASE" = "1" ] && ARMS="$ARM"
@@ -92,7 +104,41 @@ for v in $ARMS; do
     --mix "$MIX" --max_steps "$STEPS" --name "ab_${ARM}_$v" \
     --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 16 --accum 2 \
     --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 \
-    --save_every "$STEPS" $extra "$@"
+    --save_every "$STEPS" $extra "$@" &
+  job=$!
+  CLAIM="ab_${ARM}_$v"
+  # WAIT FOR THE EXEC, don't just wait a bit. `cmd &` forks first and execs second, so for a
+  # brief window the child's cmdline is still this bash -- and the de-34 guard reads exactly
+  # that, so an immediate claim can be refused as "a shell" for a job that is in fact torchrun a
+  # millisecond later.
+  #
+  # POLL argv[0], NOT A SUBSTRING. Pre-exec, this shell's cmdline already CONTAINS the words
+  # "torchrun" and "train.py" -- they are its arguments -- so `case *torchrun*` matches the very
+  # shell we are waiting to stop being, and the wait ends immediately having tested nothing.
+  # That is card_claim.py:119's documented trap, reproduced here by writing the check the easy
+  # way first. `ps -o args=` because the guard falls back to it too (no /proc on macOS, where
+  # the selftests run).
+  for _ in $(seq 1 100); do
+    a0=$(ps -o args= -p "$job" 2>/dev/null | awk '{print $1}')
+    case "$(basename "${a0:-sh}")" in
+      sh|bash|dash|zsh|ksh|"") ;;                # still the pre-exec shell: keep waiting
+      *) break ;;                                # execed into something that is not a shell
+    esac
+    kill -0 "$job" 2>/dev/null || break          # died on its own: let the claim report the truth
+    sleep 0.1
+  done
+  if ! python3 scripts/card_claim.py acquire --name "$CLAIM" --cards "$CARDS" \
+       --pid "$job" --note "A/B $ARM arm $v, $STEPS steps" --wait "${CLAIM_WAIT:-0}"; then
+    # Kill by the exact pid we started, never a pattern: this tree is shared by six sessions.
+    kill "$job" 2>/dev/null || true
+    CLAIM=""
+    echo "REFUSING: could not claim cards $CARDS for arm $v -- torchrun $job killed before it" >&2
+    echo "reached CUDA init. See card_claim.py status for who holds the lane." >&2
+    exit 1
+  fi
+  wait "$job"
+  python3 scripts/card_claim.py release --name "$CLAIM" >/dev/null 2>&1 || true
+  CLAIM=""
 done
 
 ARM="$ARM" SKIP_BASE="$SKIP_BASE" BASE_CKPT="${BASE_CKPT:-}" python3 - <<'PY'
