@@ -95,7 +95,7 @@ def main():
     ap.add_argument("--web-labels", default="data/corpus/sample/web_labels.jsonl")
     a = ap.parse_args()
 
-    hand = [json.loads(l) for l in open(a.handread)]
+    hand = [json.loads(l) for l in open(a.handread, encoding="utf-8")]
     assert all(r.get("label_set_version") == "v2" for r in hand), "handread must be v2 (0cf1eb8fa4ae=junk)"
     pairs = [(r["shard"], r["id"]) for r in hand]
     texts = pull_texts(a.raw_dir, pairs)
@@ -120,8 +120,8 @@ def main():
     w = fit(Xtr, y, reg)
     print(f"chosen reg={reg:.0e} in-sample AUC={auc(y, Xtr @ w):.3f}", flush=True)
 
-    audit = [json.loads(l) for l in open(a.audit400)]
-    labels = {json.loads(l)["id"]: json.loads(l)["junk"] for l in open(a.audit400_labels)}
+    audit = [json.loads(l) for l in open(a.audit400, encoding="utf-8")]
+    labels = {json.loads(l)["id"]: json.loads(l)["junk"] for l in open(a.audit400_labels, encoding="utf-8")}
     t400 = pull_texts(a.raw_dir, [(r["shard"], r["id"]) for r in audit])
     junk400 = np.array([1.0 if labels[r["id"]] else 0.0 for r in audit])
     s400 = build_matrix([t400[r["id"]] for r in audit]) @ w
@@ -137,7 +137,7 @@ def main():
         mark = "  <-- PASS" if rec >= 0.5 and prec >= 0.8 else ""
         print(f"  drop {q:.0%}: recall={rec:.3f} precision={prec:.3f} (TP={tp} FP={fp} FN={fn}){mark}")
 
-    web = [json.loads(l) for l in open(a.web_labels)]
+    web = [json.loads(l) for l in open(a.web_labels, encoding="utf-8")]
     yw = np.array([1.0 - r["y"] for r in web])  # web y=1 means keep/educational
     sw = build_matrix([r["t"] for r in web]) @ w
     print(f"\nWEB_LABELS: AUC(junk)={auc(yw, sw):.3f}  (old head AUC(keep)=0.823 on this set)")
