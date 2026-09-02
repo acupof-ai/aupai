@@ -1,0 +1,261 @@
+
+import triton
+import triton.language as tl
+
+from torch._inductor.runtime import triton_helpers, triton_heuristics
+from torch._inductor.runtime.triton_helpers import libdevice, math as tl_math
+from torch._inductor.runtime.hints import AutotuneHint, ReductionHint, TileHint, DeviceProperties
+triton_helpers.set_driver_to_gpu()
+
+@triton_heuristics.persistent_reduction(
+    size_hints={'x': 65536, 'r0_': 1024},
+    reduction_hint=ReductionHint.INNER,
+    filename=__file__,
+    triton_meta={'signature': {'in_ptr0': '*bf16', 'in_ptr1': '*bf16', 'in_ptr2': '*bf16', 'in_ptr3': '*fp32', 'in_ptr4': '*bf16', 'in_ptr5': '*fp32', 'in_ptr6': '*bf16', 'in_ptr7': '*fp32', 'in_ptr8': '*bf16', 'in_ptr9': '*fp32', 'in_ptr10': '*bf16', 'in_ptr11': '*fp32', 'in_ptr12': '*bf16', 'in_ptr13': '*fp32', 'in_ptr14': '*bf16', 'in_ptr15': '*fp32', 'in_ptr16': '*bf16', 'in_ptr17': '*fp32', 'in_ptr18': '*bf16', 'in_ptr19': '*fp32', 'in_ptr20': '*bf16', 'in_ptr21': '*fp32', 'in_ptr22': '*bf16', 'in_ptr23': '*fp32', 'in_ptr24': '*bf16', 'in_ptr25': '*fp32', 'in_ptr26': '*bf16', 'in_ptr27': '*fp32', 'in_ptr28': '*bf16', 'in_ptr29': '*fp32', 'in_ptr30': '*bf16', 'in_ptr31': '*fp32', 'in_ptr32': '*bf16', 'in_ptr33': '*fp32', 'in_ptr34': '*bf16', 'in_ptr35': '*fp32', 'in_ptr36': '*bf16', 'in_ptr37': '*fp32', 'in_ptr38': '*bf16', 'in_ptr39': '*fp32', 'in_ptr40': '*bf16', 'in_ptr41': '*fp32', 'in_ptr42': '*bf16', 'in_ptr43': '*fp32', 'in_ptr44': '*bf16', 'in_ptr45': '*fp32', 'in_ptr46': '*bf16', 'in_ptr47': '*fp32', 'in_ptr48': '*bf16', 'in_ptr49': '*fp32', 'in_ptr50': '*bf16', 'in_ptr51': '*fp32', 'out_ptr0': '*fp32', 'out_ptr1': '*fp32', 'out_ptr2': '*fp32', 'out_ptr3': '*fp32', 'out_ptr4': '*fp32', 'out_ptr5': '*fp32', 'out_ptr6': '*fp32', 'out_ptr7': '*fp32', 'out_ptr8': '*fp32', 'out_ptr9': '*fp32', 'out_ptr10': '*fp32', 'out_ptr11': '*fp32', 'out_ptr12': '*fp32', 'out_ptr13': '*fp32', 'out_ptr14': '*fp32', 'out_ptr15': '*fp32', 'out_ptr16': '*fp32', 'out_ptr17': '*fp32', 'out_ptr18': '*fp32', 'out_ptr19': '*fp32', 'out_ptr20': '*fp32', 'out_ptr21': '*fp32', 'out_ptr22': '*fp32', 'out_ptr23': '*fp32', 'out_ptr24': '*fp32', 'out_ptr25': '*fp32', 'out_ptr26': '*fp32', 'out_ptr27': '*fp32', 'out_ptr28': '*fp32', 'out_ptr29': '*fp32', 'out_ptr30': '*fp32', 'out_ptr31': '*fp32', 'out_ptr32': '*fp32', 'out_ptr33': '*fp32', 'out_ptr34': '*fp32', 'out_ptr35': '*fp32', 'out_ptr36': '*fp32', 'out_ptr37': '*fp32', 'out_ptr38': '*fp32', 'out_ptr39': '*fp32', 'out_ptr40': '*fp32', 'out_ptr41': '*fp32', 'out_ptr42': '*fp32', 'out_ptr43': '*fp32', 'out_ptr44': '*fp32', 'out_ptr45': '*fp32', 'out_ptr46': '*fp32', 'out_ptr47': '*fp32', 'out_ptr48': '*fp32', 'out_ptr49': '*fp32', 'xnumel': 'i32', 'r0_numel': 'i32', 'XBLOCK': 'constexpr'}, 'device': DeviceProperties(type='cuda', index=0, multi_processor_count=78, cc=90, major=9, regs_per_multiprocessor=65536, max_threads_per_multi_processor=2048, max_threads_per_block=1024, warp_size=32), 'constants': {}, 'native_matmul': False, 'enable_fp_fusion': True, 'launch_pdl': False, 'disable_ftz': False, 'configs': [{(0,): [['tt.divisibility', 16]], (1,): [['tt.divisibility', 16]], (2,): [['tt.divisibility', 16]], (3,): [['tt.divisibility', 16]], (4,): [['tt.divisibility', 16]], (5,): [['tt.divisibility', 16]], (6,): [['tt.divisibility', 16]], (7,): [['tt.divisibility', 16]], (8,): [['tt.divisibility', 16]], (9,): [['tt.divisibility', 16]], (10,): [['tt.divisibility', 16]], (11,): [['tt.divisibility', 16]], (12,): [['tt.divisibility', 16]], (13,): [['tt.divisibility', 16]], (14,): [['tt.divisibility', 16]], (15,): [['tt.divisibility', 16]], (16,): [['tt.divisibility', 16]], (17,): [['tt.divisibility', 16]], (18,): [['tt.divisibility', 16]], (19,): [['tt.divisibility', 16]], (20,): [['tt.divisibility', 16]], (21,): [['tt.divisibility', 16]], (22,): [['tt.divisibility', 16]], (23,): [['tt.divisibility', 16]], (24,): [['tt.divisibility', 16]], (25,): [['tt.divisibility', 16]], (26,): [['tt.divisibility', 16]], (27,): [['tt.divisibility', 16]], (28,): [['tt.divisibility', 16]], (29,): [['tt.divisibility', 16]], (30,): [['tt.divisibility', 16]], (31,): [['tt.divisibility', 16]], (32,): [['tt.divisibility', 16]], (33,): [['tt.divisibility', 16]], (34,): [['tt.divisibility', 16]], (35,): [['tt.divisibility', 16]], (36,): [['tt.divisibility', 16]], (37,): [['tt.divisibility', 16]], (38,): [['tt.divisibility', 16]], (39,): [['tt.divisibility', 16]], (40,): [['tt.divisibility', 16]], (41,): [['tt.divisibility', 16]], (42,): [['tt.divisibility', 16]], (43,): [['tt.divisibility', 16]], (44,): [['tt.divisibility', 16]], (45,): [['tt.divisibility', 16]], (46,): [['tt.divisibility', 16]], (47,): [['tt.divisibility', 16]], (48,): [['tt.divisibility', 16]], (49,): [['tt.divisibility', 16]], (50,): [['tt.divisibility', 16]], (51,): [['tt.divisibility', 16]], (52,): [['tt.divisibility', 16]], (53,): [['tt.divisibility', 16]], (54,): [['tt.divisibility', 16]], (55,): [['tt.divisibility', 16]], (56,): [['tt.divisibility', 16]], (57,): [['tt.divisibility', 16]], (58,): [['tt.divisibility', 16]], (59,): [['tt.divisibility', 16]], (60,): [['tt.divisibility', 16]], (61,): [['tt.divisibility', 16]], (62,): [['tt.divisibility', 16]], (63,): [['tt.divisibility', 16]], (64,): [['tt.divisibility', 16]], (65,): [['tt.divisibility', 16]], (66,): [['tt.divisibility', 16]], (67,): [['tt.divisibility', 16]], (68,): [['tt.divisibility', 16]], (69,): [['tt.divisibility', 16]], (70,): [['tt.divisibility', 16]], (71,): [['tt.divisibility', 16]], (72,): [['tt.divisibility', 16]], (73,): [['tt.divisibility', 16]], (74,): [['tt.divisibility', 16]], (75,): [['tt.divisibility', 16]], (76,): [['tt.divisibility', 16]], (77,): [['tt.divisibility', 16]], (78,): [['tt.divisibility', 16]], (79,): [['tt.divisibility', 16]], (80,): [['tt.divisibility', 16]], (81,): [['tt.divisibility', 16]], (82,): [['tt.divisibility', 16]], (83,): [['tt.divisibility', 16]], (84,): [['tt.divisibility', 16]], (85,): [['tt.divisibility', 16]], (86,): [['tt.divisibility', 16]], (87,): [['tt.divisibility', 16]], (88,): [['tt.divisibility', 16]], (89,): [['tt.divisibility', 16]], (90,): [['tt.divisibility', 16]], (91,): [['tt.divisibility', 16]], (92,): [['tt.divisibility', 16]], (93,): [['tt.divisibility', 16]], (94,): [['tt.divisibility', 16]], (95,): [['tt.divisibility', 16]], (96,): [['tt.divisibility', 16]], (97,): [['tt.divisibility', 16]], (98,): [['tt.divisibility', 16]], (99,): [['tt.divisibility', 16]], (100,): [['tt.divisibility', 16]], (101,): [['tt.divisibility', 16]], (102,): [['tt.divisibility', 16]], (103,): [['tt.divisibility', 16]]}]},
+    inductor_meta={'grid_type': 'Grid1D', 'autotune_hints': set(), 'kernel_name': 'triton_per_fused_mul_squeeze_sum_0', 'mutated_arg_names': [], 'optimize_mem': False, 'no_x_dim': None, 'atomic_add_found': False, 'num_load': 52, 'num_store': 50, 'num_reduction': 25, 'backend_hash': 'D1670D28DE244E2E3F72E33F48DF60470534E9DD0E611D9CD47DE4460C472CC9', 'assert_indirect_indexing': True, 'autotune_local_cache': True, 'autotune_pointwise': True, 'autotune_remote_cache': None, 'force_disable_caches': False, 'dynamic_scale_rblock': True, 'max_autotune': False, 'max_autotune_pointwise': False, 'min_split_scan_rblock': 256, 'spill_threshold': 16, 'store_cubin': False, 'deterministic': False, 'force_filter_reduction_configs': False, 'mix_order_reduction_allow_multi_stages': False, 'are_deterministic_algorithms_enabled': False, 'tiling_scores': {'x': 32768000, 'r0_': 3355447296}}
+)
+@triton.jit
+def triton_per_fused_mul_squeeze_sum_0(in_ptr0, in_ptr1, in_ptr2, in_ptr3, in_ptr4, in_ptr5, in_ptr6, in_ptr7, in_ptr8, in_ptr9, in_ptr10, in_ptr11, in_ptr12, in_ptr13, in_ptr14, in_ptr15, in_ptr16, in_ptr17, in_ptr18, in_ptr19, in_ptr20, in_ptr21, in_ptr22, in_ptr23, in_ptr24, in_ptr25, in_ptr26, in_ptr27, in_ptr28, in_ptr29, in_ptr30, in_ptr31, in_ptr32, in_ptr33, in_ptr34, in_ptr35, in_ptr36, in_ptr37, in_ptr38, in_ptr39, in_ptr40, in_ptr41, in_ptr42, in_ptr43, in_ptr44, in_ptr45, in_ptr46, in_ptr47, in_ptr48, in_ptr49, in_ptr50, in_ptr51, out_ptr0, out_ptr1, out_ptr2, out_ptr3, out_ptr4, out_ptr5, out_ptr6, out_ptr7, out_ptr8, out_ptr9, out_ptr10, out_ptr11, out_ptr12, out_ptr13, out_ptr14, out_ptr15, out_ptr16, out_ptr17, out_ptr18, out_ptr19, out_ptr20, out_ptr21, out_ptr22, out_ptr23, out_ptr24, out_ptr25, out_ptr26, out_ptr27, out_ptr28, out_ptr29, out_ptr30, out_ptr31, out_ptr32, out_ptr33, out_ptr34, out_ptr35, out_ptr36, out_ptr37, out_ptr38, out_ptr39, out_ptr40, out_ptr41, out_ptr42, out_ptr43, out_ptr44, out_ptr45, out_ptr46, out_ptr47, out_ptr48, out_ptr49, xnumel, r0_numel, XBLOCK : tl.constexpr):
+    xnumel = 65536
+    r0_numel = 1024
+    R0_BLOCK: tl.constexpr = 1024
+    rnumel = r0_numel
+    RBLOCK: tl.constexpr = R0_BLOCK
+    xoffset = tl.program_id(0) * XBLOCK
+    xindex = xoffset + tl.arange(0, XBLOCK)[:, None]
+    xmask = tl.full([XBLOCK], True, tl.int1)[:, None]
+    r0_index = tl.arange(0, R0_BLOCK)[None, :]
+    r0_offset = 0
+    r0_mask = tl.full([R0_BLOCK], True, tl.int1)[None, :]
+    roffset = r0_offset
+    rindex = r0_index
+    r0_1 = r0_index
+    x0 = xindex
+    tmp0 = tl.load(in_ptr0 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp1 = tl.load(in_ptr1 + (r0_1), None, eviction_policy='evict_last').to(tl.float32)
+    tmp2 = tl.load(in_ptr2 + (r0_1), None, eviction_policy='evict_last').to(tl.float32)
+    tmp9 = tl.load(in_ptr3 + (x0), None, eviction_policy='evict_last')
+    tmp11 = tl.load(in_ptr4 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp17 = tl.load(in_ptr5 + (x0), None, eviction_policy='evict_last')
+    tmp19 = tl.load(in_ptr6 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp25 = tl.load(in_ptr7 + (x0), None, eviction_policy='evict_last')
+    tmp27 = tl.load(in_ptr8 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp33 = tl.load(in_ptr9 + (x0), None, eviction_policy='evict_last')
+    tmp35 = tl.load(in_ptr10 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp41 = tl.load(in_ptr11 + (x0), None, eviction_policy='evict_last')
+    tmp43 = tl.load(in_ptr12 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp49 = tl.load(in_ptr13 + (x0), None, eviction_policy='evict_last')
+    tmp51 = tl.load(in_ptr14 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp57 = tl.load(in_ptr15 + (x0), None, eviction_policy='evict_last')
+    tmp59 = tl.load(in_ptr16 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp65 = tl.load(in_ptr17 + (x0), None, eviction_policy='evict_last')
+    tmp67 = tl.load(in_ptr18 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp73 = tl.load(in_ptr19 + (x0), None, eviction_policy='evict_last')
+    tmp75 = tl.load(in_ptr20 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp81 = tl.load(in_ptr21 + (x0), None, eviction_policy='evict_last')
+    tmp83 = tl.load(in_ptr22 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp89 = tl.load(in_ptr23 + (x0), None, eviction_policy='evict_last')
+    tmp91 = tl.load(in_ptr24 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp97 = tl.load(in_ptr25 + (x0), None, eviction_policy='evict_last')
+    tmp99 = tl.load(in_ptr26 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp105 = tl.load(in_ptr27 + (x0), None, eviction_policy='evict_last')
+    tmp107 = tl.load(in_ptr28 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp113 = tl.load(in_ptr29 + (x0), None, eviction_policy='evict_last')
+    tmp115 = tl.load(in_ptr30 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp121 = tl.load(in_ptr31 + (x0), None, eviction_policy='evict_last')
+    tmp123 = tl.load(in_ptr32 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp129 = tl.load(in_ptr33 + (x0), None, eviction_policy='evict_last')
+    tmp131 = tl.load(in_ptr34 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp137 = tl.load(in_ptr35 + (x0), None, eviction_policy='evict_last')
+    tmp139 = tl.load(in_ptr36 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp145 = tl.load(in_ptr37 + (x0), None, eviction_policy='evict_last')
+    tmp147 = tl.load(in_ptr38 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp153 = tl.load(in_ptr39 + (x0), None, eviction_policy='evict_last')
+    tmp155 = tl.load(in_ptr40 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp161 = tl.load(in_ptr41 + (x0), None, eviction_policy='evict_last')
+    tmp163 = tl.load(in_ptr42 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp169 = tl.load(in_ptr43 + (x0), None, eviction_policy='evict_last')
+    tmp171 = tl.load(in_ptr44 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp177 = tl.load(in_ptr45 + (x0), None, eviction_policy='evict_last')
+    tmp179 = tl.load(in_ptr46 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp185 = tl.load(in_ptr47 + (x0), None, eviction_policy='evict_last')
+    tmp187 = tl.load(in_ptr48 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp193 = tl.load(in_ptr49 + (x0), None, eviction_policy='evict_last')
+    tmp195 = tl.load(in_ptr50 + (r0_1 + 1024*x0), None).to(tl.float32)
+    tmp201 = tl.load(in_ptr51 + (x0), None, eviction_policy='evict_last')
+    tmp3 = tmp1 * tmp2
+    tmp4 = tmp0 * tmp3
+    tmp5 = tmp4.to(tl.float32)
+    tmp6 = tl.broadcast_to(tmp5, [XBLOCK, R0_BLOCK])
+    tmp8 = tl.sum(tmp6, 1)[:, None].to(tl.float32)
+    tmp10 = tmp8 * tmp9
+    tmp12 = tmp11 * tmp3
+    tmp13 = tmp12.to(tl.float32)
+    tmp14 = tl.broadcast_to(tmp13, [XBLOCK, R0_BLOCK])
+    tmp16 = tl.sum(tmp14, 1)[:, None].to(tl.float32)
+    tmp18 = tmp16 * tmp17
+    tmp20 = tmp19 * tmp3
+    tmp21 = tmp20.to(tl.float32)
+    tmp22 = tl.broadcast_to(tmp21, [XBLOCK, R0_BLOCK])
+    tmp24 = tl.sum(tmp22, 1)[:, None].to(tl.float32)
+    tmp26 = tmp24 * tmp25
+    tmp28 = tmp27 * tmp3
+    tmp29 = tmp28.to(tl.float32)
+    tmp30 = tl.broadcast_to(tmp29, [XBLOCK, R0_BLOCK])
+    tmp32 = tl.sum(tmp30, 1)[:, None].to(tl.float32)
+    tmp34 = tmp32 * tmp33
+    tmp36 = tmp35 * tmp3
+    tmp37 = tmp36.to(tl.float32)
+    tmp38 = tl.broadcast_to(tmp37, [XBLOCK, R0_BLOCK])
+    tmp40 = tl.sum(tmp38, 1)[:, None].to(tl.float32)
+    tmp42 = tmp40 * tmp41
+    tmp44 = tmp43 * tmp3
+    tmp45 = tmp44.to(tl.float32)
+    tmp46 = tl.broadcast_to(tmp45, [XBLOCK, R0_BLOCK])
+    tmp48 = tl.sum(tmp46, 1)[:, None].to(tl.float32)
+    tmp50 = tmp48 * tmp49
+    tmp52 = tmp51 * tmp3
+    tmp53 = tmp52.to(tl.float32)
+    tmp54 = tl.broadcast_to(tmp53, [XBLOCK, R0_BLOCK])
+    tmp56 = tl.sum(tmp54, 1)[:, None].to(tl.float32)
+    tmp58 = tmp56 * tmp57
+    tmp60 = tmp59 * tmp3
+    tmp61 = tmp60.to(tl.float32)
+    tmp62 = tl.broadcast_to(tmp61, [XBLOCK, R0_BLOCK])
+    tmp64 = tl.sum(tmp62, 1)[:, None].to(tl.float32)
+    tmp66 = tmp64 * tmp65
+    tmp68 = tmp67 * tmp3
+    tmp69 = tmp68.to(tl.float32)
+    tmp70 = tl.broadcast_to(tmp69, [XBLOCK, R0_BLOCK])
+    tmp72 = tl.sum(tmp70, 1)[:, None].to(tl.float32)
+    tmp74 = tmp72 * tmp73
+    tmp76 = tmp75 * tmp3
+    tmp77 = tmp76.to(tl.float32)
+    tmp78 = tl.broadcast_to(tmp77, [XBLOCK, R0_BLOCK])
+    tmp80 = tl.sum(tmp78, 1)[:, None].to(tl.float32)
+    tmp82 = tmp80 * tmp81
+    tmp84 = tmp83 * tmp3
+    tmp85 = tmp84.to(tl.float32)
+    tmp86 = tl.broadcast_to(tmp85, [XBLOCK, R0_BLOCK])
+    tmp88 = tl.sum(tmp86, 1)[:, None].to(tl.float32)
+    tmp90 = tmp88 * tmp89
+    tmp92 = tmp91 * tmp3
+    tmp93 = tmp92.to(tl.float32)
+    tmp94 = tl.broadcast_to(tmp93, [XBLOCK, R0_BLOCK])
+    tmp96 = tl.sum(tmp94, 1)[:, None].to(tl.float32)
+    tmp98 = tmp96 * tmp97
+    tmp100 = tmp99 * tmp3
+    tmp101 = tmp100.to(tl.float32)
+    tmp102 = tl.broadcast_to(tmp101, [XBLOCK, R0_BLOCK])
+    tmp104 = tl.sum(tmp102, 1)[:, None].to(tl.float32)
+    tmp106 = tmp104 * tmp105
+    tmp108 = tmp107 * tmp3
+    tmp109 = tmp108.to(tl.float32)
+    tmp110 = tl.broadcast_to(tmp109, [XBLOCK, R0_BLOCK])
+    tmp112 = tl.sum(tmp110, 1)[:, None].to(tl.float32)
+    tmp114 = tmp112 * tmp113
+    tmp116 = tmp115 * tmp3
+    tmp117 = tmp116.to(tl.float32)
+    tmp118 = tl.broadcast_to(tmp117, [XBLOCK, R0_BLOCK])
+    tmp120 = tl.sum(tmp118, 1)[:, None].to(tl.float32)
+    tmp122 = tmp120 * tmp121
+    tmp124 = tmp123 * tmp3
+    tmp125 = tmp124.to(tl.float32)
+    tmp126 = tl.broadcast_to(tmp125, [XBLOCK, R0_BLOCK])
+    tmp128 = tl.sum(tmp126, 1)[:, None].to(tl.float32)
+    tmp130 = tmp128 * tmp129
+    tmp132 = tmp131 * tmp3
+    tmp133 = tmp132.to(tl.float32)
+    tmp134 = tl.broadcast_to(tmp133, [XBLOCK, R0_BLOCK])
+    tmp136 = tl.sum(tmp134, 1)[:, None].to(tl.float32)
+    tmp138 = tmp136 * tmp137
+    tmp140 = tmp139 * tmp3
+    tmp141 = tmp140.to(tl.float32)
+    tmp142 = tl.broadcast_to(tmp141, [XBLOCK, R0_BLOCK])
+    tmp144 = tl.sum(tmp142, 1)[:, None].to(tl.float32)
+    tmp146 = tmp144 * tmp145
+    tmp148 = tmp147 * tmp3
+    tmp149 = tmp148.to(tl.float32)
+    tmp150 = tl.broadcast_to(tmp149, [XBLOCK, R0_BLOCK])
+    tmp152 = tl.sum(tmp150, 1)[:, None].to(tl.float32)
+    tmp154 = tmp152 * tmp153
+    tmp156 = tmp155 * tmp3
+    tmp157 = tmp156.to(tl.float32)
+    tmp158 = tl.broadcast_to(tmp157, [XBLOCK, R0_BLOCK])
+    tmp160 = tl.sum(tmp158, 1)[:, None].to(tl.float32)
+    tmp162 = tmp160 * tmp161
+    tmp164 = tmp163 * tmp3
+    tmp165 = tmp164.to(tl.float32)
+    tmp166 = tl.broadcast_to(tmp165, [XBLOCK, R0_BLOCK])
+    tmp168 = tl.sum(tmp166, 1)[:, None].to(tl.float32)
+    tmp170 = tmp168 * tmp169
+    tmp172 = tmp171 * tmp3
+    tmp173 = tmp172.to(tl.float32)
+    tmp174 = tl.broadcast_to(tmp173, [XBLOCK, R0_BLOCK])
+    tmp176 = tl.sum(tmp174, 1)[:, None].to(tl.float32)
+    tmp178 = tmp176 * tmp177
+    tmp180 = tmp179 * tmp3
+    tmp181 = tmp180.to(tl.float32)
+    tmp182 = tl.broadcast_to(tmp181, [XBLOCK, R0_BLOCK])
+    tmp184 = tl.sum(tmp182, 1)[:, None].to(tl.float32)
+    tmp186 = tmp184 * tmp185
+    tmp188 = tmp187 * tmp3
+    tmp189 = tmp188.to(tl.float32)
+    tmp190 = tl.broadcast_to(tmp189, [XBLOCK, R0_BLOCK])
+    tmp192 = tl.sum(tmp190, 1)[:, None].to(tl.float32)
+    tmp194 = tmp192 * tmp193
+    tmp196 = tmp195 * tmp3
+    tmp197 = tmp196.to(tl.float32)
+    tmp198 = tl.broadcast_to(tmp197, [XBLOCK, R0_BLOCK])
+    tmp200 = tl.sum(tmp198, 1)[:, None].to(tl.float32)
+    tmp202 = tmp200 * tmp201
+    tl.store(out_ptr1 + (x0), tmp10, None)
+    tl.store(out_ptr3 + (x0), tmp18, None)
+    tl.store(out_ptr5 + (x0), tmp26, None)
+    tl.store(out_ptr7 + (x0), tmp34, None)
+    tl.store(out_ptr9 + (x0), tmp42, None)
+    tl.store(out_ptr11 + (x0), tmp50, None)
+    tl.store(out_ptr13 + (x0), tmp58, None)
+    tl.store(out_ptr15 + (x0), tmp66, None)
+    tl.store(out_ptr17 + (x0), tmp74, None)
+    tl.store(out_ptr19 + (x0), tmp82, None)
+    tl.store(out_ptr21 + (x0), tmp90, None)
+    tl.store(out_ptr23 + (x0), tmp98, None)
+    tl.store(out_ptr25 + (x0), tmp106, None)
+    tl.store(out_ptr27 + (x0), tmp114, None)
+    tl.store(out_ptr29 + (x0), tmp122, None)
+    tl.store(out_ptr31 + (x0), tmp130, None)
+    tl.store(out_ptr33 + (x0), tmp138, None)
+    tl.store(out_ptr35 + (x0), tmp146, None)
+    tl.store(out_ptr37 + (x0), tmp154, None)
+    tl.store(out_ptr39 + (x0), tmp162, None)
+    tl.store(out_ptr41 + (x0), tmp170, None)
+    tl.store(out_ptr43 + (x0), tmp178, None)
+    tl.store(out_ptr45 + (x0), tmp186, None)
+    tl.store(out_ptr47 + (x0), tmp194, None)
+    tl.store(out_ptr49 + (x0), tmp202, None)
+    tl.store(out_ptr0 + (x0), tmp8, None)
+    tl.store(out_ptr2 + (x0), tmp16, None)
+    tl.store(out_ptr4 + (x0), tmp24, None)
+    tl.store(out_ptr6 + (x0), tmp32, None)
+    tl.store(out_ptr8 + (x0), tmp40, None)
+    tl.store(out_ptr10 + (x0), tmp48, None)
+    tl.store(out_ptr12 + (x0), tmp56, None)
+    tl.store(out_ptr14 + (x0), tmp64, None)
+    tl.store(out_ptr16 + (x0), tmp72, None)
+    tl.store(out_ptr18 + (x0), tmp80, None)
+    tl.store(out_ptr20 + (x0), tmp88, None)
+    tl.store(out_ptr22 + (x0), tmp96, None)
+    tl.store(out_ptr24 + (x0), tmp104, None)
+    tl.store(out_ptr26 + (x0), tmp112, None)
+    tl.store(out_ptr28 + (x0), tmp120, None)
+    tl.store(out_ptr30 + (x0), tmp128, None)
+    tl.store(out_ptr32 + (x0), tmp136, None)
+    tl.store(out_ptr34 + (x0), tmp144, None)
+    tl.store(out_ptr36 + (x0), tmp152, None)
+    tl.store(out_ptr38 + (x0), tmp160, None)
+    tl.store(out_ptr40 + (x0), tmp168, None)
+    tl.store(out_ptr42 + (x0), tmp176, None)
+    tl.store(out_ptr44 + (x0), tmp184, None)
+    tl.store(out_ptr46 + (x0), tmp192, None)
+    tl.store(out_ptr48 + (x0), tmp200, None)

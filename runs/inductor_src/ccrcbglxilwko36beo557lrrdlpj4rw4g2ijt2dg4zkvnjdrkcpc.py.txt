@@ -1,0 +1,135 @@
+
+import triton
+import triton.language as tl
+
+from torch._inductor.runtime import triton_helpers, triton_heuristics
+from torch._inductor.runtime.triton_helpers import libdevice, math as tl_math
+from torch._inductor.runtime.hints import AutotuneHint, ReductionHint, TileHint, DeviceProperties
+triton_helpers.set_driver_to_gpu()
+
+@triton_heuristics.pointwise(
+    size_hints={'y': 16384, 'x': 8192}, tile_hint=TileHint.DEFAULT,
+    filename=__file__,
+    triton_meta={'signature': {'in_out_ptr0': '*fp32', 'in_ptr0': '*bf16', 'in_ptr1': '*fp32', 'in_ptr2': '*bf16', 'ynumel': 'i32', 'xnumel': 'i32', 'YBLOCK': 'constexpr', 'XBLOCK': 'constexpr'}, 'device': DeviceProperties(type='cuda', index=0, multi_processor_count=78, cc=90, major=9, regs_per_multiprocessor=65536, max_threads_per_multi_processor=2048, max_threads_per_block=1024, warp_size=32), 'constants': {}, 'native_matmul': False, 'enable_fp_fusion': True, 'launch_pdl': False, 'disable_ftz': False, 'configs': [{(0,): [['tt.divisibility', 16]], (1,): [['tt.divisibility', 16]], (2,): [['tt.divisibility', 16]], (3,): [['tt.divisibility', 16]], (4,): [['tt.divisibility', 16]]}]},
+    inductor_meta={'grid_type': 'Grid2D', 'autotune_hints': set(), 'kernel_name': 'triton_poi_fused__to_copy_add_mul_select_silu_silu_backward_slice_backward_transpose_unsqueeze_view_11', 'mutated_arg_names': ['in_out_ptr0'], 'optimize_mem': True, 'no_x_dim': False, 'atomic_add_found': False, 'num_load': 12, 'num_store': 1, 'num_reduction': 0, 'backend_hash': 'D1670D28DE244E2E3F72E33F48DF60470534E9DD0E611D9CD47DE4460C472CC9', 'assert_indirect_indexing': True, 'autotune_local_cache': True, 'autotune_pointwise': True, 'autotune_remote_cache': None, 'force_disable_caches': False, 'dynamic_scale_rblock': True, 'max_autotune': False, 'max_autotune_pointwise': False, 'min_split_scan_rblock': 256, 'spill_threshold': 16, 'store_cubin': False, 'deterministic': False, 'force_filter_reduction_configs': False, 'mix_order_reduction_allow_multi_stages': False, 'are_deterministic_algorithms_enabled': False, 'tiling_scores': {'y': 536870912, 'x': 1611005952}},
+    min_elem_per_thread=0
+)
+@triton.jit
+def triton_poi_fused__to_copy_add_mul_select_silu_silu_backward_slice_backward_transpose_unsqueeze_view_11(in_out_ptr0, in_ptr0, in_ptr1, in_ptr2, ynumel, xnumel, YBLOCK : tl.constexpr, XBLOCK : tl.constexpr):
+    ynumel = 16384
+    xnumel = 4099
+    yoffset = tl.program_id(1) * YBLOCK
+    yindex = yoffset + tl.arange(0, YBLOCK)[:, None]
+    ymask = tl.full([YBLOCK], True, tl.int1)[:, None]
+    xoffset = tl.program_id(0) * XBLOCK
+    xindex = xoffset + tl.arange(0, XBLOCK)[None, :]
+    xmask = xindex < xnumel
+    x2 = xindex
+    y0 = (yindex % 1024)
+    y1 = yindex // 1024
+    y3 = yindex
+    tmp0 = x2
+    tmp1 = tl.full([1, 1], 3, tl.int64)
+    tmp2 = tmp0 >= tmp1
+    tmp3 = tl.load(in_ptr0 + ((-3072) + y0 + 1024*x2 + 4194304*y1), tmp2 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp4 = tmp3.to(tl.float32)
+    tmp5 = tl.load(in_ptr1 + ((-3) + x2 + 4096*y3), tmp2 & xmask, eviction_policy='evict_last', other=0.0)
+    tmp6 = -tmp5
+    tmp7 = libdevice.exp(tmp6)
+    tmp8 = tl.full([1, 1], 1.0, tl.float32)
+    tmp9 = tmp7 + tmp8
+    tmp10 = tl.full([1, 1], 1, tl.int32)
+    tmp11 = (tmp10 / tmp9)
+    tmp12 = tmp11 * tmp8
+    tmp13 = tmp4 * tmp12
+    tmp14 = tmp8 - tmp12
+    tmp15 = tmp5 * tmp14
+    tmp16 = tmp15 + tmp8
+    tmp17 = tmp13 * tmp16
+    tmp18 = tl.load(in_ptr2 + (tl.broadcast_to(3 + 4*y0, [YBLOCK, XBLOCK])), tmp2 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp19 = tmp18.to(tl.float32)
+    tmp20 = tmp17 * tmp19
+    tmp21 = tl.full(tmp20.shape, 0.0, tmp20.dtype)
+    tmp22 = tl.where(tmp2, tmp20, tmp21)
+    tmp23 = tl.full([1, 1], 0.0, tl.float32)
+    tmp24 = tl.where(tmp2, tmp22, tmp23)
+    tmp25 = tl.full([1, 1], 2, tl.int64)
+    tmp26 = tmp0 >= tmp25
+    tmp27 = tl.full([1, 1], 4098, tl.int64)
+    tmp28 = tmp0 < tmp27
+    tmp29 = tmp26 & tmp28
+    tmp30 = tl.load(in_ptr0 + ((-2048) + y0 + 1024*x2 + 4194304*y1), tmp29 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp31 = tmp30.to(tl.float32)
+    tmp32 = tl.load(in_ptr1 + ((-2) + x2 + 4096*y3), tmp29 & xmask, eviction_policy='evict_last', other=0.0)
+    tmp33 = -tmp32
+    tmp34 = libdevice.exp(tmp33)
+    tmp35 = tl.full([1, 1], 1.0, tl.float32)
+    tmp36 = tmp34 + tmp35
+    tmp37 = tl.full([1, 1], 1, tl.int32)
+    tmp38 = (tmp37 / tmp36)
+    tmp39 = tmp38 * tmp35
+    tmp40 = tmp31 * tmp39
+    tmp41 = tmp35 - tmp39
+    tmp42 = tmp32 * tmp41
+    tmp43 = tmp42 + tmp35
+    tmp44 = tmp40 * tmp43
+    tmp45 = tl.load(in_ptr2 + (tl.broadcast_to(2 + 4*y0, [YBLOCK, XBLOCK])), tmp29 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp46 = tmp45.to(tl.float32)
+    tmp47 = tmp44 * tmp46
+    tmp48 = tl.full(tmp47.shape, 0.0, tmp47.dtype)
+    tmp49 = tl.where(tmp29, tmp47, tmp48)
+    tmp50 = tl.where(tmp29, tmp49, tmp23)
+    tmp51 = tmp24 + tmp50
+    tmp52 = tl.full([1, 1], 1, tl.int64)
+    tmp53 = tmp0 >= tmp52
+    tmp54 = tl.full([1, 1], 4097, tl.int64)
+    tmp55 = tmp0 < tmp54
+    tmp56 = tmp53 & tmp55
+    tmp57 = tl.load(in_ptr0 + ((-1024) + y0 + 1024*x2 + 4194304*y1), tmp56 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp58 = tmp57.to(tl.float32)
+    tmp59 = tl.load(in_ptr1 + ((-1) + x2 + 4096*y3), tmp56 & xmask, eviction_policy='evict_last', other=0.0)
+    tmp60 = -tmp59
+    tmp61 = libdevice.exp(tmp60)
+    tmp62 = tl.full([1, 1], 1.0, tl.float32)
+    tmp63 = tmp61 + tmp62
+    tmp64 = tl.full([1, 1], 1, tl.int32)
+    tmp65 = (tmp64 / tmp63)
+    tmp66 = tmp65 * tmp62
+    tmp67 = tmp58 * tmp66
+    tmp68 = tmp62 - tmp66
+    tmp69 = tmp59 * tmp68
+    tmp70 = tmp69 + tmp62
+    tmp71 = tmp67 * tmp70
+    tmp72 = tl.load(in_ptr2 + (tl.broadcast_to(1 + 4*y0, [YBLOCK, XBLOCK])), tmp56 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp73 = tmp72.to(tl.float32)
+    tmp74 = tmp71 * tmp73
+    tmp75 = tl.full(tmp74.shape, 0.0, tmp74.dtype)
+    tmp76 = tl.where(tmp56, tmp74, tmp75)
+    tmp77 = tl.where(tmp56, tmp76, tmp23)
+    tmp78 = tmp51 + tmp77
+    tmp79 = tl.full([1, 1], 4096, tl.int64)
+    tmp80 = tmp0 < tmp79
+    tmp81 = tl.load(in_ptr0 + (y0 + 1024*x2 + 4194304*y1), tmp80 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp82 = tmp81.to(tl.float32)
+    tmp83 = tl.load(in_ptr1 + (x2 + 4096*y3), tmp80 & xmask, eviction_policy='evict_last', other=0.0)
+    tmp84 = -tmp83
+    tmp85 = libdevice.exp(tmp84)
+    tmp86 = tl.full([1, 1], 1.0, tl.float32)
+    tmp87 = tmp85 + tmp86
+    tmp88 = tl.full([1, 1], 1, tl.int32)
+    tmp89 = (tmp88 / tmp87)
+    tmp90 = tmp89 * tmp86
+    tmp91 = tmp82 * tmp90
+    tmp92 = tmp86 - tmp90
+    tmp93 = tmp83 * tmp92
+    tmp94 = tmp93 + tmp86
+    tmp95 = tmp91 * tmp94
+    tmp96 = tl.load(in_ptr2 + (tl.broadcast_to(4*y0, [YBLOCK, XBLOCK])), tmp80 & xmask, eviction_policy='evict_last', other=0.0).to(tl.float32)
+    tmp97 = tmp96.to(tl.float32)
+    tmp98 = tmp95 * tmp97
+    tmp99 = tl.full(tmp98.shape, 0.0, tmp98.dtype)
+    tmp100 = tl.where(tmp80, tmp98, tmp99)
+    tmp101 = tl.where(tmp80, tmp100, tmp23)
+    tmp102 = tmp78 + tmp101
+    tl.debug_barrier()
+    tl.store(in_out_ptr0 + (x2 + 4128*y3), tmp102, xmask)
