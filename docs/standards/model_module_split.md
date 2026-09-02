@@ -9,8 +9,8 @@ source: b0-8（fb 转达用户方向 2026-09-02，pair tilerl）。行号取自 
 # 把模型切出去：一个结构实验 = 一个类 + 一个 Cfg 开关
 
 **目标不是"文件更小"，是让一次奇葩结构实验的成本等于一个类加一个开关。**
-（搬迁量 382 行 = 13.9%，不是最初写的 22%——这个数字不支撑"文件更小"，
-所以更不该拿它当理由。）
+（搬迁量 363 行 = 13.2%，不是最初写的 22%——这个数字不支撑"文件更小"，
+所以更不该拿它当理由。**实测净加 60 行**，见 §5。）
 
 用户点名的例子是 DFlash 式 draft head 共享主干——那件事今天要改 2,751 行文件里的
 模型定义，而模型定义和训练环、信号处理绞在一起。
@@ -40,19 +40,27 @@ HF transformers 的 `modeling_*.py` 一个文件一个架构、torchtitan 的 `m
 | `RMSNorm` | 278-287 | 归一化 |
 | `rms_scale` | 288-294 | `AttnRes` 用的 gain-free RMS |
 | `DeltaRecurrence` | 295-357 | **KDA block**；状态在类内部（见 §2） |
-| `GatedMLA` | 358-414 | **gated-MLA block**，NoPE |
+| `GatedMLA` | 358-408 | **gated-MLA block**，NoPE |
 | `SwiGLU` | 631-647 | FFN |
 | `Source` | 648-661 | `AttnRes` 的输入契约（`v` + `scale`） |
 | `AttnRes` | 662-688 | 深度注意力 |
 | `Block` | 689-708 | **接口所在，见 §2** |
 | `remap_legacy_state_dict` | 709-731 | 老 ckpt 键名重映射 |
-| `HybridLM` | 732-875 | 模型本体，含 FoNE head（`:757-758`） |
+| `HybridLM` | 732-862 | 模型本体，含 FoNE head（`:757-758`） |
 
-**合计 382 行**（十个区间逐个相加），占 train.py 2,751 行的 13.9%。
+**合计 363 行**（十个区间逐个相加），占 train.py 2,751 行的 13.2%。
 
 **不要用首尾相减**：278-875 的跨度是 598 行，但 FP8 那一族（415-630，216 行）夹在
 中间且留守（见下），598 - 216 = 382。**本页前三版写的"约 600 行"就是这么错的**——
 把跨度当成了搬迁量，而跨度里有一块不搬。
+
+**382 也还是错的，第四版才对（363）**：`HybridLM` 的区间原写 732-875、`GatedMLA` 原写
+358-414，**真实结束行是 862 和 408**。865-873 是 "Muon optimizer" 段注释加
+`POLAR_EXPRESS`（Muon 的），411-412 是 FP8 段注释加 `_FP8_MAX_E4M3`（FP8 的），
+**四段都属于留守的代码**。按 382 切会直接产生 `NameError: POLAR_EXPRESS` 和四条
+`F821 Undefined name _FP8_MAX_E4M3`——这两个错正是这么发现的。
+**一个区间有两端，而校验脚本只验起始行**（`732` 确实是 `class HybridLM`，所以它放行）。
+脚本现在两端都验，并会点名被吞掉的那个符号。
 
 ### 留在 `train.py`
 
@@ -117,11 +125,19 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 那是"配置说开了、实际没开"的经典形状。**设计要求：`Block` 基类提供默认
 `sublayers()`，子类不实现就用默认；`AttnRes` 遇到 `None` 时抛，不跳过。**
 
-**抛在 `AttnRes.__init__`，不在 `forward`**（tilerl 定，2026-09-02）。理由是这个条件
+**抛在构造期，不在 `forward`**（tilerl 定，2026-09-02）。理由是这个条件
 **静态可判**：哪些 block 实现了 `sublayers()` 在模型构造完就确定，不随 step 变。
 构造期抛，错误出现在 step 0 之前、栈里带着那个 block 的类名；forward 里抛，最好
 情况 step 1 崩，**最坏情况某个条件分支上的 block 到 step 8000 才第一次被问到**。
 **这条规则存在的理由正是"配置说开了、实际没开"不能悄悄跑下去，那就该在开跑前喊。**
+
+**落点是 `HybridLM.__init__`，不是 `AttnRes.__init__`（实现时更正，fb 2026-09-02 接受）。**
+`AttnRes.__init__` 的签名是 `(self, d, dyn_q=False, rank=64)`——**它手上没有任何 block
+引用，判不了"这个 block 有没有 sublayers()"**。`HybridLM.__init__` 里 `attn_res` 和
+`self.blocks` 同时在作用域内，那才是判据能看见它所需事实的地方，而且仍满足 tilerl 的
+两条要求：**step 0 之前抛，消息里带那个 block 的类名**。
+**判据必须落在能看见它所判事实的作用域里**——写页面时我按"谁的契约"选了落点，
+而正确的选法是"谁看得见证据"。
 
 ## 3. `test_arch_compat` 必须覆盖什么
 
@@ -129,7 +145,7 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 `remap_legacy_state_dict`（709）的存在证明这个风险已经实现过一次
 （`w1|w3 -> w13`、`k_up|v_up -> kv_up` 等键名融合）。
 
-**四条，前两条是硬要求：**
+**五条，前两条是硬要求，第五条是静态的：**
 
 1. **老 ckpt 往返**：加载一个搬迁前存的 checkpoint，`load_state_dict(strict=True)`
    必须过。**`strict=True` 是要点**——`strict=False` 会把"少加载了一半权重"读成成功。
@@ -149,6 +165,17 @@ def sublayers(self, cu=None):           # AttnRes 用：(深度注意力, norm, 
 4. **import 方向单向**：`model.py` 的 import 集合里没有 `train`。
    **一行 `assert "train" not in sys.modules` 式的检查即可**，它防的是下一个人
    "顺手" import 回去。
+5. **`ruff check --select F821,F401` 在拆分后的两个文件上为零**（fb 加，2026-09-02）。
+   **理由是实测：前四条全绿的同时 `_FP8_MAX_E4M3` 是未定义的。** `test_arch_compat`
+   跑的路径不进 FP8，所以它 exit 0；是 hook 里的 ruff F821 一秒指出来的（同一次还
+   抓到 `LigerFusedLinearCrossEntropyLoss` 被我连同 kernel try-import 块一起删掉，
+   而 FLCE 的 loss 路径留在 `train.py`）。
+   **报错的是留下来的那一半，不是搬走的那一半**（e1 复现更正，2026-09-02）：坏切割下
+   `ruff --select F821` 在 `model.py` 上是 All checks passed，因为常量被搬**进**了它；
+   六个使用点留在 `train.py`。**所以这道检查必须跑两个文件**——只查新文件会全绿。
+   **前四条都作用在"搬走的代码"上，对"留下来但丢了名字的代码"一句话说不出**——
+   这个缺口不是靠增加动态用例能补的，只能靠一道静态检查。F401 同时挡住
+   re-export 写漏和多写。
 
 ## 4. 下游 import 不能断
 
@@ -176,11 +203,15 @@ ddp_even_len, doc_cu_seqlens, opt_snapshot, save_checkpoint, set_schedule, setup
 
 **验收就是 fb 的那句**：行数净减，且 59 门检查结论完全不变。
 
-- `train.py` 减 382 行，`model.py` 加 382 行 + re-export 约 8 行（6 个符号 + import +
-  `__all__`）→ **净加约 8 行，不是净减。** 这一点必须提前说清，不要在验收时才发现。
-  （前三版这里写"净加 5 行"，算法没错，错在搬迁量的前提是 600 而不是 382，
-  re-export 的符号数是 2 而不是 6。**推导继承前提的状态**，见
-  `docs/standards/writing.md`。）
+- **实测（`5add1c8`）**：`train.py` 2,751 → 2,369（**-382**），`model.py` **+442**，
+  **净加 60 行**。不是估的净加 8。
+- **60 从哪来**：re-export **19 行**（13 个符号，不是 6）、`model.py` 自己的 docstring 与
+  import 头 **62 行**（其中 kernel 的 try-import 块约 35 行）、`AttnRes` 新守卫约 19 行。
+  **没有重复**：`train.py` 现在 `flash_attn` 的 import 为零，`HAS_FA`／`SOFTCAP`／
+  `chunk_kda` 全部来自 `model`。
+- **前三版这里的估算全部作废，而算法一次都没错**：写"净加 5 行"时前提是搬 600、
+  re-export 2 个符号；写"净加 8 行"时前提是搬 382、re-export 6 个符号。
+  **推导继承前提的状态**（`docs/standards/writing.md`）——三次算对，三次前提错。
 - **真正的净减来自第二步**：切出去之后，`Block`／`HybridLM` 里那些
   `getattr(cfg, "attn_res", False)` 式的防御性读取可以收敛成显式参数。
   **但那是行为可能变化的改动，不属于这次搬迁**——按 fb 的话，那是另一个检查。
