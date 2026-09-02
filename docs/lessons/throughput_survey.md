@@ -23,8 +23,9 @@ train.py:164(`36328ab`)。原因是可复现的:**我只读了 `facts/efficiency
 | 量 | 值 | 出处 |
 |---|---|---|
 | 当前 500M 运行 | 12K tok/s/gpu, MFU 12%, batch 32 accum 1, grad_ckpt ON, FP8, 8 卡 | 运行日志(2026-09-02) |
-| 200M 参照 | **72K tok/s/gpu, MFU 30%, micro-batch 16 accum 2, no grad_ckpt, 7 卡**(实测) | `eff.microbatch_32_oom` |
-| 200M 转述值(勿用) | 73K, MFU 31%, batch 32, 8 卡 | `eff.fb_mfu`,已降为 recorded:b32 被实测否决 |
+| 200M 参照(本轮实测,首选) | **77K tok/s/gpu, MFU 32%, micro-batch 16 accum 2, no grad_ckpt, 8 卡, peak 49.5 GiB** | p200m attempt 3, `5342b61`, step 30, 2026-09-02 12:05Z |
+| 200M 早前实测(7 卡) | 72K tok/s/gpu, MFU 30%, micro-batch 16 accum 2 | `eff.microbatch_32_oom` |
+| 200M 转述值(勿用) | 73K, MFU 31%, batch 32, 8 卡 | `eff.fb_mfu`,已降为 recorded:b32 被实测否决,73K 未独立复测 |
 | 稳态 step 分解 | busy 1600.25 ms / span 1676.63 ms,idle 76.38 ms(95.44% busy) | `eff.steady_state_composition` |
 | fp8 GEMM | 493.1 ms/step,**已在本 pod 实测 fp8 峰值的 98.2%** | `eff.fp8_gemm_at_realizable_peak` |
 | H20 实测 fp8 峰值 | 279.6 TFLOPS(厂商标 296) | 同上 |
@@ -96,11 +97,15 @@ L=32 batch4:OFF 2069.5 ms / 54.50 GiB,ON 2309.4 ms / 13.36 GiB;按倍增找最�
 (56.38 GiB),ON 装下 16(49.18 GiB)——**4 倍 batch 而峰值还低 7.2 GiB**。存储的激活占 54.5 GiB 里
 约 41 GiB。
 
-对本轮两条新启动行的直接结论:200M(L12)用 `--no-grad_ckpt`。但**基线可比这句话要小心**:实测的
-200M 基线是 micro-batch **16** accum 2、**7 卡**、72K(`eff.microbatch_32_oom`),不是
-`eff.fb_mfu` 转述的 batch 32、8 卡、73K——后者的 b32 已被同一条实测否决(200M b32a1 在 seq 4096
-fp8 下 OOM,93.8/95.2 GB)。今天 p200m 按 b32 起,OOM 两次。要真可比,启动行该是 `--batch 16
---accum 2`;按 b32 起就既不可比也跑不起来。300M(L18)在两者之间且**从未实测**,显存探针该进冲刺清单。
+对本轮两条新启动行的直接结论,现在已经由实测收口:200M(L12)用 `--no-grad_ckpt --batch 16
+--accum 2`,`5342b61` 就是这条,attempt 3 跑起来了并读到 77K/MFU 32%/peak 49.5 GiB。**b32 不是
+"不可比",是装不下**:attempt 1/2 按 b32 起,两次 OOM,与 `eff.microbatch_32_oom`(08-31,
+b32a1 在 seq 4096 fp8 下 93.8/95.2 GB)一致。这一点 argparse 看不见——我早先对那两条行报了
+PARSED OK 并列出解析值,而显存不是解析属性,parser 绿和跑得起来是两个判据。
+
+300M(L18)不能照抄 200M 的设置:L12 在 b32 就装不下,L18 更不会,所以 b16 无重算大概也装不下。
+间隙 A/B 因此改成 **grad_ckpt b16a2 vs no-grad_ckpt b8a4**(两臂同 tokens/step),让实测决定,
+而不是从 L12 外推。
 
 **选择性**(只 ckpt 一部分层)本栈未测。L=32 的 1.116× 已经很便宜,而 L=18 可能连 ckpt 都不需要,
 所以选择性重算的收益空间被两头挤掉了。**未测,低优先**。
@@ -166,13 +171,18 @@ grep,不是一份 fact 表。
 | 运行 | 形状 | grad_ckpt | 预期 | 依据 |
 |---|---|---|---|---|
 | 500M(当前) | d1024/L32,493.64M | ON | 12K tok/s/gpu, MFU 12% | 运行日志 |
-| 200M | d1024/L12,206.13M | **OFF** | 72K,但需 b16/a2 才可比 | `eff.microbatch_32_oom`(实测,7 卡) |
-| 300M | d1024/L18,293.05M | OFF | 未测,介于两者 | 无 |
+| 200M | d1024/L12,206.13M | **OFF** | **77K, MFU 32%**(实测) | p200m attempt 3, b16a2, 8 卡 |
+| 300M | d1024/L18,293.05M | 待定 | 未测 | 间隙 A/B:gc b16a2 vs no-gc b8a4 |
 
-3× 来自 **L12 无重算 vs L32 重算**这个组合,不是任何一个内核技巧。500M 的 12K 和 200M 的 73K
-差约 6 倍,而两者的差就是深度加 grad_ckpt(`eff.grad_ckpt_inverts_with_depth`:L=12 时 ckpt 慢
-2.4×,L=32 时只慢 1.116×)。这也是为什么 200M 那条启动行必须带 `--no-grad_ckpt`——它是 73K
-那次测量的设置,换掉就失去可比性。
+3× 来自 **L12 无重算 vs L32 重算**这个组合,不是任何一个内核技巧,而且现在有了**本轮自己的实测**:
+p200m attempt 3(`5342b61`,12:05:39Z 起,八卡,micro-batch 16 accum 2,no grad_ckpt)在 step 30
+读到 **77K tok/s/gpu, MFU 32%, peak 49.5 GiB, loss 5.77**。对比当前 500M 的 12K/MFU 12%,
+比值 6.4×,而两者的差就是深度加 grad_ckpt(`eff.grad_ckpt_inverts_with_depth`:L=12 时 ckpt 慢
+2.4×,L=32 时只慢 1.116×)。
+
+77K 这个数**取代**上面两行里的 73K 作为 200M 参照:它是本栈自己在八卡上测的,而 73K 来自 briefing
+且从未独立复测(见 `eff.fb_mfu` 的 boundary 逐字段说明)。b32 那条路走不通——attempt 1/2 按 b32 起,
+两次 OOM,与 `eff.microbatch_32_oom`(08-31)一致。
 
 已 ship 的两项仍有一件事没做完:`chunk_size=32` 的 +19.1% 是**单层隔离**测的,七卡真模型上
 还没确认(train.py:176 自己的注释)。合并后的运行应当把它读出来。
@@ -183,7 +193,7 @@ grep,不是一份 fact 表。
 |---|---|
 | ZeRO-1 | 上界是 8 卡通信残余 6.25% 的一部分;那 5K 尚未归因,先归因更便宜 |
 | 选择性重算 | L=32 全 ckpt 只 1.116×,L=18 可能不需要 ckpt,两头挤掉空间 |
-| L18 batch32 显存 | 需要探针;`eff.microbatch_32_oom` 是 500M 形状的结果,不可外推 |
+| L18 显存 | 间隙 A/B 会答(gc b16a2 vs no-gc b8a4)。注:`eff.microbatch_32_oom` 是 **200M/L12** 的结果(此表早前误写 500M),L12 b32 都不装,L18 不可乐观外推 |
 | batch 48-64 | `eff.batch_ceiling` 明确标 untested;32 no-ckpt=90K,72 无 ckpt OOM |
 
 ## 引用说明
