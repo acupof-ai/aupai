@@ -261,7 +261,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 11 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 17 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 18 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §70 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 6 | §7 §13 §25 §27 §51 §59 |
 | State the vision before the number; outside it, label unmeasured, not absent | 10 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 |
@@ -286,7 +286,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Rule | Enforced by |
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
-| Vocabulary identity | manual: enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check |
+| Vocabulary identity | manual: enforced at load since 7aacbac (2026-09-03): sft_math.py refuses a vocab_id mismatch and prints the matching id; before 7aacbac the guard key was `vocab` and the assert key `vocab_id`, so the check never fired (shape §70) |
 | GPUs | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
