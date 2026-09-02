@@ -64,6 +64,26 @@ MEASURED = {
     "ppl.py": ([8, 8], "killed during checkpoint load; had NOT reached a token cache"),
 }
 
+# WALL-CLOCK ON A DEDICATED CARD -- A DIFFERENT QUANTITY FROM MEASURED ABOVE, kept in its own
+# table for exactly that reason. MEASURED holds training-throughput dips: seconds of TRAINING lost
+# while an eval shares the machine, which is what the co-residency rule turns on. The numbers here
+# are how long the eval itself takes with a card to itself, which is what you need to decide
+# whether to wait for it or run it beside something. Putting 970s into MEASURED would have claimed
+# lambada_en costs 970 seconds of training time; it costs 970 seconds of YOUR time.
+#
+# Both are needed and neither substitutes: an eval can be quick and disruptive (score_matrix's
+# likelihood metrics) or slow and gentle (a generative eval that leaves the GPU 74% idle).
+WALL_SECS = {
+    "lambada_en.py": (970.7, 5153, "generative, ONE ITEM AT A TIME -- eval/lambada_en.py:286 "
+                      "loops greedy_word + target_nll_per_byte per item with no batching, so the "
+                      "card sits at ~26% util for 16 minutes. Measured 2026-09-03 in b0-17's "
+                      "readout (runs/b0_17_readout.log, ckpt_ab_untiehead_untiehead.pt.ep1) on a "
+                      "dedicated card 3. The log goes SILENT for the whole 16 min, which reads as "
+                      "a hang: py-spy showed the parent blocked in subprocess.communicate at "
+                      "score_matrix.py:269, i.e. working. 5153 items, not the 1000 I assumed "
+                      "before reading n_items."),
+}
+
 # HOST BYTES PER TOKEN CACHE, measured on the pod 2026-09-03:
 #   ~/bin/pod "ls -la /data00/tokens_*.pt | awk '{print \$5, \$9}'"
 # 22 caches, 247.8 GB total. This is the quantity the co-residency rule turns on, and the one
@@ -165,8 +185,8 @@ def main():
     print(f"Control: the run's own 2.1GB checkpoint save + val costs {ctrl:.0f}s, every 500 "
           f"steps, with no eval running.")
     print(f"An eval below {ctrl:.0f}s costs less than the run already spends on itself.\n")
-    print(f"{'eval':28s} {'ckpt':5s} {'host GB':>8s} {'gen':4s} {'measured':>9s}  note")
-    print("-" * 108)
+    print(f"{'eval':28s} {'ckpt':5s} {'host GB':>8s} {'gen':4s} {'measured':>9s} {'wall':>9s}  note")
+    print("-" * 118)
     mixes = sorted(glob.glob(os.path.join(ROOT, "data", "mix_*.json")))
     live = [m for m in mixes if os.path.basename(m).startswith(("mix_500m", "mix_200m"))]
     ref = live[0] if live else (mixes[0] if mixes else None)
@@ -182,13 +202,24 @@ def main():
             gb = "~2"
         else:
             gb = "-"
+        wall = WALL_SECS.get(name)
+        wcol = f"{wall[0]:.0f}s" if wall else "-"
         print(f"{name:28s} {'yes' if c['ckpt_load'] else '-':5s} "
               f"{gb:>8s} {'yes' if c['generative'] else '-':4s} "
-              f"{got:>9s}  {note}")
+              f"{got:>9s} {wcol:>9s}  {note or (wall[2] if wall else '')}")
     unmeasured = [n for n, _, s, _ in rows() if s is None]
-    print(f"\n{len(unmeasured)} of {len(rows())} evals are NOT MEASURED -- listed as '-', "
-          f"never as zero:")
+    print(f"\n{len(unmeasured)} of {len(rows())} evals have NO THROUGHPUT-DIP measurement -- "
+          f"listed as '-' in the measured column, never as zero:")
     print("  " + ", ".join(unmeasured))
+    # An eval with a wall time but no dip is still unmeasured IN THE COLUMN THAT MATTERS FOR
+    # CO-RESIDENCY, and saying "measured" of it would answer the wrong question -- so it stays in
+    # the list above and the gap is named here instead of quietly closed.
+    wall_only = sorted(n for n in WALL_SECS if n in unmeasured)
+    if wall_only:
+        print(f"\n{len(wall_only)} of those DO have a dedicated-card wall time (the 'wall' column) "
+              f"but no throughput dip: {', '.join(wall_only)}.\nThat is not the same measurement: "
+              f"wall time says how long you wait, the dip says what it costs a run beside it. An "
+              f"eval can be slow and gentle (26% util for 16 min) or quick and disruptive.")
     print("\nThe three measured points do not rank by metric class. score_matrix runs four "
           "likelihood\nmetrics for 46s -- cheaper than the control. l1_fewshot is "
           "generative and costs 209s. ppl\nwas killed at 109s before touching a cache; the "
