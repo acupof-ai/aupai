@@ -1,14 +1,19 @@
 ---
 question: 业界提 tok/s 的方法逐项对本栈(KDA+MLA、FP8 torchao、DDP 8×H20、seq 4096)给预期收益和改动代价
 status: open
-source: facts/efficiency.json 实测为主 + 外部来源。e1,2026-09-02,60 分钟冲刺
+source: facts/efficiency.json 实测 + train.py 实读(两者都必须查,见文首)。e1,2026-09-02,60 分钟冲刺
 ---
 
 # 训练提速方法逐项对照
 
-**这份文档大部分不是提案,是索引。** fb 点的八项里五项本栈已经实测过,其中三项已被自己的
-数据否决。把已测的结论重新包装成"建议尝试"是这份文档最容易犯、也最贵的错——它会让人第二次
-花钱买同一个答案。所以每一项先标状态,再谈还剩什么。
+**这份文档不是提案,是索引:八项全部已测、已 ship,或结构性不适用,内核层没有剩余项。**
+把已测的结论重新包装成"建议尝试"会让人第二次花钱买同一个答案,所以每一项先标状态,再谈还剩什么。
+
+**这份草稿自己犯过一次那个错,值得写在最前面。** 第一版把 `chunk_size=32` 和 flash 缝的
+`_dynamo.disable` 列为"本轮可试、性价比最高",而两者早已分别在 train.py:174(`43c4110`)和
+train.py:164(`36328ab`)。原因是可复现的:**我只读了 `facts/efficiency.json`,没读 `train.py`。**
+一条 fact 记录的是"这个杠杆值多少",不**是**"它有没有被拉下去",而我把前者读成了后者。
+判据是一行 grep,不是一份 fact 表——这一条对任何以 facts 文件为唯一输入的调研都成立。
 
 标注口径:**已测**(本栈有实测数)/ **已否决**(实测后 NO-SHIP)/ **未测**(本栈没数,可试)/
 **不适用**(结构性,附原因)。收益一律按本轮实测基线折算,不引用厂商峰值。
@@ -37,11 +42,12 @@ idle 的 72%,其中 CPU 编译/guard 时间 69.3 ms/step。步 260 的重编译�
 (`eff.steady_state_composition`)。
 
 已有 SHIP CANDIDATE:把 `flash_attn_varlen_func` 包进 `torch._dynamo.disable`,flash 重编译
-70 → **0**,总重编译降 85%,数值中性(`eff.seam_dynamo_disable`)。
+70 → **0**,总重编译降 85%,数值中性(`eff.seam_dynamo_disable`)。**已 ship**:train.py:164
+(`36328ab`)。本轮没有剩余动作。
 
 **这一项最重要的一句话是它的验收方式**:两臂 tok/s 都是 81K,**完全一样**。一个恒定的税对稳态
 吞吐不可见,只看 tok/s 会把这个修复判成"没用"——当初把平的 77K 读成"重编译税不存在"就是这么错的。
-所以本轮要试它必须用 trace 判据,不能用 tok/s。
+这条判据教训对后面任何一次内核修复仍然有效,即使这一项本身已经合了。
 
 CUDA graphs:**不适用**。doc-mask 的动态 cu_seqlens 形状让 `mode=max-autotune` 已被实测为不可用
 (`eff.max_autotune_dynamic_shape_noship`),graph capture 对动态形状是同一堵墙。要用得先放弃
@@ -115,17 +121,20 @@ static_graph=False 无变化,bucket_view=False 无变化)。
 ### 7. fla 内核参数 — 一项已测可用,一项被 upstream 封顶
 
 `chunk_size=32`:实测 fla 核 T=4096 时 **-19.1%**(12.12 → 9.81 ms),T=1024 -17.8%,T=2048 -18.2%。
-是 fla 支持的 kwarg({32,64}),train.py **没传**,默认 64。折算到 in-model fla 组(~102 ms 的
-128.1 ms DeltaRecurrence)约 **19.5 ms/step = 整步 978.5 ms 的 2.0%**(`eff.kda_chunk_size_32`)。
-数值已验:每步 loss 差 ≤0.0017,无增长,符号振荡(`eff.chunk_size_parity`)。
-**本轮可试,一行改动,是本清单里性价比最高的一项。**
+折算到 in-model fla 组约 19.5 ms/step = 整步 978.5 ms 的 2.0%(`eff.kda_chunk_size_32`)。数值已验:
+每步 loss 差 ≤0.0017,无增长,符号振荡(`eff.chunk_size_parity`)。
+
+**已 ship**:`Cfg.chunk_size = 32`(train.py:174,`43c4110`),经 :301 → :353 传进 `chunk_kda`。
+本轮没有剩余动作。train.py:176 的注释还留了一句我这份草稿漏掉的限定:**那 +19.1% 是单层隔离
+测的,不是七卡真模型**,合并后的运行必须自己把它显示出来——所以这一项的正确状态是"已 ship,
+待真模型确认",不是"可试"。
 
 `num_warps`:fla 把 KDA backward 的 autotune 在 Hopper 上封在 [2,4],我们的 H20 吃不到更大的配置
 (`eff.kda_num_warps_capped_on_h20`)。**不适用**(需改 upstream)。
 
 三个"KDA 是瓶颈"的假设都已被实测**否决**:并行度不足(`eff.kda_parallelism_not_the_bottleneck`)、
 occupancy 受限(`eff.kda_occupancy_bound`,三个独立测量,时间随 B*h 线性)。所以 KDA 侧除
-chunk_size 外没有已知空间。
+chunk_size 外没有已知空间,而 chunk_size 已经在里面了。
 
 ### 8. 通信/计算重叠 — 见第 6 项;另一类重叠已被否决
 
@@ -142,15 +151,27 @@ gap 在 5 µs 以下、合计只有 10.2 ms,而最大的 20 个 gap 合计 164.9
 
 ## 本轮该做什么
 
-按"已测收益 / 改动代价"排,只列两项,因为其余都已测尽或不适用:
+**内核层没有剩余项。** 八项全部已测、已 ship 或结构性不适用——包括我这份草稿原本列为"可做"
+的两项(`chunk_size=32` 和 flash 缝的 `_dynamo.disable`),它们已经分别在 train.py:174 和 :164。
+草稿的错误值得写下来,因为它是可复现的:**我只读了 `facts/efficiency.json`,没读 `train.py`。**
+一条 fact 记录的是"这个杠杆值多少",不是"它有没有被拉下去",而我把前者读成了后者。判据是一行
+grep,不是一份 fact 表。
 
-1. **`chunk_size=32` 传进 fla** — +2.0% 整步,一行,数值已验(≤0.0017)。
-2. **`_dynamo.disable` 包 flash 缝** — 消掉 54.9 ms/step 的 72% 稳态 idle,数值中性;
-   **验收必须用 trace,tok/s 两臂相同**。
+所以本轮唯一的提速来源是**形状**:
 
-两项都不是 3×。3× 的来源不在这份清单里,而在 stop_window 文档已经写下的那条:
-**500M 的 12K vs 200M 的 73K 差 6 倍,而两者的差是 grad_ckpt + 深度**。本轮真正的提速动作是
-跑 200M(L12,no-grad_ckpt,73K 基线可比)和 300M(L18),不是在 500M 上找 2%。
+| 运行 | 形状 | grad_ckpt | 预期 | 依据 |
+|---|---|---|---|---|
+| 500M(当前) | d1024/L32,493.64M | ON | 12K tok/s/gpu, MFU 12% | 运行日志 |
+| 200M | d1024/L12,206.13M | **OFF** | 73K 基线可比 | `eff.fb_mfu` 同形状同设置 |
+| 300M | d1024/L18,293.05M | OFF | 未测,介于两者 | 无 |
+
+3× 来自 **L12 无重算 vs L32 重算**这个组合,不是任何一个内核技巧。500M 的 12K 和 200M 的 73K
+差约 6 倍,而两者的差就是深度加 grad_ckpt(`eff.grad_ckpt_inverts_with_depth`:L=12 时 ckpt 慢
+2.4×,L=32 时只慢 1.116×)。这也是为什么 200M 那条启动行必须带 `--no-grad_ckpt`——它是 73K
+那次测量的设置,换掉就失去可比性。
+
+已 ship 的两项仍有一件事没做完:`chunk_size=32` 的 +19.1% 是**单层隔离**测的,七卡真模型上
+还没确认(train.py:176 自己的注释)。合并后的运行应当把它读出来。
 
 ## 未测清单(留给下一轮,附为什么现在不做)
 
