@@ -260,6 +260,50 @@ def score(model, arm, kept, device, batch, pad_id):
     return tot_loss, tot_tok
 
 
+def control_chatml_ids(model_dir):
+    """The ChatML ids this file's control tokenizer produces, by the base-dir + re-add path.
+
+    Separate function so the scorer and the agreement check below cannot drift apart.
+    """
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(model_dir)
+    tok.add_special_tokens({"additional_special_tokens": [IM_START, IM_END]})
+    return {t: tok.convert_tokens_to_ids(t) for t in (IM_START, IM_END)}
+
+
+def check_control_ids_agree(model_dir, ckpt_dir):
+    """Refuse if the checkpoint's own tokenizer disagrees with base-dir + re-add.
+
+    WHY THIS EXISTS. The keep-set is emitted with no checkpoint on hand (a CPU step -- see
+    heldout_crossarm.sh), so it can only tokenize via base dir + add_special_tokens. The
+    scorer then loads a TRAINED checkpoint that shipped its own tokenizer. Nothing made
+    those two agree; `sft_hf_control.py:302` records `chatml_token_ids` in meta.json
+    precisely because "an id assigned at run time is not reconstructable from the config
+    afterwards", and this file never read it.
+
+    Today they do agree (50277/50278 measured on pythia160m_lr3e-5.hf, 2026-09-03Z), so
+    this changes no number. That is the point: an id collision would move every completion's
+    stop symbol to a token the model never trained on and the loss would just come out
+    somewhat worse -- a wrong number, not a crash. Compare, don't assume.
+    """
+    import json
+    from transformers import AutoTokenizer
+    ours = control_chatml_ids(model_dir)
+    saved = AutoTokenizer.from_pretrained(ckpt_dir)
+    theirs = {t: saved.convert_tokens_to_ids(t) for t in (IM_START, IM_END)}
+    bad = [f"{t}: scorer {ours[t]} vs checkpoint {theirs[t]}"
+           for t in (IM_START, IM_END) if ours[t] != theirs[t]]
+    # meta.json is a third witness and may be absent (an older point, or a hand-copied dir):
+    # absent is fine, present-and-different is not.
+    meta_p = ckpt_dir.rstrip("/").removesuffix(".hf") + ".meta.json"
+    if os.path.exists(meta_p):
+        with open(meta_p, encoding="utf-8") as f:
+            rec = json.load(f).get("chatml_token_ids") or {}
+        bad += [f"{t}: scorer {ours[t]} vs meta.json {rec[t]}"
+                for t in (IM_START, IM_END) if t in rec and rec[t] != ours[t]]
+    return ours, bad
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--arm", choices=("ours", "control"))
@@ -378,6 +422,13 @@ def main():
         model, _ = load_control(a.ckpt, a.device)
         from transformers import AutoTokenizer
         pad_id = AutoTokenizer.from_pretrained(a.model_dir).eos_token_id or 0
+        ids_used, disagree = check_control_ids_agree(a.model_dir, a.ckpt)
+        if disagree:
+            print("REFUSING: the ChatML ids this scorer tokenizes with are not the ids the "
+                  "checkpoint was trained with, so every completion's stop symbol would be a "
+                  "token the model never saw:\n  " + "\n  ".join(disagree))
+            return 1
+        print(f"  chatml ids agree: {ids_used}")
 
     tot_loss, tot_tok = score(model, a.arm, kept, a.device, a.batch, pad_id)
     if tot_tok == 0:
@@ -703,6 +754,63 @@ def selftest():
                   "a card)")
     except (OSError, IndexError) as e:
         fails.append(f"could not read load_ours to check the bf16 cast: {e}")
+
+    # 7. THE ChatML ID AGREEMENT CHECK MUST BITE. check_control_ids_agree compares three
+    #    witnesses (this scorer's base-dir+re-add, the checkpoint's own tokenizer, and
+    #    meta.json's recorded ids). Two ways to test it wrong:
+    #      - assert it passes on the real checkpoint: needs a checkpoint, and it passes
+    #        today, so it would prove only that today's ids happen to line up
+    #      - read its source for the comparison: green when the comparison is deleted
+    #    So: hand it a FABRICATED disagreement and require a non-empty `bad`. The fixture
+    #    is a fake meta.json next to a fake .hf whose tokenizer is the real base dir --
+    #    i.e. scorer and checkpoint agree, meta.json does not. That is the third witness,
+    #    the one an "ids match the saved tokenizer" check alone would miss.
+    import json as _json
+    import shutil
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="e1_idcheck_")
+    try:
+        base = os.path.join(ROOT, "data", "controls", "pythia-160m-step2000")
+        if not os.path.isdir(base):
+            print(f"  SELFTEST SKIP chatml id agreement: {base} absent (control tokenizer "
+                  f"lives on the pod) -- run --selftest there to cover case 7")
+        else:
+            hf = os.path.join(tmp, "fake.hf")
+            os.makedirs(hf)
+            for fn in os.listdir(base):
+                if fn.startswith("tokenizer") or fn in ("special_tokens_map.json",
+                                                        "added_tokens.json", "vocab.json",
+                                                        "merges.txt", "config.json"):
+                    shutil.copy(os.path.join(base, fn), hf)
+            # The saved tokenizer here has NOT had the specials added, so it reports the
+            # unknown-token id for both -- a real disagreement, not a synthetic one.
+            _, bad_unadded = check_control_ids_agree(base, hf)
+            if not bad_unadded:
+                fails.append("check_control_ids_agree passed a checkpoint whose tokenizer "
+                             "lacks the ChatML specials entirely -- it cannot detect an id "
+                             "mismatch")
+            # Now the meta.json witness, with the .hf tokenizer made to agree.
+            from transformers import AutoTokenizer
+            t = AutoTokenizer.from_pretrained(base)
+            t.add_special_tokens({"additional_special_tokens": [IM_START, IM_END]})
+            t.save_pretrained(hf)
+            _, bad_clean = check_control_ids_agree(base, hf)
+            if bad_clean:
+                fails.append(f"check_control_ids_agree reports a disagreement on a "
+                             f"checkpoint built the same way as the scorer: {bad_clean}")
+            with open(os.path.join(tmp, "fake.meta.json"), "w", encoding="utf-8") as f:
+                _json.dump({"chatml_token_ids": {IM_START: 999999, IM_END: 999998}}, f)
+            _, bad_meta = check_control_ids_agree(base, hf)
+            if not bad_meta:
+                fails.append("check_control_ids_agree ignored a meta.json recording "
+                             "different ChatML ids -- the recorded-id witness is dead")
+            else:
+                print(f"  checked: chatml id disagreement refuses "
+                      f"({len(bad_unadded)} unadded, {len(bad_meta)} via meta.json)")
+    except ImportError as e:
+        print(f"  SELFTEST SKIP chatml id agreement: transformers unavailable ({e})")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
