@@ -45,6 +45,14 @@ THREE DECISIONS THAT ARE NOT OBVIOUS, each named because a later reader will won
     python scripts/build_agentic_sft.py --limit 10000 --out data/sft/agentic_v1.jsonl
     python scripts/build_agentic_sft.py --selftest
 
+# This file first landed inside merge commit 34982c2 rather than as its own commit: an
+# earlier `git merge main` had not been completed, so `git commit -F` attached my message to
+# the merge. `git log -S SYNTHETIC_USER -- scripts/build_agentic_sft.py` therefore returns
+# NOTHING -- log -S does not read merge diffs, which is the same blind spot that made
+# merge_complete stand red all morning (de-22). Not rewritten: 34982c2 is already a merge
+# others may build on, and a soft reset staged nine other people's commits as mine. This
+# comment is the touch that makes the file findable by content search.
+#
 # restartable: an interrupt costs 18s. The whole build is a pure function of the session
 # files -- it holds nothing on the pod, writes one file at the very end, and re-running it
 # reproduces the same pack byte for byte (no randomness, no timestamps in the rows). There
