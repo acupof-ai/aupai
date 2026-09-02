@@ -6,7 +6,7 @@ source: user ruling 2026-09-02 09:44Z (stop after the step-3000 save) and 09:50Z
 
 # Stop window 1: after the step-3000 save
 
-Timeline (UTC): step 2600 at 09:44Z, 11.0 s/step, save at step 3000 ≈ 10:57Z. Stop: kill `supervise_run.sh` first (it would auto-resume once), then SIGTERM the torchrun leader (interrupt checkpoint), then `nvidia-smi` shows zero processes. Executor: tilerl. Downtime target: 2.5 h.
+Timeline (UTC): step 2600 at 09:44Z, 11.0 s/step, save at step 3000 ≈ 10:57Z. Stop: pin step 3000 first (e1, `_pin_milestone` only, no scoring: `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`, a hardlink the `.pt.step*` pruner cannot see; without it step 4500 deletes the resume target), then kill `supervise_run.sh` (it would auto-resume once), then SIGTERM the torchrun leader (interrupt checkpoint), then `nvidia-smi` shows zero processes. Executor: tilerl. Downtime target: 2.5 h.
 
 ## Throughput, the main item
 
@@ -25,6 +25,28 @@ In the window: torch.profiler over 3 steps at the live shape; A/B of 40 steps ea
 
 ## Code that merges, in order, each behind `test_arch_compat`
 
-de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split. Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.pt.step3000` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
+de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split. Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
 
-Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus or mix change.
+Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change. `eval/score_matrix.py:765` still defaults `--mix` to the ladder mix (44's challenge on d57273f, 09:52Z): correct as a fact, deferred to de-26 because the file is in the frozen set and `cache_guard` turns the defect into a refusal, not a wrong number.
+
+## Token budget (user, 09:52Z: model unchanged, mix unchanged, fewer tokens)
+
+Candidate: `total_tokens` 19,999,997,952 → 9,999,998,976 in `data/mix_500m.json` at the relaunch, tokens/step unchanged at 1,048,576, steps 19,151 → 9,537; step 3000 = 3.1B is then 31% in and still in the constant-LR phase (warmdown 0.1 × total starts at step 8,583). Gated on de answering from `build_mix`: the cursor continues every domain without re-read under the halved plan, and the LR at step 3000 is bitwise the old value. Remaining time at 10B: 6.9B tokens / (8 × 16K) = 15 h, / (8 × 30K) = 8 h. The user's "3 hours" equals 2.6B tokens at 30K tok/s/gpu, less than the 3.1B already trained; it is not a budget the run can meet, and a Chinchilla-scale 10B is the smallest budget with a literature basis.
+
+## Decision (user, 10:06Z): 200M first, then 300M; the 500M is not resumed
+
+The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`; the resume line above is void. The token-budget section above is superseded by this one. Composition unchanged: `data/mix_200m_4b.json` and `data/mix_300m_6b.json` carry the 500M weights at 4B and 6B (`write_mix_500m.py --total`, generated on the pod, 863143b).
+
+| run | config | steps | measured or estimated tok/s/gpu | wall |
+|---|---|---|---|---|
+| p200m_4b_0902 | d1024 L12 (3 MLA + 9 KDA), 206.13M built, batch 32 accum 1, `--no-grad_ckpt` (the 73K baseline's setting) | 3,815 | 73K measured (`facts/efficiency.json#eff.fb_mfu`) | 1.9 h |
+| p300m_6b_0902 | d1024 L18 (4 MLA + 14 KDA), 293.05M built, batch 32, `--no-grad_ckpt` pending the L18 memory probe (`eff.grad_ckpt_inverts_with_depth`: 2.4x slower at L12, 1.116x at L32, L18 unmeasured) | 5,722 | unmeasured, ~50K | ~4 h |
+
+Order after the stop: merges as listed → a 60-minute throughput sprint on all eight cards with the 200M config (user, 10:07Z: every idle owner works on training speed) → launch the 200M with the sprint's best config → the 300M after it ends. Launch lines, every knob explicit (row 173's omission):
+
+```
+setsid nohup bash scripts/supervise_run.sh p200m_4b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_200m_4b.json --name p200m_4b_0902 --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+setsid nohup bash scripts/supervise_run.sh p300m_6b_0902 -- env CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 NGPU=8 ./run_ddp.sh --mix data/mix_300m_6b.json --name p300m_6b_0902 --dim 1024 --layers 18 --heads 8 --ffn_hidden 3072 --batch 32 --accum 1 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --save_every 500
+```
+
+Sprint split: tilerl profiles (3-step trace, compile on/off, batch 32/64, fla chunk size); b0 reads the trace per block kind and lists the matmuls not on FP8; de measures host side (loader wait, save, val, NCCL share); 3b measures the startup cost of `build_mix` and the token-cache read path for the 4B mix; e1 surveys industry methods with an expected gain and cost per item for this stack (`docs/lessons/throughput_survey.md`); 44 reviews every number's measurement config. Every probe is a `harness launch` row with a hypothesis.

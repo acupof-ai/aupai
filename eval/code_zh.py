@@ -29,7 +29,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
-from scripts.loader import format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer, prompt_fn  # noqa: E402
 from datagen.sandbox_exec import run_sandboxed  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "code_holdout_500.jsonl")
@@ -141,6 +141,15 @@ def main():
     from eval.gsm8k import generate_batch
 
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
+    # The prompt format follows the CHECKPOINT, not this script's habit. A base checkpoint
+    # handed format_prompt's ChatML prefix continues a sequence absent from 168,000 sampled
+    # corpus rows (AGENTS.md:200) rather than answering: 1.6% of generations carried a code
+    # fence under ChatML against 94.4% under 1-shot continuation, same family
+    # (eval/score_code_exec.py:9-31). classify() reads cfg, never the filename.
+    from score_matrix import classify
+
+    _fmt = prompt_fn(classify(cfg, os.path.basename(args.ckpt)))
+    print(f"  prompt format: {_fmt.__name__}", flush=True)
     model = model.to(torch.bfloat16)
     tok = load_tokenizer(args.tokenizer, cfg)
 
@@ -175,7 +184,7 @@ def main():
         out_path = fout.name
         for s in range(0, len(rows), per_batch):
             batch = rows[s : s + per_batch]
-            prompts = [tok.encode(format_prompt(r["instruction"])).ids for r in batch]
+            prompts = [tok.encode(_fmt(r["instruction"])).ids for r in batch]
             with torch.no_grad():
                 # k=1 keeps the single-sample semantics (--temperature samples); k>1
                 # makes pass@1 the greedy answer and temperature only the k draws.

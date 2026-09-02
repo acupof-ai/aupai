@@ -62,9 +62,14 @@ def cursor_rows_at(src, step, origin, batch, accum, world):
     ever fail. A test that cannot go green is an assertion, not an acceptance test (de,
     2026-09-02, caught by simulating the fix before trusting the red).
 
-    Two independent ways the whole-run count can be correct:
+    Three independent ways the whole-run count can be correct:
       1. rows_done stops subtracting a per-segment origin
       2. the cursor accumulates: `used[name] += ...` instead of `=`
+      3. the write site adds the cursor this plan STARTED from, so a relative per-segment
+         count plus that base is the run total. This is the shape de-13 shipped, and the
+         test had to learn it -- recognising only shapes 1 and 2 would have kept the test red
+         against a correct fix, which is the same defect as a test that cannot go green, one
+         level up: a test that can only go green the way its author imagined.
     """
     m = re.search(r"^\s*rows_done\s*=\s*\(step\s*-\s*([\w.]+)\)\s*\*", src, re.M)
     if m is None:
@@ -81,6 +86,13 @@ def cursor_rows_at(src, step, origin, batch, accum, world):
     # when each segment is counted relatively.
     if re.search(r"used\[name\]\s*\+=\s*int\(", src):
         return step * batch * accum * world
+    # Shape 3: the written cursor adds a per-domain base, and that base is set from the
+    # cursor build_mix applied. Both halves are required -- a base that is never populated
+    # adds zero, so checking only the write site would accept a broken fix.
+    writes_base = re.search(r"row_cursor\"\]\s*=\s*\{[^}]*_base\.get\(", src, re.S)
+    fills_base = re.search(r"base\[name\]\s*=\s*used\[name\]", src)
+    if writes_base and fills_base:
+        return seg_rows + origin * batch * accum * world
     return seg_rows
 
 
