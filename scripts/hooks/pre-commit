@@ -374,6 +374,10 @@ def main():
         # default --selftest path because it is green today and has no reason to exit 0
         # while red -- unlike test_recipe_required, which needed --strict.
         "scripts/test_eval_base_prompt_format.py",
+        # e1-24: the transcript parser. Its --selftest needs neither ~/.claude nor a
+        # tokenizer -- it builds a fixture transcript and asserts the turn shape,
+        # format_agentic's contract, and that the redaction leaves no username.
+        "scripts/build_agentic_sft.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
