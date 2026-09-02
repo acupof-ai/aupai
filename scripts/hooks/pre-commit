@@ -764,7 +764,17 @@ def main():
                                 "the stub-scorer plumbing, which both need the tokenizer",
                                 "--selftest-nodata"),
         "eval/lambada_zh.py": "asserts data/tokenizer.json, which is gitignored",
-        "eval/domain_loss.py": "--selftest requires --ckpt, so it needs a checkpoint",
+        # --selftest scores a real probe and so needs a checkpoint AND a card (the KDA kernel has
+        # no CPU path). --paired_selftest needs neither: it checks b0-18's paired statistic against
+        # b0-16's independently computed answer using rows already scored, so it runs on a fresh
+        # tree while every card is busy. The exemption is therefore PARTIAL, not total -- the
+        # reason it existed ("needs a checkpoint") stopped covering the whole file the moment a
+        # card-free path was added, and an exemption nobody revisits is how a tested file goes
+        # untested.
+        "eval/domain_loss.py": ("--selftest scores a probe, so it needs both a checkpoint and a "
+                                "card; --paired_selftest checks the paired statistic against a "
+                                "known answer with no model and no mix, and DOES run here",
+                                "--paired_selftest"),
         # NOT "harness check is its selftest" -- that was false. `check` runs
         # run_checks(); `--selftest` is what verifies every check FAILs on its broken
         # world, and the two share no code path. The real reason is cost: measured
