@@ -360,6 +360,7 @@ def main():
         "scripts/launch_tests.py",
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
+        "algorithms/rollout.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
@@ -467,6 +468,14 @@ def main():
                                       "sandbox: 42s measured, and they need a host with "
                                       "process isolation, which CI is not",
                                       "--selftest-detector"),
+        # No partial half exists: every assertion in it runs K rollouts, so there is nothing
+        # to split off the way code_reward's detector cases split off. 6.3s measured, which
+        # is affordable -- the reason is the host, not the clock. Verified by hand on both,
+        # 2026-09-02: Mac/seatbelt 10 ok 4.4x parallel, pod/sandbox_exec 10 ok 2.4x, the same
+        # ten rewards, and the two escape probes confirmed to FIRE at level rlimits_only
+        # (reward 0.0, escaped true, /Users/bytedance/.ssh named in the failure).
+        "algorithms/rollout.py": "every assertion runs rollouts in a sandbox; needs a host "
+                                 "with process isolation, which CI is not",
     }
     # The STAGED blob, never the working tree. The gate's whole claim is "the version
     # being committed passes its own selftest", and running the working-tree copy tests
