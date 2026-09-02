@@ -939,6 +939,20 @@
       },
       "uncertainty": "Classifier heuristic; the 81% vs 99% spread is classifier breadth -- both ground-truth passes showed the residual is also non-Python, so the TRUE non-Python share is likely >95%. Sample is shard-proportional, not uniform over all docs.",
       "status": "measured"
+    },
+    {
+      "id": "dq.code_mining_single_blob_zero",
+      "value": "Single-file-inline stdlib-only mining of code_with_tests from code_supply (The-Stack, shard 0000) yields ZERO runnable pairs. Number chain: 12,551 test files -> 6,819 unittest-pattern -> 580 strict-stdlib-only imports -> ~150 loose impl-basename candidates -> 0 strict join (all imports subset stdlib union {single target}). Github tests import their own module via dotted path (pkg != impl basename), relative import, or a framework; the bare-sibling-import + stdlib-only shape is ~unmeasurable. sandbox_exec (fixed c15c088) was not the cause of the earlier 0 (that was an impl-key .py suffix bug); the zero here is fundamental to the single-blob strategy.",
+      "measured": "2026-09-02",
+      "source": "datagen/mine_code_with_tests.py on pod shard data/raw/code_supply/0000.parquet (29,235 repos); ceiling scan; de corrected the sandbox attribution",
+      "config": {
+        "corpus": "code_supply/0000.parquet",
+        "strategy": "single-blob inlined impl + module-alias + unittest runner, stdlib-only sandbox",
+        "sandbox": "datagen/sandbox_exec.py c15c088 (uid 65534, not root)",
+        "decision": "fb 2026-09-02 option B: curated 3b-9 sets (Exercism+Aider SFT; EvalPlus eval/RL-only), not github mining"
+      },
+      "uncertainty": "Measured on shard 0000 only; other shards may differ marginally but the strict join is structurally ~0 across github py tests.",
+      "status": "measured"
     }
   ]
 }
