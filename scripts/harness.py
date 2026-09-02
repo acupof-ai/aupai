@@ -3219,7 +3219,13 @@ FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
 FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
-    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows)/[\w./-]+"
+    # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
+    # decision: 44's 22 probe deletions in 3fb1946 rewrote 39 refs to path@rev, and this
+    # check would have passed them either way because it never looked in that directory.
+    # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
+    # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
+    # profile_step.py live.
+    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes)/[\w./-]+"
 )
 # Debt register for tracked-missing sources: each entry carries a reason. Can only
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
