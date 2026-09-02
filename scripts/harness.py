@@ -1943,8 +1943,11 @@ def _broken_blob():
 
 
 def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
-    """Definitions the merge base had that the merge result no longer has, where the
-    losing side never deleted them. Returns [(path, name, side_taken)].
+    """Definitions the merge base had that the merge result no longer has.
+
+    Returns [(path, name, side_taken, already_dropped_at)]. `already_dropped_at` is None
+    for the shape the caller must FAIL on, and a commit sha for the shape it must only
+    WARN on -- see the asymmetry below.
 
     The complement of merge_took_one_side, and the more dangerous shape. That
     function only examines paths BOTH parents changed since the base, on the
@@ -1958,6 +1961,31 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
     tested operationally (fb's rule): the removal counts as intended only when the
     removing side's OWN commits, merge-base..parent, contain a diff that removes the
     name. Otherwise the content is simply older than that branch.
+
+    THE TWO SHAPES ARE NOT SYMMETRIC, and treating them alike produced 117 reds in one
+    day (fb's ruling, 2026-09-02, after de measured that no single flag fixes it):
+
+      name in ours, gone from the result -- THIS merge lost it. FAIL. 21da619 is here:
+      base had it, ours had it, theirs had never seen it, and the resolution took theirs.
+
+      name absent from ours, present in theirs and in the base -- ours had ALREADY
+      dropped it before this merge ran, and this merge changed nothing about that. The
+      loss belongs to whichever merge dropped it, and that merge's own check owned it.
+      WARN naming that commit, because every later merge from an older branch inherits
+      the same absence and calling inheritance a defect is what made the check unusable.
+      e73554b is here: _built_set was dropped in 6d51c9c's conflict resolution, which
+      states its reason, and 117 merges after it inherited the red.
+
+    Why plain `-S` still gates the FAIL branch and no flag was added: `git log -S` shows
+    no diff for a merge commit, so a deletion made inside a resolution is invisible to
+    it. `-m` sees that but then also matches a merge which merely CARRIED a deletion in
+    from one side, which silences 21da619 -- a false PASS on the founding case, with
+    merge_took_one_side returning [] there too. `--diff-merges=first-parent` finds
+    neither, because 6d51c9c took parent1 whole and its first-parent diff is empty.
+    6d51c9c and ef27df0 are structurally identical at the graph level, so no predicate
+    over the graph separates deliberate from accidental (de, MEASURED). The first-parent
+    split above sidesteps the question instead of answering it: it asks which merge lost
+    the definition, which is decidable, rather than whether someone meant to.
 
     Scope: top-level `def NAME(` in tracked .py files. Definitions are what a merge
     can silently revert without breaking an import, and a name is cheap to test for.
@@ -1998,8 +2026,19 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
             deleted_deliberately = bool(
                 git("log", "--format=%h", "-S", f"def {name}(", f"{base}..{dropper}", "--", path).strip()
             )
-            if not deleted_deliberately:
-                out.append((path, name, side))
+            if deleted_deliberately:
+                continue
+            # Ours already lacked it before this merge: inherited, not lost here. Name
+            # the last commit on ours' line that removed it, so the WARN points at the
+            # merge that owns the decision instead of at this one. `-m` is right for
+            # THIS lookup -- unlike the gate above it is not deciding intent, only
+            # reporting where to look, and the removal is usually a resolution.
+            if not in_ours:
+                at = git("log", "--format=%h", "-m", "-S", f"def {name}(",
+                         f"{base}..{ours}", "--", path).split()
+                out.append((path, name, side, at[0] if at else "an unfound commit"))
+            else:
+                out.append((path, name, side, None))
     return out
 
 
@@ -2204,12 +2243,25 @@ def check_merge_complete(root):
     # and silently reverts the other side. merge_took_one_side cannot see it, because
     # it only examines files BOTH parents changed (21da619, 2026-08-31).
     reverted = merge_reverted_content(root)
-    if reverted:
+    lost_here = [r for r in reverted if r[3] is None]
+    inherited = [r for r in reverted if r[3] is not None]
+    if lost_here:
         return FAIL, (
-            f"{len(reverted)} definition(s) present in the merge base and gone from the "
-            "result, with no side deleting them: "
-            + "; ".join(f"{name} in {path}" for path, name, _ in reverted[:3])
+            f"{len(lost_here)} definition(s) present in the merge base and in ours, gone "
+            "from the result, with no side deleting them: "
+            + "; ".join(f"{name} in {path}" for path, name, _, _ in lost_here[:3])
             + ". A side that never had the content did not delete it -- restore from the base."
+        )
+    if inherited:
+        # Ours already lacked these before this merge, so this merge lost nothing. The
+        # merge that dropped it owned the decision, and its own run of this check saw it.
+        # FAILing on inheritance is what put the same red on 117 merges (fb, 2026-09-02).
+        return WARN, (
+            f"{len(inherited)} definition(s) the base had and ours had ALREADY dropped "
+            "before this merge: "
+            + "; ".join(f"{name} in {path}, last removed on ours by {at} (git log -m -S)"
+                        for path, name, _, at in inherited[:3])
+            + ". This merge did not change ours' state -- check whether that commit meant it."
         )
     # The count for the PASS line comes from the scan already done above, not a second
     # one. Recomputing it cost 12.57s of the check's 25.37s and timed the check out on
@@ -7414,16 +7466,28 @@ def _selftest_merge_reverted_content():
 
     The constructed case is the one that decides whether the check is usable: someone
     retiring a function on purpose must not be flagged, or every intentional deletion
-    becomes a red and the check gets bypassed."""
+    becomes a red and the check gets bypassed.
+
+    e73554b is the third case and the reason the return value grew a fourth field
+    (de-22, 2026-09-02): _built_set was dropped in 6d51c9c's conflict resolution, ours
+    already lacked it when this merge ran, and calling that a defect put the same red on
+    117 merges. It must land in the ALREADY-DROPPED class, naming 6d51c9c, while 21da619
+    stays a FAIL -- the two shapes are checked here together because a fix for either one
+    alone is what the flag experiments produced."""
     import shutil
     import tempfile
 
     real = "/Users/bytedance/code/aupai"
     if os.path.exists(os.path.join(real, ".git")):
         hit = merge_reverted_content(real, "21da619")
-        assert any(n == "_selftest_gpu_descendants" for _, n, _ in hit), \
-            f"21da619 must be caught, got {hit}"
+        assert any(n == "_selftest_gpu_descendants" and at is None for _, n, _, at in hit), \
+            f"21da619 must be caught with already_dropped_at None (a FAIL), got {hit}"
         assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
+        # The inherited class, and the whole point of the fourth field: the same scan must
+        # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
+        inh = merge_reverted_content(real, "e73554b")
+        assert any(n == "_built_set" and at == "6d51c9c" for _, n, _, at in inh), \
+            f"e73554b must report _built_set as already dropped by 6d51c9c, got {inh}"
 
     d = tempfile.mkdtemp(prefix="delib_")
     try:
@@ -7449,7 +7513,29 @@ def _selftest_merge_reverted_content():
             "a deliberate deletion must not be flagged, or every intended removal is a red"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  merge revert: 21da619 caught, 41294c1 clean, deliberate deletion not flagged")
+
+    # The verdicts, not just the scan. check_merge_complete reads HEAD, so each case is a
+    # clone checked out AT that merge -- the real artifact, per the broken-world rule. The
+    # scan asserts above would still pass if the caller collapsed both classes to FAIL,
+    # which is exactly the bug being fixed, so the states are asserted here too.
+    if os.path.exists(os.path.join(real, ".git")):
+        w = tempfile.mkdtemp(prefix="mergecls_")
+        try:
+            for merge, want, needle in ((("21da619"), FAIL, "_selftest_gpu_descendants"),
+                                        (("e73554b"), WARN, "6d51c9c")):
+                c = os.path.join(w, merge)
+                assert subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", real, c],
+                                      capture_output=True).returncode == 0
+                assert subprocess.run(["git", "-C", c, "checkout", "-q", merge],
+                                      capture_output=True).returncode == 0
+                st, why = check_merge_complete(c)
+                assert st == want, f"{merge} must be {want}, got {st}: {why[:160]}"
+                assert needle in why, f"{merge}'s text must name {needle}: {why[:160]}"
+        finally:
+            shutil.rmtree(w, ignore_errors=True)
+
+    print("  merge revert: 21da619 FAIL, e73554b WARN naming 6d51c9c, 41294c1 clean, "
+          "deliberate deletion not flagged")
 
 
 def _selftest_attest_written_path():
