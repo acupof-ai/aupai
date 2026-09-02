@@ -436,7 +436,7 @@ def gate_checks_and_drift(root, mix_path, world):
 #   BOTH  the same gate means DIFFERENT things in each place and needs both readings
 AUTHORITY = {
     "mix_file": "main", "recipe_provenance": "main", "vocab_id": "main",
-    "arch_tests": "main", "cards": "main",
+    "arch_tests": "main", "cards": "main", "memory_measured": "main",
     "corpora": "pod", "epochs_measured": "pod",
     "checks_and_drift": "both",
 }
