@@ -6691,6 +6691,67 @@ def _broken_frozen_paths():
     return d
 
 
+def check_no_conflict_markers(root):
+    """No tracked source or doc holds a merge/stash conflict marker.
+
+    Found by reading, not by a gate: `docs/lessons/gate_failure_shapes.md:870` carried a
+    bare `>>>>>>> Stashed changes` in 9420c8b, committed, with every hook line green (de,
+    2026-09-02). Nothing in CHECKS looked for it, ruff does not read Markdown, and a
+    trailing marker at the end of a long doc is invisible to a reviewer scrolling to the
+    section they came for.
+
+    Why this class survives a clean-looking commit: a marker is not a syntax error in
+    Markdown, JSON-with-comments, or a shell heredoc, so the file still parses and still
+    renders. In a .py it WOULD be a syntax error, which is why py_compile catches those
+    and only those -- the gap is exactly the file types this repo keeps its evidence in.
+
+    `Stashed changes` specifically points at the shared stash stack AGENTS.md forbids: a
+    pop of another session's entry conflicts on paths the popper never touched, so the
+    marker lands somewhere they were not looking.
+
+    Matched at line start only, and `=======` is deliberately NOT one of the needles: a
+    Markdown setext heading underline is a row of `=`, and so is a table rule in some
+    docs, which would make this check fire on well-formed prose."""
+    needles = ("<<<<<<< ", ">>>>>>> ", "|||||||  ")
+    hits = []
+    for p, txt in walk_tracked(root, (".md", ".py", ".json", ".jsonl", ".sh", ".txt", ".yml", ".yaml")):
+        rel = os.path.relpath(p, root)
+        # This file names the markers in its own docstring and needle list, so it would
+        # match itself -- the §61 shape, a criterion whose needle sits in its own data.
+        if rel == os.path.join("scripts", "harness.py"):
+            continue
+        for i, line in enumerate(txt.splitlines(), 1):
+            if line.startswith(needles):
+                hits.append(f"{rel}:{i} {line[:34]}")
+                break
+    if hits:
+        return FAIL, (f"{len(hits)} file(s) hold a conflict marker -- a resolution was committed "
+                      f"half-done: {'; '.join(hits[:4])}")
+    return PASS, "no tracked file holds a conflict marker"
+
+
+def _broken_no_conflict_markers():
+    """The REAL shapes doc with the REAL marker put back at the line it was found on.
+
+    Mutating the actual file, not a hand-written stub: the check reads tracked files under
+    a repo-shaped tree, and a stub would share the check's assumption about where docs
+    live. This is the exact byte sequence 9420c8b committed."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    rel = os.path.join("docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, rel)
+    # _tmp_repo_shaped symlinks docs/, so writing through it would edit the real file.
+    real_docs = os.path.join(d, "docs")
+    if os.path.islink(real_docs):
+        os.unlink(real_docs)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, rel), dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(">>>>>>> Stashed changes\n")
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -7201,6 +7262,13 @@ CHECKS = [
         _broken_no_shared_stash,
     ),
     (
+        "no_conflict_markers",
+        "no tracked doc or source holds a merge/stash conflict marker",
+        "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
+        check_no_conflict_markers,
+        _broken_no_conflict_markers,
+    ),
+    (
         "dirty_aged",
         f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
@@ -7248,7 +7316,7 @@ EVIDENCE = {
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "frozen_paths": "repo",
+    "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
