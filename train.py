@@ -23,7 +23,6 @@ import random
 import re
 import signal
 import shutil
-import sys
 import tempfile
 import time
 from typing import NamedTuple
@@ -54,23 +53,7 @@ class RunLog:
     def __init__(self, name, track=False):
         os.makedirs(os.path.join(ROOT, "runs"), exist_ok=True)
         self.path = os.path.join(ROOT, "runs", f"{name}.log")
-        # ONE writer. When the launcher already redirects stdout to this same file, the
-        # print() below reaches it through an inherited fd that carries its OWN offset --
-        # opened O_WRONLY, not O_APPEND -- while this handle appends at EOF. Two offsets,
-        # one file: the inherited fd trails and overwrites what we appended. It reads as
-        # harmless only because both writers emit identical bytes; when their lengths
-        # desync the log keeps a visible duplicate (3 of them by step 1250 of
-        # p500m_20b_0902, measured 2026-09-02). stderr still needs the redirect -- torchrun
-        # warnings and tracebacks never come through print() -- so the launcher keeps it
-        # and we drop the second handle instead.
-        self.f = None
-        try:
-            a, b = os.fstat(sys.stdout.fileno()), os.stat(self.path)
-            same = (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
-        except (OSError, ValueError, AttributeError):
-            same = False   # no stdout to compare (pytest capture, no fileno): keep the handle
-        if not same:
-            self.f = open(self.path, "a", encoding="utf-8")
+        self.f = open(self.path, "a", encoding="utf-8")
         self.track = None
         if track:
             import trackio
@@ -80,9 +63,8 @@ class RunLog:
 
     def __call__(self, msg):
         print(msg, flush=True)
-        if self.f:
-            self.f.write(msg + "\n")
-            self.f.flush()
+        self.f.write(msg + "\n")
+        self.f.flush()
         if self.track:
             m = self._STEP_RE.search(msg)
             if m:
