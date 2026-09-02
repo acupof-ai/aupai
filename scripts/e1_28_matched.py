@@ -73,6 +73,25 @@ def universal_only(grams):
     return bool(grams) and all(any(u in g for u in UNIVERSAL) for g in grams)
 
 
+# data/corpus/<domain>/ HOLDS NON-CORPUS JSONL. Every chat/code domain carries a
+# holdout_slice_<domain>.jsonl whose single row is {"phase", "rule_fp", "n": 0} -- a guard
+# artifact, not text. A bare *.jsonl glob feeds it to the scanner, which correctly refuses on the
+# missing content field, and reading it as corpus would have been worse than crashing.
+#
+# e1_28_leak_scan.py has the same glob and got away with it: holdout_slice sorts AFTER the
+# numbered shards, so its cursor row cap is always reached first. That is luck, not a design --
+# one domain whose cursor exceeds its real shard rows would read the file. Checked, not assumed:
+# for all four affected domains the cap lands before the slice.
+SHARD_SKIP = ("holdout_slice_", "build_corpus_stats")
+
+
+def shards(dom, root=None):
+    """The domain's text shards, with guard artifacts excluded by NAME rather than by luck."""
+    base = os.path.join(root or ROOT, "data", "corpus", dom)
+    return [p for p in sorted(glob.glob(os.path.join(base, "*.jsonl")))
+            if not any(s in os.path.basename(p) for s in SHARD_SKIP)]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--heldout", default="data/sft/control_sft_text_heldout.jsonl")
@@ -82,9 +101,10 @@ def main():
                     "cursor, which is the population the scan itself used")
     ap.add_argument("--ckpt", default="ckpt_p200m_4b_0902.pt")
     ap.add_argument("--rows_per_shard", type=int, default=0,
-                    help="0 = every row. A NONZERO VALUE IS A SAMPLE, stamped as such in the "
-                         "output: the 12-vs-424 reading above came from one 3000-row shard and is "
-                         "not a whole-corpus count")
+                    help="0 = the cursor's row count per domain, i.e. the rows the run actually "
+                         "consumed. A NONZERO VALUE IS A SAMPLE, stamped as such in the output: "
+                         "the 12-vs-424 reading above came from one 3000-row shard and is not a "
+                         "whole-corpus count")
     ap.add_argument("--top", type=int, default=6, help="strings to print per unit per domain")
     a = ap.parse_args()
 
@@ -113,28 +133,34 @@ def main():
             ch_need.setdefault(g, i)
 
     # The domains the CHECKPOINT consumed, so this looks at the same population the scan did.
+    cursor = None
     if a.domains:
         doms = [d for d in a.domains.split(",") if d]
     else:
         import torch
         ck = torch.load(os.path.join(ROOT, a.ckpt), map_location="cpu", weights_only=False)
-        doms = sorted((ck.get("row_cursor") or {}))
+        cursor = ck.get("row_cursor") or {}
+        doms = sorted(cursor)
         if not doms:
             sys.exit(f"REFUSING: {a.ckpt} carries no row_cursor")
 
     out = {"rows_per_shard": a.rows_per_shard, "sample": bool(a.rows_per_shard),
            "min_charset": S.MIN_CHARSET, "per_domain": {}}
     for dom in doms:
-        files = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", dom, "*.jsonl")))
+        files = shards(dom)
         if not files:
             print(f"=== {dom}: no shards")
             continue
+        # THE SAME ROW CAP THE SCAN USED. Without it this reads the whole corpus on disk (232 GB)
+        # instead of the 1,189,548 rows the run consumed, which is a different population and would
+        # report overlap from rows the model never saw.
+        cap = a.rows_per_shard or (cursor or {}).get(dom, 0)
         ws_m, ch_m = collections.Counter(), collections.Counter()
         by_id = collections.defaultdict(set)
         char_ids, n = set(), 0
         for p in files:
             for line in open(p, errors="replace"):
-                if a.rows_per_shard and n >= a.rows_per_shard:
+                if cap and n >= cap:
                     break
                 n += 1
                 t = S.text_of(json.loads(line))
@@ -147,7 +173,7 @@ def main():
                         if g in ch_need and not S.low_entropy(g):
                             ch_m[g] += 1
                             char_ids.add(ch_need[g])
-            if a.rows_per_shard and n >= a.rows_per_shard:
+            if cap and n >= cap:
                 break
         print(f"=== {dom} ({n:,} rows{' SAMPLE' if a.rows_per_shard else ''}) ===")
         print(f"  ws: {len(by_id)} ids, {len(ws_m)} distinct grams")
