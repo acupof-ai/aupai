@@ -95,9 +95,15 @@ on that number.
 THE TIED LM HEAD IS NOT WHY tok.weight GROWS UNIFORMLY, AND THE REFUTATION IS IN THE WEIGHTS
 RATHER THAN IN A LOSS. The candidate mechanism (1e's, for b0-10's uniform per-quantile embedding
 growth) was that a tied head trains tok.weight through a SECOND gradient path at embed_lr 0.1, so
-removing that path should reduce the growth. It INCREASES it: tok row-norm median 16.9115 (tied
-base) -> 18.3308 (untied at embed lr, x1.0839) -> 19.8036 (untied at head_lr 0.003464, x1.1710),
-i.e. the LOWER the head's lr the MORE tok grows.
+removing that path should reduce the growth. It INCREASES it. Two medians, and they must not be
+mixed in one sentence -- the WHOLE-TABLE median over all 32832 rows is 16.9115 -> 18.3308 ->
+19.8036, while the median over the input+head class [0,32773) alone is 16.9211 -> 18.3390 ->
+19.8118. The class figure is the one runs/b0_17_rows.json stores and the one the table below
+uses; the whole-table figure sits slightly lower because it includes the 48 no-path rows near
+0.62 and the 11 pad rows. Ratios on the class median, at full precision: x1.083796 (arm 2) and
+x1.170835 (arm 3), i.e. the LOWER the head's lr the MORE tok grows. (Dividing the 4-decimal
+medians instead gives 1.0838 / 1.1708 -- e1's independent recompute caught that my first draft
+quoted 1.0839 / 1.1710, which is rounding-then-dividing, not the ratio.)
 
 THE 11 ALIGNMENT-PADDING ROWS SETTLE IT, because they are the path itself and not a proxy for it.
 Rows [32773, 32784) of tok.weight are never an input id and never a target (train.py:164-174), so
@@ -138,7 +144,7 @@ there is exactly zero rather than an init-scale number.
 **uncertainty** — One run per arm, one seed, one depth, 500 steps. The 0.0000 is a fact about
 reachability plus that init zeroing, so it is not a statistical claim; the 1.067x on the head's pad
 rows IS a one-sample comparison with no replicate. Arm 3's head is barely trained (2.4x init), so
-its tok figure of 19.8036 conflates the lr change with an untrained head -- the monotone
+its tok figure of 19.8118 (input+head class) conflates the lr change with an untrained head -- the monotone
 "lower head lr -> more tok growth" reads across only two untied points, one of which is not at
 steady state.
 
