@@ -2310,23 +2310,33 @@
   },
   {
    "id": "eff.kda_mla_growth_ratio_l12",
-   "value": "1.63x at L=12 (KDA excess 0.2069 / MLA excess 0.1270), against 3.43x-7.96x at L=32 (eff.kda_mla_growth_ratio_l32). THE GAP R3-lr WAS BUILT TO EQUALIZE IS HALF TO A QUARTER AS LARGE AT THE SCALE THE ARM WOULD RUN. This reading is what fired b0-12's invalidation condition and withdrew R3-lr: the condition was written as 'if B0 reads a ratio near 1 at L=12, the 0.28 coefficient has no source', and p200m is itself L=12, so B0 was never needed. The equalizing coefficient implied here is 0.61, NOT the 0.28 derived from L=32 -- and 0.28 was already dead on its own (the L=32 ratio drifts 3.43->7.96 within one run, so it has no fixed target). Medians are over 9 KDA and 3 MLA blocks, of per-block mean weight-norm ratios.",
+   "value": "TWO WINDOWS AT L=12, AND THE RATIO DRIFTS HERE TOO: 1.63x over step500->interrupt.step832 (KDA excess 0.2069 / MLA excess 0.1270) and 2.65x over step1000->step1500 (KDA_median 1.096436 / MLA_median 1.036371, excess 0.096436 / 0.036371). Against 3.43x-7.96x at L=32 (eff.kda_mla_growth_ratio_l32) -- so the SHAPE is the same at both depths (a drifting ratio, not a constant) while the LEVEL is 2-3x smaller at L=12. THE GAP R3-lr WAS BUILT TO EQUALIZE IS HALF TO A QUARTER AS LARGE AT THE SCALE THE ARM WOULD RUN. This reading is what fired b0-12's invalidation condition and withdrew R3-lr: the condition was written as 'if B0 reads a ratio near 1 at L=12, the 0.28 coefficient has no source', and p200m is itself L=12, so B0 was never needed. The equalizing coefficients implied by the two windows are 0.61 and 0.38, NOT the 0.28 derived from L=32 -- and they disagree with each other, which is the point: a coefficient back-derived from one window holds only for that window. Medians are over 9 KDA and 3 MLA blocks, of per-block mean weight-norm ratios.",
    "measured": "2026-09-02",
-   "source": "python3 scripts/ckpt_health.py ckpt_p200m_4b_0902.pt.step500 ckpt_p200m_4b_0902.pt.interrupt.step832 (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 2322032. The later file is the INTERRUPT checkpoint (959,435,257 B): the run was stopped at 832, so there is no plain .pt.step832 and this entry first cited one that never existed (1e, 2026-09-02). 44's ckpt_facts_sources_present joins on the exact name.",
+   "source": "python3 scripts/ckpt_health.py ckpt_p200m_4b_0902.pt.step500 ckpt_p200m_4b_0902.pt.interrupt.step832 (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 2322032. The later file is the INTERRUPT checkpoint (959,435,257 B): the run was stopped at 832, so there is no plain .pt.step832 and this entry first cited one that never existed (1e, 2026-09-02). 44's ckpt_facts_sources_present joins on the exact name. SECOND WINDOW (2026-09-02, added by e1 at fb's request): b0's offline ckpt_health read over ckpt_p200m_4b_0902.pt.step1000 -> ckpt_p200m_4b_0902.pt.step1500, both present on the pod at 959,429,383 B each (verified by e1 before recording). e1 did not run this read; the two medians are b0's numbers and the 2.65 ratio was recomputed from them here ((1.096436-1)/(1.036371-1) = 2.6515, rounded 2.65).",
    "config": {
     "run": "p200m_4b_0902",
-    "ckpt_pair": "step500 -> interrupt.step832 (332 steps)",
+    "ckpt_pair": "window 1: step500 -> interrupt.step832 (332 steps); window 2: step1000 -> step1500 (500 steps)",
     "model": "206M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, seq 4096, fp8",
     "launch": "--batch 16 --accum 2 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --save_every 500",
     "block_split": "KDA = blocks with mixer.A_log present; MLA = the rest; 9 KDA, 3 MLA",
     "criterion": "per block, mean over its 2D weight-norm ratios ckpt_b/ckpt_a in fp32; then median within each block kind; ratio = (KDA_median - 1) / (MLA_median - 1), i.e. excess over 1.0, which is the quantity that grows",
-    "KDA_median": 1.2069,
-    "MLA_median": 1.127,
+    "KDA_median": [
+     1.2069,
+     1.096436
+    ],
+    "MLA_median": [
+     1.127,
+     1.036371
+    ],
     "n_KDA": 9,
-    "n_MLA": 3
+    "n_MLA": 3,
+    "ratios": [
+     1.63,
+     2.65
+    ]
    },
-   "uncertainty": "ONE window, n=3 on the MLA side. No seed replicate, so the run-to-run spread of this ratio is unmeasured -- the 0.02 nat sigma work (b0-12 B0-seed2) does not cover it. The MLA median at n=3 has a measured blind spot: two of three blocks diverging together collapses every robust-z toward 1 (z 1.06) where n=8 flags at z>3000, so a two-block MLA divergence inside this window would not have been visible.",
-   "boundary": "NOT A COEFFICIENT SOURCE. Single window, and the FIRST window after warmup (--warmup 300 ends at step 300, this pair starts at 500), so it carries whatever transient the lr and Muon-momentum ramps leave behind -- train.py:1160 ramps momentum to step 150 and the pair opens 350 steps later. Deriving any lr multiplier from it repeats exactly the error that killed 0.28: taking one unstabilized ratio as a constant. What it CAN answer is directional and that is all it was used for: the L=32 gap does not transfer to L=12 at anything like its L=32 size. Says nothing about whether the ratio is stable at L=12 -- that needs a second interval, which is pending p200m's resume.",
+   "uncertainty": "TWO windows now, n=3 on the MLA side in both. No seed replicate, so the run-to-run spread of this ratio is still unmeasured -- the 0.02 nat sigma work (b0-12 B0-seed2) does not cover it. The MLA median at n=3 has a measured blind spot: two of three blocks diverging together collapses every robust-z toward 1 (z 1.06) where n=8 flags at z>3000, so a two-block MLA divergence inside either window would not have been visible. The two windows are not the same length (332 vs 500 steps), so the level difference between 1.63 and 2.65 confounds interval length with time in training; the DIRECTION of the drift does not depend on that, the magnitude does. Window 2 was read by b0, not by e1, and is recorded here from b0's report.",
+   "boundary": "NOT A COEFFICIENT SOURCE. Two windows, and they disagree (1.63 vs 2.65), which is the same finding as at L=32 (3.74 -> 3.43 -> 7.96): the ratio is not a stable property of the architecture, so 'equalize it to 1' has no fixed target at either depth. Window 1 is also the FIRST window after warmup (--warmup 300 ends at step 300, that pair starts at 500), so it carries whatever transient the lr and Muon-momentum ramps leave behind -- train.py:1160 ramps momentum to step 150 and the pair opens 350 steps later. Deriving any lr multiplier from either window repeats exactly the error that killed 0.28: taking one unstabilized ratio as a constant. What this CAN answer is directional and that is all it is used for: the L=32 gap does not transfer to L=12 at anything like its L=32 size, and the drift is not an L=32 artifact. Says nothing about WHY the ratio moves, and nothing about val loss -- no arm here was trained with a modified lr, so this measures a correlate, never an intervention.",
    "status": "measured"
   },
   {
