@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Arm 3: token loss on text that is certainly unseen, against val loss.
 
-Pre-registered in docs/lessons/copy_hypothesis_prereg.md: if external >> val,
+Pre-registered in docs/lessons/copy_hypothesis_chain.md: if external >> val,
 our val is measuring memorisation, because val is drawn from the same
 never-deduplicated corpus.
 
