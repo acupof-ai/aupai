@@ -1,6 +1,7 @@
 # pod /work/aupai checkpoints, listed 2026-09-02 13:58Z: 216 files, 181 GB, /work at 86%
 # KEEP: ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt, .pt.interrupt.step3006, ckpt_p200m_4b_0902.pt.step500, .pt.interrupt.step832
 # KEEP (claims 14:05Z): e1 -> ckpt_sft_p324_v3.pt, ckpt_sft_p324_v5.pt, ckpt_p324.pt (base of be.ctx_length_p324, be.l1_3shot_rerun, be.readout_30b_prereg; e1-22 retests on it); de, tilerl, 3b -> nothing kept
+# KEEP (claim b0 14:10Z): ckpt_p500m_20b_0902.pt.step2000, .pt.step2500, .pt.step3000 -- only recomputable source of eff.kda_mla_growth_ratio_l32 (step1500 already pruned) and of structure_experiments.md section 0; note .pt.step3000 is a different file from milestone_stopwindow1_step3000.pt
 # A. pre-0830v1 (mtime < 2026-08-30): zeroed by the reset, deleted 2026-09-03 14:00Z unless claimed
 2026-08-26_12:05 0.41 ckpt_ablation_base.pt.ep1
 2026-08-26_13:19 0.41 ckpt_dm_nodocmask.pt.ep1
