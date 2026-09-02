@@ -307,7 +307,7 @@ CITATION = re.compile(
     # two ever written (e1-9, 2026-09-02) tripped it immediately. The trailing (?![\w])
     # stops a prefix match from standing in for the whole extension.
     #
-    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: 3fb1946
+    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: 30b9010
     # (44-13) deleted 22 probes and rewrote 39 refs in facts/*.json plus
     # scripts/harness.py:386,647,693 to probes/<name>.py@<sha>. All 26 distinct ones
     # resolve. This gate could not read one of them -- the pattern stopped at the
@@ -318,10 +318,10 @@ CITATION = re.compile(
     # first was jsonl eaten as json).
     #
     # The rev is [\w~^-]+ joined by single ./ -- NOT [\w./~^-]+. The greedy version
-    # captured the sentence-ending period ("...py@849026e." -> rev "849026e."), which git
+    # captured the sentence-ending period ("...py@4016bdc." -> rev "4016bdc."), which git
     # rejects, so a correctly-retired citation would have gone NO-GO on the punctuation
     # after it. Found by running the pattern on real prose, not by reading it: both
-    # spellings look right in the source. Still admits 849026e~1, 849026e^2, v1.2,
+    # spellings look right in the source. Still admits 4016bdc~1, 4016bdc^2, v1.2,
     # refs/tags/v1.
     r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|datagen|bench_eff)/"
     r"[\w./-]+\.(?:jsonl|json|log|md|py|sh|txt))(?![\w])"

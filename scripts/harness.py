@@ -2070,7 +2070,7 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
       loss belongs to whichever merge dropped it, and that merge's own check owned it.
       WARN naming that commit, because every later merge from an older branch inherits
       the same absence and calling inheritance a defect is what made the check unusable.
-      e73554b is here: _built_set was dropped in 6d51c9c's conflict resolution, which
+      c8a4578 is here: _built_set was dropped in d5aac3d's conflict resolution, which
       states its reason, and 117 merges after it inherited the red.
 
     Why plain `-S` still gates the FAIL branch and no flag was added: `git log -S` shows
@@ -2078,8 +2078,8 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
     it. `-m` sees that but then also matches a merge which merely CARRIED a deletion in
     from one side, which silences 21da619 -- a false PASS on the founding case, with
     merge_took_one_side returning [] there too. `--diff-merges=first-parent` finds
-    neither, because 6d51c9c took parent1 whole and its first-parent diff is empty.
-    6d51c9c and ef27df0 are structurally identical at the graph level, so no predicate
+    neither, because d5aac3d took parent1 whole and its first-parent diff is empty.
+    d5aac3d and ef27df0 are structurally identical at the graph level, so no predicate
     over the graph separates deliberate from accidental (de, MEASURED). The first-parent
     split above sidesteps the question instead of answering it: it asks which merge lost
     the definition, which is decidable, rather than whether someone meant to.
@@ -3348,7 +3348,7 @@ FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
-    # decision: 44's 22 probe deletions in 3fb1946 rewrote 39 refs to path@rev, and this
+    # decision: 44's 22 probe deletions in 30b9010 rewrote 39 refs to path@rev, and this
     # check would have passed them either way because it never looked in that directory.
     # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
     # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
@@ -3771,9 +3771,9 @@ def check_facts_well_formed(root):
                         continue
                     # `path@rev` is the repo's retirement form for a deleted file: the
                     # content is reachable at that sha, so the citation resolves even
-                    # though the path does not. launch_gate learned this in 1a4be21; this
+                    # though the path does not. launch_gate learned this in 4676118; this
                     # check did not, and it FAILed on the seven retirements of de-21 while
-                    # 44's 22 in 3fb1946 passed only because `probes/` is absent from
+                    # 44's 22 in 30b9010 passed only because `probes/` is absent from
                     # FACT_SOURCE_PATH's directory list -- the same deletions in eval/ or
                     # scripts/ would have failed. Verify the rev, do not just accept the
                     # syntax: a sha that names nothing is a dead citation wearing the
@@ -7376,8 +7376,21 @@ def _selftest_killpg_reaps_children():
         assert missed, "the differently-named child must be INVISIBLE to a cmdline match"
         # the group is what sees everything
         os.killpg(pgid, sig.SIGTERM)
-        time.sleep(1.5)
-        left = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+        try:
+            proc.wait(timeout=5)
+        except sp.TimeoutExpired:
+            pass
+        deadline = time.time() + 5
+        while True:
+            pids = sp.run(["pgrep", "-g", str(pgid)], capture_output=True, text=True).stdout.split()
+            left = []
+            for k in pids:
+                st = sp.run(["ps", "-o", "stat=", "-p", k], capture_output=True, text=True).stdout.strip()
+                if st and not st.startswith("Z"):
+                    left.append(k)
+            if not left or time.time() > deadline:
+                break
+            time.sleep(0.2)
         assert not left, f"killpg must reap the whole group, {left} survived"
     finally:
         try:
@@ -7642,10 +7655,10 @@ def _selftest_merge_reverted_content():
     retiring a function on purpose must not be flagged, or every intentional deletion
     becomes a red and the check gets bypassed.
 
-    e73554b is the third case and the reason the return value grew a fourth field
-    (de-22, 2026-09-02): _built_set was dropped in 6d51c9c's conflict resolution, ours
+    c8a4578 is the third case and the reason the return value grew a fourth field
+    (de-22, 2026-09-02): _built_set was dropped in d5aac3d's conflict resolution, ours
     already lacked it when this merge ran, and calling that a defect put the same red on
-    117 merges. It must land in the ALREADY-DROPPED class, naming 6d51c9c, while 21da619
+    117 merges. It must land in the ALREADY-DROPPED class, naming d5aac3d, while 21da619
     stays a FAIL -- the two shapes are checked here together because a fix for either one
     alone is what the flag experiments produced."""
     import shutil
@@ -7659,9 +7672,9 @@ def _selftest_merge_reverted_content():
         assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
         # The inherited class, and the whole point of the fourth field: the same scan must
         # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
-        inh = merge_reverted_content(real, "e73554b")
-        assert any(n == "_built_set" and at == "6d51c9c" for _, n, _, at in inh), \
-            f"e73554b must report _built_set as already dropped by 6d51c9c, got {inh}"
+        inh = merge_reverted_content(real, "c8a4578")
+        assert any(n == "_built_set" and at == "d5aac3d" for _, n, _, at in inh), \
+            f"c8a4578 must report _built_set as already dropped by d5aac3d, got {inh}"
 
     d = tempfile.mkdtemp(prefix="delib_")
     try:
@@ -7696,7 +7709,7 @@ def _selftest_merge_reverted_content():
         w = tempfile.mkdtemp(prefix="mergecls_")
         try:
             for merge, want, needle in ((("21da619"), FAIL, "_selftest_gpu_descendants"),
-                                        (("e73554b"), WARN, "6d51c9c")):
+                                        (("c8a4578"), WARN, "d5aac3d")):
                 c = os.path.join(w, merge)
                 assert subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", real, c],
                                       capture_output=True).returncode == 0
@@ -7708,7 +7721,7 @@ def _selftest_merge_reverted_content():
         finally:
             shutil.rmtree(w, ignore_errors=True)
 
-    print("  merge revert: 21da619 FAIL, e73554b WARN naming 6d51c9c, 41294c1 clean, "
+    print("  merge revert: 21da619 FAIL, c8a4578 WARN naming d5aac3d, 41294c1 clean, "
           "deliberate deletion not flagged")
 
 

@@ -45,7 +45,7 @@ source: fb 2026-09-01("比任何单个红项都重要");44-7 分流夜实测。c
 
 **关键是这个上限的性质(fb 裁定):它是回溯性的,不是原理性的。** 一个没有记录自己产生时代码身份的产物,事后无法被接回历史——这一点不可修复。但一个记录了的产物可以,而记录是事前一行的事。所以正确的结论不是"放弃这类问题",是"事前记,事后就是一次 join"。
 
-事前机制已经有一半:`scripts/pod_push.sh:31` 的 `stamp_sync` 在每次全量推送时把 `git rev-parse HEAD` 写进 pod 的 `data/pod_synced_head`(实测 2026-09-01:`cbee9ca2732f87aa186e72d6b982f7dc835e329b 0 2026-09-01T15:50:58Z`,dirty=0),而按名推送会**清除**戳而不是声称一个 sha——因为那时 pod 是"一个 sha 的树加另一个 sha 的一个文件",诚实状态是 unknown。e1 的 `exp.py --commit` 是另一半。
+事前机制已经有一半:`scripts/pod_push.sh:31` 的 `stamp_sync` 在每次全量推送时把 `git rev-parse HEAD` 写进 pod 的 `data/pod_synced_head`(实测 2026-09-01:`b3b0213b8fc4c1925fdeac8daa7253f97052a9c0 0 2026-09-01T15:50:58Z`,dirty=0),而按名推送会**清除**戳而不是声称一个 sha——因为那时 pod 是"一个 sha 的树加另一个 sha 的一个文件",诚实状态是 unknown。e1 的 `exp.py --commit` 是另一半。
 
 **缺的那一半在语料侧,而且比预想的更缺。** 实测 pod 上 43 个 `build_corpus_stats.json`:**没有一个带代码 sha**,`filters_fp` 只有 14 个带,`fingerprint` 43 个全带。所以"这批语料是哪个版本的代码建的"目前只能靠人翻 commit——`df2b774` 那五条中文正则从未到达 pod、九域在它不存在的情况下建成,就是靠翻当时的 manifest 才定案的。下一次构建应把 `pod_synced_head` 的 sha 写进 `build_corpus_stats.json`,这个问题从此自动可答。
 
@@ -66,4 +66,4 @@ source: fb 2026-09-01("比任何单个红项都重要");44-7 分流夜实测。c
 - runs/board.jsonl 第 [69] 行(board.py union-merge 不存在)
 - scripts/harness.py(checks 注册表、SKIP 语义、pod_drift 的 manifest 子集视野)
 - 边界条件一节的三列:`f981b21` / `22de0e7` / `_broken_merge_complete()`,de 2026-09-01 实测,判据见 `scripts/harness.py` 的 `_content_restored`;`merge_complete` 逃生口修复 accc868
-- 事前身份:`scripts/pod_push.sh:31` `stamp_sync`;pod 上 `data/pod_synced_head` = `cbee9ca2 0 2026-09-01T15:50:58Z`(de 实测);pod 上 43 个 `build_corpus_stats.json` 的键频:`fingerprint` 43、`filters_fp` 14、代码 sha **0**
+- 事前身份:`scripts/pod_push.sh:31` `stamp_sync`;pod 上 `data/pod_synced_head` = `b3b0213b 0 2026-09-01T15:50:58Z`(de 实测);pod 上 43 个 `build_corpus_stats.json` 的键频:`fingerprint` 43、`filters_fp` 14、代码 sha **0**
