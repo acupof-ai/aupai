@@ -82,6 +82,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
 | Lambda probes | `python eval/assemble_lambda_probe.py` / `python eval/validate_lambda_probe.py` — t05 lambda-curriculum probes (3b, deprioritised but live) |
+| Progress page | `python3 scripts/progress_feed.py` — writes `~/aupai-progress.html`; 98 runs it by hand every 5–20 minutes. **This row IS its reader.** A tool only ever launched from a terminal has no citation anywhere in the tree, so every reachability scan reports it unreferenced by construction — de-5 deleted it on that reading (5c2cb9c) and froze the page. Same shape as `vet_programs.py:37`'s glob: a runtime dependency static analysis cannot see. The fix for an operational tool is a row here, not leaving it bare |
 
 ## Run pretraining
 
