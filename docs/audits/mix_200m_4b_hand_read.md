@@ -51,5 +51,5 @@ source: hand-read of a deterministic 20-doc/domain sample of mix_200m_4b domains
 
 - 抽样：deterministic，seed = 3 + Σord(domain)，reservoir k=20/域，全 9 域，180 篇；dump /work/aupai/runs/mix_handread_<domain>.txt（含 SRC 行 = shard:line）。
 - **并发注明（fb 要求 1）**：抽样运行期间 near-dedup 全量（datagen/near_dedup_scale.py，starcoder+rp1t）正在读同一批 code shards。
-- **boundary（fb 要求 2）**：抽样窗口内 p200m_4b_0902_resume2.log 步 1650–1720，**tok/s/gpu ≈9.6K**（8 卡合计 77K，host-log 一列即 8 卡合计），≥ 此前 save 步 7K 基准，与 200M 训练无吞吐冲突；这轮 hand-read 未拖累训练。适用范围：混入 dedup 并发的同帧读，不推到其它未量化 IO 冲突。
+- **boundary（fb 要求 2）**：抽样窗口内 p200m_4b_0902_resume2.log 步 1650–1720 稳定 **77K tok/s/gpu**（log 字段本身即每卡每秒 token，1,048,576 tok/step ÷ 8 卡 ÷ 1.7 s/step ≈ 77K，与 ETA 自洽），≥ 此前 save 步 7K 基准，与 200M 训练无吞吐冲突；这轮 hand-read 未拖累训练。适用范围：混入 dedup 并发的同帧读，不推到其它未量化 IO 冲突。
 - 方法局限：20/域 手读为定性分层，非统计显著；最差样例属本文档判读选择。
