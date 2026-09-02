@@ -66,28 +66,44 @@ start before all logits at that row are done. That looks like it forces two
 full passes over `v`, and at tensor granularity it does: one source is
 **134.2 MB**, the H20 L2 is 60 MB, so nothing survives from pass 1 to pass 2.
 
-**But the dependency is per-row, not global.** Rows `(b,t)` are independent.
-Block the traversal by rows: for a block of `R` rows, load that block of every
-source once, compute all `n` logits, softmax across `i` **within the block**,
-then mix — still holding the same data.
+**But the dependency is per-row, not global.** Rows `(b,t)` are independent, so
+the traversal blocks by rows: for a block of `R` rows, compute all `n` logits,
+softmax across `i` within the block, then mix.
 
-| R rows | working set `n×R×D` bf16 | fits |
-|---|---|---|
-| 64 | 3.28 MB | L2 |
-| 128 | 6.55 MB | L2 |
-| 256 | 13.11 MB | L2 |
+**The blocking size is set by SMEM, not L2, and an earlier version of this
+section got that wrong.** Holding `n` tiles per CTA (`n×R×D`) does not survive
+78 SMs running concurrently — at R=128 that is 6.55 MB per CTA and **511 MB
+across the machine, against a 60 MB L2**. The fix is that a CTA never needs
+`n` tiles resident: it streams one source at a time, keeping only the **fp32
+accumulator `out[R,D]`** plus the current tile.
 
-So `v` is read **once per source read**, not twice. This is the whole saving,
-and it is exactly the factor 2 b0 measured in the `add_` count
+| R rows | accumulator (fp32) | + one tile (bf16) | per CTA | fits 228 KB SMEM |
+|---|---|---|---|---|
+| 16 | 64 KB | 32 KB | 96 KB | yes |
+| 32 | 128 KB | 64 KB | 192 KB | tight |
+| 64 | 256 KB | — | — | no |
+
+So **R ≤ 16**, and the accumulator stays in SMEM instead of round-tripping to
+HBM.
+
+**The single pass is only valid with an online softmax.** `a_i` needs every
+logit, so a kernel that streams sources cannot know `a_i` when it reads `v_i`.
+The kernel keeps a running max `m`, a running denominator `l`, and the
+accumulator, rescaling both by `exp(m_old − m_new)` when a new source raises
+the max — flash-attention's trick, applied over the source axis instead of the
+key axis. Final `out = acc / l`. Verified in fp64 against `softmax(0)` then
+mix: **max error 2.2e-16** over n=25, i.e. exact to rounding. Without this the
+form silently needs two passes, which is what an earlier version assumed.
+
+`v` is then read **once per source read** rather than twice, which is the
+whole saving — exactly the factor 2 b0 measured in the `add_` count
 (`add_ = 2 × source_reads`, one edge from the logits read and one from the
-mixing read — confirmed by ablation: detaching the logits read halves the
-count at L=2/3/4/12, ratio 2.00 at every depth).
+mixing read; confirmed by ablation, ratio 2.00 at L=2/3/4/12).
 
-**This contradicts the "L2 cannot hold it, so write two passes each with its
-own read" instruction.** The instruction is right about tensor granularity and
-wrong about row granularity; the design takes the row-blocked form and must be
-held to the byte count below. If the implementation cannot hit it, the two-pass
-fallback is the retreat, not the plan.
+The byte budget below is unchanged by this correction: it counts HBM traffic
+per source read, which does not depend on `R`. If the implementation cannot
+hold the accumulator in SMEM, two passes each with their own read is the
+retreat, not the plan.
 
 ## Bytes, per step at L=12 (325 source reads forward)
 
@@ -123,9 +139,26 @@ dV_i[b,t,d] = a[i,b,t] · dout[b,t,d]              elementwise
 dA[i,b,t]   = Σ_d dout[b,t,d] · v_i[b,t,d]        reduction over D
 ```
 
-Both are one `[B,T,D]` traversal with `dout` read once and accumulation inside
-the kernel. The `sum` backward is a broadcast-multiply; its reads are already
-inside b0's 261.7 GB/step accounting.
+Backward is also **one pass**, but only because forward saves `a`. The chain is
+
+```
+dA[i,b,t]     = Σ_d dout·v_i                    one pass over v
+s[b,t]        = Σ_i a[i]·dA[i]                  a per-row scalar
+dlogit[i,b,t] = a[i]·(dA[i] − s)                softmax backward
+dV_i[b,t,d]   = a[i,b,t]·dout[b,t,d]            elementwise
+```
+
+`dlogit` needs **all** `dA` before any of it is final, and `dV` needs `a`.
+Both dependencies are per-row scalars, so if forward stores `a[n,B,T]` the
+backward streams `v` once. Verified in fp64 against autograd: `dlogit` max
+error 2.2e-16, `dV` exactly 0.
+
+**Storing `a` rather than recomputing it is not a close call**: `a[n,B,T]` fp32
+is 0.0066 GB per call against 3.36 GB to re-read `v` and rebuild the logits —
+**512× cheaper**. (Contrast KDA, where the analogous `disable_recompute=True`
+trade stores ~1.6 GB/call; that one is genuinely arguable, this one is not.)
+The `sum` backward is a broadcast-multiply; its reads are already inside b0's
+261.7 GB/step accounting.
 
 **The gradient wrt `v_i` has a second term the mixing does not own**: each `v`
 is read by its own logit too, so autograd's `v.grad` is the mixing term *plus*
@@ -167,10 +200,13 @@ would let a wrong kernel pass.
 
 The 6.25× itself. The fused kernel is designed to halve the bytes; whether it
 also closes the gap to roofline depends on why the current kernel is 6.25× off,
-and that has not been diagnosed. **Candidate: 632 launches/step for 18 calls
-means ~35 launches per call, so each launch does a small slice of a reduction
-whose only parallel axis is D=1024.** If that is the cause, the row-blocked
-form fixes it as a side effect (rows become the parallel axis). If it is not,
-the byte saving stands alone at 10.9 ms and the rest needs its own
-investigation. **Measure the launch count of the new kernel; if it is not ~18,
-the diagnosis was wrong.**
+and that has not been diagnosed. **Candidate: 632 kernel launches/step for 18
+calls means ~35 launches per call, so each launch does a small slice of a
+reduction whose only parallel axis is D=1024.** If that is the cause, row
+blocking fixes it as a side effect (rows become the parallel axis). If not, the
+byte saving stands alone at 10.9 ms and the rest needs its own investigation.
+
+**Criterion: 18 KERNEL launches per step, one per call — not 18 CTAs.** At
+R=16 each call launches 65536/16 = 4096 CTAs, so the step runs 73728 CTAs in
+18 launches. CTAs are cheap; kernel launches are what the 632 counts. Reading
+this criterion as a CTA count would reject a correct kernel.
