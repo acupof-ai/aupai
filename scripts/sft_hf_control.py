@@ -195,20 +195,45 @@ def pack_rows(pairs, tok, eos_id, seq):
 
 
 def eval_loss(model, ids, lab, batch, device):
-    """Mean loss over the validation rows. The number an lr scan is selected on."""
+    """Mean NLL per supervised token over the validation rows. The lr-scan selection number.
+
+    DO NOT PRE-SHIFT. transformers shifts labels internally, so passing `input_ids=x[:, :-1]`
+    together with `labels=y[:, 1:]` shifts TWICE: logits[t] is then asked to predict token
+    t+2, and the last supervised token is dropped. That was this function's first version and
+    it reported 2.5594 where the correct number is ~7.35 on the same checkpoint -- measured
+    2026-09-02 on point 1 of the seq-2048 scan, three ways over the same 24 examples:
+
+      manual, x[:, :-1] vs y[:, 1:]        6.9568   <- correct
+      HF native, full x with labels=y      6.9568   <- identical, i.e. the reference
+      pre-shifted BOTH (the old code)      3.0556   <- 2.28x too low
+
+    The error direction is what made it survive: predicting t+2 should be HARDER, but the
+    input window at position t already CONTAINS token t+1, so the misalignment leaks the
+    answer and pushes the loss DOWN. A number that moves the wrong way is easy to catch; one
+    that is merely too good looks like a well-trained model.
+
+    Summed and divided by supervised tokens, not averaged over rows: HF's per-batch mean
+    weights a row with 8 supervised tokens the same as one with 900, and the arms' comparable
+    unit is per-token (then per-byte), never per-row. scripts/eval_heldout.py is the
+    authority for the cross-arm number and uses the same alignment; this stays only because
+    the scan needs a selection value without loading a second scorer.
+    """
     import torch
 
     model.eval()
-    tot = n = 0.0
+    tot_nll, tot_tok = 0.0, 0
     with torch.no_grad():
         for lo in range(0, ids.shape[0], batch):
             bi = ids[lo:lo + batch].to(device)
             bl = lab[lo:lo + batch].to(device)
-            out = model(input_ids=bi[:, :-1], labels=bl[:, 1:])
-            tot += out.loss.item() * bi.shape[0]
-            n += bi.shape[0]
+            # Full row in, no pre-shift; the manual CE below does the one and only shift.
+            logits = model(input_ids=bi).logits
+            tot_nll += torch.nn.functional.cross_entropy(
+                logits[:, :-1].reshape(-1, logits.shape[-1]).float(),
+                bl[:, 1:].reshape(-1), ignore_index=-100, reduction="sum").item()
+            tot_tok += int((bl[:, 1:] != -100).sum())
     model.train()
-    return tot / max(n, 1)
+    return tot_nll / max(tot_tok, 1)
 
 
 def sha256_of(path):
@@ -449,6 +474,11 @@ def selftest():
 
     No card, no model download: a fake tokenizer stands in, because what is being checked is
     the mask, the packing and the schedule -- none of which involve weights.
+
+    Case 4 is the exception and needs a real forward pass, so it builds a 2-layer random
+    transformers model on CPU. That is what it takes to compare an alignment against HF's
+    own: the double-shift bug this file shipped could not be caught by any fixture that
+    stubs the model, because the second shift happens INSIDE transformers.
     """
     fails = []
 
@@ -560,6 +590,83 @@ def selftest():
     if ".resize_token_" + "embeddings(" in src:
         fails.append("resize_token_embeddings is called again: on this model it SHRINKS "
                      "50304 -> 50279 silently. Grow to a multiple of 128, or do nothing.")
+
+    # 5. KNOWN ANSWER FOR eval_loss's ALIGNMENT. It must agree with HF's own label shift,
+    #    and with scripts/eval_heldout.score's manual shift, on the same rows. This file's
+    #    first version pre-shifted BOTH sides -- transformers then shifted again, so logits[t]
+    #    predicted token t+2 -- and reported 2.5594 where the true value was ~7.35.
+    #
+    #    Needs a REAL transformers forward, because the second shift happens inside the
+    #    library: any stubbed model reproduces whatever alignment the stub implements, which
+    #    is the shape that let this ship. A 2-layer GPTNeoX on CPU, ~5s.
+    #
+    #    AND THE FIXTURE MUST BE TRAINED, briefly, on a LEARNABLE pattern. A random model is
+    #    near-uniform, so predicting t+1 and t+2 are equally hopeless and the double shift
+    #    costs only 0.0139 nat (0.3%) -- measured. In production, on a trained checkpoint, it
+    #    was 2.28x. A random fixture understates this bug ~150x, and a mutation that
+    #    reintroduces the double shift then lands INSIDE the tolerance and the case passes.
+    #    The leak only pays once the model has learned local structure worth copying, so the
+    #    fixture learns some: a fixed repeating cycle, a few steps of Adam.
+    try:
+        import torch
+        from transformers import GPTNeoXConfig, GPTNeoXForCausalLM
+
+        torch.manual_seed(0)
+        V, T = 16, 25
+        m = GPTNeoXForCausalLM(GPTNeoXConfig(
+            vocab_size=V, hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+            intermediate_size=64, max_position_embeddings=64))
+        # A cycle of period 4: token t+1 is a deterministic function of token t, so a model
+        # that has learned it predicts the NEXT token well -- which is exactly the structure a
+        # double shift can cheat on, since t+1 is already in the input window at position t.
+        cyc = torch.tensor([[(i + r) % 4 for i in range(T)] for r in range(8)])
+        opt = torch.optim.Adam(m.parameters(), lr=5e-3)
+        m.train()
+        for _ in range(40):
+            opt.zero_grad()
+            m(input_ids=cyc, labels=cyc).loss.backward()
+            opt.step()
+        m.eval()
+        ids = cyc[:3]
+        lab = ids.clone()
+        lab[:, :5] = -100                      # a prompt half, as the packer produces
+        # Wrapped: a pre-shifted eval_loss raises a shape ValueError here rather than
+        # returning a wrong number, and an unhandled raise aborts the whole selftest with a
+        # traceback instead of a named failure. Red either way, but a traceback describes the
+        # crash, not the defect -- and it does not print "SELFTEST FAIL", so a grep for that
+        # string over the mutation's output shows NOTHING and reads as "the mutation
+        # survived". That is how I misread this case twice.
+        try:
+            got = eval_loss(m, ids, lab, batch=2, device="cpu")
+        except Exception as e:  # noqa: BLE001
+            got = None
+            fails.append(f"eval_loss raised instead of returning a loss: "
+                         f"{type(e).__name__}: {e} -- the label alignment is wrong (a "
+                         f"pre-shifted input gives a shape mismatch)")
+
+        with torch.no_grad():
+            lg = m(input_ids=ids).logits
+        want = torch.nn.functional.cross_entropy(
+            lg[:, :-1].reshape(-1, V).float(), lab[:, 1:].reshape(-1),
+            ignore_index=-100, reduction="sum").item() / int((lab[:, 1:] != -100).sum())
+        if got is not None and abs(got - want) > 1e-4:
+            fails.append(f"eval_loss {got:.6f} != the one-shift reference {want:.6f} -- the "
+                         f"label alignment is wrong (a double shift reads LOWER, not higher)")
+
+        # The bug must be LOUD here, not merely different. 1.5x is far below the 2.28x seen in
+        # production and far above the 0.3% an untrained fixture produces; if the gap is
+        # smaller than this the fixture has stopped being able to detect the bug, and that is
+        # a failure of the case, not a pass.
+        with torch.no_grad():
+            dbl = m(input_ids=ids[:, :-1], labels=lab[:, 1:]).loss.item()
+        if not (dbl < want / 1.5 or dbl > want * 1.5):
+            fails.append(f"the double-shifted variant reads {dbl:.6f} against the correct "
+                         f"{want:.6f} -- less than 1.5x apart, so this fixture can no longer "
+                         f"detect the double shift it exists for (an untrained model gives "
+                         f"only 0.3%; the fixture must stay trained)")
+    except ImportError as e:
+        fails.append(f"could not build a real model to check eval_loss's alignment: {e} -- "
+                     f"this case did NOT run, and a stubbed model cannot replace it")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
