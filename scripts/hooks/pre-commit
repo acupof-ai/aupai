@@ -419,7 +419,19 @@ def main():
         # Our arm's held-out reader. sft_math.py does not evaluate a held-out set, so without
         # this the two arms' headline numbers would be a held-out loss on one side and nothing
         # on the other. Its selftest needs no card and no checkpoint.
+        #
+        # SUPERSEDED by scripts/eval_heldout.py, which scores BOTH arms. Two implementations
+        # of one number is what let three defects through: different populations per arm
+        # (12.0% dropped vs 0.26%), a denominator over the whole file while half was scored,
+        # and one arm row-weighting what the other token-weighted. Kept as a redirect until
+        # the report's numbers are in, then deleted.
         "scripts/eval_heldout_ours.py",
+        # The one evaluator both arms are scored with. Its selftest is mutation-checked: each
+        # case was confirmed to fail when the defect it names is reintroduced (whole-file
+        # denominator, row-weighted mean, skipped-instead-of-refused id, off-by-one drop rule,
+        # a local copy of the template). Needs no card -- the drop rule takes an injectable
+        # encoder, and score() runs against a fixture module on CPU.
+        "scripts/eval_heldout.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
