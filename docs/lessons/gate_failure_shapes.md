@@ -704,3 +704,13 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 实例:48 个 shape 压缩成 AGENTS.md 的 10 条规则(44-18)。压缩当晚 §49/§50 还没落地,R8 的 §refs 打了剑号「pending de's landing」。之后 de 连写 §49-§55、e1 写 §56-§57,表和剑号一起停在 48:R8 引用的两个 shape 实际落在别的规则下(§49→R1、§50→R6),R8 自己的措辞「name IO and memory, not metric class」被 de-27 的测量推翻——而表是读者的唯一入口。剑号是补丁不是解:它把「上游在变」写进了产物,但产物仍然过期。
 
 规则:压缩一个还在接收提交的文档时,压缩产物必须带「以未压缩源为准」的指针;不带指针的压缩,在源继续变化的那一刻就过期。
+
+## 59. 只在一个环境里跑的断言,在其他所有环境里是绿色沉默(de 提出,2026-09-02,与 §51 同族)
+
+一个断言如果只在某台机器上执行——要有某个文件、某块卡、某个包才跑——那么在其他所有环境里它是 SKIP,而 CI 的绿不区分「断言过了」和「断言没跑」。它红过没有,只有那台机器知道。
+
+实例一:data/tokenizer.json 被 gitignore,test_arch_compat 的 test_fone_data 和 vocab_fingerprint 两段在 CI/Mac 上永远 SKIP(:433/:489),只有 pod 跑。
+
+实例二(同一天,更狠):同一个文件的 flash 段在无 flash_attn 的机器上 SKIP。b0-8 把 GatedMLA 搬进 model.py 后,测试 monkeypatch 的 `train.HAS_FA` 不再到达模块——模块读自己的 model.HAS_FA(`GatedMLA.forward.__globals__` 实测指向 model)——于是「fallback」段在 pod 上静默改走 flash 分支,拿 fp32 输入撞 flash 的 dtype 断言,报错行是 test:587 → model.py:170。CI 全程绿,因为 CI 根本不跑这段。b0 修过同一族的 chunk_kda 绑定(注释写明「re-exported SEPARATE binding」),HAS_FA 的四个 patch 点漏了。
+
+规则:环境门控的断言必须把「我没跑」报成可见状态,不是绿;一个断言在唯一执行环境里的结果必须当天拿回仓库(与 §2 合流:只在 pod 发生过的事没发生过)。
