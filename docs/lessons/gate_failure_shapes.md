@@ -328,6 +328,8 @@ de-22(dca2d1c)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 第二条理由(b0,2026-09-02):`git stash` 对未跟踪文件静默不收,而新拆出的文件必然未跟踪——b0 的 model.py 留在盘上、train.py 切割进了 stash,一个动作把一次改动劈成两半。禁 stash 的理由从「共享全局状态」再加一条「未跟踪文件静默丢失」。
 
+补注(2026-09-02,AGENTS.md 事故移入,同族:共享工作树状态):day-one 一个 session 的 `git checkout` 抹掉了另一个 session 未提交的 device gate(`scripts/test_arch_compat.py`,只因几分钟前 `podput` 过一份到 pod 才找回)。共享工作树下,checkout 一个你没写的文件 = 对别人未提交改动的静默删除。规则:永不 checkout/restore 你没写的文件,自己的改动手工 undo。
+
 ## 34. 区间有两端,只验一端(b0,2026-09-02,与 §29 同族)
 
 一个区间有两端;校验只验起始端,结束端就是盲区——而结束端多带走的东西,正是拆分类改动里最贵的错误。
