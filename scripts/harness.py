@@ -10182,6 +10182,20 @@ def cmd_install_hooks(rest):
 
 
 def main():
+    # Drop inherited GIT_* before anything runs. git sets GIT_DIR and GIT_INDEX_FILE for
+    # its hooks, and a hook that runs a selftest passes them down: any `git init` in a
+    # temp directory then RECONFIGURES the real repository, and `core.bare = true` on a
+    # repo with a worktree makes every git command in every session fatal. That happened
+    # twice on 2026-09-02, from two different selftests.
+    #
+    # Here, not at the eight `git init` call sites, and not only in the hook: the
+    # invariant is "this file's git work is about ROOT, never about whatever invoked us",
+    # which holds for `harness check` under a hook, under CI, and typed by hand. Guarding
+    # the call sites means every future one must remember; guarding the hook means only
+    # that entry point is safe. pod_drift.py keeps its own copy -- it runs standalone.
+    for _v in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY",
+               "GIT_COMMON_DIR"):
+        os.environ.pop(_v, None)
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
     # failure mode this file exists to prevent.
