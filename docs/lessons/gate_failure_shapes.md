@@ -10,6 +10,8 @@ source: fb 裁定 + 44-7/44-8 分流夜实测 + 2026-09-01/02 夜。44-6 草稿,
 
 > 整表说明(b0,2026-09-02,不进表):b0 提交前又用 `git diff --name-only HEAD main` 判「main 动过我的文件」——正确判据是 `git log HEAD..main -- <path>`,他自己提出、AGENTS 已写的规则,第三次踩。**能说出病名不等于免疫。**
 
+> b0 原话(2026-09-02,文首并列):「每一次核验成本都远低于事故成本,而每一次不核的理由都是看起来对。」今晚四次:行号、区间结束行、diff 判据、fb 的 reset 前提。
+
 ## 1. 观察值 vs 外推值(fb 2026-09-02 裁定,原文)
 
 > 一个 token 数必须说明它是从缓存数出来的,还是从 stamp 外推的。外推值和实测值在文本上完全一样,差 0.48% 时看起来像舍入,而 0.48% 在 8.7B 上是 4200 万 token。和「亲历/重建」是同一原则的两个面:前者管来源,后者管数字。一个产物必须说明它是被观察到的还是被推算出来的。
@@ -370,6 +372,60 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 规则:破坏性指令的双重验证——授权 + 世界为真;后者只能执行者自己核,授权者的描述不免除这一步。
 
+## 38. 规则在测出它的场景成立、在目标场景不成立(fb 当事人,2026-09-02,与 §34 同形)
+
+一条规则从实测里长出来,只在测过的场景里被验过;目标场景换了变量,规则原样应用就是新错误。
+
+实例(fb 当事人,b0 A/B):fb 给出规则「先 merge 再 stage」,依据 e1/tilerl 的实测。b0 的 A/B 显示暂存与否无关——真正的变量是 main 是否动了同一文件,而那个文件是 `data/pod_head_manifest.txt`,hook 每次提交重生成。规则在测出它的场景成立,在目标场景不成立。
+
+修法两层:手册(派生物 checkout 后重合,tilerl)、hook 不留脏 manifest(e1-19)。
+
+## 39. 过期的 fixture key 读起来与一条死测试完全一样(de,2026-09-02)
+
+删除候选里「死测试」和「死在 setup 的测试」不可读分辨——跑一次才分得出。
+
+实例(de-5,5c2cb9c):`test_domain_loss_val` 死在自己的 fixture:写 `{"text": …}`,而 train.py:1197 `_jsonl_content` 读 `["content"]` 直接 raise——正是 20B 发车 step 0 撞死的那个 `KeyError('content')`。一行 fixture 修好,pod 上就过。删前跑一次:fb 对 de-5 的裁定就是「每个 test_ 形候选先跑再判」——五个全过、全留,删除集从 12 降到 7。
+
+## 40. 门只检查它碰巧能跑的东西:hook 的 runner 语法里没有 .sh(de,2026-09-02,与 §29 同族)
+
+hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -euo pipefail`,所以 SELFTEST_FILES 里从来零个 .sh——不是 .sh 不需要验,是门的 runner 按构造跑不了它们。
+
+实例(de-5,5c2cb9c):`test_eval_rescore.sh` 验 eval_math.sh/eval_code.sh 的裸 rescore 拒绝,0.4s 跑过——归 CI 不归 hook,因为 hook 跑它必红。门只检查它碰巧能跑的东西;不能跑的那类需要另一种 runner(CI),不是不需要检查。
+
+## 41. 手跑的运维工具是任何仓库扫描按构造看不见的 reader(de,2026-09-02)
+
+一个脚本的调用者是一个人的巡检规格、不在树里,那么 glob、加载器扫描、reachability 审计按构造都找不到它——删它的审计结论在审计自己的判据下无懈可击,页面在人那边冻结。
+
+实例(de-5,5c2cb9c):`scripts/progress_feed.py`(165 行)被删,理由原话「the audit excluded it as 'operational', which is not reader evidence」。而 98 每 5–20 分钟手跑它写进展页,页面因此冻结。de 这一步判得对——「operational」是豁免不是证据——只是少了把证据造出来那一步。
+
+修法:给它一行 AGENTS 入口表作为 reader,而不是豁免。规则:删除清单发到每个可能手跑它的人,24 小时无人认领再删。
+
+同族:`mathbank/vet_programs.py:37`(main 上在)的 glob——运行时依赖,扫描同样看不见。
+
+## 42. commit message 里的 HOLD 约束的是人不是 merge(tilerl,2026-09-02)
+
+文字 HOLD 对自动化合并且无摩擦力——它约束读到它的人,不约束 merge。
+
+实例(tilerl 自报):f82ca46 首行写 `HOLD: do not merge to main while p500m_20b_0902 is training`,随整条 tilerl 分支被合进 main;两分钟后 3bc18f8 只回退 train.py(diff 0,pod 0 命中)。修法:tilerl-17 `frozen_paths` 检查进 hook——机器判据,不是文字约定。
+
+## 43. eval 复用训练的数据路径而不带训练的身份变量,「重建」是默认动作(fb 当事人,2026-09-02,de-23)
+
+复用路径的人必须复用身份变量;身份对不上时正确动作是拒绝,不是重建。
+
+实例(fb 一手):用户要 step1500 的 benchmark,起 `eval/ppl.py --mix data/mix_500m.json`,2 分钟后日志 `cache was built by another vocabulary, retokenizing`。ppl.py 从不设 `train.VOCAB_ID`(只有 train.py:1462 设);build_mix:1647 拿 `(VOCAB_ID or "")` 比 stamp 必假——/data00 九个活缓存会被重 tokenize 并以空 stamp 覆盖。按精确 PID 杀,缓存 mtime 未动。
+
+## 44. 守卫对路径错:无 checkpoint 名的产物路径(fb 当事人,2026-09-02,de-24)
+
+守卫本身是对的(拒绝覆盖),但它守的路径把两个 checkpoint 的产物映射到同一个名字——守卫在守一个错误的身份。
+
+实例(同一次):score_matrix 的 l1_fewshot 写 `data/eval/preds_l1_d3.jsonl`,路径无 checkpoint 名,第二个 checkpoint 被 ArtifactExists 正确拒绝。产物路径必须带生成者身份(checkpoint/step),否则守卫越正确越锁死错误。
+
+## 45. 判据用退出码不用 stdout 文本(e1,2026-09-02,86e1917,与 §40 同族)
+
+工具的结论在退出码里,stdout 文本是给人看的副产物——拿副产物当判据,工具的失败模式(跑不起来、无法解析)全部落进过滤器的盲区。
+
+实例(e1 一手,86e1917):ruff 跑了但失败(exit 127、stdout 空)被 "F821 in line" 文本匹配读成 GREEN;invalid-syntax 被 F821 过滤丢掉读成「无未定义名」。修法(e1 已落):rc not in (0,1) = no-verdict;invalid-syntax 计入。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -392,3 +448,10 @@ de-22(9b0a890)修 merge_complete 的「删除是否故意」误判,两条 selfte
 - de 的 de-5 清单(fb 转达,2026-09-02):引用扫描器五个可信错版本;known-answer 规则 4 loader-reached/2 hook-map/3 not-reached;arch.html 的 reader 是 pages.yml
 - b0 补注(849993f,fb 转达,2026-09-02):F821 只查新文件的盲区 + 89 条假数字(真 8 条全在 train.py);结束行正则漏下划线开头常量;`git diff --name-only HEAD main` 第三次踩自己立的规则
 - fb 当事人(2026-09-02,b0 消息一手):reset --hard 指令的归属描述错误(五个提交是 44 的),b0 逐个 is-ancestor 核后执行——授权 + 世界为真双重验证
+- b0 原话 + A/B(2026-09-02,fb 转达):核验成本远低于事故成本;「先 merge 再 stage」在目标场景不成立,变量是 main 是否动了 hook 重生成的 manifest
+- de-5(5c2cb9c,2026-09-02):test_domain_loss_val fixture key 过期=20B step0 KeyError,跑一次才分得出死活;test_eval_rescore.sh 归 CI——hook 的 sys.executable 跑不了 .sh,门只检查它碰巧能跑的
+- de-5(5c2cb9c,2026-09-02)+ 98(fb 转达,UTC 12:3x):progress_feed.py 以「operational 非 reader 证据」被删,98 每 5–20 分钟手跑它写进展页,页面冻结——手跑运维工具按构造逃过一切仓库扫描;修法=AGENTS 入口行 + 删除清单 24h 认领制
+- mathbank/vet_programs.py:37(main,2026-09-02 sed 核验):glob 运行时依赖,shape 41 锚点
+- tilerl(f82ca46/3bc18f8,2026-09-02):HOLD 文字随分支合进 main,约束人不约束 merge;tilerl-17 frozen_paths 进 hook
+- fb 当事人(2026-09-02):ppl.py 不设 VOCAB_ID→build_mix:1647 必假→九活缓存险被重 tokenize(de-23);preds_l1_d3.jsonl 无 checkpoint 名被 ArtifactExists 拒(de-24)
+- e1-16(86e1917,2026-09-02):exit 127 空 stdout 读成 GREEN、invalid-syntax 被 F821 过滤丢掉;rc not in (0,1)=no-verdict
