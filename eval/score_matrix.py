@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 import torch
 
@@ -551,6 +552,66 @@ def selftest():
         # An unreadable checkpoint must not take down a scoring run.
         assert _mix_for(os.path.join(_td, "nope.pt"), _fb) == _fb, "unreadable ckpt must fall back"
 
+    # A RAISING metric costs its own entry and nothing else. domain_loss raises through
+    # val_seqs -> cache_guard, which is designed to refuse; before this, that took score()'s
+    # whole record with it and threw away every metric already measured.
+    _rec = {"metrics": {}, "skipped": {}}
+    _metric("ok_one", lambda: ({"value": 1}, None), _rec)
+
+    def _boom():
+        raise RuntimeError("cache stamps disagree")
+
+    # The raise must be CAUGHT by _metric, not by this selftest. Letting it propagate here would
+    # also exit nonzero -- with the raw RuntimeError and no assertion named, which reads exactly
+    # like a guard firing. Twice today a bad world passed for that reason.
+    try:
+        _metric("raiser", _boom, _rec)
+    except Exception as _e:
+        raise AssertionError(
+            f"_metric let {type(_e).__name__} escape; score()'s per-checkpoint except then "
+            "discards every metric already measured for that checkpoint"
+        ) from _e
+    _metric("ok_two", lambda: ({"value": 2}, None), _rec)
+    assert _rec["metrics"]["ok_one"]["value"] == 1, _rec
+    assert _rec["metrics"]["ok_two"]["value"] == 2, "a raise must not stop later metrics"
+    assert "RuntimeError" in _rec["metrics"]["raiser"]["error"], _rec["metrics"]["raiser"]
+    # The traceback, not only the message: "domain_loss failed" is the same string whether the
+    # cause was cache_guard, a vocab mismatch or an unreadable shard. Presence asserted before
+    # indexing -- a bare _rec[...]["_traceback"] raises KeyError, which exits nonzero naming no
+    # assertion and reads like the guard firing. Third instance of that trap today.
+    assert "_traceback" in _rec["metrics"]["raiser"], \
+        f"a raised metric records no traceback, only {sorted(_rec['metrics']['raiser'])}"
+    assert any("_boom" in ln for ln in _rec["metrics"]["raiser"]["_traceback"]), \
+        _rec["metrics"]["raiser"]["_traceback"]
+    # An (None, err) return is still an error entry, not an exception -- the two paths must not
+    # have merged into one.
+    _metric("returner", lambda: (None, "no shards"), _rec)
+    assert _rec["metrics"]["returner"]["error"] == "no shards", _rec["metrics"]["returner"]
+    assert "_traceback" not in _rec["metrics"]["returner"], "a returned error has no traceback"
+
+    # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
+    # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.
+    # Asserted HERE because domain_loss.py's own --selftest requires a --ckpt, so the pre-commit
+    # hook lists it as unrunnable: a check living in that file would never execute. An AST read,
+    # not a substring, and it asserts the CLI CALLS _mix_for rather than that the name appears --
+    # an import with no call site is exactly what a copy-paste of this fix would leave behind.
+    import ast as _ast
+    _dl = os.path.join(HERE, "domain_loss.py")
+    with open(_dl, encoding="utf-8") as _fh:
+        _dl_src = _fh.read()
+    _dl_main = next((n for n in _ast.parse(_dl_src).body
+                     if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
+    _calls = {_ast.unparse(n.func) for n in _ast.walk(_dl_main) if isinstance(n, _ast.Call)} \
+        if _dl_main else set()
+    assert "_mix_for" in _calls, \
+        "domain_loss.py's CLI does not call _mix_for; it would score against the ladder mix"
+    # And the mix it hands to domain_files must be that result, not a.mix.
+    _files_args = [_ast.unparse(n.args[0]) for n in _ast.walk(_dl_main)
+                   if isinstance(n, _ast.Call) and _ast.unparse(n.func) == "domain_files"
+                   and n.args] if _dl_main else []
+    assert _files_args == ["mix_path"], \
+        f"domain_loss.py passes {_files_args} to domain_files, not the checkpoint's mix"
+
     # kind stamp wins over sft epochs; epochs>1 is sft; no stamp, no ledger row -> base
     assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
     assert classify({"epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "sft"
@@ -676,10 +737,33 @@ def selftest():
 def _metric(name, fn, record, *args, **kwargs):
     """Run a metric, print start/result, store it. Real-time output so a 2h
     silent run doesn't look dead. Wall time recorded so a milestone profile
-    has a measured budget, not a guess."""
+    has a measured budget, not a guess.
+
+    ONE metric raising takes down ONE metric. Every metric_* returns (value, error) and the
+    convention held until one of them raised instead -- domain_loss does, through
+    val_seqs -> cache_guard, which is designed to refuse. That propagated to score()'s caller,
+    where the per-checkpoint except discarded the record whole: the four metrics already
+    measured, minutes of card time, and the checkpoint's row in the ledger, thrown away by a
+    metric that was never going to work on that checkpoint. A partial record is the useful
+    artifact -- the point of `metrics` and `skipped` being separate keys is that a record says
+    what it could and could not carry (44, reviewing 3415e9e).
+
+    The traceback goes into the record, not just the message: an eval that fails inside a
+    dependency (cache_guard, a tokenizer mismatch, a shard read) is diagnosed by where, and the
+    message alone reads as "domain_loss failed" for every one of those causes.
+    """
     print(f"  {name:15s} ... running", flush=True)
     t0 = time.time()
-    v, err = fn(*args, **kwargs)
+    try:
+        v, err = fn(*args, **kwargs)
+    except Exception as e:
+        elapsed = round(time.time() - t0, 1)
+        v, err = None, f"{type(e).__name__}: {' '.join(str(e).split())}"
+        record["metrics"][name] = {"error": err, "_wall_s": elapsed,
+                                  "_traceback": traceback.format_exc().splitlines()[-6:]}
+        print(f"  {name:15s} RAISED: {err} ({elapsed}s) -- the other metrics continue",
+              flush=True)
+        return
     elapsed = round(time.time() - t0, 1)
     entry = v if v else {"error": err}
     if isinstance(entry, dict):
