@@ -169,12 +169,12 @@ def main():
 
     from scripts.loader import load_checkpoint, load_tokenizer
 
-    tok_fp = hashlib.sha256(open(a.tokenizer, "rb").read()).hexdigest()[:16]
+    tok_file_fp = hashlib.sha256(open(a.tokenizer, "rb").read()).hexdigest()[:16]
     data = {k: load_pairs(ROOT, p, qk, ak, a.limit) for k, (p, qk, ak) in SETS.items()}
     for k, v in data.items():
         print(f"  {k}: {len(v)} (question, gold) pairs")
 
-    res = {"probe": "t65_gold_bpb", "tokenizer_fp": tok_fp, "limit": a.limit,
+    res = {"probe": "t65_gold_bpb", "tokenizer_file_fp": tok_file_fp, "limit": a.limit,
            "sets": {k: len(v) for k, v in data.items()}, "checkpoints": []}
 
     for ck in a.ckpt:
