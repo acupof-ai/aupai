@@ -56,6 +56,30 @@ embedding 只算一份 33,619,968（head 与 tok 共享权重；checkpoint 存�
 
 1. **优化器不同**。我们用 Muon 带 2D 矩阵；在外来模型上套 Muon 是在数据之外加第二个干预。
 2. **lr 不同，且不可换算**。Muon 的更新是正交化过的，它的 lr 与 AdamW 的 lr 不在同一标尺。（我第一版把 `Cfg.embed_lr × lr_scale = 1e-2` 当成"同量级"给了对照臂，**实测发散**：4 步 loss 11.52 → 13.27。1e-4 才下降到 2.49。）
+
+   **不可换算的具体形式：我们臂根本没有"一个 lr"。** e1-27 的 40 步复现让每组的实际 lr
+   第一次进了日志（`lr_scale 0.1`，step 0，warmup 1/300）：
+
+   ```
+   Muon:0    (2D 矩阵)   initial 0.01  -> 3.33e-06
+   AdamW:0   (embedding) initial 0.1   -> 3.33e-05
+   AdamW:0   (scalar)    initial 0.15  -> 5e-05
+   AdamW:0   (attn_res)  initial 0.01  -> 3.33e-06
+   ```
+
+   **四组跨 15×（0.01…0.15），由同一个 `lr_scale` 统一缩放；对照臂是单一个 AdamW lr。**
+   所以"给两臂同一个 lr"这句话**没有指称对象** —— 换算前必须先决定拿我们哪一组去对，而那个
+   选择本身没有依据。这不是"标尺不同"的修辞，是**一侧是四维一侧是一维**。
+
+   **而 `ckpt_control_ours.pt` 训练时的 `lr_scale` 原本没有任何留存记录**：`train.py:848`
+   把 scale 用在 `set_schedule` 里（`initial_lr * lr_scale * m`），它既不进 `Cfg` 也不进
+   checkpoint，`runs/control_ours.log` 只有 step/loss 行。§5.1 的 0.293989 是每个 lead 数的
+   分母，而唯一"证据"是 `sft_math.py:53` 的默认值 0.1 —— **默认值不是记录**。已实测确认：
+   `lr_scale 0.1` 重跑前 40 步与该 log **逐位相同**（1.606 / 1.629 / 1.606 / 1.663，四个
+   delta 全为 0.000），而阴性对照 `lr_scale 1.0` 单调偏离到 −0.224（11 倍容差）。
+   `runs/e1_27_step0/`。修在 `sft_math.py`：argv、`lr_scale`、每组 step 0 的实际 lr 进日志，
+   `lr_scale` 进 checkpoint cfg。
+
 3. **seq 不同**（4096 vs 2048，Pythia 的位置上限就是 2048）。两侧的超长丢弃数都报：0.21% vs 2.18%。
 
 ### 2.1 对照臂最初跑在 seq 1024，那个数不能用

@@ -73,10 +73,15 @@ def main():
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--stop_after", type=int, default=None,
                         help="stop after N steps WITHOUT shortening the schedule. --max_steps "
-                             "also feeds total_steps (line below), and lr_mult reads total: "
-                             "--max_steps 40 moves warmdown's start from step 359 to step 14 "
-                             "and puts the lr at 5%% by step 40, so it does NOT give you the "
-                             "first N steps of the full run. Use this to reproduce a prefix.")
+                             "also feeds total_steps (line below) and lr_mult reads total, so "
+                             "it moves warmdown's start and gives a DIFFERENT lr curve than the "
+                             "run you are reproducing a prefix of. How much different depends "
+                             "on the resumed cfg: at warmup 20 / warmdown 0.65 the step-40 "
+                             "multiplier differs 18.7x between total=1024 and total=40, while "
+                             "at warmup 300 / warmdown 0.1 (what ckpt_p200m_4b_0902.pt carries) "
+                             "step 40 is still inside warmup and both give 40/300 -- so the "
+                             "hazard is real but its size is not knowable from the flag alone. "
+                             "Use this whenever the intent is a prefix.")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "ckpt_sft_math.pt"),
