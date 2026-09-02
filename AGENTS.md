@@ -257,18 +257,18 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 6 | §8 §14 §18 §37 §38 §46 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 8 | §8 §14 §18 §37 §38 §46 §49 §52 |
 | A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 11 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
-| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 4 | §7 §13 §25 §27 |
-| State the vision before the number; outside it, label unmeasured, not absent | 9 | §3 §5 §6 §17 §19 §28 §30 §32 §36 |
-| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 5 | §1 §11 §12 §20 §21 |
-| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 3 | §16 §22 §42 |
-| Shared resources are explicitly exclusive; sharing rules name IO and memory, not metric class | 4 | §15 §33 §49† §50† |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 5 | §7 §13 §25 §27 §51 |
+| State the vision before the number; outside it, label unmeasured, not absent | 10 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 |
+| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 6 | §1 §11 §12 §20 §21 §50 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 4 | §16 §22 §42 §54 |
+| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §33 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
 
-†§49/§50 pending de's landing; sources: `af02a5a` (ppl_v2 IO footprint), `frozen_paths` commits (supervisor window). Full cases live in the shapes doc.
+Full cases live in the shapes doc; new shapes land there first and this table follows.
 
 ## Rule coverage
 
