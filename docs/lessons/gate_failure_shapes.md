@@ -1399,7 +1399,7 @@ b0-14 给 step line 加四个优化器组的 lr,测试要断言 train.py 仍然�
 
 b0 的 zero-card 分析、review 行、task、三个 commit 都落了,才想到 KEEP-claim step2500/3000/3500——而且是被 e1 的 prune FAIL 撞出来的(6625aa68 补)。这三个 checkpoint 是 b0-10 interval 4 和整个 b0-16 的唯一可复算源。**读数的价值全在可复算,可复算在别人 prune 那一刻消失——而 prune 的人不知道你的读数依赖它。**
 
-规则:**fact/review 落地的那个 commit,source ckpt 必须同时进 KEEP——claim 是读数的一部分,不是读完之后的善后。** 判断法:写完 fact/review 问一句"我的 source 在 KEEP 里吗?"——不在,这个 commit 就没落地完;被 prune FAIL 撞出来才补,说明流程里没有这一步。
+规则:**要可复算的读数必须进 facts/*.json——那是 check 的唯一视野;review 行里的数字不受保护(1e 2026-09-03 拍板:不扩扫描范围,噪音 > 收益)。** fact 落地的那个 commit,source ckpt 必须同时进 KEEP——claim 是读数的一部分,不是读完之后的善后。 判断法:写完 fact/review 问一句"我的 source 在 KEEP 里吗?"——不在,这个 commit 就没落地完;被 prune FAIL 撞出来才补,说明流程里没有这一步。
 
 ## 108. 同一个手数切片 off-by-one 五分钟犯两遍:不崩的错比崩的贵(e1 当事人,1e 提,2026-09-03,§87 族)
 
