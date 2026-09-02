@@ -1,0 +1,16 @@
+arm control  seq 2048  text data/sft/control_sft_text_heldout.jsonl
+  10,641 examples -> 10,421 fit, 220 dropped (2.07%)
+  restricted to --ids: 10,421 examples
+Loading weights:   0%|          | 0/148 [00:00<?, ?it/s]Loading weights: 100%|██████████| 148/148 [00:00<00:00, 8464.44it/s]
+  chatml ids agree: {'<|im_start|>': 50277, '<|im_end|>': 50278}
+  scored examples          10,421
+  evaluated ids sha256     cae4daf7ad59388c   <- must match the other arm
+  supervised tokens        3,658,306
+  supervised bytes         10,554,038
+  total NLL                4,438,410.5
+  NLL / supervised BYTE    0.420541   <- compare across arms
+  NLL / supervised token   1.213242   (arm-internal)
+  sanity: 1.2132 nat/token = 11.2% of ln(V)=10.8253 (V=50,279) -- below the no-information baseline, so the alignment is carrying signal
+  skip-one  (t+2)          12.955849   (alignment check)
+  alignment OK: next-token beats skip-one by 10.68x
+wrote runs/heldout_v2/ctrl_lr3e-3.json

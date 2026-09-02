@@ -90,6 +90,11 @@ for blocks, ckpt, dyn in [
     h.sum().backward()
     assert m.final_ar.q.grad is not None and torch.isfinite(h).all()
     assert blocks == 0 or len(m.ar_block_ends) == blocks, "Block AttnRes must produce exactly N blocks"
+    # FOUR groups: muon, embed, scalar, arq. b0-17's untied head adds a FIFTH, and only when
+    # both --untie_head and --head_lr are set -- so this assertion is about the DEFAULT config and
+    # says so, rather than passing by luck. Asserting the untied count here too would make the
+    # number the test's subject; scripts/test_untie_head.py owns the three arms.
+    assert not getattr(Cfg, "untie_head", False),         "Cfg.untie_head defaults True; the 4-group count below describes the tied default and "         "every existing checkpoint was trained under it"
     assert len(build_optimizers(m, Cfg)) == 4
 
 srcs = [train.Source.of(torch.randn(1, 3, 8)) for _ in range(5)]

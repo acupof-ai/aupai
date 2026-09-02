@@ -357,7 +357,19 @@ class HybridLM(nn.Module):
         self.value_embed = (nn.Embedding(self.padded_vocab, cfg.d)
                             if getattr(cfg, "value_embed", False) else None)
         self.head = nn.Linear(cfg.d, self.padded_vocab, bias=False)
-        self.head.weight = self.tok.weight
+        # TIED BY DEFAULT. b0-17 unties it because the tied head necessarily trains at the
+        # EMBEDDING lr (train.py routes any name containing tok/head into the embed group at 0.1),
+        # which is 28.9x the nanochat reference head lr 0.004*(d/768)^-0.5 = 0.003464 at d1024 --
+        # and that is the named candidate for the uniform embedding growth b0-10 measured at 1.43x
+        # per 500 steps.
+        #
+        # The untied head is NOT initialised from tok's values. self.apply(self._init) gives it its
+        # own std=0.02 draw, so the two arms differ from step 0. Copying tok would make the arms
+        # bit-identical before the first step and would answer a different question (how fast a
+        # head diverges from its embedding) than the one asked (what an untied head with its own
+        # lr is worth).
+        if not getattr(cfg, "untie_head", False):
+            self.head.weight = self.tok.weight
         # FoNE: [NUM] carries no value in its identity; injected from Fourier features, read per digit
         self.fone = getattr(cfg, "fone", False)
         if self.fone:
@@ -427,13 +439,20 @@ class HybridLM(nn.Module):
         # path slices head.weight[:vocab] into Liger FLCE, which has no per-class mask, so
         # random-init padding logits steal denominator mass: 11 columns spiked the vocab A/B
         # to |delta| 1.8 (eff.vocab_padding_softmax_defect). Zero keeps their logits at 0;
-        # they are never targets, so CE gradient only pushes them down. The tied embedding
-        # rows are zeroed too -- their ids never appear as inputs. After _init, or _init
+        # they are never targets, so CE gradient only pushes them down. After _init, or _init
         # re-fills them.
+        #
+        # UNTIED NEEDS BOTH TENSORS ZEROED, and this is a real trap rather than tidiness (1e,
+        # b0-17): while the head IS tok, one zero_() does both. Untie them and `tok`'s pad rows
+        # keep their std=0.02 draw -- so the untied arm would train pad rows the tied arm never
+        # touched, adding a hidden variable to an A/B whose whole point is the head. tok's pad
+        # rows are never inputs, so zeroing them costs nothing in either arm.
         _real = getattr(cfg, "vocab_real", cfg.vocab)
         if _real < cfg.vocab:
             with torch.no_grad():
                 self.head.weight[_real : cfg.vocab].zero_()
+                if self.head.weight is not self.tok.weight:
+                    self.tok.weight[_real : cfg.vocab].zero_()
 
     def load_state_dict(self, sd, strict=True):
         """Load old checkpoints (fused-key remap); disable AttnRes if the ckpt predates it."""

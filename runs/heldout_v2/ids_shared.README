@@ -1,0 +1,15 @@
+ids_shared.txt -- the cross-arm population. 10,421 question ids, sha256 (sorted, comma
+joined, first 16 hex) = cae4daf7ad59388c. Every accepted row in this directory reports
+this same sha, and eval_heldout.py REFUSES to score if a requested id does not fit the arm.
+
+Built as the INTERSECTION of the two arms keep-sets, each computed at the seq that arm
+TRAINED at: ours 10,613 at seq 4096 (sha 433e835a7859c63e), control 10,421 at seq 2048
+(sha cae4daf7ad59388c). The control set is a strict subset here, so the intersection equals
+it -- that is a property of these two seqs and this data, NOT a guarantee, which is why the
+criterion is "both arms report the same evaluated_ids_sha256" and not "the control set is
+smaller".
+
+COPIED HERE FROM /tmp/e1_scratch/ ON 2026-09-03Z. It was generated in /tmp, which does not
+survive a container restart -- and this file is what defines the population every number in
+this directory is computed over. The numbers would remain in the JSONs but nothing could be
+recomputed on the same set. Keeping the population next to the results it defines.
