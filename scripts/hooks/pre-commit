@@ -366,6 +366,7 @@ def main():
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
         "scripts/stale_claims.py",
+        "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         # e1-23: the twelve recipe knobs are required=True as of this commit, so this
