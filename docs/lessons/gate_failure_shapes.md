@@ -1321,7 +1321,7 @@ b0-14 给 step line 加四个优化器组的 lr,测试要断言 train.py 仍然�
 
 修法:加一个检查,从真 checkpoint 结构构造输入、穿过 `read_embed_state`(含 untied-embedding 拒绝)。同 commit 还修了第三个缺陷:一个 fixture 同时违反两个拒绝条件,两个守卫各自的红世界都建不出来(拆掉任一守卫 selftest 都绿)—— 拆成两个 fixture,各自验红。
 
-规则:**selftest 的输入必须穿过被守卫文件的真实入口,不能只喂中间函数的产物。** 判断法:把 bug 写进另一半(把 `w = a or b` 改回真代码),selftest 必须变红 —— 不变红,它守的是半个文件。
+规则:**selftest 的输入必须穿过被守卫文件的真实入口,不能只喂中间函数的产物。** 检测法按成本从低到高:先问"这个 selftest 调用过它声称在守的那个函数吗"——embed_norm_sdr 的检查 1-5 全喂 `interval()` 字典,`read_embed_state` 一次没执行,崩的正是它;这一问不用读代码就能答,比"fixture 够不够真"更早触发(b0,a09877b)。再做变异:把 bug 写进另一半(把 `w = a or b` 改回真代码),selftest 必须变红 —— 不变红,它守的是半个文件。
 
 ## 98. fixture 与被测公式同形,则不变性按构造成立(b0 当事人,1e 提,2026-09-03,证据 a09877b,与 §69/§80 同族)
 
