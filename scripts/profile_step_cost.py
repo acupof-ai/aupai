@@ -138,6 +138,14 @@ def _selftest():
             top.add(n.name)
         elif isinstance(n, ast.Assign):
             top.update(t.id for t in n.targets if isinstance(t, ast.Name))
+        elif isinstance(n, (ast.Import, ast.ImportFrom)):
+            # A RE-EXPORTED name is a top-level binding too. Missing this branch made the scan
+            # report HybridLM and SOFTCAP absent the moment b0-8 moved them to model.py and
+            # re-exported them from train.py -- `train.HybridLM` still resolves at runtime, so
+            # the scan was answering "is it DEFINED here" while claiming to answer "does it
+            # RESOLVE here". Those differ exactly when a module re-exports, which is the whole
+            # mechanism the split relies on.
+            top.update(a.asname or a.name.split(".")[0] for a in n.names)
     need = ("Cfg", "HybridLM", "build_optimizers", "build_tokenizer", "build_mix",
             "setup_ddp", "validate", "doc_cu_seqlens", "SOFTCAP", "vocab_fingerprint",
             "VOCAB_ID")
