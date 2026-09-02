@@ -367,6 +367,35 @@ def usable(messages):
     return True, ""
 
 
+def token_filter(rows, tok_path, max_tokens=4096):
+    """(kept, dropped) by the REAL bound: the longest format_agentic pair must fit.
+
+    The pair, not the episode: the packer emits one row per assistant turn, each carrying
+    every prior turn as its masked prompt, so the LAST pair is the longest and it is the
+    one that has to fit. Summing the episode would over-count (the prompt is shared) and
+    measuring the first pair would under-count.
+
+    Measured on the 5264-pair pilot with the pod's tokenizer (vocab 32773, fp
+    0bce3584bc24f255, md5-verified against /work/aupai/data/tokenizer.json): 4810 rows fit
+    (91.4%), 454 over (8.6%), longest single pair 6808 tokens. The 12000-char pre-filter
+    that stood in for this while no tokenizer was on the machine was loose in the right
+    direction -- it dropped nothing this would have kept -- but it was never the bound, and
+    the report said so rather than implying it had run.
+    """
+    from loader import format_agentic
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_file(tok_path)
+    kept, dropped = [], 0
+    for r in rows:
+        longest = max((len(tok.encode(pr + co).ids)
+                       for pr, co in format_agentic(r["messages"])), default=0)
+        if longest > max_tokens:
+            dropped += 1
+        else:
+            kept.append(dict(r, tokens=longest))
+    return kept, dropped
+
+
 def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
     """Episodes -> (rows, report). Rows are {"messages": [...], "project": str}.
 
@@ -382,7 +411,11 @@ def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
                      "dropped": {}, "chars": 0, "by_project": {}, "secret_hits": 0,
                      "scanned": 0, "scan_ran": True}
     for path in files:
-        project = os.path.basename(os.path.dirname(path))
+        # scrub HERE, not at the row: the report's by_project keyed on the raw directory
+        # name and printed "-Users-bytedance-code-x" to the terminal for the top 8
+        # projects, while every row's own project field was clean. A redaction that covers
+        # the artifact but not the report about the artifact is not a redaction.
+        project = scrub(os.path.basename(os.path.dirname(path)))
         try:
             episodes = turns_from_session(path)
         except OSError as e:
@@ -401,7 +434,7 @@ def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
                 rep["dropped"]["over max_chars (token filter pending)"] = \
                     rep["dropped"].get("over max_chars (token filter pending)", 0) + 1
                 continue
-            rows.append({"messages": msgs, "project": scrub(project)})
+            rows.append({"messages": msgs, "project": project})
             rep["kept"] += 1
             rep["chars"] += n
             rep["by_project"][project] = rep["by_project"].get(project, 0) + 1
@@ -410,6 +443,44 @@ def build(limit=10000, max_chars=12000, sessions=None, verbose=True):
         if verbose and rep["episodes"] and rep["episodes"] % 2000 == 0:
             print(f"  {rep['kept']} kept / {rep['episodes']} episodes", flush=True)
     return rows, rep
+
+
+# Hit types that are a real credential SHAPE rather than a heuristic. A hit in this set
+# discards the whole episode; the rest are reported for judgement. fb's ruling, 2026-09-02:
+# discard, never mask -- a masked line leaves the surrounding context intact and that
+# context still teaches the model "a credential belongs here", which is the thing we do not
+# want it to learn. Secret Keyword and the two entropy detectors stay OUT of this set: they
+# fire on example values, log lines and shas, and dropping every episode they touch would
+# empty the pack while removing nothing real.
+REAL_CREDENTIAL = frozenset({
+    "AWS Access Key", "Azure Storage Account access key", "Basic Auth Credentials",
+    "Cloudant Credentials", "Discord Bot Token", "GitHub Token", "GitLab Token",
+    "IBM Cloud IAM Key", "IBM COS HMAC Credentials", "JSON Web Token", "Mailchimp API Key",
+    "NPM tokens", "OpenAI API Key", "Private Key", "PyPI upload token", "SendGrid API Key",
+    "Slack Token", "SoftLayer Credentials", "Square OAuth Secret", "Stripe Access Key",
+    "Telegram Bot Token", "Twilio API Key",
+})
+
+
+def drop_credential_rows(rows):
+    """(kept, dropped) -- episodes carrying a real credential shape are removed entirely.
+
+    Per-turn scan, because the location is what gets reported to a human: fb needs the file
+    path and line of any true credential so the user can be told it is sitting in a
+    transcript, and "somewhere in the pack" is not a report. The content is never printed or
+    written anywhere.
+    """
+    kept, dropped = [], []
+    for r in rows:
+        hits = set()
+        for m in r["messages"]:
+            hits.update(t for t in (find_secrets(m["content"]) or []) if t in REAL_CREDENTIAL)
+        if hits:
+            dropped.append({"project": r["project"], "types": sorted(hits),
+                            "turns": len(r["messages"])})
+        else:
+            kept.append(r)
+    return kept, dropped
 
 
 def scan_rows(rows, sample=None):
@@ -537,7 +608,32 @@ def _selftest():
             except ImportError as e:
                 fails.append(f"cannot import loader.format_agentic: {e}")
 
-    # 4. A tool result with no preceding assistant turn must be refused, not repaired.
+    # 4. A real credential removes its episode; a heuristic hit does not.
+    if find_secrets("x") is not None:
+        real = [{"project": "p", "messages": [
+            {"role": "user", "content": "deploy it"},
+            {"role": "assistant", "content": "token: ghp_16C7e42F292c6912E7710c838347Ae178B4a"}]}]
+        # A HEURISTIC-ONLY hit, verified to actually trip one: `password = <word>` returns
+        # Secret Keyword and nothing from REAL_CREDENTIAL. My first draft used a git sha,
+        # which trips NOTHING -- so the assertion passed under a blinding that moved Secret
+        # Keyword into REAL_CREDENTIAL, i.e. it never exercised the boundary it claims to
+        # guard. A negative case has to be positive for the detector and negative for the
+        # decision.
+        soft = [{"project": "p", "messages": [
+            {"role": "user", "content": "set the password"},
+            {"role": "assistant", "content": "password = hunter2supersecret"}]}]
+        if not find_secrets(soft[0]["messages"][1]["content"]):
+            fails.append("the heuristic fixture trips no detector at all, so the "
+                         "keep-heuristic-hits assertion below proves nothing")
+        kept, dropped = drop_credential_rows(real)
+        if len(dropped) != 1 or kept:
+            fails.append(f"an episode carrying a GitHub token was kept: {len(kept)} kept")
+        kept, dropped = drop_credential_rows(soft)
+        if len(kept) != 1 or dropped:
+            fails.append("an episode with only a heuristic hit was discarded -- dropping every "
+                         "heuristic hit empties the pack while removing nothing real")
+
+    # 5. A tool result with no preceding assistant turn must be refused, not repaired.
     bad = [{"role": "tool", "content": "orphan"}, {"role": "assistant", "content": "x"}]
     ok, why = usable(bad)
     if ok:
@@ -554,6 +650,14 @@ def main():
     ap.add_argument("--limit", type=int, default=10000, help="stop after N pairs")
     ap.add_argument("--max-chars", type=int, default=12000,
                     help="character pre-filter; the 4096-token filter runs where the tokenizer is")
+    ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"),
+                    help="apply the real 4096-token filter with this tokenizer")
+    ap.add_argument("--max-tokens", type=int, default=4096)
+    ap.add_argument("--subagents", action="store_true",
+                    help="also read */subagents/*.jsonl as INDEPENDENT episodes (source=subagent); "
+                         "never interleaved into the parent -- a subagent conversation has its "
+                         "own system prompt, and interleaving is what would teach the model to "
+                         "answer prompts it was never shown (fb's ruling, 2026-09-02)")
     ap.add_argument("--out", help="write JSONL here")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -561,6 +665,35 @@ def main():
         return _selftest()
 
     rows, rep = build(limit=a.limit, max_chars=a.max_chars)
+    for r in rows:
+        r.setdefault("source", "session")
+    if a.subagents:
+        subs = sorted(glob.glob(os.path.expanduser("~/.claude/projects/*/*/subagents/*.jsonl")))
+        srows, srep = build(limit=max(a.limit - len(rows), 0), max_chars=a.max_chars,
+                            sessions=subs, verbose=False)
+        for r in srows:
+            r["source"] = "subagent"
+        rows += srows
+        rep["subagent_files"] = len(subs)
+        rep["subagent_pairs"] = len(srows)
+    rows, cred = drop_credential_rows(rows)
+    if cred:
+        print(f"\nDISCARDED {len(cred)} episode(s) carrying a real credential shape "
+              "(whole episode, not masked -- a masked line still teaches the model that a "
+              "credential belongs there):")
+        for c in cred:
+            print(f"  {c['types']}  {c['turns']} turns  {c['project']}")
+        print("  Content is not printed or written anywhere. The source files still hold "
+              "these; that is a separate problem for whoever owns the machine.")
+    tokens_note = ""
+    if os.path.exists(a.tokenizer):
+        before = len(rows)
+        rows, over = token_filter(rows, a.tokenizer, a.max_tokens)
+        tokens_note = (f"token filter ({a.max_tokens}): {len(rows)} of {before} fit "
+                       f"({len(rows) / max(before, 1):.1%}), {over} over")
+    else:
+        tokens_note = (f"TOKEN FILTER DID NOT RUN: no {a.tokenizer} -- the character "
+                       "pre-filter is not the real bound, and this is not a measured result")
     hits, scanned, ran = scan_rows(rows)
     print(f"\nsessions       {rep['sessions']}")
     print(f"episodes       {rep['episodes']}")
@@ -576,8 +709,14 @@ def main():
         print("\nSECRET SCAN DID NOT RUN (detect-secrets absent) -- this is not a clean result")
     else:
         print(f"\nsecret scan: {len(hits)} type(s) over {scanned:,} chars {hits or ''}")
-    print("TOKEN COUNTS PENDING: data/tokenizer.json is absent here, so the 4096-token "
-          "filter and the token total are not measured on this machine.")
+    print(tokens_note)
+    if rows and "tokens" in rows[0]:
+        tot = sum(r["tokens"] for r in rows)
+        print(f"tokens         {tot:,} in longest pairs (mean {tot // len(rows)}, "
+              f"max {max(r['tokens'] for r in rows)})")
+    if a.subagents:
+        print(f"subagents      {rep.get('subagent_pairs', 0)} pairs from "
+              f"{rep.get('subagent_files', 0)} files, source=subagent, never interleaved")
     if a.out:
         os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
         with open(a.out, "w", encoding="utf-8") as fh:
