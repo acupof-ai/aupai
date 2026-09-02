@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # restartable: writes only the output checkpoint, at the end. An interrupt costs the run.
-# One card, no DDP -- 212M params at seq 1024 fits, and a single-card run has no rank-skew
-# failure mode to debug on a control arm.
+# One card, no DDP -- 162M params at seq 1024 fits, and a single-card run has no rank-skew
+# failure mode to debug on a control arm. (162,322,944 measured on the real checkpoint;
+# the 212M this line used to claim counted BUFFERS as parameters and is retracted.)
 """SFT a HuggingFace causal LM on the shared control text pack. One card, ~1h.
 
     python3 scripts/sft_hf_control.py \
@@ -55,7 +56,12 @@ NECESSARILY DIFFERENT, and this belongs in the report header rather than a footn
                   the alternative, letting them split, would handicap the control for a
                   reason unrelated to the question. NO resize: Pythia's config.vocab_size
                   (50,304) already exceeds its tokenizer (50,277), so the two ids land on
-                  pretrained-but-unaddressed rows. See the resize comment in main().
+                  rows no token ever addressed -- near-init, NOT trained (measured; see the
+                  resize comment in main()).
+  the tied head   OURS IS TIED (model.py:322 sets head.weight = tok.weight, one tensor);
+                  Pythia's embed_in and embed_out are two separate 38,633,472-param tensors.
+                  So non-embedding params (85,056,000 here) is the only figure comparable
+                  across the two arms, and a total-param comparison is not.
 """
 
 import argparse
@@ -294,11 +300,18 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.bfloat16)
     # NO resize. Pythia's config.vocab_size is 50,304 (padded for kernel alignment) while
     # its tokenizer holds 50,277 entries, so the two ChatML ids land at 50,277/50,278 --
-    # INSIDE the pretrained embedding, on rows that were allocated and trained but never
-    # addressed by a token. resize_token_embeddings(len(tok)) would resize DOWN to 50,279
-    # and throw away 25 trained rows: verified on the pod, 50,304 -> 50,279. The rows the
-    # markers land on are randomly-initialised in effect (no token ever mapped to them), so
-    # this is what the resize was meant to achieve, minus the truncation.
+    # INSIDE the existing embedding. resize_token_embeddings(len(tok)) would resize DOWN to
+    # 50,279, dropping 25 rows and the 128-alignment: verified on the pod, 50,304 -> 50,279.
+    #
+    # THOSE ROWS ARE NOT TRAINED, and the earlier "would throw away 25 TRAINED rows" wording
+    # is corrected here -- the same comment also called them "randomly-initialised in
+    # effect", and both cannot hold. No tokenizer id maps to rows 50,254-50,303, so they
+    # never received an embed_in gradient. Measured on the real checkpoint: those rows read
+    # norm 0.6124 against 0.7733 for reachable rows (0.79x), and embed_out 0.8051 against
+    # 1.0732. They are near-init, which is exactly what a fresh special token wants -- so
+    # skipping the resize is still right, for the cost it actually has (25 rows and the
+    # alignment) rather than one it does not.
+
     emb_rows = model.get_input_embeddings().weight.shape[0]
     max_id = max(chatml_ids.values())
     if max_id >= emb_rows:
@@ -307,8 +320,8 @@ def main():
               f"resize_token_embeddings(len(tok)) also truncate.")
         return 2
     print(f"embedding {emb_rows} rows, ChatML ids at {sorted(chatml_ids.values())} -- inside, "
-          f"no resize (a resize to len(tok)={len(tok)} would DISCARD "
-          f"{emb_rows - len(tok)} trained rows)", flush=True)
+          f"no resize (a resize to len(tok)={len(tok)} would drop "
+          f"{emb_rows - len(tok)} rows and the 128-alignment)", flush=True)
     model.gradient_checkpointing_enable()
     model.to(a.device).train()
     # fused AdamW is a CUDA-only kernel; the cpu path exists to smoke-test this loop.
@@ -384,8 +397,10 @@ def main():
         "embedding_rows": emb_rows,
         "resized": False,
         "resize_note": "config.vocab_size 50304 > tokenizer 50277, so the ChatML ids land "
-                       "inside the pretrained embedding; resize_token_embeddings(len(tok)) "
-                       "would have shrunk it to 50279 and discarded 25 trained rows",
+                       "inside the existing embedding on rows no token addresses (norm "
+                       "0.6124 vs 0.7733 for reachable rows: near-init, not trained); "
+                       "resize_token_embeddings(len(tok)) would have shrunk it to 50279, "
+                       "dropping 25 rows and the 128-alignment",
         "supervised_frac": round(st["supervised"] / max(st["total"], 1), 4),
         "steps": step, "epochs": a.epochs, "effective_batch": a.batch * a.accum,
         "optimizer": "AdamW (our arm uses Muon on 2D matrices -- NOT the same optimizer)",
@@ -517,6 +532,23 @@ def selftest():
             fails.append("a row without an id field did not fall back to line order")
         if held_out_path("/x/plain.jsonl") is not None:
             fails.append("held_out_path invented a path for a non-_train filename")
+
+    # 5. THE RESIZE MUST STAY GONE. resize_token_embeddings(len(tok)) SHRINKS this model
+    #    (50,304 -> 50,279, verified on the pod) and says nothing while doing it: no error,
+    #    nothing downstream goes red, just 25 rows and the 128-alignment gone. So absence of
+    #    the call is the only thing left to check. The needle is the CALL -- ".resize_token_"
+    #    + "embeddings(" -- which the prose in this file deliberately never writes that way,
+    #    so it cannot match its own documentation.
+    #
+    #    A SECOND grep was written beside it and DELETED before commit: it asserted the
+    #    bounds-check message above was still present, but that message appears on the check's
+    #    own line, so `needle not in src` was false by construction. It passed its broken
+    #    world because it could not fail, not because the code was intact -- de's shape from
+    #    this morning, a criterion whose needle lands in its own data matching itself.
+    src = open(os.path.abspath(__file__), encoding="utf-8").read()
+    if ".resize_token_" + "embeddings(" in src:
+        fails.append("resize_token_embeddings is called again: on this model it SHRINKS "
+                     "50304 -> 50279 silently. Grow to a multiple of 128, or do nothing.")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")

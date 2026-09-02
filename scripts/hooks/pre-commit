@@ -344,6 +344,12 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
+        # and the row splitter, both pure string logic -- so it belongs here and not in
+        # NEEDS_DATA. It caught two defects in its own file before that file's first commit:
+        # a `required=True` on --ckpt that made `--selftest` itself un-runnable, and a
+        # comment claiming the hyphen was a word boundary while the set omitted it.
+        "eval/lambada_en.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
