@@ -140,7 +140,7 @@ def _selftest():
         me = fh.read()
     _main = next((n for n in _ast.parse(me).body
                   if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
-    calls, casts = set(), set()
+    calls, casts, loops, dicts = set(), set(), [], []
     for n in _ast.walk(_main) if _main else ():
         if isinstance(n, _ast.Call):
             f = n.func
@@ -148,17 +148,45 @@ def _selftest():
                 calls.add(f.attr)
                 if f.attr == "to":
                     casts.update(_ast.unparse(x) for x in n.args)
+        elif isinstance(n, _ast.For):
+            loops.append(_ast.unparse(n.iter))
+        elif isinstance(n, _ast.Dict):
+            dicts.append({_ast.unparse(k): _ast.unparse(v)
+                          for k, v in zip(n.keys, n.values) if k is not None})
+    # The record's fp8 field must carry the APPLIED value (the local `fp8`), not the requested
+    # flag (`a.fp8`). Read from the AST, not by substring: a literal '"fp8": fp8,' in this
+    # check's own data table would match itself, which is how the first version of the check
+    # below stayed green after the real call was deleted.
+    fp8_field = next((d["'fp8'"] for d in dicts if "'fp8'" in d), None)
     for ok, why, hint in (
         (_main is not None, "has a main() to check at all", "main() is gone"),
         ("convert_to_fp8_compute" in calls, "calls convert_to_fp8_compute (train.py:2020)",
          "fp8 would be recorded but the linears never converted"),
         (any("bfloat16" in c for c in casts), "casts the model to bf16 (train.py:2019)",
          "the model stays fp32 and every activation doubles -- this is what OOMed"),
-        ('"fp8": fp8,' in me, "records the APPLIED fp8, not the requested flag",
-         "the record would claim a premise the run never established"),
+        (fp8_field == "fp8", "records the APPLIED fp8, not the requested flag",
+         f"the record's fp8 field is {fp8_field!r}; a.fp8 is the request, fp8 is what ran"),
     ):
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
+
+    # A step is `accum` micro-batches, not one. The first version ran a single forward per
+    # timed step, so step_total did not depend on accum at all -- and the b32a1-vs-b16a2 A/B
+    # is a comparison whose ONLY variable is accum, so the b16a2 arm would have reported half
+    # its work and won. Checked structurally: some loop in main() must iterate over Cfg.accum,
+    # and the DDP no_sync that train.py:2246 applies to every micro-batch but the last must be
+    # called, or the high-accum arm all-reduces accum times per step and pays what the run
+    # does not.
+    for ok, why, hint in (
+        (any(it.replace(" ", "") == "range(train.Cfg.accum)" for it in loops),
+         "loops over range(Cfg.accum) micro-batches",
+         f"no loop in main() iterates range(Cfg.accum) (loops: {loops}); step_total would be "
+         "independent of accum, deciding the b32a1/b16a2 A/B backwards"),
+        ("no_sync" in calls, "calls no_sync for all but the last micro-batch (train.py:2246)",
+         "DDP would all-reduce accum times per step, inflating the high-accum arm"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} the timed step {why}" + ("" if ok else f" -- {hint}"))
 
     # Every train.* name this file resolves must exist, checked by AST rather than by import
     # (train pulls in CUDA-only modules). Three of my drafts named symbols that do not exist
@@ -195,7 +223,7 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 4
+    n = 6 + 3 + 2 + 4 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -296,23 +324,40 @@ def main():
               flush=True)
 
     for st in range(a.steps + a.warmup):
-        idx = torch.arange(st * B, st * B + B) % len(X)
         torch.cuda.synchronize()
         t_step = time.perf_counter()
-        torch.index_select(X, 0, idx, out=xb_pin)
-        torch.index_select(Y, 0, idx, out=yb_pin)
-        xb = xb_pin.to(dev, non_blocking=True)
-        yb = yb_pin.to(dev, non_blocking=True)
-        torch.cuda.synchronize()
-        t_fwd = time.perf_counter()
+        t_fwd = None
+        # ACCUM micro-batches per optimizer step, as train.py:2212 does: its loop strides by
+        # Cfg.batch and steps the optimizer every Cfg.accum-th iteration, so one "step" is
+        # accum forward/backward passes. Timing a single pass and calling it a step made
+        # step_total independent of accum -- which would have decided fb's b32a1 vs b16a2 A/B
+        # backwards, since accum IS the variable there: the b16a2 arm would report half its
+        # real work and win on a number that describes half a step.
+        for micro in range(train.Cfg.accum):
+            idx = torch.arange(st * B * train.Cfg.accum + micro * B,
+                               st * B * train.Cfg.accum + (micro + 1) * B) % len(X)
+            torch.index_select(X, 0, idx, out=xb_pin)
+            torch.index_select(Y, 0, idx, out=yb_pin)
+            xb = xb_pin.to(dev, non_blocking=True)
+            yb = yb_pin.to(dev, non_blocking=True)
+            if micro == 0:
+                torch.cuda.synchronize()
+                t_fwd = time.perf_counter()
 
-        cu = train.doc_cu_seqlens(xb, eos) if train.Cfg.doc_mask else None
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-            hidden, _ = model(xb, yb, cu, None)
-        Bt, Tt, D = hidden.shape
-        weight = raw.head.weight[: raw.cfg.vocab]
-        loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
-        (loss / train.Cfg.accum).backward()
+            cu = train.doc_cu_seqlens(xb, eos) if train.Cfg.doc_mask else None
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
+                hidden, _ = model(xb, yb, cu, None)
+            Bt, Tt, D = hidden.shape
+            weight = raw.head.weight[: raw.cfg.vocab]
+            loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
+            loss = loss / train.Cfg.accum
+            # train.py:2246 -- no_sync on every micro-batch but the last, or DDP all-reduces
+            # accum times per step and the NCCL cost of the b16a2 arm doubles for no reason.
+            if ddp and train.Cfg.accum > 1 and micro + 1 != train.Cfg.accum:
+                with model.no_sync():
+                    loss.backward()
+            else:
+                loss.backward()
         torch.nn.utils.clip_grad_norm_(raw.parameters(), train.Cfg.clip)
         for opt in optimizers:
             opt.step()
