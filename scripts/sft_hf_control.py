@@ -40,9 +40,11 @@ NECESSARILY DIFFERENT, and this belongs in the report header rather than a footn
                   about either alone.
   the ChatML tokens  ours are single special tokens; the NeoX BPE has no <|im_start|>, so
                   they tokenize as several ordinary tokens. Added to the tokenizer as real
-                  special tokens here (and the embedding resized) so the two sides both
-                  learn a dedicated stop symbol -- the alternative, letting them split,
-                  would handicap the control for a reason unrelated to the question.
+                  special tokens here so the two sides both learn a dedicated stop symbol --
+                  the alternative, letting them split, would handicap the control for a
+                  reason unrelated to the question. NO resize: Pythia's config.vocab_size
+                  (50,304) already exceeds its tokenizer (50,277), so the two ids land on
+                  pretrained-but-unaddressed rows. See the resize comment in main().
 """
 
 import argparse
@@ -122,7 +124,7 @@ def pack_rows(pairs, tok, eos_id, seq):
     # Batch-encode: one call per side beats 2N calls on a 500k-row pack.
     p_ids = tok([p for p, _ in pairs], add_special_tokens=False)["input_ids"]
     c_ids = tok([c for _, c in pairs], add_special_tokens=False)["input_ids"]
-    for pi, ci in zip(p_ids, c_ids):
+    for pi, ci in zip(p_ids, c_ids, strict=True):  # one per pair on both sides
         need = len(pi) + len(ci)
         if need > row_len:
             n_drop += 1
@@ -188,7 +190,7 @@ def main():
     added = tok.add_special_tokens({"additional_special_tokens": ["<|im_start|>", IM_END]})
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    # The ids the resize created, recorded per fb's ruling: an id assigned at run time is
+    # The ids the tokenizer assigned, recorded per fb's ruling: an id assigned at run time is
     # not reconstructable from the config afterwards, and a scorer that re-tokenizes with a
     # freshly built tokenizer would get different ones without any error.
     chatml_ids = {t: tok.convert_tokens_to_ids(t) for t in ("<|im_start|>", IM_END)}
@@ -206,9 +208,24 @@ def main():
         print("REFUSING: the mask supervises nothing or everything")
         return 1
 
-    model = AutoModelForCausalLM.from_pretrained(model_dir, torch_dtype=torch.bfloat16)
-    if added:
-        model.resize_token_embeddings(len(tok))
+    model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=torch.bfloat16)
+    # NO resize. Pythia's config.vocab_size is 50,304 (padded for kernel alignment) while
+    # its tokenizer holds 50,277 entries, so the two ChatML ids land at 50,277/50,278 --
+    # INSIDE the pretrained embedding, on rows that were allocated and trained but never
+    # addressed by a token. resize_token_embeddings(len(tok)) would resize DOWN to 50,279
+    # and throw away 25 trained rows: verified on the pod, 50,304 -> 50,279. The rows the
+    # markers land on are randomly-initialised in effect (no token ever mapped to them), so
+    # this is what the resize was meant to achieve, minus the truncation.
+    emb_rows = model.get_input_embeddings().weight.shape[0]
+    max_id = max(chatml_ids.values())
+    if max_id >= emb_rows:
+        print(f"CANNOT RUN: ChatML id {max_id} is outside the embedding ({emb_rows} rows). "
+              f"This model needs a resize UP -- add it deliberately rather than letting "
+              f"resize_token_embeddings(len(tok)) also truncate.")
+        return 2
+    print(f"embedding {emb_rows} rows, ChatML ids at {sorted(chatml_ids.values())} -- inside, "
+          f"no resize (a resize to len(tok)={len(tok)} would DISCARD "
+          f"{emb_rows - len(tok)} trained rows)", flush=True)
     model.gradient_checkpointing_enable()
     model.cuda().train()
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, betas=(0.9, 0.95),
@@ -232,7 +249,7 @@ def main():
     t0 = time.time()
     step = 0
     losses = []
-    for ep in range(a.epochs):
+    for _ep in range(a.epochs):
         for s in range(per_epoch):
             if step >= total:
                 break
@@ -269,6 +286,11 @@ def main():
         "dropped_overlong": st["dropped_overlong"],
         "vocab_before": vocab_before, "vocab_after": len(tok),
         "chatml_token_ids": chatml_ids,
+        "embedding_rows": emb_rows,
+        "resized": False,
+        "resize_note": "config.vocab_size 50304 > tokenizer 50277, so the ChatML ids land "
+                       "inside the pretrained embedding; resize_token_embeddings(len(tok)) "
+                       "would have shrunk it to 50279 and discarded 25 trained rows",
         "supervised_frac": round(st["supervised"] / max(st["total"], 1), 4),
         "steps": step, "epochs": a.epochs, "effective_batch": a.batch * a.accum,
         "optimizer": "AdamW (our arm uses Muon on 2D matrices -- NOT the same optimizer)",
