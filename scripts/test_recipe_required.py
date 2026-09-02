@@ -245,6 +245,122 @@ def undefined_names(paths):
     return [ln for ln in r.stdout.splitlines() if ": F821 " in ln or ": invalid-syntax" in ln], ""
 
 
+def caller_command_lines():
+    """[(label, argv|None, why)] -- every real command line that fixes recipe values.
+
+    THE REVERSE HALF, and the reason it exists: every assertion above is on the REJECT
+    side ("omitting a knob is refused"), so they were all green the moment ead2d2b landed
+    -- while test_e2e, launch_30b, lr_probe and prove_resume were all being refused at
+    exit 2 by the very parser this file was calling green. A test with only a reject side
+    proves the constraint exists, not that the system still runs (gate_failure_shapes
+    §64). ead2d2b's diff touched four files and not one launcher.
+
+    Lines are READ from their sources, never copied here: a copy drifts silently and this
+    file's whole subject is drift between two lists. Scripts are read as text and the
+    stop-window doc's launch lines by prefix, so editing either changes what this asserts.
+
+    Excluded on purpose: run_ddp.sh, run_pretrain.sh, run_ablation.sh, supervise_run.sh --
+    they forward "$@" and fix no recipe value, so they have nothing to be missing.
+    """
+    import ast
+    import re
+    import shlex
+    import subprocess
+
+    out = []
+
+    # test_e2e's E2E_RECIPE, by AST: importing it asserts E2E_GPU at module scope.
+    p = os.path.join(ROOT, "scripts", "test_e2e.py")
+    try:
+        tree = ast.parse(open(p, encoding="utf-8").read())
+        recipe = next(ast.literal_eval(n.value) for n in tree.body
+                      if isinstance(n, ast.Assign)
+                      and getattr(n.targets[0], "id", "") == "E2E_RECIPE")
+        out.append(("test_e2e.py stage 3",
+                    ("--name e2e_tmp --mix data/mix_sample.json --max_steps 6 "
+                     "--batch 1 --seq 512 --warmup 2").split() + list(recipe), ""))
+    except (OSError, SyntaxError, StopIteration, ValueError) as e:
+        out.append(("test_e2e.py stage 3", None, f"could not read E2E_RECIPE: {e}"))
+
+    # launch_30b.sh builds its line from two branches; ask the script itself via --dry.
+    for stage, extra in (("1", []), ("2", ["--resume", "ckpt_probe.pt"])):
+        try:
+            r = subprocess.run(["bash", os.path.join(ROOT, "scripts", "launch_30b.sh"),
+                                "--stage", stage, "--dry"] + extra,
+                               cwd=ROOT, capture_output=True, text=True, timeout=180)
+            m = re.search(r"bash run_ddp\.sh (.+)", r.stdout)
+            if m:
+                out.append((f"launch_30b.sh --stage {stage}", shlex.split(m.group(1)), ""))
+            else:
+                out.append((f"launch_30b.sh --stage {stage}", None,
+                            f"--dry printed no resolved command (exit {r.returncode}); "
+                            "readiness may be blocked off-pod"))
+        except (OSError, subprocess.SubprocessError) as e:
+            out.append((f"launch_30b.sh --stage {stage}", None, f"{type(e).__name__}: {e}"))
+
+    # The two probe scripts: pull the flag block out of the source text.
+    for rel, pat, subs in (
+        ("scripts/lr_probe.sh", r"\./run_ddp\.sh \\\n((?:.*\\\n)*.*?)\n",
+         {'"$lr"': "0.85"}),
+        ("scripts/prove_resume.sh", r'FLAGS="(.*?)"',
+         {"$SEED": "42", "$MIX": "data/mix_sample.json"}),
+    ):
+        try:
+            src = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            m = re.search(pat, src, re.S)
+            if not m:
+                out.append((rel, None, "flag block not found -- the script was restructured"))
+                continue
+            line = re.sub(r"\\\n", " ", m.group(1))
+            for k, v in subs.items():
+                line = line.replace(k, v)
+            line = re.sub(r'--name\s+\S+', "--name recipe_probe", line)
+            # Shell redirects are not argv. Dropping them is what makes this read the
+            # command; keeping them made lr_probe report "missing: <nothing>", a refusal
+            # with an empty cause -- the extractor's defect wearing the test's clothes.
+            argv, skip = [], False
+            for tok in shlex.split(line, posix=False):
+                if skip:
+                    skip = False
+                    continue
+                if tok.startswith((">", "2>", "&>", "|", "<")):
+                    skip = not tok.rstrip().endswith(("1", "log", '"'))
+                    continue
+                argv.append(tok.strip('"'))
+            out.append((rel, argv, ""))
+        except OSError as e:
+            out.append((rel, None, f"{type(e).__name__}: {e}"))
+
+    # The stop-window doc's own launch lines: the 200M that ran, its four-card resume, and
+    # the 300M. Read by prefix so a doc edit changes what this asserts.
+    doc = os.path.join(ROOT, "docs", "lessons", "stop_window_2026-09-02.md")
+    try:
+        for raw in open(doc, encoding="utf-8"):
+            if "./run_ddp.sh" not in raw:
+                continue
+            body = raw.split("./run_ddp.sh", 1)[1].strip()
+            name = re.search(r"--name\s+(\S+)", body)
+            label = f"stop_window doc: {name.group(1) if name else 'unnamed'}"
+            # A line carrying a prose placeholder is UNRESOLVED, not failing: the 300M
+            # batch/accum/grad_ckpt come from the gap A/B and do not exist yet.
+            if "<" in body and ">" in body:
+                out.append((label, None,
+                            "unresolved placeholder in the doc: "
+                            f"{re.search(r'<[^>]+>', body).group(0)}"))
+                continue
+            out.append((label, shlex.split(body), ""))
+            # The four-card resume of that same line (doc prose, --batch 16 --accum 4).
+            if name and name.group(1) == "p200m_4b_0902":
+                resumed = re.sub(r"--accum\s+\d+", "--accum 4", body)
+                out.append((label + " (4-card resume, accum 4)",
+                            shlex.split(resumed)
+                            + ["--resume", "ckpt_p200m_4b_0902.pt.interrupt.step832"], ""))
+    except OSError as e:
+        out.append(("stop_window doc", None, f"{type(e).__name__}: {e}"))
+
+    return out
+
+
 def main():
     strict = "--strict" in sys.argv
     parser, why = build_parser()
@@ -338,10 +454,29 @@ def main():
         if not wrong:
             green.append(f"the complete command parses, all {len(BASE)} values as passed")
 
+    # 4. THE REVERSE HALF: every real caller must still parse. Checks 1-3 are all on the
+    #    reject side, and they were green while four launchers were being refused.
+    unresolved = []
+    for label, argv, why in caller_command_lines():
+        if argv is None:
+            unresolved.append(f"{label}: {why}")
+            continue
+        _, code = _parse(parser, argv)
+        if code is None:
+            green.append(f"caller parses: {label}")
+        else:
+            passed = {a.lstrip("-").replace("no-", "") for a in argv if a.startswith("--")}
+            miss = sorted(k for k in RECIPE_FLAGS if k not in passed)
+            cause = (" ".join("--" + m for m in miss) if miss else
+                     "(no recipe knob missing; the refusal is elsewhere in the line)")
+            red.append(f"caller REFUSED (exit {code}): {label} -- missing {cause}")
+
     for line in red:
         print(f"  RED    {line}")
     for line in wrong:
         print(f"  WRONG  {line}")
+    for line in unresolved:
+        print(f"  n/a    {line}")
     for line in green:
         print(f"  green  {line}")
     print(f"\n{len(red)} red (the e1-16 work), {len(wrong)} red for the WRONG reason, "
@@ -350,9 +485,18 @@ def main():
         print("A red-for-the-wrong-reason is not progress: fix those before reading the rest.")
         return 2
     if red:
-        print("Expected while train.py is frozen. These turn green when e1-16 lands.")
+        # e1-16 has LANDED (ead2d2b), so the pre-landing lenience is gone: every red here
+        # is now a real regression. A refused caller in particular is a broken launch, and
+        # exiting 0 on it is how a green test coexisted with four broken launchers for a
+        # whole merge -- the reject-side-only defect this file's check 4 exists to catch.
+        if any(line.startswith("caller REFUSED") for line in red):
+            print("A REFUSED caller is a broken launch: that command cannot start at all.")
+            return 1
+        print("Unexpected red now that e1-16 has landed -- this is a regression, not the "
+              "frozen-train.py state.")
         return 1 if strict else 0
-    print("All green: every justified knob's omission is now unsatisfiable.")
+    print("All green: every justified knob's omission is now unsatisfiable, and every "
+          "real caller still parses.")
     return 0
 
 

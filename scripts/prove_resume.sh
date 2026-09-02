@@ -57,6 +57,7 @@ rm -rf /tmp/torchinductor_root
 
 FLAGS="--mix $MIX --dim 1024 --layers 32 --heads 8 --ffn_hidden 3072 \
 --batch 32 --accum 1 --grad_ckpt --seq 4096 --warmup 300 --seed $SEED \
+--lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.1 \
 --max_steps 60 --save_every 20 --val_every 0"
 
 echo "=== RUN 1: to step 40, then kill -9  $(date -u +%H:%M:%S)"
