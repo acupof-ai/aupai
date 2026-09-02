@@ -1413,6 +1413,8 @@ e1 在五分钟内把同一个手数切片错误犯了两遍。第一遍 `[8:-5]
 
 规则:**结构化文件名一律正则解析,不用索引切片;选点脚本自带 ENDPOINT/BRACKETED 判决(标签必须匹配 `^[0-9.e-]+$` 且在已知 lr 集合里),不靠记忆。** 判断法:把解析结果喂给一个不认识文件名的判决器,判决器放行才算解析成功——解析和判决分开,记忆就不在路径上了。
 
+又一实例(44 当事人,2026-09-03,scripts/harness.py `_broken_keep_claim_reasons`):`_tmp_repo_shaped` 的 docstring 明写着"Write into a symlinked directory and you write into the repo, so a world that mutates a file under one must copy it in first (de, 2026-09-01)",我重读了 docstring 还是踩了——broken world 通过 symlink 把真实 facts/ 里三个 fact 翻成 retracted,工作树脏了才发现。教训在 docstring 里、在同一个函数里、读了一遍,仍然没拦住:**写进 docstring 的规矩是给读者的,不是给执行者的;执行者只被代码拦(copy-before-mutate 做进函数),不被注释拦。**
+
 ## 109. 配对设计用配对误差:共享噪声不是不确定性(e1 当事人,1e 提,2026-09-03,R6)
 
 同 batch、同顺序、只差 lr 的两个 run,batch 噪声是**共享**的——配对相减时它抵消。e1 把单 run 跨 batch 摆动(~0.17)当误差棒,于是配对 stdev 0.0085 的差异(+0.0535,11/11 个点全更低)被说成"在噪声带内"——可分性被稀释 20×(0.17/0.0085)。摆动量的是"这个 run 跨 batch 多不稳",配对差量的是"两个 run 之间的差多稳";两个 run 共享同一份不稳,它就不该进差值的误差棒。
@@ -1476,3 +1478,21 @@ runs/heldout_v2/ 全目录和 heldout_ours.json 只活在 pod 的 emptyDir 上,�
 对照臂的 per-token loss 换算成"占 ln V 的百分比"时,用了我们臂的 ln V=10.3974 去除——应该用对照臂自己的 10.8253。三个数全偏小:13.3/10.6/9.5 → 13.9/11.0/9.9(比值 10.8253/10.3974 = 1.041,偏小 4%)。**分母是被测量臂自己的属性,不是测量者的属性;用自己的尺量别人的长度,每一寸都偏。**
 
 规则:**跨臂换算百分比,分母用被换算臂自己的量(词表大小、token 数、预算),不用测量臂的。** 判断法:把算式里的每个常数问一句"这是谁的?"——出现测量者的属性在被测量者的分母里,就是偏的。
+
+## 119. 规则变更让未重跑的调用方静默失效:de-34 之后所有"先 claim 后 torchrun"的 launcher 都死了(b0 当事人,1e 提,2026-09-03,证据 f1d86a8f、8393d579,R7)
+
+de-34(8393d579)让 card_claim 见到 shell pid 就拒。run_ab_speedrun.sh 在 torchrun 存在之前就 acquire——它能拿出的唯一 pid 是自己的 shell pid,于是每次 launch 都死在 "pid N is a shell, not the job",一张卡没碰。**这个脚本自 8393d579 起没人再跑过,所以失效没暴露**——规则变了,调用方没重跑,静默就是必然。规则变更是一种撤回:旧调用约定死了,撤回必须到达每个调用方;没到达的那个,会在下次被用到时以"从来如此"的方式炸。
+
+规则:**改守卫的判据后,grep 所有调用方,逐个确认新判据下还能过;过不了的当场改,不留"下次跑的时候再说"。** 判断法:把新判据套在每个调用方的实际调用序列上——有一个在新判据下必死,这个调用方就是定时炸弹,不管它上次跑是什么时候。
+
+## 120. 等待循环的 glob 匹配了它等它消失的那个 shell(b0 当事人,1e 提,2026-09-03,证据 f1d86a8f、card_claim.py:157,R2)
+
+launcher 等 fork/exec 窗口结束,用 `case *torchrun*` 匹配子进程 cmdline——但 exec 前那个 shell 的 cmdline **本来就含 "torchrun train.py"**(那是它自己的参数),glob 匹配的正是要等它消失的那个 shell,等待循环等于没测。修法用守卫自己的判据:basename(argv[0]) 对 shell 列表(card_claim.py:157),拿 exec 前 sleep 0.7s 的 stub 验证——claim 绑的是 exec 后的进程,释放干净。
+
+规则:**等待 X 消失的判据,必须在 X 还在时为真、X 消失后为假;拿 X 自己的属性当判据,循环永远不空转也永远不生效。** 判断法:把判据在"等待开始前"和"等待结束后"各代一次——两次都真,判据没在测它该测的东西。
+
+## 121. 验证器与被验对象定义不同:char 5-gram 的 est 对 word 3-gram 的 exact(3b 当事人,1e 提,2026-09-03,证据 datagen/build_corpus.py:167、datagen/near_dedup_scale.py:79,R2)
+
+near-dedup 的验证阶段:MinHash 签名用 **char 5-gram**(build_corpus.py:169,`s[i:i+5]`,原文不规范化),exact Jaccard 用 **word 3-gram on normalise_code**(near_dedup_scale.py:83)。200 顶对 est 0.922 vs exact 0.729 被读成"MinHash 系统性高估"——实际是两个量:字符 5-gram 对词 3-gram、原文对规范化后,定义不同,数值没有义务相等。**验证器和被验对象各用各的定义,验证的不是同一个东西;读出"偏差"是把两个量的差当成了一个量的偏差。**
+
+规则:**验证器与被验量共用同一定义——同样的 shingle、同样的规范化、同样的 tokenization;已知答案用一对按构造 est 必须等于 exact 的文档(两条完全相同的文档,两个定义都该给 1.0)。** 判断法:把验证器和被验量的定义并排写——有一个字不同,验证就在测别的东西。
