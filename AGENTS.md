@@ -291,12 +291,14 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
+| Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
 | `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
 | File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
 | `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
+| Never `git stash` in this repository ->R8 | `no_shared_stash` |
 | Only a conflicting path needs a commit first, and read which path i | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
 | `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
 | Only a `refusing:` line means nothing shipped | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
