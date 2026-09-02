@@ -39,6 +39,15 @@
       "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform"
     },
     {
+      "name": "e1",
+      "socket": "uds:/tmp/cc-socks/66482.sock",
+      "role": "research",
+      "topics": [
+        "launch_gate"
+      ],
+      "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence."
+    },
+    {
       "name": "3b",
       "socket": "uds:/tmp/cc-socks/5207.sock",
       "role": "data",
@@ -92,22 +101,15 @@
       "why": "answered 不是 2026-09-02"
     }
   ],
-  "departed": [
-    {
-      "name": "e1",
-      "socket": "uds:/tmp/cc-socks/13136.sock",
-      "left": "2026-09-02T01:50Z",
-      "why": "session gone; lessons-e1 (53788) answered it is not e1",
-      "work_moved_to": "de (de-17); tokenizer stays frozen, FoNE off in the main run, so nothing else was open"
-    }
-  ],
+  "departed": [],
   "pairs": {
     "de": "44",
     "44": "de",
     "tilerl": "b0",
     "b0": "tilerl",
     "3b": "b0",
-    "fb": "44"
+    "fb": "44",
+    "e1": "3b"
   },
-  "refreshed": "2026-09-02T02:00Z by fb, user order: roster and responsibilities"
+  "refreshed": "2026-09-02T02:10Z by fb: e1 returned"
 }
