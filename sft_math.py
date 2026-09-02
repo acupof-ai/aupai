@@ -110,12 +110,22 @@ def main():
     # A pack from another vocabulary trains silently at ~4x the loss: every id is
     # wrong and in range, and the sizes match.
     ck_vocab = args.vocab or ck.get("vocab_id")
-    if ck_vocab and "vocab" in d:
-        assert d["vocab_id"] == ck_vocab, (
-            f"{args.sft_path} was packed against vocabulary {d['vocab']} but "
+    # GUARDED ON THE WRONG KEY UNTIL 2026-09-03. The condition was `"vocab" in d` while
+    # prepare_sft.pack_and_save writes "vocab_id" (only the pre-2026-08 arith_* packs carry a
+    # bare "vocab"). So for every pack built by the current packer the assert was skipped and
+    # the run took the WARNING branch instead -- "the pack predates vocabulary fingerprinting"
+    # printed about a pack that carries the fingerprint. The check whose comment says a wrong
+    # vocabulary "trains silently at ~4x the loss" has therefore never once fired, and its
+    # warning read as a property of the pack rather than a defect in the reader.
+    pack_vocab = d.get("vocab_id", d.get("vocab"))
+    if ck_vocab and pack_vocab is not None:
+        assert pack_vocab == ck_vocab, (
+            f"{args.sft_path} was packed against vocabulary {pack_vocab} but "
             f"{args.resume} was trained on {ck_vocab}; repack with "
             "`datagen/prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
         )
+        if is_main:
+            print(f"vocab_id matches: {ck_vocab}", flush=True)
     elif is_main:
         missing = "the checkpoint" if not ck_vocab else "the pack"
         print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)

@@ -50,6 +50,50 @@ CONVERTED = [
 ]
 MARKERS = ("<|im_start|>", "<|im_end|>", "im_start", "im_end")
 
+#: Modules OUTSIDE eval/ that build a ChatML prompt for a checkpoint they loaded. The
+#: converted list above was scoped to eval/ and enumerated by hand, so a caller anywhere
+#: else was invisible to it -- and one was live: algorithms/rlvr_trainer.py takes --resume,
+#: calls format_prompt on every problem in the batch, and contained no reference to
+#: classify or kind anywhere in the file (found 2026-09-02, e1-22's second half). Handed a
+#: base checkpoint it would have run to completion: rewards near zero for a formatting
+#: reason, advantages near zero with them, and the result reading as "RL did not help".
+#: Discovered by walking the repo rather than by reading this list, which is why the walk
+#: below now backs the list up.
+TRAINERS = ["algorithms/rlvr_trainer.py"]
+
+#: chat.py is exempt, and not because it is small: it loads a fixed ckpt.pt and answers a
+#: person typing at a prompt, so a nonsense generation is visible to whoever caused it and
+#: nothing it produces enters a fact, a ledger row, or a decision.
+EXEMPT = {"chat.py": "interactive, fixed ckpt.pt, output goes to a human not a record"}
+
+
+def chatml_callers_repo_wide():
+    """[(relpath, consults_kind)] for every .py that CALLS format_prompt and loads a
+    checkpoint, found by walking -- so a new caller cannot hide from a hand-kept list.
+
+    The two hardcoded lists above are what this file checks in detail; this walk is the
+    backstop that says the lists are complete. A hand-kept subject list going stale is
+    the defect one layer up from the defect being checked.
+    """
+    out = []
+    for base, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs
+                   if d not in {".git", "__pycache__", "data", "runs", "node_modules"}]
+        for f in sorted(files):
+            if not f.endswith(".py"):
+                continue
+            rel = os.path.relpath(os.path.join(base, f), ROOT)
+            try:
+                calls = called_names(rel)
+            except (OSError, SyntaxError):
+                continue
+            if "format_prompt" not in calls:
+                continue
+            if not ({"load_checkpoint"} & calls):
+                continue  # builds the string but holds no checkpoint (packers, tests)
+            out.append((rel, bool({"classify", "prompt_fn"} & calls)))
+    return out
+
 
 def called_names(path):
     """Every function name CALLED in this module, from the ast.
@@ -122,13 +166,44 @@ def main():
             fails.append(f"{path} never calls classify, so its prompt_fn argument is not "
                          "derived from the checkpoint -- a hardcoded kind is a guess")
 
+    # 4. THE TRAINERS. A ChatML caller outside eval/ must consult the checkpoint's kind
+    #    too, and for RLVR the correct behaviour is to REFUSE a base checkpoint rather than
+    #    switch format: continuation-format RLVR is a different method, not a fallback.
+    for path in TRAINERS:
+        if not os.path.exists(os.path.join(ROOT, path)):
+            fails.append(f"{path}: gone -- this test's subject list is stale")
+            continue
+        calls = called_names(path)
+        if "classify" not in calls:
+            fails.append(f"{path} calls format_prompt on a loaded checkpoint without "
+                         f"calling classify -- a base checkpoint would be trained against "
+                         f"rewards that measure format, not reasoning")
+        src = open(os.path.join(ROOT, path), encoding="utf-8").read()
+        if "classify" in calls and 'kind == "base"' not in src and "kind=='base'" not in src:
+            fails.append(f"{path} calls classify but never branches on base -- reading the "
+                         f"kind and not acting on it is not a guard")
+
+    # 5. THE LISTS ARE COMPLETE. Both subject lists are hand-kept, and a hand-kept list
+    #    going stale is the defect one layer above the one being checked: rlvr_trainer was
+    #    missed for exactly that reason. The walk finds every ChatML caller holding a
+    #    checkpoint and requires each to be covered here or explicitly exempt.
+    known = set(CONVERTED) | set(TRAINERS)
+    for rel, consults in chatml_callers_repo_wide():
+        if os.path.basename(rel) in EXEMPT or rel in known:
+            continue
+        fails.append(f"{rel} calls format_prompt on a loaded checkpoint and is in no list "
+                     f"here (consults kind: {consults}) -- add it to CONVERTED/TRAINERS, "
+                     f"or to EXEMPT with the reason it cannot mislead a record")
+
     for f in fails:
         print(f"  FAIL {f}")
     print(f"\n{len(fails)} failure(s); "
-          f"{len(CONVERTED)} converted script(s) and the chooser checked")
+          f"{len(CONVERTED)} converted script(s), {len(TRAINERS)} trainer(s) and the "
+          f"chooser checked; {len(chatml_callers_repo_wide())} ChatML caller(s) found "
+          f"repo-wide")
     if fails:
         return 1
-    print("OK: base checkpoints cannot be handed a ChatML prompt by any eval script.")
+    print("OK: base checkpoints cannot be handed a ChatML prompt by any eval or trainer.")
     return 0
 
 

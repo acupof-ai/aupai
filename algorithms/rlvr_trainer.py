@@ -178,6 +178,29 @@ def main():
     # load_checkpoint builds the model in eval() with grad_ckpt False; this
     # trainer needs grad_ckpt ON, so restore it here.
     model, cfg = load_checkpoint(args.resume, device=device)
+    # RLVR is defined on a checkpoint that has been taught the chat template: every prompt
+    # below goes through format_prompt (ChatML), and the reward is computed on what comes
+    # back. Handed a BASE checkpoint, that prefix occurs 0 times in 168,000 sampled corpus
+    # rows -- generations carry a code fence 1.6% of the time under ChatML against 94.4%
+    # under continuation on the same family (eval/score_code_exec.py:9-31). The rewards
+    # would be near-zero for a formatting reason, the advantages near-zero with them, and
+    # the run would look like RL that simply did not help. REFUSE, do not silently switch
+    # format: continuation-format RLVR is a different method, not a fallback, and choosing
+    # it here would hide the mistake instead of reporting it (e1-22, 2026-09-02).
+    sys.path.insert(0, os.path.join(ROOT, "eval"))
+    from score_matrix import classify
+
+    kind = classify(cfg, os.path.basename(args.resume))
+    if kind == "base":
+        raise SystemExit(
+            f"refusing: {args.resume} classifies as a BASE checkpoint (no SFT marker in "
+            f"cfg and no sft row in runs/experiments.jsonl). Every prompt here is ChatML, "
+            f"a prefix a base checkpoint has never seen, so the rewards would measure "
+            f"format rather than reasoning. Run SFT first, or pass an SFT/RL checkpoint."
+        )
+    if is_main:
+        print(f"rlvr on a {kind} checkpoint, ChatML prompts (classify read cfg, not the "
+              f"filename)", flush=True)
     cfg.grad_ckpt = True  # required for stability
     model.grad_ckpt = True
     raw_model = model.to(torch.bfloat16)

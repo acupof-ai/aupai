@@ -559,7 +559,7 @@
         "blocker": "head and backbone checkpoints are pod-side only",
         "why_it_matters": "the ratio criterion's recall_home floor (>=0.5) should be evaluated on the component that makes the quality decision; if the head's operating-point recall is also <0.5 the floor binds on the real gate, not just the regex layer"
       },
-      "uncertainty": null,
+      "uncertainty": "CHECKPOINT STATUS 2026-09-02 (fb, 44-22): ckpt_k5_clean_0827.pt [absent] -- pre-0830v1 backbone, not in runs/pod_ckpt_candidates_2026-09-02.txt; the design was never run and cannot be run against this backbone. A measurement needs a post-reset backbone named in a new fact.",
       "status": "unmeasured",
       "claim": "the head's operating-point recall_home is measurable and should be >=0.5 for the criterion to pass web_hq's own gate",
       "audit": "not yet run; blocked on pod-side weights",
@@ -661,7 +661,7 @@
         "next_levers": "fastText ALSO FAILED (dq.fasttext.cci3_failed): locked-400 AUC 0.574, web_labels 0.577 vs old head 0.823. Quality-classifier route on 150 labels exhausted across 3 feature families. Remaining: 27B LLM judge on CCI3 (deferred, GPU contention) or accept the regex layer + CCI3 exclusion",
         "label_version": "head trained on v1 labels (0cf1eb8fa4ae=usable); the v2 flip of one training doc does not move the locked-400 result (400 never touched); fastText follow-up trains on v2"
       },
-      "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural",
+      "uncertainty": "n=400 AUC +/-0.035; the 150-label head has d~1024 vs n=150 so some overfitting is expected, but the old head's 0.541 at 20K labels and the tail-pooling tie show the ceiling is structural. CHECKPOINT STATUS 2026-09-02 (e1, 44-22): the checkpoint named in value, ckpt_k5_clean_0827.pt (the bare .pt; its .step1000-.step11000 siblings ARE listed), is NOT on the pod's complete file enumeration (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)), so it was already pruned or was never a durable artifact. The source names it under retired_pre0830v2/, a path absent from the enumeration entirely. Value untouched; the reading stands as recorded and cannot be re-derived from the file.",
       "status": "measured"
     },
     {

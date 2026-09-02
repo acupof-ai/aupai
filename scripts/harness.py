@@ -156,6 +156,7 @@ _RULE_CHECKS = {
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
     "Check a launch line's shape against `facts/efficiency.json` before it reaches a card": "launch_line_vs_oom_facts",
+    "A fact's source names only checkpoints that still exist": "ckpt_facts_sources_present",
     "setsid, not nohup": "no_foreground_pod_training",
     "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
@@ -939,6 +940,161 @@ def _agents_coverage_table(root):
             continue
         rows[rule] = val
     return rows, None
+
+
+def check_shapes_table_covers_doc(root):
+    """Every § in the shapes doc appears exactly once in AGENTS.md's rule table, and every
+    row's count equals the §refs it lists.
+
+    The table is a hand-maintained compression of docs/lessons/gate_failure_shapes.md and
+    nothing read it: three sessions added shapes on 2026-09-02 and the numbering collided
+    twice (b0 and I both wrote §62, 44 and I both wrote §63), each caught only by a merge
+    conflict. A conflict catches a collision on the same LINE; it does not catch a shape
+    that never reaches the table, or a count that says 14 next to fifteen refs.
+
+    Same reason as agents_rules_covered one section up, and the same ceiling: this proves
+    a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
+    belongs to is a judgement only a person re-reading the pair can make.
+
+    A heading number written twice is also FAIL: two sessions appending shapes in
+    parallel collided on §62, §63, §69, and §70, and a merge conflict only catches a
+    collision on the same line, not the same NUMBER.
+
+    §65's own subject, applied to §65: the table and the doc must agree, and until this
+    check existed nothing verified it."""
+    p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(p):
+        return FAIL, "docs/lessons/gate_failure_shapes.md missing"
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)]
+    if not nums:
+        return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
+    dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
+    if dupes:
+        return FAIL, "shape heading number(s) used more than once: " + ", ".join(
+            f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
+    doc = set(nums)
+
+    a = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(a):
+        return FAIL, "AGENTS.md missing"
+    # The compressed-rules table only: three columns, the third a run of §refs. Other
+    # AGENTS.md tables have two columns and cannot match.
+    rows = re.findall(r"^\|\s*(.+?)\s*\|\s*(\d+)\s*\|\s*((?:§\d+\s*)+)\|",
+                      open(a, encoding="utf-8").read(), re.M)
+    if not rows:
+        return FAIL, "no rule rows with §refs found in AGENTS.md -- the table was restructured"
+
+    seen, miscount = {}, []
+    for rule, n, refstr in rows:
+        refs = [int(x) for x in re.findall(r"§(\d+)", refstr)]
+        if len(refs) != int(n):
+            miscount.append(f"{rule[:32]}: says {n}, lists {len(refs)}")
+        for r in refs:
+            seen[r] = seen.get(r, 0) + 1
+
+    missing = sorted(doc - set(seen))
+    dangling = sorted(set(seen) - doc)
+    twice = sorted(k for k, v in seen.items() if v > 1)
+    problems = []
+    if missing:
+        problems.append(f"in the doc, in no rule: {['§%d' % m for m in missing]}")
+    if dangling:
+        problems.append(f"in the table, not in the doc: {['§%d' % d for d in dangling]}")
+    if twice:
+        problems.append(f"listed under more than one rule: {['§%d' % t for t in twice]}")
+    if miscount:
+        problems.append(f"count disagrees with refs: {miscount[:3]}")
+    if problems:
+        return FAIL, "; ".join(problems)
+    return PASS, (f"{len(doc)} shapes (max §{max(doc)}) each referenced exactly once across "
+                  f"{len(rows)} rules; every row's count matches")
+
+
+def _broken_shapes_table_covers_doc():
+    """The REAL AGENTS.md with one §ref deleted from a rule row, doc untouched.
+
+    fb's specified world (2026-09-02): a shape that reaches no rule. Note the row's own
+    count is left at its old value, so this breaks BOTH halves at once -- the coverage
+    half (that § is now in no rule) and the arithmetic half (the count now exceeds the
+    refs listed). Deleting the ref without touching the count is also what a hand edit
+    actually does.
+
+    The other direction -- a shape appended to the doc while the table stands still, which
+    is what happened twice on 2026-09-02 -- is _broken_shapes_table_doc_grew below. CHECKS
+    holds one broken() per row, so the selftest runs that one explicitly."""
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src) or not os.path.exists(
+            os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    # Drop the LAST §ref of the first rule row that has more than one, so the row keeps a
+    # valid shape and only its coverage changes.
+    m = None
+    for cand in re.finditer(r"^\|\s*.+?\s*\|\s*\d+\s*\|\s*((?:§\d+\s*){2,})\|", text, re.M):
+        m = cand
+        break
+    if m is None:
+        raise SelftestSkip("no rule row with 2+ §refs; update _broken_shapes_table_covers_doc")
+    refs = m.group(1)
+    dropped = re.findall(r"§\d+", refs)[-1]
+    text = text[:m.start(1)] + re.sub(r"\s*" + dropped + r"\s*$", " ", refs) + text[m.end(1):]
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_shapes_table_doc_grew():
+    """The REAL docs with a new shape appended and the table left alone -- exactly what
+    happened twice on 2026-09-02, and what a merge conflict does not catch."""
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    if not nums:
+        raise SelftestSkip("no shape headings to extend; update _broken_shapes_table_doc_grew")
+    # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
+    # fixture to the REAL shapes doc. Replace the link with a real directory holding a
+    # real copy of the one file this world mutates.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
+
+
+def _broken_shapes_table_duplicate_heading():
+    """The REAL docs with one heading number duplicated -- what happened four times
+    (§62, §63, §69, §70) when two sessions appended shapes in parallel. A merge
+    conflict catches a collision on the same LINE, not two sessions writing the same
+    NUMBER."""
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = re.findall(r"^## (\d+)\.", text, re.M)
+    if not nums:
+        raise SelftestSkip("no shape headings to duplicate; update _broken_shapes_table_duplicate_heading")
+    # Same symlink hazard as _broken_shapes_table_doc_grew: docs/ is a link into the repo.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        text + f"\n\n## {nums[-1]}. a duplicate heading number (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
 
 
 def check_agents_rules_covered(root):
@@ -1762,6 +1918,191 @@ def _broken_launch_line_oom():
                      r"\g<1>32\g<2>1", text, count=1)
     assert mutated != text, "broken world found no run_ddp.sh --batch 16 --accum 2 line to mutate"
     open(doc, "w").write(mutated)
+    return d
+
+
+def _ckpt_names(text):
+    """Concrete checkpoint filenames named in a fact's source/config text.
+
+    Brace notation `X.pt.step{1500,2000,2500}` is an explicit enumeration and is
+    expanded; everything else is exact-match only. A fact that shortens a name
+    (`ckpt_p200m_4b_0902.pt.step832` for the on-disk `.pt.interrupt.step832`,
+    b0's eff.kda_mla_growth_ratio_l12, 2026-09-02) is a DEFECT IN THE FACT, not
+    something the check resolves away: the absent name FAILs as a dead source.
+    `.pt` is required in the token so ckpt_health.py and friends never match;
+    trailing doc extensions (.jsonl/.txt) are stripped so a citation of a
+    readout sidecar resolves to its checkpoint."""
+    text = re.sub(r"(ckpt_[\w.]+?)\.step\{([\d, ]+)\}",
+                  lambda m: " ".join(f"{m.group(1)}.step{n.strip()}"
+                                     for n in m.group(2).split(",")),
+                  text)
+    names = set()
+    for tok in re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", text):
+        for ext in (".jsonl", ".txt", ".md"):
+            if tok.endswith(ext):
+                tok = tok[: -len(ext)]
+        names.add(tok.rstrip("."))
+    return names
+
+
+def _parse_ckpt_listing(path):
+    """-> (listing_date, keep_set, {candidate: (mtime, section)}).
+
+    KEEP lines carry series shorthand (`X.pt.step2000, .pt.step2500`); a
+    continuation attaches after the bare core OR after the `.pt` boundary, and
+    both readings are kept -- the wrong reading names a file that cannot exist,
+    so over-protection costs nothing and under-protection is the hazard."""
+    keep, cands, date, section = set(), {}, None, "A"
+    for line in open(path, encoding="utf-8").read().splitlines():
+        if line.startswith("# "):
+            m = re.search(r"listed (\d{4}-\d{2}-\d{2} \d{2}:\d{2}Z)", line)
+            if m:
+                date = m.group(1)
+            if re.match(r"# [A-Z]\.", line):
+                section = line[2]
+            if line.startswith("# KEEP"):
+                base = pt = None
+                for item in (s.strip() for s in line.split(",")):
+                    # A claim line separates claims with "; " but shorthand continuations
+                    # with ",", so one item can both continue the previous claim and name
+                    # the next: attach the leading continuation FIRST (old base), then let
+                    # tokens rebase. "NOT kept: X" is an explicit exclusion -- cut it.
+                    kept = item.split("NOT kept")[0]
+                    if item.startswith(".") and base:
+                        cont = re.match(r"[\w.]+", item).group(0)
+                        keep.add(base + cont)
+                        if pt:
+                            keep.add(pt + cont)
+                    toks = re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", kept)
+                    if toks:
+                        for t in toks:
+                            keep.add(t.rstrip("."))
+                        first = toks[0].rstrip(".")
+                        base = re.match(r"ckpt_[\w.]+?(?=\.)", first).group(0)
+                        mm = re.match(r"ckpt_[\w.]+?\.pt", first)
+                        pt = mm.group(0) if mm else None
+            continue
+        m = re.match(r"(\d{4}-\d\d-\d\d_\d\d:\d\d) [\d.]+ (\S+)", line)
+        if m:
+            cands[m.group(2)] = (m.group(1), section)
+    return date, keep, cands
+
+
+def _noted_gone(entry, name):
+    """Whether the entry's uncertainty/boundary already names this checkpoint as
+    deleted/pruned. A stale source with an honest note is a WARN, not a FAIL:
+    b0's eff.kda_mla_growth_ratio_l32 keeps step1500 in its source (provenance) and
+    records the pruning in uncertainty, and that is the right shape. The tail after
+    `.pt` matches the note; tails under 5 chars (`ep1`) must appear in full, since
+    `ep1` is a substring of `step1000` and friends. The gone-word list includes the
+    check's own tier labels (`absent`, `zero`ed, `delet`ion-candidate): a note that
+    says "[absent] -- not in the listing" is speaking this check's language.
+    Name and gone-word must sit in the SAME sentence: concatenating the fields lets
+    "measured on X. Y was pruned" disclose a death X never had (de, review of
+    9420c8b, measured True). Semicolons stay inside a sentence -- they join an aside
+    to the disclosure that owns it (e1's recal note names the ckpt, then "; its
+    siblings ARE listed", then the pruning). ASCII "." is no boundary: checkpoint
+    names are built from it."""
+    note = f"{entry.get('uncertainty') or ''} {entry.get('boundary') or ''}"
+    if not note.strip():
+        return False
+    tail = name.split(".pt", 1)[-1].lstrip(".")
+    for seg in re.split(r"[。！？!?]+", note):
+        if (name in seg or (len(tail) >= 5 and tail in seg)) and re.search(
+                r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
+            return True
+    return False
+
+
+def check_ckpt_facts_sources_present(root):
+    """A measured fact whose only recomputable source is a checkpoint that is
+    doomed or gone must be red at write time, not at prune time.
+
+    Three tiers (44 review, fb ruling 2026-09-02):
+    [deletion-candidate] a fact's source/config names a checkpoint on the pod
+    deletion list (runs/pod_ckpt_candidates_*.txt, newest by date) that no KEEP
+    line claims -- eff.kda_mla_growth_ratio_l32's step1500 was pruned with
+    nothing red, and step2000/2500/3000 nearly followed it the same day.
+    [absent] / [zeroed] a fact's source/config names a checkpoint not in the
+    listing -- pruned (step1500), zeroed by the reset (section A), or misnamed
+    (`.pt.step832` vs the on-disk `.pt.interrupt.step832`). FAIL, unless the
+    entry's uncertainty/boundary already names it as gone: then WARN -- the
+    fact is honest about its dead source, and source keeps its provenance.
+    A listing is a snapshot: a checkpoint newer than it reads absent until the
+    listing is refreshed, which the FAIL message says. A FAIL on such a checkpoint
+    (de's interrupt.step1192, written 14:31Z against a 13:58Z listing) means REFRESH
+    THE LISTING -- re-scan the pod -- not KEEP-claim: a checkpoint that was never a
+    candidate needs no claim. The interim unblock is an uncertainty note naming the
+    write time, which WARNs. Only source/config fields
+    are scanned -- a ckpt mentioned in a value or uncertainty is prose, not a
+    source claim. Names match exactly: a fact that shortens a name is a DEFECT
+    IN THE FACT (b0's step832), never resolved away here."""
+    listings = sorted(glob.glob(os.path.join(root, "runs", "pod_ckpt_candidates_*.txt")))
+    if not listings:
+        return FAIL, "no runs/pod_ckpt_candidates_*.txt -- the facts side of this check is empty"
+    date, keep, cands = _parse_ckpt_listing(listings[-1])
+    bad, warned, n_facts = [], [], 0
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            src = str(e.get("source", ""))
+            cfg = e.get("config")
+            if isinstance(cfg, dict):
+                src += " " + json.dumps(cfg, ensure_ascii=False)
+            else:
+                src += " " + str(cfg or "")
+            names = _ckpt_names(src)
+            if not names:
+                continue
+            n_facts += 1
+            fid = e.get("id", os.path.basename(fp))
+            for name in sorted(names):
+                if name in cands:
+                    mtime, section = cands[name]
+                    if name in keep:
+                        continue
+                    if section == "A":
+                        msg = f"[zeroed] {fid} -> {name} (section A, zeroed by the reset)"
+                    else:
+                        msg = f"[deletion-candidate] {fid} -> {name} (candidate {mtime}, not KEEP-claimed)"
+                elif name not in keep:
+                    msg = f"[absent] {fid} -> {name} (not in pod listing {date}; pruned, misnamed, or newer than the snapshot)"
+                else:
+                    continue
+                (warned if _noted_gone(e, name) else bad).append(msg)
+    if bad:
+        both = "; ".join(bad + warned)
+        return FAIL, f"{len(bad)} FAIL + {len(warned)} WARN: fact source(s) name doomed/gone " \
+                     f"checkpoints (listing {date}): {both}"
+    if warned:
+        return WARN, f"{n_facts} fact(s) cite checkpoints; {len(warned)} source(s) name a gone " \
+                     f"checkpoint already disclosed in uncertainty/boundary (listing {date}): " + "; ".join(warned)
+    return PASS, (f"{n_facts} fact(s) cite checkpoints; every name is KEEP-claimed or "
+                  f"resolves against the listing ({date}, {len(cands)} candidates)")
+
+
+def _broken_ckpt_facts_sources():
+    """The real candidates listing with every KEEP line deleted: the checkpoints
+    fb ruled to keep at 14:15Z become unkept deletion candidates, and the facts
+    that cite them must FAIL. runs/ is not linked in a shaped world, so it is
+    copied in first (2.2M) -- the same copy-before-mutate rule as docs/."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)  # _tmp_repo makes an empty runs/ dir
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    assert listings, "broken world found no candidates listing to strip"
+    path = listings[-1]
+    lines = [ln for ln in open(path, encoding="utf-8").read().splitlines()
+             if not ln.startswith("# KEEP")]
+    assert len(lines) < sum(1 for _ in open(path, encoding="utf-8")), \
+        "broken world found no KEEP lines to strip"
+    open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
     return d
 
 
@@ -6386,6 +6727,183 @@ def _broken_frozen_paths():
     return d
 
 
+def _cfg_known_names(root):
+    """Every name a `cfg`/`Cfg` object can legitimately carry -> (body, published).
+
+    Two sources, and leaving either out makes the check useless in opposite directions:
+    the Cfg class body (48 names), and every `cfg.x = ` / `Cfg.x = ` assignment anywhere in
+    the tree (25 more) -- build_mix publishes _row_cursor, _plan_domains and friends onto Cfg
+    at runtime, so a body-only reading would flag all of them."""
+    train_py = os.path.join(root, "train.py")
+    if not os.path.exists(train_py):
+        return None, None
+    try:
+        tree = ast.parse(open(train_py, encoding="utf-8", errors="replace").read())
+    except SyntaxError as e:
+        return None, f"train.py does not parse: {e}"
+    cls = next((n for n in ast.walk(tree)
+                if isinstance(n, ast.ClassDef) and n.name == "Cfg"), None)
+    if cls is None:
+        return None, "train.py has no class Cfg"
+    body = {x.id for s in cls.body if isinstance(s, ast.Assign)
+            for x in s.targets if isinstance(x, ast.Name)}
+    body |= {s.target.id for s in cls.body
+             if isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)}
+    published = set()
+    for p, txt in walk_tracked(root, (".py",)):
+        try:
+            t2 = ast.parse(txt)
+        except SyntaxError:
+            continue
+        for n in ast.walk(t2):
+            if isinstance(n, (ast.Assign, ast.AnnAssign)):
+                tg = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for x in tg:
+                    if isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) \
+                            and x.value.id in ("cfg", "Cfg"):
+                        published.add(x.attr)
+    return (body, published), None
+
+
+def check_getattr_cfg_names_exist(root):
+    """`getattr(cfg, "name", <non-None>)` names a field cfg can actually carry.
+
+    getattr returns the SAME value when the name is absent as when it is present and equal
+    to the default, so the call site cannot tell "read it" from "did not find it". 62's
+    probe read `getattr(cfg, "logit_softcap", 0.0)` -- softcap is the module constant
+    SOFTCAP at model.py:63, so the field does not exist, 0.0 came back silently, and
+    post-softcap logits were reported as pre. The three values (14.62/14.69/14.54) were
+    perfect evidence for the conclusion being argued, so nothing looked wrong; what gave it
+    away was 14.62 sitting 0.4 under a hard ceiling of 15.0.
+
+    The benign and the fatal spelling are IDENTICAL in source -- train.py:756's
+    `getattr(cfg, "attn_res_lr", 0.01)` names a real field at :221 with a matching default
+    -- which is why a human reading the line cannot separate them and a name check can.
+
+    WHICH POSITIVES THIS DELIBERATELY MISSES, asked before writing it rather than after
+    (the rule from docs/lessons/fact_and_inference.md):
+      - a None default is a presence PROBE, not a value read: `getattr(cfg, "x", None)`
+        followed by an `is None` branch is the correct way to ask, so it is skipped.
+      - a non-literal name (`getattr(cfg, key, d)`) is not statically decidable; skipped.
+      - objects other than a bare `cfg`/`Cfg` name (`self.cfg`, `ck["cfg"]`) are not
+        followed, so this covers the spelling that has bitten us and not every reader.
+      - a checkpoint's cfg DICT legitimately lacks fields added after it was written; those
+        go through `.get()`, not getattr, so they are outside this check by construction."""
+    known, err = _cfg_known_names(root)
+    if err:
+        return FAIL, err
+    body, published = known
+    allow = body | published
+    bad = []
+    for p, txt in walk_tracked(root, (".py",)):
+        try:
+            tree = ast.parse(txt)
+        except SyntaxError:
+            continue
+        rel = os.path.relpath(p, root)
+        for n in ast.walk(tree):
+            if not (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == "getattr" and len(n.args) == 3):
+                continue
+            obj, nm, dflt = n.args
+            if not (isinstance(obj, ast.Name) and obj.id in ("cfg", "Cfg")):
+                continue
+            if not (isinstance(nm, ast.Constant) and isinstance(nm.value, str)):
+                continue
+            if isinstance(dflt, ast.Constant) and dflt.value is None:
+                continue
+            if nm.value in allow:
+                continue
+            bad.append(f"{rel}:{n.lineno} getattr({obj.id}, {nm.value!r}, ...)")
+    if bad:
+        return FAIL, (f"{len(bad)} getattr site(s) name a field Cfg does not carry, so the "
+                      f"default comes back silently and reads as a measurement: "
+                      f"{'; '.join(bad[:4])}")
+    return PASS, f"every getattr(cfg, ...) name is one of {len(allow)} Cfg fields"
+
+
+def _broken_getattr_cfg_names():
+    """The REAL train.py with one getattr name misspelled -- mutated, not hand-written.
+
+    `attn_res_lr` at :756 is the benign instance the docstring cites, so breaking exactly
+    it makes the broken world the same shape as the defect: a real field name, off by a
+    suffix, with a plausible default beside it."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    real_train = os.path.join(d, "train.py")
+    if os.path.islink(real_train):
+        os.unlink(real_train)
+    shutil.copy(os.path.join(ROOT, "train.py"), real_train)
+    src = open(real_train, encoding="utf-8").read()
+    needle = 'getattr(cfg, "attn_res_lr", 0.01)'
+    assert needle in src, "the benign getattr the broken world mutates has moved"
+    open(real_train, "w", encoding="utf-8").write(
+        src.replace(needle, 'getattr(cfg, "attn_res_lr_MISSING", 0.01)', 1))
+    return d
+
+
+def check_no_conflict_markers(root):
+    """No tracked source or doc holds a merge/stash conflict marker.
+
+    Found by reading, not by a gate: `docs/lessons/gate_failure_shapes.md:870` carried a
+    bare `>>>>>>> Stashed changes` in 9420c8b, committed, with every hook line green (de,
+    2026-09-02). Nothing in CHECKS looked for it, ruff does not read Markdown, and a
+    trailing marker at the end of a long doc is invisible to a reviewer scrolling to the
+    section they came for.
+
+    Why this class survives a clean-looking commit: a marker is not a syntax error in
+    Markdown, JSON-with-comments, or a shell heredoc, so the file still parses and still
+    renders. In a .py it WOULD be a syntax error, which is why py_compile catches those
+    and only those -- the gap is exactly the file types this repo keeps its evidence in.
+
+    `Stashed changes` specifically points at the shared stash stack AGENTS.md forbids: a
+    pop of another session's entry conflicts on paths the popper never touched, so the
+    marker lands somewhere they were not looking.
+
+    Matched at line start only, and `=======` is deliberately NOT one of the needles: a
+    Markdown setext heading underline is a row of `=`, and so is a table rule in some
+    docs, which would make this check fire on well-formed prose."""
+    needles = ("<<<<<<< ", ">>>>>>> ", "|||||||  ")
+    hits = []
+    for p, txt in walk_tracked(root, (".md", ".py", ".json", ".jsonl", ".sh", ".txt", ".yml", ".yaml")):
+        rel = os.path.relpath(p, root)
+        # This file names the markers in its own docstring and needle list, so it would
+        # match itself -- the §61 shape, a criterion whose needle sits in its own data.
+        if rel == os.path.join("scripts", "harness.py"):
+            continue
+        for i, line in enumerate(txt.splitlines(), 1):
+            if line.startswith(needles):
+                hits.append(f"{rel}:{i} {line[:34]}")
+                break
+    if hits:
+        return FAIL, (f"{len(hits)} file(s) hold a conflict marker -- a resolution was committed "
+                      f"half-done: {'; '.join(hits[:4])}")
+    return PASS, "no tracked file holds a conflict marker"
+
+
+def _broken_no_conflict_markers():
+    """The REAL shapes doc with the REAL marker put back at the line it was found on.
+
+    Mutating the actual file, not a hand-written stub: the check reads tracked files under
+    a repo-shaped tree, and a stub would share the check's assumption about where docs
+    live. This is the exact byte sequence 9420c8b committed."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    rel = os.path.join("docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, rel)
+    # _tmp_repo_shaped symlinks docs/, so writing through it would edit the real file.
+    real_docs = os.path.join(d, "docs")
+    if os.path.islink(real_docs):
+        os.unlink(real_docs)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, rel), dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(">>>>>>> Stashed changes\n")
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -6476,6 +6994,13 @@ CHECKS = [
         "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
         check_launch_line_vs_oom_facts,
         _broken_launch_line_oom,
+    ),
+    (
+        "ckpt_facts_sources_present",
+        "no fact source/config names a checkpoint on the deletion list unkept, or one absent from the pod listing",
+        "eff.kda_mla_growth_ratio_l32's step1500 source was pruned with nothing red; the same day's list nearly took step2000/2500/3000 too",
+        check_ckpt_facts_sources_present,
+        _broken_ckpt_facts_sources,
     ),
     (
         "no_oversized_blob",
@@ -6791,6 +7316,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "shapes_table_covers_doc",
+        "every shape in the shapes doc is referenced exactly once in AGENTS.md's rule table",
+        "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
+        check_shapes_table_covers_doc,
+        _broken_shapes_table_covers_doc,
+    ),
+    (
         "timestamps_are_utc",
         "every timestamp written into the repo is UTC",
         "the Mac writes CST and the pod container writes UTC in the same format with no marker, so a pod row reads eight hours old the moment it lands and every ledger age comparison is wrong by up to eight hours (2026-09-01)",
@@ -6882,6 +7414,20 @@ CHECKS = [
         _broken_no_shared_stash,
     ),
     (
+        "no_conflict_markers",
+        "no tracked doc or source holds a merge/stash conflict marker",
+        "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
+        check_no_conflict_markers,
+        _broken_no_conflict_markers,
+    ),
+    (
+        "getattr_cfg_names_exist",
+        "every getattr(cfg, \"name\", <non-None>) names a field Cfg can carry",
+        "getattr(cfg, 'logit_softcap', 0.0) on a nonexistent field reported post-softcap logits as pre, and the numbers matched the expected conclusion (lessons-62, 2026-09-03)",
+        check_getattr_cfg_names_exist,
+        _broken_getattr_cfg_names,
+    ),
+    (
         "dirty_aged",
         f"tracked files dirty longer than {_AGE_HOURS}h are named so the owner commits or reverts",
         "uncommitted work blocks pushes and gets swept into other sessions' commits (d535674, 26 files)",
@@ -6926,10 +7472,13 @@ EVIDENCE = {
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "frozen_paths": "repo",
+    "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
+    "ckpt_facts_sources_present": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
@@ -8563,6 +9112,18 @@ def _demo():
     assert score_from("math-hard deferred to the bench stage") is None, "invented a score"
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
 
+    # _noted_gone: name and gone-word must share a sentence; the tier vocabulary counts.
+    # The cross-sentence case is de's review finding (9420c8b): concatenating the fields
+    # read "measured on X. Y was pruned" as X's own death disclosure.
+    assert _noted_gone({"uncertainty": "ckpt_k5_clean_0827.pt [absent] -- not in the listing"},
+                       "ckpt_k5_clean_0827.pt")
+    assert _noted_gone({"uncertainty": "step1500 pruned before this reading"},
+                       "ckpt_p500m_20b_0902.pt.step1500")
+    assert not _noted_gone({"uncertainty": "在 ckpt_x.pt.step1500 上测的。step2000 被剪了"},
+                           "ckpt_x.pt.step1500")
+    assert not _noted_gone({"uncertainty": "step1000 was fine"}, "ckpt_x.pt.ep1")
+    assert not _noted_gone({"uncertainty": "nothing here"}, "ckpt_x.pt.step1500")
+
     # run dispatch: a missing or unknown step is a usage error, not a silent exit 0
     assert run_dispatch([]) == 2 and run_dispatch(["bogus"]) == 2
 
@@ -8668,6 +9229,21 @@ def _demo():
                                 f"bullet ({_why[:60]})")
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
+
+    # shapes_table_covers_doc has two halves its registered world does not exercise: a
+    # shape that reaches the doc but not the table, and a heading number written twice.
+    # _broken_shapes_table_doc_grew existed but nothing ran it -- a broken world nobody
+    # runs is the §71 shape itself.
+    for _w, _label in ((_broken_shapes_table_doc_grew, "doc grew, table stood still"),
+                       (_broken_shapes_table_duplicate_heading, "duplicate heading number")):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_shapes_table_covers_doc(_d)
+                if _st != FAIL:
+                    untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
@@ -9127,6 +9703,11 @@ _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    # Initialisation: FROZEN, not measurement. It changes the trajectory from step 0, so two
+    # segments of one run that disagree on it are not comparable -- and because it only acts
+    # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
+    # exists to catch (the arm's own weights carry the init; the flag does not).
+    "zero_init_out", "muon_shape_lr",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )

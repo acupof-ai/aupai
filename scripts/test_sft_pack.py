@@ -143,4 +143,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # --selftest is the hook's calling convention for every file in SELFTEST_FILES, and it
+    # is equivalent to a bare run: the checks below are assertions, so a failure is a
+    # non-zero exit either way. An unknown flag is refused rather than ignored, because a
+    # script that exits 0 on an argument it did not understand registers as a pass (the
+    # hook's own comment on why it drives the map instead of probing for the flag).
+    if len(sys.argv) > 1 and sys.argv[1:] != ["--selftest"]:
+        sys.exit(f"usage: {os.path.basename(__file__)} [--selftest]  (got {sys.argv[1:]})")
     main()

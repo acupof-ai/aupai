@@ -351,6 +351,30 @@ class HybridLM(nn.Module):
         for m in self.modules():
             if isinstance(m, AttnRes) and m.dyn is not None:
                 nn.init.zeros_(m.dyn[1].weight)  # after _init, or it starts non-uniform
+        # A/B (3): zero every OUTPUT projection, so each sublayer starts as an identity on the
+        # residual stream. Off unless --zero_init_out. Two sites, four tensor kinds: `.o` is the
+        # name in BOTH the KDA block (model.py:91) and the MLA block (:156), and `w2` is FFN's
+        # down-projection (:204). AttnRes's final_ar is deliberately NOT included -- it mixes
+        # sources, it does not write to the residual stream (1e's ruling 2026-09-03).
+        #
+        # Zeroed AFTER _init, like the two blocks above, or _init refills them. And the count
+        # is asserted rather than assumed: a rename of `o` or `w2` would silently zero nothing
+        # and the arm would be an exact copy of the baseline that still reports as the arm --
+        # the most expensive way for this to fail, since it costs a full run to learn nothing.
+        if getattr(cfg, "zero_init_out", False):
+            n_zeroed = 0
+            with torch.no_grad():
+                for name, mod in self.named_modules():
+                    if isinstance(mod, nn.Linear) and (
+                        name.endswith(".o") or name.endswith(".w2")):
+                        mod.weight.zero_()
+                        n_zeroed += 1
+            expect = 2 * cfg.layers  # one output projection per sublayer: attn/KDA `o` + FFN `w2`
+            assert n_zeroed == expect, (
+                f"zero_init_out zeroed {n_zeroed} projections, expected {expect} "
+                f"(2 x {cfg.layers} layers). A renamed `o`/`w2` would make this arm a silent "
+                f"copy of the baseline.")
+            print(f"zero_init_out: {n_zeroed} output projections zeroed", flush=True)
         # Alignment padding (vocab_real:vocab) must stay neutral in the softmax. The training
         # path slices head.weight[:vocab] into Liger FLCE, which has no per-class mask, so
         # random-init padding logits steal denominator mass: 11 columns spiked the vocab A/B

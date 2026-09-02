@@ -254,18 +254,19 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 - **The pod is frozen from a training launch until that run prints its first step.** A launch reads `data/pod_synced_head` and the manifest at startup (`run_ddp.sh:36-41`), and `build_mix` then spends minutes loading token caches before the first step — 156 GB and ~2.5 minutes for `mix_200m_4b`. A push landing inside that window turns the drift gate red on a run that is already committed to the cards, and the failure names the pushed file rather than the push. Whoever wants to push waits for the first step line; whoever launches says so when the run is up (2026-09-02: a `profile_step_cost.py` push landed between p200m_4b_0902's launch and its first step — harmless only because the run reads `train.py`).
 - **Check a launch line's shape against `facts/efficiency.json` before it reaches a card.** The fact store already holds the answer for the shapes people try, down to which ranks die first: `eff.microbatch_32_oom` records that micro-batch 32 × accum 1 OOMs at seq 4096 fp8 at 93.8/95.2 GB with ranks 3/6 first, and states the verdict — grow the effective batch via accum, not micro-batch. p200m_4b_0902 launched on 32×1 twice on 2026-09-02 and reproduced that fact to two decimals (93.78 GiB, rank3 first), because nothing reads the fact store at launch time. `harness` check `launch_line_vs_oom_facts` now joins the two sides (44-20, 2026-09-02): a stop-window launch line or a running experiments row matching a recorded OOM config on (dim, layers, batch, accum, seq) is FAIL; grad_ckpt and world are printed for adjudication, never joined on.
+- **A fact's `source` names only checkpoints that still exist.** A checkpoint on the pod deletion list (`runs/pod_ckpt_candidates_*.txt`) must be KEEP-claimed by name; a source that names a pruned, zeroed, or misnamed checkpoint is a fact defect, not a footnote. `eff.kda_mla_growth_ratio_l32`'s step1500 was pruned with nothing red and the same day's list nearly took step2000/2500/3000 too (b0, 2026-09-02). `harness` check `ckpt_facts_sources_present` (44-22) joins every fact's source/config against the newest listing and FAILs both classes — `[deletion-candidate]` (on the list, unkept) and `[absent]` (not in the listing: pruned, zeroed, or misnamed) — naming the fact and the file on both sides. A source the fact's own uncertainty/boundary already names as gone is WARN, not FAIL: honest provenance stays visible (three tiers, fb ruling 2026-09-02). Names match exactly: a fact that shortens a name is wrong, and the check says so.
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 10 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 15 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 12 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 19 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 6 | §7 §13 §25 §27 §51 §59 |
 | State the vision before the number; outside it, label unmeasured, not absent | 10 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 |
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 10 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 |
-| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 4 | §16 §22 §42 §58 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 5 | §16 §22 §42 §58 §68 |
 | Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §33 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
@@ -285,7 +286,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Rule | Enforced by |
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
-| Vocabulary identity | manual: enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check |
+| Vocabulary identity | manual: enforced at load since 7aacbac (2026-09-03): sft_math.py refuses a vocab_id mismatch and prints the matching id; before 7aacbac the guard key was `vocab` and the assert key `vocab_id`, so the check never fired (shape §70) |
 | GPUs | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |

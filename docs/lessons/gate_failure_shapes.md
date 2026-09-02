@@ -801,3 +801,201 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 与 §61 同族:那条是判据取值范围放过了真缺陷,这条是判据的**方向**只有一半。修法是给任何"强制/拒绝"型测试加**反向半**:一个真实调用方命令行的集合,每条必须 PARSED OK,少一条就红。
 
 规则:加约束的提交必须同时改调用方,且验收包含双向——违反侧红、合法侧绿。只有拒绝侧的测试,证明的是约束存在,不是系统还能用。
+
+## 66. 看见字面量 `0` 就断定它不是实际配置——哨兵值反过来读(b0 当事人,2026-09-02,与 §62 同源反向)
+
+§62 是**把转述当测量**。这一条是它的反面:**把代码里读得到的事实当成可疑的默认值**,而两次是同一个 omission——**没读那一行**。
+
+实例(b0,`d4a0f78` 提出、`2aa0ccc` 撤回):`eff.grad_ckpt_inverts_with_depth` 记 AttnRes Full 的 source reads 是「325 at L=12 到 2145 at L=32,峰值 65 个 [B,T,D] 活张量对 25 个」。我看到产生这些数的 `probes/t71_depth_lr_rule.py:130` 是 `source_reads(L, blocks=0)`,**认定 `blocks=0` 是「没传参数」,于是断言「真实调用是 `blocks=L`」**,把 fact 改成 181 / 1121(峰值 33 对 13),还转给 e1 要求改 `facts/`。
+
+**真相在两行代码里,我一行都没读:**
+
+```
+train.py:219    attn_res_blocks = 0
+model.py:330    n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)
+```
+
+`0 or n_sub` —— **`0` 是哨兵值,语义就是 Full**。`n_blocks = n_sub = 2L`,`ar_block_ends = {1..2L}`,每个 sublayer 都是块边界。**`blocks=0` 那一列就是生产 run 跑的东西**,`facts/efficiency.json` 里 `"Full (attn_res_blocks=0, 25 sources)"` 出现五次,一直在说这件事。**`blocks=L` 是没有任何 run 用过的配置**,所以 181 / 1121 描述的是一个不存在的世界。
+
+**错的机制是从命名推语义**:参数叫 `blocks`,值是 `0`,读起来像「零个块」=「没配置」。而 `or` 把它翻译成了相反的意思。**一个 falsy 字面量在 Python 里最常见的用途恰恰是哨兵,`x or default` 是这门语言里最普通的一行**——所以「看见 0 = 没传」是一个恰好在最常见写法上失效的启发式。
+
+**代价的形状值得单记**:自己算错一个数,损害止于自己;**发起一次错的"更正"并转出去要求别人改 fact,损害是别人的时间加上正确记录被改坏的风险**。这次没改坏,只因为我本来就不动 `facts/`。与 §62 第二层同一个量级:污染别人的结论比自己算错贵。
+
+**同一天的第三次同族(记下来是因为它证明规则本身没被执行)**:撤回这条时我把本节初稿 `git add` 进了索引,然后用 `git diff`(不含索引)存盘、`git checkout --` 清树——**存下来的补丁是 0 字节,整节丢了,得重写**。`git diff` 默认只报未暂存的改动,这和上面「`0` 默认不是空」是同一个形状:**一个默认行为被当成了它的字面读法**。正确写法是 `git diff HEAD`(或 `git stash` 若未被本仓库禁用)。
+
+规则:**要判定一个参数的实际取值,读它的默认定义和消费它的那一行,不要从参数名和字面量推。** 具体到 falsy 值:看到 `0` / `""` / `None` 被当作配置,先找 `or` / `if x is None` / `getattr(..., default)`——**先确定它是「未设置」还是「一个有语义的值」,再决定它意味着什么。** 更一般地:**准备更正一条 fact 之前,先找那条 fact 自己的措辞有没有在回答你的疑问**——这次 `"Full (attn_res_blocks=0, 25 sources)"` 五处都写着答案。
+
+## 67. 断言约束的是数值,不是机制——"A = 2×B" 不蕴含"那个 2 是我说的原因"(b0 当事人,2026-09-02,tilerl 报并跑对照)
+
+一个数字断言可以在解释为真和为假时都通过。**通过的是算术,不是因果。** 于是一条被 assert 守着的机制解释,证据强度和一句没验的话相同——但看起来像实测。
+
+实例:AttnRes 的 `add_[B,T,D]` 计数。我实测出 `n(n+1)`(L=2/3/4/12 上 30/56/90/650 全对),把那个因子 2 解释成"每次调用把每个 source 读两遍"(`model.py:248` 算 logits 读一遍、`:250-252` 混合再读一遍),并 assert 住 `n_add == n*(n+1)`。四个深度全绿,归因写进 commit。
+
+**tilerl 指出并跑了我缺的那次运行**:在同一个 harness 上只把 logits 那一读改成 `s.v.detach()`,mixing 一行不动——**机制缺席的那次运行**。若因子 2 来自双读,计数必须精确对折:
+
+```
+  L   n  n(n+1)   full  logits-detached  ratio
+  2   5      30     30               15   2.00
+  3   7      56     56               28   2.00
+ 12  25     650    650              325   2.00
+```
+
+全深度整 2.00。**解释成立——但成立是这次消融给的,不是那个 assert 给的。** `650 = 2×325` 与 "那个 2 是双读" 是两个命题,前者不蕴含后者:换任何一个凑出 2 倍的机制(比如 tilerl 原先读的"两条栈各挂一条边"),`n(n+1)` 一样绿。
+
+**与 §61 的关系**:§61 是判据的取值范围覆盖不到要区分的那件事;这一条更进一步——**判据根本不在区分那件事**。它在量一个量,而结论说的是那个量的成因。**数值断言与机制断言之间没有推理关系,只有共存关系。**
+
+**tilerl 那边还有一条附带的,更硬**:他第一版消融自己写了个数图边的计数器,**全深度都对不上 `n(n+1)`,L12 数出 852**——工具在基线上就已经自证伪了。他换成我的 profiler 口径才跑。**消融的前提是仪器先在基线上闭合**:一个复现不了基线的工具,不可能用来否定任何东西,它给出的"不一致"是它自己的。
+
+规则:**任何"X 是因为 M"的结论,交付物里必须有一次 M 缺席的运行**,而不只是一个 X 数值正确的断言。做法是把机制做成可关掉的开关(这里是 `detach_logits=True`),两臂都跑、两臂都断言,且断言的是**两臂的比**而不只是各自的值。检测法:问"如果我的机制解释是错的,而这个数照样对,我的检查会红吗"——答不出会红,那它就没在测这个解释。
+
+## 68. 一条 fact 没随代码更新,同一个错误被引用两遍(44 当事人,2026-09-02,1e 报)
+
+修复落地后,描述旧行为的 fact 没跟上:status 留在 measured、没有 refuted_by。这条 fact 当天被引用两次,两次都驱动了决策,两次都付了代价——而代码在八个小时前就已经让它失效。
+
+实例:p200m_4b_0902 续训。时间线(UTC):
+
+- **~01:22** p500m_20b_0902 的 interrupt.step32/step83 落盘,de 和 tilerl 各自测出 row_cursor 只记一个 segment(origin≠0 时第二次 resume 重读),`ds.second_resume_rereads_one_segment` 记录——**当时为真**。
+- **10:10** 52aec31(de-13 训练半)落地:`ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))}`,cursor 跨 resume 累加,变成绝对。b0 在 pod 上核实:两个 ckpt 的 cursor 和都等于 step×256。**fact 没更新**。
+- **12:35** p200m 从 interrupt.step832 续训,踩中 `eff.resume_inflates_total_steps`:total 4646 vs 计划 3814,warmdown 起点 4181 > 3814,无退火。
+- **~14:2x** 44 复审重起裁定,**引用这条 fact 的机制**论证「从 step832 重起会重读被停 run 的进度、重读随停点增长,该早停」。1e 14:31Z 停 run(step ~1192)。
+- **~14:3x** de 证明没有重读:cursor 在 52aec31 后是绝对的;即便按旧 cursor,step832 的 ckpt 自己 origin=0,且重wind 丢弃被停谱系——「重读」是 fact 里那个已修的 bug。
+- **重起决策第二次引用同一条 fact**:为避开「第二次 resume 重读一段」,从 step832(而非 step1192)重起。cursor 既已绝对,从 1192 重起本可零丢弃——**这条 stale fact 让 360 步算力(832..1192)被丢弃重算**。
+
+两层:
+
+- **R7(根因)**:修复(52aec31)没有传到描述该 bug 的 fact。撤回没到引用处,旧错误就一直活着——它先以 44 的论证形式停了 run,再以 fact 形式把重起钉在 832。de 补 refuted_by。
+- **R1(传播)**:44 引用 fact 的机制时没读当下的代码——fact 说「重读」,代码说「绝对 cursor」。论证建在过期源上。动作(早停)碰巧是对的(重起既被钉在 832,丢弃必然,越早越少),但理由是错的;机制读出前,对的理由和碰巧对的错理由无法区分。
+
+规则:**修 bug 的同一个 commit 要 grep facts/ 里描述这个 bug 的条目,挂 refuted_by**;引用一条 fact 的机制做论证前,先读它描述的代码当下的样子。检测法:fact 的 value 里出现「re-read/重读/second resume」这类行为断言、而该行为的修复 commit 已在 main 上、fact 无 refuted_by——就是本条。
+
+## 69. 判据的 needle 落在判据自己那一行——它没有能力失败(b0 当事人,2026-09-03,与 §67 同族)
+
+一个 grep 型守卫,断言「被守护的那段文案还在」。**那句文案就出现在守卫自己那一行里**,所以 `needle not in src` 恒为假。它读起来完全正确,静态复审看不出问题,**只有给它造 broken world 才会露:改坏被守护的代码,守卫是绿的。**
+
+实例:`scripts/sft_hf_control.py` 的 selftest。`resize_token_embeddings(len(tok))` 在 Pythia-160m 上是**缩小**(50304 → 50279,丢 25 行和 128 对齐),而且**完全静默**——不报错,下游没有任何检查会红。所以写了两个 grep:
+
+```python
+# 守卫 1(真的):grep 那个调用本身
+if ".resize_token_" + "embeddings(" in src:            # 断成两半,不匹配自己的文档
+    fails.append("resize_token_embeddings is called again: ...")
+
+# 守卫 2(假的):grep 边界检查的报错文案
+if "is outside the embedding" not in src:              # ← 这句就在这一行里
+    fails.append("the ChatML-id bounds check is gone, ...")
+```
+
+`grep -n "is outside the embedding"` 出来**两处**:`:276` 是被守护的 `print`,`:486` 是守卫自己。把 `:276` 改坏,`src` 里仍然有 `:486` 那一份,selftest 绿。
+
+守卫 1 之所以没踩同一个坑,是因为**needle 被写成 `".resize_token_" + "embeddings("`**,拼接后才等于要找的串,所以这个文件的散文和注释里怎么写都不会自匹配。这不是巧合,是这类判据唯一的写法。
+
+**处理是删掉,不是修。** 改成搜 `if max_id >= emb_rows` 能用,但那条边界检查是 `main()` 里一个活的 `if`——**删掉它是一次可见的代码删除**,不是 grep 该防的静默失效。grep 只该守「删了没人会发现」的东西,resize 那条正是,边界检查那条不是。删除理由写在本该放那个检查的位置,因为下一个想加它的人会伸手拿同一个形状。
+
+与 §67 的关系:§67 是「断言约束的是数值不是机制」,本条是**断言约束的是它自己**。两条同一根:**判据的作用域没有排除判据自身**。de 同日在 `harness.py` 的 `no_conflict_markers` 上遇到同一件事并正确处理了——它的 needle 列表里就有那些 marker,所以**把自己排除在扫描之外**。判据和数据在同一个文件里时,要么排除自己(de 的做法),要么让 needle 拼接后才成立(守卫 1 的做法);两者都不做就是本条。
+
+规则:**grep 型判据必须跑一次 broken world**——改坏被守护的东西,确认它红。检测法:把 needle 拿去 `grep -n` 整个文件,**命中数 ≥ 2 且其中一处是判据自己那一行**,就是本条。
+
+推论,比本条更宽:**「注释断言了代码没做的事」和「判据断言了它没在检查的事」不是同一件事,后者严重得多**。前者读代码能发现(注释和代码并排,矛盾可见);后者读代码发现不了,因为**它读起来完全正确**。所以「守卫交付标准 = 证明它会失效」在这类上不是把标准提高,**是唯一的发现手段**。
+
+## 70. `git diff HEAD main` 看得见改动、看不见方向——三次误读成「main 改了我的文件」(de 当事人,2026-09-03)
+
+`git diff HEAD main --name-only` 列出一个文件时,它只说「两边不同」。**它不说是谁改的。**
+
+今天 2026-09-03,在一个每几分钟就要 merge 一次 main 的节奏下,我三次看到自己刚写的
+`docs/lessons/fact_and_inference.md` 出现在这个列表里,三次的第一反应都是「main 改了它,
+我得先读 main 的新版本」。三次都错:**是我自己的 commit 还没合进 main**,所以
+`HEAD..main` 显示的「删除」正是我未合的工作。
+
+```
+$ git diff HEAD main --stat -- facts/efficiency.json
+ facts/efficiency.json | 41 -----------------------------------------
+ 1 file changed, 41 deletions(-)          ← 读作「main 删了我 41 行」
+```
+
+真相是那 41 行**从来没进过 main**。`--numstat` 看得见删除的行数,`--name-only` 看得见
+文件名,**两个都看不见方向**——而在这个方向上判断错的代价是不对称的:
+
+| 误判 | 后果 |
+|---|---|
+| 以为是 main 改的,实际是我未合 | 去「重读 main 的新版」并据此重贴,可能把自己刚写的覆盖回旧版 |
+| 以为是我未合,实际是 main 改的 | 强推 patch,把 main 那次(可能是对的)重写覆盖掉 |
+
+**一条命令就能分辨**:
+
+```bash
+git merge-base --is-ancestor <我的commit> main && echo "已合" || echo "未合,删除是我自己的"
+```
+
+lessons-62 同一天从相反方向踩到同一件事:第五轮 `git apply` 报
+`patch does not apply`,因为 main 把整个文件重写了(text-level split 加它自己的 lr
+实测,都是对的)。他们**没有强推,而是重读 main 的新版本逐处重贴**,结果发现新版把两个
+需要修的地方又带回来了——重贴是必要的。
+
+所以两个问题必须分开问,而且顺序固定:
+
+1. **谁改的**——`merge-base --is-ancestor`,一条命令,不看 diff 内容。
+2. **我的修正在新版本里还对不对**——只能重读。`git apply` 成功与否回答不了这个问题:
+   patch 能干净落地,也可能落在一个前提已经变了的文件上。
+
+规则:**在共享 worktree 里,任何基于「谁改了这个文件」的动作之前,先跑一次
+`merge-base --is-ancestor`。** 这条不进 AGENTS.md(1e 裁定):它不是一条约束,是一次
+误读的记录,而误读的成本已经写在上面那张表里。
+## 71. 一道检查被守卫条件挡住，从未执行；"静默通过"与"跳过"在日志里同形（2026-09-03，e1、lessons-58 报）
+
+守卫条件和断言体读不同的字段名，检查就永不执行——而它要防的恰恰是唯一一种不报错的失败。
+
+实例：`sft_math.py` 的 vocab_id 断言（2026-09-03 前）：
+
+```python
+ck_vocab = args.vocab or ck.get("vocab_id")
+if ck_vocab and "vocab" in d:          # 守卫判 "vocab"
+    assert d["vocab_id"] == ck_vocab   # 断言体用 "vocab_id"
+elif is_main:
+    print("WARNING the pack predates vocabulary fingerprinting; verify by hand")
+```
+
+packer（`datagen/prepare_sft.py:288`）写的键是 `vocab_id`。全量普查 21 个 pack（lessons-58，2026-09-03）：裸 `vocab` 8 个、`vocab_id` 8 个、两键皆无 5 个、两者都有 0 个。守卫 `"vocab" in d` 对 8 个 `vocab_id` pack 恒假——**现行 packer 的产出全部走 warning 分支，断言在它们身上一次没触发过**；而它的注释自己写着要防什么："a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match"——不会报错的失败，正是最需要守卫的那种。这次没有损害（两边实测都是 `0bce3584bc24f255`），被记录的是守卫失效本身。
+
+**收窄一句**：5 个两键皆无的 pack 走 warning 是**正确行为**（它们确实没有 fingerprint）——"warning 是缺陷"只对 16 个带键的 pack 成立。一句话概括两种情形，会把一条正确行为也说成 bug。
+
+**为什么能活这么久——这是 shape 的核心，不是"写错了键"那么浅：**
+
+1. **失败模式与成功模式在日志里同形。** assert 通过时不打印任何东西，跳过时打印一条 WARNING。"检查过了"是静默的，"没检查"是一行警告——**没有任何一次运行的日志能区分这两种状态。**
+2. **那条 WARNING 把缺陷说成了产物的属性。** 它写 "the pack predates vocabulary fingerprinting"——而那个 pack 明明带 fingerprint。读者会去查 pack，不会去查 reader。
+
+**怎么被抓到的（可复用）：** `check_sft_ready.py:check_vocab` 读的是正确的键，pre-flight 报 READY；同一次上卡，trainer 报"我判断不了"。**同一个字段的两个独立读取者给出矛盾结论**——它们的分歧比任何一方的结论更有信息量。没有那道独立的 gate，这条永远不会露头。
+
+修法（`7aacbac`）：两键都读；**匹配时也打印 id**——让"通过"在日志里有形状。
+
+规则：守卫条件和断言体必须读同一个字段名，写完拿一个真反例喂一次（known-answer negative）；**凡是"通不过才说话"的检查，都无法从日志证明它跑过——匹配时也打印。** 检测法：一个字段有两个读取者时，先看它们的结论是否一致。
+
+## 72. 条件 stub：测试在依赖缺失的机器上绿、在依赖存在的机器上红——"本机绿"对目标机零信息量(b0 当事人,2026-09-03,与 §71 反向)
+
+用「真东西能不能 import」来决定 stub 什么。**方向和平常相反**：条件 stub 在依赖**缺失**的地方通过，在依赖**存在**的地方失败——而后者正是要跑生产的那台机器。所以「本机绿」不是弱证据，**是零证据**：它恰好只在不重要的环境里成立。
+
+实例：`scripts/test_zero_init_out.py`（A/B (3) 的守卫）。同一个形状在一个文件里出现两次：
+
+```python
+if getattr(M, "chunk_kda", None) is None:      # ① fla 在 pod 上可导入
+    M.chunk_kda = lambda q, k, v, **kw: ...    #   → 真 Triton kernel 留在原地
+# HAS_FA 保持读到的值                            # ② flash_attn 在 pod 上可导入
+                                               #   → MLA 走 flash_attn_func
+```
+
+pod 上两条依次炸：
+
+| | 报错 | 为什么本机不炸 |
+|---|---|---|
+| ① | `Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)` | Mac 无 triton，`chunk_kda is None`，stub 装上了 |
+| ② | `inputs must be float16, bfloat16, fp8 e4m3fn, or fp8 e5m2` | Mac 无 flash_attn，`HAS_FA=False`，走 SDPA 回退 |
+
+**②比①更值得记**：它不是"stub 没装"，是**测试构造的 fp32 参数撞上一个只接 bf16 的后端**。测试要测的契约（zero-init 的梯度形状）与 dtype 和后端都无关，**但它继承了环境而不是钉住环境**。
+
+修法是**无条件强制**：`M.chunk_kda = stub`、`M.HAS_FA = False`，不问能不能 import。判据要覆盖的东西不是那个 kernel，**stub 的存在性不该是环境的函数**。
+
+**代价是真的**：这个测试在 pod 上跑之前，我已经把它 commit 进 gate、写进 commit message 说"三个 broken world 全红"——那三个 world 是在**一个从不执行真 kernel 的环境**里验的。broken world 验的是判据能不能红，**不验判据能不能跑**。两件事都要。
+
+**与 §71 同一根、方向相反**：§71 是检查被守卫条件挡住而从未执行（"静默通过"与"跳过"同形）；本条是**测试执行了，但执行的是另一条代码路径**。共同点：**判据的行为是环境的函数，而记录里只有"绿"这一个字**。
+
+**这次的补救动作本身也是一个错，1e 报的，比上面那条更贵**：我发现 pod 上崩了之后用 `podput` 直接推了修复。**tracked 文件只能经 `pod_push` 上 pod，不能 podput** —— 我那份副本随后被 1e 的 `--all` 覆盖回旧版（这次运气好，只是又崩一次），**换个时序就是 A/B 跑在未提交代码上而 manifest 全绿**：manifest 记的是 commit，podput 不改 commit，所以"漂移"这件事对守卫不可见的那一半正是我手动塞进去的那一半。要在 pod 上试未合并的改动，**先合 main 再推**。这次守卫恰好因为 diff 抓到了（`pod code drift: 1 drifted: diff scripts/test_zero_init_out.py`），但它抓到的是内容差异，不是"有人绕过了发布路径"。
+
+**这也是 AGENTS.md 那句 "green here is not green on the pod" 的原文场景**——那句写给 harness check，而我把同一个洞开在了 selftest 里。规则：**任何 selftest 只要 import 了带原生后端的模块（fla / flash_attn / torchao / triton），stub 必须无条件，且必须在 pod 上跑过一次才算交付。** 检测法：`grep -n "if.*is None" ` 你的 stub 行——**条件 stub 就是本条**。
