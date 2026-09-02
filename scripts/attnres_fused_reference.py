@@ -7,16 +7,18 @@ External id: those add_ calls are autograd's gradient accumulation for multi-con
 tensors, not inductor-fused arithmetic. If so, an in-place `out.add_()` in forward changes
 nothing and the fix is to make the mixing one autograd node.
 
-WHAT THE ACCOUNTING SAYS, JOINTLY WITH tilerl (read before writing a
-kernel):
+WHAT THE ACCOUNTING SAYS, JOINTLY WITH tilerl (read before writing a kernel):
 
- 1. THE ACCOUNTING IS NOW CLOSED, jointly with tilerl. add_[B,T,D] per step = 2 *
-    source_reads = n(n+1) at n=2L+1: 650 at L=12, 4290 at L=32, measured exactly by
-    add_count() at four depths. Times 3 touches per in-place add_ that is 261.7 GB/step,
-    which is the trace's figure to four figures with no fitted constant. (The trace's ~1950
-    is 3 STEPS -- my earlier "6.5x gap" was a per-step vs per-3-step unit error, tilerl's
-    catch. tilerl read the remaining 2x as two AttnRes stacks; it is one stack where every
-    call reads every source twice, model.py:248 for the logits and :250-252 for the mixing.)
+ 1. THE ACCOUNTING IS CLOSED, AND THE MECHANISM IS ABLATED. add_[B,T,D] per step = 2 *
+    source_reads = n(n+1) at n=2L+1: 650 at L=12, 4290 at L=32, exact at four depths. Times
+    3 touches per in-place add_ that is 261.7 GB/step -- the trace's figure to four figures,
+    no fitted constant. The factor 2 is one stack reading every source TWICE (model.py:248
+    logits, :250-252 mixing), not two stacks; tilerl's ablation detaches the logits read
+    only and the count halves exactly at every depth, which is the claim's actual evidence
+    (the n(n+1) assert would pass either way -- it constrains the value, not the mechanism).
+    Two errors were corrected getting here, one each: my "6.5x gap" was per-step vs
+    per-3-step (the trace's ~1950 is 3 steps), and tilerl's "two triangles = two stacks" was
+    the double read.
  2. HALF THOSE ADDS ARE ON THE LOGITS PATH (325 of 650), which a mixing-only kernel cannot
     touch by construction.
  3. THE OTHER HALF DOES NOT MOVE EITHER. The accumulation is across calls -- s.v at position
@@ -144,7 +146,7 @@ def known_answer():
     return max(gaps)
 
 
-def add_count(L, D=8, B=1, T=3):
+def add_count(L, D=8, B=1, T=3, detach_logits=False):
     """MEASURE add_[B,T,D] on a real Full AttnRes stack, and give its exact closed form.
 
     tilerl measured 650 per step at L=12 -- the trace's ~1950 is 3 STEPS, so my "6.5x gap" was
@@ -159,6 +161,16 @@ def add_count(L, D=8, B=1, T=3):
     two stacks: each AttnRes call reads every source TWICE, once for the logits (model.py:248,
     (s.v*gq).sum(-1)) and once for the mixing (model.py:250-252), so every source read puts two
     edges on the graph and earns two accumulations.
+
+    `detach_logits=True` IS THE NEGATIVE CONTROL, AND THE ASSERT ABOVE IS NOT (tilerl, 14:3xZ).
+    `n_add == n*(n+1)` passes whether or not the 2 comes from the double read: it constrains the
+    VALUE, and "650 = 2 x 325" does not entail "the 2 is the double read" -- two propositions,
+    the first not implying the second. The control is the run with the mechanism ABSENT: detach
+    the logits read only, leave the mixing untouched, and the count must halve exactly. It does,
+    at every depth (30->15, 56->28, 90->45, 650->325). tilerl ran this before accepting the
+    explanation; I had shipped the assert and called it measured. Same shape as
+    docs/experience/errors/2026-09-02-green-checks-that-proved-less-than-they-looked.md: a check
+    never seen red is an assumption about the check.
 
     THE CONSEQUENCE TURNS ON THE NUMBER I TRIED TO RETRACT THIS MORNING: the count is exactly
     2x source_reads, and source_reads is eff.grad_ckpt_inverts_with_depth's O(L^2) quantity --
@@ -175,18 +187,30 @@ def add_count(L, D=8, B=1, T=3):
 
     import model as m  # noqa: PLC0415
 
+    def forward_detached(self, srcs):
+        """model.AttnRes.forward with the LOGITS read detached and the mixing untouched."""
+        q = self.q if self.dyn is None else self.q + self.dyn(srcs[-1].normed() * self.g)
+        gq = self.g * q
+        logits = torch.stack([(s.v.detach() * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])
+        a = logits.float().softmax(0).to(srcs[0].v.dtype)
+        out = a[0].unsqueeze(-1) * srcs[0].v
+        for i in range(1, len(srcs)):
+            out = out + a[i].unsqueeze(-1) * srcs[i].v
+        return out
+
     torch.manual_seed(0)
     ars = [m.AttnRes(D) for _ in range(2 * L + 1)]
     for ar in ars:
         with torch.no_grad():
             ar.q.normal_(std=0.5)  # q is zero-init: uniform weights are an identity element
+    fwd = (lambda ar, s: forward_detached(ar, s)) if detach_logits else (lambda ar, s: ar(s))
     x = torch.randn(B, T, D, requires_grad=True)
     done, partial = [m.Source.of(x)], []
     for i in range(2 * L):
-        out = ars[i](done + partial) * 1.0001  # *1.0001 stands in for norm + f
+        out = fwd(ars[i], done + partial) * 1.0001  # *1.0001 stands in for norm + f
         partial = [m.Source.of(partial[0].v + out if partial else out)]
         done, partial = done + partial, []  # attn_res_blocks=0: every sublayer is a boundary
-    y = ars[-1](done + partial)
+    y = fwd(ars[-1], done + partial)
 
     with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
         y.sum().backward()
@@ -195,7 +219,9 @@ def add_count(L, D=8, B=1, T=3):
                 if e.key == "aten::add_" and str(e.input_shapes) == want)
 
     n = 2 * L + 1
-    assert n_add == n * (n + 1), f"L={L}: measured {n_add}, closed form n(n+1)={n * (n + 1)}"
+    expect = n * (n + 1) // 2 if detach_logits else n * (n + 1)
+    assert n_add == expect, \
+        f"L={L} detach_logits={detach_logits}: measured {n_add}, expected {expect}"
     return n_add
 
 
@@ -287,8 +313,15 @@ def main():
         f"dA through softmax max {(logits.grad - da_soft).abs().max()}"
 
     known_answer()
+    # BOTH ARMS at every depth: the full stack, and the negative control with the logits read
+    # detached. The control is what makes "the 2 is the double read" a measurement instead of an
+    # interpretation -- see add_count's docstring.
     for L in (2, 3, 4, 12):
-        add_count(L)
+        full, half = add_count(L), add_count(L, detach_logits=True)
+        assert full == 2 * half, f"L={L}: {full} != 2 x {half}"
+    print(f"ABLATION (tilerl's control): logits-detached halves the count exactly at L=2/3/4/12 "
+          f"-- 650 -> {add_count(12, detach_logits=True)} at L=12. The mixing is untouched in "
+          f"that arm, so the factor 2 IS the double read, not two stacks.")
 
     # THE COUNT THE FUSION REMOVES, and a retraction. `attn_res_blocks` defaults to 0
     # (train.py:219) and model.py:330 reads it as `min(n_sub, blocks or n_sub)` -- the `or`

@@ -941,6 +941,125 @@ def _agents_coverage_table(root):
     return rows, None
 
 
+def check_shapes_table_covers_doc(root):
+    """Every § in the shapes doc appears exactly once in AGENTS.md's rule table, and every
+    row's count equals the §refs it lists.
+
+    The table is a hand-maintained compression of docs/lessons/gate_failure_shapes.md and
+    nothing read it: three sessions added shapes on 2026-09-02 and the numbering collided
+    twice (b0 and I both wrote §62, 44 and I both wrote §63), each caught only by a merge
+    conflict. A conflict catches a collision on the same LINE; it does not catch a shape
+    that never reaches the table, or a count that says 14 next to fifteen refs.
+
+    Same reason as agents_rules_covered one section up, and the same ceiling: this proves
+    a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
+    belongs to is a judgement only a person re-reading the pair can make.
+
+    §65's own subject, applied to §65: the table and the doc must agree, and until this
+    check existed nothing verified it."""
+    p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(p):
+        return FAIL, "docs/lessons/gate_failure_shapes.md missing"
+    doc = {int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)}
+    if not doc:
+        return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
+
+    a = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(a):
+        return FAIL, "AGENTS.md missing"
+    # The compressed-rules table only: three columns, the third a run of §refs. Other
+    # AGENTS.md tables have two columns and cannot match.
+    rows = re.findall(r"^\|\s*(.+?)\s*\|\s*(\d+)\s*\|\s*((?:§\d+\s*)+)\|",
+                      open(a, encoding="utf-8").read(), re.M)
+    if not rows:
+        return FAIL, "no rule rows with §refs found in AGENTS.md -- the table was restructured"
+
+    seen, miscount = {}, []
+    for rule, n, refstr in rows:
+        refs = [int(x) for x in re.findall(r"§(\d+)", refstr)]
+        if len(refs) != int(n):
+            miscount.append(f"{rule[:32]}: says {n}, lists {len(refs)}")
+        for r in refs:
+            seen[r] = seen.get(r, 0) + 1
+
+    missing = sorted(doc - set(seen))
+    dangling = sorted(set(seen) - doc)
+    twice = sorted(k for k, v in seen.items() if v > 1)
+    problems = []
+    if missing:
+        problems.append(f"in the doc, in no rule: {['§%d' % m for m in missing]}")
+    if dangling:
+        problems.append(f"in the table, not in the doc: {['§%d' % d for d in dangling]}")
+    if twice:
+        problems.append(f"listed under more than one rule: {['§%d' % t for t in twice]}")
+    if miscount:
+        problems.append(f"count disagrees with refs: {miscount[:3]}")
+    if problems:
+        return FAIL, "; ".join(problems)
+    return PASS, (f"{len(doc)} shapes (max §{max(doc)}) each referenced exactly once across "
+                  f"{len(rows)} rules; every row's count matches")
+
+
+def _broken_shapes_table_covers_doc():
+    """The REAL AGENTS.md with one §ref deleted from a rule row, doc untouched.
+
+    fb's specified world (2026-09-02): a shape that reaches no rule. Note the row's own
+    count is left at its old value, so this breaks BOTH halves at once -- the coverage
+    half (that § is now in no rule) and the arithmetic half (the count now exceeds the
+    refs listed). Deleting the ref without touching the count is also what a hand edit
+    actually does.
+
+    The other direction -- a shape appended to the doc while the table stands still, which
+    is what happened twice on 2026-09-02 -- is _broken_shapes_table_doc_grew below. CHECKS
+    holds one broken() per row, so the selftest runs that one explicitly."""
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src) or not os.path.exists(
+            os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    # Drop the LAST §ref of the first rule row that has more than one, so the row keeps a
+    # valid shape and only its coverage changes.
+    m = None
+    for cand in re.finditer(r"^\|\s*.+?\s*\|\s*\d+\s*\|\s*((?:§\d+\s*){2,})\|", text, re.M):
+        m = cand
+        break
+    if m is None:
+        raise SelftestSkip("no rule row with 2+ §refs; update _broken_shapes_table_covers_doc")
+    refs = m.group(1)
+    dropped = re.findall(r"§\d+", refs)[-1]
+    text = text[:m.start(1)] + re.sub(r"\s*" + dropped + r"\s*$", " ", refs) + text[m.end(1):]
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_shapes_table_doc_grew():
+    """The REAL docs with a new shape appended and the table left alone -- exactly what
+    happened twice on 2026-09-02, and what a merge conflict does not catch."""
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    if not nums:
+        raise SelftestSkip("no shape headings to extend; update _broken_shapes_table_doc_grew")
+    # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
+    # fixture to the REAL shapes doc. Replace the link with a real directory holding a
+    # real copy of the one file this world mutates.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
+
+
 def check_agents_rules_covered(root):
     """Every AGENTS.md rule maps to a check name or an explicit manual reason, and the
     table in the doc says the same thing as the map in the code.
@@ -6791,6 +6910,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "shapes_table_covers_doc",
+        "every shape in the shapes doc is referenced exactly once in AGENTS.md's rule table",
+        "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
+        check_shapes_table_covers_doc,
+        _broken_shapes_table_covers_doc,
+    ),
+    (
         "timestamps_are_utc",
         "every timestamp written into the repo is UTC",
         "the Mac writes CST and the pod container writes UTC in the same format with no marker, so a pod row reads eight hours old the moment it lands and every ledger age comparison is wrong by up to eight hours (2026-09-01)",
@@ -6926,6 +7052,7 @@ EVIDENCE = {
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo",
