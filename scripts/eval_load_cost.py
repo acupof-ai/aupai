@@ -29,6 +29,8 @@ a 54-second interval overrun prints as 29 lost hours (gate_failure_shapes.md §5
 """
 
 import ast
+import glob
+import json
 import os
 import re
 import sys
@@ -61,6 +63,40 @@ MEASURED = {
     "l1_fewshot.py": ([7, 6, 10], "generative, 497 problems x 512 new tokens"),
     "ppl.py": ([8, 8], "killed during checkpoint load; had NOT reached a token cache"),
 }
+
+# HOST BYTES PER TOKEN CACHE, measured on the pod 2026-09-03:
+#   ~/bin/pod "ls -la /data00/tokens_*.pt | awk '{print \$5, \$9}'"
+# 22 caches, 247.8 GB total. This is the quantity the co-residency rule turns on, and the one
+# AGENTS.md's coverage table records as "nothing in the repo records it per eval run" -- recorded
+# here now, per DOMAIN, which is the level at which it is a property of the corpus rather than of
+# a run. An eval's host read is the sum over the domains its mix names, because _domain_seqs
+# torch.loads one file per domain.
+#
+# Why bytes and not "reads a cache: yes/no": zh_web alone is 85 GB and tokens_sample is 5 MB, so
+# the boolean column groups a 16,000x range into one bucket. `ppl` over mix_500m reads ~166 GB and
+# `ppl` over a chat-only mix reads 0.3 GB -- the rule "an eval that reads a token cache waits for
+# the run" is right for the first and absurd for the second.
+CACHE_BYTES = {
+    "zh_web": 85173617415, "code_py_starcoder": 35147667156, "code_rp1t": 30276327900,
+    "math_owm_stage2": 26114186246, "en_c4": 19236278784, "math_owm": 16139300949,
+    "en_c4_stage2": 9604578481, "textbook_30b": 6440843057, "textbook": 6440843029,
+    "web_hq": 5737618119, "cot": 1696226494, "code_py_rp1t": 1683425021,
+    "wiki_chat": 1135614653, "wiki": 982864005, "en": 643070455, "math_seed": 326728936,
+    "math": 326728901, "code": 230279173, "chatml": 155984979, "chat_qa": 152752218,
+    "chat": 152752197, "sample": 5271699,
+}
+
+
+def mix_cache_bytes(mix_path):
+    """(bytes, [domains with no cache on the pod]) for one mix file."""
+    try:
+        with open(mix_path, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (OSError, ValueError):
+        return None, []
+    doms = list((obj.get("domains") or {}).keys())
+    return (sum(CACHE_BYTES.get(d, 0) for d in doms),
+            [d for d in doms if d not in CACHE_BYTES])
 
 # Static facts read off each file, so a new eval cannot be silently absent from the table.
 # host_io means "reads a token cache from /data00", i.e. goes through train._domain_seqs.
@@ -129,12 +165,25 @@ def main():
     print(f"Control: the run's own 2.1GB checkpoint save + val costs {ctrl:.0f}s, every 500 "
           f"steps, with no eval running.")
     print(f"An eval below {ctrl:.0f}s costs less than the run already spends on itself.\n")
-    print(f"{'eval':28s} {'ckpt':5s} {'>10GB':6s} {'gen':4s} {'measured':>9s}  note")
+    print(f"{'eval':28s} {'ckpt':5s} {'host GB':>8s} {'gen':4s} {'measured':>9s}  note")
     print("-" * 108)
+    mixes = sorted(glob.glob(os.path.join(ROOT, "data", "mix_*.json")))
+    live = [m for m in mixes if os.path.basename(m).startswith(("mix_500m", "mix_200m"))]
+    ref = live[0] if live else (mixes[0] if mixes else None)
+    ref_bytes, _ref_missing = mix_cache_bytes(ref) if ref else (None, [])
     for name, c, secs, note in rows():
         got = f"{secs:.0f}s" if secs is not None else "-"
+        # host GB is what THIS eval reads: the reference mix's whole cache set if it goes through
+        # _domain_seqs, else just the checkpoint. Not a boolean, because the caches span 5 MB to
+        # 85 GB and a yes/no column puts both in one bucket.
+        if c["host_io"] and ref_bytes:
+            gb = f"{ref_bytes / 1e9:.0f}"
+        elif c["ckpt_load"]:
+            gb = "~2"
+        else:
+            gb = "-"
         print(f"{name:28s} {'yes' if c['ckpt_load'] else '-':5s} "
-              f"{'YES' if c['host_io'] else '-':6s} {'yes' if c['generative'] else '-':4s} "
+              f"{gb:>8s} {'yes' if c['generative'] else '-':4s} "
               f"{got:>9s}  {note}")
     unmeasured = [n for n, _, s, _ in rows() if s is None]
     print(f"\n{len(unmeasured)} of {len(rows())} evals are NOT MEASURED -- listed as '-', "
@@ -145,6 +194,19 @@ def main():
           "generative and costs 209s. ppl\nwas killed at 109s before touching a cache; the "
           "166GB it was about to read is why it was\nstopped, and that cost is unmeasured "
           "because it never happened.")
+    print("\nHOST BYTES BY MIX -- what a cache-reading eval loads, per domain set (pod, "
+          "2026-09-03):")
+    for m in mixes:
+        b, missing = mix_cache_bytes(m)
+        if not b:
+            continue
+        note = f"  ({len(missing)} domain(s) with no cache)" if missing else ""
+        mark = "  <-- reference for the table above" if m == ref else ""
+        print(f"  {os.path.basename(m):32s} {b / 1e9:7.1f} GB{note}{mark}")
+    print(f"  {'ALL 22 caches on /data00':32s} {sum(CACHE_BYTES.values()) / 1e9:7.1f} GB")
+    print("\nzh_web alone is 85 GB and tokens_sample is 5 MB, a 16,000x range. That is why this "
+          "column\nis bytes: 'reads a token cache' put both in one bucket, and the rule derived "
+          "from it\n(wait for the run) is right for the first and absurd for the second.")
     return 0
 
 
@@ -211,11 +273,28 @@ def _selftest():
                 ), f"{os.path.basename(p)}: host_io set by a prose-only mention of {name}"
     # And the table must not silently omit an eval.
     assert len(rows()) >= 25, f"only {len(rows())} evals found"
+
+    # THE HOST-BYTES COLUMN REPRODUCES THE NUMBER AGENTS.md CITES, from a different source. The
+    # rule says ppl reads "~166 GB across the nine domains of mix_500m"; that figure came from
+    # per-domain estimates, and summing the pod's actual file sizes gives 166.2 GB. Two
+    # derivations agreeing is the only reason to believe either. If this ever drifts, one of them
+    # changed and the rule is quoting a number nothing measures.
+    b, missing = mix_cache_bytes(os.path.join(ROOT, "data", "mix_500m.json"))
+    assert b is not None, "data/mix_500m.json unreadable -- the host-bytes column has no reference"
+    assert not missing, f"mix_500m names domains with no recorded cache: {missing}"
+    assert 160e9 < b < 172e9, f"mix_500m cache total {b / 1e9:.1f} GB, AGENTS.md says ~166"
+
+    # The spread is the whole reason this column is bytes rather than a boolean. If it ever
+    # collapses, the boolean was adequate after all and this complexity is not earned.
+    lo, hi = min(CACHE_BYTES.values()), max(CACHE_BYTES.values())
+    assert hi / lo > 1000, f"cache sizes span only {hi / lo:.0f}x -- a boolean would do"
+
     print(
         f"selftest OK: interval arithmetic on 4 known answers, 4 published costs "
         f"reproduce, ETA amplification 29.1h vs 54.6s real, cache-reader column correct "
         f"on 6 files (3 positive, 3 negative) plus the prose-only property over all "
-        f"{len(rows())} evals listed"
+        f"{len(rows())} evals listed, and mix_500m's cache total {b / 1e9:.1f} GB "
+        f"independently reproduces AGENTS.md's ~166 GB from pod file sizes"
     )
     return 0
 
