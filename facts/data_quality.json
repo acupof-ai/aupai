@@ -884,6 +884,46 @@
       "uncertainty": "a 20000-row head sample per domain, not a uniform draw; shard order is build order",
       "status": "measured",
       "boundary": "Says what the missing rules would have dropped, not whether dropping them helps. The rules were tuned on handread-150 only and no downstream measurement ties them to loss or to any eval. The controller ruled no rebuild at 0.25%."
+    },
+    {
+      "id": "dq.corpus_filter_residue",
+      "value": "corpus batch filters_fp=33462c13868a2194 (pod, 5 CCI3-HQ Chinese rules short of main 88ee503b); measured residue ~0.25% of total corpus",
+      "unit": "fraction of tokens",
+      "measured": "2026-09-01",
+      "source": "fb recomputation of fp_filters (main=88ee503b, pod/domain stamps=33462c13) over the 9 corpus domains",
+      "config": {
+        "filter_diff": "pod filters/pass3_garbage.py missing 5 of the 2026-08-30 CCI3-HQ Chinese rules that main has",
+        "residue_by_domain": {
+          "zh_web": "6.68% of domain, weight 3.05% -> 0.204% of total",
+          "textbook": "0.48% -> 0.049%",
+          "chat/cot": "~0",
+          "en": "0",
+          "code": "not 'zero': ast.parse is a SYNTAX filter (valid Python, not no-contamination); code_py_rp1t inherits cleanliness from code_rp1t sustain's light filter + holdout (e1: 29,333 rows 0-hit, holdout non-empty 2,533); out-of-list contamination unmeasured+untooled"
+        },
+        "total": "~0.25%",
+        "ruling": "no rebuild (fb 2026-09-01)",
+        "then": "filters/ to pod is tilerl's push"
+      },
+      "uncertainty": "residue measured by fb over the 9 stamped domains; the 5 missing rules are Chinese CCI3-HQ quality rules",
+      "status": "measured",
+      "boundary": "residue ~0.25% covers the CCI3-HQ Chinese-rule gap on the pod filter; does NOT cover contamination outside the holdout list for the code_py_rp1t chain (ast.parse is syntax-only: syntactically-correct code embedding eval answers survives). The code-python domain's upper bound comes from code_rp1t's light+holdout, which is unmeasured beyond the 2,533-item holdout list."
+    },
+    {
+      "id": "dq.code_py_starcoder_holdout_zero",
+      "value": "full holdout scan of the delivered code_py_starcoder corpus: 6,180,175 rows, 0 is_holdout hits",
+      "unit": "hits",
+      "measured": "2026-09-02",
+      "source": "datagen/scan_delivered_holdout.py (full 6.18M-row scan on the pod); corpus fp e1a14839e11f3e6f",
+      "config": {
+        "corpus_fp": "e1a14839e11f3e6f",
+        "rows_scanned": 6180175,
+        "holdout_hits": 0,
+        "build_note": "corpus built by a PARALLEL build_starcoder_py.py that dropped the is_holdout check (tilerl catch 09-02); this scan verifies the DELIVERED bytes are clean, not the build mechanism (the fixed/holdout-checking build is the one going forward)"
+      },
+      "uncertainty": "0 hits in the full scan is definitive for the delivered bytes at fp e1a14839e11f3e6f; it does not cover future rebuilds",
+      "status": "measured",
+      "boundary": "validates the delivered corpus at fp e1a14839e11f3e6f only; if the corpus changes, re-run before trusting a new zero",
+      "provenance": "the result is bound to corpus fp e1a14839e11f3e6f so a later zero knows which bytes it measured"
     }
   ]
 }
