@@ -748,3 +748,16 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 规则:引用一条 fact 的某个字段前,先看它的 source 支不支持那个字段。**briefing / 设计文档 / 别人的转述,支持「有人主张过」,不支持「这个配置跑过」。** 冲突时按测量日期与证据强度排序,不按 status 字段——status 盖整条,而错的往往只是其中一个字段。
 
 推论(给 facts 的写法):**一条 fact 里混着实测字段与转述字段时,boundary 必须点名哪些是转述的。** `eff.fb_mfu` 现在按 fb 裁定改 `status: recorded` 并在 boundary 指向 `eff.microbatch_32_oom`(e1 执行),value 不删——因为 73K 那个吞吐数本身可能是真的,坏的是它旁边那个 batch。
+
+## 63. 两个反向的测量误差相消,凑出一个看着合理的数——比单个大错难发现(tilerl 当事人,2026-09-02,1e 报)
+
+一个由多个分量算出的数,两个方向相反的错会互相抵消,输出落在合理区间。单个大错让数离谱(0.1x、1230%),一眼假;相消的错让数「合理」,每个分量单独看都有出处,于是没人复查。
+
+实例:p200m trace 的 GEMM 读数(`scripts/trace_classes.py`,aaa1ab2 之前)。比值 = measured/ideal,错出在比值的两侧:
+
+- **分母侧(ideal)**:非 matmul 的 fused op(`triton_poi_fused__scaled_mm`)被按 GEMM 计价,2·M·N·K 套在它的输入形状上是 59.43 ms/step 的假 ideal,几个这样的 id 压过所有真 GEMM——ideal 虚高,比值被压低。
+- **分子侧(measured)与峰值**:GEMM 类按 kernel 名分类,`nvjet_*` 的 fused kernel 时长进了 GEMM 的 measured;同时精度峰值按 `--precision` 一刀切——fp8 的 `_scaled_mm` 在 bf16 档按 bf16 峰值(ideal 翻倍,比值压低),bf16 的 `aten::mm` 在 fp8 档按 fp8 峰值(ideal 减半,比值抬高)。
+
+`--precision bf16` 下两侧同向压低,读 0.1x(比峰值快十倍,aaa1ab2 commit message),假到立刻被抓;`--precision fp8` 下分母侧的压低与分子侧的抬高相消,读 **1.43×**——一个看着完全合理的数,活到了修复之后才被对出来。修掉三个错(只有 MATMUL_OPS 计价、`_scaled_mm` 永远按 fp8 峰值、ideal 记在干活的 kernel 类上)之后,两半各自 92.8% MFU。
+
+规则:一个数的分量里有两个以上的估计时,「输出合理」不是它对的证据——相消的错输出的就是合理。验数要验分量(每个 ideal 对应哪个 op、哪个峰值、哪段时长),不是验总数。检测法:已知答案世界里,**只修一个错,数应该变得更离谱;如果修一个错让数几乎不动,说明另一个错在补偿它**——那就是相消存在的直接证据。
