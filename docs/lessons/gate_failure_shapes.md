@@ -1552,3 +1552,13 @@ leak scan(e1-28)要先核 `row_cursor_srcfp`:checkpoint 里记的语料指纹和
 **守卫算身份必须用生产者的函数;重实现一个"看起来一样"的哈希,测的是"我的哈希等于我的哈希",两个实现对同一数量的分歧不是关于数据的发现。** 这也是 R1:前提"我的哈希和 train.py 的是同一个算法"从没被验证过——而验证只要一行 import。
 
 规则:**守卫计算身份(指纹、哈希、id)时 import 生产者的函数,不重实现;生产者没有函数就先把函数抽出来,让守卫和生产者调同一个。** 判断法(e1 的 case 2b):拿 checkpoint 自己记录的值做证人——多数域不符,是算法错,不是语料变;单域不符才报"语料变了"。再问一句:这个哈希有第二个实现吗?有,它们的一致性有断言吗?没有,两个实现迟早分叉,而分叉永远读作"数据变了"。
+
+## 130. 删掉守卫 selftest 照绿第二例:替代路径抛另一个异常,被宽 except 当成守卫生效(b0 当事人,1e 提,2026-09-03,证据 de0adf25 scripts/head_path_rows.py,R2,§103 族)
+
+`head_path_rows.py` 的显式守卫:`vocab_real > vocab` 时 raise ValueError——否则 head-only 切片 `[vocab_real:vocab)` 是空集。删掉守卫,selftest 照绿:空切片走到 `.max()`,torch 抛 `RuntimeError("Expected reduction dim ... for input.numel() == 0")`——一个 `except Exception: pass` 的 selftest 会把这个下游崩溃读成"守卫拦了"。**崩溃不是拒绝:崩溃说"工具坏了",拒绝说"这个 checkpoint 的 vocab 字段不一致";宽 except 把前者记成后者,守卫在不在世界都绿。** 与 §103 同族(不可否证的检查),差别在 §103 是替代路径抛同一个异常,这条是抛另一个、被宽 catch 接住。
+
+更险的第二点:空切片不崩的那条路径(比如先 `.norm` 再聚合的写法)会打出 **0.0000**——正是这次否证依赖的那个值(arm2 的 tok pad 行恰好 0.0000 = head 路径被完全移除)。**工具坏了会凭空造出发现:假 0.0000 和真 0.0000 输出上逐位相同,一个支持假设一个是没测。**
+
+修法(de0adf25 已落):selftest 断言异常**类型**和消息——`except ValueError` 验消息,`except Exception` 分支直接 FAIL("a downstream crash is not a refusal")。
+
+规则:**selftest 验证"守卫会拦"时,断言异常类型(和消息),不用宽 except;宽 except 把替代路径的崩溃记成守卫的功绩。** 判断法:把守卫删掉跑 selftest——绿了,你的 selftest 在测"有异常"而不是"守卫生效";再问一句:守卫不在时,下游会不会打出一个和真发现逐位相同的值?会,这个工具坏了就是造假机。
