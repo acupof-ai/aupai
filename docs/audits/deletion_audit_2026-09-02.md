@@ -67,6 +67,15 @@ Subtotal 1a (excluding the two post-run and the fact-cited one): **21 files, 2,3
 
 Excluded from 1a after the second grep (NOT deletable): `datagen/t2s_corpus.py` (imported by `datagen/clean_web.py:67,135`), `datagen/data_overview.py` (imported by `datagen/check_mix.py:24`), `scripts/run_sampled_cell.sh` (named in `scripts/harness.py`), `scripts/progress_feed.py` (controller's progress page writer, operational, uncited), `datagen/build_chat_qa.py` + `datagen/build_chatml.py` (144 lines, uncited, but they built the live `chat_qa`/`chatml` domains of `data/mix_500m.json` — record them in `data/PROVENANCE.md` rather than delete), `scripts/bootstrap_pod.sh` (self-cited only, but it is the pod bootstrap).
 
+**1a correction (a), measured 2026-09-02 (de). `scripts/test_arch_L32.py` is not "run by nothing" — it gates the 20B launch.** `scripts/launch_gate.py:196` names it in `ARCH_TESTS`, and `gate_arch_tests` returns NO-GO when the file is absent, when no row in `runs/launch_tests.json` records a pass of it, or when the recorded `test_sha256` does not match the file on disk. The row's parenthetical — "`launch_tests.py` reads a `test_file` field from `runs/launch_tests.json`, does not name it" — is true of `launch_tests.py` and false of `launch_gate.py`, which names the path as a literal. Two of the three post-run exclusions in the same table (`test_orphan_kill.sh`, `test_kill_pairing.sh`) are correct; this one is a miss, and the costliest in 1a, because the file it would have deleted is the launch gate's own evidence. Live as of 2026-09-02: that gate reads NO-GO on both `ARCH_TESTS` rows, the recorded sha of each no longer matching the file, which is the gate working.
+
+**1a correction (b), measured 2026-09-02 (de). A citation in a fact's `value` is invisible to both fact checks, so "cited by facts" and "checked by the harness" are different sets.** This table's last row credits `scripts/test_parallel_encode.py` to a `facts/efficiency.json` source field. It is not there: the only mention is inside `eff.pretokenize_throughput`'s **`value`** prose ("`scripts/test_parallel_encode.py` asserts torch.equal on 2,000 docs"). Neither check would notice its deletion:
+
+- `facts_well_formed` scans `str(e["source"])` only (`scripts/harness.py:3711-3712`). A path named anywhere else in the entry is never matched.
+- `fact_refs_resolve` runs the other direction entirely — it reads `facts/<file>.json#<id>` citations **out of docs** and checks the id exists (`:4034-4042`). It never looks at a fact's own fields, so no path in any fact reaches it.
+
+The consequence for this audit's method: a file whose only evidence of use is a sentence in a fact's `value` reads as uncited under a `source`-field scan and as unreferenced under a name scan, while deleting it silently falsifies a measurement's stated method. That is the same class as the runtime-glob rule in AGENTS.md, one field over. It is not a checkable claim to add — a scan over `value` would match every path ever mentioned in prose, including retired ones — so it is a reading rule: before deleting, grep the whole facts tree, not the `source` fields.
+
 ### 1b. Cited only by the pre-commit hook's `SELFTEST_FILES` map (run only when the file itself is staged)
 
 `scripts/hooks/pre-commit:218-249`. `check_selftests_are_gated` (`scripts/harness.py:562`) asserts every file *carrying* `--selftest` is in the map; it does not assert map entries exist, so deleting a file plus its map line is clean. These are tests nothing schedules: not CI (`.github/workflows/ci.yml`), not `harness check`.
@@ -150,6 +159,16 @@ Rule for the directory: a `t<NN>_*.py` probe is a one-shot whose number lives in
 | `scripts/sample_code_rp1t.py` | 48 | `dq.code_rp1t_handread_50` | |
 
 Facts citing a path that does not exist (fix the fact, nothing to delete): `facts/base_eval.json#be.gold_bpb_method` → `eval/configs/task_suites.py` (no `eval/configs/` directory).
+
+**2c correction, measured 2026-09-02 (de). Three of the ten rows are not "cited by facts only", and all three are live code.** Seven of the ten were deleted in 850cf71. The three that stayed:
+
+| row | what the audit missed | live caller |
+|---|---|---|
+| `eval/l1_fewshot.py` | 12 references in `eval/score_matrix.py`, 3 in `eval/code_fewshot.py`, 2 in `scripts/test_fewshot_demos.py` | `eval/score_matrix.py:227` runs it as a metric of record; the row's own "ENTRY per reachability — verify before deleting" was the warning, and the verification would have answered it |
+| `eval/compare_fewshot_arms.py` | 8 references to its `constant_baseline` from `eval/base_matrix.py`, 8 from `eval/score_math_formatfree.py` | it is the reference implementation of 44's constant-baseline ruling. `eval/base_matrix.py` held a second copy of the counting until 850cf71 imported this one instead — deleting it would have left the ruling with no definition |
+| `scripts/test_parallel_encode.py` | — | the only assertion that `_encode_domain(workers>1)` is element-identical to `workers=1` (`train.py:1682`, the path that writes every run's `/data00` token cache). `.srcfp` fingerprints the source directory, not the encode path, so nothing else would notice a divergence |
+
+The shared error is treating "no importer" as "no reader". `l1_fewshot` and `compare_fewshot_arms` are both imported; the audit's own citation matrix matched basenames and stems, so an import of the module by name should have hit. `test_parallel_encode` genuinely has no importer and is still not deletable: a test's caller is a person, and the reason it is never run automatically is recorded in the hook's `NEEDS_DATA` map rather than being absent (850cf71 — it needs `data/tokenizer.json` and the math_seed corpus, both gitignored, and carries no `--selftest` flag, so the hook could not invoke it even where the data existed).
 
 ### 2d. Reached only through `scripts/restartability_baseline.json` — 21 files, 4,502 lines
 
