@@ -189,6 +189,13 @@ def find_secrets(text, chunk=1):
     None rather than [] when the package is absent: a tool that did not run is not a clean
     result, and the caller reports that as its own outcome -- the shape e1-16 hit with
     ruff, where an unrunnable scanner read as green.
+
+    ONE temp file per call, rewritten per chunk, not one per line. The per-line version
+    created and unlinked ~1.9M files for a full pack; each is cheap on its own, but the
+    run died at `OSError: [Errno 28] No space left on device` inside NamedTemporaryFile
+    when an unrelated process filled the disk -- a scan holding a single reused path has
+    nothing to lose to that. The chunking above is unchanged: chunk=1 is still where the
+    loss stops, and this touches only how the chunk reaches scan_file.
     """
     try:
         import tempfile
@@ -199,21 +206,20 @@ def find_secrets(text, chunk=1):
         return None
     lines = text.splitlines()
     found = set()
-    with transient_settings({"plugins_used": SECRET_PLUGINS}):
-        for i in range(0, max(len(lines), 1), chunk):
-            block = "\n".join(lines[i:i + chunk])
-            if not block.strip():
-                continue
-            path = None
-            try:
-                with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
-                                                 encoding="utf-8") as fh:
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    os.close(fd)
+    try:
+        with transient_settings({"plugins_used": SECRET_PLUGINS}):
+            for i in range(0, max(len(lines), 1), chunk):
+                block = "\n".join(lines[i:i + chunk])
+                if not block.strip():
+                    continue
+                with open(path, "w", encoding="utf-8") as fh:
                     fh.write(block + "\n")
-                    path = fh.name
                 found.update(s.type for s in scan.scan_file(path))
-            finally:
-                if path and os.path.exists(path):
-                    os.unlink(path)
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
     return sorted(found)
 
 
