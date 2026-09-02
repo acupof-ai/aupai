@@ -1045,3 +1045,27 @@ gate 把自己的输入误读成缺陷，报一个假 FAIL——它和真 FAIL �
 修法（`93fdedd`）：位置解析与行解析交叉验证，不一致就拒绝并点名原因——"map 被误读，下面的计数无意义"。变异验证：注入一个引号即变红，且消息指对地方。
 
 规则：gate 的报错必须指向真正错的东西；解析器先自查（两种独立解析交叉验证）再报下游。检测法：一个 gate 的 FAIL 如果在它声称的缺陷不存在时也能出现，它就在误导——给它喂一个"除解析外一切正常"的世界，必须不红。
+
+## 75. 同一个缺陷修在一个入口、漏在旁边那个;报错把「本进程缺指纹」印成「缓存脏了」(b0 当事人,2026-09-03,与 §74 同族,机制不同)
+
+`eval/domain_loss.py` 的独立入口**给任何 checkpoint 打分都会被自己的守卫拒掉**。它在 `val_seqs` 里调 `assert_caches_fresh`,但从不调 `cache_guard.set_vocab_id`,所以 `train.VOCAB_ID` 全程是 `None`。守卫比较 `got != want[".vocab"]`,`want` 取 `train.VOCAB_ID or ""` —— 左边是缓存里的真哈希,右边是空串,必然不等。
+
+报错长这样:
+
+```
+REFUSING: an eval must never rebuild a training token cache. 1 problem(s):
+  math_owm_stage2: tokens_math_owm_stage2.pt.vocab is 0bce3584bc24f255, this run needs
+```
+
+**方向完全反了。** 读起来是"缓存被别的词表污染了",我第一反应去查 checkpoint 的 vocab_id 和缓存对不对得上 —— 而真相是缓存好得很,**缺指纹的是本进程**。这条消息里唯一的线索是 `needs` 后面**什么都没有**:一个空的右手边。它没有说"我这边是空的",所以那句空白读起来像截断而不像信号。
+
+**这不是 §74。** §74 是 gate 把自己的输入误读成缺陷(解析器坏了)。这里守卫的比较**逻辑完全正确** —— 两个值确实不等,它确实该拒。错的是**调用方少了一步初始化**,而错误消息的模板没有为"右边是空"这种状态留话。同一句话服务两个世界:缓存脏(右边有值、左右不同)和本进程没指纹(右边为空),而它只为第一个世界写了措辞。
+
+**最贵的一点:同一个缺陷在旁边那个入口已经修过了。** `eval/score_matrix.py:1086` 有 `set_vocab_id(cfg)`,:1079 的注释还写着 fb 2026-09-02 在 `ppl.py` 上"两分钟撞进一次 live run"抓到的就是这个 —— 修进了 `score_matrix`,`domain_loss` 的独立入口漏了。**一个 bug 有两个入口时,修完第一个要 grep 第二个**:检测法是 `grep -l "assert_caches_fresh\|val_seqs"` 出来的每个文件都必须出现 `set_vocab_id`。
+
+**副产物两条,同一次调查:**
+
+- **`vocab_id` 是 checkpoint 的顶层键,不是 `cfg` 字段。** 我直接 `torch.load` 读 `cfg.get('vocab_id')` 得 `None`,差点判"这批 checkpoint 没指纹、A/B 读数作废";实际顶层 `ck["vocab_id"] = '0bce3584bc24f255'`,与缓存一致,是 `scripts/loader.py` 把它搬到 cfg 上的。**绕过正规 loader 手工读 checkpoint,读到的缺失可能是你没走那一步搬运。**
+- **`--selftest` 也需要一个真实 `--ckpt`。** `_mix_for(a.ckpt[0], ...)` 在 selftest 分支之前执行,所以 `--selftest --ckpt x` 死在 `FileNotFoundError: 'x'`。一个"不需要模型"的自检却必须先能打开一个模型文件。
+
+规则:**错误消息的每个插值位都要为"这个值是空/缺失"准备一句话**,否则守卫会把自己的未初始化印成对方的污染。判断法:把消息里每个 `{}` 依次置空,读一遍剩下的句子 —— 如果它仍然像在指控对方,措辞就是错的。
