@@ -220,6 +220,27 @@ def selftest():
     med0, sig0, zs0 = robust_z([2.0] * 7)
     assert sig0 == 0.0 and set(zs0) == {0.0}
 
+    # n=3 IS A DIFFERENT TEST, and the reason is not the one I first wrote down. The 200M
+    # experiment tier is L=12 with 3 MLA blocks, against L=32's 8, so this population size is
+    # what the AttnRes/per-block-kind arms will actually be judged on.
+    #
+    # A SINGLE outlier at n=3 is caught cleanly -- median and MAD are both set by the other
+    # two points, so the outlier cannot move the yardstick it is measured against:
+    one_out = robust_z([1.01, 1.02, 1.60])[2]
+    assert max(one_out) > 30, one_out
+    # TWO of three diverging is the blind spot: the median lands on the diverging side, MAD
+    # becomes the divergence itself, and every z collapses toward 1. Nothing clears 3 sigma.
+    two_out = robust_z([1.01, 1.20, 1.50])[2]
+    assert max(abs(z) for z in two_out) < 3, two_out
+    # The same shape at n=8 is flagged hard, because six normal layers pin sigma down. So the
+    # 3-sigma rule is not "less sensitive" at n=3 -- it fails completely for this one shape,
+    # which is why the pre-registration reads all three ratios and not the flag count.
+    import random
+
+    random.seed(7)
+    n8 = [1.01 + random.uniform(-2e-4, 2e-4) for _ in range(6)] + [1.20, 1.50]
+    assert max(robust_z(n8)[2]) > 100, "n=8 must catch what n=3 misses"
+
     assert layer_of("blocks.11.mixer.o.weight") == 11
     assert layer_of("tok.weight") is None
     print(f"selftest OK: outlier at 1.5 -> z {zs[-1]:.0f} (MAD) vs {z_mean:.3f} (mean/std); "
