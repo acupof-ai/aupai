@@ -21,9 +21,30 @@ leaves the card ORPHAN, or lingers and makes a finished job look live -- both ha
 descendant exists by the time Popen returns, both for a python payload and for a shell script
 that execs one, as run_ddp.sh does.
 
-The three cases here are the ones that would have caught the original defect, and they run
-locally with no cards: a launch claims, a finished launch's claim is gone, and the pid claimed is
-the job rather than the wrapper.
+The cases run locally with no cards: the wrapper is a shell, a descendant exists at Popen, the
+claim records the job pid and a non-empty cmdline, status does not call it ORPHAN-SHELL, release
+removes it, cmd_launch's body really calls the helpers, and the monitor carries a release on both
+of its exit paths.
+
+TWO DEFECTS IN THIS FILE, both found by trying to make it fail rather than by reading it:
+
+  The wiring assertion grepped the source for `_acquire_cards(` and PASSED with the call site
+  stubbed out, because that name also appears in its own `def`. Measured: 9/9 green on a tree
+  where the launch claimed nothing. It is now an AST walk over cmd_launch's own body, which goes
+  red naming the missing call. Same shape as gate_failure_shapes §61 -- a criterion that
+  recomputes what it judges.
+
+  The helper case wrote a claim into the repo's REAL runs/claims/. card_claim.py reads
+  AUPAI_CLAIM_DIR at import and the helper shells out to it, so patching this process's
+  CC.CLAIM_DIR never reached the subprocess. It now sets AUPAI_CLAIM_DIR and asserts nothing
+  landed in the real directory. The pre-commit hook refuses this class for the git config
+  (_shared_repo_state); claims had no such guard.
+
+RELEASE CANNOT LIVE IN cmd_launch. That returns while the job is still running, so releasing
+there frees a card under a live job. The monitor is the only thing that outlives the job and sees
+it end, so the release sits beside the row it writes on death -- and on the settled() path too,
+because a run closed by hand (`exp.py done`, `harness kill`) is the majority of runs and would
+otherwise leave its claim forever. Release is idempotent, so both firing is harmless.
 """
 
 import os
