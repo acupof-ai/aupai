@@ -35,6 +35,7 @@ has to say which. Same reasoning as vocab_id on a checkpoint.
 # most one temp directory under the system tmp; no state is carried between runs.
 """
 
+import ctypes
 import json
 import os
 import platform
@@ -62,6 +63,58 @@ ISOLATES = {
 
 class Unisolated(RuntimeError):
     """rlimits_only was selected and ALLOW_UNISOLATED is not set."""
+
+
+def _linux_primitives():
+    """What this Linux kernel actually offers, PROBED. Returns {name: (bool, why)}.
+
+    fb ruling (a): the Landlock levels stay in the table and detection never assumes. The
+    reason is a distinction that costs a whole diagnosis when it is missed -- **ENOSYS means
+    this kernel does not have the feature; EINVAL means it does and rejected the argument**.
+    Reading only "the syscall failed" turns the first into an apparent configuration problem.
+    MEASURED on this pod (2026-09-02): kernel 5.4.250, Landlock arrived in 5.13, so syscalls
+    444/445/446 all return ENOSYS and /sys/kernel/security is empty -- structurally absent,
+    not switched off. seccomp on the same host answers EINVAL to a deliberately invalid
+    operation, which is what "present" looks like.
+
+    "The binary exists" is not "the sandbox works" either, which is why unshare is probed by
+    running it rather than by which().
+    """
+    out = {}
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    ctypes.set_errno(0)
+    libc.syscall(444, None, 0, 3)  # landlock_create_ruleset(NULL, 0, GET_ABI_VERSION)
+    err = ctypes.get_errno()
+    out["landlock"] = (err == 0, "ABI probe ok" if err == 0 else
+                       ("ENOSYS: kernel has no Landlock (needs 5.13+, this is "
+                        f"{platform.release()})" if err == 38
+                        else f"errno {err} ({os.strerror(err)})"))
+
+    ctypes.set_errno(0)
+    libc.syscall(317, 99, 0, None)  # __NR_seccomp with an invalid op
+    err = ctypes.get_errno()
+    out["seccomp"] = (err == 22, "EINVAL on an invalid op, so seccomp is present"
+                      if err == 22 else
+                      ("ENOSYS: kernel has no seccomp" if err == 38
+                       else f"errno {err} ({os.strerror(err)})"))
+
+    try:
+        r = subprocess.run(["unshare", "-Ur", "true"], capture_output=True, timeout=10)
+        out["userns"] = (r.returncode == 0,
+                        "unshare -Ur true succeeds" if r.returncode == 0
+                        else f"unshare -Ur exits {r.returncode}: "
+                             f"{(r.stderr or b'').decode()[:80]}")
+    except (OSError, subprocess.SubprocessError) as e:
+        out["userns"] = (False, f"unshare unavailable: {e}")
+
+    try:
+        with open("/proc/sys/user/max_user_namespaces", encoding="utf-8") as f:
+            n = int(f.read().strip())
+        out["max_user_namespaces"] = (n > 0, str(n))
+    except (OSError, ValueError) as e:
+        out["max_user_namespaces"] = (False, f"unreadable: {e}")
+    return out
 
 
 def detect_level():
@@ -276,6 +329,25 @@ def _selftest():
     for t in ("bwrap", "nsjail", "firejail", "unshare", "sandbox-exec"):
         print(f"  {t:12s} {shutil.which(t) or 'ABSENT'}")
 
+    # fb ruling (a): the kernel primitives are PROBED and the reason is recorded, so a level
+    # that cannot be selected here says why rather than being silently skipped.
+    if platform.system() == "Linux":
+        prims = _linux_primitives()
+        print("  kernel primitives:")
+        for name, (ok, why) in sorted(prims.items()):
+            print(f"    {name:20s} {'YES' if ok else 'no ':4s} {why}")
+        # The known answer for the distinction itself: a probe must never report a feature
+        # as absent-because-misconfigured when the errno says the kernel lacks it.
+        ok, why = prims["landlock"]
+        if not ok:
+            assert "ENOSYS" in why or "errno" in why, (
+                f"landlock reported unavailable without naming an errno: {why!r} -- a probe "
+                f"that cannot say WHY cannot distinguish 'kernel lacks it' from "
+                f"'misconfigured', which is the whole point of this check")
+        ok, why = prims["seccomp"]
+        assert ("EINVAL" in why) == ok, (
+            f"seccomp availability disagrees with its own reason: ok={ok} why={why!r}")
+
     # 1. The level's own claims, provoked. A level that says it isolates the network must
     #    make the network probe fail -- asserting the claim rather than the mechanism, so a
     #    new level cannot be added without its evidence.
@@ -392,6 +464,10 @@ if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
     if "--probe" in sys.argv:
-        print(json.dumps({"level": detect_level(), "isolated": probe()}, indent=1))
+        out = {"level": detect_level(), "isolated": probe()}
+        if platform.system() == "Linux":
+            out["primitives"] = {k: {"ok": v[0], "why": v[1]}
+                                 for k, v in _linux_primitives().items()}
+        print(json.dumps(out, indent=1))
         sys.exit(0)
     print(json.dumps({"level": detect_level()}, indent=1))
