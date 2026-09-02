@@ -1,0 +1,39 @@
+=== sft_math_code Sun Aug 30 12:06:41 PM UTC 2026 ==
+IDF pass: 1381795 docs over 63 paths, 490/490 holdout bigrams present in corpus
+BASELINE (62 shard(s), 1366324 rows, 5.915 GB): 0 hit rows = 0.0/GB, 0 exact
+
+=== sft_math_code.jsonl: 15471 rows, 0.019 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.29, 'p75': 0.305, 'p90': 0.38, 'p95': 0.381, 'p99': 0.382, 'p100': 0.382}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 150
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+=== synthetic_code Sun Aug 30 12:08:47 PM UTC 2026 ==
+IDF pass: 1369324 docs over 63 paths, 490/490 holdout bigrams present in corpus
+BASELINE (62 shard(s), 1366324 rows, 5.915 GB): 0 hit rows = 0.0/GB, 0 exact
+
+=== synthetic_code.jsonl: 3000 rows, 0.001 GB, 0 empty
+exact-normalized hits: 587
+  row 0: 输出 2 到 15 之间所有的素数
+  row 4: 从列表 [17, 3, 7, 15, 5, 18, 7] 中筛选出所有偶数
+  row 5: 求列表 [2, 25, 12, 21, 14, 15, 4, 24] 中所有偶数的和
+  row 10: 用辗转相除法求 64 和 66 的最大公约数
+  row 16: 用 for 循环求 1 到 14 的和
+hit rows (containment >= 0.8, long holdouts): 1652 = 1538665.0/GB = 550666.7/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 457/438/253 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.899, 'p75': 0.936, 'p90': 0.971, 'p95': 0.973, 'p99': 0.979, 'p100': 0.979}, 43 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 46
+verdict: REJECT (baseline 0.0/GB, ratio inf, reject if > 2.0x or exact)
+=== evol_code Sun Aug 30 12:11:58 PM UTC 2026 ==
+IDF pass: 1374324 docs over 63 paths, 490/490 holdout bigrams present in corpus
+BASELINE (62 shard(s), 1366324 rows, 5.915 GB): 0 hit rows = 0.0/GB, 0 exact
+
+=== evol_code.jsonl: 8000 rows, 0.015 GB, 0 empty
+exact-normalized hits: 0
+hit rows (containment >= 0.8, long holdouts): 0 = 0.0/GB = 0.0/M-docs
+  (union holdouts hit at 0.7/0.8/0.9: 0/0/0 -- context only, not the verdict)
+short-holdout bucket (<20 bigrams, n=43): deciles {'p50': 0.29, 'p75': 0.305, 'p90': 0.38, 'p95': 0.381, 'p99': 0.382, 'p100': 0.382}, 0 at 0.8 -- REPORTED SEPARATELY
+number-multiset flags (cross-language screen, review-only): 57
+verdict: clean (baseline 0.0/GB, ratio n/a, reject if > 2.0x or exact)
+=== DONE Sun Aug 30 12:15:46 PM UTC 2026 ===

@@ -1,0 +1,11 @@
+  64/500 acc=1.6%
+  128/500 acc=3.1%
+  192/500 acc=2.6%
+  256/500 acc=2.0%
+  320/500 acc=2.2%
+  384/500 acc=2.1%
+  448/500 acc=2.2%
+  500/500 acc=2.2%
+code-500: 11/500 = 2.2%
+no-fence rate 87.8%
+preds saved: /work/aupai/data/eval/preds_code_ckpt_sft_p324_v2.pt.jsonl

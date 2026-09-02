@@ -1,0 +1,14 @@
+mix: sample 1757 rows = 0.80 epochs
+mix: 1757 rows = 0.00B tokens scheduled
+step    v=32773    v=32776      delta
+   0    10.6047    10.6048    +0.0001
+   1     9.7775     9.7781    +0.0005
+   2     8.7817     8.7833    +0.0016
+   3     8.4575     8.4576    +0.0002
+   4     8.3590     8.3596    +0.0005
+   5     8.0615     8.0661    +0.0046
+   6     8.1663     8.1657    -0.0006
+   7     8.2343     8.2349    +0.0005
+   8     8.4579     8.4573    -0.0006
+   9     7.8468     7.8474    +0.0006
+dynamo guard (real runs): cache_size_limit=64 (AttnRes Full needs 25); this script runs eager (limit here: 8)

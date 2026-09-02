@@ -1,0 +1,49 @@
+W0829 17:20:23.421000 3169206 torch/distributed/run.py:851] 
+W0829 17:20:23.421000 3169206 torch/distributed/run.py:851] *****************************************
+W0829 17:20:23.421000 3169206 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0829 17:20:23.421000 3169206 torch/distributed/run.py:851] *****************************************
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W829 17:20:30.222705758 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: web_hq 15811 rows = 0.06 epochs
+mix: textbook 24228 rows = 0.06 epochs
+mix: wiki 3696 rows = 0.06 epochs
+mix: en 2418 rows = 0.06 epochs
+mix: math 1228 rows = 0.06 epochs
+mix: code 865 rows = 0.06 epochs
+mix: chat 574 rows = 0.06 epochs
+mix: 48820 rows = 0.20B tokens scheduled
+FP8 compute enabled
+params 206.1M | tokens 6102 | seqs 6102 | device cuda:0 | world 8 | fa True | fp8 True
+cfg batch 32 accum 1 seq 4096 grad_ckpt False doc_mask True attn_res True/4 softcap 15.0 warmup 150 epochs 1 lr_scale 0.5 mix data/mix_scale_0.2b.json fone False
+[rank5]:W0829 17:20:45.503000 3169290 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank4]:W0829 17:20:45.518000 3169289 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0829 17:20:45.522000 3169285 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0829 17:20:45.523000 3169286 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank3]:W0829 17:20:45.526000 3169288 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank2]:W0829 17:20:45.534000 3169287 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank6]:W0829 17:20:45.540000 3169291 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank7]:W0829 17:20:45.544000 3169292 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+step 10/190 5% [main] | loss 7.766 | lr 3.33e-04 | gnorm 2.00 | 0.01B tok | 44K tok/s/gpu | MFU 18% | ETA 0.1h
+step 20/190 11% [main] | loss 6.757 | lr 6.67e-04 | gnorm 0.59 | 0.02B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 30/190 16% [main] | loss 6.437 | lr 1.00e-03 | gnorm 1.62 | 0.03B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 40/190 21% [main] | loss 6.131 | lr 1.33e-03 | gnorm 1.35 | 0.04B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 50/190 26% [main] | loss 5.745 | lr 1.67e-03 | gnorm 2.33 | 0.05B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 60/190 32% [main] | loss 5.651 | lr 2.00e-03 | gnorm 4.09 | 0.06B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 70/190 37% [main] | loss 5.432 | lr 2.33e-03 | gnorm 2.58 | 0.07B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 80/190 42% [main] | loss 5.485 | lr 2.67e-03 | gnorm 4.19 | 0.08B tok | 74K tok/s/gpu | MFU 31% | ETA 0.1h
+step 90/190 47% [main] | loss 5.164 | lr 3.00e-03 | gnorm 5.16 | 0.09B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 100/190 53% [main] | loss 5.472 | lr 3.33e-03 | gnorm 4.88 | 0.10B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 110/190 58% [main] | loss 4.971 | lr 3.67e-03 | gnorm 3.25 | 0.12B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 120/190 63% [main] | loss 4.866 | lr 4.00e-03 | gnorm 3.89 | 0.13B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 130/190 68% [main] | loss 4.713 | lr 4.33e-03 | gnorm 4.06 | 0.14B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 140/190 74% [main] | loss 4.687 | lr 4.67e-03 | gnorm 3.45 | 0.15B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 150/190 79% [main] | loss 4.630 | lr 5.00e-03 | gnorm 4.12 | 0.16B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 160/190 84% [main] | loss 4.338 | lr 9.56e-04 | gnorm 1.01 | 0.17B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 170/190 89% [main] | loss 3.779 | lr 5.84e-04 | gnorm 0.40 | 0.18B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 180/190 95% [anneal] | loss 3.960 | lr 3.43e-04 | gnorm 0.39 | 0.19B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+step 190/190 100% [anneal] | loss 4.094 | lr 2.51e-04 | gnorm 0.33 | 0.20B tok | 74K tok/s/gpu | MFU 31% | ETA 0.0h
+ep 1/1 train 4.094 val 4.221 403s
+saved /work/aupai/ckpt_0830v1_0.2b.pt
+/work/aupai/runs/0830v1_0.2b.log: no curves found
+ train 4.094 val 4.221 403s
