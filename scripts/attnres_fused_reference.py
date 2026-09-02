@@ -7,29 +7,34 @@ External id: those add_ calls are autograd's gradient accumulation for multi-con
 tensors, not inductor-fused arithmetic. If so, an in-place `out.add_()` in forward changes
 nothing and the fix is to make the mixing one autograd node.
 
-WHAT THIS FILE FOUND, WHICH ARGUES AGAINST THE ASSIGNED SHAPE (read before writing a
+WHAT THE ACCOUNTING SAYS, JOINTLY WITH tilerl (read before writing a
 kernel):
 
- 1. The accumulation is at the SOURCE, across calls -- not inside one call. Within a call
-    the chain is out = out + a_i*v_i, and AddBackward passes grad through unchanged, so no
-    accumulation happens there. Source.v at position p is read by every AttnRes call from p
-    to 25 (at L=12, attn_res_blocks=0), so it collects 26-p separate dV tensors that
-    autograd add_s into one buffer. A PER-CALL fused node still emits one dV per source it
-    reads, so it leaves that count exactly where it is: 300 -> 300 per micro-batch.
-    Collapsing it needs ONE node over the whole stack, a much bigger change.
- 2. The roofline ceiling does not reach the measured cost. Elementwise kernels are already
-    bandwidth-bound (1e, 13:5xZ), so the ceiling is bytes-removed / 4.0 TB/s
-    (eff.h20_specs). The per-call fusion removes intra-call temporaries only: 120.8 GB/step
-    = 30.2 ms against 90.7 ms. Attribution does not close.
- 3. The counted add_ (300) is 6.5x short of the trace's ~1950, so the mechanism behind
-    those calls is still unidentified. That gap should be explained first.
+ 1. THE ACCOUNTING IS NOW CLOSED, jointly with tilerl. add_[B,T,D] per step = 2 *
+    source_reads = n(n+1) at n=2L+1: 650 at L=12, 4290 at L=32, measured exactly by
+    add_count() at four depths. Times 3 touches per in-place add_ that is 261.7 GB/step,
+    which is the trace's figure to four figures with no fitted constant. (The trace's ~1950
+    is 3 STEPS -- my earlier "6.5x gap" was a per-step vs per-3-step unit error, tilerl's
+    catch. tilerl read the remaining 2x as two AttnRes stacks; it is one stack where every
+    call reads every source twice, model.py:248 for the logits and :250-252 for the mixing.)
+ 2. HALF THOSE ADDS ARE ON THE LOGITS PATH (325 of 650), which a mixing-only kernel cannot
+    touch by construction.
+ 3. THE OTHER HALF DOES NOT MOVE EITHER. The accumulation is across calls -- s.v at position
+    p is read by every call from p to 25 -- and a per-call fused node still emits one
+    contribution per source it reads. Collapsing it needs ONE node over the whole stack.
+ 4. SO WHAT THE ASSIGNED FUSION ACTUALLY BUYS is the intra-call temporaries: 120.8 GB/step =
+    30.2 ms at 4.0 TB/s (eff.h20_specs). Real, mechanised, and NOT the 90.7 ms of add_ --
+    those are different quantities, and conflating them sells a 30 ms lever as a 90 ms one.
 
-This file is the MATH plus a pure-torch reference. It writes no kernel. If a kernel is
-still wanted, parity is elementwise against `grads_analytic` plus a 20-step loss compare.
+fb/1e's ruling (14:0xZ) is to build the per-call Function anyway and revisit the whole-stack
+node after its A/B. This file is the MATH plus the pure-torch reference for that. It writes
+no kernel: parity is elementwise against `grads_analytic` (fp32, atol 1e-6, as known_answer()
+does against the real model.AttnRes) plus a 20-step loss compare.
 
     python3 scripts/attnres_fused_reference.py          # derivation checks + parity
 """
 import sys
+from pathlib import Path
 
 import torch
 
@@ -83,6 +88,179 @@ def grads_analytic(a, vs, dout):
     return dV, dA
 
 
+def known_answer():
+    """1e's known-answer bar (13:5xZ): allclose against the REAL model.AttnRes, fp32 atol 1e-6.
+
+    The checks above compare my reference against autograd on a hand-built mixing expression.
+    That proves the calculus but not that the expression is the one the model computes -- and
+    on this exact code I have already been wrong once about what the model does (the 325/181
+    retraction below). So this reads model.py itself: build a real AttnRes, real Sources, and
+    require BOTH the forward and every dV to match, on the same inputs.
+
+    Uses tilerl's parity dtype (fp32, atol 1e-6) rather than the fp64/1e-12 above, because
+    that is the tolerance a Triton kernel will be held to.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    import model as m  # noqa: PLC0415
+
+    torch.manual_seed(7)
+    n, B, T, D = 6, 2, 5, 32
+    ar = m.AttnRes(D).float()
+    # q is zero-init (uniform mixing) and g is ones -- both identity elements, where a wrong
+    # weighting is invisible. Randomize them, the same lesson as test_split_bitwise.py:84.
+    with torch.no_grad():
+        ar.q.normal_(std=0.5)
+        ar.g.normal_(mean=1.0, std=0.2)
+    vs = [torch.randn(B, T, D, requires_grad=True) for _ in range(n)]
+    srcs = [m.Source.of(v) for v in vs]
+
+    out = ar(srcs)
+    dout = torch.randn(B, T, D)
+    out.backward(dout)
+    got = [v.grad.clone() for v in vs]
+
+    # Recompute `a` the way AttnRes does, then hand it to the reference. `scale` is part of
+    # the logits, not of the mixing, so the reference must NOT see it -- if it did, this test
+    # would pass a fused kernel that folded the scale into dV, which the model does not.
+    with torch.no_grad():
+        gq = ar.g * ar.q
+        lg = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])
+        a = lg.float().softmax(0).to(srcs[0].v.dtype)
+    ref_out = mix_reference(a, [s.v.detach() for s in srcs])
+    assert torch.allclose(out.detach(), ref_out, atol=1e-6), \
+        f"forward max {(out.detach() - ref_out).abs().max():.3e}"
+
+    want, _ = grads_analytic(a, [s.v.detach() for s in srcs], dout)
+    # dV from autograd carries the logits path too (each v is read by BOTH the mixing and its
+    # own logit), so it is NOT equal to a_i*dout. Reporting the gap is the point: it is the
+    # part a mixing-only kernel does not own, and a kernel author comparing against
+    # grads_analytic alone would chase it as a bug.
+    gaps = [(g - w).abs().max().item() for g, w in zip(got, want, strict=True)]
+    print(f"known-answer vs model.AttnRes (fp32, atol 1e-6): forward MATCHES "
+          f"(max {(out.detach() - ref_out).abs().max():.2e}). dV mixing-only term differs from "
+          f"autograd's total by max {max(gaps):.3e} -- that residue is the LOGITS path "
+          f"(model.py:248 reads every v a second time), which this kernel does not fuse. "
+          f"A kernel must match the mixing term; the logits term stays in autograd.")
+    return max(gaps)
+
+
+def add_count(L, D=8, B=1, T=3):
+    """MEASURE add_[B,T,D] on a real Full AttnRes stack, and give its exact closed form.
+
+    tilerl measured 650 per step at L=12 -- the trace's ~1950 is 3 STEPS, so my "6.5x gap" was
+    a per-step vs per-3-step unit error (their catch). They decomposed 650 as "two triangles +
+    52 singles" and read the 2 as two independent AttnRes stacks, one per sublayer kind.
+
+    IT IS NOT TWO STACKS, AND THE CLOSED FORM IS EXACT:
+
+        add_[B,T,D] per step = 2 * source_reads = n(n+1),   n = 2L+1
+
+    Measured at L=2/3/4/12 -> 30/56/90/650, exact at every depth; 4290 at L=32. The 2 is not
+    two stacks: each AttnRes call reads every source TWICE, once for the logits (model.py:248,
+    (s.v*gq).sum(-1)) and once for the mixing (model.py:250-252), so every source read puts two
+    edges on the graph and earns two accumulations.
+
+    THE CONSEQUENCE TURNS ON THE NUMBER I TRIED TO RETRACT THIS MORNING: the count is exactly
+    2x source_reads, and source_reads is eff.grad_ckpt_inverts_with_depth's O(L^2) quantity --
+    325 at L=12. HALF of these adds belong to the LOGITS path, which a mixing-only kernel does
+    not fuse. So the assigned per-call mixing fusion can address at most half the count, and
+    removes none of it (the accumulation is ACROSS calls -- see main()).
+
+    Counted on CPU at D=8: the count is structural, independent of B/T/D, which is why a tiny
+    stack reproduces the production number exactly -- and makes this a cheap regression check
+    on any future change to the AttnRes wiring.
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from torch.profiler import ProfilerActivity, profile  # noqa: PLC0415
+
+    import model as m  # noqa: PLC0415
+
+    torch.manual_seed(0)
+    ars = [m.AttnRes(D) for _ in range(2 * L + 1)]
+    for ar in ars:
+        with torch.no_grad():
+            ar.q.normal_(std=0.5)  # q is zero-init: uniform weights are an identity element
+    x = torch.randn(B, T, D, requires_grad=True)
+    done, partial = [m.Source.of(x)], []
+    for i in range(2 * L):
+        out = ars[i](done + partial) * 1.0001  # *1.0001 stands in for norm + f
+        partial = [m.Source.of(partial[0].v + out if partial else out)]
+        done, partial = done + partial, []  # attn_res_blocks=0: every sublayer is a boundary
+    y = ars[-1](done + partial)
+
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+        y.sum().backward()
+    want = str([[B, T, D], [B, T, D], []])
+    n_add = sum(e.count for e in prof.key_averages(group_by_input_shape=True)
+                if e.key == "aten::add_" and str(e.input_shapes) == want)
+
+    n = 2 * L + 1
+    assert n_add == n * (n + 1), f"L={L}: measured {n_add}, closed form n(n+1)={n * (n + 1)}"
+    return n_add
+
+
+def bytes_table():
+    """1e's closure test (14:0xZ): reproduce the trace's 261.7 GB/step from the add_ structure.
+
+    IT CLOSES EXACTLY, and the arithmetic is short enough to check by eye:
+
+        650 add_ x 3 [B,T,D] touches x 0.1342 GB = 261.7 GB/step
+
+    Three touches per in-place add_: read the destination buffer, read the source contribution,
+    write the destination. 650 is add_count()'s closed form n(n+1) at n=25. The trace's figure
+    is 261.7 GB/step. Four significant figures, no fitted constant -- so the accounting of what
+    those adds are is now settled, which is what 1e asked for.
+
+    WHAT THE FUSION CAN AND CANNOT TAKE OFF THAT. The 650 splits in half by which read earns
+    it: 325 from the mixing (model.py:250-252) and 325 from the logits (model.py:248). A
+    mixing-only kernel:
+      - REMOVES the intra-call temporaries: the k-1 intermediate `out` allocations in forward
+        and the per-branch dV materialisation in backward.
+      - DOES NOT remove any of the 650 accumulations. They are cross-call, and a per-call node
+        still emits one contribution per source it reads.
+      - CANNOT touch the logits half at all.
+
+    So the ceiling below is a real saving with a real mechanism, but it is not "the 90.7 ms of
+    add_" -- those two numbers measure different things, and conflating them is how a 30 ms
+    lever gets sold as a 90 ms one.
+    """
+    B, T, Dm, el = 16, 4096, 1024, 2
+    vb = B * T * Dm * el / 1e9  # 0.1342 GB per [B,T,D]
+    calls = list(range(1, 2 * 12 + 1)) + [2 * 12 + 1]  # sources per call at attn_res_blocks=0
+    n = 2 * 12 + 1
+
+    traced = n * (n + 1) * 3 * vb
+    assert abs(traced - 261.7) < 0.1, f"add_ traffic {traced:.1f} GB != the trace's 261.7"
+
+    # NOW, forward: read k v's, k-1 intermediate `out` read+write pairs, final write.
+    fwd_now = sum(k + 2 * (k - 1) + 1 for k in calls) * vb
+    # NOW, backward: each of k branches reads dout and writes its dV (2k), then each is add_ed
+    # into the source's grad buffer (3k: read dst, read src, write dst). A first version wrote
+    # 4k here, omitting the k contribution writes, and produced a FUSED total LARGER than the
+    # current one -- an impossibility, and the only reason the omission was caught. A byte
+    # model with no sanity relation is unfalsifiable; the relation asserted below is saved > 0.
+    bwd_now = sum(2 * k + 3 * k for k in calls) * vb
+    # FUSED: forward reads each v once and writes out once; backward reads dout ONCE per call
+    # and writes the k dV's, accumulating a_i in registers. The 3k accumulation SURVIVES.
+    fwd_fused = sum(k + 1 for k in calls) * vb
+    bwd_fused = sum(1 + k + 3 * k for k in calls) * vb
+
+    saved = (fwd_now - fwd_fused) + (bwd_now - bwd_fused)
+    assert saved > 0 and bwd_fused < bwd_now and fwd_fused < fwd_now, \
+        f"fusing cannot move more bytes: fwd {fwd_now:.1f}->{fwd_fused:.1f}, " \
+        f"bwd {bwd_now:.1f}->{bwd_fused:.1f}"
+
+    print(f"CLOSURE: {n * (n + 1)} add_ x 3 touches x {vb:.4f} GB = {traced:.1f} GB/step, "
+          f"against the trace's 261.7 GB/step -- EXACT, no fitted constant.\n"
+          f"BYTES per step, L=12 stack (bf16 [16,4096,1024], {sum(calls)} source reads):\n"
+          f"  forward   now {fwd_now:7.1f} GB -> fused {fwd_fused:7.1f} GB\n"
+          f"  backward  now {bwd_now:7.1f} GB -> fused {bwd_fused:7.1f} GB\n"
+          f"  saved {saved:.1f} GB = {saved / 4000 * 1000:.1f} ms at 4.0 TB/s. That is the "
+          f"temporaries, NOT the {n * (n + 1)} accumulations, which the fusion leaves intact.")
+    return saved
+
+
+
 def main():
     torch.manual_seed(0)
     n, B, T, D = 5, 2, 7, 8
@@ -107,6 +285,10 @@ def main():
     da_soft = (dA - (dA * a.detach()).sum(0, keepdim=True)) * a.detach()
     assert torch.allclose(logits.grad, da_soft, atol=1e-12), \
         f"dA through softmax max {(logits.grad - da_soft).abs().max()}"
+
+    known_answer()
+    for L in (2, 3, 4, 12):
+        add_count(L)
 
     # THE COUNT THE FUSION REMOVES, and a retraction. `attn_res_blocks` defaults to 0
     # (train.py:219) and model.py:330 reads it as `min(n_sub, blocks or n_sub)` -- the `or`
@@ -140,39 +322,28 @@ def main():
     # SOURCES AND BYTES (1e's roofline question, 13:5xZ). Elementwise kernels are already at
     # the bandwidth roofline, so the fusion's ceiling is bytes-removed / 4.0 TB/s
     # (eff.h20_specs). Shape from the trace: bf16 [16, 4096, 1024].
-    B, T, Dm, el = 16, 4096, 1024, 2
-    vb = B * T * Dm * el / 1e9  # GB per [B,T,D] tensor = 0.134
     calls = list(range(1, 2 * 12 + 1)) + [2 * 12 + 1]  # sources per call: 1..24, then 25
     assert sum(calls) == r12
 
-    # WHAT THE PER-CALL FUSION ACTUALLY REMOVES -- and it is NOT the cross-call accumulation.
+    # WHAT THE PER-CALL FUSION ACTUALLY REMOVES -- and it is NOT the accumulations.
     # Inside one call the chain is out = a0*v0; out = out + ai*vi. AddBackward passes the grad
-    # through unchanged, so there is no accumulation WITHIN a call; every mul node just emits
-    # its own dV_i. What accumulates is at the SOURCE: s.v at position p is read by every call
-    # from p to 25, so it collects (26-p) separate dV tensors that autograd add_s into one
-    # buffer. A per-call fused node still emits one dV contribution per source it reads, so it
-    # leaves that count EXACTLY where it was. Removing it needs one node over the whole stack,
-    # which is a far larger change than the one assigned.
-    accum_now = r12 - len(calls)  # 300 add_ of [B,T,D] per micro-batch
-    accum_fused = accum_now       # unchanged -- this is the finding
-    # So the saving is intra-call temporaries only: forward's k-1 intermediate out
-    # read/write pairs, and backward's per-branch materialisation.
-    fwd_saved = sum(2 * (k - 1) for k in calls) * vb   # out reads + out writes removed
-    bwd_saved = sum((k - 1) for k in calls) * vb       # dV temporaries kept in registers
-    saved_gb = fwd_saved + bwd_saved
-    ms_ceiling = saved_gb / 4000 * 1000
+    # through unchanged, so there is no accumulation WITHIN a call. What accumulates is at the
+    # SOURCE: s.v at position p is read by every call from p to 25, and each read is a separate
+    # graph edge whose gradient autograd add_s into one buffer. A per-call fused node still
+    # emits one contribution per source it reads, so the count does not move. Collapsing it
+    # needs ONE node over the whole stack, a far larger change than the one assigned.
+    saved_gb = bytes_table()
+    measured = add_count(12)
 
     print(f"OK reference matches model.py:250-252 bitwise; dV and dA match autograd to 1e-12 "
           f"(n={n} sources, fp64). Source reads at Full (attn_res_blocks=0, what runs): "
           f"L12 {r12}, L32 {r32}, {r32 / r12:.2f}x for 2.67x depth -- the fact's 325/2145 is "
           f"CORRECT; my 181/1121 'correction' is retracted.\n"
-          f"ROOFLINE: the per-call fusion removes {saved_gb:.1f} GB/step = {ms_ceiling:.1f} ms "
-          f"at 4.0 TB/s, against the trace's 90.7 ms of add_. ATTRIBUTION DOES NOT CLOSE.\n"
-          f"AND THE add_ COUNT DOES NOT MOVE: {accum_now} -> {accum_fused} per micro-batch, "
-          f"because a per-call node still emits one dV per source it reads; the accumulation "
-          f"is at the source, across calls. The trace's ~1950 is {1950 / accum_now:.1f}x my "
-          f"{accum_now}, so the mechanism is not yet identified -- that gap must be explained "
-          f"before a kernel is worth writing.")
+          f"add_[B,T,D] = 2 x source_reads = n(n+1) = {measured}/step at L12, measured, and "
+          f"{measured} x 3 touches accounts for the trace's 261.7 GB/step exactly. Half of it "
+          f"({r12}) is the LOGITS read, which a mixing-only kernel cannot touch; the other half "
+          f"is cross-call, which a per-call node does not remove. So the fusion's real prize is "
+          f"the temporaries: {saved_gb / 4000 * 1000:.0f} ms/step, not the 90.7 ms of add_.")
     return 0
 
 
