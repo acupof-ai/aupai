@@ -474,6 +474,10 @@ def selftest():
     import tempfile
 
     fails = []
+    # Cases that could not run HERE, with the reason. Separate from `fails` because "did not
+    # run" and "ran and passed" are different facts, and the exit line must not blur them:
+    # a green summary that silently covered fewer cases is how a guard dies unnoticed.
+    skips = []
 
     # 1. THE DENOMINATOR COVERS THE SCORED SET, NOT THE FILE. The replaced code divided the
     #    NLL of 9,369 examples by the bytes of 10,641. Built so the two differ by construction:
@@ -531,7 +535,20 @@ def selftest():
     #    pass while main() still scored a subset.
     #    --arm ours, because main() builds a real tokenizer and only ours (data/tokenizer.json)
     #    is present on a dev box. The refusal being checked is arm-independent.
-    with tempfile.TemporaryDirectory() as d:
+    #
+    #    THAT FILE IS GITIGNORED (.gitignore:5), so in a fresh worktree it is absent and this
+    #    case used to raise "No such file or directory" out of the hook -- which reads as a
+    #    broken repo, and cost two other sessions time on 2026-09-03Z before either of them
+    #    suspected my selftest. The skip is LOUD and names the case, because a silent pass
+    #    would be the worse failure: the guard would be gone exactly where nobody looks.
+    #    Every other case runs without it -- only this one goes through main().
+    tokf = os.path.join(ROOT, "data", "tokenizer.json")
+    if not os.path.exists(tokf):
+        skips.append("case 2 (unfittable --ids refuses): data/tokenizer.json absent "
+                     "(gitignored, .gitignore:5) and this case goes through main(), which "
+                     "builds a real tokenizer. Run it in a tree that has the file.")
+    else:
+      with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "h.jsonl")
         with open(p, "w", encoding="utf-8") as f:
             f.write(_json.dumps({"id": 1, "question": "q", "answer": "a"}) + "\n")
@@ -563,6 +580,7 @@ def selftest():
                              "isolate the id-list refusal")
         finally:
             sys.argv = argv
+
 
     # 3. BOTH TRAINERS' TEMPLATE IS THIS ONE FUNCTION. sft_hf_control.read_pack and our
     #    prepare_sft both call loader.format_example; the denominator must be bytes of the
@@ -723,6 +741,8 @@ def selftest():
         # cannot run, and says so rather than passing.
         print(f"  SELFTEST SKIP load_ours symbols: train.py not importable here ({e}) -- "
               f"this case did NOT run; run it where train.py imports")
+        skips.append(f"case 5 (load_ours' imported names exist): train.py not importable "
+                     f"here ({e})")
     if checked_symbols:
         print("  checked: train.Cfg and train.HybridLM exist, sft_math.py builds HybridLM")
 
@@ -774,6 +794,8 @@ def selftest():
         if not os.path.isdir(base):
             print(f"  SELFTEST SKIP chatml id agreement: {base} absent (control tokenizer "
                   f"lives on the pod) -- run --selftest there to cover case 7")
+            skips.append(f"case 7 (ChatML id disagreement refuses): {os.path.relpath(base, ROOT)} "
+                         f"absent -- the control tokenizer lives on the pod")
         else:
             hf = os.path.join(tmp, "fake.hf")
             os.makedirs(hf)
@@ -809,6 +831,8 @@ def selftest():
                       f"({len(bad_unadded)} unadded, {len(bad_meta)} via meta.json)")
     except ImportError as e:
         print(f"  SELFTEST SKIP chatml id agreement: transformers unavailable ({e})")
+        skips.append(f"case 7 (ChatML id disagreement refuses): transformers unavailable ({e})")
+
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -817,8 +841,15 @@ def selftest():
     if fails:
         print(f"\n{len(fails)} selftest failure(s)")
         return 1
+    # The count is in the summary line on purpose. "selftest OK" over a run that quietly
+    # covered fewer cases than it looks like is the failure mode this whole file is about.
+    if skips:
+        print(f"\n{len(skips)} case(s) DID NOT RUN here:")
+        for s in skips:
+            print(f"  - {s}")
     print("eval_heldout selftest OK (denominator tracks the scored set, missing id refuses, "
-          "templates match both trainers, score() sums and is padding-invariant)")
+          "templates match both trainers, score() sums and is padding-invariant)"
+          + (f" -- {len(skips)} case(s) skipped, see above" if skips else ""))
     return 0
 
 
