@@ -11,6 +11,15 @@ before that was added. Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-in
 mean, and legacy checkpoint round-trip: old-key state_dict -> load (remap) ->
 save -> load, identical key set and outputs.
 Run: python scripts/test_arch_compat.py
+     python scripts/test_arch_compat.py --selftest   (identical; the hook's calling convention)
+
+--selftest is accepted so the pre-commit hook's SELFTEST_FILES map can call this file the
+same way it calls every other entry, and REJECTING an unknown argument is the point of
+handling it explicitly. This module asserts at import time with no main(), so before this
+it ignored argv entirely: `test_arch_compat.py --selftest` ran the checks and exited 0, and
+so would `--no-such-flag`. The hook's own comment says why that is not good enough -- "a
+script that exits 0 on an unknown argument would otherwise register as a pass" -- and a
+file whose checks are its module body is exactly where that happens silently.
 """
 
 import contextlib
@@ -20,6 +29,11 @@ import sys
 
 import torch
 import torch.nn as nn
+
+# Before any of the work below, and before the heavy imports: an unknown flag must fail
+# loudly rather than run the suite and report success for a call nobody meant to make.
+if len(sys.argv) > 1 and sys.argv[1:] != ["--selftest"]:
+    sys.exit(f"usage: {os.path.basename(__file__)} [--selftest]  (got {sys.argv[1:]})")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datagen"))
