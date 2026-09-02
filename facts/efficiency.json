@@ -2249,6 +2249,23 @@
    "boundary": "Rate per WINDOW, not per step: each log line covers 10 steps, so a 1-step stall is smeared over 10 and the true worst instant is lower than 5.65K. Also only the first 10% of the run: these 190 lines are steps 90-1980 of 19,151, all at constant LR before warmdown, so the median is a same-conditions baseline and not a whole-run figure.",
    "uncertainty": "The attribution is by TIME COINCIDENCE plus a named artifact, not by a scheduler record -- no eval in this window appears in runs/experiments.jsonl, so nothing states which cards a job took. The step wall-clocks are reconstructed from one mtime and a constant rate, so each carries roughly a minute of drift over the reconstructed span; that is far inside the gap between these dips but it is not a timestamp. A DATELESS MTIME IS NOT A TIMESTAMP: the first version of this entry attributed 1900-1910 to two 08-31 files because the listing showed only HH:MM. Same family as reading a +0800 git log against a UTC pod clock. Every mtime here is now read with an explicit date. The val attribution is solid on its own (exactly steps 500/1000/1500, and val_every=500).",
    "status": "measured"
+  },
+  {
+   "id": "eff.m4b_startup",
+   "value": "est_startup 316.05s = 4.39% of 2h run for the 200M@4B retrain mix; torch.load 88.68s + corpus_fp walk 227.36s (72%); zh_web single-domain walk 163.4s = 52% of all startup",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/measure_mix_startup.py data/mix_200m_4b.json on pod (/work/aupai), host-side IO, 1 pass",
+   "config": {
+    "mix": "data/mix_200m_4b.json",
+    "n_domains": 9,
+    "total_tokens": "3999997952",
+    "cache_bytes_GB": 166.17,
+    "run_len": "2h reference",
+    "method": "per-domain torch.load(map_location=cpu,weights_only=True) + _corpus_fp shard-content-hash walk"
+   },
+   "uncertainty": "single pass, cold cache; subsequent runs re-read the OS page cache and will be faster",
+   "boundary": "does not measure other startup costs (model init, optimizer alloc, rank setup); startup scales with corpus dir size, not cache size",
+   "status": "measured"
   }
  ]
 }
