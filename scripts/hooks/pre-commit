@@ -19,8 +19,10 @@ stale" CI red that required a separate "regenerate pod manifest" commit.
 """
 import fnmatch
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 MAX = 5 * 1024 * 1024
 
@@ -61,6 +63,40 @@ def _behind_main():
         return int(r.stdout.strip())
     except ValueError:
         return 0
+
+
+def _merging(common_abs=None):
+    """Is this invocation part of a merge? Three signals, because each is absent in
+    some real case and MERGE_HEAD alone was wrong in BOTH gates below.
+
+    git runs this one file under two names. `git commit` (finishing a CONFLICTED
+    merge) sees MERGE_HEAD already on disk. `git merge` does not call pre-commit at
+    all -- it calls pre-merge-commit, symlinked here by cmd_install_hooks -- and on a
+    CLEAN merge it calls it BEFORE MERGE_HEAD is written. So a clean merge looks like
+    no merge, and both exemptions below silently failed on it:
+
+      integration tree   `git merge --no-edit e1` on main was refused and left a
+                         half-finished merge in the shared tree (2026-09-02)
+      behind main        `git merge --no-edit main` in a diverged worktree was
+                         refused -- the exact command its own message tells you to
+                         run (measured 2026-09-02, a true merge, not a fast-forward)
+
+    Both were tested by resolving a CONFLICT, where MERGE_HEAD does exist, so both
+    read green. A fast-forward runs no hook at all, which is why the everyday case
+    hid it too.
+
+    --git-path resolves MERGE_HEAD per worktree (.git/worktrees/<name>/), which the
+    common dir does not; pass common_abs to also accept the integration tree's own
+    .git, where the tree check knows the common dir IS .git.
+    """
+    if common_abs and os.path.exists(os.path.join(common_abs, "MERGE_HEAD")):
+        return True
+    p = subprocess.run(["git", "rev-parse", "--git-path", "MERGE_HEAD"],
+                       capture_output=True, text=True).stdout.strip()
+    if p and os.path.exists(p):
+        return True
+    return (os.path.basename(sys.argv[0]) == "pre-merge-commit"
+            or os.environ.get("GIT_REFLOG_ACTION", "").startswith("merge"))
 
 
 def staged(diff_filter):
@@ -104,7 +140,9 @@ def main():
                      and os.path.realpath(top) == os.path.realpath(integration))
         branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
                                 capture_output=True, text=True).stdout.strip()
-        merging = os.path.exists(os.path.join(common_abs, "MERGE_HEAD"))
+        # See _merging: MERGE_HEAD alone is False during a CLEAN merge, because git
+        # calls this file as pre-merge-commit before writing it.
+        merging = _merging(common_abs)
         if main_tree and branch == "main" and not merging and os.environ.get("AUPAI_CONTROLLER") != "1":
             print(
                 "REFUSING: this is the integration tree on main. Commit in your own "
@@ -145,9 +183,13 @@ def main():
     # MERGE_HEAD is exactly where it looks. The bug was never the expression -- it was
     # the expression in a context nobody had evaluated it in (e1 caught the
     # overcorrection).
-    merge_head = subprocess.run(["git", "rev-parse", "--git-path", "MERGE_HEAD"],
-                                capture_output=True, text=True).stdout.strip()
-    merging = bool(merge_head) and os.path.exists(merge_head)
+    #
+    # --git-path fixed the WHERE and left the WHEN: on a clean merge git calls
+    # pre-merge-commit before MERGE_HEAD exists anywhere, so this refused
+    # `git merge --no-edit main` -- the command this very message prints. Measured
+    # 2026-09-02 in a diverged worktree; the conflict path it was tested on has
+    # MERGE_HEAD on disk and passed. Now shares _merging with the tree check (e1-12).
+    merging = _merging()
     if behind and not merging and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
         print(
             f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
@@ -257,6 +299,11 @@ def main():
         # checkpoint needed (de, 2026-09-02, de-12 step 1).
         "mathbank/arith_curriculum.py", "mathbank/dist_check.py",
         "mathbank/procedure_curriculum.py",
+        # This file. Its selftest re-executes this script in a temp repo declared the
+        # integration tree, so the guard is live rather than simulated (e1-12). No
+        # recursion: the runner copies the staged blob to .hookstaged_pre-commit and
+        # git never invokes that name, and the temp repo has no hooks installed.
+        "scripts/hooks/pre-commit",
     }
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
@@ -319,7 +366,8 @@ def main():
             with open(dst, "wb") as fh:
                 fh.write(blob.stdout)
             r = subprocess.run([sys.executable, dst, "--selftest"], capture_output=True,
-                               text=True, cwd=repo_root())
+                               text=True, cwd=repo_root(),
+                               env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
                 print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
@@ -446,5 +494,157 @@ def main():
     print(f"hook: total {time.time() - t_start:.2f}s", file=sys.stderr)
 
 
+def _selftest():
+    """Prove the integration-tree guard both fires and lets a merge through.
+
+    Runs with every GIT_* variable removed from the environment first. git exports
+    GIT_DIR (on merge) and GIT_INDEX_FILE to hooks, and a `git init` in a temp
+    directory that inherits GIT_DIR re-initialises the SHARED repo instead: core.bare
+    flipped to true and the fixture f.txt landed in the real index, twice on
+    2026-09-02 (02:49Z and 04:4xZ), taking every session's git down until someone
+    unset it. pod_drift.py:61 recorded the mechanism a day earlier, inside one script.
+
+    Two worlds, and the second is the one that mattered: on 2026-09-02 `git merge
+    --no-edit e1` on main was REFUSED and left a half-finished merge in the shared
+    tree, because git calls this script as pre-merge-commit BEFORE writing
+    MERGE_HEAD. Testing only "a plain commit on main is refused" passes on the
+    broken version, which is why that version shipped.
+
+    Runs the real hook as a subprocess in a temp repo whose path is declared the
+    integration tree, so the guard is live rather than simulated.
+
+    EVERY git call here strips the caller's git environment. The hook runs with GIT_DIR
+    set to the committing worktree's gitdir, and `git init` in a fresh directory with
+    GIT_DIR inherited reconfigures the SHARED repo instead -- it sets core.bare=true,
+    which breaks every git command for every session until someone unsets it. I did
+    exactly that at 02:49Z on 2026-09-02 and blocked main for two minutes; the mechanism
+    was already written down in pod_drift.py:61-66 and I did not apply it. Reproduced
+    since: GIT_DIR must point at a WORKTREE gitdir (.git/worktrees/<name>) for the bare
+    flag to be set -- a plain repo's GIT_DIR does not do it, which is why a casual test
+    of this looks safe, and why the destructive form only appears from a worktree, where
+    every session except the controller works.
+    """
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(k)
+
+    hook = os.path.realpath(__file__)
+    fails = []
+    # os.environ is already GIT_*-free four lines up, so `clean` is it. Named anyway,
+    # because every git call below reads as deliberate rather than as inheriting
+    # whatever the caller held -- and the seven-name list this replaced was narrower
+    # than the prefix sweep for no reason.
+    clean = dict(os.environ)
+
+    def run(cwd, argv0, env_extra):
+        dst = os.path.join(cwd, argv0)
+        shutil.copyfile(hook, dst)
+        os.chmod(dst, 0o755)
+        env = dict(clean, AUPAI_INTEGRATION_TREE=cwd)
+        env.pop("AUPAI_CONTROLLER", None)
+        env.update(env_extra)
+        r = subprocess.run([sys.executable, dst], cwd=cwd, capture_output=True,
+                           text=True, env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    d = tempfile.mkdtemp()
+    try:
+        for a in (["init", "-q", "-b", "main", "."], ["config", "user.email", "t@t"],
+                  ["config", "user.name", "t"]):
+            subprocess.run(["git"] + a, cwd=d, capture_output=True, env=clean)
+        with open(os.path.join(d, "f.txt"), "w") as fh:
+            fh.write("base\n")
+        subprocess.run(["git", "add", "f.txt"], cwd=d, capture_output=True, env=clean)
+        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=d, capture_output=True,
+                       env=clean)
+
+        # WORLD 1 (must REFUSE): an ordinary commit in the integration tree on main.
+        rc, out = run(d, "pre-commit", {})
+        if rc == 0 or "REFUSING: this is the integration tree" not in out:
+            fails.append(f"world 1: a plain commit on main was NOT refused (rc={rc})")
+
+        # WORLD 2 (must PASS): the same script invoked the way `git merge` invokes it.
+        # No MERGE_HEAD on disk -- that is exactly the state the old code got wrong.
+        if os.path.exists(os.path.join(d, ".git", "MERGE_HEAD")):
+            fails.append("world 2 precondition: MERGE_HEAD exists, so it proves nothing")
+        rc, out = run(d, "pre-merge-commit", {})
+        if "REFUSING: this is the integration tree" in out:
+            fails.append("world 2: a merge was refused in the integration tree "
+                         "(pre-merge-commit with no MERGE_HEAD yet)")
+
+        # WORLD 3 (must PASS): finishing a CONFLICTED merge, where MERGE_HEAD is on disk.
+        with open(os.path.join(d, ".git", "MERGE_HEAD"), "w") as fh:
+            fh.write("0" * 40 + "\n")
+        rc, out = run(d, "pre-commit", {})
+        if "REFUSING: this is the integration tree" in out:
+            fails.append("world 3: the commit that resolves a conflicted merge was refused")
+        os.unlink(os.path.join(d, ".git", "MERGE_HEAD"))
+
+        # WORLD 4 (must PASS): reflog action says merge, name and MERGE_HEAD say nothing.
+        rc, out = run(d, "pre-commit", {"GIT_REFLOG_ACTION": "merge e1"})
+        if "REFUSING: this is the integration tree" in out:
+            fails.append("world 4: GIT_REFLOG_ACTION=merge was refused")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # WORLD 5 (must PASS): the OTHER gate. A real linked worktree, diverged from main,
+    # merging main in -- which is what the behind-main refusal tells you to do. Needs a
+    # true merge, not a fast-forward: a fast-forward runs no hook, which is how this
+    # stayed hidden. Kept separate because it needs a worktree, not just a repo.
+    d2 = tempfile.mkdtemp()
+    try:
+        def git(*a, cwd=d2):
+            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
+                                  text=True, env=clean)
+        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
+                  ("config", "user.name", "t")):
+            git(*a)
+        with open(os.path.join(d2, "f.txt"), "w") as fh:
+            fh.write("base\n")
+        git("add", "f.txt")
+        git("commit", "-q", "-m", "base")
+        git("branch", "-q", "feat")
+        with open(os.path.join(d2, "m.txt"), "w") as fh:
+            fh.write("m\n")
+        git("add", "m.txt")
+        git("commit", "-q", "-m", "main-ahead")
+        wt = os.path.join(d2, "wt")
+        git("worktree", "add", "-q", wt, "feat")
+        hooks = os.path.join(d2, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        for name in ("pre-commit", "pre-merge-commit"):
+            dst = os.path.join(hooks, name)
+            if os.path.exists(dst):
+                os.unlink(dst)
+            shutil.copyfile(hook, dst)
+            os.chmod(dst, 0o755)
+        with open(os.path.join(wt, "d.txt"), "w") as fh:
+            fh.write("d\n")
+        git("add", "d.txt", cwd=wt)
+        env = dict(clean, AUPAI_BEHIND_MAIN_OK="1")
+        subprocess.run(["git", "commit", "-q", "-m", "feat"], cwd=wt,
+                       capture_output=True, env=env)
+        behind = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
+        r = subprocess.run(["git", "merge", "--no-edit", "main"], cwd=wt,
+                           capture_output=True, text=True,
+                           env={k: v for k, v in clean.items()
+                                if k != "AUPAI_BEHIND_MAIN_OK"})
+        out = r.stdout + r.stderr
+        if behind == "0":
+            fails.append("world 5 precondition: worktree is not behind, proves nothing")
+        if "REFUSING: this tree is" in out:
+            fails.append("world 5: `git merge --no-edit main` was refused in a worktree "
+                         f"{behind} behind main -- the command the refusal itself prints")
+    finally:
+        shutil.rmtree(d2, ignore_errors=True)
+
+    for f in fails:
+        print("SELFTEST FAIL: " + f, file=sys.stderr)
+    print("pre-commit selftest: %s (5 worlds)" % ("FAIL" if fails else "ok"),
+          file=sys.stderr)
+    return 1 if fails else 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()

@@ -3354,7 +3354,7 @@ def check_tasks_closed_by_commit(root):
         if not sha:
             bad.append(f"{t['id']}: closed with no commit")
             continue
-        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"])
+        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"], t.get("closed"))
         if why:
             bad.append(f"{t['id']}: {why}")
     if bad:
@@ -5061,37 +5061,71 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def _commit_named_for(tid, root=None):
-    """A commit on main whose subject names this task id, if one exists.
+def _main_when(root=None):
+    """{full sha: commit time 'YYYY-MM-DD HH:MM'} for every commit on main, one git call.
 
-    Touching a path in evidence does not identify a delivery: two commits touch
-    scripts/launch_gate.py and only one of them is e1-4. Closing by path alone put
-    the wrong sha on two of e1's rows while both passed the check (2026-09-01)."""
-    r = subprocess.run(["git", "-C", root or ROOT, "log", "main", "--format=%H %s",
-                        "--grep", rf"\b{re.escape(tid)}\b", "-E", "-1"],
-                       capture_output=True, text=True)
-    return r.stdout.split(" ", 1)[0] if r.stdout.strip() else ""
+    Replaces the rule "a commit naming the task id in its subject beats the cited one":
+    reviews and register commits name task ids too, and a delivery spans several commits,
+    so that rule failed 9 of 31 honest rows the first time it actually ran (2026-09-02).
+    What the incident behind it needed is the time check in _commit_delivers: a commit
+    cited on a row must have existed when the row closed. Applied to rows closed from
+    2026-09-02, the day the register's timestamps became UTC; earlier rows are local time
+    and cannot be compared to a commit date."""
+    root = root or ROOT
+    if root not in _MAIN_WHEN:
+        r = subprocess.run(["git", "-C", root, "log", "main", "--format=%H %cd", "--date=format-local:%Y-%m-%d %H:%M"],
+                           capture_output=True, text=True, env={**os.environ, "TZ": "UTC"})
+        _MAIN_WHEN[root] = dict(ln.split(" ", 1) for ln in r.stdout.splitlines() if " " in ln)
+    return _MAIN_WHEN[root]
 
 
-def _commit_delivers(sha, evidence, root=None, tid=None):
+_MAIN_WHEN = {}
+
+
+_MAIN_TOUCHED = {}
+
+
+def _main_touched(root):
+    """{full sha: [paths touched]} for every commit reachable from main, one git call.
+
+    The per-task form ran cat-file, merge-base and show for each closed task: 32 tasks
+    were 96 subprocesses and 4.9 s alone, over the 5 s deadline under hook contention,
+    so the check timed out three times running and became a permanent red (2026-09-02)."""
+    if root not in _MAIN_TOUCHED:
+        r = subprocess.run(["git", "-C", root, "log", "main", "--name-only", "--format=%x00%H"],
+                           capture_output=True, text=True)
+        out = {}
+        for block in r.stdout.split("\x00")[1:]:
+            lines = block.split("\n")
+            out[lines[0].strip()] = [p for p in lines[1:] if p.strip()]
+        _MAIN_TOUCHED[root] = out
+    return _MAIN_TOUCHED[root]
+
+
+def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
     """Empty string if sha reaches main and its diff touches a path named in evidence.
 
     The register's evidence field was free text: a path that never existed closed a
     task, and the register read as delivered. A commit hash is the one claim the repo
     can refute by itself -- it either resolves, reaches main, and moved that file, or
     it does not (user ruling 2026-09-01: the conversation is notification, the commit
-    is the truth)."""
+    is the truth).
+
+    Resolution is one minute: commit dates carry no seconds and the close time is
+    padded to :59, so a commit made in the same minute as the close always passes.
+    Measured by e1 (2026-09-02): closed 02:47 passes, closed 02:46 fails. The register
+    writes minutes, so a same-minute backdate is invisible to this check by design.
+    """
     root = root or ROOT
     g = ["git", "-C", root]
-    if subprocess.run(g + ["cat-file", "-e", f"{sha}^{{commit}}"],
-                      capture_output=True).returncode != 0:
+    main_log = _main_touched(root)
+    full = subprocess.run(g + ["rev-parse", "--verify", "-q", f"{sha}^{{commit}}"],
+                          capture_output=True, text=True).stdout.strip()
+    if not full:
         return f"{sha} is not a commit in this repo"
-    if subprocess.run(g + ["merge-base", "--is-ancestor", sha, "main"],
-                      capture_output=True).returncode != 0:
+    if full not in main_log:
         return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
-    r = subprocess.run(g + ["show", "--name-only", "--format=", sha],
-                       capture_output=True, text=True)
-    touched = [p for p in r.stdout.split("\n") if p.strip()]
+    touched = main_log[full]
     paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
              if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
     if not paths:
@@ -5099,10 +5133,11 @@ def _commit_delivers(sha, evidence, root=None, tid=None):
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
                 "the commit does not deliver what the evidence claims")
-    named = _commit_named_for(tid, root) if tid else ""
-    if named and not named.startswith(sha) and not sha.startswith(named[:len(sha)]):
-        return (f"{named[:8]} names {tid} in its subject and {sha[:8]} does not -- "
-                "a commit that merely touches the same file is not this delivery")
+    when = _main_when(root).get(full, "")
+    if closed and closed >= "2026-09-02" and when and when > closed[:16] + ":59":
+        return (f"{sha[:8]} was committed at {when}, after the row closed at {closed} -- "
+                "a delivery cited after the fact is a repair of the register, not the delivery; "
+                "reopen and close again on the commit that exists")
     return ""
 
 
@@ -8827,22 +8862,56 @@ def cmd_clean(rest):
     return 0
 
 
-def _allocation_cards(training):
-    """Card set from the controller's allocation file, never from the caller.
+def _expand_cards(spec):
+    """Card spec to a sorted index list. Accepts "0,1,2", "0-7", and both mixed.
 
-    Training jobs get the block (all cards in mix_scale_run_config.json).
-    Non-training jobs get the lane (the card not in the block)."""
-    config_path = os.path.join(ROOT, "data", "mix_scale_run_config.json")
-    if os.path.isfile(config_path):
-        config = json.load(open(config_path, encoding="utf-8"))
-        block = config.get("cards", "")
-        if training:
-            return block
-        block_set = {c.strip() for c in block.split(",") if c.strip()}
-        all_cards = {str(i) for i in range(8)}
-        lane = sorted(all_cards - block_set)
-        return ",".join(lane) if lane else block
-    return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    The grant file writes ranges ("block_cards": "0-7") and the ladder config writes
+    lists, so a reader that splits on commas turns eight cards into one -- and NGPU is
+    len(cards.split(",")), which would launch a one-rank job under an eight-card grant."""
+    out = set()
+    for part in str(spec or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            out.update(range(int(a), int(b) + 1))
+        else:
+            out.add(int(part))
+    return sorted(out)
+
+
+def _allocation_cards(training):
+    """Card set from the controller's grant, never from the caller and never from a recipe.
+
+    runs/card_assignment.json is the authority: it is where the controller records a
+    decision, and launch_gate.py:360 already reads the same file for the same purpose.
+    The ladder config is a RECIPE -- its `cards` describes what the six budget points
+    ran on, and its own _comment says card identity changes no computation. Reading it
+    as the allocation forced world=7 under an eight-card grant, so the 500M launch
+    bypassed `harness launch` entirely and silently lost --auto-resume with it: 40
+    minutes unsupervised, and scripts/supervise_run.sh exists only because of that.
+
+    No grant is a refusal, not a default. A defaulted card set is how a launch proceeds
+    on cards nobody granted; returning None makes the caller say so."""
+    grant_path = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(grant_path):
+        return None
+    try:
+        grant = json.load(open(grant_path, encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if training:
+        if not grant.get("launch_block_granted"):
+            return None
+        block = _expand_cards(grant.get("block_cards"))
+        return ",".join(str(c) for c in block) if block else None
+    lane = grant.get("lane_card")
+    if lane is not None:
+        return ",".join(str(c) for c in _expand_cards(lane))
+    # lane_card null with the block granted: the grant took every card, so there is no
+    # lane. Distinct from "no grant" -- the controller decided this, and said so.
+    return "" if grant.get("launch_block_granted") else None
 
 
 def _lane_occupant(card):
@@ -8878,7 +8947,7 @@ def cmd_free_card(argv):
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
     a = ap.parse_args(argv)
-    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    lane = [c.strip() for c in (_allocation_cards(False) or "").split(",") if c.strip()]
     if not lane:
         print("no lane card in the allocation", file=sys.stderr)
         return 1
@@ -9112,6 +9181,8 @@ def cmd_launch(rest):
     ap.add_argument("--auto-resume", type=int, default=0, metavar="N",
                     help="on a non-zero exit, relaunch with --resume <latest step ckpt>, up to N times "
                          "(blocks: detach the whole command with setsid nohup)")
+    ap.add_argument("--dry", action="store_true",
+                    help="print the allocation and exit: no ledger row, no process, no card touched")
     # Manual split on -- : argparse REMAINDER greedily captures our own --training flag.
     if "--" not in rest:
         ap.error("no command given after --")
@@ -9125,7 +9196,7 @@ def cmd_launch(rest):
     # have killed tonight's healthy 15B run, whose first step came 6m26s in.
     gate_note = None
     if args.gate_timeout is None:
-        if args.training:
+        if args.training and not args.dry:
             derived, gate_note = _derive_gate_timeout(cmd)
             if derived is None and gate_note and "no token caches" in gate_note:
                 # REFUSE rather than fall back. The fallback was backwards: the emptier
@@ -9144,7 +9215,8 @@ def cmd_launch(rest):
         else:
             args.gate_timeout = 300 if "--resume" in cmd else 120
     if args.training:
-        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)"))
+        print(f"startup gate: {args.gate_timeout}s" + (f" ({gate_note})" if gate_note else " (explicit)")
+              if not args.dry else "startup gate: derived at launch from the cache size (not read by --dry)")
 
     # Popen does not use a shell: a bare foo.py fails with Permission denied.
     # Prepend the interpreter when the command is a .py file in the repo.
@@ -9163,6 +9235,28 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
+        if cards is None:
+            # Before the ledger row: a refused launch leaves no trace. Refusing rather
+            # than defaulting is the point -- the 500M bypass happened because a recipe
+            # supplied a card count nobody granted, and a default is indistinguishable
+            # from a decision once the job is running.
+            print(f"REFUSED: {args.name} - no card grant in runs/card_assignment.json"
+                  f"{' with launch_block_granted' if args.training else ''}. "
+                  f"Card ownership is a controller decision; ask for a grant. "
+                  f"No ledger row written.", file=sys.stderr)
+            return 1
+
+    if args.dry:
+        # After allocation, before the lane check and the ledger row: the question --dry
+        # answers is "which cards, how many ranks", and answering it must touch no card
+        # and write no row. The refusal above still applies, so --dry reports a missing
+        # grant as a refusal instead of printing a plausible default.
+        ngpu = len(cards.split(",")) if (args.training and cards) else 0
+        print(f"cards {cards or '(none)'}"
+              + (f" world {ngpu}" if ngpu else "")
+              + (f" auto-resume {args.auto_resume}" if args.auto_resume else "")
+              + f"\ncmd {' '.join(cmd)}")
+        return 0
 
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
