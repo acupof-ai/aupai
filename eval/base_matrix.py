@@ -266,9 +266,34 @@ MC_TRIPWIRE = ["arc-easy", "arc-challenge", "winogrande", "piqa", "openbookqa",
                "boolq", "hellaswag", "mmlu", "ceval"]
 
 
+def _constant_baseline(items):
+    """Accuracy of the best always-answer-slot-i strategy, measured on these items.
+
+    The decision line for any MC or short-answer eval is the STRONGEST CONSTANT
+    strategy, never random (44's ruling 2026-09-01, docs/lessons/honest_measurement_prereg.md,
+    after math_test_500 scored 9.78% by always answering '2' and three L1 points came in
+    BELOW it while reading z=8.42 over shuffle). Measured on arc-easy, n=2376: constant
+    26.64% against random 25.00%, so the +2se line moves 26.78% -> 28.45%. An accuracy in
+    that 1.68pt band is 2 sigma over random and below a strategy that reads nothing.
+
+    Returns None when the gold labels are not slot indices, rather than guessing: an
+    unmeasurable baseline must not silently become a favourable one."""
+    from collections import Counter
+    if not items:
+        return None
+    golds = [it.get("answer", it.get("label")) for it in items]
+    if any(not isinstance(g, int) for g in golds):
+        return None
+    return max(Counter(golds).values()) / len(items)
+
+
 def z_over_chance(acc, chance, n):
-    """z of the accuracy against the chance floor -- a tripwire reads in sigmas,
-    not percent (3/5 pinned at 25% is invisible as a raw number)."""
+    """z of the accuracy against the floor -- a tripwire reads in sigmas,
+    not percent (3/5 pinned at 25% is invisible as a raw number).
+
+    `chance` is the floor the CALLER chose; score_mc_tripwire passes
+    max(random, constant), so this stays the arithmetic and the floor stays a decision
+    made where the items are visible."""
     import math
     se = math.sqrt(chance * (1 - chance) / n)
     return (acc - chance) / se if se else 0.0
@@ -292,9 +317,15 @@ def score_mc_tripwire(model, tok, cfg, device, benchmarks=MC_TRIPWIRE):
         except Exception as e:
             out[key] = {"error": f"{type(e).__name__}: {str(e)[:90]}"}
             continue
-        chance = 1.0 / len(items[0]["options"])
-        out[key] = {"acc": acc, "z": z_over_chance(acc, chance, len(items)),
-                    "chance": chance, "n": len(items)}
+        random_floor = 1.0 / len(items[0]["options"])
+        const = _constant_baseline(items)
+        # max(random, constant): the floor is whichever a no-capability strategy reaches.
+        floor = max(random_floor, const) if const is not None else random_floor
+        out[key] = {"acc": acc, "z": z_over_chance(acc, floor, len(items)),
+                    "chance": floor, "random": random_floor, "constant": const,
+                    "floor_is": ("constant" if const is not None and const > random_floor
+                                 else "random" if const is not None else "random (constant unmeasurable)"),
+                    "n": len(items)}
     return out
 
 
@@ -336,6 +367,11 @@ def summarize(runs):
 
 def _selftest():
     """Construction invariants + metric plumbing with a stub scorer (no model)."""
+    # The floor assertions FIRST, because they need neither the tokenizer nor a dataset.
+    # Everything below needs data/tokenizer.json, which is gitignored -- on a machine
+    # without it the whole selftest died at line 1, so an assertion placed after this
+    # point is never reached and never protects anything.
+    _selftest_floor()
     tok = load_tokenizer(TOK_PATH, __import__("types").SimpleNamespace(
         vocab=None, vocab_id=None))
     pairs = build_pairs()
@@ -368,6 +404,27 @@ def _selftest():
     n_ok_swap = sum(lp_swap[2 * k] > lp_swap[2 * k + 1] for k in range(len(kept)))
     assert n_ok_swap == 0, "swap plumbing broken"
     print("base_matrix self-test OK")
+
+
+def _selftest_floor():
+    """The floor is the strongest constant strategy, not random.
+
+    Constructed to FAIL if the floor reverts: at n=2376 an accuracy of 27.2% is 2.48
+    sigma over random 25.00% and 0.62 sigma over the constant 26.64% measured on
+    arc-easy -- signal under the old floor, nothing under the correct one. No dataset
+    and no tokenizer needed; the arithmetic is what the ruling constrains."""
+    skew = ([{"answer": 0}] * 633 + [{"answer": 1}] * 581
+            + [{"answer": 2}] * 581 + [{"answer": 3}] * 581)
+    const = _constant_baseline(skew)
+    assert abs(const - 633 / 2376) < 1e-9, const
+    floor = max(0.25, const)
+    assert z_over_chance(0.272, 0.25, 2376) > 2, "random floor no longer calls 27.2% signal"
+    assert z_over_chance(0.272, floor, 2376) < 2, "constant floor must NOT call 27.2% signal"
+    assert _constant_baseline([{"answer": "A"}]) is None, "string golds must be unmeasurable, not 1.0"
+    assert _constant_baseline([]) is None
+    print(f"floor: constant {const:.4f} > random 0.2500; 27.2% reads "
+          f"{z_over_chance(0.272, 0.25, 2376):.2f}s over random, "
+          f"{z_over_chance(0.272, floor, 2376):.2f}s over constant")
 
 
 def main():
