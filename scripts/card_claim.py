@@ -135,7 +135,7 @@ def held_cards(live):
     return held
 
 
-def acquire(name, cards, wait=0, note=""):
+def acquire(name, cards, wait=0, note="", pid=None):
     """Claim `cards` for `name`, waiting up to `wait` seconds. Returns (ok, message).
 
     Refuses rather than sharing: this is a lock, not a message. The previous arrangement was a
@@ -152,8 +152,21 @@ def acquire(name, cards, wait=0, note=""):
         held = held_cards([c for c in live if c.get("name") != name])
         clash = {c: held[c] for c in cards if c in held}
         if not clash:
-            claim = {"name": name, "cards": list(cards), "pid": os.getpid(),
-                     "cmdline": _cmdline(os.getpid()), "acquired": _now(), "note": note}
+            # WHOSE pid. os.getpid() is THIS process -- the card_claim.py invocation, which
+            # exits the moment it has written the file. Every claim was therefore stale on
+            # arrival: the next acquire read a dead pid, deleted the file as a crashed claim,
+            # and took the card. Measured 2026-09-03: two acquires for the same card both
+            # succeeded, and `release --name armA` then reported "no claim" because armB's
+            # file had replaced it. That is why `card_claim.py status` reported all eight pod
+            # cards as ORPHAN -- not because nobody claimed, but because no claim could
+            # survive its own exit.
+            #
+            # The pid that matters is the JOB's. --pid names it; PPID is the default because
+            # the normal caller is a launcher script that outlives this command and dies with
+            # the job.
+            holder = pid if pid else os.getppid()
+            claim = {"name": name, "cards": list(cards), "pid": holder,
+                     "cmdline": _cmdline(holder), "acquired": _now(), "note": note}
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
             try:
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -219,28 +232,56 @@ def _selftest():
     import tempfile
     global CLAIM_DIR
     bad = 0
+    # Counted as the cases run, not hardcoded. `n = 10` at the bottom stayed 10 when two cases
+    # were added, so the line read "10/10 pass" while running twelve -- a total that cannot
+    # notice a case going missing is not a total.
+    n = 0
+
+    def _case(good, text):
+        nonlocal bad, n
+        n += 1
+        bad += 0 if good else 1
+        print(f"  {'ok  ' if good else 'BUG '} {text}")
+
     d = tempfile.mkdtemp(prefix="claim_")
     CLAIM_DIR = d
 
     ok, msg = acquire("runA", ["0", "1"])
-    bad += 0 if ok else 1
-    print(f"  {'ok  ' if ok else 'BUG '} a free card set is claimable ({msg})")
+    _case(ok, f"a free card set is claimable ({msg})")
 
     # The whole point: the second acquirer must NOT get overlapping cards.
     ok2, msg2 = acquire("runB", ["1", "2"], wait=0)
     good = not ok2 and "claimed by" in msg2
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} an overlapping set is refused, not shared ({msg2})")
+    _case(good, f"an overlapping set is refused, not shared ({msg2})")
 
     # Disjoint sets coexist -- a lock that blocks unrelated work gets deleted by hand.
     ok3, msg3 = acquire("runC", ["5", "6"], wait=0)
-    bad += 0 if ok3 else 1
-    print(f"  {'ok  ' if ok3 else 'BUG '} a disjoint set is granted ({msg3})")
+    _case(ok3, f"a disjoint set is granted ({msg3})")
 
     live, stale = claims()
     good = len(live) == 2 and not stale
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} two live claims, no stale ({[c['name'] for c in live]})")
+    _case(good, f"two live claims, no stale ({[c['name'] for c in live]})")
+
+    # THE CLI PATH, which every real caller uses and no case here covered. The in-process
+    # acquire() calls above record THIS process's pid, which is alive for the whole selftest --
+    # so they passed while the command line was broken: `card_claim.py acquire` recorded its
+    # own pid, exited, and the claim was stale before the next command could read it. Run two
+    # real subprocesses and assert the second is refused.
+    import subprocess as _sp
+    env = dict(os.environ, AUPAI_CLAIM_DIR=d)
+    here = os.path.abspath(__file__)
+    r1 = _sp.run([sys.executable, here, "acquire", "--name", "cliA", "--cards", "3",
+                  "--wait", "0"], capture_output=True, text=True, env=env)
+    r2 = _sp.run([sys.executable, here, "acquire", "--name", "cliB", "--cards", "3",
+                  "--wait", "0"], capture_output=True, text=True, env=env)
+    good = r1.returncode == 0 and r2.returncode != 0
+    _case(good, f"a claim survives the claiming COMMAND's exit "
+          f"(first rc={r1.returncode}, second rc={r2.returncode})")
+    r3 = _sp.run([sys.executable, here, "release", "--name", "cliA"],
+                 capture_output=True, text=True, env=env)
+    good = r3.returncode == 0
+    _case(good, f"and the original holder can release it "
+          f"({r3.stdout.strip() or r3.stderr.strip()})")
 
     # A dead claimant's cards are reclaimable, or a crash locks the machine forever.
     p = os.path.join(d, "runA.json")
@@ -249,23 +290,19 @@ def _selftest():
     json.dump(c, open(p, "w"))
     live, stale = claims()
     good = [s.get("name") for s in stale] == ["runA"] and len(live) == 1
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} a claim whose pid is gone reads as stale ({stale and stale[0]['why']})")
+    _case(good, f"a claim whose pid is gone reads as stale ({stale and stale[0]['why']})")
 
     ok4, msg4 = acquire("runD", ["0", "1"], wait=0)
-    bad += 0 if ok4 else 1
-    print(f"  {'ok  ' if ok4 else 'BUG '} a stale claim's cards are re-acquirable ({msg4})")
+    _case(ok4, f"a stale claim's cards are re-acquirable ({msg4})")
 
     ok5, _ = release("runD")
     live, _ = claims()
     good = ok5 and "runD" not in [c["name"] for c in live]
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} release removes the claim")
+    _case(good, "release removes the claim")
 
     ok6, msg6 = release("never_existed")
     good = not ok6
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} releasing an unheld name fails loudly ({msg6})")
+    _case(good, f"releasing an unheld name fails loudly ({msg6})")
 
     # An orphan is memory with no claim. card_memory() is stubbed, because the property under
     # test is the DISAGREEMENT logic, not nvidia-smi.
@@ -275,8 +312,7 @@ def _selftest():
     orphans, dup, lines = status()
     good = orphans == [("3", 9000)] and any("ORPHAN card 3" in x for x in lines) \
         and any("claimed by runC but idle" in x for x in lines)
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} busy-and-unclaimed is an ORPHAN; claimed-and-idle is a note")
+    _case(good, "busy-and-unclaimed is an ORPHAN; claimed-and-idle is a note")
     if not good:
         print("       " + " | ".join(lines))
 
@@ -284,12 +320,10 @@ def _selftest():
     card_memory = lambda: None
     orphans, dup, lines = status()
     good = not orphans and any("not measured" in x for x in lines)
-    bad += 0 if good else 1
-    print(f"  {'ok  ' if good else 'BUG '} no nvidia-smi reports 'not measured', never zero orphans")
+    _case(good, "no nvidia-smi reports 'not measured', never zero orphans")
     card_memory = real
 
     shutil.rmtree(d, ignore_errors=True)
-    n = 10
     print(f"card_claim selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -301,6 +335,10 @@ def main():
     ap.add_argument("--cards", help="comma-separated card indices, as CUDA_VISIBLE_DEVICES")
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a clash to clear")
     ap.add_argument("--note", default="", help="free text: what this job is")
+    ap.add_argument("--pid", type=int, default=None,
+                    help="the pid that HOLDS the cards (default: this command's parent, i.e. "
+                         "the launcher script). A claim recording this command's own pid is "
+                         "stale the instant it is written")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -321,7 +359,7 @@ def main():
     if not a.cards:
         ap.error("--cards is required for acquire")
     cards = [c.strip() for c in a.cards.split(",") if c.strip()]
-    ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note)
+    ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note, pid=a.pid)
     print(msg, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 

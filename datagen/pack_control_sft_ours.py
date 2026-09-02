@@ -104,11 +104,18 @@ def main():
           flush=True)
 
     tok = Tokenizer.from_file(a.tokenizer)
-    eos = tok.token_to_id("<|endoftext|>")
+    # "<eos>" is what OUR tokenizer calls it (id 1) -- prepare_sft.py:379 does the same
+    # lookup. The first version of this file tried "<|endoftext|>" then "</s>", the HF names,
+    # and both are absent here: eos came back None and pack_and_save died on
+    # torch.tensor(rows_ids) with "NoneType cannot be interpreted as an integer", a message
+    # that names the tensor rather than the tokenizer. The fallbacks stay for a foreign
+    # tokenizer, after the name that actually applies.
+    eos = tok.token_to_id("<eos>")
+    for alt in ("<|endoftext|>", "</s>"):
+        if eos is None:
+            eos = tok.token_to_id(alt)
     if eos is None:
-        eos = tok.token_to_id("</s>")
-    if eos is None:
-        print("CANNOT RUN: no eos token found in the tokenizer")
+        print(f"CANNOT RUN: no eos token in {a.tokenizer} under <eos>, <|endoftext|> or </s>")
         return 2
 
     # sources = the file this pack was actually built from.
