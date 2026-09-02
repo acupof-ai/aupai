@@ -221,7 +221,10 @@ def main():
     ap.add_argument("--max_steps", type=int, default=None, help="smoke tests only")
     ap.add_argument("--device", default="cuda",
                     help="'cpu' runs the real forward/backward without a card -- the only way "
-                         "to prove this loop executes before it holds one")
+                         "to prove this loop executes before it holds one. To pick a specific "
+                         "card use CUDA_VISIBLE_DEVICES=<n> and leave this as 'cuda': both arms "
+                         "run concurrently on different cards, and 'cuda:0' inside the process "
+                         "would fight run_sft.sh's arm for card 0")
     ap.add_argument("--heldout", default=None,
                     help="the held-out text file. Defaults to the _heldout.jsonl beside the "
                          "--pack file; BOTH arms read the same two files so the held-out set "
