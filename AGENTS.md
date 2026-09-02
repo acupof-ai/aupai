@@ -53,6 +53,8 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
   - **Small jobs queue on the lane card. They never spill into the block, not even onto a card that is idle at that instant.** A 7-card run needs all seven *simultaneously*, so one 10-minute eval on one block card blocks a 55-minute training job completely — contention only slows, occupancy stops. On 2026-08-30 a bf16 A/B waited ~40 minutes for a window, and the window it finally got was closed within seconds by a confirmatory eval landing on a block card.
   - **The lane holds one job at a time.** The round routinely wants two or three concurrent probes; they serialize. The previous version of this rule named a single bench card without saying jobs must queue on it, so three concurrent small jobs spilled into the block *by necessity* — an under-provisioned lane is violated for cause, not by carelessness, and a rule people must break is not a rule.
   - When the block is idle and no 7-card job is pending, the controller may lend block cards out explicitly. Idle is not the same as free: a card's owner is the script still running or the job the controller has queued, never the instantaneous `nvidia-smi` row.
+  - **When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency is judged by host IO and seconds, not by metric class.** The rule stated on 2026-09-02 was "likelihood evals may share a card, generative ones wait", derived from one eval (`score_matrix`, 2.3 GiB). MEASURED against the run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was killed. The class was never the variable. What separates `ppl` from `score_matrix` inside one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for `zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits for the run; one that only loads a checkpoint costs about what a save costs. `python3 scripts/eval_load_cost.py` is the table, with the unmeasured evals listed as unmeasured rather than as zero.
+  - **Judge the cost in seconds against what the run already spends on itself, never by the printed ETA.** ETA extrapolates a single 10-step interval over 19,151 steps, so one interval 54 s slow prints as 29 lost hours, and every checkpoint save prints ~99 h. Total across every dip in the first 1990 steps: 10.3 min of 6.04 h elapsed, 2.8% (`docs/lessons/gate_failure_shapes.md` §50).
 - **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
 - **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
@@ -251,6 +253,23 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **Reachability changes without notice, so a fetcher carries a mirror chain.** 2026-08-31 from ~14:30: `hf-mirror.com` rc=28 (timeout) for the rest of the day; `www.modelscope.cn` 200 in 0.08 s and `/datasets/AI-ModelScope/<name>/resolve/master/<file>` serves HF datasets; `data.together.xyz` 200 all day. The math and CoT fetches stalled for hours on the one dead host. Rule: every HF-hosted source lists `[hf-mirror, modelscope, huggingface.co]` with a verified name map; a 10 s `curl -4` probe per host before fetching and on any timeout/403; failover continues from the same `.part`; `fetch_stats.json` records which host served each file (`t37`).
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 
+## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
+
+| Rule | Shapes | §refs |
+|---|---|---|
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 6 | §8 §14 §18 §37 §38 §46 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 11 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 |
+| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 4 | §7 §13 §25 §27 |
+| State the vision before the number; outside it, label unmeasured, not absent | 9 | §3 §5 §6 §17 §19 §28 §30 §32 §36 |
+| Every number carries its basis: source type, resolution, algorithm; label extrapolation | 5 | §1 §11 §12 §20 §21 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 3 | §16 §22 §42 |
+| Shared resources are explicitly exclusive; sharing rules name IO and memory, not metric class | 4 | §15 §33 §49† §50† |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
+| What happened only on the pod did not happen; bring it back to the repo the same day | 1 | §2 |
+
+†§49/§50 pending de's landing; sources: `af02a5a` (ppl_v2 IO footprint), `frozen_paths` commits (supervisor window). Full cases live in the shapes doc.
+
 ## Rule coverage
 
 Every rule below maps to a check that enforces it or an explicit reason none can.
@@ -270,21 +289,22 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
 | Small jobs queue on the lane card. They never spill into the block, not even o | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | The lane holds one job at a time | manual: same: lane_respected sees now, not the queue discipline |
+| When there is no lane card at all — `NGPU=8`, as p500m_ | manual: the deciding quantity is host bytes read, which nothing in the repo records per eval run. `scripts/eval_load_cost.py` classifies each eval by whether it reaches a token cache (static, checkable) and carries the three MEASURED costs, but the measurement itself needs a live training run to differ against |
+| Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | Long jobs detach | `no_foreground_pod_training` |
 | Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
-| A deletion needs a per-file check for glob and runtime loaders | manual: no static analysis sees a runtime glob; reachability.py is a citation graph and its header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators a name scan reads as unreferenced (near-miss, 2026-08-31) |
-| Derived artifacts carry the fingerprint of what produced them | `corpus_fp_matches` |
+| Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
+| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
+| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
 | `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
-| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
-| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
-| Never `git stash` in this repository | `no_shared_stash` |
-| The behind-main gate does not want a clean tree, so merge directly | manual: a measured property of git merge, not a rule a check can assert: nothing in the repo records which order a session ran merge and add in |
-| Only a conflicting path needs a commit first, and read which path i | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
+| Never `git stash` in this repository ->R8 | `no_shared_stash` |
+| The index must equal HEAD before you merge: commit your | manual: which order a session ran merge and add in is not recoverable from the repo. What IS checked is the consequence: a wip commit lands on the branch where dirty_aged and the behind-main hook see it. The rule's own history is the reason it stays prose -- the previous version was a correct measurement of the wrong branch shape, and no artifact records which shape a merge had |
+| A conflicting path needs a commit first, and read which | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
 | `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
 | Only a `refusing:` line means nothing shipped | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
 | `pod_drift.py --write` regenerates from HEAD, `--write-index` from | manual: which flag a session typed is not recoverable from the manifest it produced -- both write the same file, and a manifest built from the wrong side is well-formed |
@@ -299,14 +319,13 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
-| Never run git checkout / git restore on a file you did not w | manual: no record of who wrote an uncommitted change |
 | Run ruff format over a whole file only if you created it. On | manual: reformat scope is a review judgement |
 | Commit as soon as a change works, and never later than 30 mi | manual: dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement |
 | Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
 | A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-45 rules: 15 checked, 30 manual. The count is regenerated from `harness check`'s
+47 rules: 15 checked, 32 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
@@ -344,8 +363,8 @@ itself had before the check began reading it.
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `git -C /Users/bytedance/code/aupai merge --no-edit <name>`; if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
 - **Never `git stash` in this repository.** `.git/refs/stash` is one stack shared by every worktree — not per-worktree like HEAD and the index — so two sessions stashing in the same window each pop the other's entry, applying a diff they never wrote to a tree it was not made against (e1 and b0, 2026-09-02; nothing was lost, and that was luck). `no_shared_stash` reports a non-empty stack.
-- **The behind-main gate does not want a clean tree, so merge directly.** A `git merge --no-edit main` succeeds with local changes, **staged or not**, as long as no file you changed is also a path the merge touches. Measured four ways on 2026-09-02: non-conflicting path unstaged → rc 0, non-conflicting path staged → rc 0, conflicting path unstaged → refused, conflicting path staged → refused. Staging is not what merge objects to; overlap is.
-- **Only a conflicting path needs a commit first, and read which path it is.** `git merge` names the file in its `would be overwritten` line. A derived artifact — `data/pod_head_manifest.txt`, which the hook regenerates on every commit, so anyone's commit makes it collide — is nobody's work: `git checkout -- data/pod_head_manifest.txt`, then merge again. A file you wrote gets a path-limited `git commit <paths> -m "wip: ..."` first. A `wip:` commit is yours on your branch; a stash is everyone's. `AUPAI_BEHIND_MAIN_OK=1` is not the way out of either: it commits onto code main has moved past.
+- **The index must equal HEAD before you merge: commit your paths, or `git reset`.** A `git merge --no-edit main` refuses with ANY staged change, including on a path the merge does not touch — MEASURED eight ways on 2026-09-02 (`docs/lessons/gate_failure_shapes.md` §49). The rule that stood here said the opposite, because it was measured on a fast-forward: a fast-forward updates the working tree like a checkout and only wants the paths it touches clean, while a three-way merge must write the index and refuses to write over a record that differs from HEAD, related path or not. Once both branches have commits — every time a merge is actually needed — three-way is the normal case. Unstaged non-conflicting changes still merge fine; the shorter rule is that a clean index always does.
+- **A conflicting path needs a commit first, and read which path it is.** `git merge` names the file in its `would be overwritten` line. A derived artifact — `data/pod_head_manifest.txt`, which the hook regenerates on every commit, so anyone's commit makes it collide — is nobody's work: `git checkout -- data/pod_head_manifest.txt`, then merge again. A file you wrote gets a path-limited `git commit <paths> -m "wip: ..."` first. A `wip:` commit is yours on your branch; a stash is everyone's. `AUPAI_BEHIND_MAIN_OK=1` is not the way out of either: it commits onto code main has moved past.
 - `runs/*.jsonl` ledgers merge by union (`.gitattributes`); row identity is `(name, started)` / `id`, never position. `data/pod_head_manifest.txt` is regenerated by the hook on the merge commit — a conflict there is resolved by regenerating, never by hand.
 - `scripts/pod_push.sh` pushes only content reachable from `main`; a branch-only file is refused. CI reads `main`.
 - The shared corpus, checkpoints, and GPUs on the pod are unchanged by this; `harness launch` and the allocation file still own them.

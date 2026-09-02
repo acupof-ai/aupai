@@ -924,6 +924,35 @@
       "status": "measured",
       "boundary": "validates the delivered corpus at fp e1a14839e11f3e6f only; if the corpus changes, re-run before trusting a new zero",
       "provenance": "the result is bound to corpus fp e1a14839e11f3e6f so a later zero knows which bytes it measured"
+    },
+    {
+      "id": "dq.code_rp1t_astparse_fail_why",
+      "value": "Of the ~16.3% of code_rp1t rows that fail ast.parse (5,000-row stratified sample over 235 shards, seed 1729), ~81-99% are NON-PYTHON content mislabeled as .py: C/C++ headers (#ifndef/#include), Java (package/android/import), JS/React (module.exports, export default, var require), Ruby (Sidekiq/Rails def/class), C# (using System), HTML doctype, reStructuredText pages. Genuine-Python syntax failures (python2-syntax, truncation, notebook-cells, encoding) are ~<2% of the sample (trunc 3, notebook 4, py2 0, encoding 0 in ~4,573 fails). Ground-truth of the residual other bucket: Ruby/C/JS/Perl, not python. Consequence: ast.parse is doing language-ID correctly; the 16.3% failure is rejection of non-Python, not Python the parser cannot handle. Sample token cost (est, bytes of failing rows): non-python 22.0M, other 5.0M, notebook/trunc <0.1M (approx, len-not-token). Ruling: DROP all non-Python at ~zero valid-Python-token cost — the 16.3% is reclaimed correctness, ast.parse already excludes it.",
+      "measured": "2026-09-02",
+      "source": "datagen/code_rp1t_fail_histogram.py (5,000 stratified) on pod; classifier + 2 hand-ground-truth passes; complements dq.code_rp1t_handread_50 (44, PHP/Java/C/Ruby/JS dominate)",
+      "config": {
+        "n": 5000,
+        "stratification": "proportional per shard (235 shards), seed 1729",
+        "classifier": "5 fb buckets (py2/trunc/notebook/non-py/encoding) + signature rules",
+        "corpus": "/work/aupai/data/corpus/code_rp1t",
+        "ground_truth": "2 passes over residual buckets (41 shards head / 800-row residual other)"
+      },
+      "uncertainty": "Classifier heuristic; the 81% vs 99% spread is classifier breadth -- both ground-truth passes showed the residual is also non-Python, so the TRUE non-Python share is likely >95%. Sample is shard-proportional, not uniform over all docs.",
+      "status": "measured"
+    },
+    {
+      "id": "dq.code_mining_single_blob_zero",
+      "value": "Single-file-inline stdlib-only mining of code_with_tests from code_supply (The-Stack, shard 0000) yields ZERO runnable pairs. Number chain: 12,551 test files -> 6,819 unittest-pattern -> 580 strict-stdlib-only imports -> ~150 loose impl-basename candidates -> 0 strict join (all imports subset stdlib union {single target}). Github tests import their own module via dotted path (pkg != impl basename), relative import, or a framework; the bare-sibling-import + stdlib-only shape is ~unmeasurable. sandbox_exec (fixed c15c088) was not the cause of the earlier 0 (that was an impl-key .py suffix bug); the zero here is fundamental to the single-blob strategy.",
+      "measured": "2026-09-02",
+      "source": "datagen/mine_code_with_tests.py on pod shard data/raw/code_supply/0000.parquet (29,235 repos); ceiling scan; de corrected the sandbox attribution",
+      "config": {
+        "corpus": "code_supply/0000.parquet",
+        "strategy": "single-blob inlined impl + module-alias + unittest runner, stdlib-only sandbox",
+        "sandbox": "datagen/sandbox_exec.py c15c088 (uid 65534, not root)",
+        "decision": "fb 2026-09-02 option B: curated 3b-9 sets (Exercism+Aider SFT; EvalPlus eval/RL-only), not github mining"
+      },
+      "uncertainty": "Measured on shard 0000 only; other shards may differ marginally but the strict join is structurally ~0 across github py tests.",
+      "status": "measured"
     }
   ]
 }

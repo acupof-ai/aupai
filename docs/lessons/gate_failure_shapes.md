@@ -328,6 +328,8 @@ de-22(dca2d1c)修 merge_complete 的「删除是否故意」误判,两条 selfte
 
 第二条理由(b0,2026-09-02):`git stash` 对未跟踪文件静默不收,而新拆出的文件必然未跟踪——b0 的 model.py 留在盘上、train.py 切割进了 stash,一个动作把一次改动劈成两半。禁 stash 的理由从「共享全局状态」再加一条「未跟踪文件静默丢失」。
 
+补注(2026-09-02,AGENTS.md 事故移入,同族:共享工作树状态):day-one 一个 session 的 `git checkout` 抹掉了另一个 session 未提交的 device gate(`scripts/test_arch_compat.py`,只因几分钟前 `podput` 过一份到 pod 才找回)。共享工作树下,checkout 一个你没写的文件 = 对别人未提交改动的静默删除。规则:永不 checkout/restore 你没写的文件,自己的改动手工 undo。
+
 ## 34. 区间有两端,只验一端(b0,2026-09-02,与 §29 同族)
 
 一个区间有两端;校验只验起始端,结束端就是盲区——而结束端多带走的东西,正是拆分类改动里最贵的错误。
@@ -448,7 +450,139 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 实例(fb 当事人):fb 对 tilerl 说「看到 0 字节 .vocab 就是 de 测试的指纹」——pod 上有七个 09-01 的 0 字节 stamp 早于该测试。空 stamp 观察本身没错(§43 的指纹),错的是把「这次的空 stamp 来自 de 测试」推广成「空 stamp ⇒ de 测试」。判据看不见被问的性质(stamp 为什么空),只看得见样本的特征(0 字节)。
 
-## Sources
+## 49. 规则条件在一个人做决定时不可观测(de-25,2026-09-02,与 §38 同族)
+
+一次测量在自己的分支形状里全对,被写成通例。写下的规则读起来可操作,实际条件是执行者在动手前无法观测的量——于是规则在它不适用的形状里把人推向它说不会发生的拒绝。
+
+实例:AGENTS.md 写着「merge 不介意脏树,只介意路径重叠」,四格测量。我的 11 个 staged 文件所在路径 main 自 merge-base 起一个都没碰,`git merge --no-edit main` 仍然拒绝并逐个点名;`git reset` 取消 staging 后同一个 merge 立刻成功。两次测量都对,变量是**这次 merge 能不能 fast-forward**,而原测量在 fast-forward 下取的。八格复现(`/tmp/merge_ff.sh`):
+
+| 形状 | staged | 重叠 | rc | 结果 |
+|---|---|---|---|---|
+| 三方 | no | no | 0 | Merge made by the 'ort' strategy |
+| 三方 | **yes** | **no** | **2** | 拒绝,点名那个不相干的文件 |
+| 三方 | no | yes | 2 | 拒绝 |
+| 三方 | yes | yes | 2 | 拒绝 |
+| fast-forward | no | no | 0 | Updating .. |
+| fast-forward | yes | no | 0 | Updating .. |
+| fast-forward | no | yes | 1 | 拒绝 |
+| fast-forward | yes | yes | 1 | 拒绝 |
+
+下四行逐格等于 AGENTS.md 原来那四行。机制:fast-forward 更新工作树像一次 checkout,只要求它要动的路径干净;三方合并必须写 index,index 里存在任何与 HEAD 不同的记录就拒绝,与那条记录的路径是否参与合并无关。
+
+改法不是加「除非是三方合并」:一个人在终端里动手前判断不出自己面对哪种形状,两个分支都有提交时——也就是每次真正需要 merge 的时候——三方是常态。规则改成不依赖该区分的形式:**merge 前 index 必须与 HEAD 一致(先 commit,或 `git reset`)**。
+
+一般形:规则的条件必须是执行者在决定的那一刻能观测的量。条件不可观测时,把规则收紧到不需要该条件的形式,而不是把条件写进文档让人猜。
+
+## 50. 瞬时外推值被当成状态值,干预针对的是 2.8% 的开销(de-27,2026-09-02,fb 撤回自己的归因)
+
+一个仪表把**单次区间**的速率外推到整个运行,打印出来的数是"如果这个速率永远保持"。瞬变期这从来不是被问的问题,但它和状态读数在文本上一模一样。于是一次几十秒的开销读起来像几十小时的损失,触发一次干预。
+
+实例:`train.py` 的 ETA 由单个 10 步区间的瞬时速率外推 19,151 步。**一个 163 秒的区间代替 109 秒的,打印的 ETA 移动 29 小时,真实完成时间移动 54 秒**。step 1900 打印 `8K tok/s/gpu | MFU 8% | ETA 83.3h`,与 step 1890 的 `12K | 12% | 52.8h` 并排,读起来是运行状态恶化;实际是那一个区间多花了 54 秒。fb 据此下令杀 ppl 并把吞吐掉档归因给它,随后撤回。
+
+```
+12K 瞬时 → 打印 58.1h        7K 瞬时 → 打印 99.6h
+ 8K 瞬时 → 打印 87.2h        6K 瞬时 → 打印 116.2h
+```
+
+**这个 run 自带对照组,而没有人看它。** `--save_every 500`,而 step 500/1000/1500/2000 四次全是 **7K**,当时没有任何 eval 在跑(2000 那次发生在 ppl 被杀之后,是干净的第四点)。7K 是全 run 最深的档位之一——存一个 2.1 GB checkpoint 加一次 val(tilerl 独立算出各约 87 秒)。按相对 12K 的损失排:
+
+| 事件 | 区间速率 | 损失 |
+|---|---|---|
+| ckpt save + val @500/1000/1500/2000(无 eval) | 7K | 各 78s |
+| score_matrix 四个似然指标 | 9K, 11K | 46s |
+| l1_fewshot 生成式 497 题 | 7K, 6K, 10K | 209s |
+| ppl,只读了 checkpoint 就被杀 | 8K, 8K | 109s |
+
+**存档比 score_matrix 全套贵**,而 run 每 500 步自己做一次。1990 步里所有掉档合计 **10.3 分钟,占已跑 6.04 小时的 2.8%**。
+
+归因方法(值得复用):以 `ckpt.step1500` 的 mtime 为锚,按每个 10 步区间自己报的速率前推,得到每次掉档的墙钟时刻,再与各 eval 日志的 mtime 对照——三个事件分别对上到 2 分钟、40 秒、6 秒内。同一晚 tilerl 把 1900 归因给 `code500_pass8_v3/v4` 日志,那些文件是 08-31 的(`ls` 不带 `--time-style` 只显示月日的坑),锚点法不会犯这个错,因为它给出的是时刻而不是候选名单。
+
+规则:**干预前把瞬时读数换算成累计代价**——秒,不是小时;占已跑时长的比例,不是外推的终点。仪表侧同步修:ETA 用窗口均值,或同行打印"本区间比基线多花 X 秒",让读者拿到的第一个数就是代价而不是外推。
+
+与 §11 同族但反向:§11 说一个指标必须带它的分辨率(n=10 被读成 n=100),这条说一个指标必须带它的**时间尺度**——外推到 19,151 步的量不能和已实现的量并排显示而不标注。也与 §48 同族:我自己第一版把教训写成"共卡许可来自被测实现的足迹而非指标类别",那同样是从一个样本推的判据——score_matrix 的四个似然指标只花 46 秒,比存档便宜,"似然类可共卡"这条其实没被证伪;ppl 贵在 `torch.load` 整个 cache(zh_web 85 GB,九域约 166 GB),是同类里的实现差异。**杀 ppl 仍然正确,但理由是事前止损**:它当时正走向读 166 GB,那部分还没发生,已发生的 109 秒比一次存档便宜。
+
+## 51. 检查按构造无法报警,而绿色被当成结论(de-28a,2026-09-02)
+
+一个检查的观测通道被它所在的运行环境吞掉,于是它的"未命中"对每一次运行都成立,包括真的命中的那一次。它不报错、不 SKIP,只是永远绿——**和一个真正通过的检查在文本上完全一致**。
+
+实例:rollout 的逃逸探针。我在被测实现里 import 时 `print('REACHED')`,再扫 rollout 的 stdout 找这个 marker。但测试是用 pytest 跑的,**pytest 默认捕获 stdout**:测试通过时那段输出根本不进报告。所以 `escaped: False` 是构造性的,不是测量出来的。第一次跑的时候 10 个变体全绿,包括那个联网的和那个读 ~/.ssh 的——而我当时正打算把这个绿色写进交付。
+
+暴露它的不是审查,是一条**方向相反的断言**:我顺手加了 `assert 'blocked' in stdout`,它红了。同一份 stdout 里既没有 `REACHED` 也没有 `blocked`,那说明这段输出整体不存在,而不是"探针报告了安全"。
+
+```
+探针在 impl 里 print   →  pytest 捕获  →  escaped 永远 False  →  10/10 绿(含两次真逃逸)
+探针在 test 里 assert  →  裁决即 reward →  隔离住 1.0 / 被突破 0.0 + marker 进 pytest 报告
+```
+
+修法不是换个扫描位置,是**把探针改成断言**:隔离住则测试通过、reward 1.0;被突破则测试失败、reward 0.0,且断言消息带着 marker 落进 pytest 报告。两个信号都在"出事"的方向上工作,没有一个是静默的。然后在 `rlimits_only`(定义上没有隔离)上跑一次证明它会红——实测 reward 0.0、`escaped: true`、断言里点出 `/Users/bytedance/.ssh`。
+
+规则:**一个检查在写下来的时候要同时回答"什么世界能让它红"。** 答不出来的检查是断言,不是测量。这条和 §7(broken() 必须存在)同族,但更早一层:§7 说每个检查要有它的破坏世界,这条说**破坏世界跑不出红色时,问题在观测通道而不在检查逻辑**——探针的判断是对的,它只是从来没有被听见。
+
+与 §50 里我自己那个"一个样本的判据"并列,都是同一晚同一个人犯的:那次是从证据不足推出结论,这次是从**没有证据**推出结论,而绿色让两者都读起来像有证据。
+
+## 52. 把"我没找到出路"读成"规则互锁",而出路写在我自己两天前的测量里(de-28a,2026-09-02,fb 当事人纠正)
+
+两条门看起来前置条件互为对方的后置条件,于是我判定合成域为空、带 override 违反其一,并准备把"互锁"写成一条形状。**实际有合法出路,而且它就在我自己做的那张实测表里。**
+
+现场:一次提交要同时满足
+
+| 门 | 要求 |
+|---|---|
+| pre-commit 落后检查 | 提交前必须先 merge main |
+| `git merge`(三方) | index 必须与 HEAD 一致 |
+
+我的推理是:有未提交的工作 → 要提交 → 门 1 要求先 merge → 门 2 拒绝 → 要清 index 就得先提交 → 回到门 1。这条链有一处是我自己填进去的:**"清 index"被我等同于"提交"**。而 de-25 的八格测量(§本文件 sources,`/tmp/merge_ff.sh`)结论是三方合并拒的是 `index != HEAD`,不是脏工作树——`git reset` 取消 staging、保留工作树,就同时满足两个门。
+
+实测(`/tmp/deadlock.sh`,非重叠路径):
+
+```
+staged + 三方 merge          →  refused,并点名 mywork(main 根本没碰的路径)
+git reset,同一个 merge      →  成功,1 file changed
+工作树                        →  M mywork,内容 mine+dirty 完好
+```
+
+正确顺序,以后不再用 override:`git reset` → `git merge --no-edit main`(派生产物如 `data/pod_head_manifest.txt` 冲突就 `git checkout --` 它再合)→ 按路径重新 `add` → commit。
+
+值得记的是错误的形状而不是这个顺序:**我拿到过那个测量,写下过那个结论,然后在需要它的那一刻没有用它**。链条里"清 index = 提交"这一步没有任何证据支持,它只是我没有查;而一旦接受了这一步,"两条规则互锁"就是从它出发的合理推论,读起来像结构性发现而不是查漏。override 的存在让这条错误不需要被发现就能通行——它把"我卡住了"和"规则错了"渲染成同一个动作。
+
+与 §48 同族但方向相反:§48 是从一个样本推出普适判据(证据不足),这条是**手上有充分证据而没有去读**;两者的共同点是结论的置信度由推理的流畅度决定,而不是由证据决定。规则:**在判定一条规则本身有缺陷之前,先检索自己对这条规则做过的测量**——尤其当结论是"只能违反它"的时候,因为那个结论的收益正好是绕过检查。
+
+**补记(同日晚,de-28a 第二轮):真的互锁存在,但条件比我原来说的窄得多,而且可以精确命名。** 上面写"没有死锁"也是过度推广——`git reset` 解的是三方合并,不是全部。当晚第二次撞上时把两半都测了:
+
+| 合并形状 | 脏路径 main 是否也改 | 结果 |
+|---|---|---|
+| 三方 | 不改 | `git reset` 后成功(`/tmp/deadlock.sh`) |
+| fast-forward | 不改 | **直接成功**,工作树完好(`/tmp/ff_tracked.sh`) |
+| fast-forward | 也改 | 拒绝,且 `git reset` 无用——ff 要写那个路径 |
+
+只有第三格是真互锁:`git reset` 帮不了,因为 fast-forward 像 checkout 一样要**写**那个路径,而不是写 index。当晚的实例是 `runs/tasks.jsonl`——我加了三条 done 行,main 也加了 `3b-9`。`git stash` 被禁,所以出路是:把那一个路径的改动存到仓库外、`git checkout --` 它、合并、再按行 union 重新应用。注意 `git checkout --` 从 **index** 恢复,所以已 stage 的路径要先 `git reset HEAD <path>`,否则它恢复的是你正想丢掉的那一版。
+
+这里还有一个独立的坑,值得单独记:重新应用时**不能整文件拷回**。我存的副本里没有 main 的 `3b-9`,拷回去等于删掉别人的行。第一版 union 脚本按 `(id, event, ts)` 比较——这三个字段里有两个在这个 ledger 里根本不存在,于是每行都"已存在",脚本报告"re-applying 0"并正常退出。**只有计数自相矛盾暴露了它**:live 260 行、saved 262 行、新增 0 行,三个数不可能同时成立。这与 §51 同形:一个按构造永远命中的判据,和一个真的没有差异的判据,输出一模一样。
+
+
+
+## 53. uid 0 在 chroot 里不是隔离,而移除它会暴露一切原来靠 root 才通过的路径(de-28a,2026-09-02,fb 裁定)
+
+一个沙箱把命名空间、chroot、rlimit 都装齐了,唯独进程仍是 uid 0。**chroot 里的 root 不是被关起来的 root**:它能 mknod 出宿主磁盘的块设备、无视只读 bind 上的所有 DAC 位、不受 RLIMIT_NPROC 约束(内核对 uid 0 不执行),并且 chdir-then-chroot 是教科书级的走出方法。所以"层数"看起来是四层,第一层就漏。
+
+修法是在命名空间和 chroot 都就位**之后**降权(`setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs`)——顺序不可换,每一步都需要它正要放弃的那个特权。`--no-new-privs` 让降权不能经 setuid 二进制回滚。65534 是内核自己的 overflow uid,chroot 内不需要 `/etc/passwd`。
+
+**教训在后半段:降权一次性暴露了两处"只因为是 root 才没报错"的路径,而两者的报错都指向错误的方向。**
+
+| 缺陷 | 症状 | 读起来像 | 实际 |
+|---|---|---|---|
+| chroot 根是 0700 | 根下每个二进制都 `error while loading shared libraries: libc.so.6` | /usr 的 bind 挂坏了 | `mkdtemp` 建的根 root 所有且不可穿越,65534 进不去,根下什么都解析不了 |
+| cwd 是 chroot 根 | 测试写相对路径 EACCES | 隔离过严,或测试有问题 | root 时它静默写进 chroot 根(root 所有),降权后同一个写立刻被拒 |
+
+第一个的鉴别只用两条命令:root 下 `ls libm.so.6` 正常并显示 644,65534 下连 `/bin/sh` 都载不动 libc。**同一个文件,不同 uid,一个能读一个不能——这排除了文件本身,只剩路径穿越。** 在此之前我先怀疑了 `chown -R` 弄坏宿主 `/usr`(查了,没有)和 `ulimit -u 64`(逐行 bisect,不是它)。
+
+第二个是被一条断言抓到的,但那条断言**报的原因是错的**:rollout 的 cross-rollout marker 测试红了,消息写着"peer 的 workdir 可见",而记录里 reward 0.0、`escaped` 为 false、stdout 里明明是 `PermissionError`。一个对的红配一条错的消息,代价是"不相信这条消息"所花的时间。现在它分开两种情况:没有 REACHED marker 就说明 marker 测试根本没跑,隔离是**未被测试**,不是被突破。
+
+规则两条:**降权是隔离的第一层,不是最后一层;**以及**当一个加固改动让不相关的东西开始报错,先问哪些路径原来是靠特权才通过的**——它们不是被改坏的,它们从来没有被真正测过。
+
+同时记一条能力边界,因为它决定裁定能不能落地:Landlock 在这台 pod 上**结构性不可用**——内核 5.4.250,Landlock 自 5.13 起才有,syscall 444/445/446 全 ENOSYS,`/sys/kernel/security` 为空。seccomp 可用(`seccomp(99)` 返回 EINVAL 而非 ENOSYS,`PR_SET_NO_NEW_PRIVS` 成功,当前模式 0),userns 可用(`max_user_namespaces` 7900484,`unshare -Ur true` 成功)。**ENOSYS 和 EINVAL 的区别就是"这个内核没有"和"有但参数不对"的区别**,只看"调用失败"会把前者读成配置问题。
+
+与 §51 同族:那条是检查按构造不能报警,这条是**被检查的属性按构造一直被绕过**——测试跑在 root 下,于是每一条关于权限的结论都只对 root 成立。
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
 - 44-7/44-8 分流夜:/tmp/hcheck.txt、tilerl 零漂移复跑记录
@@ -482,3 +616,7 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - 44 本机 `date -u` 06:27 UTC:第三只钟,与 98 容器一致
 - tilerl(2026-09-02,1e 转达 06:4x):train.py:1647 读侧 / :1686 写侧共享 `VOCAB_ID or ""` 兜底值,空 stamp 被无 vocab 读者判为 same_vocab——指纹检查按构造永远过;修法进 de-23 train 半(None 即 raise/不写空 stamp/空 stamp 即 stale),tilerl review
 - fb 当事人(2026-09-02):「0 字节 .vocab = de 测试指纹」判据被 pod 上七个 09-01 旧空 stamp 证伪——从一个样本推出一个判据,与 §29 同族
+- de-25(2026-09-02,fb 裁定接受,reviewer 3b):AGENTS.md 的 merge 四格测量取自 fast-forward,三方合并下 staged 改动一律被拒(路径不相干也拒);八格复现脚本 `/tmp/merge_ff.sh`,规则改为「merge 前 index 必须与 HEAD 一致」
+- de-27(2026-09-02,fb 复核并撤回自己 07:29 的归因):p500m_20b_0902.log 每 10 步速率序列 + ckpt/eval 日志 mtime 锚点反推;run 自带对照组 step 500/1000/1500/2000 四次 7K 无 eval(2000 那次在 ppl 被杀之后,是干净的第四点);1990 步累计掉档 10.3 分钟 = 2.8%;ETA 单区间外推放大 29h/54s;成本脚本 /tmp/cost.py、/tmp/attrib.py、/tmp/eta.py
+- de-28a 第二轮(2026-09-02,fb 裁定 survey A.3/C.5):chroot 内 uid 0 = mknod 宿主块设备 + RLIMIT_NPROC 不生效 + chdir-then-chroot;`setpriv` 降权后 pod 16/16 known answer(含 uid=65534、mknod EPERM、setsid 双 fork、/proc environ 三进程无泄漏);降权暴露 chroot 根 0700(报错指向 /usr bind)与 cwd 在 chroot 根(报错指向隔离过严);互锁三格表 `/tmp/deadlock.sh` `/tmp/ff_tracked.sh`——只有「ff + main 也改该路径」是真互锁;union 脚本按不存在的字段比较,报 re-applying 0 而计数自相矛盾;Landlock 内核 5.4 结构性缺失(444/445/446 ENOSYS),seccomp 与 userns 可用
+- de-28a 第一轮(2026-09-02,fb 内容接受并纠正流程):探针在 impl 里 print 被 pytest 捕获→`escaped:False` 按构造成立,10/10 绿含两次真逃逸;改成 test 内 assert 后在 rlimits_only 实测会红(reward 0.0/escaped true/点出 `/Users/bytedance/.ssh`);`/dev` 三次测量(ro bind→Errno 30、逐设备 bind→null/zero/full/tty 未进 chroot、mknod 固定主次号);死锁判定被 fb 推翻——`/tmp/deadlock.sh` 实测 `git reset` 后三方合并成功且工作树完好,出路在 de-25 自己的表里
