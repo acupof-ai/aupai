@@ -999,3 +999,38 @@ pod 上两条依次炸：
 **这次的补救动作本身也是一个错，1e 报的，比上面那条更贵**：我发现 pod 上崩了之后用 `podput` 直接推了修复。**tracked 文件只能经 `pod_push` 上 pod，不能 podput** —— 我那份副本随后被 1e 的 `--all` 覆盖回旧版（这次运气好，只是又崩一次），**换个时序就是 A/B 跑在未提交代码上而 manifest 全绿**：manifest 记的是 commit，podput 不改 commit，所以"漂移"这件事对守卫不可见的那一半正是我手动塞进去的那一半。要在 pod 上试未合并的改动，**先合 main 再推**。这次守卫恰好因为 diff 抓到了（`pod code drift: 1 drifted: diff scripts/test_zero_init_out.py`），但它抓到的是内容差异，不是"有人绕过了发布路径"。
 
 **这也是 AGENTS.md 那句 "green here is not green on the pod" 的原文场景**——那句写给 harness check，而我把同一个洞开在了 selftest 里。规则：**任何 selftest 只要 import 了带原生后端的模块（fla / flash_attn / torchao / triton），stub 必须无条件，且必须在 pod 上跑过一次才算交付。** 检测法：`grep -n "if.*is None" ` 你的 stub 行——**条件 stub 就是本条**。
+
+## 73. 注释断言了一个没有任何检查提供的保证——错的不是代码,是"哪个检查覆盖了什么"(b0 当事人,2026-09-03,与 §69 同族高一层)
+
+代码是对的、检查是对的、每个检查都在自己的 broken world 上红过。**假的是注释里那句"这种情况会被 X 抓到"** —— 而 X 并不覆盖那种情况。**读代码分辨不出来**:注释指向一个真实存在、真的会红、只是红在别的事情上的检查。
+
+实例:A/B (4) 的 `model.py`。它用 `getattr(cfg, "value_embed", False)` 而不是 Muon 那种 `assert hasattr`,**这个选择是对的** —— `test_split_bitwise.py` 会用**分裂前的 `train.py`** 构造同一架构来证明分裂没改任何 bit,而旧 `Cfg` 不可能有这个字段,assert 会为一个历史事实把它判红。于是我在注释里补了一句:
+
+> What still has to be loud is the RENAME, and the gate is where that is caught:
+> `test_value_embed.py` asserts the arm's parameter delta is exactly table + gates,
+> so a renamed field makes the arm's delta 0 and the test fails.
+
+**这句是假的。** 那个 suite 里每个检查都自己往对象上设 `cfg.value_embed = True`,所以**没有一个能看见 `train.Cfg` 里的改名**。把字段改成 `value_embedd` 之后:
+
+```
+$ python3 scripts/test_value_embed.py
+value_embed OK: 1 shared table of 65,536, 1 gated MLA layer(s), gate starts at exactly 1.5, ...
+```
+
+**全绿。** 而真实后果是:`--value_embed` 写到一个不存在的字段上,`model.py` 的 `getattr` 默认读到 `False`,**这个臂跑 baseline 而 exp 行、日志、ckpt 名全都说它是臂**。
+
+修法是加 check 0,**直接读 `train.Cfg` 而不是读被测对象**:
+
+```python
+if not hasattr(train.Cfg, "value_embed"):
+    fails.append("train.Cfg has no `value_embed` field. model.py reads it via getattr with a "
+                 "False default, so the arm would run the BASELINE and still report as the arm")
+```
+
+改名后**只有它红**,其余五个仍绿 —— 这证明它覆盖的是别人没覆盖的那一格。
+
+**与 §69 的关系:同族,高一层。** §69 是判据自己没有能力失败;本条是**判据有能力失败、但失败的条件不是注释宣称的那个**。两条的共同点是"文档里的保证与实际覆盖之间没有校验",而本条更难发现:§69 里那个判据一造 broken world 就露,本条**必须造对那个 broken world** —— 我如果只验了"门被强制为 0""表加进 latent""stash 泄漏",永远碰不到改名这一格。
+
+规则:**注释里每写一句"这种情况会被 X 抓到",就要造出那种情况、确认 X 真的红。** 一个测试套件的覆盖声明本身是需要被测试的断言。检测法:grep 你的注释里的 "caught by" / "asserted by" / "会被…抓到",逐条问"我造过那个 world 吗"。
+
+**副产物,同一天同一批**:`getattr(obj, name, default)` 在字段缺失与字段存在且等于 default 时返回同一个值(de 记在 `fact_and_inference.md` 第 7 条),所以**凡是用 `getattr` 读 A/B 开关的地方,都必须另有一处直接读那个持有者**。Muon 用 `assert hasattr` 是因为它只从活的 `train.Cfg` 构造;`HybridLM` 不能,因为它也从历史 `Cfg` 构造 —— **两个地方写法不同不是不一致,是它们的调用者集合不同**。判断依据是"这个构造函数会不会拿到一个合法地缺这个字段的 cfg"。
