@@ -2314,6 +2314,7 @@ _SPAWNED_SCRIPTS = [
     ("eval/eval_all.sh", "harness eval"),
     ("eval/eval_hard.sh", "harness eval --hard"),
     ("run_ddp.sh", "harness launch"),
+    ("scripts/card_claim.py", "harness launch acquires the cards; the monitor releases them"),
 ]
 
 
@@ -10298,6 +10299,13 @@ def settled():
 while True:
     time.sleep(60)
     if settled():
+        # A terminal row exists, so someone closed this run -- `exp.py done` by hand, or
+        # `harness kill`. Release here too: the row is the signal that the job is over, and
+        # the exit below is the ONLY other place that releases. Without this, every run closed
+        # by a human leaves its claim behind, which is the majority of runs. Release is
+        # idempotent -- "no claim for X" on an already-released name is not an error.
+        subprocess.run([sys.executable, os.path.join(os.path.dirname(exp_py), "card_claim.py"),
+                        "release", "--name", name], capture_output=True)
         break  # a result exists; anything the monitor adds now can only contradict it
     # os.kill(pid, 0) accepts a ZOMBIE: an exited child nobody reaped keeps its pid,
     # so the monitor waits forever on a finished run (harness.py:6418 documents the
@@ -10342,6 +10350,14 @@ while True:
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
             "--result", result, "--finding", finding,
             "--decision", "check the log", "--status", status], capture_output=True)
+        # RELEASE THE CARDS HERE, beside the row that records the death. cmd_launch cannot:
+        # it returns while the job is still running, so releasing there would free a card
+        # under a live job. The monitor is the only thing that outlives the job and sees it
+        # end, and a claim nobody releases is the ORPHAN-SHELL state one step on -- a card
+        # that reads held forever, which is what made `card_claim.py status` report all
+        # eight pod cards as orphans (de-30/de-34).
+        subprocess.run([sys.executable, os.path.join(os.path.dirname(exp_py), "card_claim.py"),
+                        "release", "--name", name], capture_output=True)
         break
     grew = False
     for p in ([log] + ([output] if output else [])):
@@ -10432,6 +10448,46 @@ def _derive_gate_timeout(cmd, cache_dir=None):
     if missing:
         note += f" (not yet tokenized: {', '.join(missing[:3])})"
     return secs, note
+
+
+def _job_pids_for(pid):
+    """[pid] of the python/torchrun processes under pid, via card_claim's ppid walk.
+
+    Imported rather than reimplemented: card_claim owns the "is this a shell" and "is this the
+    job" predicates, and a second copy is a second thing to keep right (de-34's argv0-vs-substring
+    distinction is exactly the kind that drifts).
+    """
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return []
+    try:
+        return [p for p, _a in card_claim._job_descendants(pid)]
+    except Exception:  # noqa: BLE001 -- a claim helper must never take the launch down
+        return []
+
+
+def _acquire_cards(name, cards, pid, note):
+    """(ok, message). Claim `cards` for `name` on behalf of `pid`."""
+    r = subprocess.run(
+        [sys.executable, os.path.join(HERE, "card_claim.py"), "acquire",
+         "--name", name, "--cards", cards, "--pid", str(pid), "--note", note],
+        capture_output=True, text=True,
+    )
+    return r.returncode == 0, (r.stdout + r.stderr).strip()
+
+
+def _release_cards(name):
+    """Release `name`'s claim. Never raises -- a stuck claim is reported by status, and a
+    release that crashes the caller would leave the job unsupervised."""
+    if not name:
+        return
+    try:
+        subprocess.run([sys.executable, os.path.join(HERE, "card_claim.py"), "release",
+                        "--name", name], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def cmd_launch(rest):
@@ -10607,6 +10663,31 @@ def cmd_launch(rest):
     with open(pid_path, "w") as f:
         f.write(f"{proc.pid}\n{' '.join(cmd)}\n")
 
+    # DECLARE THE CARDS. de-30: card_claim.py existed and harness launch -- the documented way
+    # to start any GPU job -- never called it, so `card_claim.py status` on the pod reported all
+    # eight cards ORPHAN. Ownership was inferred from nvidia-smi instead of declared, and on
+    # 2026-09-02 two probes shared cards twice and OOM'd each other.
+    #
+    # WHICH PID. Not proc.pid: that is `bash -c 'set -o pipefail; "$@"; ...'`, a shell by
+    # construction, and card_claim refuses a shell because a claim on one fails both ways (de-34,
+    # measured 2026-09-03 on both of tonight's incidents). The claim must name the process that
+    # dies WITH the job, so acquire on the job descendant. Measured on harness's own wrapper
+    # shape: the descendant exists by the time Popen returns, both for a python payload and for a
+    # shell script that execs one, as run_ddp.sh does. If it has not appeared yet -- a slow
+    # interpreter start -- claim nothing and say so rather than claim the wrapper.
+    claim_name = None
+    if cards and not args.no_gpu:
+        job_pids = _job_pids_for(proc.pid)
+        if job_pids:
+            ok_claim, claim_msg = _acquire_cards(args.name, cards, job_pids[0], f"harness launch {args.name}")
+            if ok_claim:
+                claim_name = args.name
+            else:
+                print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+        else:
+            print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
+                  f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
+
     # 4. Training jobs: verify the startup gate line
     if args.training:
         ok, reason = _wait_for_startup(log_path, args.gate_timeout)
@@ -10629,6 +10710,7 @@ def cmd_launch(rest):
                 capture_output=True,
             )
             print(f"FAILED: {args.name} killed — {reason}", file=sys.stderr)
+            _release_cards(claim_name)
             return 1
 
     # 5. Arm monitor

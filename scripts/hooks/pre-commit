@@ -604,6 +604,10 @@ def main():
         # a hook change -- .git/hooks/pre-commit resolves to MAIN's copy -- so this file is how
         # a branch-side hook edit gets checked at all. ~10s.
         "scripts/test_ledger_hook.py",
+        # de-30: harness launch declares its cards. The half that fails silently is the RELEASE
+        # -- a claim nobody releases makes a card read held forever, which looks exactly like the
+        # state the wiring was meant to fix. Spawns short-lived local processes, no cards, ~25s.
+        "scripts/test_launch_claims.py",
         # The predicate's home, and the history scan built on it. Its selftest asserts the two
         # known cases -- a59ac1f flagged (a plain commit that reverted an amendment whose key is
         # SHARED with the rows it amends, so merges-only, default history simplification, and

@@ -1096,6 +1096,74 @@ def selftest():
             print("  checked: skip-one refuses the v1 wrong-objective pair (2.7663 < 7.2494) "
                   "and is wired to return 1")
 
+    # 8d. score_skip_one MUST SCORE DIFFERENT PAIRS THAN score(), on a fixture built to be
+    #     good at exactly ONE objective. Cases 8/8c check the DECISION from numbers I typed
+    #     in; this one checks the two scorers actually disagree when they should, which is
+    #     the part that would break if a slice were wrong.
+    #
+    #     MY FIRST FIXTURE HERE WAS BLIND, third time tonight for this shape. It was the
+    #     Ramp from case 4 -- logits peaking at id (t % V) -- and it gave next-token and
+    #     skip-one the IDENTICAL loss (25.101244 both). Not because the code was wrong: the
+    #     two scorers really do score different (position, target) pairs, but the ramp's peak
+    #     missed EVERY target by a constant, so both objectives read the same number. A
+    #     fixture whose error is uniform across positions cannot tell two alignments apart,
+    #     exactly as a constant-logit model cannot tell a row-mean from a token-sum (case 4).
+    #     What works is a model built FROM THE ROW to be right for one objective only.
+    #
+    #     It also settles the token counts: both objectives supervise 7 tokens here, and that
+    #     is correct -- shifting the label window one further drops a PROMPT -100, not a
+    #     supervised token. Equal counts are not evidence of a wrong slice.
+    p_ids, c_ids = [1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11, 12]
+    row = p_ids + c_ids
+    Vf = 17
+
+    class _Peak(torch.nn.Module):
+        """Peaks on the token `off` positions ahead, so it is good at exactly that objective."""
+
+        def __init__(self, off):
+            super().__init__()
+            self.map = {t: row[t + off] for t in range(len(row) - off)}
+
+        def forward(self, x):
+            o = torch.zeros(x.shape[0], x.shape[1], Vf)
+            for t in range(x.shape[1]):
+                if t in self.map:
+                    o[:, t, self.map[t]] = 8.0
+            return o
+
+    kept_f = [(1, p_ids, c_ids)]
+    n_before = len(fails)
+    for off, label, want_refuse in ((1, "good at next-token", False),
+                                    (2, "good at skip-one", True)):
+        m_f = _Peak(off)
+        # Wrapped: dropping the extra shift makes logits and targets differ in length, so
+        # score_skip_one raises a ValueError instead of returning a wrong number. Red either
+        # way, but an unhandled raise aborts the selftest with a traceback that names a shape,
+        # not the defect -- and prints no "SELFTEST FAIL", so grepping for that string over a
+        # mutation's output shows nothing and reads as "the mutation survived".
+        try:
+            nx_l, nx_t = score(m_f, "ours", kept_f, "cpu", 1, 0)
+            sk_l, sk_t = score_skip_one(m_f, "ours", kept_f, "cpu", 1, 0)
+        except Exception as e:  # noqa: BLE001 -- any raise here is the defect
+            fails.append(f"scoring a model {label} raised {type(e).__name__}: {e} -- "
+                         f"score_skip_one's slices are inconsistent (logits over x[:, :-2] "
+                         f"must be paired with y[:, 2:])")
+            continue
+        got = (sk_l / sk_t) < (nx_l / nx_t)
+        if got != want_refuse:
+            fails.append(f"a model {label} was {'not ' if want_refuse else ''}refused: "
+                         f"next={nx_l/nx_t:.4f} skip={sk_l/sk_t:.4f} per token -- the two "
+                         f"scorers are not reading different positions")
+        if abs(nx_l / nx_t - sk_l / sk_t) < 1e-6:
+            fails.append(f"a model {label} scores IDENTICALLY under both objectives "
+                         f"({nx_l/nx_t:.6f}) -- this fixture is blind, like the Ramp that "
+                         f"gave 25.101244 for both")
+    # NOT for/else: that runs whenever the loop is not `break`-ed, so it printed the success
+    # line even when the cases above had just appended failures. Gate on the count instead.
+    if len(fails) == n_before:
+        print("  checked: skip-one and next-token disagree on models built for one objective "
+              "(refuse only for the skip-one model)")
+
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
     if fails:
