@@ -208,11 +208,18 @@ def render(rows):
             status = json.load(fh)
         h = status.get("headline")
         if h:
-            pct = round(100 * h["step"] / h["total"])
+            if h.get("paused"):
+                big = (f'{html.escape(h["run"])}：停窗口中，最新 ckpt '
+                       f'{html.escape(h["ckpt"])}（step {h["step"]}/{h["total"]}）')
+            else:
+                pct = round(100 * h["step"] / h["total"])
+                big = (f'{html.escape(h["run"])}：step {h["step"]}/{h["total"]}（{pct}%）'
+                       f' · loss {h["loss"]} · {html.escape(h["tps"])} tok/s/gpu'
+                       f' · ETA {html.escape(h["eta"])} · 最新 ckpt {html.escape(h["ckpt"])}')
             parts.append('<div class=head>')
-            parts.append(f'<div class=bi>{html.escape(h["run"])}：step {h["step"]}/{h["total"]}（{pct}%）'
-                         f' · loss {h["loss"]} · {html.escape(h["tps"])} tok/s/gpu'
-                         f' · ETA {html.escape(h["eta"])} · 最新 ckpt {html.escape(h["ckpt"])}</div>')
+            parts.append(f'<div class=bi>{big}</div>')
+            if h.get("stop"):
+                parts.append(f'<div class=su style="color:#7c5cff">{html.escape(h["stop"])}</div>')
             parts.append(f'<div class=su>截至 {bj_str(h["asof"])} (+0800)，来自 pod 训练日志</div></div>')
         cards = status.get("cards", [])
         if cards:
