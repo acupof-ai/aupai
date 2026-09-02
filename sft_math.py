@@ -10,8 +10,10 @@ import os
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 import argparse
+import json
 import math
 import re
+import sys
 import time
 
 import torch
@@ -69,6 +71,12 @@ def main():
         help=argparse.SUPPRESS,  # deprecated spelling, one version only
     )
     parser.add_argument("--max_steps", type=int, default=None)
+    parser.add_argument("--stop_after", type=int, default=None,
+                        help="stop after N steps WITHOUT shortening the schedule. --max_steps "
+                             "also feeds total_steps (line below), and lr_mult reads total: "
+                             "--max_steps 40 moves warmdown's start from step 359 to step 14 "
+                             "and puts the lr at 5%% by step 40, so it does NOT give you the "
+                             "first N steps of the full run. Use this to reproduce a prefix.")
     parser.add_argument(
         "--out",
         default=os.path.join(ROOT, "ckpt_sft_math.pt"),
@@ -81,12 +89,19 @@ def main():
         "train.py started recording it (print it with scripts/ckpt_info.py)",
     )
     args = parser.parse_args()
+    if args.stop_after and args.max_steps:
+        parser.error("--stop_after and --max_steps together are ambiguous: --max_steps also "
+                     "shortens total_steps (and therefore the LR schedule) while --stop_after "
+                     "does not. Pass exactly one.")
 
     ck = torch.load(args.resume, map_location="cpu", weights_only=False)
     for k, v in ck.get("cfg", {}).items():
         setattr(Cfg, k, v)
     Cfg.batch = args.batch
     Cfg.epochs = args.epochs
+    # Before ANY save: SAVE_INTERVAL writes .stepN checkpoints mid-run, and an interrupted
+    # run's last .stepN is precisely the file someone has to identify later.
+    Cfg.lr_scale = args.lr_scale
     # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
     if args.no_grad_ckpt:
         print("WARNING --no_grad_ckpt is deprecated; use --no-grad_ckpt (hyphen), the "
@@ -195,6 +210,31 @@ def main():
     total_steps = Cfg.epochs * (len(X) // Cfg.batch)
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)
+    # --stop_after ends the run without touching total_steps, so the LR schedule is the one
+    # the full run would have had. --max_steps keeps its old meaning (shorten BOTH), because
+    # runs in flight pass it. _stop is whichever bound applies; the two are refused up at
+    # parse time, not here, so a contradictory launch dies before loading 1.6 GB.
+    _stop = args.stop_after or args.max_steps
+    # THE RUN'S OWN RECORD OF WHAT IT WAS ASKED TO DO. lr_scale never reaches Cfg -- train.py
+    # :848 applies it inside set_schedule as initial_lr * lr_scale * m -- so it reached no log
+    # and no checkpoint, and ckpt_control_ours.pt's scale is now unrecoverable: not in its cfg,
+    # not in runs/control_ours.log, not in the launch log. That checkpoint's held-out loss is
+    # the divisor of every number in docs/audits/control_pythia160m_vs_ours.md, and "the
+    # argparse default was 0.1" is not evidence of what ran. Printing the ARGV and the REALISED
+    # per-group lr costs two lines and makes the question answerable from the log alone.
+    if is_main:
+        runlog("argv " + json.dumps(sys.argv[1:]))
+        runlog(f"lr_scale {args.lr_scale} total_steps {total_steps} stop_after {args.stop_after} "
+               f"batch {Cfg.batch} epochs {Cfg.epochs} seed {Cfg.seed}")
+        set_schedule(optimizers, 0, total_steps, Cfg, args.lr_scale)
+        for opt in optimizers:
+            for gi, g in enumerate(opt.param_groups):
+                # The realised lr at step 0, not the configured base: a reader can multiply
+                # initial_lr by a scale themselves, but only the process knows which groups
+                # exist and which optimizer owns them.
+                runlog(f"  lr[{type(opt).__name__}:{gi}] initial {g['initial_lr']:.3g} "
+                       f"-> step0 {g['lr']:.3g}")
+
     step = 0
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
@@ -241,7 +281,7 @@ def main():
                 for opt in optimizers:
                     opt.zero_grad(set_to_none=True)
                 step += 1
-                if args.max_steps and step >= args.max_steps:
+                if _stop and step >= _stop:
                     break
                 continue
 
@@ -264,9 +304,9 @@ def main():
                 runlog(f"step {step}/{total_steps} loss {last:.3f} "
                        f"{time.time() - t0:.0f}s/{LOG_INTERVAL}steps")
                 t0 = time.time()
-            if args.max_steps and step >= args.max_steps:
+            if _stop and step >= _stop:
                 break
-        if args.max_steps and step >= args.max_steps:
+        if _stop and step >= _stop:
             break
 
     if is_main:
