@@ -914,7 +914,8 @@ def _broken_agents_rules_covered():
     wrong check it carried until 2026-09-01 -- the exact defect 44 and 3b found.
 
     This breaks the TABLE half, which the old broken world (an unmapped bullet) never
-    exercised. The bullet half is covered by _broken_agents_rules_unmapped."""
+    exercised. The bullet half is covered by _broken_agents_rules_unmapped, which CHECKS
+    cannot hold (one broken() per row) and the selftest runs explicitly after the loop."""
     d = _tmp_repo()
     src = os.path.join(ROOT, "AGENTS.md")
     if not os.path.exists(src):
@@ -7902,6 +7903,24 @@ def _demo():
                             f"unimportable script ({_why[:60]})")
     finally:
         shutil.rmtree(_imp, ignore_errors=True)
+
+    # agents_rules_covered needs a SECOND world for the same structural reason: CHECKS
+    # carries one broken() per row, and its registered world breaks the TABLE half (a
+    # coverage row naming the wrong check). The BULLET half -- a rule mapped to neither a
+    # check nor a manual reason -- has its world written and never run, which is why the
+    # deletion audit read it as dead code. It is not: on that world the check FAILs with
+    # "1 rule(s) map to neither a check nor a manual reason", a defect the table world
+    # cannot produce. Measured before wiring, since a world nobody runs is indistinguishable
+    # from one that cannot fail.
+    _unm = _broken_agents_rules_unmapped()
+    if _unm:
+        try:
+            _st, _why = check_agents_rules_covered(_unm)
+            if _st != FAIL:
+                untested.append(f"agents_rules_covered reported {_st} on an unmapped rule "
+                                f"bullet ({_why[:60]})")
+        finally:
+            shutil.rmtree(_unm, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
