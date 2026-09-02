@@ -84,6 +84,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -197,7 +198,10 @@ def regressions(path, head_lines, index_lines, message=""):
     interleaved read-modify-write cycles but does NOT stop a STALE process from writing back
     state it read before someone else's update. Two writers that never overlap in time still
     lose a record if the second read early, and this audit cannot see it either -- the key
-    survives, the row is simply older.
+    survives, the row is simply older. The 22 duplicates b0-15 folded (3422731) were NOT this
+    blind spot: 21 were the 7464dc1 profile-field migration (byte-identical pairs, one row
+    without the field) and 1 a genuine re-score -- the axis was schema migration, not stale
+    writers.
     """
     pred = PREDICATE.get(path, subsume)
     kf = KEYS[path]
@@ -207,6 +211,25 @@ def regressions(path, head_lines, index_lines, message=""):
 
 def declared_rewrite(message):
     return REWRITE_MARKER in (message or "")
+
+
+def duplicates(path, index_lines):
+    """Keys with MORE THAN ONE row in the index blob -- the third predicate (b0-15).
+
+    subsume and key_present guard what LEAVES a ledger; this guards what DOUBLES. A matrix
+    that is 'the current state, not a history' with two rows per key has no defined current
+    state. write_records replaces same-key rows in-process, so duplicates enter via
+    cross-branch union merge, which the in-tree lock cannot see -- the guard has to run at
+    commit time on the index blob.
+    """
+    kf = KEYS[path]
+    counts = defaultdict(int)
+    for r in _rows(path, index_lines):
+        try:
+            counts[kf(r)] += 1
+        except (AttributeError, TypeError):
+            continue
+    return sorted(k for k, c in counts.items() if c > 1)
 
 
 def vanished_values(path, head_lines, index_lines):
@@ -373,6 +396,27 @@ def _selftest():
         fails.append("second-reading fixture regresses against itself")
     if not vanished_values(P, twokeys, kept_live):
         fails.append("vanished_values misses a finding that left the file entirely")
+
+    # 8. duplicates(): the third predicate. subsume/key_present guard what LEAVES; this
+    #    guards what DOUBLES. b0-15's 22 keys entered via cross-branch union merge.
+    #
+    #    READ THE INDEX, FALLING BACK TO HEAD -- not HEAD alone. During a merge HEAD is still the
+    #    PRE-merge commit, so an assertion about "the current file" reads a blob the merge is
+    #    about to replace, and the selftest refuses the very commit that fixes it. That happened
+    #    on the merge bringing 44's fold into a worktree whose HEAD predated it: the staged blob
+    #    was the folded 43-row file, HEAD was the 65-row one, and there is no way to advance HEAD
+    #    without committing the merge this assertion blocks. Same shape as pod_drift.py's
+    #    --write vs --write-index (AGENTS.md), one file over.
+    sm = _blob("", "runs/score_matrix.jsonl") or _blob("HEAD", "runs/score_matrix.jsonl")
+    if sm:
+        if duplicates("runs/score_matrix.jsonl", sm):
+            fails.append("HEAD's score_matrix.jsonl still has duplicate (ckpt, profile) keys "
+                         "-- the b0-15 fold regressed")
+    dup_world = (json.dumps({"ckpt": "c", "profile": "full", "measured": "m1"}) + "\n"
+                 + json.dumps({"ckpt": "c", "profile": "full", "measured": "m2"}) + "\n"
+                 + json.dumps({"ckpt": "d", "profile": "full", "measured": "m3"}) + "\n")
+    if duplicates("runs/score_matrix.jsonl", dup_world) != [("c", "full")]:
+        fails.append("duplicates() does not flag the one doubled key in a 3-row world")
 
     for f in fails:
         print(f"  FAIL {f}")
