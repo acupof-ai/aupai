@@ -47,6 +47,18 @@ E2E_SHAPE = ["--layers", E2E_LAYERS] if E2E_LAYERS else []
 # not asking. Set E2E_MIX=data/mix_500m.json to run the joins on the mix being launched.
 E2E_MIX = os.environ.get("E2E_MIX", "").strip()
 MIX = E2E_MIX or "data/mix_sample.json"
+# The recipe knobs train.py requires (ead2d2b) that this test was previously taking from Cfg
+# without naming them. NOT new choices and NOT recipe_provenance.json's values: read from Cfg
+# at 32a7a4a, the last commit before ead2d2b, and confirmed identical at HEAD, so the test's
+# behaviour is unchanged. --layers 12 in particular keeps the "real 12x1024 architecture" the
+# E2E_LAYERS comment above promises; recipe_provenance's 32 belongs to the 500M run and would
+# silently turn an 8-step smoke test into a 500M one. E2E_SHAPE is appended AFTER these, so
+# E2E_LAYERS still overrides the depth (argparse takes the last occurrence).
+E2E_RECIPE = [
+    "--dim", "1024", "--layers", "12", "--heads", "8", "--ffn_hidden", "3072",
+    "--accum", "1", "--lr_scale", "1.0", "--warmdown", "0.65", "--anneal_frac", "0.1",
+    "--no-grad_ckpt", "--save_every", "1000",
+]
 if not os.path.exists(os.path.join(ROOT, MIX)):
     raise SystemExit(f"E2E_MIX={MIX!r} does not exist. A missing mix is a refusal, not a "
                      f"fall back to the sample mix: falling back is how a sample-mix pass "
@@ -160,6 +172,7 @@ def main():
                 "512",
                 "--warmup",
                 "2",
+                *E2E_RECIPE,
                 *E2E_SHAPE,
             ]
         )
@@ -329,6 +342,7 @@ def main():
                 "512",
                 "--warmup",
                 "2",
+                *E2E_RECIPE,
                 *E2E_SHAPE,
             ],
             cwd=ROOT,

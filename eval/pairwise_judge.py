@@ -37,9 +37,10 @@ import sys
 VALID = {"A", "B", "tie"}
 
 # Pre-registered 2026-09-02 (protocol section 4): of the 20 mixed validation
-# pairs, the judge must take a side on at least 15. The 0.8 gate stops a judge
-# that judges wrong; this floor stops a judge that does not judge -- 2/20
-# sided with both right would otherwise pass with agreement 1.0.
+# pairs, the judge must take a side on at least 15. This floors n_validated
+# (mixed+gold pairs where the judge sided), not the agreement denominator --
+# if non-mixed rows enter the validation file, n_validated drops while the
+# denominator stays the sided count, so the floor fails closed.
 MIN_VALIDATED = 15
 
 
@@ -56,12 +57,14 @@ def verdict(order_ab, order_ba):
     return "abstain"
 
 
-def score(rows):
+def score(rows, min_validated=MIN_VALIDATED):
     """Returns (verdicts, report). verdicts: pair_id -> verdict. report: dict.
 
     Agreement is measured only on mixed pairs (test differences exist) where
     the judge took a side A/B. Ties and abstentions never enter the
     denominator -- a tie-everything judge must score nothing, not 1.0.
+    min_validated is injectable so the selftest can prove the floor is wired
+    into accepted (bump it past the passing world and it must go red).
     """
     verdicts = {}
     agree = disagree = abstained = ties = unknown = 0
@@ -95,7 +98,7 @@ def score(rows):
         "n_validated": n_validated,
         "n_production": n_production,
         "n_unknown_subgroup": unknown,
-        "accepted": (agree / judged >= 0.8 and n_validated >= MIN_VALIDATED) if judged else False,
+        "accepted": (agree / judged >= 0.8 and n_validated >= min_validated) if judged else False,
     }
 
 
@@ -138,6 +141,11 @@ def _selftest():
             "test_winner": "A", "subgroup": "mixed"} for i in range(4)]
     _, rep2 = score(ok)
     assert rep2["agreement"] == 0.8 and rep2["accepted"] is True, rep2
+    # Negative control (tilerl 2026-09-02): bump the floor past the passing
+    # world and it MUST go red -- proves the constant is wired into accepted,
+    # not just present in the file.
+    _, rep2b = score(ok, min_validated=21)
+    assert rep2b["accepted"] is False, rep2b
     # The participation hole (tilerl 2026-09-02): a judge that only sides on
     # 2/20 pairs, both right, must NOT pass -- agreement 1.0 means nothing
     # when the judge judged almost nothing.

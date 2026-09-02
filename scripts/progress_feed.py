@@ -183,6 +183,24 @@ def queue_section():
         out.append(f'<tr><td>{html.escape(m)}{tag}</td><td class={cls}>{open_cell}</td>'
                    f'<td>{oldest}</td><td>{closed}</td></tr>')
     out.append("</table>")
+    names = {m: [] for m in members}
+    for t in latest.values():
+        if t.get("state") == "open" and not (t.get("blocked_on") or "").strip() and t.get("owner") in names:
+            first = t.get("task", "")
+            if first.upper().startswith("LONG LINE:"):
+                first = first.split(":", 1)[1].strip()
+            cut = next((i for i, ch in enumerate(first[:40]) if ch in ":;,("), 0)
+            if cut:
+                first = first[:cut]
+            elif len(first) > 40:
+                first = first[:40].rsplit(" ", 1)[0]
+            names[t["owner"]].append(first.strip())
+    listed = [f"<tr><td>{html.escape(m)}</td><td>{html.escape('；'.join(names[m]))}</td></tr>"
+              for m in members if names[m]]
+    if listed:
+        out.append("<table><tr><th></th><th>open 任务</th></tr>")
+        out.extend(listed)
+        out.append("</table>")
     return "".join(out)
 
 
@@ -208,11 +226,18 @@ def render(rows):
             status = json.load(fh)
         h = status.get("headline")
         if h:
-            pct = round(100 * h["step"] / h["total"])
+            if h.get("paused"):
+                big = (f'{html.escape(h["run"])}：停窗口中，最新 ckpt '
+                       f'{html.escape(h["ckpt"])}（step {h["step"]}/{h["total"]}）')
+            else:
+                pct = round(100 * h["step"] / h["total"])
+                big = (f'{html.escape(h["run"])}：step {h["step"]}/{h["total"]}（{pct}%）'
+                       f' · loss {h["loss"]} · {html.escape(h["tps"])} tok/s/gpu'
+                       f' · ETA {html.escape(h["eta"])} · 最新 ckpt {html.escape(h["ckpt"])}')
             parts.append('<div class=head>')
-            parts.append(f'<div class=bi>{html.escape(h["run"])}：step {h["step"]}/{h["total"]}（{pct}%）'
-                         f' · loss {h["loss"]} · {html.escape(h["tps"])} tok/s/gpu'
-                         f' · ETA {html.escape(h["eta"])} · 最新 ckpt {html.escape(h["ckpt"])}</div>')
+            parts.append(f'<div class=bi>{big}</div>')
+            if h.get("stop"):
+                parts.append(f'<div class=su style="color:#7c5cff">{html.escape(h["stop"])}</div>')
             parts.append(f'<div class=su>截至 {bj_str(h["asof"])} (+0800)，来自 pod 训练日志</div></div>')
         cards = status.get("cards", [])
         if cards:

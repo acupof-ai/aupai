@@ -52,10 +52,21 @@ def main():
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr_scale", type=float, default=0.1, help="SFT LR = pretrain LR x scale")
     parser.add_argument("--no_fp8", action="store_true")
+    # Spelled --no-grad_ckpt (hyphen) to match train.py, whose BooleanOptionalAction
+    # generates that form (ead2d2b). Two entry points spelling the same switch differently
+    # is a trap a person walks into once per script; the underscore form is kept for one
+    # version and prints a deprecation so nothing in flight breaks silently.
+    parser.add_argument(
+        "--grad_ckpt",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="activation checkpointing; --no-grad_ckpt disables it "
+             "(FP8 backward goes NaN without it, so it defaults ON here)",
+    )
     parser.add_argument(
         "--no_grad_ckpt",
         action="store_true",
-        help="disable activation checkpointing (FP8 backward goes NaN without it)",
+        help=argparse.SUPPRESS,  # deprecated spelling, one version only
     )
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument(
@@ -77,7 +88,11 @@ def main():
     Cfg.batch = args.batch
     Cfg.epochs = args.epochs
     # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
-    Cfg.grad_ckpt = not args.no_grad_ckpt
+    if args.no_grad_ckpt:
+        print("WARNING --no_grad_ckpt is deprecated; use --no-grad_ckpt (hyphen), the "
+              "spelling train.py uses. Honoured this once.", flush=True)
+        args.grad_ckpt = False
+    Cfg.grad_ckpt = args.grad_ckpt
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")

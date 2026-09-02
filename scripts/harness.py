@@ -155,6 +155,7 @@ _RULE_CHECKS = {
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
+    "Check a launch line's shape against `facts/efficiency.json` before it reaches a card": "launch_line_vs_oom_facts",
     "setsid, not nohup": "no_foreground_pod_training",
     "CUDA_VISIBLE_DEVICES, not cuda:N": "device_set_honoured",
     "Push code via scripts/pod_push.sh <files>, never bare podput": "pod_drift",
@@ -214,6 +215,11 @@ _MANUAL_RULES = {
     "tn exec and ~/bin/pod are two different filesystem views":
         "a fact about the environment; the mistakes it prevents are interactive",
     "cd inside a backgrounded chain stays in it": "a shell fact; no artifact records the mistake",
+    "The pod is frozen from a training launch until that run prints its first step":
+        "the window is bounded by two events in different places -- a launch timestamp on the "
+        "pod and a push from a laptop -- and nothing records the second. pod_drift sees the "
+        "drift that results, which is the consequence; whether a push landed inside someone "
+        "else's startup window is not recoverable from any artifact",
     "Stage by path, never `git add -A`": "git history cannot show which command staged a commit",
     "Never run `git checkout` / `git restore` on a file you did not write":
         "no record of who wrote an uncommitted change",
@@ -301,7 +307,20 @@ _MANUAL_RULES = {
 #:      checkable half is on the instrument, not the operator -- ETA as a window mean, or
 #:      the per-interval overrun printed beside it -- and that edits train.py, frozen for
 #:      p500m_20b_0902. When that lands, this comes back to 31 or 30.
-_MANUAL_BASELINE = 32
+#: 32 -> 34 (de, 2026-09-02), and both are temporary for stated reasons, not new
+#: unenforceable ground:
+#:   "The pod is frozen from a training launch until that run prints its first step" is
+#:   manual by nature -- the window is bounded by a launch on the pod and a push from a
+#:   laptop, and nothing records the second, so no artifact can say whether a push landed
+#:   inside someone's startup window. This one does not come back down.
+#:   "Check a launch line's shape against facts/efficiency.json" is manual only until
+#:   44-20 lands. Both sides are static -- the launch line's (batch, accum, seq, layers)
+#:   and the fact store's config blocks -- so it is fully checkable; it just is not
+#:   written yet. When 44-20 lands this returns to 33.
+#: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
+#: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
+#: only until written, not manual by nature -- both sides are static.
+_MANUAL_BASELINE = 33
 
 
 def _norm_rule(text):
@@ -920,6 +939,125 @@ def _agents_coverage_table(root):
             continue
         rows[rule] = val
     return rows, None
+
+
+def check_shapes_table_covers_doc(root):
+    """Every § in the shapes doc appears exactly once in AGENTS.md's rule table, and every
+    row's count equals the §refs it lists.
+
+    The table is a hand-maintained compression of docs/lessons/gate_failure_shapes.md and
+    nothing read it: three sessions added shapes on 2026-09-02 and the numbering collided
+    twice (b0 and I both wrote §62, 44 and I both wrote §63), each caught only by a merge
+    conflict. A conflict catches a collision on the same LINE; it does not catch a shape
+    that never reaches the table, or a count that says 14 next to fifteen refs.
+
+    Same reason as agents_rules_covered one section up, and the same ceiling: this proves
+    a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
+    belongs to is a judgement only a person re-reading the pair can make.
+
+    §65's own subject, applied to §65: the table and the doc must agree, and until this
+    check existed nothing verified it."""
+    p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(p):
+        return FAIL, "docs/lessons/gate_failure_shapes.md missing"
+    doc = {int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)}
+    if not doc:
+        return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
+
+    a = os.path.join(root, "AGENTS.md")
+    if not os.path.exists(a):
+        return FAIL, "AGENTS.md missing"
+    # The compressed-rules table only: three columns, the third a run of §refs. Other
+    # AGENTS.md tables have two columns and cannot match.
+    rows = re.findall(r"^\|\s*(.+?)\s*\|\s*(\d+)\s*\|\s*((?:§\d+\s*)+)\|",
+                      open(a, encoding="utf-8").read(), re.M)
+    if not rows:
+        return FAIL, "no rule rows with §refs found in AGENTS.md -- the table was restructured"
+
+    seen, miscount = {}, []
+    for rule, n, refstr in rows:
+        refs = [int(x) for x in re.findall(r"§(\d+)", refstr)]
+        if len(refs) != int(n):
+            miscount.append(f"{rule[:32]}: says {n}, lists {len(refs)}")
+        for r in refs:
+            seen[r] = seen.get(r, 0) + 1
+
+    missing = sorted(doc - set(seen))
+    dangling = sorted(set(seen) - doc)
+    twice = sorted(k for k, v in seen.items() if v > 1)
+    problems = []
+    if missing:
+        problems.append(f"in the doc, in no rule: {['§%d' % m for m in missing]}")
+    if dangling:
+        problems.append(f"in the table, not in the doc: {['§%d' % d for d in dangling]}")
+    if twice:
+        problems.append(f"listed under more than one rule: {['§%d' % t for t in twice]}")
+    if miscount:
+        problems.append(f"count disagrees with refs: {miscount[:3]}")
+    if problems:
+        return FAIL, "; ".join(problems)
+    return PASS, (f"{len(doc)} shapes (max §{max(doc)}) each referenced exactly once across "
+                  f"{len(rows)} rules; every row's count matches")
+
+
+def _broken_shapes_table_covers_doc():
+    """The REAL AGENTS.md with one §ref deleted from a rule row, doc untouched.
+
+    fb's specified world (2026-09-02): a shape that reaches no rule. Note the row's own
+    count is left at its old value, so this breaks BOTH halves at once -- the coverage
+    half (that § is now in no rule) and the arithmetic half (the count now exceeds the
+    refs listed). Deleting the ref without touching the count is also what a hand edit
+    actually does.
+
+    The other direction -- a shape appended to the doc while the table stands still, which
+    is what happened twice on 2026-09-02 -- is _broken_shapes_table_doc_grew below. CHECKS
+    holds one broken() per row, so the selftest runs that one explicitly."""
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "AGENTS.md")
+    if not os.path.exists(src) or not os.path.exists(
+            os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    # Drop the LAST §ref of the first rule row that has more than one, so the row keeps a
+    # valid shape and only its coverage changes.
+    m = None
+    for cand in re.finditer(r"^\|\s*.+?\s*\|\s*\d+\s*\|\s*((?:§\d+\s*){2,})\|", text, re.M):
+        m = cand
+        break
+    if m is None:
+        raise SelftestSkip("no rule row with 2+ §refs; update _broken_shapes_table_covers_doc")
+    refs = m.group(1)
+    dropped = re.findall(r"§\d+", refs)[-1]
+    text = text[:m.start(1)] + re.sub(r"\s*" + dropped + r"\s*$", " ", refs) + text[m.end(1):]
+    open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
+    return d
+
+
+def _broken_shapes_table_doc_grew():
+    """The REAL docs with a new shape appended and the table left alone -- exactly what
+    happened twice on 2026-09-02, and what a merge conflict does not catch."""
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    if not nums:
+        raise SelftestSkip("no shape headings to extend; update _broken_shapes_table_doc_grew")
+    # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
+    # fixture to the REAL shapes doc. Replace the link with a real directory holding a
+    # real copy of the one file this world mutates.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
 
 
 def check_agents_rules_covered(root):
@@ -1659,6 +1797,90 @@ def _broken_mix():
     d = _tmp_repo({"total_tokens": 1e9, "domains": {"web": {"weight": 0.5}, "gone": {"weight": 0.5}}})
     os.makedirs(os.path.join(d, "data", "corpus", "web"))
     open(os.path.join(d, "data", "corpus", "web", "a.jsonl"), "w").write("{}\n")
+    return d
+
+
+def check_launch_line_vs_oom_facts(root):
+    """A launch line whose shape exactly matches a recorded OOM config is a refusal.
+    p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had
+    recorded that exact OOM (93.8/95.2 GB, ranks 3/6 first): the line had been checked
+    against argparse, not against the facts. Exact match on (dim, layers, batch, accum,
+    seq) only -- partial matches skip, no fuzzy matching. seq defaults to Cfg.seq
+    (train.py:187, 4096; launch lines carry no --seq flag). grad_ckpt and world are
+    printed in the FAIL message, never joined on: the fact store does not record them
+    consistently, and a guard that silently assumes equality invents data."""
+    key = ("dim", "layers", "batch", "accum", "seq")
+    oom = []
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            cfg = e.get("config")
+            if not isinstance(cfg, dict) or not all(k in cfg for k in key):
+                continue  # incomplete config blocks skip: no fuzzy matching
+            if "OOM" not in str(e.get("value", "")) + str(cfg.get("result", "")):
+                continue
+            oom.append((e.get("id", os.path.basename(fp)), cfg))
+    if not oom:
+        return FAIL, ("no OOM fact with a complete (dim, layers, batch, accum, seq) config "
+                      "block -- the facts side of this check is empty")
+    flag_re = re.compile(r"--(dim|layers|batch|accum)\s+(\d+)")
+    bad = []
+
+    def adjudicate(where, line):
+        if "run_ddp.sh" not in line:
+            return
+        flags = {k: int(v) for k, v in flag_re.findall(line)}
+        if not all(k in flags for k in ("dim", "layers", "batch", "accum")):
+            return  # partial launch line: skip, no fuzzy matching
+        flags.setdefault("seq", 4096)  # Cfg.seq, train.py:187
+        for fid, cfg in oom:
+            if all(flags[k] == cfg[k] for k in key):
+                grad = ("--no-grad_ckpt" if "--no-grad_ckpt" in line else
+                        "--grad_ckpt" if "--grad_ckpt" in line else "grad_ckpt unstated")
+                m = re.search(r"NGPU=(\d+)", line)
+                world = f"NGPU={m.group(1)}" if m else "world unstated"
+                fgrad = cfg["grad_ckpt"] if "grad_ckpt" in cfg else "fact did not record grad_ckpt"
+                fworld = f"cards={cfg['cards']}" if "cards" in cfg else "fact did not record world"
+                bad.append(f"{where} matches OOM fact {fid} on "
+                           f"dim/layers/batch/accum/seq={tuple(flags[k] for k in key)}; "
+                           f"launch {grad}, {world}; fact {fgrad}, {fworld}")
+
+    for doc in sorted(glob.glob(os.path.join(root, "docs", "lessons", "stop_window_*.md"))):
+        try:
+            lines = open(doc).read().splitlines()
+        except OSError:
+            continue
+        for ln, line in enumerate(lines, 1):
+            adjudicate(f"{os.path.basename(doc)}:{ln}", line)
+    exp = os.path.join(root, "runs", "experiments.jsonl")
+    if os.path.exists(exp):
+        for e in _exp_events(root) or []:
+            if e.get("status") == "running" and isinstance(e.get("cmd"), str):
+                adjudicate(f"experiments.jsonl running row {e.get('name')} ({e.get('started')})",
+                           e["cmd"])
+    if bad:
+        return FAIL, "; ".join(bad)
+    return PASS, f"{len(oom)} joinable OOM fact(s); no launch line or running row matches"
+
+
+def _broken_launch_line_oom():
+    """The real stop-window doc with the 200M line set back to --batch 32 --accum 1:
+    the exact shape eff.microbatch_32_oom records as OOM, and the shape p200m_4b_0902
+    launched twice on 2026-09-02. docs/ is a symlink in a shaped world, so it is copied
+    before the mutation -- writing through the link would write into the repo."""
+    import shutil
+    d = _tmp_repo_shaped()
+    os.remove(os.path.join(d, "docs"))
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    doc = os.path.join(d, "docs", "lessons", "stop_window_2026-09-02.md")
+    text = open(doc).read()
+    mutated = re.sub(r"(run_ddp\.sh[^\n]*?--batch )16( --accum )2\b",
+                     r"\g<1>32\g<2>1", text, count=1)
+    assert mutated != text, "broken world found no run_ddp.sh --batch 16 --accum 2 line to mutate"
+    open(doc, "w").write(mutated)
     return d
 
 
@@ -4231,20 +4453,23 @@ def _broken_fact_ref():
 DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
 
 
+@functools.lru_cache(maxsize=None)
+def _tracked_paths(root):
+    r = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+    return None if r.returncode else frozenset(r.stdout.split("\n"))
+
+
 def _cited_path_exists(root, tok):
     """A doc-cited data path that resolves. Gitignored artifacts (tokenizer.json, corpus
     bytes) are exempt -- absent from a clean checkout is their normal state; only a
     TRACKED path that is missing is rot. With no git (the pod), disk is the only truth."""
     if os.path.exists(os.path.join(root, tok)):
         return True
-    is_repo = (
-        subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root, capture_output=True).returncode
-        == 0
-    )
-    if not is_repo:
+    tracked = _tracked_paths(root)
+    if tracked is None:
         return False
-    r = subprocess.run(["git", "ls-files", "--error-unmatch", tok], cwd=root, capture_output=True, text=True)
-    return r.returncode != 0  # tracked-but-missing -> False; untracked (gitignored) -> True
+    prefix = tok.rstrip("/") + "/"
+    return tok not in tracked and not any(p.startswith(prefix) for p in tracked)
 
 
 def _doc_data_paths(root):
@@ -6365,6 +6590,13 @@ CHECKS = [
         _broken_mix,
     ),
     (
+        "launch_line_vs_oom_facts",
+        "no stop-window launch line or running experiments row matches a recorded OOM config on (dim, layers, batch, accum, seq)",
+        "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
+        check_launch_line_vs_oom_facts,
+        _broken_launch_line_oom,
+    ),
+    (
         "no_oversized_blob",
         f"no file over {MAX_TRACKED_MB}MB is tracked by git",
         "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
@@ -6678,6 +6910,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "shapes_table_covers_doc",
+        "every shape in the shapes doc is referenced exactly once in AGENTS.md's rule table",
+        "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
+        check_shapes_table_covers_doc,
+        _broken_shapes_table_covers_doc,
+    ),
+    (
         "timestamps_are_utc",
         "every timestamp written into the repo is UTC",
         "the Mac writes CST and the pod container writes UTC in the same format with no marker, so a pod row reads eight hours old the moment it lands and every ledger age comparison is wrong by up to eight hours (2026-09-01)",
@@ -6813,9 +7052,11 @@ EVIDENCE = {
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo",
+    "launch_line_vs_oom_facts": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
@@ -10731,6 +10972,8 @@ def cmd_install_hooks(rest):
 
 
 def main():
+    for _k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(_k)
     # Drop inherited GIT_* before anything runs. git sets GIT_DIR and GIT_INDEX_FILE for
     # its hooks, and a hook that runs a selftest passes them down: any `git init` in a
     # temp directory then RECONFIGURES the real repository, and `core.bare = true` on a

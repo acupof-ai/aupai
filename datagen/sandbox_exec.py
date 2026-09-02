@@ -23,6 +23,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 
 _SETUP = r"""set -e
@@ -115,7 +116,8 @@ DROP="setpriv --reuid 65534 --regid 65534 --clear-groups --no-new-privs"
 # belongs in the workdir; -C puts it there (2026-09-02).
 if [ "$#" -eq 0 ]; then
   exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
-    $DROP "$PY" -I /work/code.py
+    PYTHONPATH=/work PYTHONDONTWRITEBYTECODE=1 \
+    $DROP "$PY" $BOOT -I /work/code.py
 fi
 # NOT -I and NOT -E for the multi-file form. Both ignore PYTHONPATH, so the test
 # could not import the implementation beside it and `-m pytest` could not find
@@ -126,11 +128,12 @@ fi
 # clean environment, and PYTHONNOUSERSITE keeps ~/.local out.
 exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING=utf-8 \
   PYTHONPATH="/work:$SITE" PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
-  HOME=/work TMPDIR=/tmp $DROP "$PY" "$@"
+  HOME=/work TMPDIR=/tmp $DROP "$PY" $BOOT "$@"
 """
 
 
-def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=False):
+def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=False,
+                  seccomp=True):
     """Run code in the sandbox. Returns (rc, stdout, stderr_tail).
 
     code:   written to /work/code.py and executed. Pass None with `files`+`argv` to run
@@ -164,7 +167,32 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
             with open(os.path.join(root, "work", os.path.basename(name)), "w",
                       encoding="utf-8") as f:
                 f.write(text)
-        setup = _SETUP.replace('shift\n', 'shift\nSITE=""\n', 1)
+        # seccomp, when this host can install a filter. It goes here rather than in the
+        # shell because setpriv cannot load a BPF filter (no --seccomp option, MEASURED),
+        # and the filter must land AFTER the uid drop and INSIDE the chroot -- so a tiny
+        # bootstrap in /work installs it and execv's the real target. Absent seccomp the
+        # sandbox runs exactly as before: the namespaces and the chroot are the guarantee,
+        # this is depth. What it adds over the netns is AF_UNIX, socketpair and ptrace,
+        # none of which a network namespace blocks.
+        seccomp_ok = False
+        if seccomp:
+            sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                            "..", "algorithms"))
+            try:
+                import seccomp as _sec
+
+                ok, _why = _sec.available()
+                if ok:
+                    shutil.copy(_sec.__file__, os.path.join(root, "work", "seccomp.py"))
+                    with open(os.path.join(root, "work", "_boot.py"), "w",
+                              encoding="utf-8") as f:
+                        f.write(_sec.BOOTSTRAP)
+                    seccomp_ok = True
+            except ImportError:
+                pass
+        setup = _SETUP.replace('shift\n', 'shift\nSITE=""\nBOOT=""\n', 1)
+        if seccomp_ok:
+            setup = setup.replace('BOOT=""', 'BOOT="/work/_boot.py"')
         if site:
             # Read-only, and only when asked. Located rather than hardcoded: the path
             # differs between 3.11 and 3.12 and between distro and local installs.
@@ -233,7 +261,17 @@ def _self_check():
         ("import socket\nsocket.socket().connect(('1.1.1.1', 80))", 1, "", "network blocked"),
         ("print(open('/work/aupai/data/eval/code_holdout_500.jsonl').read()[:10])",
          1, "", "filesystem isolation (eval answers invisible)"),
-        ("import os\nprint(os.listdir('/work'))", 0, "code.py", "only the tmpfs workdir is visible"),
+        ("import os\nprint(sorted(os.listdir('/work')))", 0, "code.py",
+         "the workdir holds code.py plus the seccomp bootstrap when the filter is in force"),
+        # seccomp specifically, as opposed to the network namespace: AF_UNIX and socketpair
+        # are NOT blocked by a netns, so these two fail only because a filter denied the
+        # syscall. Without seccomp they succeed -- asserted from the other side in
+        # algorithms/seccomp.py --selftest, which runs them unfiltered first.
+        ("import socket\n"
+         "try:\n    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); print('REACHED unix')\n"
+         "except PermissionError:\n    print('blocked')\n"
+         "except OSError as e:\n    print('oserr', e.errno)\n",
+         0, "blocked", "AF_UNIX socket is denied (seccomp, not the netns)"),
         ("import sys\nprint(sys.stdin.read().strip())", 0, "hello", "stdin passthrough (example-based tests)"),
         # The uid drop, as an assertion rather than a claim in a comment. Everything below
         # depends on it: RLIMIT_NPROC is not enforced for uid 0, and root inside a chroot can

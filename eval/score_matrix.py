@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 import torch
 
@@ -522,10 +523,129 @@ def selftest():
     assertion is a case with a known right answer."""
     import tempfile
 
+    # _mix_for: the mix comes from the CHECKPOINT unless --mix was named. Worlds are real
+    # torch.save files, because the bug being guarded is a type assumption -- cfg is a dict on
+    # every real checkpoint, and a getattr-only read returns the fallback for all of them while
+    # looking like it consulted the checkpoint.
+    import torch
+    with tempfile.TemporaryDirectory() as _td:
+        _mixp = os.path.join(_td, "mix_probe.json")
+        with open(_mixp, "w", encoding="utf-8") as fh:
+            json.dump({"total_tokens": 1, "domains": {}}, fh)
+        _dictck = os.path.join(_td, "ckpt_dictcfg.pt")
+        torch.save({"cfg": {"mix": _mixp, "epochs": 1}, "model": {}}, _dictck)
+        _fb = os.path.join(ROOT, "data/mix_scale_3.24b.json")
+        assert _mix_for(_dictck, _fb) == _mixp, "a dict cfg's mix must be used"
+        assert _mix_for(_dictck, _fb, explicit=True) == _fb, "--mix must win when named"
+
+        # A cfg naming an absent mix falls back, and SAYS so -- silently scoring against the
+        # ladder's mix is how a record acquires a basis nobody chose.
+        _gonck = os.path.join(_td, "ckpt_goneMix.pt")
+        torch.save({"cfg": {"mix": "data/mix_that_does_not_exist.json", "epochs": 1},
+                    "model": {}}, _gonck)
+        assert _mix_for(_gonck, _fb) == _fb, "an absent mix must fall back"
+
+        # No mix in cfg at all: fall back rather than raise.
+        _nock = os.path.join(_td, "ckpt_noMix.pt")
+        torch.save({"cfg": {"epochs": 1}, "model": {}}, _nock)
+        assert _mix_for(_nock, _fb) == _fb, "a cfg without a mix must fall back"
+        # An unreadable checkpoint must not take down a scoring run.
+        assert _mix_for(os.path.join(_td, "nope.pt"), _fb) == _fb, "unreadable ckpt must fall back"
+
+    # A RAISING metric costs its own entry and nothing else. domain_loss raises through
+    # val_seqs -> cache_guard, which is designed to refuse; before this, that took score()'s
+    # whole record with it and threw away every metric already measured.
+    _rec = {"metrics": {}, "skipped": {}}
+    _metric("ok_one", lambda: ({"value": 1}, None), _rec)
+
+    def _boom():
+        raise RuntimeError("cache stamps disagree")
+
+    # The raise must be CAUGHT by _metric, not by this selftest. Letting it propagate here would
+    # also exit nonzero -- with the raw RuntimeError and no assertion named, which reads exactly
+    # like a guard firing. Twice today a bad world passed for that reason.
+    try:
+        _metric("raiser", _boom, _rec)
+    except Exception as _e:
+        raise AssertionError(
+            f"_metric let {type(_e).__name__} escape; score()'s per-checkpoint except then "
+            "discards every metric already measured for that checkpoint"
+        ) from _e
+    _metric("ok_two", lambda: ({"value": 2}, None), _rec)
+    assert _rec["metrics"]["ok_one"]["value"] == 1, _rec
+    assert _rec["metrics"]["ok_two"]["value"] == 2, "a raise must not stop later metrics"
+    assert "RuntimeError" in _rec["metrics"]["raiser"]["error"], _rec["metrics"]["raiser"]
+    # The traceback, not only the message: "domain_loss failed" is the same string whether the
+    # cause was cache_guard, a vocab mismatch or an unreadable shard. Presence asserted before
+    # indexing -- a bare _rec[...]["_traceback"] raises KeyError, which exits nonzero naming no
+    # assertion and reads like the guard firing. Third instance of that trap today.
+    assert "_traceback" in _rec["metrics"]["raiser"], \
+        f"a raised metric records no traceback, only {sorted(_rec['metrics']['raiser'])}"
+    assert any("_boom" in ln for ln in _rec["metrics"]["raiser"]["_traceback"]), \
+        _rec["metrics"]["raiser"]["_traceback"]
+    # An (None, err) return is still an error entry, not an exception -- the two paths must not
+    # have merged into one.
+    _metric("returner", lambda: (None, "no shards"), _rec)
+    assert _rec["metrics"]["returner"]["error"] == "no shards", _rec["metrics"]["returner"]
+    assert "_traceback" not in _rec["metrics"]["returner"], "a returned error has no traceback"
+
+    # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
+    # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.
+    # Asserted HERE because domain_loss.py's own --selftest requires a --ckpt, so the pre-commit
+    # hook lists it as unrunnable: a check living in that file would never execute. An AST read,
+    # not a substring, and it asserts the CLI CALLS _mix_for rather than that the name appears --
+    # an import with no call site is exactly what a copy-paste of this fix would leave behind.
+    import ast as _ast
+    _dl = os.path.join(HERE, "domain_loss.py")
+    with open(_dl, encoding="utf-8") as _fh:
+        _dl_src = _fh.read()
+    _dl_main = next((n for n in _ast.parse(_dl_src).body
+                     if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
+    _calls = {_ast.unparse(n.func) for n in _ast.walk(_dl_main) if isinstance(n, _ast.Call)} \
+        if _dl_main else set()
+    assert "_mix_for" in _calls, \
+        "domain_loss.py's CLI does not call _mix_for; it would score against the ladder mix"
+    # And the mix it hands to domain_files must be that result, not a.mix.
+    _files_args = [_ast.unparse(n.args[0]) for n in _ast.walk(_dl_main)
+                   if isinstance(n, _ast.Call) and _ast.unparse(n.func) == "domain_files"
+                   and n.args] if _dl_main else []
+    assert _files_args == ["mix_path"], \
+        f"domain_loss.py passes {_files_args} to domain_files, not the checkpoint's mix"
+
     # kind stamp wins over sft epochs; epochs>1 is sft; no stamp, no ledger row -> base
     assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
     assert classify({"epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "sft"
     assert classify({"epochs": 1}, "ckpt_selftest_no_such_row.pt") == "base"
+
+    # e1-22: a metric a checkpoint type cannot carry must reach `skipped`, never a score.
+    # THE DISPATCH ITSELF, not a copy of it. My first draft reimplemented the four lines
+    # inside this selftest and asserted on the reimplementation -- which stays green while
+    # score() regresses, because the two share no code. A second copy of the logic is a
+    # second thing to keep in step, and the defect being fixed here WAS two lists
+    # disagreeing. So `dispatch` is a module-level function that score() calls, and these
+    # assertions exercise the same object the real path does.
+    #
+    # --metrics code_500 on a base checkpoint: the case that put a ChatML zero into the
+    # ledger as measured. code_500 hands the model <|im_start|>user...assistant, absent
+    # from 168,000 sampled corpus rows (AGENTS.md:200).
+    w, un, sk = dispatch("base", ["code_500"])
+    assert w == [], f"code_500 must not be scored on a base checkpoint, got {w}"
+    assert un == ["code_500"], un
+    assert "code_500" in sk and "REQUESTED" in sk["code_500"], sk
+    # --profile milestone: one list run across every type on purpose. base keeps the two
+    # it can carry and the generative ones are skipped, so the same command works on base
+    # and sft and the record says which metrics each could actually carry.
+    w, un, sk = dispatch("base", PROFILES["milestone"])
+    assert w == ["domain_loss"], f"base milestone should keep only domain_loss, got {w}"
+    assert {"mc_full", "math_500", "code_500", "code_500_v2"} <= set(sk), sk
+    # ...and an sft checkpoint carries the whole milestone list, or this check would be
+    # passing by refusing everything.
+    w, un, sk = dispatch("sft", PROFILES["milestone"])
+    assert w == PROFILES["milestone"], f"sft must carry the full milestone list, got {w}"
+    assert un == [], un
+    # The default path is untouched: no --metrics means APPLIES[kind], all applicable.
+    w, un, _ = dispatch("base", APPLIES["base"])
+    assert w == APPLIES["base"] and un == [], (w, un)
     # the ledger join is the only RL signal: rlvr in the producing command
     with tempfile.TemporaryDirectory() as d:
         log = os.path.join(d, "experiments.jsonl")
@@ -617,10 +737,33 @@ def selftest():
 def _metric(name, fn, record, *args, **kwargs):
     """Run a metric, print start/result, store it. Real-time output so a 2h
     silent run doesn't look dead. Wall time recorded so a milestone profile
-    has a measured budget, not a guess."""
+    has a measured budget, not a guess.
+
+    ONE metric raising takes down ONE metric. Every metric_* returns (value, error) and the
+    convention held until one of them raised instead -- domain_loss does, through
+    val_seqs -> cache_guard, which is designed to refuse. That propagated to score()'s caller,
+    where the per-checkpoint except discarded the record whole: the four metrics already
+    measured, minutes of card time, and the checkpoint's row in the ledger, thrown away by a
+    metric that was never going to work on that checkpoint. A partial record is the useful
+    artifact -- the point of `metrics` and `skipped` being separate keys is that a record says
+    what it could and could not carry (44, reviewing 3415e9e).
+
+    The traceback goes into the record, not just the message: an eval that fails inside a
+    dependency (cache_guard, a tokenizer mismatch, a shard read) is diagnosed by where, and the
+    message alone reads as "domain_loss failed" for every one of those causes.
+    """
     print(f"  {name:15s} ... running", flush=True)
     t0 = time.time()
-    v, err = fn(*args, **kwargs)
+    try:
+        v, err = fn(*args, **kwargs)
+    except Exception as e:
+        elapsed = round(time.time() - t0, 1)
+        v, err = None, f"{type(e).__name__}: {' '.join(str(e).split())}"
+        record["metrics"][name] = {"error": err, "_wall_s": elapsed,
+                                  "_traceback": traceback.format_exc().splitlines()[-6:]}
+        print(f"  {name:15s} RAISED: {err} ({elapsed}s) -- the other metrics continue",
+              flush=True)
+        return
     elapsed = round(time.time() - t0, 1)
     entry = v if v else {"error": err}
     if isinstance(entry, dict):
@@ -668,15 +811,97 @@ def _pick_card():
     return f"cuda:{best}"
 
 
+def dispatch(kind, requested):
+    """(metrics to score, metrics asked for but impossible, skipped -> reason).
+
+    ONE place decides what a checkpoint type can carry, because the defect this replaces
+    was two lists disagreeing: score() validated a requested metric name against the
+    UNION of all three types (every real name passes) and never against APPLIES[kind], so
+    `--metrics code_500` and `--profile milestone` routed a base checkpoint into the three
+    generative ChatML metrics. Worse, the skip bookkeeping keyed on the requested list, so
+    such a metric was missing from `skipped` -- it had been scored, and its zero entered
+    the ledger as measured. A base checkpoint reads zero on those because the prompt hands
+    it <|im_start|>user...<|im_start|>assistant, a prefix occurring 0 times in 168,000
+    sampled corpus rows (AGENTS.md:200); score_code_exec.py:9-31 measured 1.6% of
+    generations carrying a code fence under ChatML against 94.4% under 1-shot continuation
+    on the same checkpoint family. That zero is a format artifact, not a capability.
+
+    Skipped, never raised: `--profile milestone` is deliberately one list run across every
+    type, and the record is supposed to say which metrics each type could carry.
+
+    A module-level function rather than inline code, so selftest() can exercise the REAL
+    dispatch. My first draft reimplemented these lines inside the selftest and asserted on
+    the copy, which stays green while this regresses -- the exact shape of the bug above.
+    """
+    wanted = [m for m in requested if m in APPLIES[kind]]
+    unusable = [m for m in requested if m not in APPLIES[kind]]
+    skipped = {m: r for m, r in SKIP_REASON.items() if m not in APPLIES[kind]}
+    for m in unusable:
+        skipped[m] = (f"REQUESTED but does not apply to a {kind} checkpoint -- "
+                      + SKIP_REASON.get(m, f"{kind} accepts {APPLIES[kind]}"))
+    return wanted, unusable, skipped
+
+
+def _mix_for(ckpt_path, fallback, explicit=False):
+    """The mix this CHECKPOINT was trained on, from its own cfg. --mix wins when named.
+
+    The mix is a property of the checkpoint, not of the invocation. --mix defaulted to the
+    ladder's mix_scale_3.24b.json, so scoring a non-ladder checkpoint read domain rows for
+    domains it never trained on and cache_guard refused -- correctly, since the seqs
+    fingerprint belongs to another corpus. run_ddp.sh's end-of-run scoring passes no --mix at
+    all, so EVERY non-ladder run would fail its own automatic scoring and exit nonzero with a
+    good checkpoint (fb hit this on p500m step2500 and again on p200m_4b_0902, 2026-09-02).
+
+    cfg is a DICT on every real checkpoint -- verified on ckpt_p200m_4b_0902.pt.step500:
+    type dict, cfg['mix'] = 'data/mix_200m_4b.json'. A getattr-only read would return the
+    fallback for all of them while looking like it consulted the checkpoint.
+    """
+    if explicit:
+        return fallback
+    try:
+        cfg, _ = read_cfg(ckpt_path)
+    except Exception:
+        return fallback
+    mix = cfg.get("mix") if isinstance(cfg, dict) else getattr(cfg, "mix", None)
+    if not mix:
+        return fallback
+    p = mix if os.path.isabs(mix) else os.path.join(ROOT, mix)
+    # A cfg naming a mix that is gone must not silently score against the ladder's: say so and
+    # fall back, so the record's basis is visible in the log rather than inferred.
+    if not os.path.exists(p):
+        print(f"note: {os.path.basename(ckpt_path)} names mix {mix!r}, which is absent here; "
+              f"falling back to {os.path.basename(fallback)}", flush=True)
+        return fallback
+    return p
+
+
 def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
-    wanted = metrics if metrics else APPLIES[kind]
+    requested = metrics if metrics else APPLIES[kind]
     known = set().union(*APPLIES.values())
-    bad = [m for m in wanted if m not in known]
+    bad = [m for m in requested if m not in known]
     if bad:
         raise ValueError(f"unknown metrics {bad}; choose from {sorted(known)}")
+    # APPLICABILITY, not just name validity. The check above asks whether a metric name
+    # exists ANYWHERE (the union of all three types), which every real metric name
+    # passes -- so `--metrics code_500` and `--profile milestone` (domain_loss, mc_full,
+    # math_500, code_500, code_500_v2) routed a BASE checkpoint into the three generative
+    # ChatML metrics. Those hand the model <|im_start|>user...<|im_start|>assistant, a
+    # prefix that occurs 0 times in 168,000 sampled corpus rows (AGENTS.md:200), so the
+    # zero they produce measures response to an unseen prefix rather than capability
+    # (score_code_exec.py:9-31: 1.6% of generations carry a fence under ChatML against
+    # 94.4% under 1-shot continuation, same checkpoint family).
+    #
+    # An inapplicable metric goes to `skipped` with its reason -- NOT raised, and not
+    # scored. That is this file's own contract eleven lines into the docstring: "an
+    # inapplicable 0 and a measured 0 must look different in the ledger". Raising would
+    # satisfy the letter of it by refusing to write either, but it also breaks
+    # `--profile milestone`, which is one list deliberately run across every checkpoint
+    # type; the profile's whole purpose is that the same command works on base and sft
+    # and the record says which metrics each could carry.
+    wanted, unusable, preskipped = dispatch(kind, requested)
     print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
     record = {
         "ckpt": ckpt_name,
@@ -753,9 +978,11 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
                           os.path.join(ROOT, f"data/eval/hard_{ckpt_name}.jsonl"), 0.8, greedy=False,
                           after="pass_at_k")
 
-    for m, reason in SKIP_REASON.items():
-        if m not in wanted:
-            record["skipped"][m] = reason
+    # dispatch() already decided this, keyed on APPLIES[kind] rather than on `wanted`.
+    # Keying on wanted meant an EXPLICITLY requested inapplicable metric was absent from
+    # `skipped` -- it had been scored, so its ChatML-induced 0 entered the ledger as a
+    # measured value, which is what the docstring above forbids.
+    record["skipped"].update(preskipped)
     return record
 
 
@@ -778,6 +1005,10 @@ def main():
         return
     if not a.ckpt:
         ap.error("--ckpt is required")
+    # Whether the caller NAMED a mix, not whether a.mix is set -- argparse fills the default
+    # in either case, so `a.mix != default` cannot tell an explicit `--mix <the default>` from
+    # a silent fallback. sys.argv is the only place that distinction survives.
+    mix_given = any(x == "--mix" or x.startswith("--mix=") for x in sys.argv[1:])
 
     metrics = PROFILES[a.profile] if a.profile else a.metrics
 
@@ -786,7 +1017,8 @@ def main():
     failed = []
     for ck in a.ckpt:
         try:
-            rec = score(ck, a.mix, a.tokenizer, device, a.ngpu, metrics, a.profile or "full")
+            rec = score(ck, _mix_for(ck, a.mix, explicit=mix_given), a.tokenizer, device,
+                        a.ngpu, metrics, a.profile or "full")
         except Exception as e:
             # "SKIPPED (OutOfMemoryError: ...)" read as "the checkpoint OOMed when
             # saving", which would be a large conclusion -- training fits but writing
