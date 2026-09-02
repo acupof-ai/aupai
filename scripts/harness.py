@@ -3354,7 +3354,7 @@ def check_tasks_closed_by_commit(root):
         if not sha:
             bad.append(f"{t['id']}: closed with no commit")
             continue
-        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"])
+        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"], t.get("closed"))
         if why:
             bad.append(f"{t['id']}: {why}")
     if bad:
@@ -5061,19 +5061,48 @@ def _write_tasks(rows, path=None):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
-def _commit_named_for(tid, root=None):
-    """A commit on main whose subject names this task id, if one exists.
+def _main_when(root=None):
+    """{full sha: commit time 'YYYY-MM-DD HH:MM'} for every commit on main, one git call.
 
-    Touching a path in evidence does not identify a delivery: two commits touch
-    scripts/launch_gate.py and only one of them is e1-4. Closing by path alone put
-    the wrong sha on two of e1's rows while both passed the check (2026-09-01)."""
-    r = subprocess.run(["git", "-C", root or ROOT, "log", "main", "--format=%H %s",
-                        "--grep", rf"\b{re.escape(tid)}\b", "-E", "-1"],
-                       capture_output=True, text=True)
-    return r.stdout.split(" ", 1)[0] if r.stdout.strip() else ""
+    Replaces the rule "a commit naming the task id in its subject beats the cited one":
+    reviews and register commits name task ids too, and a delivery spans several commits,
+    so that rule failed 9 of 31 honest rows the first time it actually ran (2026-09-02).
+    What the incident behind it needed is the time check in _commit_delivers: a commit
+    cited on a row must have existed when the row closed. Applied to rows closed from
+    2026-09-02, the day the register's timestamps became UTC; earlier rows are local time
+    and cannot be compared to a commit date."""
+    root = root or ROOT
+    if root not in _MAIN_WHEN:
+        r = subprocess.run(["git", "-C", root, "log", "main", "--format=%H %cd", "--date=format-local:%Y-%m-%d %H:%M"],
+                           capture_output=True, text=True, env={**os.environ, "TZ": "UTC"})
+        _MAIN_WHEN[root] = dict(ln.split(" ", 1) for ln in r.stdout.splitlines() if " " in ln)
+    return _MAIN_WHEN[root]
 
 
-def _commit_delivers(sha, evidence, root=None, tid=None):
+_MAIN_WHEN = {}
+
+
+_MAIN_TOUCHED = {}
+
+
+def _main_touched(root):
+    """{full sha: [paths touched]} for every commit reachable from main, one git call.
+
+    The per-task form ran cat-file, merge-base and show for each closed task: 32 tasks
+    were 96 subprocesses and 4.9 s alone, over the 5 s deadline under hook contention,
+    so the check timed out three times running and became a permanent red (2026-09-02)."""
+    if root not in _MAIN_TOUCHED:
+        r = subprocess.run(["git", "-C", root, "log", "main", "--name-only", "--format=%x00%H"],
+                           capture_output=True, text=True)
+        out = {}
+        for block in r.stdout.split("\x00")[1:]:
+            lines = block.split("\n")
+            out[lines[0].strip()] = [p for p in lines[1:] if p.strip()]
+        _MAIN_TOUCHED[root] = out
+    return _MAIN_TOUCHED[root]
+
+
+def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
     """Empty string if sha reaches main and its diff touches a path named in evidence.
 
     The register's evidence field was free text: a path that never existed closed a
@@ -5083,15 +5112,14 @@ def _commit_delivers(sha, evidence, root=None, tid=None):
     is the truth)."""
     root = root or ROOT
     g = ["git", "-C", root]
-    if subprocess.run(g + ["cat-file", "-e", f"{sha}^{{commit}}"],
-                      capture_output=True).returncode != 0:
+    main_log = _main_touched(root)
+    full = subprocess.run(g + ["rev-parse", "--verify", "-q", f"{sha}^{{commit}}"],
+                          capture_output=True, text=True).stdout.strip()
+    if not full:
         return f"{sha} is not a commit in this repo"
-    if subprocess.run(g + ["merge-base", "--is-ancestor", sha, "main"],
-                      capture_output=True).returncode != 0:
+    if full not in main_log:
         return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
-    r = subprocess.run(g + ["show", "--name-only", "--format=", sha],
-                       capture_output=True, text=True)
-    touched = [p for p in r.stdout.split("\n") if p.strip()]
+    touched = main_log[full]
     paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
              if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
     if not paths:
@@ -5099,10 +5127,11 @@ def _commit_delivers(sha, evidence, root=None, tid=None):
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
                 "the commit does not deliver what the evidence claims")
-    named = _commit_named_for(tid, root) if tid else ""
-    if named and not named.startswith(sha) and not sha.startswith(named[:len(sha)]):
-        return (f"{named[:8]} names {tid} in its subject and {sha[:8]} does not -- "
-                "a commit that merely touches the same file is not this delivery")
+    when = _main_when(root).get(full, "")
+    if closed and closed >= "2026-09-02" and when and when > closed[:16] + ":59":
+        return (f"{sha[:8]} was committed at {when}, after the row closed at {closed} -- "
+                "a delivery cited after the fact is a repair of the register, not the delivery; "
+                "reopen and close again on the commit that exists")
     return ""
 
 
