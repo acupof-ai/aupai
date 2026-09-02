@@ -195,6 +195,12 @@ def gate_corpora(root, mix_path, world):
 
 ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
 LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+# The mix being launched, beside the shape and for the same reason: launch_tests needs to
+# say whether a recorded arch-test pass touched the launch DATA, and it may not hold a
+# second copy of this path (_launch_shape's docstring: a second copy drifts invisibly in
+# exactly the case the warning exists for). A module constant rather than the --mix default
+# it used to be, so both readers and the parser take it from one place (de-10).
+LAUNCH_MIX = "data/mix_500m.json"
 
 
 def _sha256(p):
@@ -703,7 +709,7 @@ def pod_attribution(root):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_500m.json"))
+    ap.add_argument("--mix", default=os.path.join(ROOT, LAUNCH_MIX))
     ap.add_argument("--world", type=int, default=7)
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()

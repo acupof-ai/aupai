@@ -39,8 +39,23 @@ STEPS = int(os.environ.get("E2E_STEPS", "6"))
 # matching makes --d ambiguous (754b624).
 E2E_LAYERS = os.environ.get("E2E_LAYERS", "").strip()
 E2E_SHAPE = ["--layers", E2E_LAYERS] if E2E_LAYERS else []
-MIX = "data/mix_sample.json"
-DOMAIN = "sample"
+# The mix, same discipline as E2E_LAYERS. Default: the sample mix, which is what this test
+# has always run -- and running it is what let the 20B launch die at step 0 on a
+# KeyError('content') that e2e could not reach: data/corpus/sample holds zero holdout
+# slices, so the shape the test pinned was right and the DATA was a different question.
+# A test that holds fixed exactly the variable that breaks answers a question the gate is
+# not asking. Set E2E_MIX=data/mix_500m.json to run the joins on the mix being launched.
+E2E_MIX = os.environ.get("E2E_MIX", "").strip()
+MIX = E2E_MIX or "data/mix_sample.json"
+if not os.path.exists(os.path.join(ROOT, MIX)):
+    raise SystemExit(f"E2E_MIX={MIX!r} does not exist. A missing mix is a refusal, not a "
+                     f"fall back to the sample mix: falling back is how a sample-mix pass "
+                     f"came to be read as clearing the launch mix.")
+_mix_obj = json.load(open(os.path.join(ROOT, MIX), encoding="utf-8"))
+DOMAINS = list(_mix_obj["domains"])
+# The cache-collision guard below keys on the domain name, so it needs every domain the
+# mix names, not one. The sample mix has exactly one and the hardcoded name hid that.
+DOMAIN = DOMAINS[0]
 
 
 def run(cmd, env=None, cwd=ROOT, timeout=3600):
@@ -72,14 +87,18 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="e2e_")
     try:
-        stage(1, "the sample mix parses and names a domain that exists")
+        stage(1, f"the mix parses and every domain it names exists ({MIX})")
         mix_path = os.path.join(ROOT, MIX)
         mix = json.load(open(mix_path, encoding="utf-8"))
         doms = list(mix["domains"])
-        assert doms == [DOMAIN], doms
-        shards = os.listdir(os.path.join(ROOT, "data", "corpus", DOMAIN))
-        n_shard = len([s for s in shards if s.endswith(".jsonl")])
-        assert n_shard, f"data/corpus/{DOMAIN} has no shards"
+        assert doms == DOMAINS, (doms, DOMAINS)
+        n_shard = 0
+        for dom in doms:
+            ddir = os.path.join(ROOT, "data", "corpus", dom)
+            assert os.path.isdir(ddir), f"data/corpus/{dom} is absent, so {MIX} cannot run here"
+            k = len([s for s in os.listdir(ddir) if s.endswith(".jsonl")])
+            assert k, f"data/corpus/{dom} has no shards"
+            n_shard += k
         # train.py has no knob for the token-cache location (_domain_cache_path writes
         # /data00/tokens_<domain>[_fone].pt), so the domain NAME is the only thing keeping
         # this six-step run out of a multi-day pretrain's cache file.
@@ -89,10 +108,26 @@ def main():
         real_mix = os.path.join(ROOT, harness.cfg_default("mix"))
         if os.path.exists(real_mix):
             real = list(json.load(open(real_mix, encoding="utf-8"))["domains"])
-            assert DOMAIN not in real, (
-                f"domain {DOMAIN!r} is also in the default mix; both would share the token cache "
-                f"/data00/tokens_{DOMAIN}.pt and this test would clobber a pretrain's."
-            )
+            shared = [d for d in doms if d in real]
+            # On the sample mix this must be empty. On a REAL mix every domain is shared by
+            # construction, and that is the whole hazard: this test would tokenize into the
+            # live run's /data00/tokens_<domain>.pt. E2E_MIX therefore refuses rather than
+            # warns -- a six-step run must never be the thing that writes a pretrain's cache
+            # (the 0-byte vocab stamp de wrote on the shared cot cache cost tilerl's gate run
+            # 5 minutes of 8 idle cards, 2026-09-02).
+            if shared and not E2E_MIX:
+                raise AssertionError(
+                    f"domains {shared} are also in the default mix; both would share the token "
+                    f"cache /data00/tokens_<domain>.pt and this test would clobber a pretrain's."
+                )
+            if shared and E2E_MIX:
+                raise SystemExit(
+                    f"REFUSING: E2E_MIX={MIX} names {len(shared)} domain(s) the default mix also "
+                    f"names ({shared[:4]}), so this run would tokenize into the live cache at "
+                    f"/data00/tokens_<domain>.pt. Run it on a card whose /data00 is not shared "
+                    f"with a live pretrain, or point E2E_MIX at a mix with its own domain dirs. "
+                    f"This is the launch-mix half of the test and it is REFUSED, not skipped."
+                )
         print(f"    {n_shard} shards, domains={doms}")
 
         stage(2, "the vocabulary the pipeline will use, and its fingerprint")
@@ -269,7 +304,7 @@ def main():
         cf = ck["cfg"]
         record_launch_test(__file__, "pass",
                            {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
-                           real_kernel=True)
+                           real_kernel=True, mix=MIX)
         return 0
     finally:
         stage(11, "resume from the step-less final save refuses (fb 2026-09-02)")
