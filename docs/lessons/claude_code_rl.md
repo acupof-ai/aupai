@@ -29,8 +29,19 @@ source: read-only survey of /Users/bytedance/code/tilerl and this repository, 20
 | B. Code-execution RL with our GSPO | reward = tests pass in the sandbox on mined impl + test pairs; the round-trip rule applies before the first RL step; gate pass@8 − pass@1 ≥ 15 pt on the SFT checkpoint | yes, after the run | reward module with its known-answer suite | reward and suite now; training after SFT | the 200M gate was flat, the 500M may be too, then RL has nothing to amplify |
 | C. tileRL as teacher and judge | tileRL serves the 27B behind its API; it scores or rewrites trajectories from A, and its GRPO takes the same code reward as B through a shared verifier module | one card, after the run | a shared `verifiers` module imported by both repos | one card-day for the 27B GRPO pilot | porting the 500M into tileRL's sampler = trainer loop is not on the table: new kernels, KV pools, gradchecks |
 
-## Ruling
+## Ruling (user, 2026-09-02 16:05 +0800: build the basic adaptation first)
 
-A and the reward half of B start now: no GPU, both serve SFT regardless of whether RL opens. C is the joint piece with tileRL: one shared verifier module, one shared trajectory format, and tileRL's 27B GRPO pilot with the code reward on one card after the run. The 500M does not enter tileRL's engine.
+The loop is: **Claude Code is the agent harness, tileRL is the inference engine and the trainer, a
+container is the environment, tests are the reward.** The policy is whatever tileRL serves; the
+27B first, the 500M when it can drive a tool loop. The 500M does not enter tileRL's engine as a
+model class; it enters the loop as a served policy behind the same API when it is ready.
 
-Tasks: e1-24 (A), de-28 (B reward + suite), tilerl-19 (C design and the tileRL-side plugin), 44-17 folds all three into the post-pretrain plan.
+| stage | deliverable | GPU | owner | done when |
+|---|---|---|---|---|
+| 1. API adaptation | an Anthropic Messages-compatible shim in front of tileRL's OpenAI server: messages, system, tools, `tool_use`/`tool_result` blocks, streaming, `stop_reason`; Claude Code points at it through `ANTHROPIC_BASE_URL` | none: tileRL's `tiny` model on CPU | tilerl | `claude -p "<task>" --output-format stream-json` completes one tool call and one final answer against the tiny model |
+| 2. Image | one container: tileRL server + shim + Claude Code CLI + python3 + the task repo; started by one command, no network except the shim | none | tilerl | the container runs stage 1 end to end from a cold start |
+| 3. Sandbox | one container per rollout, task repo mounted read-write, tests run inside, wall-clock and memory limits, killed after the run; K rollouts of one task in parallel | none | de (reuses de-28) | K=8 rollouts of one task finish, their diffs and test results are collected |
+| 4. Reward + trajectory | reward = tests pass (de-28, `(code, tests) -> float`); trajectory = the session's transcript JSONL to token ids in the same ChatML the shim rendered, with the per-token logprobs the server returned | none | e1 (reuses e1-24 parser) | one rollout's transcript reproduces the exact token sequence the server sampled |
+| 5. Training | GRPO in tileRL over K rollouts per task with the stage-4 rewards, LoRA on the served weights, sampler = trainer so no weight sync | one card after the run | tilerl | reward rises on a 20-task pilot and MMLU does not drop within noise |
+
+Order is fixed: no stage starts before the previous one's "done when" is an artifact. Stages 1-4 need no GPU and start now. Tasks: tilerl-19 covers stages 1, 2 and 5; de-28 stage 3 and the reward; e1-24 stage 4.
