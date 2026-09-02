@@ -10731,6 +10731,8 @@ def cmd_install_hooks(rest):
 
 
 def main():
+    for _k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(_k)
     # Drop inherited GIT_* before anything runs. git sets GIT_DIR and GIT_INDEX_FILE for
     # its hooks, and a hook that runs a selftest passes them down: any `git init` in a
     # temp directory then RECONFIGURES the real repository, and `core.bare = true` on a
