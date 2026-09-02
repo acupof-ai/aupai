@@ -282,6 +282,71 @@ def gate_arch_tests(root, mix_path, world):
                 f"d{LAUNCH_SHAPE['d']} L{LAUNCH_SHAPE['layers']} on a real kernel")
 
 
+CITATION = re.compile(
+    # jsonl BEFORE json: regex alternation takes the first branch that matches, so
+    # ".../experiments.jsonl" matched ".json" and the trailing "l" was dropped -- the gate
+    # then reported "runs/experiments.json does not exist", a dead citation for a file that
+    # is tracked. Every .jsonl citation in recipe_provenance was unciteable, and the first
+    # two ever written (e1-9, 2026-09-02) tripped it immediately. The trailing (?![\w])
+    # stops a prefix match from standing in for the whole extension.
+    #
+    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: 3fb1946
+    # (44-13) deleted 22 probes and rewrote 39 refs in facts/*.json plus
+    # scripts/harness.py:386,647,693 to probes/<name>.py@<sha>. All 26 distinct ones
+    # resolve. This gate could not read one of them -- the pattern stopped at the
+    # extension, the @sha was discarded, and the bare path then failed ls-files -- so every
+    # retired citation read as dead, and telling the citer to "use an accepted spelling"
+    # would have been advice with no accepted spelling behind it. Second instance of one
+    # shape: the gate not recognising a reference format the repo is already using (the
+    # first was jsonl eaten as json).
+    #
+    # The rev is [\w~^-]+ joined by single ./ -- NOT [\w./~^-]+. The greedy version
+    # captured the sentence-ending period ("...py@849026e." -> rev "849026e."), which git
+    # rejects, so a correctly-retired citation would have gone NO-GO on the punctuation
+    # after it. Found by running the pattern on real prose, not by reading it: both
+    # spellings look right in the source. Still admits 849026e~1, 849026e^2, v1.2,
+    # refs/tags/v1.
+    r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|datagen|bench_eff)/"
+    r"[\w./-]+\.(?:jsonl|json|log|md|py|sh|txt))(?![\w])"
+    r"(?:@([\w~^-]+(?:[./][\w~^-]+)*))?")
+
+
+def dead_citations(root, text, tracked):
+    """Which file references in one prose source cannot be followed.
+
+    Only paths under the repo, and only ones that look like a file: a source is prose
+    that may mention a run name, a person or a date, and demanding every token resolve
+    would make this fire on sentences. Dead here means "named a file that is not there",
+    not "is unverified".
+
+    Two forms, one property -- can a reader reach the bytes:
+      path        must be TRACKED, not merely present on disk (b0's pair review):
+                  os.path.exists would pass on the pod and fail on every laptop for a
+                  pod-only artifact like runs/w7_b16a2.log, and a gate whose answer
+                  depends on which machine ran it is the defect this repo spent a night
+                  on. Tracked is also stronger: an untracked file can vanish with no
+                  commit.
+      path@rev    the blob must be reachable at that rev. `git cat-file -e <rev>:<path>`
+                  is the whole judgement; its three failures all return 128 -- no such
+                  rev, that rev never held the path, the short sha is ambiguous. The rev
+                  need NOT be where the path last existed (fb's ruling, 2026-09-02): a
+                  source cites the content of one version, not the newest one. So a
+                  deletion no longer kills a citation, which is what the retirement
+                  convention is for.
+    """
+    dead = []
+    for ref, rev in CITATION.findall(str(text)):
+        if rev:
+            if subprocess.run(["git", "cat-file", "-e", f"{rev}:{ref}"], cwd=root,
+                              capture_output=True, text=True).returncode != 0:
+                dead.append(f"{ref}@{rev} (no such blob in git)")
+        elif ref not in tracked:
+            dead.append(f"{ref} (" + ("present but untracked"
+                                      if os.path.exists(os.path.join(root, ref))
+                                      else "does not exist") + ")")
+    return dead
+
+
 def gate_recipe_provenance(root, mix_path, world):
     """5. Every recipe value traces to an experiment row or a committed probe.
 
@@ -311,34 +376,11 @@ def gate_recipe_provenance(root, mix_path, world):
     # never in doubt -- 7 x 32 x 4096 = 917,504 is forced by arithmetic -- but the gate
     # passed a citation nobody could follow, which is the whole thing it checks. Same job
     # fact_refs_resolve already does for facts/<f>.json#<id>; these sources are free text,
-    # so nothing was verifying them.
-    #
-    # Only paths under the repo, and only ones that look like a file: a source is prose
-    # that may mention a run name, a person, or a date, and demanding every token resolve
-    # would make this fire on sentences. Missing here means "named a file that is not
-    # there", not "is unverified".
-    # TRACKED, not merely present on disk (b0's pair review): os.path.exists would pass on
-    # the pod and fail on every laptop for a pod-only artifact like runs/w7_b16a2.log, and
-    # a gate whose answer depends on which machine ran it is the defect this repo spent the
-    # night on. "Named by a recipe source" therefore means "in git" -- which is also the
-    # stronger property, since an untracked artifact can vanish without any commit.
+    # so nothing was verifying them. dead_citations holds the judgement and its reasons.
     tracked = set(subprocess.run(["git", "ls-files"], cwd=root, capture_output=True,
                                  text=True).stdout.split())
-    dead = []
-    for f in RECIPE_FLAGS:
-        # jsonl BEFORE json: regex alternation takes the first branch that matches, so
-        # ".../experiments.jsonl" matched ".json" and the trailing "l" was dropped -- the
-        # gate then reported "runs/experiments.json does not exist", a dead citation for a
-        # file that is tracked. Every .jsonl citation in this file was unciteable, and the
-        # first two ever written (e1-9, 2026-09-02) tripped it immediately. The trailing
-        # (?![\w]) stops a prefix match from standing in for the whole extension.
-        for ref in re.findall(r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|"
-                              r"datagen)/[\w./-]+\.(?:jsonl|json|log|md|py|sh|txt))(?![\w])",
-                              str(prov.get(f, ""))):
-            if ref not in tracked:
-                where = ("present but untracked" if os.path.exists(os.path.join(root, ref))
-                         else "does not exist")
-                dead.append(f"{f} -> {ref} ({where})")
+    dead = [f"{f} -> {d}" for f in RECIPE_FLAGS
+            for d in dead_citations(root, prov.get(f, ""), tracked)]
     if dead:
         return NOGO, (f"{len(dead)} recipe source(s) name a file git does not track: "
                       f"{'; '.join(dead[:4])} -- a citation that cannot be followed is "
@@ -990,26 +1032,48 @@ def selftest():
                 f.write(json.dumps(r) + "\n")
     reversible["launch_command"] = (dl, ml, _fixcmd)
 
-    # The .jsonl citation, tested on the REAL tree, not in a temp world: the property is
-    # "a tracked .jsonl resolves", and a temp world's runs/ is untracked, so a world would
-    # fail on trackedness and prove nothing about the extension. Before e1-9 the
-    # alternation put json ahead of jsonl, so every .jsonl citation was truncated to .json
-    # and reported as a file that does not exist -- a dead citation for a tracked file,
-    # failing CLOSED and so invisible until the first one was written.
+    # Citation forms, exercised on the REAL tree rather than in a temp world, because both
+    # properties are about git and a world has no .git: `git cat-file -e` returns 128 there
+    # for EVERY rev, so an @sha world would go red without the judgement being reached --
+    # the shape fb ruled on tonight (a world that fails before the stage under test proves
+    # nothing). dead_citations is pure enough to call directly with constructed prose, which
+    # is the same reason reconcile_command is pure.
     _tracked = set(subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True,
                                   text=True).stdout.split())
     _probe = [p for p in ("runs/experiments.jsonl", "runs/board.jsonl", "runs/tasks.jsonl")
               if p in _tracked]
     if not _probe:
         bad.append("no tracked .jsonl in the repo to probe the citation regex with")
+    elif dead_citations(ROOT, f"read from {_probe[0]}, some run name", _tracked):
+        # Before e1-9 the alternation put json ahead of jsonl, so every .jsonl citation was
+        # truncated to .json and reported as a file that does not exist -- a dead citation
+        # for a tracked file, failing CLOSED and so invisible until the first was written.
+        bad.append(f"a mention of {_probe[0]!r} reads as a dead citation -- the extension "
+                   "was truncated, so a tracked file looks missing (jsonl before json)")
+
+    # @rev: one live commit, four judgements. The live pair comes from the tree, not from a
+    # constant: a hardcoded sha is itself a citation that rots, and this file would then be
+    # asserting against a rev it can no longer reach.
+    _del = subprocess.run(["git", "log", "--diff-filter=D", "--format=%H", "-1",
+                           "--name-only", "--", "probes/", "bench_eff/"],
+                          cwd=ROOT, capture_output=True, text=True).stdout.split()
+    if len(_del) < 2:
+        bad.append("no deleted probe in history to test an @rev citation with")
     else:
-        for ref in re.findall(r"(?<![\w./-])((?:runs|facts|data|docs|scripts|eval|probes|"
-                              r"datagen)/[\w./-]+\.(?:jsonl|json|log|md|py|sh|txt))(?![\w])",
-                              f"read from {_probe[0]}, some run name"):
-            if ref not in _tracked:
-                bad.append(f"the citation regex extracted {ref!r} from a mention of "
-                           f"{_probe[0]!r} -- the extension was truncated, so a tracked "
-                           "file reads as missing (jsonl must precede json)")
+        _sha, _gone = _del[0], _del[1]
+        for text, want_dead, what in (
+            (f"measured in {_gone}@{_sha}~1.", False,
+             "a retired path at the commit before its deletion must RESOLVE"),
+            (f"measured in {_gone}.", True,
+             "a deleted path with no @rev must stay DEAD, or @rev support has "
+             "silently retired the tracked test for every bare path"),
+            (f"measured in {_gone}@0000000000000000000000000000000000000000.", True,
+             "@ a rev that does not exist must be DEAD (fb's world)"),
+            (f"measured in probes/never_existed_xyz.py@{_sha}.", True,
+             "@ a real rev that never held the path must be DEAD"),
+        ):
+            if bool(dead_citations(ROOT, text, _tracked)) != want_dead:
+                bad.append(f"citation {text!r}: {what}")
 
     for name, (d, mixp, restore) in reversible.items():
         fn = dict(GATES)[name]
