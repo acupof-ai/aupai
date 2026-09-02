@@ -1168,6 +1168,7 @@ def build_probe():
 
 
 def main():
+    global TOTAL_TOKENS, ROWS
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     # Default is the STAMP when the corpus is on this host, so the common case needs no
     # transcription at all. 8.85e9 remains the labelled projection for a dev box. fb sent me
@@ -1180,13 +1181,27 @@ def main():
     ap.add_argument("--probe", action="store_true",
                     help="write data/mix_probe_lr.json instead: the 500-step lr A/B probe, "
                          "eight domains, ratios renormalised not re-decided")
+    ap.add_argument("--total", type=float, default=TOTAL_TOKENS,
+                    help="token budget; the weights are the same function of the objective, "
+                         "epochs and the code floor re-derive against this total")
+    ap.add_argument("--out", default=None, help="output path; required with a non-default --total")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    if int(a.total) != TOTAL_TOKENS:
+        if not a.out or a.probe:
+            ap.error("a non-default --total needs --out and excludes --probe")
+        TOTAL_TOKENS = int(a.total)
+        ROWS = TOTAL_TOKENS // SEQ
     m = build_probe() if a.probe else build(a.code_tokens)
-    out = PROBE_OUT if a.probe else OUT
+    out = PROBE_OUT if a.probe else (a.out or OUT)
+    if a.out and not a.probe:
+        m["_comment"].append(f"TOTAL overridden to {TOTAL_TOKENS / 1e9:.3f}B by --total for "
+                             f"{os.path.basename(out)}; weights identical to mix_500m.json, epochs "
+                             "and the code floor re-derived (user, 2026-09-02 10:0xZ: smaller "
+                             "models, fewer tokens, same composition).")
     # REFUSE, do not label. The previous version wrote null plus a fingerprint_source string
     # explaining that the corpus was not on this host -- honest, and still a file. On
     # 2026-09-01 that file was generated on a Mac and pushed over the pod's copy, replacing
