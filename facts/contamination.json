@@ -527,7 +527,7 @@
      "tiered_reporting": "WITHDRAWN 2026-08-30 (aupai-fb): arithmetic-gap families were 0/240 and equally degenerate —— 不要用一个坏读数去填一个看起来完整的报告结构。",
      "informative_target": "ckpt_k8_proc_replay (best remaining instructed ckpt: math-500 2.8%, old math-hard 0.1%); the 51.2% math-500 SFT checkpoints were deleted from the pod",
      "next": "v2 stays a post-SFT instrument. For base-checkpoint math signal at 200M, use the likelihood twin (p(correct solution) vs p(matched wrong)) -- facts/base_eval.json#be.math_v2_likelihood_twin. Full-resolution v2 measurement deferred until a strong SFT checkpoint exists.",
-     "fmt_cue_ran": "2026-08-30, runs/eval_v2_fmt.log on the pod (GPU0)"
+     "fmt_cue_ran": "2026-08-30, retired_pre0830v2/runs/eval_v2_fmt.log on the pod (GPU0)"
     }
    },
    "measured": "2026-08-30",

@@ -1086,6 +1086,25 @@ def _broken_no_foreground_pod_training():
     return d
 
 
+_SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
+
+
+def walk_tracked(root, suffixes):
+    """Yield (path, text) for every tracked source file under root, one definition.
+
+    Excluding what cannot hold tracked source, rather than listing what can, means a new
+    directory is covered by default. A hand-listed set of directories was missing probes/
+    and the repo root while the evidence still read "every curl call passes -4" -- true
+    of what it looked at, silent about what it did not.
+    """
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
+        for fn in sorted(filenames):
+            if fn.endswith(suffixes):
+                p = os.path.join(dirpath, fn)
+                yield p, open(p, encoding="utf-8", errors="replace").read()
+
+
 def check_curl_ipv4(root):
     """Every curl invocation in tracked code passes -4.
 
@@ -1098,28 +1117,15 @@ def check_curl_ipv4(root):
     # command string. Matching the bare word finds docstrings -- including this
     # check's own, which is how the first version failed on itself.
     inv = re.compile(r"""(?:\[\s*|["'])curl["'\s]|^\s*curl\s|[;&|]\s*curl\s""")
-    # The POPULATION, not just the predicate. A hand-listed set of directories was
-    # missing probes/ and the repo root, and the evidence still said "every curl call
-    # passes -4" -- true of what it looked at, silent about what it did not. Walk the
-    # tree and exclude what cannot hold a tracked invocation, so a new directory is
-    # covered by default rather than by someone remembering to add it (fb's sweep,
-    # 2026-09-01; same shape as selftests_are_gated reporting 27 of 36).
-    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
     scanned = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
-        for fn in filenames:
-            if not (fn.endswith(".py") or fn.endswith(".sh")):
-                continue
-            p = os.path.join(dirpath, fn)
-            scanned += 1
-            text = open(p, encoding="utf-8", errors="replace").read()
-            # Drop docstrings and comments before looking for invocations.
-            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
-            for n, line in enumerate(text.split("\n"), 1):
-                s = line.split("#", 1)[0]
-                if inv.search(s) and not re.search(r"-4\b", s):
-                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+    for p, text in walk_tracked(root, (".py", ".sh")):
+        scanned += 1
+        # Drop docstrings and comments before looking for invocations.
+        text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'', "", text)
+        for n, line in enumerate(text.split("\n"), 1):
+            s = line.split("#", 1)[0]
+            if inv.search(s) and not re.search(r"-4\b", s):
+                bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} curl call(s) without -4: {bad[:3]}"
     return PASS, f"every curl call in {scanned} tracked .py/.sh passes -4"
@@ -1134,30 +1140,23 @@ def check_timestamps_are_utc(root):
     tasks_closed_by_commit all compare those strings: a pod row reads eight hours old
     the moment it is written and a Mac row reads eight hours in the future."""
     bad = []
-    _SKIP_DIRS = {".git", "data", "runs", "node_modules", "__pycache__", ".venv", "venv"}
     scanned = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [x for x in dirnames if x not in _SKIP_DIRS and not x.startswith(".")]
-        for fn in filenames:
-            if not fn.endswith(".py"):
-                continue
-            p = os.path.join(dirpath, fn)
-            scanned += 1
-            text = open(p, encoding="utf-8", errors="replace").read()
-            # Blank the docstring, keep its newlines: dropping it outright shifts every
-            # line number after it, which is how the first run of this check named three
-            # lines that hold no timestamp at all.
-            text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
-                          lambda m: "\n" * m.group(0).count("\n"), text)
-            lines = text.split("\n")
-            for n, line in enumerate(lines, 1):
-                # The call's arguments may wrap, so read the continuation too: a first
-                # version named a strftime whose time.gmtime sat on the next line.
-                s = "".join(lines[n - 1:n + 1]).split("#", 1)[0]
-                if re.search(r"""(?<!["'])time\.strftime\(""", s) and "gmtime" not in s:
-                    bad.append(f"{os.path.relpath(p, root)}:{n}")
-                elif re.search(r"""(?<!["'])time\.localtime\(""", s):
-                    bad.append(f"{os.path.relpath(p, root)}:{n}")
+    for p, text in walk_tracked(root, (".py",)):
+        scanned += 1
+        # Blank the docstring, keep its newlines: dropping it outright shifts every
+        # line number after it, which is how the first run of this check named three
+        # lines that hold no timestamp at all.
+        text = re.sub(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'',
+                      lambda m: "\n" * m.group(0).count("\n"), text)
+        lines = text.split("\n")
+        for n, line in enumerate(lines, 1):
+            # The call's arguments may wrap, so read the continuation too: a first
+            # version named a strftime whose time.gmtime sat on the next line.
+            s = "".join(lines[n - 1:n + 1]).split("#", 1)[0]
+            if re.search(r"""(?<!["'])time\.strftime\(""", s) and "gmtime" not in s:
+                bad.append(f"{os.path.relpath(p, root)}:{n}")
+            elif re.search(r"""(?<!["'])time\.localtime\(""", s):
+                bad.append(f"{os.path.relpath(p, root)}:{n}")
     if bad:
         return FAIL, f"{len(bad)} naive local-clock call(s): {bad[:3]}"
     return PASS, f"every strftime in {scanned} tracked .py passes time.gmtime()"
@@ -3532,8 +3531,16 @@ def check_facts_well_formed(root):
     Source standard: a fact's source is the command that produced it PLUS a durable
     artifact (score_matrix record / preds file / commit sha). runs/*.log is NOT a
     qualified source -- logs are deleted, overwritten, or replaced by the next
-    same-named run. A fact that cites only a log becomes unreproducible the moment
-    the log is cleaned.
+    same-named run: four facts cited logs a full-disk find on the pod could not produce
+    (de-16, 2026-09-02). Committing a log makes the path RESOLVE, not the source qualify.
+    Measured: overwriting runs/ab_vocab.log in the working tree left
+    `git show HEAD:runs/ab_vocab.log` byte-identical at sha256 923862e4 -- so what a
+    commit preserves is the blob, reachable only by sha, while the cited path now holds
+    the next run's bytes. A citation naming the path still reads the wrong content, and
+    this check cannot see the difference. Enforcing tracked-ness was tried and dropped:
+    `git ls-files` returns nothing usable in a broken world with no real .git, so the
+    branch could not be made to FAIL, and a check that cannot fail is an assertion.
+    The remedy stays a durable artifact per fact.
 
     Three-state source check (same shape as corpus_filters_fp):
     - path exists -> OK
