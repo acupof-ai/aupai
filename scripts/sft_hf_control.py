@@ -184,10 +184,16 @@ def main():
     tok = AutoTokenizer.from_pretrained(model_dir)
     # Our ChatML markers are single special tokens on our side; give this side dedicated
     # tokens too, so neither arm is handicapped on the stop symbol.
+    vocab_before = len(tok)
     added = tok.add_special_tokens({"additional_special_tokens": ["<|im_start|>", IM_END]})
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    print(f"tokenizer {len(tok)} entries (+{added} ChatML specials)", flush=True)
+    # The ids the resize created, recorded per fb's ruling: an id assigned at run time is
+    # not reconstructable from the config afterwards, and a scorer that re-tokenizes with a
+    # freshly built tokenizer would get different ones without any error.
+    chatml_ids = {t: tok.convert_tokens_to_ids(t) for t in ("<|im_start|>", IM_END)}
+    print(f"tokenizer {vocab_before} -> {len(tok)} entries (+{added} ChatML specials) "
+          f"{chatml_ids}", flush=True)
 
     pairs = read_pack(pack_path)
     ids, lab, st = pack_rows(pairs, tok, tok.eos_token_id, a.seq)
@@ -261,6 +267,8 @@ def main():
         "pack": os.path.relpath(pack_path, ROOT), "pack_sha256": pack_sha,
         "examples": len(pairs), "rows": st["rows"], "seq": a.seq, "tokens": tokens,
         "dropped_overlong": st["dropped_overlong"],
+        "vocab_before": vocab_before, "vocab_after": len(tok),
+        "chatml_token_ids": chatml_ids,
         "supervised_frac": round(st["supervised"] / max(st["total"], 1), 4),
         "steps": step, "epochs": a.epochs, "effective_batch": a.batch * a.accum,
         "optimizer": "AdamW (our arm uses Muon on 2D matrices -- NOT the same optimizer)",
