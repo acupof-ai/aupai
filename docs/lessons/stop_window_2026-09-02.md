@@ -6,7 +6,7 @@ source: user ruling 2026-09-02 09:44Z (stop after the step-3000 save) and 09:50Z
 
 # Stop window 1: after the step-3000 save
 
-Timeline (UTC): step 2600 at 09:44Z, 11.0 s/step, save at step 3000 ≈ 10:57Z. Stop: kill `supervise_run.sh` first (it would auto-resume once), then SIGTERM the torchrun leader (interrupt checkpoint), then `nvidia-smi` shows zero processes. Executor: tilerl. Downtime target: 2.5 h.
+Timeline (UTC): step 2600 at 09:44Z, 11.0 s/step, save at step 3000 ≈ 10:57Z. Stop: pin step 3000 first (e1, `_pin_milestone` only, no scoring: `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`, a hardlink the `.pt.step*` pruner cannot see; without it step 4500 deletes the resume target), then kill `supervise_run.sh` (it would auto-resume once), then SIGTERM the torchrun leader (interrupt checkpoint), then `nvidia-smi` shows zero processes. Executor: tilerl. Downtime target: 2.5 h.
 
 ## Throughput, the main item
 
@@ -25,6 +25,10 @@ In the window: torch.profiler over 3 steps at the live shape; A/B of 40 steps ea
 
 ## Code that merges, in order, each behind `test_arch_compat`
 
-de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split. Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.pt.step3000` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
+de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split. Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
 
-Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus or mix change.
+Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change. `eval/score_matrix.py:765` still defaults `--mix` to the ladder mix (44's challenge on d57273f, 09:52Z): correct as a fact, deferred to de-26 because the file is in the frozen set and `cache_guard` turns the defect into a refusal, not a wrong number.
+
+## Token budget (user, 09:52Z: model unchanged, mix unchanged, fewer tokens)
+
+Candidate: `total_tokens` 19,999,997,952 → 9,999,998,976 in `data/mix_500m.json` at the relaunch, tokens/step unchanged at 1,048,576, steps 19,151 → 9,537; step 3000 = 3.1B is then 31% in and still in the constant-LR phase (warmdown 0.1 × total starts at step 8,583). Gated on de answering from `build_mix`: the cursor continues every domain without re-read under the halved plan, and the LR at step 3000 is bitwise the old value. Remaining time at 10B: 6.9B tokens / (8 × 16K) = 15 h, / (8 × 30K) = 8 h. The user's "3 hours" equals 2.6B tokens at 30K tok/s/gpu, less than the 3.1B already trained; it is not a budget the run can meet, and a Chinchilla-scale 10B is the smallest budget with a literature basis.
