@@ -625,8 +625,8 @@ def check_selftests_are_gated(root):
     # carries a selftest and was invisible here (de, 2026-09-02, MEASURED at 42 vs 43).
     for p, body in walk_tracked(root, (".py",)):
         rel = os.path.relpath(p, root)
-        # `--selftest` anywhere, not `"--selftest"` next to `add_argument`. The
-        # narrow predicate assumed every selftest is wired through argparse; nine
+        # `--selftest` anywhere in the CODE, not `"--selftest"` next to `add_argument`.
+        # The narrow predicate assumed every selftest is wired through argparse; nine
         # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
         # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
         # gate reported "27 files, all gated" while those nine ran nowhere. A gate
@@ -634,7 +634,15 @@ def check_selftests_are_gated(root):
         # the files it already understood -- the check encoding an assumption about
         # where the interesting case lives, which is this repo's named class, in
         # the check written to catch that class (de, 2026-09-01, on 62's gate).
-        if "--selftest" in body:
+        #
+        # Docstrings blanked, because the widening reached one file too far: prose
+        # SAYING a file carries no `--selftest` matched as if it carried one. MEASURED
+        # 2026-09-02 at 44 raw vs 42 stripped -- scripts/test_resume_accumulates.py,
+        # whose docstring explains why it deliberately has no selftest flag, and
+        # scripts/test_serve_history.py, whose usage line quotes the flag its body never
+        # reads. Only the first was ever reported, because the second happens to be in
+        # the map: a false positive hides wherever the answer is right by accident.
+        if "--selftest" in strip_docstrings(body):
             have.add(rel)
     missing = sorted(have - gated)
     if missing:
