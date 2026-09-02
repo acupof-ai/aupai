@@ -847,3 +847,24 @@ model.py:330    n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_su
 **tilerl 那边还有一条附带的,更硬**:他第一版消融自己写了个数图边的计数器,**全深度都对不上 `n(n+1)`,L12 数出 852**——工具在基线上就已经自证伪了。他换成我的 profiler 口径才跑。**消融的前提是仪器先在基线上闭合**:一个复现不了基线的工具,不可能用来否定任何东西,它给出的"不一致"是它自己的。
 
 规则:**任何"X 是因为 M"的结论,交付物里必须有一次 M 缺席的运行**,而不只是一个 X 数值正确的断言。做法是把机制做成可关掉的开关(这里是 `detach_logits=True`),两臂都跑、两臂都断言,且断言的是**两臂的比**而不只是各自的值。检测法:问"如果我的机制解释是错的,而这个数照样对,我的检查会红吗"——答不出会红,那它就没在测这个解释。
+
+## 68. 一条 fact 没随代码更新,同一个错误被引用两遍(44 当事人,2026-09-02,1e 报)
+
+修复落地后,描述旧行为的 fact 没跟上:status 留在 measured、没有 refuted_by。这条 fact 当天被引用两次,两次都驱动了决策,两次都付了代价——而代码在八个小时前就已经让它失效。
+
+实例:p200m_4b_0902 续训。时间线(UTC):
+
+- **~01:22** p500m_20b_0902 的 interrupt.step32/step83 落盘,de 和 tilerl 各自测出 row_cursor 只记一个 segment(origin≠0 时第二次 resume 重读),`ds.second_resume_rereads_one_segment` 记录——**当时为真**。
+- **10:10** 52aec31(de-13 训练半)落地:`ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))}`,cursor 跨 resume 累加,变成绝对。b0 在 pod 上核实:两个 ckpt 的 cursor 和都等于 step×256。**fact 没更新**。
+- **12:35** p200m 从 interrupt.step832 续训,踩中 `eff.resume_inflates_total_steps`:total 4646 vs 计划 3814,warmdown 起点 4181 > 3814,无退火。
+- **~14:2x** 44 复审重起裁定,**引用这条 fact 的机制**论证「从 step832 重起会重读被停 run 的进度、重读随停点增长,该早停」。1e 14:31Z 停 run(step ~1192)。
+- **~14:3x** de 证明没有重读:cursor 在 52aec31 后是绝对的;即便按旧 cursor,step832 的 ckpt 自己 origin=0,且重wind 丢弃被停谱系——「重读」是 fact 里那个已修的 bug。
+- **重起决策第二次引用同一条 fact**:为避开「第二次 resume 重读一段」,从 step832(而非 step1192)重起。cursor 既已绝对,从 1192 重起本可零丢弃——**这条 stale fact 让 360 步算力(832..1192)被丢弃重算**。
+
+两层:
+
+- **R7(根因)**:修复(52aec31)没有传到描述该 bug 的 fact。撤回没到引用处,旧错误就一直活着——它先以 44 的论证形式停了 run,再以 fact 形式把重起钉在 832。de 补 refuted_by。
+- **R1(传播)**:44 引用 fact 的机制时没读当下的代码——fact 说「重读」,代码说「绝对 cursor」。论证建在过期源上。动作(早停)碰巧是对的(重起既被钉在 832,丢弃必然,越早越少),但理由是错的;机制读出前,对的理由和碰巧对的错理由无法区分。
+
+规则:**修 bug 的同一个 commit 要 grep facts/ 里描述这个 bug 的条目,挂 refuted_by**;引用一条 fact 的机制做论证前,先读它描述的代码当下的样子。检测法:fact 的 value 里出现「re-read/重读/second resume」这类行为断言、而该行为的修复 commit 已在 main 上、fact 无 refuted_by——就是本条。
+>>>>>>> Stashed changes
