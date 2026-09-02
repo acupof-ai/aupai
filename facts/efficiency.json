@@ -778,7 +778,7 @@
    "source": "started by the tileRL session; command recorded below verbatim",
    "config": {
     "weights": "/data00/Qwen3.8-27B-NVFP4 (NVFP4 only -- the bf16 copy is broken, MMLU 0.0%)",
-    "tilerl_commit": "5be4085 (synced to /work/tilerl by scripts/pod_sync.sh)",
+    "tilerl_commit": "5be4085 (synced to /work/tilerl on the pod; the sync script is not in this repo)",
     "command": "per card, two separate processes: setsid nohup bash -c 'cd /work/tilerl && export PYTHONPATH=/work/tilerl/src:/work/tilerl/packages/tilerl-kernels/src TILELANG_CACHE_DIR=/work/tilelang_cache TILERL_TARGET=cuda TILERL_QWEN38_SOURCE=/data00/Qwen3.8-27B-NVFP4 CUDA_VISIBLE_DEVICES=<4|5> && python -m tilerl.cli serve --model qwen38-27b --host 0.0.0.0 --port <8100|8101>' &",
     "devices": "ONE CARD PER PROCESS, and --devices is deliberately NOT passed. cli.py:56-81: --devices builds a DataParallelEngine, which is replicas inside ONE process; a CUDA error in one replica is sticky for the whole process, so one card's failure takes the other down while HTTP keeps answering. Omitting --devices takes the plain build_engine path, pinned by CUDA_VISIBLE_DEVICES.",
     "port": 8100,
@@ -1066,7 +1066,7 @@
    "id": "eff.dynamo_recompile_not_a_lever",
    "value": "SUPERSEDED IN PART by eff.steady_state_composition (2026-09-01): the steady-state trace shows the compile gaps PERSIST past step 50 -- 8 gaps over 1 ms at step 260, 7 at the same rms_norm -> flash seam, 54.9 ms/step and 72% of all steady idle, with compile_attempt_1 inside them. So the 'one-time per shape, warmup only' reasoning below is WRONG. What survives is the narrower point that frame 13 carries 0.1% of GPU region time, so cu bucketing specifically is not shown to be the fix; the recompile tax is real and recurring, and it needs its own diagnosis. My evidence that throughput was flat is consistent with a CONSTANT tax, which I read as absence.\n\nRETRACTED AS A LEVER, kept as a measurement. I reported dynamo recompilation as the largest addressable cost in the t56 trace and recommended cu bucketing as t57's first lever. Four checks against the same trace and the live run say the ceiling is ~0%, and the recommendation was wrong. WHAT IS TRUE: GPU idle in the profiled window is 186.6 ms/step over 138460 gaps; 95.3% of gaps are under 5 us summing to 10.2 ms, while the largest 20 sum to 164.9 ms with the biggest at 645 ms, all at the same rms_norm -> flash seam, and the cpu_ops inside them are compile_attempt_1 81 ms, bytecode_tracing 36 ms, build_guards 34 ms. That part stands. WHAT WAS WRONG, in four steps. (1) I read 'dynamo cache_size_limit=64 (need 25)' as 25 cu-shape variants. It is not: train.py:1912 prints it for the AttnRes source count, 1 + 2*layers = 25, an architecture constant with nothing to do with cu. (2) The frame that actually recompiles is frame 13, 18 variants, sub-ids 18..35, from the trace's compile_id=13/N guard records. (3) Frame 13 carries 2.2 ms/step of GPU region time, 0.1% of all compiled-region time, so it is not the model body and bucketing its input cannot return 10%. (4) The profiled 20-step window ran 1791 ms/step wall against 1702 ms/step at the steady-state 77K tok/s, i.e. the entire compile-plus-guard cost of that window is +5.2%, and it is warmup-only: the live 7-card run reads 24K tok/s at step 10, 77K by step 260, and a flat 77K at every 250-step sample through step 2510. ALSO FOUND, and this one is real but benign: all 7 ranks of the live run hit 'torch._dynamo hit config.recompile_limit (64)' on frame 17 between 12:53:33 and 12:59:06, which is the eager-fallback condition train.py's own assert at :1926 exists to prevent. Throughput did not move: those timestamps are steps ~120-260, the interval over which tok/s ROSE to 77K and then stayed. So frame 17 is also not on the hot path. The assert guards the AttnRes frame specifically and is not falsified by this.",
    "measured": "2026-08-31",
-   "source": "bench_eff/ddp_trace_rank0.json, bench_eff/t56_attr.py@1a8622a, runs/t56_profile.log",
+   "source": "trace on the pod at /work/aupai/bench_eff/ddp_trace_rank0.json (not committed), bench_eff/t56_attr.py@1a8622a, runs/t56_profile.log",
    "config": {
     "task": "t56 / tilerl-4 follow-up",
     "cards": 1,
@@ -1807,7 +1807,7 @@
    "source": "bench_eff/t56_elementwise_owner.py@87b60d7, runs/t56_elementwise_owner.json, /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted); corroborates probes/t58_quant_tax.py@b15d348 + runs/t58_quant_tax.json",
    "config": {
     "task": "tilerl-10",
-    "trace": "ddp_trace_rank0.json, 7 cards, rank 0",
+    "trace": "pod:/work/aupai/bench_eff/ddp_trace_rank0.json (not committed), 7 cards, rank 0",
     "n_active_steps": 20,
     "group_ms_per_step": 250.61,
     "resolved_ms_per_step": 250.57,
@@ -1988,7 +1988,7 @@
    "source": "bench_eff/t61_fusion_quant_overlap.py@46c9d57 against /work/aupai/bench_eff/ddp_trace_rank0.json (pod, 415 MB, uncommitted, captured 2026-09-01 05:51)",
    "config": {
     "task": "tilerl-10",
-    "trace": "ddp_trace_rank0.json, 7 cards, rank 0",
+    "trace": "pod:/work/aupai/bench_eff/ddp_trace_rank0.json (not committed), 7 cards, rank 0",
     "n_active_steps": 20,
     "kernels_shared_between_groups": 0,
     "fusion_ms_per_step": 511.88,
