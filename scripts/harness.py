@@ -6011,13 +6011,35 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
     if full not in main_log:
         return f"{sha} does not reach main -- a delivery in a worktree is not delivered"
     touched = main_log[full]
-    paths = [w.strip(" ,;:'\"") for w in re.split(r"\s+", evidence)
-             if "/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))]
+    # A fact citation facts/<f>.json#<id> is the form check_fact_refs requires, and the
+    # done gate rejected it as a nonexistent path (44-26). Strip the fragment for the
+    # touched-file comparison, then assert the id lives in that file at HEAD.
+    fact_refs = FACT_REF_RE.findall(evidence)
+    paths = []
+    for w in re.split(r"\s+", evidence):
+        w = w.strip(" ,;:'\"")
+        if not ("/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))):
+            continue
+        if w.startswith("facts/") and "#" in w:
+            w = w.split("#", 1)[0]
+        paths.append(w)
     if not paths:
         return f"evidence names no path, so nothing can be checked against {sha[:8]}"
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
                 "the commit does not deliver what the evidence claims")
+    for fname, fid in fact_refs:
+        r = subprocess.run(g + ["show", f"HEAD:facts/{fname}.json"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            return f"evidence cites facts/{fname}.json#{fid} but that file is not at HEAD"
+        try:
+            ids = {e.get("id") for e in json.loads(r.stdout).get("facts", [])}
+        except ValueError:
+            return f"evidence cites facts/{fname}.json#{fid} but that file is not valid JSON at HEAD"
+        if fid not in ids:
+            return (f"evidence cites facts/{fname}.json#{fid} but that id is not in the file "
+                    f"at HEAD -- the citation does not resolve")
     when = _main_when(root).get(full, "")
     if closed and closed >= "2026-09-02" and when and when > closed[:16] + ":59":
         return (f"{sha[:8]} was committed at {when}, after the row closed at {closed} -- "
@@ -8834,6 +8856,38 @@ def _selftest_merge_reverted_content():
           "deliberate deletion not flagged")
 
 
+def _selftest_commit_delivers_fact_ref():
+    """_commit_delivers understands facts/<f>.json#<id>: the fragment is stripped for the
+    touched-file comparison and the id must exist in that file at HEAD (44-26).
+
+    Three worlds: a real id passes, a fake id is named-refused, a bare path (no fragment)
+    is unchanged. The done gate rejected the citation form check_fact_refs requires."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix="cdfr_")
+    try:
+        def sh(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        sh("init", "-q", "-b", "main"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+        json.dump({"facts": [{"id": "eff.real", "status": "measured"}]},
+                  open(os.path.join(d, "facts", "efficiency.json"), "w"))
+        sh("add", "."); sh("commit", "-qm", "add facts")
+        sha = sh("rev-parse", "HEAD").stdout.strip()
+        # world 1: real id passes
+        assert _commit_delivers(sha, "facts/efficiency.json#eff.real", d) == "", \
+            "a real fact id was refused"
+        # world 2: fake id named-refused
+        why = _commit_delivers(sha, "facts/efficiency.json#eff.fake", d)
+        assert "eff.fake" in why, f"a fake id was not named in the refusal: {why}"
+        # world 3: bare path unchanged
+        assert _commit_delivers(sha, "facts/efficiency.json", d) == "", \
+            "a bare path was refused"
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+    print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path unchanged")
+
+
 def _selftest_attest_written_path():
     """attest must record the path that was WRITTEN, not the one requested.
 
@@ -9747,6 +9801,7 @@ def _demo():
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
+    _selftest_commit_delivers_fact_ref()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
