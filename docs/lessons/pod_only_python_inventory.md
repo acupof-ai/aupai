@@ -1,5 +1,5 @@
 ---
-question: pod 上 214 个不在 main 的 .py 文件，每一个是什么
+question: pod 上 179 个不在 main 的 .py 文件，每一个是什么
 status: recorded
 source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: a file's
   bytes are hashed as a git blob and looked up with `git cat-file --batch-check` against
@@ -8,7 +8,7 @@ source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: 
   exist in the object store.
 ---
 
-# pod 独有的 214 个 .py：分类，不是清理
+# pod 独有的 179 个 .py：分类，不是清理
 
 **本文只做分类：一个字节都没删，一个文件都没移。**
 
@@ -21,16 +21,49 @@ source: b0 (3b-4, reassigned from 3b 2026-09-02). Classification is mechanical: 
 第一次尝试在 pod 上跑 `git ls-files` 得到 419（等于全部 .py），那是"没有仓库所以
 零个被跟踪"，不是"419 个是孤儿"。**一个空的跟踪集合会让每个文件看起来都是孤儿。**
 
-**二、总数是 214，不是 168。** main 跟踪 241 个 .py，pod 上有 419 个，差集 214。
-168 这个数我没能复现，也不知道它的口径（可能只数了根目录，或者排除了 tmp/）。
-**记下差异，不假设谁对。**
+**二、总数是 179。** main 跟踪 241 个 .py，pod 上有 419 个，差集 **179**。
+
+**我第一版写 214，那是错的，根因是 locale collation。** `comm` 要求两个输入用
+同一种排序，而我的两份清单一份在 macOS 默认 locale 下 sort、一份在容器里 sort。
+加 `LC_ALL=C` 重排后 214 → 179，**多出来的 35 个是假阳性：它们是 main 当前跟踪的
+活文件，字节与 HEAD 完全相同**（`algorithms/rlvr_reward.py`、
+`datagen/build_chat_qa.py` 等）。**按 214 那版执行删除，会删掉建 chat_qa 语料的
+那个脚本。**
+
+**这个错误的形状值得记**：`comm` 在输入排序不一致时**不报错**，它安静地给出一个
+错的差集。两份清单各自都是对的，**错在比较它们的那一步，而那一步没有任何校验**。
+
+168 我仍未复现，口径不明。**记下差异，不假设谁对。**
 
 ## 1. 分类结果
 
 | 类别 | 数量 | 处置 |
 |---|---|---|
-| **字节存在于 git 历史** | **56** | 可删（内容不会丢，git 里有） |
+| 字节在 git 历史里，**但路径仍被 main 跟踪** | 1 | **不动**——是活文件 |
+| 字节在 git 历史里，路径已退役 | **20** | 真候选，三关照走；**其中 3 个本轮扣下，见 §1.1** |
 | **从未进过 git** | **158** | **一律保留**，逐个说明见 §3 |
+
+**158 这个数在修正前后没有变化**，所以 §2 的"118 个在根目录"和 §3 的逐条明细
+不受 collation 错误影响。**变的只有"可删"那一侧：56 → 20，缩了 64%。**
+
+**三份清单以文件形式提交，供独立对账**（`docs/lessons/_pod_inventory/`）：
+`all_179.txt`、`candidates_20.txt`、`never_in_git_158.txt`。**清单是文件不是消息**
+——一份只在消息里的清单，对方对不了账。
+
+### 1.1 本轮扣下的三个
+
+- **`datagen/scan_delivered_holdout.py`** —— 有提交 `2965ded` 但不在 HEAD。它是
+  跑出 `FULL 6180175 rows | holdout HITS 0` 那个 P0 结果的脚本，**而那个结果至今
+  没有落成 fact 或写进 PROVENANCE**。删掉它，零命中结论再也无法复现。
+  **已落盘（3b，`e0dcccf`）**：fact `dq.code_py_starcoder_holdout_zero`，绑定语料
+  指纹 `e1a14839e11f3e6f`。**前置满足，但脚本仍建议留**——它是那个结论的复现器，
+  而复现器比结论便宜。
+- **`datagen/cascade_code_py.py`**、**`datagen/classify_parse_failures.py`** ——
+  `git log --all -- <path>` 两个都返回空，但字节在对象库里。**已查清（3b）：它们
+  在 3b 的分支上、本轮提交、未并入 main**——正是"未合并分支"那种情况。
+  **它们是活的测量脚本，处置是合进 main，不是删。** 保留这一条的记录，因为
+  判定方法在这里正好证明了自己的边界：**"字节在历史里"不等于"这条路径的历史可
+  追溯"，而两者的处置相反（一个可删、一个该合）。**
 
 **判定方法可复算**：把文件内容按 `blob <len>\0<bytes>` 算 sha1，交给
 `git cat-file --batch-check`。命中即证明这些字节被 git 记录过；miss 即证明没有。
