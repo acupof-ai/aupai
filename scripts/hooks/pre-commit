@@ -344,7 +344,7 @@ def main():
     SELFTEST_FILES = {
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
-        "eval/cache_guard.py",
+        "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
