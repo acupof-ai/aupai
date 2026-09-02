@@ -18,6 +18,7 @@ manifest matches HEAD after the commit lands. This eliminates the "manifest
 stale" CI red that required a separate "regenerate pod manifest" commit.
 """
 import fnmatch
+import hashlib
 import os
 import shutil
 import subprocess
@@ -105,6 +106,53 @@ def staged(diff_filter):
         capture_output=True, text=True,
     )
     return [f for f in r.stdout.splitlines() if f.strip()]
+
+
+def _shared_repo_state(root):
+    """(sha256 of the shared .git/config, staged paths) -- what a selftest must not change.
+
+    Stripping GIT_* from the child stops the leak we know about (e1-12). This measures
+    the property instead of the mechanism: whatever a selftest does, the shared repo must
+    look the same afterwards. Two cheap reads, ~10ms.
+
+    HASH THE WHOLE FILE, do not enumerate fields (b0's correction, 2026-09-02). The first
+    version compared core.bare, because that is the field that broke us -- but `git init`
+    under a leaked GIT_DIR rewrites the entire config, and core.bare is merely the most
+    lethal line in it. A field list only catches the forms already imagined; the next leak
+    adds a remote or bumps repositoryformatversion and passes.
+
+    The leak needs GIT_DIR pointing at a WORKTREE gitdir (.git/worktrees/<name>) -- a
+    plain repo's GIT_DIR does not flip core.bare, so a casual test looks safe and only a
+    worktree, where every session but the controller works, produces the destructive form.
+    Twice on 2026-09-02: a bare flag at 02:49Z (a report at 02:50:39Z records it) and a
+    second write at 02:51:08Z while the first was being reproduced. Each took every
+    session's git down until someone unset it.
+
+    The first of those was reported as "probably some automation" 45 seconds after the
+    reporter had landed a selftest that runs `git init`. The error was the ORDER of
+    investigation, not the guess: an external cause is easier to assume and harder to
+    refute, while "what did I change in the last 60 seconds" is the one thing you can
+    always get evidence for. This check exists so the answer arrives without anyone
+    having to ask the question.
+    """
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # --path-format=absolute, not bare --git-common-dir: that returns ".git", relative to
+    # the REPO, and realpath resolves it against the caller's cwd instead -- so the digest
+    # came back empty from anywhere but the repo root and world 6 reported "no config
+    # digest". An empty digest compares equal to an empty digest, so the detector would
+    # have passed everything while measuring nothing.
+    cfg = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                          "--git-common-dir"],
+                         capture_output=True, text=True, env=env).stdout.strip()
+    digest = ""
+    if cfg:
+        path = os.path.join(cfg, "config")
+        if os.path.exists(path):
+            with open(path, "rb") as fh:
+                digest = hashlib.sha256(fh.read()).hexdigest()[:16]
+    idx = subprocess.run(["git", "-C", root, "diff", "--cached", "--name-only"],
+                         capture_output=True, text=True, env=env).stdout.split()
+    return digest, frozenset(idx)
 
 
 def main():
@@ -349,6 +397,9 @@ def main():
     # so a refusal that returns early would leave a .hookstaged_* file behind for the
     # next session to find dirty. The parallel tree could be left to rot; this cannot.
     staged_copies = []
+    # Measured per selftest, not once around the loop, so the refusal can name WHICH
+    # one did it (e1-14). A single before/after pair would say "something changed".
+    state_before = _shared_repo_state(repo_root())
     try:
         for f in sorted(SELFTEST_FILES & set(staged("AM"))):
             blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
@@ -366,6 +417,29 @@ def main():
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
                 print(f"REFUSING: {f} --selftest failed (staged version):\n" + "\n".join(tail),
+                      file=sys.stderr)
+                sys.exit(1)
+            # A selftest that PASSED can still have written to the shared repo, and that
+            # is the worse case: rc=0 reads as "verified" while another session's git is
+            # already broken. Checked after the rc check so a crashing selftest reports
+            # its own error first.
+            after = _shared_repo_state(repo_root())
+            if after != state_before:
+                what = []
+                if after[0] != state_before[0]:
+                    what.append(f".git/config changed ({state_before[0]} -> {after[0]})")
+                gained, lost = after[1] - state_before[1], state_before[1] - after[1]
+                if gained:
+                    what.append(f"staged {sorted(gained)[:4]}")
+                if lost:
+                    what.append(f"unstaged {sorted(lost)[:4]}")
+                print(f"REFUSING: {f} --selftest changed the SHARED repo: "
+                      + "; ".join(what) + ".\n"
+                      "It passed, which makes this worse than a failure: rc=0 reads as "
+                      "verified while every other session's git is already broken.\n"
+                      "A selftest must build its world from nothing the caller is "
+                      "holding -- strip GIT_* from every subprocess it spawns "
+                      "(pod_drift.py:61-66).",
                       file=sys.stderr)
                 sys.exit(1)
     finally:
@@ -632,9 +706,71 @@ def _selftest():
     finally:
         shutil.rmtree(d2, ignore_errors=True)
 
+    # WORLD 6 (must DETECT): _shared_repo_state notices a selftest that wrote to the
+    # shared repo, which is the e1-14 detector. Built from the real leak: a fake
+    # selftest that runs `git init` with GIT_DIR pointing at a WORKTREE gitdir, the
+    # only form that flips core.bare. Everything happens inside a throwaway repo --
+    # reproducing a destructive defect against the real one is how it got loose twice.
+    d3 = tempfile.mkdtemp()
+    try:
+        def g3(*a, cwd=d3):
+            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
+                                  text=True, env=clean)
+        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
+                  ("config", "user.name", "t")):
+            g3(*a)
+        with open(os.path.join(d3, "f.txt"), "w") as fh:
+            fh.write("base\n")
+        g3("add", "f.txt")
+        g3("commit", "-q", "-m", "base")
+        g3("branch", "-q", "side")
+        wt3 = os.path.join(d3, "wt")
+        g3("worktree", "add", "-q", wt3, "side")
+        gd = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=wt3,
+                            capture_output=True, text=True, env=clean).stdout.strip()
+
+        before = _shared_repo_state(d3)
+        if not before[0]:
+            fails.append("world 6 precondition: no config digest, so a change cannot show")
+        cfg_path = os.path.join(
+            subprocess.run(["git", "-C", d3, "rev-parse", "--path-format=absolute",
+                            "--git-common-dir"], capture_output=True, text=True,
+                           env=clean).stdout.strip(), "config")
+        with open(cfg_path, "rb") as fh:
+            cfg_bytes = fh.read()
+        victim = tempfile.mkdtemp()
+        try:
+            subprocess.run(["git", "init", "-q", victim], capture_output=True,
+                           env=dict(clean, GIT_DIR=gd))
+        finally:
+            shutil.rmtree(victim, ignore_errors=True)
+        after = _shared_repo_state(d3)
+        if after == before:
+            fails.append("world 6: the leak did not reproduce, so the detector is "
+                         "untested -- GIT_DIR must point at a worktree gitdir")
+        elif subprocess.run(["git", "-C", d3, "config", "--get", "core.bare"],
+                            capture_output=True, text=True,
+                            env=clean).stdout.strip() != "true":
+            fails.append("world 6: config changed but core.bare is not true -- the "
+                         "reproduction is not the leak we mean")
+        # Restore the exact bytes, then confirm equality returns -- so a difference is
+        # attributable to one selftest and not to drift. `git config --unset core.bare`
+        # does NOT restore them: `git init` wrote `bare = false`, and the unset deletes
+        # that line rather than putting it back, leaving a config that differs from the
+        # baseline. A whole-file hash notices that; a core.bare comparison would not,
+        # which is the point of hashing.
+        with open(cfg_path, "wb") as fh:
+            fh.write(cfg_bytes)
+        if _shared_repo_state(d3) != before:
+            fails.append("world 6: state did not return to baseline after restoring the "
+                         "config bytes, so a difference cannot be attributed to one "
+                         "selftest")
+    finally:
+        shutil.rmtree(d3, ignore_errors=True)
+
     for f in fails:
         print("SELFTEST FAIL: " + f, file=sys.stderr)
-    print("pre-commit selftest: %s (5 worlds)" % ("FAIL" if fails else "ok"),
+    print("pre-commit selftest: %s (6 worlds)" % ("FAIL" if fails else "ok"),
           file=sys.stderr)
     return 1 if fails else 0
 
