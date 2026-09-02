@@ -2204,6 +2204,51 @@
    "boundary": "The token axis of the readout is 19,151 x 1,048,576 = 20,081,278,976 = 20.08B, NOT the 20.00B the mix declares and the log's plan line prints -- that line describes the plan, not the run. Warmdown starts at step 17,236 = 18.07B. Anyone aligning a milestone or a scaling point against this run uses 20.08B; the 0.4% gap is two resumes' worth of extra fresh rows.",
    "uncertainty": "NOT YET VERIFIED, and verifiable in thirty seconds: the end-of-plan claim is derived from the loop bound plus an arithmetic identity that reproduces all three observed total_steps exactly, but no run has been watched reaching its last step. The check is one grep of the final log against `step 19151/19151` and the .ep1 save -- not a study, and it should be run rather than left as 'pending observation'. Each further resume raises the total again by the same rule.",
    "status": "measured"
+  },
+  {
+   "id": "eff.p500m_20b_throughput_and_dips",
+   "value": "The 20B run holds 11.87K tok/s/gpu median and every departure from it so far is a job SHARING THE CARDS, not the run degrading. Steps 90-1980, 190 step lines. THE LOG'S OWN tok/s IS TOO COARSE TO SEE THIS: it prints whole K, so a 6.5K window and a 12.4K window both read as plausible and a 5% dip is invisible. The rate is recovered from ETA instead -- ETA carries three significant figures, and ETA*3600/(total-step) is seconds per step exactly. That is the whole method, and it is why dips that the eye reads as '12K, fine' are measurable to 0.01K here. EIGHT SLOW WINDOWS, TWO CAUSES. Three are periodic and expected: steps 500, 1000, 1500 at 6.55/6.71/6.68K are the val_every=500 pass, ~87s each, and they will recur 38 more times. Five are aperiodic and are contention, each matching an eval artifact written on the pod while training ran: step 1540 (8.56K, ~06:23Z) and steps 1610-1620 (7.30K then 5.65K, ~06:36-06:37Z) against runs/eval_p500m_step1500_l1.log written 06:29:12, whose first line is 'L1 few-shot: 3 demos, 497 eval problems'; steps 1900-1910 (7.54K, 7.83K, ~07:29-07:31Z) against runs/ppl_step1500_v2.log written 07:25:52. CORRECTED 2026-09-02 (fb): I first named code500_pass8_v3.log and code500_v4.log here, which are 08-31 files -- `ls --time-style=+%H:%M` prints no date, so two days stacked into one window and a stale artifact read as a live job. Re-checked with +%Y-%m-%d; the only job today in that window is the ppl eval. The L1 attribution was 09-02 and stands. THE COST: 615 s of excess wall time over these eight windows, 10.2 minutes, about 0.06B tokens of foregone throughput -- of which 263 s is val (a design choice) and 352 s is contention (avoidable). Contention alone is 5.9 minutes and the worst single window ran at 5.65K, less than half the median. This is the number the stopped-window decision needs: a generative eval sharing the block costs roughly 2 minutes of training per eval, and the run has 17,000 steps left.",
+   "measured": "2026-09-02",
+   "source": "train.py:2508,2569 (the step loop and its ETA print); eval/l1_fewshot.py",
+   "config": {
+    "run": "p500m_20b_0902",
+    "steps_covered": [
+     90,
+     1980
+    ],
+    "step_lines": 190,
+    "tok_per_step": 1048576,
+    "world": 8,
+    "median_tok_s_per_gpu_k": 11.87,
+    "median_s_per_step": 11.04,
+    "method": "rate = ETA_hours*3600/(total_steps-step); the printed tok/s is rounded to whole K and cannot resolve a 5% dip",
+    "val_every": 500,
+    "val_windows": {
+     "500": 6.55,
+     "1000": 6.71,
+     "1500": 6.68
+    },
+    "contention_windows": {
+     "1540": 8.56,
+     "1610": 7.3,
+     "1620": 5.65,
+     "1900": 7.54,
+     "1910": 7.83
+    },
+    "excess_seconds_total": 615,
+    "excess_seconds_val": 263,
+    "excess_seconds_contention": 352,
+    "tokens_foregone_b": 0.06,
+    "attribution_basis": "pod artifact mtime inside the dip window; wall-clock of each step derived from the log's mtime minus (last_step - step) * median_s_per_step",
+    "observed_in": "pod-only logs, not cited as sources because they do not resolve from main: runs/p500m_20b_0902.log (the 190 step lines), runs/eval_p500m_step1500_l1.log (2026-09-02 06:29:12, first line 'L1 few-shot: 3 demos, 497 eval problems'), runs/ppl_step1500_v2.log (2026-09-02 07:25:52). Every number they settle is restated in this config. Every mtime here was read with --time-style=+%Y-%m-%d_%H:%M:%S.",
+    "contention_attribution": {
+     "1540,1610,1620": "runs/eval_p500m_step1500_l1.log 2026-09-02 06:29:12",
+     "1900,1910": "runs/ppl_step1500_v2.log 2026-09-02 07:25:52"
+    }
+   },
+   "boundary": "Rate per WINDOW, not per step: each log line covers 10 steps, so a 1-step stall is smeared over 10 and the true worst instant is lower than 5.65K. Also only the first 10% of the run: these 190 lines are steps 90-1980 of 19,151, all at constant LR before warmdown, so the median is a same-conditions baseline and not a whole-run figure.",
+   "uncertainty": "The attribution is by TIME COINCIDENCE plus a named artifact, not by a scheduler record -- no eval in this window appears in runs/experiments.jsonl, so nothing states which cards a job took. The step wall-clocks are reconstructed from one mtime and a constant rate, so each carries roughly a minute of drift over the reconstructed span; that is far inside the gap between these dips but it is not a timestamp. A DATELESS MTIME IS NOT A TIMESTAMP: the first version of this entry attributed 1900-1910 to two 08-31 files because the listing showed only HH:MM. Same family as reading a +0800 git log against a UTC pod clock. Every mtime here is now read with an explicit date. The val attribution is solid on its own (exactly steps 500/1000/1500, and val_every=500).",
+   "status": "measured"
   }
  ]
 }

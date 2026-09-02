@@ -195,6 +195,17 @@ _MANUAL_RULES = {
     "Small jobs queue on the lane card":
         "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
     "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
+    "When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency "
+    "is judged by host IO and seconds, not by metric class":
+        "the deciding quantity is host bytes read, which nothing in the repo records per "
+        "eval run. scripts/eval_load_cost.py classifies each eval by whether it reaches a "
+        "token cache (static, checkable) and carries the three MEASURED costs, but the "
+        "measurement itself needs a live training run to differ against",
+    "Judge the cost in seconds against what the run already spends on itself, never by the "
+    "printed ETA":
+        "how a human reads a log field. The fix that IS checkable is on the instrument -- "
+        "ETA as a window mean, or the per-interval overrun printed beside it -- and that "
+        "edits train.py, frozen for p500m_20b_0902 (de-27, stop-window list)",
     "What is reachable, measured 2026-08-30 with -4": "a record of a measurement, not a rule to enforce",
     "Reachability changes without notice, so a fetcher carries a mirror chain":
         "fetchers do carry chains; asserting 'a chain is present' would match a comment",
@@ -278,7 +289,19 @@ _MANUAL_RULES = {
 #: conflicting path -- and no artifact records the order. The rule they replace IS
 #: checked (no_shared_stash), which is why the pair is +1 checked and +2 manual rather
 #: than +3 manual: the enforceable half of "never stash" is the stack itself.
-_MANUAL_BASELINE = 30
+#:
+#: 30 -> 32 (de-27, 2026-09-02). Two co-residency rules under Lanes, and each names the
+#: exact quantity nothing here can read:
+#:   1. "co-residency is judged by host IO and seconds": the deciding quantity is host
+#:      bytes read per eval run, which no artifact records. scripts/eval_load_cost.py
+#:      classifies statically (does this file reach a token cache) and carries the three
+#:      measured costs, but the measurement needs a live training run to difference
+#:      against -- 46s/109s/209s came from p500m_20b_0902's own rate series.
+#:   2. "judge in seconds, never by the printed ETA": how a human reads a log field. The
+#:      checkable half is on the instrument, not the operator -- ETA as a window mean, or
+#:      the per-interval overrun printed beside it -- and that edits train.py, frozen for
+#:      p500m_20b_0902. When that lands, this comes back to 31 or 30.
+_MANUAL_BASELINE = 32
 
 
 def _norm_rule(text):
@@ -6157,6 +6180,25 @@ def check_frozen_paths(root):
     ok, note = _run_holds_the_block(root)
     if not ok:
         return SKIP, f"no run holds the block ({note})"
+    # The pod has no .git, so no sha resolves there and a `git diff` baseline cannot work
+    # -- and the banner names a pre-rewrite sha that stopped existing on 2026-09-02 when
+    # history was rewritten. On the pod the question is answered without git at all: do
+    # the frozen files still hash to what the committed manifest says? That is the same
+    # comparison pod_drift makes, narrowed to the paths that must not move mid-run.
+    if pod_drift.is_pod(root):
+        manifest = pod_drift.read_manifest(os.path.join(root, "data", "pod_head_manifest.txt"))
+        bad = []
+        for p in _FROZEN_PATHS:
+            want = (manifest.get(p) or (None,))[0]
+            full = os.path.join(root, p)
+            if want is None or not os.path.exists(full):
+                continue
+            if pod_drift.sha_disk(full) != want:
+                bad.append(p)
+        if bad:
+            return FAIL, (f"{len(bad)} frozen path(s) on the pod differ from the committed "
+                          f"manifest while a run holds the block: {', '.join(bad[:4])}")
+        return PASS, f"{len(_FROZEN_PATHS)} frozen paths match the manifest ({note})"
     rows = [r for r in (_exp_events(root) or []) if r.get("status") == "running"]
     base = None
     for r in reversed(rows):
@@ -6178,11 +6220,17 @@ def check_frozen_paths(root):
         if base:
             break
     if not base:
-        return SKIP, ("a run holds the block but no readable run log carries a `pod code:` "
-                      "banner. NOT falling back to the exp row's commit: it is stamped at "
-                      "`exp start` and a relaunch makes it name code the job stopped "
-                      "executing (dca9762 vs the live cdfa1db, 2026-09-02), so it reports "
-                      "drift on files that are byte-identical")
+        # No banner: the log is pod-only until the run ends. SKIP rather than substitute
+        # a baseline. Both available substitutes are wrong in a way that produces a
+        # standing red, and a check that is always red gets muted -- which is how the
+        # guard fails. The exp row's `commit` is stamped once at start and goes stale on
+        # a relaunch (dca9762 vs the live cdfa1db). The last commit before the row's
+        # `started` is EARLIER than the code the pod actually holds, because pod_push
+        # ships mid-run: it reported 5 changed paths here while the pod matched main
+        # byte for byte. This check is armed on the pod, which is where a mid-run edit
+        # lands; a Mac says nothing rather than something false.
+        return SKIP, ("no `pod code:` banner in a committed run log -- this is armed on "
+                      "the pod, where the live log and the manifest both exist")
     r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
                        cwd=root, capture_output=True, text=True)
     if r.returncode != 0:
