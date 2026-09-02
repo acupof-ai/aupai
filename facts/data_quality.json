@@ -788,7 +788,7 @@
       "value": 0.0,
       "unit": "fraction of rows that are exact duplicates",
       "measured": "2026-09-01",
-      "source": "probes/t62_corpus_dup_rate.py (full-domain), probes/t63_cross_domain_dup.py (cross-domain)",
+      "source": "probes/t62_corpus_dup_rate.py@381d922 (full-domain), probes/t63_cross_domain_dup.py@381d922 (cross-domain)",
       "config": {
         "task": "P0 duplication hypothesis",
         "within_domain_full_scan": "cot 851,965 rows / 851,965 unique; textbook_30b 920,692 / 920,692; wiki_chat 372,827 / 372,827. max_copies 1 in every case.",
@@ -807,7 +807,7 @@
       "value": 0.00625,
       "unit": "fraction of scored docs that are actually held out",
       "measured": "2026-09-01",
-      "source": "probes/t64_val_head_overlap.py; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
+      "source": "probes/t64_val_head_overlap.py@381d922; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
       "config": {
         "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
         "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
@@ -827,7 +827,7 @@
       "value": 4.77,
       "unit": "percent of rows removable, code_rp1t, J>=0.5",
       "measured": "2026-09-01",
-      "source": "probes/t65_near_dup_sweep.py, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
+      "source": "probes/t65_near_dup_sweep.py@71006cf, importing build_corpus's own _word_shingle_hashes/_near_coeffs/_minhash/_lsh_candidates so the number describes the shipped engine",
       "config": {
         "task": "P0 duplication -- the one leg exact-dedup could not answer",
         "sample": "20,000 documents per domain, first shards in sorted order",
