@@ -71,6 +71,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
+import eval_heldout_ours  # noqa: E402  -- the shared supervised-byte denominator
 from loader import IM_END, format_example  # noqa: E402
 
 SEQ = 1024  # Pythia-160m's max_position_embeddings is 2048; 1024 halves the step cost and
@@ -400,7 +401,11 @@ def main():
         # Per supervised BYTE, so the two arms' held-out losses are comparable despite
         # different tokenizers: loss-per-token is not a shared unit when the tokenizers
         # segment the same text into different counts.
-        "held_out_supervised_bytes": sum(len(c.encode()) for _, c in val_pairs),
+        # IMPORTED, not recomputed: two implementations of one denominator is exactly the
+        # drift the shared-split ruling exists to prevent, and the arms' per-byte losses are
+        # only comparable if the divisor is literally the same function.
+        "held_out_supervised_bytes": (
+            eval_heldout_ours.supervised_bytes(hp)[0] if hp and os.path.exists(hp) else 0),
         "wall_s": round(time.time() - t0),
     }
     with open(out_path + ".meta.json", "w", encoding="utf-8") as f:
