@@ -1494,7 +1494,6 @@ def _broken_tokenizer(eos_id=1, with_num=True):
 def _broken_stale_run():
     """The row is built by the REAL logger, not hand-written -- a hand-written row shares
     the check's own schema assumptions."""
-    import subprocess
 
     d = _tmp_repo()
     subprocess.run(
@@ -1926,7 +1925,6 @@ def check_no_oversized_blob(root):
 def _broken_blob():
     """A real blob through real git plumbing -- a synthesised ls-tree line shares the
     check's own assumptions."""
-    import subprocess
 
     d = _tmp_repo()
     big = os.path.join(d, "big.jsonl")
@@ -4254,7 +4252,6 @@ def check_score_matrix(root):
 def _broken_score_matrix():
     """A REAL ok training row, written by the real exp.py, with no score-matrix
     record -- the FAIL tier."""
-    import subprocess
 
     d = _tmp_repo()
     for argv in (
@@ -8775,110 +8772,6 @@ def cmd_sync(rest):
 # --------------------------------------------------------------------------- clean
 
 
-def cmd_clean(rest):
-    """`harness clean --dry` -- list superseded artifacts, do not delete.
-    Deletion is a separate step from this committed listing, by exact path.
-    Each line: path, bytes, producer, why superseded."""
-    if "--dry" not in rest:
-        print("usage: harness.py clean --dry (list only; deletion is a separate step)")
-        return 2
-    pod = os.path.expanduser("~/bin/pod")
-    rows = []
-
-    def pod_lines(cmd):
-        if not os.path.exists(pod):
-            return []
-        r = subprocess.run([pod, cmd], capture_output=True, text=True, timeout=30)
-        return r.stdout.splitlines() if r.returncode == 0 else []
-
-    # 1. Checkpoints: scan pod for ckpt_*.pt, flag known-superseded names.
-    for ln in pod_lines("ls -la /work/aupai/ckpt_*.pt 2>/dev/null"):
-        parts = ln.split()
-        if len(parts) < 9:
-            continue
-        sz, name = parts[4], parts[-1]
-        base = os.path.basename(name)
-        why = ""
-        if base == "ckpt_sft_p324_v2.pt":
-            why = "superseded by t20/t01 rerun (verify rerun exists before deleting)"
-        elif "faFalse" in base or "fa_false" in base or "fa0" in base:
-            why = "fa=False ablation arm, superseded by t20/t01 rerun (verify rerun exists)"
-        if why:
-            rows.append((name, sz, "training run", why))
-
-    # 2. eval_hard shard residue: .N.jsonl files left by multi-GPU eval.
-    for ln in pod_lines("find /work/aupai/data/eval -name '*.\\d.jsonl' 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "eval_hard.sh multi-GPU shard",
-                      "shard residue: a single-card run read 7 shard leftovers as 148/1032 preds"))
-
-    # 3. Orphan .part files under data/raw.
-    for ln in pod_lines("find /work/aupai/data/raw -name '*.part' 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "fetch_corpus.py interrupted",
-                      "partial shard, never renamed to final -- fetch deletes stale .part on startup"))
-
-    # 4. /tmp logs on the pod.
-    for ln in pod_lines("find /tmp -maxdepth 2 -name '*.log' -size +1M 2>/dev/null"):
-        ln = ln.strip()
-        if not ln:
-            continue
-        sz = pod_lines(f"stat -c%s {ln} 2>/dev/null")
-        rows.append((ln, sz[0] if sz else "?", "pod /tmp log", "superseded: /tmp is wiped on restart"))
-
-    # 5. Unregistered .py files on the pod: throwaway probes and bare-podput arrivals
-    # that no manifest entry names. The ones nothing names (UNNAMED) are deletion
-    # candidates; the rest are kept until their run is done.
-    import shlex
-    scan = (
-        "import os,json,time\n"
-        "m=set()\n"
-        "for l in open('data/pod_head_manifest.txt'):\n"
-        " p=l.strip().split('  ',1)\n"
-        " if len(p)==2:m.add(p[1])\n"
-        "pr={}\n"
-        "try:\n"
-        " for l in open('runs/experiments.jsonl'):\n"
-        "  r=json.loads(l)\n"
-        "  for w in r.get('cmd','').split():\n"
-        "   if w.endswith('.py'):pr.setdefault(os.path.basename(w),[]).append(r.get('name','?'))\n"
-        "except:pass\n"
-        "EX=('datagen','filters','mathbank','workflows','.git','__pycache__')\n"
-        "for dp,dn,fns in os.walk('.'):\n"
-        " dn[:]=[d for d in dn if d not in EX and not d.startswith('.')]\n"
-        " rel=os.path.relpath(dp,'.')\n"
-        " if rel.split(os.sep)[0] in('data','runs'):continue\n"
-        " for fn in fns:\n"
-        "  if fn.endswith('.py'):\n"
-        "   p=os.path.normpath(os.path.join(rel,fn))\n"
-        "   if p not in m:\n"
-        "    st=os.stat(p)\n"
-        "    prd=', '.join(pr.get(fn,[])[:3])or'UNNAMED'\n"
-        "    print(f'/work/aupai/{p}\\t{st.st_size}\\t{time.strftime(\"%Y-%m-%d\",time.gmtime(st.st_mtime))}\\t{prd}')\n"
-    )
-    for ln in pod_lines(f"cd /work/aupai && python3 -c {shlex.quote(scan)}"):
-        parts = ln.split("\t")
-        if len(parts) >= 4:
-            path, sz, mtime, prod = parts[0], parts[1], parts[2], parts[3]
-            why = "deletion candidate: no run names it" if prod == "UNNAMED" else f"in use by: {prod}"
-            rows.append((path, sz, f"unregistered .py (mtime {mtime})", why))
-
-    if not rows:
-        print("no superseded artifacts found")
-        return 0
-    print(f"{'PATH':<60} {'BYTES':>12}  PRODUCER / WHY SUPERSEDED")
-    for path, sz, producer, why in rows:
-        print(f"{path:<60} {sz:>12}  {producer}: {why}")
-    print(f"\n{len(rows)} candidate(s). Deletion is a separate step, by exact path.")
-    return 0
-
-
 def _expand_cards(spec):
     """Card spec to a sorted index list. Accepts "0,1,2", "0-7", and both mixed.
 
@@ -10222,8 +10115,6 @@ def main():
         return cmd_task(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
-    if len(sys.argv) > 1 and sys.argv[1] == "clean":
-        return cmd_clean(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "launch":

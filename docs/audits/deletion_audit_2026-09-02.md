@@ -330,10 +330,33 @@ Composition: 59 `def` + 188 docstring + 45 comment + 39 blank + **331 setup boil
 
 | change | lines | selftest constraint |
 |---|---:|---|
-| delete `stages`, `gaps`, `ledger`, `clean` + `main` branches + `_demo` asserts on `score_from`/`recorded_scores` 7759–7775 | ~215 | none (not checks); edit AGENTS.md Harness table rows by hand |
-| (b) world builder + dead world | ~205 | every world still on a repo-real path |
+| delete `clean` only (**not** `stages`/`gaps`/`ledger` — see 4g note) | 104 measured | none (not a check); remove its `sys.argv[1]` dispatch, keep the `clean` PIPELINE step at `:8668`, which is `clean_corpus.py` and unrelated |
+| (b) world builder + dead world | 47 measured (not 205) | skipped by ruling: 47 lines against each world's self-evidence |
 | (a) merge 12 → 6 checks + stamp trio 3 → 1 | ~330 | one `broken()` per merged entry, FAILs on each folded rule; propagate names to `EVIDENCE`, `_CHECK_TIMEOUTS`, `_RULE_CHECKS`, `STAGES`, AGENTS.md coverage table |
 | one `_jsonl`/`_fold`, `_git`, `exp.now`, `cfp._shard_line`, `pod_drift.sha_disk` | ~140 | `_selftest_exp_fold` 7492 already covers the fold |
+
+**4g note, measured 2026-09-02 (de, corrects this table's first two rows).**
+`stages`, `gaps` and `ledger` are NOT dead surface and were not deleted. They run under
+`cmd == "all"`, and `all` is the argparse DEFAULT (`harness.py:10239`), so bare
+`python scripts/harness.py` calls all three (`:10264`, `:10267`, `:10274`). Deleting them
+changes the default invocation's behaviour, which is a product decision, not cleanup.
+Three live runtime references besides that: `harness.py:3644` (`facts_well_formed`'s own
+evidence string says "see `harness gaps`"), `:6583` (`measure`'s closing line), and
+AGENTS.md:117/118/120, which `entrypoints_table_present` reads. "0 external references"
+was wrong.
+
+Line counts, measured rather than estimated: `ledger` 20, `gaps` 51, `stages` 14,
+`cmd_clean` 104 — 189 together, not 215. The world-builder saving is 47, not 205: 53 of
+the repeats are `d = _tmp_repo()`, which is already the shared builder's call site rather
+than removable duplication, and a factored builder still needs one call per world.
+
+One caution for whoever reads the other sections' numbers. A first pass measured 1,896
+lines across the 59 `_broken_` functions and a 466-line outlier; both were artifacts of a
+span walker that ended a function only at the next `def`/`class`, so trailing
+module-level constants and nested defs were absorbed. Ending a span at the next
+zero-indent non-blank non-comment line gives 1,290 lines, mean 21.9, largest 50. The
+audit's own figures were produced by a read-only agent and were not re-derived here
+except where a task touched them.
 | **total without dropping a check** | **≈ 890 (8.7 %)** | `python scripts/harness.py --selftest && python scripts/harness.py check` |
 
 Past ~10 % means retiring checks or CLI verbs (`board` 300, `run` 321, `sync` 88), not refactoring. 2,197 lines (21.6 %) are docstrings and comments, against the user's 2026-09-01 no-comments order — the incident text belongs in the CHECKS `incident` field or the commit that added the check.
@@ -417,7 +440,7 @@ Eight e1 docs, 678 lines, one hypothesis chain, one day (2026-09-01), identical 
 | 4 | One-shot probes whose number is already a fact (§2b, 24 more probes after item 3) — retire each fact `source` to `probes/<f>@<sha>`, delete `padshim.py` (retracted fact) and `t7_attest_path.py` first | 2,994 | 44 | `harness check` (`probe_numbers_unique`, `selftests_are_gated` after editing the hook map, `fact_refs_resolve`) |
 | 5 | Hook-only tests + eval with no runner (§1b): six `scripts/test_*.py` into CI or gone (561); `score_code_exec.py` + `code_l0prime.py` wired into `score_matrix.py` or gone (691); `stale_claims.py`, `audit_population_universals.py`, `read_lr_probe.py` (442) | 1,694 | de (scripts), 44 (eval) | `harness check` `selftests_are_gated` after removing the map lines; CI if tests are added |
 | 6 | Helper dedup (§3): MC suite → `load_items` + `run_eval` table (350), `iter_jsonl` in `loader.py` (320), hash → `corpus_fingerprint` (55), argparse → `loader.add_model_args` (40), 12 AST-identical pairs (165), rest (170) | 1,100 | 44 (eval 400), de (scripts/loader 400), 3b (datagen/mathbank 300) | CI `ruff` + `python scripts/loader.py selftest` + `scripts/test_arch_compat.py`; `eval/score_matrix.py --selftest` for the MC change |
-| 7 | `scripts/harness.py` (§4): delete `stages/gaps/ledger/clean` (215), world builder (205), merge 12 → 6 checks + stamp trio (330), `_jsonl/_git/exp.now` (140) | 890 | de | `python scripts/harness.py --selftest && python scripts/harness.py check`; `agents_rules_covered` after renaming; AGENTS.md Harness table rows edited |
+| 7 | `scripts/harness.py` (§4): delete `clean` (104 measured; `stages`/`gaps`/`ledger` KEPT — they run under the argparse default, see 4g note), 3 redundant `import subprocess` in `_broken_` fns, merge 12 → 6 checks + stamp trio (~330, unmeasured), `_jsonl/_git/exp.now` (~140, unmeasured) | 107 landed of ~890 claimed | de | `python scripts/harness.py --selftest && python scripts/harness.py check`; `agents_rules_covered` after renaming; AGENTS.md Harness table rows edited |
 | 8 | `bench_eff/` (§2a, 4 trace analyzers, facts-only) — retire `source` to `@sha` | 541 | 44 | `harness check` `facts_well_formed`, `fact_refs_resolve` |
 | 9 | Docs (§6): eight `*_prereg.md` → one `copy_hypothesis_chain.md` with `status: measured` (−160); `architecture_efficiency.md` + `arch_efficiency_plan.md` folded into `arch_efficiency_2x.md` (−200); `incremental_batch_jobs.md` into `sop.md` (−18) | 380 | 44 | `harness check` (`lessons_have_frontmatter`, `fact_refs_resolve`, `doc_commands_exist`); `python scripts/reachability.py > runs/reachability.txt` to un-stale the listing |
 | 10 | `mathbank/` generators (§5, §2e): 27 `math_programs_*` + `run_math_short`/`run_short_sol`/`make_v11*`/`split_bank`/`dist_check`/`vet_programs`/`program_probe`/`*_curriculum`; keep `eval_hard_v2_gen.py` (live: `math_hard_eval_v2_1k.jsonl` ← `eval/math_v2_like.py:43`) | 39,900 (44 % of all Python) | 3b; **user ruling** — deletes the last generator of a frozen corpus whose provenance already records generator+seed | `harness check` (`entrypoints_ran`, `entrypoints_table_present` after editing AGENTS.md:60,76,271; `doc_commands_exist` for `audit_math_corpus.md:102-145`), CI `py_compile mathbank/*.py` (edit `ci.yml:13`), `facts/contamination.json` sources → `@sha`. Fallback if refused: shared `_reg`/`_d`/self-check base = −1,650 (4.7 %) |
