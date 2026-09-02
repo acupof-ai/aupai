@@ -1317,15 +1317,44 @@ def read_mix(path):
     return list(doms), None
 
 
+def _exp_fold(evs):
+    """The ledger's own fold, from scripts/exp.py. Lazy-imported, like _launch_shape.
+
+    exp.py owns runs/experiments.jsonl (it is the only writer), so it owns the
+    reduction; this file had four separate re-implementations of it and three of them
+    were wrong in different ways (position-based last-wins in two, name-only keying in
+    a third). Imported INSIDE the function rather than at module scope, for the reason
+    launch_tests documents about launch_gate: a selftest world is a partial tree, and
+    harness must still import where scripts/exp.py is absent. Falls back to the
+    terminal-wins fold inline -- not to position-based -- so a missing exp.py degrades
+    to the correct answer rather than the one this task exists to delete.
+    """
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        from exp import fold
+        return fold(evs)
+    except Exception:
+        out = {}
+        for r in evs:
+            key = (r.get("name"), r.get("started"))
+            prev = out.get(key)
+            if (prev is not None and prev.get("status") != "running"
+                    and r.get("status") == "running"):
+                continue
+            out[key] = r
+        return list(out.values())
+
+
 @functools.lru_cache(maxsize=None)
 def experiments(raw=False):
-    """The experiment log, folded by (name, started): the last event for a run wins.
+    """The experiment log, folded by (name, started) with a close beating a later start.
 
     The file is an event log -- exp.py appends a running row and later a terminal one
-    rather than rewriting, so union merge cannot produce a running/done pair. A reader
-    that does not fold sees a superseded status: t56_profile went ok 13:34 then fail
-    13:47, and an unfolded read failed score_matrix_present on the stale ok.
-    raw=True yields every event."""
+    rather than rewriting. A reader that does not fold sees a superseded status:
+    t56_profile went ok 13:34 then fail 13:47, and an unfolded read failed
+    score_matrix_present on the stale ok. This used to fold on POSITION, which reopens
+    a closed run when a duplicate start lands after it (see _exp_fold); it now shares
+    the ledger's one fold. raw=True yields every event."""
     p = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(p):
         return []
@@ -1337,12 +1366,7 @@ def experiments(raw=False):
                 evs.append(json.loads(line))
             except Exception:
                 pass
-    if raw:
-        return evs
-    folded = {}
-    for r in evs:
-        folded[(r.get("name"), r.get("started"))] = r
-    return list(folded.values())
+    return evs if raw else _exp_fold(evs)
 
 
 CKPT_RE = re.compile(r"\bckpt_[A-Za-z0-9_.-]+?\.pt\b")
@@ -2458,29 +2482,7 @@ def _exp_events(root, folded=True):
             continue  # a line another session is mid-append
     if not folded:
         return evs
-    out = {}
-    for r in evs:
-        key = (r.get("name"), r.get("started"))
-        prev = out.get(key)
-        # A close is TERMINAL. Last-write-wins alone reopens a finished run when a
-        # duplicate start event lands after its close -- which the ledger contains:
-        # (sft_p324_v3, 2026-08-31 03:44) has an ok event at line 44 and a running
-        # event at line 132, and folding on order alone reported a run that finished
-        # in 32 minutes as 26 hours stale. A union merge of two branches can order
-        # events however it likes, so order is not evidence of sequence.
-        # Terminal beats running regardless of POSITION. A union merge concatenates
-        # two branches' rows, so a `running` row can land after the `ok` that closed
-        # it -- sft_p324_v3 has ok at line 44 and running at 132 for the same
-        # (name, started). Position-based last-wins reads that as an open run 25h old
-        # and refuses every merge in the shipment window. A run does not reopen; only
-        # `task reopen` does that, and it is a different ledger. Two terminal events
-        # for one run: the later one wins. (de and e1 reached this independently,
-        # 2026-09-01; de's inline version in check_no_stale_running and this shared
-        # one merged here, with de's reasoning kept.)
-        if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
-            continue
-        out[key] = r
-    return list(out.values())
+    return _exp_fold(evs)
 
 
 #: A `running` row older than this is a job that died without exp.py done. Named rather
@@ -2536,21 +2538,22 @@ def check_no_ghost_running(root):
     import subprocess
 
     # FOLD FIRST. experiments.jsonl is append-only: one run emits many rows and the
-    # readers fold by (name, started), last wins. Reading raw lines asked pgrep 54
-    # times where 13 were needed (measured on the pod, 0.083s each = the whole 4.1s),
-    # and reported the same run as several ghosts because its history has several
-    # rows. So the count was wrong as well as slow, and raising the deadline would
-    # have preserved both.
-    folded = {}
+    # readers fold by (name, started), a close beating a later start. Reading raw lines
+    # asked pgrep 54 times where 13 were needed (measured on the pod, 0.083s each = the
+    # whole 4.1s), and reported the same run as several ghosts because its history has
+    # several rows. So the count was wrong as well as slow, and raising the deadline
+    # would have preserved both. Through _exp_fold since e1-18: this fold was
+    # position-based, so a start event landing after a close made a finished run look
+    # like a ghost -- the check for ghosts inventing one.
+    evs = []
     with open(p, encoding="utf-8") as f:
         for line in f:
             try:
-                r = json.loads(line)
+                evs.append(json.loads(line))
             except Exception:
                 continue
-            folded[(r.get("name"), r.get("started"))] = r
     ghosts = []
-    for r in folded.values():
+    for r in _exp_fold(evs):
         if r.get("status") != "running":
             continue
         try:
@@ -4308,18 +4311,19 @@ def check_score_matrix(root):
     log = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(log):
         return SKIP, "runs/experiments.jsonl not present"
-    # Fold by (name, started), last event wins: the ledger is an event log, so one run
-    # has a running row and then a terminal one. Reading raw events made a superseded
-    # 'ok' outlive the 'fail' that replaced it -- t56_profile, ok 13:34 then fail 13:47,
-    # failed this check as an unscored success (2026-08-31).
-    folded = {}
+    # Fold by (name, started) with a close beating a later start: the ledger is an event
+    # log, so one run has a running row and then a terminal one. Reading raw events made
+    # a superseded 'ok' outlive the 'fail' that replaced it -- t56_profile, ok 13:34 then
+    # fail 13:47, failed this check as an unscored success (2026-08-31). Through
+    # _exp_fold since e1-18; it was position-based, so a duplicate start after a close
+    # reopened the run and this check then demanded a score for a finished one.
+    evs = []
     for line in open(log, encoding="utf-8"):
         try:
-            r = json.loads(line)
+            evs.append(json.loads(line))
         except Exception:
             continue
-        folded[(r.get("name"), r.get("started"))] = r
-    rows = list(folded.values())
+    rows = _exp_fold(evs)
     if not rows:
         return SKIP, "experiments.jsonl has no rows"
     scored = set()
@@ -4557,15 +4561,29 @@ def check_ladder_config(root):
     declared = {}
     exp_path = os.path.join(root, "runs", "experiments.jsonl")
     if os.path.exists(exp_path):
+        # Folded first (e1-18), then keyed by NAME, and the second half is a known
+        # narrowing rather than an oversight. `declared` grants a frozen-key exemption,
+        # so which run of a name wins decides which deviations are forgiven -- and two
+        # names in this ledger ran with DIFFERENT flag sets: p02_s0 (4 runs, 3 sets) and
+        # p500m_20b_0902 (00:03 with 10 flags, the 01:03 relaunch with 15). Dropping
+        # `started` collapses those, so the exemption for ckpt_<name>.pt comes from
+        # whichever row wins rather than from the run that produced the checkpoint.
+        # Position order and start order agree on today's ledger (measured: 0 of 27
+        # names differ), so this is latent, and widening the key is a behaviour change
+        # to an exemption path -- left for a ruling, not folded in here. The fold does
+        # remove the other half: a duplicate start landing after a close can no longer
+        # be the row that grants an exemption.
+        evs = []
         for line in open(exp_path, encoding="utf-8"):
             if line.strip():
-                r = json.loads(line)
-                if "run_ddp.sh" in r.get("cmd", ""):
-                    nm = r.get("name", "")
-                    ladder_names.add(nm)
-                    flags = {_FLAG_TO_CFG.get(t[2:].split("=", 1)[0], t[2:].split("=", 1)[0])
-                             for t in r.get("cmd", "").split() if t.startswith("--")}
-                    declared[nm] = flags
+                evs.append(json.loads(line))
+        for r in _exp_fold(evs):
+            if "run_ddp.sh" in r.get("cmd", ""):
+                nm = r.get("name", "")
+                ladder_names.add(nm)
+                flags = {_FLAG_TO_CFG.get(t[2:].split("=", 1)[0], t[2:].split("=", 1)[0])
+                         for t in r.get("cmd", "").split() if t.startswith("--")}
+                declared[nm] = flags
     bad, unknown, exempt, checked = [], [], [], 0
     for p in ckpts:
         name = os.path.basename(p)[5:-3]  # ckpt_<name>.pt
@@ -7712,6 +7730,15 @@ def _selftest_exp_fold():
             {"name": "b", "started": "2026-08-31 03:44", "status": "running", "ended": ""},
             # a genuinely open run must survive the fold
             {"name": "c", "started": recent, "status": "running", "ended": ""},
+            # ONE NAME, TWO RUNS, and it is here to give the key WIDTH something to fail
+            # on. Without it the fixture cannot tell (name, started) from name alone --
+            # every name appeared once, so both keyings returned identical rows and a
+            # reader folding by name only (check_ladder_flags_declared did, dropping
+            # `started`) passed the agreement assertion below. Verified by blinding:
+            # exp.fold keyed on name alone goes green on the other four rows and red on
+            # these two. d's two runs must stay two rows.
+            {"name": "d", "started": "2026-08-30 06:05", "status": "ok", "ended": "2026-08-30 06:06"},
+            {"name": "d", "started": "2026-08-30 06:13", "status": "fail", "ended": "2026-08-30 06:15"},
         ]
         with open(p, "w", encoding="utf-8") as f:
             for r in ev:
@@ -7723,16 +7750,58 @@ def _selftest_exp_fold():
             "a start appended after a close must NOT reopen the run"
         assert folded[("c", recent)]["status"] == "running", \
             "a genuinely open run must still read as running"
-        assert len(_exp_events(d, folded=False)) == 5, "raw=False must return every event"
+        assert len(_exp_events(d, folded=False)) == len(ev), "raw=False must return every event"
 
         # a and b keep fixed dates on purpose: both are CLOSED, and check_no_stale_running
         # only looks at rows whose status is still running, so no amount of clock movement
         # reaches them. Only the open row had to become relative.
         state, evidence = check_no_stale_running(d)
         assert state == PASS, f"only run c is open and it is recent: {state} {evidence}"
+
+        # EVERY READER, NOT JUST THIS ONE (e1-18). Four re-implementations of this fold
+        # lived here and in exp.py, and three were wrong in different ways: position-based
+        # last-wins in experiments() and check_no_ghost_running/check_score_matrix, and
+        # name-only keying in check_ladder_flags_declared. exp.py:34's docstring asserted
+        # the shape above was impossible -- "union-merging two branches cannot produce a
+        # running row and a done row for the same run" -- while the comment 200 lines up
+        # from here records the ledger containing it. Assert the AGREEMENT, because the
+        # defect was never one reader's answer, it was two readers giving different ones.
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import exp as _exp
+        prev_log = _exp.LOG
+        try:
+            _exp.LOG = p
+            by_exp = {(r["name"], r["started"]): r["status"] for r in _exp.rows()}
+        finally:
+            _exp.LOG = prev_log
+        by_harness = {(r["name"], r["started"]): r["status"] for r in _exp_events(d)}
+        assert by_exp == by_harness, (
+            f"exp.py and harness fold the same ledger differently: {by_exp} vs {by_harness} "
+            "-- one ledger, one reduction, or a check and the tool disagree about what ran")
+        assert by_exp[("b", "2026-08-31 03:44")] == "ok", \
+            "exp.py rows() must not reopen a closed run either (it folded on position)"
+        # AGREEMENT IS NOT THE PROPERTY, and finding that out is why these two lines
+        # exist. Both readers now reach one fold, so a regression IN that fold moves both
+        # and they agree while both are wrong -- verified by blinding exp.fold to
+        # name-only keying, which went green on the agreement assertion above. Assert the
+        # KEY WIDTH against d's two runs directly: one name, two `started` values, two
+        # rows. That is what check_ladder_flags_declared dropped, and it decides which
+        # run's flags grant a frozen-key exemption.
+        for reader, got in (("exp.py rows()", by_exp), ("harness _exp_events", by_harness)):
+            assert got.get(("d", "2026-08-30 06:05")) == "ok" and \
+                got.get(("d", "2026-08-30 06:13")) == "fail", \
+                (f"{reader} folded two runs of one name into one row ({got}) -- the key is "
+                 "(name, started), and dropping `started` makes a re-run replace its "
+                 "predecessor's record")
+        # And the fold reached through the lazy import is the same fold. A silent fallback
+        # to position-based would pass every assertion above, because the real exp.py is
+        # importable here; check the degraded path explicitly.
+        assert {(r["name"], r["started"]): r["status"] for r in _exp_fold(ev)} == by_harness, \
+            "_exp_fold must agree with the reader it replaced"
     finally:
         shutil.rmtree(d, ignore_errors=True)
-    print("  exp fold: close clears its start; a later start does not reopen; open runs survive")
+    print("  exp fold: close clears its start; a later start does not reopen; open runs "
+          "survive; exp.py and harness agree")
 
 
 def _selftest_gpu_descendants():
