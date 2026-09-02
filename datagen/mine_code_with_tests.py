@@ -65,6 +65,28 @@ def detects_unittest(src):
     return "unittest." in src or "assertTrue" in src or "self.assertEqual" in src
 
 
+def has_unskippable_assert(src):
+    """True iff some test method has a real assert and is not skip-decorated.
+    de-28b: a fully-skippable/assert-free test returns rc 0 even with a wrong impl
+    (reward 1.0). Guard at the miner (cheapest), not in the reward parse."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test"):
+            continue
+        if any(isinstance(d, ast.Name) and d.id == "skip" for d in node.decorator_list):
+            continue
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Assert):
+                return True
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and \
+               sub.func.attr in ("assertEqual", "assertTrue", "assertIs", "assertIn"):
+                return True
+    return False
+
+
 def stdlib_core_ok(src):
     try:
         tree = ast.parse(src)
@@ -105,12 +127,12 @@ def main():
             impl_by_base = {}
             for p in files:
                 if not TEST_RE.search(p):
-                    impl_by_base.setdefault(os.path.basename(p), p)
+                    impl_by_base.setdefault(os.path.basename(p)[:-3], p)  # strip .py
             for tp, src in files.items():
                 if not TEST_RE.search(tp):
                     continue
                 counts["test_files"] += 1
-                if not detects_unittest(src):
+                if not detects_unittest(src) or not has_unskippable_assert(src):
                     continue
                 if not stdlib_core_ok(src):
                     continue
