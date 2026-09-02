@@ -249,6 +249,10 @@ class Cfg:
     # the current one (container restart, package update). Default refuses -- a resume
     # under a changed environment is not the same run.
     allow_env_drift = False
+    # 44-12: a resume that would discard a domain cursor (sample_seed or corpus-fingerprint
+    # mismatch) refuses instead of printing and restarting that domain at row 0. The flag
+    # pardons a known, intended discard; the default refuses.
+    allow_partial_cursor = False
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
     val_batches = 20
@@ -1688,6 +1692,16 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # counts, which are non-zero on every run and would make the flag meaningless.
     Cfg._cursor_seeded = any(v > 0 for v in used.values())
     Cfg._cursor_discarded = list(discarded)
+    if discarded and not Cfg.allow_partial_cursor:
+        # 44-12: the print above is the only signal a 66h log gives. Refuse, named, so the
+        # operator chooses --allow_partial_cursor knowingly instead of discovering the
+        # restarted domains in a readout.
+        raise RuntimeError(
+            f"refusing to start: {len(discarded)} domain cursor(s) would be silently "
+            f"discarded and those domains would restart at row 0 -- "
+            f"{'; '.join(discarded[:4])}{'; ...' if len(discarded) > 4 else ''}. "
+            f"Pass --allow_partial_cursor to proceed knowingly (44-12)."
+        )
     # NOW it is trimmed, and the flag above is the reason it can be: the budget already
     # spent by earlier segments is subtracted, so a resume allocates the REMAINDER instead
     # of the whole recipe a second time. Without this, `rows` is the full budget at :1528
@@ -1913,6 +1927,11 @@ def main():
     parser.add_argument(
         "--allow_pod_drift", action="store_true",
         help="train on a pod whose code is behind the committed manifest (known hotfix only)",
+    )
+    parser.add_argument(
+        "--allow_partial_cursor", action="store_true",
+        help="resume even if a domain cursor is discarded (sample_seed/corpus mismatch); "
+             "the discarded domain restarts at row 0. Default refuses (44-12).",
     )
     parser.add_argument(
         "--allow_env_drift", action="store_true",

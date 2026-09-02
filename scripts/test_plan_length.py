@@ -293,6 +293,29 @@ def main():
         else:
             bad.append(f"a spent budget raises RuntimeError that does not name the budget: {msg[:120]}")
 
+    # 44-12: a cursor that WOULD be discarded refuses startup, named; the flag pardons
+    # knowingly. Case 1 (sample_seed mismatch) -- the cheaper world, no corpus dir needed.
+    Cfg.allow_partial_cursor = False
+    try:
+        _build(train, p, row_cursor={"a": 1000}, cursor_seed=train._sample_seed() + 1)
+        bad.append("cursor-discard startup did not refuse (sample_seed mismatch): a print is not a gate")
+    except RuntimeError as e:
+        msg = str(e)
+        if "a" not in msg or "discard" not in msg:
+            bad.append(f"the refusal does not name the domain/reason: {msg[:100]}")
+        else:
+            print(f"  discard refuse: RuntimeError names the domain -- {msg[:80]}")
+    # the flag pardons: the discarded cursor subtracts nothing (full budget, not budget-1000)
+    Cfg.allow_partial_cursor = True
+    tr_d, _log_d, _sd_d, _cur_d = _build(
+        train, p, row_cursor={"a": 1000}, cursor_seed=train._sample_seed() + 1)
+    Cfg.allow_partial_cursor = False
+    if not Cfg._cursor_discarded or "a" not in Cfg._cursor_discarded[0]:
+        bad.append(f"flag path: discard not recorded: {Cfg._cursor_discarded}")
+    if tr_d.shape[0] != per_rank0:
+        bad.append(f"flag path: a discarded cursor still subtracted rows: "
+                   f"{tr_d.shape[0]} vs fresh {per_rank0}")
+
     print()
     for w in warn:
         print("  WARN:", w)
