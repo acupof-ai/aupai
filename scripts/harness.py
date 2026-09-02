@@ -4250,20 +4250,23 @@ def _broken_fact_ref():
 DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
 
 
+@functools.lru_cache(maxsize=None)
+def _tracked_paths(root):
+    r = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+    return None if r.returncode else frozenset(r.stdout.split("\n"))
+
+
 def _cited_path_exists(root, tok):
     """A doc-cited data path that resolves. Gitignored artifacts (tokenizer.json, corpus
     bytes) are exempt -- absent from a clean checkout is their normal state; only a
     TRACKED path that is missing is rot. With no git (the pod), disk is the only truth."""
     if os.path.exists(os.path.join(root, tok)):
         return True
-    is_repo = (
-        subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], cwd=root, capture_output=True).returncode
-        == 0
-    )
-    if not is_repo:
+    tracked = _tracked_paths(root)
+    if tracked is None:
         return False
-    r = subprocess.run(["git", "ls-files", "--error-unmatch", tok], cwd=root, capture_output=True, text=True)
-    return r.returncode != 0  # tracked-but-missing -> False; untracked (gitignored) -> True
+    prefix = tok.rstrip("/") + "/"
+    return tok not in tracked and not any(p.startswith(prefix) for p in tracked)
 
 
 def _doc_data_paths(root):
