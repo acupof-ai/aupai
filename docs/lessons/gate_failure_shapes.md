@@ -621,6 +621,33 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
+
+## 56. 扫描器切分了要判的那个字符串,阈值从未被问到那个凭据上(e1,2026-09-02,e1-24)
+
+`detect_secrets` 的 `Base64HighEntropyString` 正则是 `[A-Za-z0-9+/]+={0,2}`。一条 urlsafe token 里带 `-` `_` `.`,**它就永远不会作为一个字符串被交给检测器**——它在这些字符处被切开,每个碎片单独判熵。
+
+实例:一条真的飞书 device code,86 字符,整体熵 4.894,`find_secrets` 返回 `[]`。因为它最长的纯 base64 碎片只有 35 字符、熵 4.009,在 4.5 限之下,其余碎片更低。**阈值是对的,被判的对象是错的**——所以任何"调阈值"的动作都找不到它。修法是让熵这个问题问在 urlsafe 字符集上,即问在真实存在的那个 token 上。
+
+这条与 §45 同族但更隐蔽:那条是判据读了 stdout 文本而不是退出码,判据本身在场;这条里判据在场、阈值在场、扫描也真的跑了,**缺的是判据和被判对象之间的对齐**。一个"0 命中"的报告因此是关于碎片的陈述,不是关于凭据的陈述。
+
+代价侧也记一条,因为它是这次唯一需要取舍的地方:按 32 字符 + 4.5 熵筛,4508 条里命中 164 条(3.6%),里面既有 4 条 device code、一个 `plat_` token、一个 session id、一个 base64 的 `user:password`,也有 SWE-bench 的 instance id 和日志文件名,后者完全无害。**164 条全丢**。要分开它们需要一个"凭据 vs 标识符"分类器,没有 ground truth,用来抢救 3.6% 的数据,而它判错一次就是一条活凭据进训练集。**多丢的代价是数据,少丢的代价不可回收**——这个不对称让取舍不成问题。
+
+## 57. 机械检查在每一版都是绿的,而每一个缺陷都是手读行读出来的(e1,2026-09-02,e1-24)
+
+一个转录解析器,自带 selftest、契约断言、密钥扫描、结构过滤器,每一版都全绿。**它交付前的每一个缺陷都是人眼读行发现的**,一个也不是检查报出来的。清单:
+
+| 缺陷 | 机械检查的说法 | 怎么发现的 |
+|---|---|---|
+| 活凭据(device code) | `find_secrets` 返回 `[]` | 打印 3 条样例准备发给 3b 时看见 |
+| harness 报错当答案(`API Error:`,307 条) | 契约全过——它是合法的 assistant 文本 | 读第 34 行样例 |
+| 未解析的 tool 调用留在文本里(7 条) | 同上 | 读第 15 行样例 |
+| 用户拒绝的 tool 调用被监督(132 条) | 拒绝落在 tool 轮=已 mask,看起来无害 | 读第 10、48 行样例 |
+| 近重复(206 条,4.8%) | 每条单独看都合法 | 读到第 19/25/30/33 行是同一条巡检 cron |
+
+有两条共同结构。**第一**:过滤器回答的是你想到要问的那个问题。凭据扫描问"有没有已知 provider 的凭据形状",答对了;没人问"有没有一个高熵的、没有 provider 规则的 token"。契约断言问"tool 输出有没有被监督",答对了;没人问"被监督的那个调用,人是不是拒绝过它"。**第二**:defect 都在检查单元的旁边一格——拒绝记录在 tool 轮(masked,正确),缺陷在它前面那个 assistant 轮;近重复是整包属性,而每个过滤器的单元是单条 episode,`usable()` 结构上看不见它。
+
+所以这条不是"要多写检查",而是:**一批数据在交付前必须有人读过它的行,而且要读原始渲染,不是统计**。50 行手读的成本是这次全部 5 个形状的来源;跑完的 4 个自动 gate 贡献 0 个。
+
 - 44-7/44-8 分流夜:/tmp/hcheck.txt、tilerl 零漂移复跑记录
 - lrprobe_0.85.log(pod,2026-09-02):871 行 saved、880 行 OOM、评分器自分配 94.65 GiB
 - scripts/harness.py EVIDENCE 声明(fa32318)、scripts/launch_gate.py 分层
@@ -658,3 +685,5 @@ run 是从 step 83 resume 的(日志第 40 行 `resumed at step 83/19151`),游�
 - 步数 19,073 vs 19,151(2026-09-02,fb 追查后结案):`total_steps` 与 `lr_mult` 同一变量(train.py:2495 → :2511/:2644),19,151 = 19,068 裁过的计划 + 83 resume 偏移(日志第 40 行);截断只减不增(anneal_frac 0.1 实测丢 8 行),故大于理想值的打印必来自加法
 - de-28a 第二轮(2026-09-02,fb 裁定 survey A.3/C.5):chroot 内 uid 0 = mknod 宿主块设备 + RLIMIT_NPROC 不生效 + chdir-then-chroot;`setpriv` 降权后 pod 16/16 known answer(含 uid=65534、mknod EPERM、setsid 双 fork、/proc environ 三进程无泄漏);降权暴露 chroot 根 0700(报错指向 /usr bind)与 cwd 在 chroot 根(报错指向隔离过严);互锁三格表 `/tmp/deadlock.sh` `/tmp/ff_tracked.sh`——只有「ff + main 也改该路径」是真互锁;union 脚本按不存在的字段比较,报 re-applying 0 而计数自相矛盾;Landlock 内核 5.4 结构性缺失(444/445/446 ENOSYS),seccomp 与 userns 可用
 - de-28a 第一轮(2026-09-02,fb 内容接受并纠正流程):探针在 impl 里 print 被 pytest 捕获→`escaped:False` 按构造成立,10/10 绿含两次真逃逸;改成 test 内 assert 后在 rlimits_only 实测会红(reward 0.0/escaped true/点出 `/Users/bytedance/.ssh`);`/dev` 三次测量(ro bind→Errno 30、逐设备 bind→null/zero/full/tty 未进 chroot、mknod 固定主次号);死锁判定被 fb 推翻——`/tmp/deadlock.sh` 实测 `git reset` 后三方合并成功且工作树完好,出路在 de-25 自己的表里
+- e1-24(2026-09-02,e1):device code 86 字符/熵 4.894 vs 最长 base64 碎片 35 字符/熵 4.009;164/4508 全丢的不对称论证;50 行手读产出 5 个形状而 4 个自动 gate 产出 0 个;负例必须「对检测器为正、对判定为负」——第一版 fixture 的碎片熵 4.52 被自己的断言抓到
+- e1(2026-09-02,e1-24 假阳性):这台机器的用户名恰好等于组织名,于是子串 grep 把公共域名(`github.com/sgl-project`同族的`bytedance.larkoffice.com`)和 git 分支名(`origin/bytedance/deepseek_v4`)一并读成身份泄漏——报 474 条,真实 0 条。判据要问契约(home path / 编码目录 / email),不是问一个恰好也出现在别处的字符串
