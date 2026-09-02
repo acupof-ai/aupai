@@ -426,6 +426,14 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 
 实例(e1 一手,86e1917):ruff 跑了但失败(exit 127、stdout 空)被 "F821 in line" 文本匹配读成 GREEN;invalid-syntax 被 F821 过滤丢掉读成「无未定义名」。修法(e1 已落):rc not in (0,1) = no-verdict;invalid-syntax 计入。
 
+## 46. 自报时间戳不带时钟来源 = 不可核验(fb 当事人,2026-09-02)
+
+「UTC」是对时钟的声明,不是格式选择:把本地时间(+0800)习惯性标成 UTC,每条消息的时间戳全部静默错位 8 小时,下游的因果排序跟着全错。
+
+实例(fb 当事人,2026-09-02):fb 全天消息里的「UTC hh:mm」都是本地 +0800 误标——违反他自己写的 Fidelity 条款,自请入表。44 转述的「kill ≈ 05:0x UTC」与 98 实测的日志 mtime(06:10 UTC)造出一个「被杀进程死后 70 分钟还在写日志」的鬼矛盾。三只钟(98 容器、44 本机 `date -u`、fb 的 `date -u`)对齐后真相平凡:ppl 06:10Z 启动、06:10:54Z 最后一行、06:13Z killed,fb 看到的是 ELAPSED 02:07 的僵尸。没有鬼进程,只有错标签。
+
+规则:时间戳要么从 `date -u` 现读,要么不写时区;读对方的时间戳,先问它来自哪只钟。
+
 ## Sources
 
 - fb 裁定原文(aupai-98 转达,2026-09-01/02)
@@ -455,3 +463,6 @@ hook 把每个受门文件都过 `sys.executable`;`python foo.sh` 死在 `set -e
 - tilerl(f82ca46/3bc18f8,2026-09-02):HOLD 文字随分支合进 main,约束人不约束 merge;tilerl-17 frozen_paths 进 hook
 - fb 当事人(2026-09-02):ppl.py 不设 VOCAB_ID→build_mix:1647 必假→九活缓存险被重 tokenize(de-23);preds_l1_d3.jsonl 无 checkpoint 名被 ArtifactExists 拒(de-24)
 - e1-16(86e1917,2026-09-02):exit 127 空 stdout 读成 GREEN、invalid-syntax 被 F821 过滤丢掉;rc not in (0,1)=no-verdict
+- fb 当事人(2026-09-02,1e 转达 06:32Z):全天「UTC」标签为本地 +0800 误标,自请入表;真实时间线 ppl 06:10Z 启动/06:13Z killed,鬼矛盾是错标签造的
+- 98(2026-09-02):容器时钟 + 日志 mtime 06:10 UTC 抓出矛盾;缓存审计九安全、probe_domain.pt 空 .vocab 是 VOCAB_ID 类缺陷指纹(de 的测试产物,非 ppl 所写)
+- 44 本机 `date -u` 06:27 UTC:第三只钟,与 98 容器一致
