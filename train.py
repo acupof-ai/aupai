@@ -21,6 +21,7 @@ import math
 import multiprocessing as mp
 import random
 import re
+import signal
 import shutil
 import tempfile
 import time
@@ -2465,7 +2466,27 @@ def main():
             on_trace_ready=lambda p: p.export_chrome_trace(f"/work/aupai/bench_eff/ddp_trace_rank{rank}.json"),
         )
         _prof.start()
-    GOOD_SAVE_INTERVAL = 200
+    # An interrupt writes a checkpoint before it dies. The periodic save is the floor,
+    # not the only line: SIGTERM (container stop, torchrun teardown, an operator's kill)
+    # and SIGINT reach the main thread between bytecodes, so the handler can snapshot
+    # GPU to CPU at the moment it arrives. SIGKILL and a dead node cannot -- for those
+    # the periodic save is all there is, which is why it stays.
+    _step_now = [resume_step]
+
+    def _save_on_interrupt(signum, _frame):
+        if is_main:
+            p = ckpt_path + f".interrupt.step{_step_now[0]}"
+            try:
+                save_checkpoint(p, {k: v.cpu() for k, v in raw_model.state_dict().items()},
+                                Cfg, VOCAB_ID, opt_snapshot(optimizers), _step_now[0])
+                print(f"interrupt (signal {signum}): saved {p}", flush=True)
+            except Exception as e:
+                print(f"interrupt (signal {signum}): SAVE FAILED {type(e).__name__}: {e}", flush=True)
+        raise KeyboardInterrupt(f"signal {signum}")
+
+    signal.signal(signal.SIGTERM, _save_on_interrupt)
+    signal.signal(signal.SIGINT, _save_on_interrupt)
+
     for ep in range(Cfg.epochs):
         model.train()
         perm = torch.arange(len(Xtr))  # the schedule is already in order; never reshuffle it
@@ -2594,12 +2615,14 @@ def main():
                 step += 1
                 if _prof is not None:
                     _prof.step()
-                # Refresh the rollback buffer on the finer of the two cadences so a save
-                # never writes a stale snapshot (save_every can be < GOOD_SAVE_INTERVAL).
-                if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
+                # One cadence, not two. The rollback buffer lived in memory and died with
+                # the process, so a crash lost everything since the last DISK write while a
+                # fresher copy sat in RAM. Refreshing straight to disk deletes the buffer,
+                # the second cadence, and the "is the snapshot stale" question with it.
+                _step_now[0] = step
+                if step > 0 and step % args.save_every == 0 and is_main:
                     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
-                if step > 0 and step % args.save_every == 0 and is_main:
                     save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
                     # keep the newest 3; resume only needs the latest
                     stale = sorted(
