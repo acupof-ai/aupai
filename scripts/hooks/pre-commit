@@ -638,6 +638,13 @@ def main():
         # version of this comment said ~sqrt(d)=32, which is torch's N(0,1) default, not ours.
         # CPU, seconds.
         "scripts/ve_row_norms.py",
+        # b0-17's three arms, two of which are indistinguishable in logs: tied, untied@embed_lr
+        # (isolating the +16.3% capacity), untied@own_lr 0.003464 (isolating the lr mechanism).
+        # Arms 2 and 3 have identical parameter counts, so arm 3 collapsing into arm 2 errors
+        # nowhere and prints one number for two experiments. Also pins that untying zeroes tok's
+        # vocab pad rows (tied, one zero_() covered both tensors) and that the head stays
+        # fp8-excluded by name. Four checks, each verified red. CPU, seconds.
+        "scripts/test_untie_head.py",
         # b0-16's layer-9 branch probe. Four checks, each verified red on its own broken world;
         # a fifth was DELETED for being unfalsifiable (an explicit `if k not in model: raise
         # KeyError` whose next line raises the same KeyError, so no fixture could tell the two

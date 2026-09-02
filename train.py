@@ -231,6 +231,13 @@ class Cfg:
     # per position by 3*sigmoid over the residual's first 12 dims. One table, not three: three
     # would be +48.9% parameters at 200M against +16.3% (1e's ruling 2026-09-03).
     value_embed = False
+    # b0-17: untie the LM head from the token embedding, and give it its own AdamW lr.
+    # untie_head acts only at __init__ (model.py:359), so it is in harness's _FROZEN_KEYS beside
+    # value_embed -- a resume silently ignores it and the arm's weights, not the flag, carry the
+    # architecture. head_lr is the A/B knob: 0.0 means FOLLOW embed_lr, which is what the tied
+    # head has always done, so the default reproduces today's behaviour byte for byte.
+    untie_head = False
+    head_lr = 0.0
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
@@ -752,12 +759,19 @@ def build_optimizers(model, cfg, master=None):
     """Muon for 2D matrices; AdamW for embeddings, 1D norm gains, and (low lr, wd=0) for the 3D
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
-    muon, embed, scalar, arq = [], [], [], []
+    muon, embed, scalar, arq, head = [], [], [], [], []
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
         q = p if master is None else master[p]
-        if "tok" in n or "head" in n:
+        # THE THIRD ARM LIVES OR DIES HERE. An untied head that still lands in `embed` trains at
+        # embed_lr 0.1 -- which is exactly arm 2 (untied, embed lr) and is a legitimate arm, but it
+        # is NOT arm 3. The two differ only in this branch, and their logs are otherwise identical,
+        # so a mistake here makes two different experiments print the same number.
+        # scripts/test_untie_head.py asserts all three arms' head lr separately.
+        if "head" in n and getattr(cfg, "untie_head", False) and getattr(cfg, "head_lr", 0.0) > 0:
+            head.append(q)
+        elif "tok" in n or "head" in n:
             embed.append(q)
         elif p.ndim == 2:
             muon.append(q)
@@ -790,6 +804,15 @@ def build_optimizers(model, cfg, master=None):
             fused=True,
         ),
     ]
+    # Appended AFTER the three fixed groups, like arq: eval and analysis code indexes opts[0]
+    # (Muon) and opts[1] (embed), and inserting a group earlier would silently repoint every one
+    # of those readings -- including scripts/embed_norm_sdr.py, which reads ck["opt"][1].
+    if head:
+        opts.append(
+            torch.optim.AdamW(
+                head, lr=cfg.head_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd, fused=True
+            )
+        )
     if arq:
         opts.append(
             torch.optim.AdamW(
@@ -810,7 +833,8 @@ def build_optimizers(model, cfg, master=None):
     # bench_eff/*, probes/, scripts/test_arch_*), and returning a tuple would break every one.
     # `arq` is present only when the model has attn_res pseudo-queries, so the zip below must
     # not assume four.
-    for opt, nm in zip(opts, ["muon", "embed", "scalar", "arq"], strict=False):
+    _names = ["muon", "embed", "scalar"] + (["head"] if head else []) + (["arq"] if arq else [])
+    for opt, nm in zip(opts, _names, strict=False):
         opt.aupai_group = nm
     return opts
 
@@ -1903,6 +1927,15 @@ def main():
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    parser.add_argument(
+        "--untie_head", action="store_true",
+        help="b0-17: give the LM head its own weights instead of tying to tok",
+    )
+    parser.add_argument(
+        "--head_lr", type=float, default=None,
+        help="b0-17: AdamW lr for the untied head; 0 or unset follows embed_lr "
+             "(nanochat reference at d1024 is 0.003464)",
+    )
     parser.add_argument(
         "--value_embed", action="store_true",
         help="A/B (4): one shared token-indexed table added to V in every MLA layer, gated by "

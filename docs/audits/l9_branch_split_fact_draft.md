@@ -31,7 +31,12 @@ Complete: all three rescale arms landed (b0-16 closed at efd171a2, review row b0
    layers (MAD sigma 0.33pp, z -19.3). CONSEQUENCE: BOUNDED, NOT ZERO. Three arms on step3500, one tensor
    changed between them: unscaled 2.1551; layer 9's mixer.o x1.4330 (the factor that puts its
    branch ratio at the 12-layer median) 2.2038, delta +0.0487; the SAME factor on layer 6 (control,
-   ratio 0.8719, nearest the median) 2.1616, delta +0.0065. Both are under the 0.24 nat bar, so on
+   ratio 0.8719, nearest the median) 2.1616, delta +0.0065. THE +0.0487 IS A MEAN OVER A
+   NON-UNIFORM QUANTITY, and reporting it alone hides the structure: per domain B-A spans
+   [+0.0247, +0.0838], a 3.4x spread, ordered chat_qa +0.0838 > zh_web +0.0730 > chatml +0.0703 >
+   textbook +0.0512 > en_c4 +0.0469 > math_owm +0.0351 > cot +0.0266 > code_starcoder +0.0261 >
+   code_rp1t +0.0247. Conversational and Chinese-web text lose ~3x what code and CoT lose. Both
+   means are under the 0.24 nat bar, so on
    b0-16's pre-registered reading the split is BOUNDED. But the arms are not equal -- layer 9's
    delta is 7.5x the control's -- so the probe has resolution and layer 9 is the sensitive layer;
    it lacks only enough resolution for a bar built for seed variance. Direction: forcing the branch
@@ -40,10 +45,25 @@ Complete: all three rescale arms landed (b0-16 closed at efd171a2, review row b0
  "measured": "2026-09-03",
  "source": "scripts/l9_branch_probe.py at f8d85e66 (probe + control arm) and afad3b18 (the
    weights-only reading); table artifacts runs/b0_16_l9.json and runs/b0_16_table.log committed at
-   0158a9cd, rescale artifacts runs/b0_16_l9_rescale.json and runs/b0_16_rescale.log at efd171a2;
-   checkpoints ckpt_p200m_4b_0902.pt.interrupt.step832, .interrupt.step1192, .pt.step2500,
-   .pt.step3000, .pt.step3500, all five KEEP-claimed at 6625aa68. Review row b0-10-interval4 in
-   runs/review.jsonl is where the split was first seen; task b0-16.",
+   0158a9cd, rescale artifacts runs/b0_16_l9_rescale.json and runs/b0_16_rescale.log at efd171a2.
+   BOTH ARTIFACT FILES ARE JSONL DESPITE THE .json EXTENSION -- read them line by line; json.load
+   raises (e1 hit this recomputing them).
+   THE HEADLINE WEIGHT NUMBERS HAVE NO ARTIFACT FILE. z -21.9, the 1.7334 peer median, the 0.0241
+   MAD sigma, and the 6.85%/13.29% direction-consistency pair exist only in this fact, in
+   scripts/l9_branch_probe.py's docstring, and in runs/review.jsonl's b0-10-interval4 row. The two
+   committed JSONL files carry domain_loss only; runs/b0_16_table.log carries ratio and median
+   only. Recomputing them means rerunning the script against the checkpoints -- which is possible
+   (script committed, checkpoints claimed, and the eval is verified deterministic), but a reader
+   must not expect to find them in b0_16_l9.json.
+   CHECKPOINT KEEP CLAIMS SIT IN THREE DIFFERENT COMMITS, not one: 827453e5 claims step500 and
+   .interrupt.step832; 73a5efa9 claims .interrupt.step1192 (as de, 15:05Z); 6625aa68 claims
+   .pt.step2500/.step3000/.step3500 (as b0, 20:55Z). AND 1192's RECORDED RATIONALE HAS EXPIRED:
+   73a5efa9 justifies it as the only evidence refuting ds.second_resume_rereads_one_segment, and
+   that fact is now status=retracted in facts/data_scaling.json. b0-16 is a NEW and independent
+   reason to keep 832 and 1192, and no claim line says so yet -- so a future prune would read them
+   as claimed while the claim's stated purpose no longer exists. b0 is adding a claim line naming
+   this fact as their live rationale (e1 caught this; it blocked the first draft).
+   Review row b0-10-interval4 in runs/review.jsonl is where the split was first seen; task b0-16.",
  "config": {
   "run": "p200m_4b_0902",
   "model": "206M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, seq 4096, fp8",
@@ -61,18 +81,25 @@ Complete: all three rescale arms landed (b0-16 closed at efd171a2, review row b0
    quantities. Why layer 9 and not another layer is unexplained; nothing here says the position
    is reproducible. The direction-consistency figure uses ||NS(m)||_F ~ 32 as the per-step push,
    which is Newton-Schulz's design property rather than a measurement of this run's updates.",
- "boundary": "BOUNDED ON A BAR THAT IS THE WRONG INSTRUMENT FOR THIS EFFECT, which is the
-   honest form of the verdict. 0.24 nat is ds.seed_variance_0p2b -- the seed-to-seed spread of a
-   whole run's unweighted mean. The rescale is a 0.0487 perturbation of ONE checkpoint measured
-   against itself with no seed involved, so run-to-run seed noise is not the noise this measurement
-   has; reading a 0.05 effect would need paired per-domain deltas on a fixed batch (where A-vs-A is
-   0 by construction), around 0.024. That is a different instrument, not more arms, and it is NOT
-   offered as a re-reading of this result: on the pre-registered bar the answer is bounded and no
-   action follows at 200M. WHERE THE 0.024 INSTRUMENT IS OWED (1e ruling 2026-09-03, no task
-   opened for it here): layer 9's delta is 7.5x the control's, so the asymmetry is real and the
-   paired per-domain instrument is what the NEXT ladder point should use -- the L32 layer-31 split
-   -- opened on demand at that point rather than retrofitted onto this one. Recorded so the
-   unopened task is a decision in the record and not an omission. THE TABLE CANNOT UPGRADE IT EITHER:
+ "boundary": "BOUNDED ON THE PRE-REGISTERED BAR, AND RESOLVED ON THE PAIRED ONE -- both, and
+   they do not conflict. 0.24 nat is ds.seed_variance_0p2b, the seed-to-seed spread of a whole
+   run's unweighted mean; the rescale is a perturbation of ONE checkpoint measured against itself
+   with no seed involved, so seed noise is not this measurement's noise. An earlier draft of this
+   line said reading a 0.05 effect would need a paired per-domain instrument that did not exist
+   yet, and that was WRONG: the data for it is already inside runs/b0_16_l9_rescale.json, and e1
+   computed it during review. Doing it properly also corrects the null hypothesis -- B-A is 9/9
+   positive, but so is C-A, because ANY rescale of trained weights hurts. So B-A > 0 does not
+   isolate layer 9; the statistic is (B-A)-(C-A) per domain: mean +0.0422 nat, sd 0.0225, t 5.62,
+   9/9 same sign, sign-test one-sided p 0.0020. A-vs-A is exactly 0 (arm A reproduces the table's
+   step3500 row on all 9 domains, max|diff| 0.000000), which is what makes the pairing legitimate
+   and also establishes that this eval is deterministic.
+   SO THE READING IS: layer 9 is distinguishably more sensitive than a normal KDA layer
+   (p 0.0020), by 0.0422 nat. That is BELOW the 0.24 bar and STILL below any threshold that would
+   justify an architecture change, so no action follows at 200M -- the verdict is unchanged, but it
+   is now bounded WITH a resolved magnitude rather than bounded because the instrument was blunt.
+   b0-18 will land --paired in eval/domain_loss.py so this is a mode rather than a review-time
+   recomputation, and the next ladder point (L32 layer-31) gets it from the start.
+   THE TABLE CANNOT UPGRADE IT EITHER:
    domain_loss falls monotonically because the model is training and the ratio falls monotonically
    too, so the two correlate whatever the ratio means -- the five-point table is confounded by
    construction and is recorded for provenance, not as evidence of consequence. Says nothing about
