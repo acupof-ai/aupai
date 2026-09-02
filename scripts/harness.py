@@ -9528,6 +9528,11 @@ _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    # Initialisation: FROZEN, not measurement. It changes the trajectory from step 0, so two
+    # segments of one run that disagree on it are not comparable -- and because it only acts
+    # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
+    # exists to catch (the arm's own weights carry the init; the flag does not).
+    "zero_init_out",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
 )

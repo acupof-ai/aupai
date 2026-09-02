@@ -219,6 +219,12 @@ class Cfg:
     attn_res_blocks = 0
     attn_res_dyn_q = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
+    # A/B (3), speedrun record: zero-init every OUTPUT projection, so each sublayer starts as
+    # an identity on the residual stream and learns its way out. Off by default -- this is an
+    # A/B arm, not a production change, until it wins. Covers `o` (both KDA's and MLA's, both
+    # named .o) and FFN's `w2`; NOT AttnRes's final_ar, which mixes sources rather than
+    # writing to the residual stream (1e's ruling 2026-09-03).
+    zero_init_out = False
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
@@ -1844,6 +1850,10 @@ def main():
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    parser.add_argument(
+        "--zero_init_out", action="store_true",
+        help="A/B (3): zero-init output projections (every .o and FFN .w2), so each sublayer "
+             "starts as an identity on the residual stream")
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )

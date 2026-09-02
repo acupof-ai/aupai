@@ -443,6 +443,11 @@ def main():
         # the gate. They are in the map so a train.py edit cannot land without them.
         "scripts/test_plan_length.py",
         "scripts/test_cursor_sum.py",
+        # A/B (3)'s arm: two ways it costs a run and reports nothing -- zeroing nothing after
+        # a rename (a bit-exact copy of the baseline that still logs as the arm), and looking
+        # like a dead branch when it is not (upstream grad is exactly 0 at step 0 by
+        # construction and recovers at step 1). Pins both halves of that contract.
+        "scripts/test_zero_init_out.py",
         # These dispatch on sys.argv instead of argparse, which the gate's old
         # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
         # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
