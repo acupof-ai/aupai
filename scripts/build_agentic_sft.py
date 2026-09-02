@@ -59,8 +59,10 @@ THREE DECISIONS THAT ARE NOT OBVIOUS, each named because a later reader will won
 # is nothing to resume, so per-shard writes would add a checkpoint format for no gain.
 """
 import argparse
+import collections
 import glob
 import json
+import math
 import os
 import re
 import sys
@@ -339,6 +341,15 @@ SYNTHETIC_USER = re.compile(
 CHATML_LITERAL = re.compile(r"<\|im_(?:start|end)\|>")
 UNACTIONABLE_OPENER = re.compile(r"\s*(?:\[Image:[^\]]*\]\s*)+$|\s*/[a-z][a-z-]{1,20}\s*$")
 NON_ANSWER = re.compile(r"\s*(?:No response requested\.?|\(no response\)|)\s*$")
+#: The HARNESS speaking in the assistant's voice. A transcript records an API failure as an
+#: assistant message, so it packs as a supervised completion and teaches the model to answer
+#: with an error string. 58 of 4349 episodes (1.3%), and in all 58 it is the LAST supervised
+#: turn -- the strongest position in the episode. Found by hand-reading the three samples for
+#: 3b, after the credential scan and every structural filter had passed them.
+HARNESS_ERROR = re.compile(
+    r"\s*(?:API [Ee]rror|Request timed out|\[?Request interrupted by user"
+    r"|Prompt is too long|Claude's response was cut off)")
+
 
 
 def is_synthetic_user(text, window=600):
@@ -392,6 +403,11 @@ def usable(messages):
         return False, "opener the model cannot act on (image-only / slash command)"
     if all(NON_ANSWER.match(m["content"]) for m in messages if m["role"] == "assistant"):
         return False, "every assistant turn is a non-answer"
+    # The whole episode goes, not just the turn: in all 58 cases the error IS the final
+    # assistant turn, so truncating leaves the episode ending on a tool turn with its result
+    # never used -- which trains the model to call a tool and abandon it.
+    if any(m["role"] == "assistant" and HARNESS_ERROR.match(m["content"]) for m in messages):
+        return False, "an assistant turn is a harness error, not a response"
     if any(CHATML_LITERAL.search(m["content"]) for m in messages):
         return False, "text contains a literal ChatML marker (tokenizes as the real token)"
     if is_synthetic_user(messages[0]["content"]):
@@ -498,9 +514,52 @@ REAL_CREDENTIAL = frozenset({
     "Telegram Bot Token", "Twilio API Key",
 })
 
+#: An opaque credential no provider detector has a rule for, judged by its own entropy.
+#:
+#: THE CHARSET IS THE WHOLE POINT. detect_secrets' Base64HighEntropyString matches
+#: `[A-Za-z0-9+/]+={0,2}`, so a urlsafe token containing `-`, `_` or `.` is never handed to
+#: the detector as one string -- it is SPLIT at those characters and each piece is judged
+#: alone. A Lark device code of 86 chars at 4.894 entropy came back clean from
+#: find_secrets(): its longest base64-only fragment is 35 chars at 4.009, under the 4.5
+#: limit, and every other fragment is far lower. The threshold was never consulted on the
+#: credential; it was consulted on the debris. This pattern spans the urlsafe charset so the
+#: entropy question is asked about the token that actually exists.
+#:
+#: 32 chars and 4.5 bits over that charset selects 461 tokens in 164 of 4508 episodes (3.6%),
+#: and the set is genuinely mixed: 4 Lark device codes, a `plat_` API token, a session id and
+#: a base64 `user:password` sit beside SWE-bench instance ids
+#: (`PyCQA__flake8.cf1542ce.func_pm_ctrl_shuffle__7e1ipwsu`) and log filenames, which are
+#: harmless. ALL 164 GO. Separating them needs a classifier for "credential vs identifier"
+#: with no ground truth, built to rescue 3.6% of a pack that has 4344 episodes left -- the
+#: trade is not close, and a wrong call in that classifier ships a live credential into
+#: training data. Over-dropping costs episodes; under-dropping is unrecoverable.
+OPAQUE_TOKEN = re.compile(r"[A-Za-z0-9_\-.]{32,}")
+OPAQUE_ENTROPY = 4.5
+
+
+def opaque_credential(text):
+    """True if `text` holds a high-entropy opaque token -- the shape find_secrets cannot see.
+
+    Shannon entropy over the token's own characters, the same measure detect_secrets applies,
+    but over the token as written rather than over base64-only fragments of it.
+    """
+    for m in OPAQUE_TOKEN.finditer(text):
+        s = m.group(0)
+        counts = collections.Counter(s)
+        h = -sum(c / len(s) * math.log2(c / len(s)) for c in counts.values())
+        if h >= OPAQUE_ENTROPY:
+            return True
+    return False
+
 
 def drop_credential_rows(rows):
     """(kept, dropped) -- episodes carrying a real credential shape are removed entirely.
+
+    TWO detectors, because one of them cannot see the other's cases. find_secrets covers the
+    shapes with a provider rule; opaque_credential covers a high-entropy token with no rule,
+    which find_secrets misses whenever the token spans the urlsafe charset (see OPAQUE_TOKEN
+    -- a live Lark device code passed the scanner and reached a sample I was about to send to
+    a peer).
 
     Per-turn scan, because the location is what gets reported to a human: fb needs the file
     path and line of any true credential so the user can be told it is sitting in a
@@ -512,6 +571,8 @@ def drop_credential_rows(rows):
         hits = set()
         for m in r["messages"]:
             hits.update(t for t in (find_secrets(m["content"]) or []) if t in REAL_CREDENTIAL)
+            if opaque_credential(m["content"]):
+                hits.add("Opaque High Entropy Token")
         if hits:
             dropped.append({"project": r["project"], "types": sorted(hits),
                             "turns": len(r["messages"])})
@@ -670,6 +731,50 @@ def _selftest():
             fails.append("an episode with only a heuristic hit was discarded -- dropping every "
                          "heuristic hit empties the pack while removing nothing real")
 
+    # 4b. THE OPAQUE TOKEN, which is the case find_secrets cannot answer. The fixture is
+    #     SYNTHETIC and its structure is the assertion: 4.5+ entropy over the urlsafe charset
+    #     while every base64-only fragment stays under the limit, which is what made a live
+    #     Lark device code (86 chars, 4.894) scan clean. A base64-only blob would be caught by
+    #     Base64HighEntropyString and would prove nothing about this gate.
+    #
+    #     Separators every 6-7 chars, deliberately: a fragment of n chars cannot exceed
+    #     log2(n) bits, so short fragments put the base64 detector structurally out of reach
+    #     (2.59 max here) while the whole token sits at 5.53. My first fixture spaced them
+    #     wider and a 4.52-bit fragment slipped over the limit -- the assertion below caught
+    #     it, which is the reason it exists.
+    fake = "qZ8mK3-xVwT9p.L2nbY7_cJ4hR6_dF5sNg_A1eU0i_OtXwQ3_vZ7yBm_C9kHjD_6fG"
+    frags = re.findall(r"[A-Za-z0-9+/]{3,}={0,2}", fake)
+
+    def _h(s):
+        c = collections.Counter(s)
+        return -sum(v / len(s) * math.log2(v / len(s)) for v in c.values())
+
+    if _h(fake) < OPAQUE_ENTROPY:
+        fails.append(f"the opaque fixture is only {_h(fake):.2f} entropy, under the "
+                     f"{OPAQUE_ENTROPY} gate -- it cannot test the gate it is for")
+    if frags and max(_h(f) for f in frags) >= OPAQUE_ENTROPY:
+        fails.append(f"the opaque fixture's base64 fragments reach {max(_h(f) for f in frags):.2f} "
+                     "entropy, so detect_secrets would catch it and this case does not "
+                     "exercise the charset-splitting blind spot at all")
+    if find_secrets(fake) is not None and any(
+            t in REAL_CREDENTIAL for t in find_secrets(fake)):
+        fails.append("the opaque fixture trips a provider detector, so drop_credential_rows "
+                     "would remove it with or without opaque_credential")
+    if not opaque_credential(fake):
+        fails.append(f"opaque_credential missed {len(fake)}-char {_h(fake):.2f}-entropy token")
+    opaque = [{"project": "p", "messages": [
+        {"role": "user", "content": "log in"},
+        {"role": "assistant", "content": f"device_code: {fake}"}]}]
+    kept, dropped = drop_credential_rows(opaque)
+    if len(dropped) != 1 or kept:
+        fails.append("an episode carrying an opaque high-entropy token was kept")
+    # And the gate must not eat ordinary text: a long identifier at low entropy stays.
+    for benign in ("scripts/test_eval_base_prompt_format.py",
+                   "p500m_20b_0902_step_0000012000_loss_2p31",
+                   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"):
+        if opaque_credential(benign):
+            fails.append(f"opaque_credential fires on benign text ({_h(benign):.2f}): {benign!r}")
+
     # 5. An episode quoting a ChatML marker must be refused: the tokenizer turns the quote
     #    into the real special token, so it would inject a role boundary into a completion.
     quoting = [{"role": "user", "content": "what does <|im_start|>tool look like?"},
@@ -687,10 +792,32 @@ def _selftest():
           {"role": "assistant", "content": "ok"}], "a bare slash command"),
         ([{"role": "user", "content": "do the thing"},
           {"role": "assistant", "content": "No response requested."}], "a pure non-answer"),
+        # The harness speaking as the assistant. The negative case below matters as much:
+        # a real answer that MENTIONS an error must survive, or the filter eats every
+        # debugging episode in a corpus that is mostly debugging.
+        ([{"role": "user", "content": "跑"},
+          {"role": "assistant", "content": "call"},
+          {"role": "tool", "content": "ok"},
+          {"role": "assistant", "content": "Request timed out"}], "a harness timeout as an answer"),
+        ([{"role": "user", "content": "跑"},
+          {"role": "assistant", "content": "API Error: 500"}], "a bare API error as an answer"),
     ):
         ok, why = usable(msgs)
         if ok:
             fails.append(f"{what} was accepted; there is nothing here to learn")
+
+    for msgs, what in (
+        ([{"role": "user", "content": "why did it fail"},
+          {"role": "assistant", "content": "The API error at line 12 is a 429; retry with backoff."}],
+         "an answer ABOUT an API error"),
+        ([{"role": "user", "content": "x"},
+          {"role": "assistant", "content": "跑挂了：Request timed out 是 pod 那侧的，不是代码。"}],
+         "an answer quoting a timeout mid-sentence"),
+    ):
+        ok, why = usable(msgs)
+        if not ok:
+            fails.append(f"{what} was dropped ({why}); HARNESS_ERROR must anchor at the "
+                         "start of the turn, not match anywhere in it")
 
     # 7. A tool result with no preceding assistant turn must be refused, not repaired.
     bad = [{"role": "tool", "content": "orphan"}, {"role": "assistant", "content": "x"}]
