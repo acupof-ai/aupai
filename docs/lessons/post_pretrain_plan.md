@@ -17,7 +17,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 
 ## 1. SFT 段
 
-- **数据**:3b 的 v1 pack(agentic 格式,`datagen/` 渲染器产出;格式约束见 scale_36b_plan.md:每源过渲染器、形态由代码定)。pack 路径与行数由 3b 在落地前填进本节——这是唯一的开放项。
+- **数据**:e1-24 的 Claude Code transcripts pack(agentic 格式,`scripts/loader.format_agentic`:assistant 文本监督、tool 输出 mask)。最新实测 v10:4,002 行 / 16,090 对 / 5,766,589 token / 76.7% 工具循环;v11 重跑中(13:40Z 因磁盘满死过一次),预计多约 40 行。as of 13:40Z,v11 终报与 pack 路径 pending——落地前替换成 fact id 与确切路径。
 - **入口闸**:base checkpoint + panel 基线(§0)。
 - **出口数**:SFT 后重跑 panel 六指标 + math-hard pass@1/pass@8。出口判据不是「SFT 比 base 好」,是「SFT 后 pass@8−pass@1 gap 是否过 RL 门」——SFT 的产品是 RL 的起点,不是终点。
 - **失败决策**:
@@ -47,6 +47,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 ### 3b. 代码 agent RL(tileRL GRPO,测试奖励)
 
 - **形态**:Claude Code 是 agent 外壳,tileRL 是推理引擎和训练器,容器是环境,测试是奖励。策略先 27B(Qwen3.8-27B NVFP4,LoRA on frozen fp4 base),500M 在能驱动 tool loop 后作为被服务策略进同一 API,不进 tileRL 引擎做模型类。
+- **任务库**:3b-9 已 admitted 134 个 Exercism 任务(≥5 测试、MIT;as of 13:40Z,在 3b worktree,提交 pending);Aider polyglot 与 EvalPlus 还在 fetch。阶段 5 的 20 任务试点从 admitted 集里抽,落地前替换成 fact id。
 - **五阶段**(裁定固定顺序,前一阶段的 done 成为产物才开下一阶段;1-4 不需要 GPU,现在就能开):
   1. API 适配(tilerl-19):tileRL OpenAI server 前的 Anthropic Messages 兼容层;done = `claude -p` 对 tiny 模型完成一次 tool call + 最终回答。
   2. 镜像(tilerl-19):tileRL server + shim + Claude Code CLI + python3 + 任务库,一命令启动;done = 冷启动端到端跑通阶段 1。
@@ -74,7 +75,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 
 ## 5. 开放项(落地前必须填)
 
-1. SFT pack 的确切路径与行数(3b 填)。
+1. SFT pack 的确切路径与行数:v10 已测(16,090 对 / 5,766,589 token / 76.7% 工具循环),v11 终报 + 路径 pending(e1-24);任务库 134 个 Exercism admitted(3b-9),提交 pending。
 2. SFT 与 RL 的实测吞吐 → 预算的卡时数字:用 tilerl-17 的 11.87K tok/s/gpu 中位数换算(数学 RLVR 轨道);代码 agent 轨道阶段 5 按 27B GRPO pilot 实测填。
 3. pass@8 的生成温度与 max_new(预登记,进 panel 配置)。
 4. RL 门的题目版本(math-hard v2,与 200M 读数同一份)。
