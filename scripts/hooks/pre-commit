@@ -331,6 +331,16 @@ def main():
         "scripts/test_spawned_fast.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
+        # de-5 candidates that turned out to assert live properties. Each was in the
+        # DELETABLE tier because nothing named it, and each was RUN before being judged
+        # (fb's ruling, 2026-09-02): a test that passes and asserts something live gets
+        # gated, not deleted. Measured here, no data or card needed:
+        #   test_monitor_exit    0.6s  4 exit paths -- clean closes ok; nonzero, killed
+        #                              and vanished all close fail
+        #   test_math_passk      0.3s  pass@k arithmetic matches code_zh, k not shadowed,
+        #                              k>1 at t=0 refuses
+        "scripts/test_monitor_exit.py",
+        "scripts/test_math_passk.py",
         # These dispatch on sys.argv instead of argparse, which the gate's old
         # predicate ('--selftest' near add_argument) could not see (de, 2026-09-01).
         # Three probes in this set were deleted in the 44-13 pass; the scripts remain.
@@ -361,6 +371,20 @@ def main():
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
+        # Two more de-5 candidates that PASS and assert live properties, but only where the
+        # corpus and tokenizer are (fb's ruling: run it before judging it). Both measured on
+        # the pod 2026-09-02:
+        #   test_resume_cursor_pod  a cursor moves the planned rows (50.0% overlap against
+        #                           an ignored cursor's 100%), no silent discard,
+        #                           _plan_trimmed true, and the seed guard fires
+        #   test_domain_loss_val    val_seqs returns train.py's held-out rows, disjoint
+        #                           from the training pool -- after this commit fixes its
+        #                           fixture key from "text" to "content", which is why it
+        #                           died in its own setup and read as unrunnable
+        "scripts/test_resume_cursor_pod.py": "needs data/tokenizer.json and data/corpus/, "
+                                             "both gitignored; run on the pod",
+        "scripts/test_domain_loss_val.py": "needs data/tokenizer.json, gitignored; SKIPs "
+                                           "cleanly here and passes on the pod",
         # Kept rather than deleted in de-21, and listed here so the reason it is not run is
         # recorded rather than absent. It is the ONLY assertion that _encode_domain(workers>1)
         # is element-identical to workers=1 (train.py:1682, the live path that writes every
