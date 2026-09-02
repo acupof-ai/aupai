@@ -1,15 +1,33 @@
 ---
-question: "milestone profile: fixed-subset eval at every stage-1/stage-2 milestone, <60 min on lane card"
+question: "milestone profile: fixed-subset eval at every stage-1/stage-2 milestone, <60 min"
 status: recorded
 source: "t53 2026-08-31; runs/milestone_p324_v2.jsonl; eval/score_matrix.py --profile milestone"
+cadence_corrected: "e1-10 2026-09-02: 532K tok/s and the 1.7-4 h cadence were p324 (200M) figures; 500M measures 94.9K, so 9.5-22.4 h and ~6 milestones. Wall times below are still p324's and are NOT rescaled."
 ---
 
 # Milestone profile
 
-Fixed subset that runs at every stage-1/stage-2 milestone on GPU 7 (lane card).
-Milestones arrive every 1.7-4 h at 532K tok/s; the profile must finish in <60 min
-so the readout does not fall behind. de's `harness milestone` (t39) and b0's
-readout_30b.py consume the record.
+Fixed subset that runs at every stage-1/stage-2 milestone. de's `harness
+milestone` (t39) and b0's readout_30b.py consume the record.
+
+Three premises this profile was sized against came from p324, a 200M checkpoint,
+and none holds for the 500M run:
+
+| sized against | measured for 500M |
+|---|---|
+| 532K tok/s = 66.5K/card | 11,857 tok/s/gpu = 94.9K total |
+| milestone every 1.7-4 h | every 9.5-22.4 h, ~6 in the run, not 28 |
+| runs on GPU 7, the lane card | no lane card: `lane_card: null`, `block_cards: 0-7` |
+
+Throughput from `runs/p500m_20b_0902.log:57-63` on the pod, steps 170-230, b32
+accum1 seq4096 world=8 grad_ckpt fp8 d1024 L32, 2026-09-02. Cards from
+`runs/card_assignment.json`, whose note states in-run milestone generation sweeps
+cannot run because the scorer needs a whole 95 GiB card and not a gap.
+
+The sparser cadence costs nothing here: it makes a <60 min budget easier, and
+what shrinks is the readout's sample count. The missing lane card is what bites —
+for the 20B run this is an end-of-run instrument, scored by `run_ddp.sh` after
+torchrun exits with all eight cards free.
 
 ## Profile contents
 
@@ -23,6 +41,10 @@ readout_30b.py consume the record.
 | code_500 | greedy code on 500 held-out problems | 722.5s |
 | code_500_v2 | greedy code on 500 clean problems | 810.3s |
 | **Total** | | **1838.9s = 30.6 min** |
+
+Those wall times are p324's. At 2.4x the parameters with O(T²) generation (see
+Known defects), 30.6 min at 500M is unmeasured — time the first 500M run before
+quoting the budget again.
 
 pass_at_k and math_hard stay out (hours); they run only at 15B and 30B.
 
@@ -59,7 +81,8 @@ Baseline math_500 took 702s with batch=64, no rep_stop. Two fixes:
 ## Reproduction
 
 ```bash
-# Run the milestone profile on GPU 7 (lane card)
+# Run the milestone profile on one free card. During the 20B run there is no
+# free card (block_cards 0-7); this is an end-of-run invocation.
 CUDA_VISIBLE_DEVICES=7 python3 eval/score_matrix.py --ckpt ckpt_p324.pt --profile milestone
 
 # Record lands in runs/milestone_<ckpt>.jsonl
