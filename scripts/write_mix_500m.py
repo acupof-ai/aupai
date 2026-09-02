@@ -1190,18 +1190,24 @@ def main():
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    ref = None
     if int(a.total) != TOTAL_TOKENS:
         if not a.out or a.probe:
             ap.error("a non-default --total needs --out and excludes --probe")
+        ref = build(a.code_tokens)
         TOTAL_TOKENS = int(a.total)
         ROWS = TOTAL_TOKENS // SEQ
     m = build_probe() if a.probe else build(a.code_tokens)
     out = PROBE_OUT if a.probe else (a.out or OUT)
-    if a.out and not a.probe:
+    if ref is not None:
+        for name, d in m["domains"].items():
+            d["weight"], d["anneal"] = ref["domains"][name]["weight"], ref["domains"][name]["anneal"]
+            assert d["weight"] * TOTAL_TOKENS <= ref["domains"][name]["weight"] * ref["total_tokens"]
         m["_comment"].append(f"TOTAL overridden to {TOTAL_TOKENS / 1e9:.3f}B by --total for "
-                             f"{os.path.basename(out)}; weights identical to mix_500m.json, epochs "
-                             "and the code floor re-derived (user, 2026-09-02 10:0xZ: smaller "
-                             "models, fewer tokens, same composition).")
+                             f"{os.path.basename(out)}: weights and anneal copied from the 20B "
+                             "build, so the composition is the 500M run's; epochs stay as caps "
+                             "and every domain draws fewer passes than at 20B (user, 2026-09-02 "
+                             "10:0xZ: smaller models, fewer tokens, same composition).")
     # REFUSE, do not label. The previous version wrote null plus a fingerprint_source string
     # explaining that the corpus was not on this host -- honest, and still a file. On
     # 2026-09-01 that file was generated on a Mac and pushed over the pod's copy, replacing
