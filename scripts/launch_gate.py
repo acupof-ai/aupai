@@ -418,35 +418,17 @@ def gate_checks_and_drift(root, mix_path, world):
 
 # The nine, in the order they are reported. A gate added here is automatically
 # covered by --selftest's broken-world requirement (see selftest below).
-# WHERE EACH GATE'S TRUTH LIVES.
-#
-# A gate's conclusion depends on which filesystem it ran on, and until now that
-# fact was absent from the conclusion. Same class as everything else today, with
-# the location standing in for the configuration: on main, `corpora` always reports
-# missing dirs (a dev tree holds no corpus) while on the pod it reported the real
-# defect; `checks_and_drift` read 0 FAIL on main and 11 FAIL on the pod at the same
-# instant. Both were true of where they ran and neither was the answer.
-#
-# My own 4c1e002 caused half of this: "read only from main, refuse GO elsewhere" is
-# right for code and wrong for data, because it excludes the ONE place the data
-# questions can be answered.
-#
-#   MAIN  code/config: the launch is cut from main, so main's state is the launch's
-#   POD   data/machine: corpora and token caches exist nowhere else
-#   BOTH  the same gate means DIFFERENT things in each place and needs both readings
+# WHERE EACH GATE'S TRUTH LIVES (fb 2026-09-01; ruling and measured cases in
+# docs/lessons/gate_authority.md 判决4):
+#   MAIN  code/config -- the launch is cut from main
+#   POD   data/machine -- corpora and token caches exist nowhere else
+#   BOTH  different things in each place, needs both readings
 AUTHORITY = {
     "mix_file": "main", "recipe_provenance": "main", "vocab_id": "main",
     "arch_tests": "main", "cards": "main", "memory_measured": "main",
     "corpora": "pod", "epochs_measured": "pod",
     "checks_and_drift": "both",
 }
-
-# FAILs partition on the per-check EVIDENCE declaration in harness.py (fb,
-# 2026-09-01): pod-evidence FAILs gate on every machine; repo-evidence FAILs
-# gate only on main, their authority. On the pod they are UNKNOWN -- not GO
-# (the evidence is not here) and not NO-GO (the tree they scanned is not
-# main's). The declaration is code both machines read identically; a runtime
-# "does it SKIP here?" observation is machine state, not the check's identity.
 
 
 def _fail_name(line):
