@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# restartable: read-only report tool; an interrupt costs only the re-scans, and re-running is idempotent (it never writes the corpus)
+# restartable: read-only report tool; an interrupt costs only the re-scan, re-running is idempotent (never writes corpus)
 """3b-8: near-dedup post-pass dry-run (report-only) over a cleaned code/math domain.
 
 fb: run near-dedup per 44's six conditions. This DRY RUN (condition 2: cluster

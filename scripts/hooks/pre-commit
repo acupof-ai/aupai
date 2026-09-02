@@ -348,6 +348,8 @@ def main():
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
+        "scripts/card_claim.py",
+        "scripts/test_exp_done_started.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
@@ -362,16 +364,41 @@ def main():
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
         "algorithms/rollout.py",
+        "algorithms/seccomp.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
         "scripts/stale_claims.py",
+        "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Added in the same commit as the file itself: selftests_are_gated refuses to
+        # register a path that does not exist, so registering from main first would have
+        # been red until the file landed, and landing the file first is red the other way.
+        # The two halves of that deadlock only cancel inside one commit.
+        "scripts/check_sft_ready.py",
+        # e1-23: the twelve recipe knobs are required=True as of this commit, so this
+        # file's 14 reds are green and it can be gated. It takes --strict rather than
+        # --selftest: without it the file exits 0 while red BY DESIGN (that is what let
+        # it be committed against a frozen train.py), and a gate that accepts exit 0
+        # from a red test is not a gate. See SELFTEST_FLAG below.
+        "scripts/test_recipe_required.py",
+        # e1-22: no eval script may hand a base checkpoint a ChatML prompt. Runs on the
+        # default --selftest path because it is green today and has no reason to exit 0
+        # while red -- unlike test_recipe_required, which needed --strict.
+        "scripts/test_eval_base_prompt_format.py",
+        # e1-24: the transcript parser. Its --selftest needs neither ~/.claude nor a
+        # tokenizer -- it builds a fixture transcript and asserts the turn shape,
+        # format_agentic's contract, and that the redaction leaves no username.
+        "scripts/build_agentic_sft.py",
         "scripts/test_shard_glob.py",
         "scripts/test_check_summary.py",
         "scripts/test_spawned_fast.py",
         "scripts/test_artifact_path_ckpt.py",
+        "scripts/test_cache_dir_knob.py",
+        "scripts/test_vocab_stamp.py",
+        "scripts/profile_step_cost.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
@@ -413,6 +440,15 @@ def main():
     NEEDS_DATA = {
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        # The sandbox itself. 17 known answers, every one of which needs root plus unshare,
+        # so none can run on a dev box or in CI -- run by hand on the pod, and the commit
+        # that changes this file records the result. It was legitimately absent from both
+        # maps until now: the file ran its checks as `_self_check()` under `if __name__`
+        # with no `--selftest` string anywhere, so the gate's scan had nothing to match
+        # (VERIFIED against HEAD before writing this). The seccomp commit added the string
+        # in a docstring, which is what pulled it into scope (de, 2026-09-02).
+        "datagen/sandbox_exec.py": "17 known answers, all needing root + unshare for the "
+                                   "chroot and namespaces; pod only, run by hand",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         # Two more de-5 candidates that PASS and assert live properties, but only where the
@@ -511,6 +547,13 @@ def main():
     # Files whose exemption is partial: run the flag that names the assertions which DO
     # work here, instead of skipping the file entirely.
     PARTIAL = {f: v[1] for f, v in NEEDS_DATA.items() if isinstance(v, tuple)}
+    # Files that run fully but whose pass/fail verdict is not on the default flag. Kept
+    # separate from PARTIAL: that map means "exempt, run the subset that works here",
+    # and its entries are NEEDS_DATA rows. This one means "runs everything, but say
+    # which flag makes a failure fatal" -- putting scripts/test_recipe_required.py in
+    # PARTIAL would have recorded it as data-exempt, which is false and would mislead
+    # the next reader of NEEDS_DATA.
+    SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict"}
     # Measured per selftest, not once around the loop, so the refusal can name WHICH
     # one did it (e1-14). A single before/after pair would say "something changed".
     state_before = _shared_repo_state(repo_root())
@@ -525,7 +568,7 @@ def main():
             staged_copies.append(dst)
             with open(dst, "wb") as fh:
                 fh.write(blob.stdout)
-            flag = PARTIAL.get(f, "--selftest")
+            flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             r = subprocess.run([sys.executable, dst, flag], capture_output=True,
                                text=True, cwd=repo_root(),
                                env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})

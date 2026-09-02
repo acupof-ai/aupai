@@ -38,11 +38,14 @@
    "measured": "2026-08-30",
    "source": "aupai-fb briefing",
    "config": {
-    "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024"
+    "model": "206M total (172.5M non-embedding), measured train.py:1600, 12 layers (3 KDA + 1 gated MLA)x3, d=1024",
+    "batch": 16,
+    "accum": 2,
+    "batch_accum_source": "eff.microbatch_32_oom (t52 pair1, 2026-08-31, measured)"
    },
    "uncertainty": null,
-   "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing. 206.13M is the CORRECT 6ND count, not embedding wrongly included: head.weight is tok.weight (train.py:544), so 206.13M = 172.51M non-embedding + 33.62M shared matrix, and tying means the free input lookup and the LM head matmul are one matrix counted once. 166M (e7c55e5) was an unmeasured estimate and is superseded; it never entered the MFU, so 31% is unaffected.",
-   "status": "measured"
+   "boundary": "MFU denominator (FP8 296 vs BF16 148 peak) not stated in the briefing. 206.13M is the CORRECT 6ND count, not embedding wrongly included: head.weight is tok.weight (train.py:544), so 206.13M = 172.51M non-embedding + 33.62M shared matrix, and tying means the free input lookup and the LM head matmul are one matrix counted once. 166M (e7c55e5) was an unmeasured estimate and is superseded; it never entered the MFU, so 31% is unaffected. FIELD BY FIELD, because status covers the whole entry and only a boundary can separate a true field from a false one (b0 shape 61, fb 2026-09-02): **batch 32** is a briefing restatement, REFUTED by eff.microbatch_32_oom (2026-08-31, one day later, measured): 200M at micro-batch 32 accum 1 OOMs at seq 4096 fp8, 93.8/95.2 GB per card. **73K tok/s/gpu and 31% MFU** come from the SAME briefing and have never been independently re-measured -- not refuted, but not measured here either. **8xH20** disagrees with the measured baseline's 7 cards, so 73K-at-8 and 72K-at-7 are not one configuration and neither number transfers to the other's card count. **206.13M / 12 layers / d=1024** IS verified independently (train.py:1600, and rebuilt from Cfg on 2026-09-02: 206.13M exact). The measured 200M baseline to cite instead: 72K tok/s/gpu, MFU 30%, micro-batch 16 accum 2, no grad_ckpt, fp8, seq 4096, 7 cards (eff.microbatch_32_oom). p200m was launched at b32 on the strength of this line and OOMed twice (2026-09-02).",
+   "status": "recorded"
   },
   {
    "id": "eff.jamba_ratio",
@@ -974,10 +977,13 @@
    "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
    "config": {
     "mix": "mix_scale_0.2b",
+    "dim": 1024,
+    "layers": 12,
+    "batch": 32,
+    "accum": 1,
     "seq": 4096,
     "fp8": true,
     "cards": 7,
-    "variant": "batch 32 accum 1",
     "baseline": "batch 16 accum 2 = 72K tok/s",
     "result": "CUDA OOM 93.8/95.2 GB"
    },
@@ -1231,7 +1237,7 @@
      "code_rp1t"
     ]
    },
-   "uncertainty": "The checkpoint check is as of step 5500, so it proves the corpora were identical up to that point and not for the remainder of stage 1. A domain rewritten later would pass this check and still diverge; the pod_drift gate and the corpus writer being finished are what cover the rest, not this measurement. _corpus_fp hashes each shard's name, size and the sha256 of its first and last 64KB, so a change confined to the middle of a large shard would not be caught -- that is the function's documented design, shared with save_checkpoint, and not a gap I introduced. Only the five reused domains are covered: en_c4 and math_owm are new builds and carry prereg 7.2 on purpose.",
+   "uncertainty": "The checkpoint check is as of step 5500, so it proves the corpora were identical up to that point and not for the remainder of stage 1. A domain rewritten later would pass this check and still diverge; the pod_drift gate and the corpus writer being finished are what cover the rest, not this measurement. _corpus_fp hashes each shard's name, size and the sha256 of its first and last 64KB, so a change confined to the middle of a large shard would not be caught -- that is the function's documented design, shared with save_checkpoint, and not a gap I introduced. Only the five reused domains are covered: en_c4 and math_owm are new builds and carry prereg 7.2 on purpose. CHECKPOINT STATUS 2026-09-02 (e1, 44-22): the checkpoint named in value, the stage-1 step-5500 checkpoint the corpora check read, is NOT on the pod's complete file enumeration (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)), so it was already pruned or was never a durable artifact. No 15b_s1 step5500 file is listed; stage 1's surviving points are milestone_8b_step8500, step15000, step15500 and milestone_15b. Value untouched; the reading stands as recorded and cannot be re-derived from the file.",
    "status": "measured"
   },
   {
@@ -1488,7 +1494,7 @@
     "max_over_p50": 1.72,
     "verdict": "per-tensor scaling sufficient"
    },
-   "uncertainty": "One domain (cot) and one checkpoint (step 11000, 68% through stage 1). cot is the smallest warm domain and was chosen for speed; a code- or math-heavy domain could have a different logit distribution, and the range may widen as training continues since logit magnitudes generally grow. 128 chunks over 4 batches is enough to characterise the bulk but not a tail event at 1-in-10000. The measurement is the FORWARD projection only: the backward pass quantises grad_logits, whose distribution is not measured here and is the other operand fp8 would touch. The verdict therefore covers the forward GEMM's input range, not the whole fp8 path.",
+   "uncertainty": "One domain (cot) and one checkpoint (step 11000, 68% through stage 1). cot is the smallest warm domain and was chosen for speed; a code- or math-heavy domain could have a different logit distribution, and the range may widen as training continues since logit magnitudes generally grow. 128 chunks over 4 batches is enough to characterise the bulk but not a tail event at 1-in-10000. The measurement is the FORWARD projection only: the backward pass quantises grad_logits, whose distribution is not measured here and is the other operand fp8 would touch. The verdict therefore covers the forward GEMM's input range, not the whole fp8 path. CHECKPOINT STATUS 2026-09-02 (e1, 44-22): the checkpoint named in value, the stage-1 step-11000 checkpoint probes/t57_absmax.py read, is NOT on the pod's complete file enumeration (runs/pod_ckpt_candidates_2026-09-02.txt (listed 2026-09-02 13:58Z, a complete enumeration of 216 files)), so it was already pruned or was never a durable artifact. No 15b_s1 step11000 file is listed -- the listed step11000 files belong to ckpt_k5_clean_0827 and ckpt_k6_fone, different runs. runs/t57_absmax.json holds the measurement. Value untouched; the reading stands as recorded and cannot be re-derived from the file.",
    "status": "measured"
   },
   {
@@ -2013,7 +2019,7 @@
   {
    "id": "eff.grad_ckpt_inverts_with_depth",
    "claim": "whether gradient checkpointing is worth it at the ruled 500M shape (d1024 L32), given it lost at 12 layers",
-   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2374-2379): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
+   "value": "IT INVERTS, AND BY MORE THAN THE DECISION NEEDED. At 12 layers grad_ckpt was 2.4x slower and was rejected; at 32 layers it costs 1.116x at equal batch and REDUCES peak memory 4.1x. Measured on one H20, d1024 L32 heads8 ffn3072, AttnRes Full ON, seq 4096, world=1, accum=1, 200 timed steps past a 50-step warmup, real step (HybridLM forward to hidden then LigerFusedLinearCrossEntropyLoss over head.weight[:vocab], as train.py:2557; the probe and this entry both cited 2374-2379, which has never held that call at any commit -- corrected 2026-09-02, e1, the measurement is unaffected): OFF batch 4, 2069.5 ms/step, 7917 tok/s, 54.50 GiB peak. ON batch 4, 2309.4 ms/step, 7094 tok/s, 13.36 GiB peak. MAX BATCH by doubling: OFF fits 4 (56.38 GiB), ON fits 16 (49.18 GiB) -- 4x the batch for 7.2 GiB LESS peak. THE MEMORY NUMBER IS THE FINDING: stored activations were ~41 GiB of the 54.5, three quarters of the footprint, and checkpointing removes essentially all of them. TWO INSTRUMENTS, ONE MECHANISM: b0's t71 counted AttnRes Full source reads as O(L^2) -- 325 at L=12 to 2145 at L=32, 65 live [B,T,D] tensors resident at peak against 25 -- from the architecture side; this is the same thing measured from the memory side, by a different instrument, neither derived from the other. WHY IT INVERTS: recompute is one extra forward against 32 layers of backward, so the ratio collapses with depth, and stored activations dominate at depth which is exactly the regime where trading all of them for one recompute wins. CONSTRUCTED PARAM COUNT 493.6M, the third independent construction of that number and exact against fb's and b0's.",
    "measured": "2026-09-01",
    "source": "probes/t66_depth_shape.py@4016bdc on GPU2; cross-reference b0 t71 (c13fdc8) for the O(L^2) AttnRes source-read count",
    "config": {
@@ -2248,6 +2254,116 @@
    },
    "boundary": "Rate per WINDOW, not per step: each log line covers 10 steps, so a 1-step stall is smeared over 10 and the true worst instant is lower than 5.65K. Also only the first 10% of the run: these 190 lines are steps 90-1980 of 19,151, all at constant LR before warmdown, so the median is a same-conditions baseline and not a whole-run figure.",
    "uncertainty": "The attribution is by TIME COINCIDENCE plus a named artifact, not by a scheduler record -- no eval in this window appears in runs/experiments.jsonl, so nothing states which cards a job took. The step wall-clocks are reconstructed from one mtime and a constant rate, so each carries roughly a minute of drift over the reconstructed span; that is far inside the gap between these dips but it is not a timestamp. A DATELESS MTIME IS NOT A TIMESTAMP: the first version of this entry attributed 1900-1910 to two 08-31 files because the listing showed only HH:MM. Same family as reading a +0800 git log against a UTC pod clock. Every mtime here is now read with an explicit date. The val attribution is solid on its own (exactly steps 500/1000/1500, and val_every=500).",
+   "status": "measured"
+  },
+  {
+   "id": "eff.m4b_startup",
+   "value": "est_startup 86.72s = 1.2% of 2h (200M@4B, 9 domains); torch.load 86.51s (99.8% of startup); corpus_fp 0.22s (train._corpus_fp, zh_web 0.13s, rest <=0.04s)",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/measure_mix_startup.py data/mix_200m_4b.json on pod (/work/aupai), host-side IO, 1 pass",
+   "config": {
+    "mix": "data/mix_200m_4b.json",
+    "n_domains": 9,
+    "total_tokens": "3999997952",
+    "cache_bytes_GB": 166.17,
+    "run_len_ref": "2h",
+    "method": "per-domain torch.load(map_location=cpu,weights_only=True) + train._corpus_fp (real fn), host IO",
+    "io": "hot cache (a prior 316s run already read all 166GB)"
+   },
+   "uncertainty": "hot-cache, possibly-contended single pass; cold cache and de-trace-free value would differ (likely higher)",
+   "boundary": "hot cache; the run may have co-occurred with de's 0-3 trace so the torch.load net value is not isolated; corpus_fp 0.22s and torch.load-dominance are competition-independent. Does not measure model init/optimizer/rank-setup.",
+   "status": "measured",
+   "refuted_by": "the earlier 316s value (9cc966b) was measured by a walk that hashed every shard byte; de + fb showed startup calls train._corpus_fp (train.py:1355-1376) which reads first/last 64KB per shard => 0.22s. This row now carries the corrected value."
+  },
+  {
+   "id": "eff.kda_mla_growth_ratio_l32",
+   "value": "THE RATIO IS NOT A STABLE PROPERTY -- IT DRIFTS WITHIN ONE RUN, 3.74x -> 3.43x -> 7.96x over three consecutive 500-step intervals. This is the finding, not the individual numbers: 'equalize the KDA/MLA growth ratio to 1' has no fixed target, so any coefficient back-derived from a single interval holds only for that interval. It killed the 0.28 coefficient (the mean of the first two intervals, 3.589 -> 0.279) and, with eff.kda_mla_growth_ratio_l12, R3-lr itself. THE DRIFT'S TWO COMPONENTS ARE EACH MONOTONE, WHICH IS WHY IT IS NOT NOISE: MLA excess halves every interval (0.02357 -> 0.011895 -> 0.006199) while KDA excess falls then REVERSES UP (0.088239 -> 0.040859 -> 0.049344). So the 7.96x is mostly MLA decelerating, not KDA running away -- the opposite of the reading that motivated a lower KDA lr. Per-interval coefficients: 0.267, 0.291, 0.126.",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/ckpt_health.py over ckpt_p500m_20b_0902.pt.step{1500,2000,2500,3000} pairwise (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 5ae47e1",
+   "config": {
+    "run": "p500m_20b_0902 (stopped)",
+    "ckpt_intervals": "1500->2000, 2000->2500, 2500->3000 (500 steps each)",
+    "model": "493.6M, L32 d1024 heads8 ffn3072, 8 MLA + 24 KDA (MLA at 3/7/11/.../31), AttnRes Full ON, seq 4096, fp8",
+    "block_split": "KDA = blocks with mixer.A_log present; 24 KDA, 8 MLA",
+    "criterion": "same as eff.kda_mla_growth_ratio_l12: per-block mean 2D weight-norm ratio in fp32, median within kind, ratio of excess over 1.0",
+    "KDA_excess": [
+     0.088239,
+     0.040859,
+     0.049344
+    ],
+    "MLA_excess": [
+     0.02357,
+     0.011895,
+     0.006199
+    ],
+    "ratios": [
+     3.74,
+     3.43,
+     7.96
+    ],
+    "n_KDA": 24,
+    "n_MLA": 8
+   },
+   "uncertainty": "One run, one seed; the drift is measured within that run only, so run-to-run reproducibility of the drift SHAPE is unmeasured. The step1500 checkpoint was deleted by the pruner after this read, so the first interval is not re-derivable from artifacts on disk -- only from this entry and 5ae47e1.",
+   "boundary": "NOT A COEFFICIENT SOURCE, and not transferable across depth -- eff.kda_mla_growth_ratio_l12 measures 1.63x for the same quantity at L=12. Says nothing about WHY the two components move as they do (MLA halving and KDA reversing are two unexplained phenomena), so the drift cannot be used as an optimization target: fb's b0-12 ruling was that treating an uncaused drift as a target is the negative result arriving early. Says nothing about val loss -- no arm here was trained with a modified lr, so this measures a correlate, never an intervention.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.kda_mla_growth_ratio_l12",
+   "value": "1.63x at L=12 (KDA excess 0.2069 / MLA excess 0.1270), against 3.43x-7.96x at L=32 (eff.kda_mla_growth_ratio_l32). THE GAP R3-lr WAS BUILT TO EQUALIZE IS HALF TO A QUARTER AS LARGE AT THE SCALE THE ARM WOULD RUN. This reading is what fired b0-12's invalidation condition and withdrew R3-lr: the condition was written as 'if B0 reads a ratio near 1 at L=12, the 0.28 coefficient has no source', and p200m is itself L=12, so B0 was never needed. The equalizing coefficient implied here is 0.61, NOT the 0.28 derived from L=32 -- and 0.28 was already dead on its own (the L=32 ratio drifts 3.43->7.96 within one run, so it has no fixed target). Medians are over 9 KDA and 3 MLA blocks, of per-block mean weight-norm ratios.",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/ckpt_health.py ckpt_p200m_4b_0902.pt.step500 ckpt_p200m_4b_0902.pt.interrupt.step832 (CPU, offline, b0-10); recorded in docs/standards/structure_experiments.md at 2322032. The later file is the INTERRUPT checkpoint (959,435,257 B): the run was stopped at 832, so there is no plain .pt.step832 and this entry first cited one that never existed (1e, 2026-09-02). 44's ckpt_facts_sources_present joins on the exact name.",
+   "config": {
+    "run": "p200m_4b_0902",
+    "ckpt_pair": "step500 -> interrupt.step832 (332 steps)",
+    "model": "206M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, seq 4096, fp8",
+    "launch": "--batch 16 --accum 2 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --save_every 500",
+    "block_split": "KDA = blocks with mixer.A_log present; MLA = the rest; 9 KDA, 3 MLA",
+    "criterion": "per block, mean over its 2D weight-norm ratios ckpt_b/ckpt_a in fp32; then median within each block kind; ratio = (KDA_median - 1) / (MLA_median - 1), i.e. excess over 1.0, which is the quantity that grows",
+    "KDA_median": 1.2069,
+    "MLA_median": 1.127,
+    "n_KDA": 9,
+    "n_MLA": 3
+   },
+   "uncertainty": "ONE window, n=3 on the MLA side. No seed replicate, so the run-to-run spread of this ratio is unmeasured -- the 0.02 nat sigma work (b0-12 B0-seed2) does not cover it. The MLA median at n=3 has a measured blind spot: two of three blocks diverging together collapses every robust-z toward 1 (z 1.06) where n=8 flags at z>3000, so a two-block MLA divergence inside this window would not have been visible.",
+   "boundary": "NOT A COEFFICIENT SOURCE. Single window, and the FIRST window after warmup (--warmup 300 ends at step 300, this pair starts at 500), so it carries whatever transient the lr and Muon-momentum ramps leave behind -- train.py:1160 ramps momentum to step 150 and the pair opens 350 steps later. Deriving any lr multiplier from it repeats exactly the error that killed 0.28: taking one unstabilized ratio as a constant. What it CAN answer is directional and that is all it was used for: the L=32 gap does not transfer to L=12 at anything like its L=32 size. Says nothing about whether the ratio is stable at L=12 -- that needs a second interval, which is pending p200m's resume.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.step_class_breakdown_p200m_4card",
+   "value": "Per-class GPU time for one 200M training step, 4 cards, from a 3-step Chrome trace. wall 1613.47 ms/step, busy (union of kernel spans) 1593.52, IDLE 19.94 = 1.2%. gemm 825.04 ms (50.8% of kernel time), elementwise_cast 497.24 (30.6%), fla_kda 171.94 (10.6%), other 46.51 (2.9%), flash_mla 46.39 (2.9%), nccl 36.85 (2.3%), optimizer 0.28 (0.0%). One stream carries 98.6% of the wall (stream 7); the second stream is 33 ms. THE BOTTLENECK IS OPERATOR COMPOSITION ON THE GPU, NOT THE HOST: at 1.2% idle there is no launch-gap or loader stall worth attacking, so every remaining lever is inside a kernel class. That is the finding this trace was run for, and it does not depend on any roofline ratio.",
+   "measured": "2026-09-02",
+   "source": "CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 scripts/profile_step_cost.py --mix data/mix_200m_4b.json --batch 16 --accum 2 --steps 8 --warmup 5 --trace runs/trace_p200m_3step.json --trace-steps 3; then python3 scripts/trace_classes.py runs/trace_p200m_3step.json --steps 3 at pod stamp cd1f9e6",
+   "config": {
+    "model": "206.13M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON, NoPE",
+    "launch": "--batch 16 --accum 2, seq 4096, fp8, compile on, grad_ckpt off",
+    "cards": "4 (indices 0-3); tokens/step/gpu 131,072",
+    "mix": "data/mix_200m_4b.json",
+    "trace": "torch.profiler CPU+CUDA, record_shapes=True, with_flops=False, window = the last 3 of 8 timed steps, rank 0 only",
+    "pod_stamp": "cd1f9e6",
+    "tool": "scripts/trace_classes.py (selftest OK; 6 mutations of the real file red)"
+   },
+   "uncertainty": "3 steps, one window, one rank. Shape-stable steps, so the per-class split is not noisy in the way a loss is, but no seed or window replicate exists. Class shares are of KERNEL time (sum of durations, which double-counts overlap across streams); busy/idle use the UNION of spans, which is why busy 1593.52 is less than the class sum 1624.25 and idle is positive. An earlier version of the tool summed durations for busy and printed idle -10.78 ms, i.e. the arithmetic reporting its own error.",
+   "boundary": "SHARES ONLY -- this entry deliberately carries no roofline ratio; those are in eff.step_roofline_p200m_4card with their own coverage caveats. NOT A 7-CARD OR 8-CARD NUMBER: nccl 36.85 ms is the 4-card floor and grows with world; the ladder runs 7 and p500m ran 8. NOT A 300M NUMBER: this is L12 d1024. The 300M A/B is a separate measurement. The --dim FLAG WAS SILENTLY IGNORED when this trace ran (Cfg's field is `d`, and the old setattr loop skipped unknown names behind hasattr, fixed at c7be89a). --dim's default 1024 equals Cfg.d, so THIS trace ran at the shape it reports and its numbers stand; audited on 2026-09-02, --dim was the only affected flag, and --fp8 never went through that map. Any profile_step_cost run before c7be89a that passed a --dim other than 1024 profiled a model of Cfg.d's width while reporting the flag's.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.step_roofline_p200m_4card",
+   "value": "Roofline ratio per class for the same step, measured/ideal over THE SAME kernels. gemm 1.17x (713.18 of its 825.04 ms priced, against 608.80 ideal). elementwise_cast 1.30x (494.73 of 497.24 priced, against 381.10). other 1.00x (46.48 of 46.51, against 46.84). fla_kda, flash_mla, nccl, optimizer: NO RATIO -- no priced ideal at all. Splitting the true matmuls by their own dtype gives 92.8% MFU on both halves independently: fp8 aten::_scaled_mm 493.43 ms measured / 457.98 ideal, bf16 aten::mm 192.34 / 178.39. The two halves agreeing to 0.1 point is the main evidence the pricing is right, since nothing forced them to.",
+   "measured": "2026-09-02",
+   "source": "python3 scripts/trace_classes.py runs/trace_p200m_3step.json --steps 3 at pod stamp cd1f9e6; peaks from facts/efficiency.json#eff.fp8_gemm_at_realizable_peak and #eff.gpu4_peak_flops",
+   "config": {
+    "model": "206.13M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON",
+    "launch": "--batch 16 --accum 2, seq 4096, fp8, compile on, grad_ckpt off",
+    "cards": "4 (indices 0-3)",
+    "flop_peak": "MEASURED on this pod: 279.6 TFLOPS fp8, 136.7 bf16 (eff.fp8_gemm_at_realizable_peak, eff.gpu4_peak_flops). NOT the H20 sheet's 296/148, which this silicon reaches 94.5% and 92.4% of.",
+    "bandwidth_peak": "4.0 TB/s, the H20 SHEET figure -- assumed, not measured",
+    "matmul_pricing": "2*M*N*K from the launching aten op's Input Dims, charged once per External id to the class holding the op's work; aten::_scaled_mm at the fp8 peak, aten::mm/bmm/addmm/baddbmm at bf16",
+    "bytes_pricing": "sum(inputs) + one output, the output shape inferred as the largest input (the trace carries no Output Dims across all 55,512 shaped cpu_ops); width from the first TENSOR operand's dtype",
+    "pod_stamp": "cd1f9e6"
+   },
+   "uncertainty": "The gemm ratio's basis is 86% of its class (713 of 825 ms): 1,686 of 3,918 gemm-classified kernels carry no matmul op, so 112 ms/step has no roofline basis. That gap is UNPRICED TIME, not time at ratio 1. elementwise's basis is 99.5% (495 of 497), so the two ratios do not deserve equal confidence. Bandwidth is a sheet figure, so every byte-based ratio (elementwise, other) is a LOWER BOUND on how close to bandwidth-bound the kernel already is -- the real achievable HBM is lower than 4.0 TB/s, which makes the true ratio closer to 1.",
+   "boundary": "fla_kda IS THE LARGEST BLANK, NOT A CLEAN RESULT: all 918 of its kernels are unpriced, so 171.94 ms/step -- 10.6% of the step -- has no roofline basis at all. This table cannot say whether KDA has room; it says the question is open. Next step belongs to tilerl's kernel inventory. Same for flash_mla (46.39) and nccl (36.85). RETRACTS AN EARLIER NUMBER FROM THIS SAME TRACE: elementwise was reported at 1.6x, read as 'room to fuse'. _shape_bytes counted reads and not the write, and byte widths came from whichever Input type string was recognised first -- often a Scalar's `float` or `double`, pricing 2-byte traffic at 4x or 8x, while 3,720 bf16 kernels got no width because the trace writes `c10::BFloat16` and the table held `bfloat16`. Both fixed (8a52353); 1.6x is withdrawn, the figure is 1.30x, and the direction of the correction is toward the roofline, not away. A gemm ratio of 1.36x from the same tool is also withdrawn: it divided the class's whole time by its partial ideal (54d1277). THE fp8 CAST IS INVESTIGATED AND HAS NOTHING TO RECOVER: what looked like a double fp8 cast is ONE cast with TWO stores (inductor num_store=2, kernel u2/cu2do4vu...py, activation [65536,6144]) -- row-major and transposed. Both are consumed: caller cczfn5uf...py:1038-1074 feeds the row-major one to the forward _scaled_mm as mat1 and the transposed one to the backward X^T@dY as mat1, and _scaled_mm requires mat1 row-major, so a view cannot replace the second store (tilerl, 2026-09-02). An earlier 'ceiling 17 ms/step' framing is withdrawn -- a ceiling on work that cannot be removed reads as 17 ms available.",
    "status": "measured"
   }
  ]

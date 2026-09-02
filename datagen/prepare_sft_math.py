@@ -86,7 +86,9 @@ def main():
         examples = examples[:MAX_EXAMPLES]
     print(f"total examples: {len(examples)}", flush=True)
 
-    pack_and_save(examples, tok, eos, args.out, SEQ, num_id=num_id)
+    # sources=sources, not prepare_sft.SOURCES: this script has its own list and
+    # --sources can override it, so the stamp must name what THIS pack read.
+    pack_and_save(examples, tok, eos, args.out, SEQ, num_id=num_id, sources=sources)
 
 
 if __name__ == "__main__":
