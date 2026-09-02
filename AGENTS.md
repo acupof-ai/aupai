@@ -77,6 +77,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
 | Reachability | `python scripts/reachability.py` — which scripts are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
+| Provision an empty pod | `bash scripts/bootstrap_pod.sh [verify\|fetch\|build\|vocab\|check]` — idempotent, one stage at a time, stopping on error rather than feeding a broken artifact forward. Launching the pretrain is deliberately NOT a stage |
 | Count cleaned code | `python datagen/count_cleaned_code.py` — token counts over cleaned corpus domains |
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
@@ -279,6 +280,9 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
 | File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
+| Never `git stash` in this repository | `no_shared_stash` |
+| The behind-main gate does not want a clean tree, so merge directly | manual: a measured property of git merge, not a rule a check can assert: nothing in the repo records which order a session ran merge and add in |
+| Only a conflicting path needs a commit first, and read which path i | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
 | `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
 | Only a `refusing:` line means nothing shipped | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
 | `pod_drift.py --write` regenerates from HEAD, `--write-index` from | manual: which flag a session typed is not recoverable from the manifest it produced -- both write the same file, and a manifest built from the wrong side is well-formed |
@@ -300,7 +304,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A commit that touches a file in data/pod_head_manifest.txt i | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-42 rules: 14 checked, 28 manual. The count is regenerated from `harness check`'s
+45 rules: 15 checked, 30 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
@@ -337,6 +341,9 @@ itself had before the check began reading it.
 
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `git -C /Users/bytedance/code/aupai merge --no-edit <name>`; if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
+- **Never `git stash` in this repository.** `.git/refs/stash` is one stack shared by every worktree — not per-worktree like HEAD and the index — so two sessions stashing in the same window each pop the other's entry, applying a diff they never wrote to a tree it was not made against (e1 and b0, 2026-09-02; nothing was lost, and that was luck). `no_shared_stash` reports a non-empty stack.
+- **The behind-main gate does not want a clean tree, so merge directly.** A `git merge --no-edit main` succeeds with local changes, **staged or not**, as long as no file you changed is also a path the merge touches. Measured four ways on 2026-09-02: non-conflicting path unstaged → rc 0, non-conflicting path staged → rc 0, conflicting path unstaged → refused, conflicting path staged → refused. Staging is not what merge objects to; overlap is.
+- **Only a conflicting path needs a commit first, and read which path it is.** `git merge` names the file in its `would be overwritten` line. A derived artifact — `data/pod_head_manifest.txt`, which the hook regenerates on every commit, so anyone's commit makes it collide — is nobody's work: `git checkout -- data/pod_head_manifest.txt`, then merge again. A file you wrote gets a path-limited `git commit <paths> -m "wip: ..."` first. A `wip:` commit is yours on your branch; a stash is everyone's. `AUPAI_BEHIND_MAIN_OK=1` is not the way out of either: it commits onto code main has moved past.
 - `runs/*.jsonl` ledgers merge by union (`.gitattributes`); row identity is `(name, started)` / `id`, never position. `data/pod_head_manifest.txt` is regenerated by the hook on the merge commit — a conflict there is resolved by regenerating, never by hand.
 - `scripts/pod_push.sh` pushes only content reachable from `main`; a branch-only file is refused. CI reads `main`.
 - The shared corpus, checkpoints, and GPUs on the pod are unchanged by this; `harness launch` and the allocation file still own them.
