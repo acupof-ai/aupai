@@ -231,6 +231,39 @@ Method: `grep -n 'def …'` per category over 241 tracked `.py`, bodies read, pl
 
 Three defects found on the way, not line counts: (1) standalone `boolq/openbookqa` score with joint tokenisation, `run_eval` with separate encode — two numbers for one checkpoint; (2) `serve.format_history` emits ChatML then `答：`; (3) `probes/t65_gold_bpb.py:172` records a tokenizer *file* hash under the name `tok_fp`, which is not `vocab_id`.
 
+### 3c. Site-by-site boundaries for rows a, d and l — unifying all three is a behaviour change (e1-11)
+
+fb asked for the per-site list behind three rows of the 3b table, because the list decides whether unification is cleanup or a behaviour change. It is a behaviour change in all three, and each has a case where two sites give **different answers to the same question**. Method: AST classification of every call site (nearest enclosing loop, nearest enclosing `try` whose *body* holds the call, backwards balanced-paren scan for the governing `open()`), then the divergences re-executed rather than read.
+
+Measured at `33c332f`; `3fb1946` then deleted 26 files, so the census shrank — `json.loads` 190→180, `--device` 27→19, `--ckpt` 36→28, `--tokenizer` 26→21, `hashlib` 56→49, tracked `.py` 241→221. Every named `file:line` below survives at HEAD; the totals do not.
+
+**Row a — 166 jsonl read sites (not 146+4).** The audit's 146 counted inline `json.loads` lines; 166 is the count after removing 14 non-jsonl parses (HTTP bodies, HF fields, subprocess stdout, a json round-trip deepcopy), 2 comment mentions, 2 inside a *generated* monitor script `harness.py` writes out, and 6 that parse an in-memory line list. Of the 166, 4 are the audit's named helpers and 162 inline in 85 files. Five policy axes, and **five bad-line policies, not three**:
+
+| axis | split |
+|---|---|
+| malformed line | 120 raise · 40 skip-silently · 3 count-and-report · 2 abort-the-whole-read · 1 `SystemExit` |
+| blank line | 95 reach `json.loads` and raise · 71 skipped by an explicit guard |
+| encoding | 148 `encoding="utf-8"` · **18 no `encoding=` at all** (locale codec), of which 4 also swallow the error. My own AST recount at HEAD narrows this to **8 live text READS** that parse json with no `encoding=` — `fasttext_junk.py:98,123,124,140`, `fetch_corpus.py:253`, `rescore_code.py:69`, `base_matrix.py:337`, `infer.py:14` — the other 10 being writes or files `3fb1946` deleted. The 8 are the actionable set. |
+| gz | 1 (`build_corpus.iter_jsonl`) · 165 no |
+| fold | 149 none · 17 fold, in **11 mutually different rules** |
+
+One input — 1 good line, 1 blank, 1 malformed, 1 good — through five readers, executed:
+
+    build_corpus.iter_jsonl   2 rows, bad=1 printed to stderr
+    board.rows                2 rows, silently
+    exp.rows                  raises JSONDecodeError
+    measure_duplication       raises JSONDecodeError
+    harness._read_tasks       1 row   (folds by id, so the two survivors collapse)
+    launch_gate._recorded_cmd refuses the gate (its try wraps the whole loop)
+
+**The sharpest single finding is not a count.** `scripts/exp.py:34`'s docstring asserts the divergent shape is impossible — "union-merging two branches cannot produce a running row and a done row for the same run" — while `scripts/harness.py:2396` records it having happened: `(sft_p324_v3, 2026-08-31 03:44)`, `ok` at line 44 and `running` at line 132, which position-based last-wins read as a 26-hour-stale run that had finished in 32 minutes. Two folds over one file, one asserting the other's bug cannot exist. Today they agree (I ran both over `runs/experiments.jsonl`: 0 of 175 keys disagree, and no key currently has a `running` row after a terminal one), so the divergence is **latent, not active** — and it returns on the next union merge that orders events the other way.
+
+**Row d — 48 hash sites, 32 distinct policies, and unification would corrupt stored values.** Only 5 of the 32 are safely unifiable. Executed, not read: `corpus_fingerprint.fp_filters` and `fp_dir` on one directory of two 100-byte files give `1f3bb9e904e2cb71` vs `14f9e5d1647f7dfd` — same file, same sha1 outer, same `[:16]`, different line format (`name:size:sha256(head):sha256(tail)\n` vs `name\0sha256(bytes)`). They sit adjacent in the same `build_corpus_stats.json` as `fingerprint` and `filters_fp`; collapsing them makes a domain's content hash equal its filter hash, erasing the distinction the module docstring was written to draw. `holdout._fingerprint:38` omits the `\0` separator entirely, `prepare_sft._fp_sources:74` iterates in declaration order rather than sorted; both write digests that live in tracked artifacts, so "unify" means "rewrite recorded fingerprints", which is the one thing a fingerprint must not do. The genuinely mergeable set: `launch_gate._sha256:200` ⇄ `launch_tests._sha256:31` (differ only in missing-file behaviour — None vs raise) and the four `chunked-sha256-full` sites, if the shared helper keeps the None option. Two dead functions found: `fetch_corpus._sha1:72` (zero callers) and `domain_loss.head_fp:123` (zero callers, but its *key name* `head_fp` in `runs/score_matrix.jsonl` is written by `seqs_fp`, which hashes tensor bytes — the name in the artifact describes a function that never wrote it).
+
+**Row l — the audit's own counts are off, and one site is a type error.** Verified by `git grep` at HEAD: `--device` is `"cuda"` **11** / `"cuda:0"` **7** / conditional 1 / int 1, not the "18 vs 8" the row states (the 18 was the pre-deletion count). `ROOT = os.path.dirname(...)` boilerplate: 92 files (row says 96, also pre-deletion). `sys.path.insert`: **93 files / 146 lines**, not 71 — the row understates by 22 files. `probes/bench_gpu_probe.py@3fb1946~1:6` is `--device type=int required=True`, consumed as `torch.cuda.set_device(args.device)`, `f"cuda:{args.device}"` and `nvidia-smi -i <n>`: routing it through a str-defaulted `add_model_args` does not change a default, it raises. That file is itself one of the 26 `3fb1946` deleted — the row-l staleness this section reports applies to this section's own citation, so it carries `@sha` like every other retired ref. `datagen/prepare_sft.py:328` parses `--out` by hand out of `sys.argv` with no parser at all. `--out default=""` means "print to stdout" at `assemble_lambda_probe.py:43` and "write to the real tokenizer path" at `build_tokenizer.py:65` — the same spelling with opposite meanings. And two `--tokenizer` defaults are not path spellings but different *vocabularies* (`data/tokenizer_k5.json`, pre-reset) or a different *referent* (`score_web_27b.py:166` points at the 27B labeller's tokenizer, not the model's).
+
+**What this means for row 6 of the Top 10.** The 415 lines it claims from rows a+d+l are not available as a mechanical dedup. Unifying the bad-line policy is a behaviour change (five policies, and the two that abort are load-bearing: a gate that refuses on a torn line is not a bug), unifying the hashes rewrites recorded digests, and unifying the argparse defaults changes what 18 sites resolve to. What *is* safe, and worth doing separately: the 8 missing-`encoding=` json reads named above (a real portability defect, no stored value moves), the two dead hash functions, and the `launch_gate`/`launch_tests` `_sha256` pair. Everything else needs a per-site ruling, which is why this section is a list rather than a patch.
+
 ---
 
 ## 4. `scripts/harness.py` — 10,172 lines, 257 commits since 08-29

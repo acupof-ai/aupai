@@ -322,4 +322,4 @@ else:
     # writes nothing at all, so it can never be mistaken for a pass of the shape.
     record_launch_test(__file__, "pass",
                        {"d": D, "layers": L, "heads": H, "ffn_hidden": F},
-                       real_kernel=True)
+                       real_kernel=True, mix=None)
