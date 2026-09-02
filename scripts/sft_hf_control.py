@@ -401,8 +401,29 @@ def main():
                 lo = (s * a.accum + k) * a.batch
                 bi = ids[lo:lo + a.batch].to(a.device)
                 bl = lab[lo:lo + a.batch].to(a.device)
-                # train.py's convention: predict token t+1 from tokens <= t.
-                out = model(input_ids=bi[:, :-1], labels=bl[:, 1:])
+                # NO PRE-SHIFT. transformers shifts labels internally, so the row goes in
+                # whole -- see eval_loss's docstring for the measurement.
+                #
+                # THIS LINE READ `model(input_ids=bi[:, :-1], labels=bl[:, 1:])` UNTIL
+                # 2026-09-03Z, with the comment "train.py's convention: predict token t+1
+                # from tokens <= t" -- which is our arm's convention and correct THERE,
+                # because HybridLM computes the loss in the training loop and shifts nothing
+                # internally (model.py:536, sft_math.py:214). Copied onto a transformers
+                # model it shifts twice, and the three points of the seq-2048 lr scan were
+                # trained to predict token t+2. Measured on point 1's checkpoint over 25,215
+                # supervised tokens of held-out:
+                #     next-token (t+1)   7.2494 nat/token   <- what we wanted
+                #     skip-one   (t+2)   2.7663 nat/token   <- what it learned, 2.6x better
+                # so this was not a mis-measurement of a good model; the model is good at the
+                # wrong task. All three checkpoints were discarded.
+                #
+                # WHY IT SURVIVED A FIX TO THE SAME BUG. eval_loss had this exact defect and
+                # was fixed in 0f9d587 -- one commit, one call site. The diagnosis recorded
+                # there was "the evaluator double-shifts", so the fix ended at the evaluator.
+                # The defect was really "in this file, pre-shifting a transformers model
+                # double-shifts", which is a property of the file, not of one function. A
+                # cause named one call site narrower than it is leaves every other site.
+                out = model(input_ids=bi, labels=bl)
                 (out.loss / a.accum).backward()
                 acc_loss += out.loss.item() / a.accum
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -658,7 +679,7 @@ def selftest():
         # smaller than this the fixture has stopped being able to detect the bug, and that is
         # a failure of the case, not a pass.
         with torch.no_grad():
-            dbl = m(input_ids=ids[:, :-1], labels=lab[:, 1:]).loss.item()
+            dbl = m(input_ids=ids[:, :-1], labels=lab[:, 1:]).loss.item()  # DELIBERATE-DOUBLE-SHIFT
         if not (dbl < want / 1.5 or dbl > want * 1.5):
             fails.append(f"the double-shifted variant reads {dbl:.6f} against the correct "
                          f"{want:.6f} -- less than 1.5x apart, so this fixture can no longer "
@@ -667,6 +688,58 @@ def selftest():
     except ImportError as e:
         fails.append(f"could not build a real model to check eval_loss's alignment: {e} -- "
                      f"this case did NOT run, and a stubbed model cannot replace it")
+
+    # 6. NO CALL SITE IN THIS FILE MAY PRE-SHIFT A transformers MODEL. Case 5 above pins
+    #    eval_loss, and eval_loss alone, by comparing its number to a reference. It passed
+    #    green while the TRAINING LOOP 170 lines away had the identical defect and trained
+    #    three checkpoints to predict token t+2 (see the comment at the `out = model(...)`
+    #    line). A per-call-site check cannot see the site it does not name, so this one reads
+    #    the whole file: every `model(input_ids=...)` that carries `labels=` must pass the
+    #    row whole.
+    #
+    #    Source-level on purpose. Behavioural coverage would mean instantiating and stepping
+    #    every call site, and the reason the training loop went unchecked for a day is that
+    #    doing so is expensive enough to skip -- a grep over the file is not, so it actually
+    #    runs. It proves the shapes at the call sites, NOT that a step converges.
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "sft_hf_control.py"), encoding="utf-8") as f:
+            lines = f.readlines()
+        bad = []
+        n_marked = 0
+        for i, ln in enumerate(lines, 1):
+            code = ln.split("#", 1)[0]          # comments quote the defect on purpose
+            if "input_ids=" not in code or "labels=" not in code:
+                continue
+            if "[:, :-1]" not in code and "[:, 1:]" not in code:
+                continue
+            # Case 5 pre-shifts ON PURPOSE, to measure how far off the bug reads. An
+            # exemption is a hole, so it is narrow and explicit: the marker must be on the
+            # line, and the marker's own count is asserted below -- a mutant that silences
+            # this check by marking the real call site changes that count.
+            if "DELIBERATE-DOUBLE-SHIFT" in ln:
+                n_marked += 1
+                continue
+            bad.append(f"{i}: {ln.strip()[:90]}")
+        if bad:
+            fails.append("a call site pre-shifts a transformers model, which shifts labels "
+                         "internally -- this trains/scores on token t+2:\n      "
+                         + "\n      ".join(bad))
+        elif n_marked != 1:
+            # Exactly one: case 5's reference variant. Zero means that case stopped measuring
+            # the bug; more than one means somebody exempted a real call site.
+            fails.append(f"{n_marked} lines carry the DELIBERATE-DOUBLE-SHIFT exemption, "
+                         f"expected exactly 1 (case 5's reference). 0 means case 5 no longer "
+                         f"measures the bug; >1 means a real call site was exempted.")
+        else:
+            n = sum(1 for ln in lines
+                    if "input_ids=" in ln.split("#", 1)[0]
+                    and "labels=" in ln.split("#", 1)[0])
+            print(f"  checked: {n} labels= call site(s), none pre-shifts except case 5's "
+                  f"marked reference (source-level)")
+
+    except OSError as e:
+        fails.append(f"could not read this file to check for pre-shifted call sites: {e}")
 
     for f in fails:
         print(f"  SELFTEST FAIL {f}")
