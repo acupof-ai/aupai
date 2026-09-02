@@ -31,39 +31,54 @@ def row_fails(t):
 def cause(t):
     if not isinstance(t, str):
         return "non-string-row"
-    head = t[:6000]
-    # 1 non-Python mislabeled as .py: no def/class/import/print, heavy prose or
-    # clearly another language (preprocessor, <html>, XML front-matter, package line)
-    digits_only_lines = not any(
-        kw in head for kw in ("def ", "class ", "import ", "from", "print(")
-    )
-    if ("#include" in head or "#ifndef" in head or "<?xml" in head.lower()
-        or head.lstrip().lower().startswith("<html") or "package " in head[:200]):
+    head = t[:6000].lstrip()
+    low = head.lower()
+    # 0 FIRST: explicit non-Python language signature -- shebang not-python, PHP,
+    # HTML, C#/Java/Go/Rust/JS/C/C++ files that occurred in a python dataset by mislabel.
+    if head.startswith("#!") and "/python" not in low[:80]:
+        return "non-python-under-py"
+    if "<?php" in low or "<html" in low or "<!doctype" in low or "<?xml" in low:
+        return "non-python-under-py"
+    if head.startswith("package ") and ";" in low:      # Java
+        return "non-python-under-py"
+    if low.startswith("using system;") or "module.exports" in low or "function(" in low \
+       or low.startswith("#include") or low.startswith("require('") or low.startswith("require(\"") \
+       or "export default class" in low or "export default function" in low \
+       or "require('" in low or 'require("path")' in low or "var path = require" in low \
+       or low.startswith("#ifndef") or low.startswith("#define"):
+        return "non-python-under-py"
+    # RST / Markdown / prose: a heading underline (===== / ------ / ~~~~~) directly
+    # beneath a short title line, i.e. a doc page, not code
+    nonblank = [l for l in head.split("\n") if l.strip()]
+    if len(nonblank) >= 2 and len(nonblank[0]) < 60 and nonblank[1] and \
+       set(nonblank[1].strip()) <= set("=-~^'\""):
+        return "non-python-under-py"
+    # C/C++/Java namespace enum / android: 'namespace X {' or 'import android'
+    if "namespace " in low and "{" in head or "import android" in low or "import org." in low \
+       or "import java." in low or "import com." in low or "import android.support" in low:
         return "non-python-under-py"
     # 2 encoding / control bytes: a NUL, or a lone surrogate that breaks utf-8 decode
-    if "\x00" in head or "\x01" in head or "\x02" in head:
+    if "\x00" in t or "\x01" in t or "\x02" in t:
         return "encoding-or-control-bytes"
-    # 3 py2 syntax: print statement, xrange, leading-zero ints, backtick repr
-    lines = t.split("\n")
-    if (">> " in t and "print " in t) or "xrange(" in t or "`" in t or \
-       any(l.strip().startswith("print ") and not l.strip().startswith("print(")
-           for l in lines):
-        return "python2-syntax"
-    # 4 not python at all despite a def (e.g. "def" inside a comment / doc prose)
-    if digits_only_lines:
-        return "non-python-under-py"
-    # 5 notebook cell: markdown + code mixed (a '[' heading or ipython prompt)
-    if t.count("In [") > 0 or t.count("Out[") > 0 or "[1]: " in head or \
-       any(l.startswith("In [") or l.startswith("Out[") for l in lines[:40]):
+    # 3 notebook cell: markdown + code mixed (an In[ / Out[ prompt or a jupyter nb header)
+    if "In [" in t or "Out[" in t or "%matplotlib" in t or "jupyter" in low:
         return "notebook-cells"
-    # 6 truncation: last nonblank line ends in a mid-construct token (colon, comma,
-    # an operator, 'elif'/'def'/'class' with no body, an open bracket)
+    # 4 py2 syntax: print statement, xrange, backtick repr, print >>, leading-zero int
+    lines = t.split("\n")
+    if (">> " in t and "print " in t) or "xrange(" in t or \
+       any(l.strip() == "`" for l in lines) or \
+       any(l.strip().startswith("print ") and not l.strip().startswith("print(") for l in lines):
+        return "python2-syntax"
+    # 5 truncation: last nonblank line ends in a mid-construct token
     nonblank = [l for l in lines if l.strip()]
     if nonblank:
         last = nonblank[-1].strip()
         if last in (":", ",", "\\", "(", "[", "{", "=") or last.endswith(":") or \
            any(last.startswith(k) for k in ("def ", "class ", "elif ", "else ", "for ", "while ", "import ")):
             return "truncated-mid-construct"
+    # 6 residual non-python: no python structure at all in a .py-named row
+    if not any(k in head for k in ("def ", "class ", "import ", "from ", "print(")):
+        return "non-python-under-py"
     return "other"
 
 
