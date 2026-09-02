@@ -2135,6 +2135,95 @@ def _broken_ckpt_facts_sources():
     return d
 
 
+def check_keep_claim_reasons_live(root):
+    """A KEEP claim whose reason cites a RETRACTED fact must WARN named: the reason
+    died but the claim did not. ckpt_facts_sources_present only checks fact->ckpt
+    membership (is the ckpt named in a live fact), not whether the claim's reason
+    still holds (44-25, 1e ruling 2026-09-03).
+
+    step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment';
+    that fact was retracted the same day by 52aec31 and the claim stood. The checkpoint
+    guard cannot see the reason's death -- it asks 'is the ckpt claimed', never 'is the
+    fact it was claimed for still alive'. WARN, not FAIL: a retracted fact does not make
+    the checkpoint worthless, it makes the claim's justification stale -- a human either
+    re-justifies (b0's live-reason line) or lets the claim go."""
+    listings = sorted(glob.glob(os.path.join(root, "runs", "pod_ckpt_candidates_*.txt")))
+    if not listings:
+        return SKIP, "no runs/pod_ckpt_candidates_*.txt -- no claims to check"
+    status = {}
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            if e.get("id"):
+                status[e["id"]] = str(e.get("status", "")).lower()
+    stale = []
+    for line in open(listings[-1], encoding="utf-8").read().splitlines():
+        if not line.startswith("# KEEP"):
+            continue
+        for fid in sorted(set(re.findall(r"\b[a-z]{2,4}\.[a-z_0-9]+\b", line))):
+            if status.get(fid) == "retracted":
+                stale.append(f"{fid} (KEEP claim: {line[7:67]}...)")
+    if stale:
+        return WARN, f"{len(stale)} KEEP claim(s) cite retracted fact(s) -- re-justify or let the claim go: " \
+                     + "; ".join(stale)
+    return PASS, "every fact id cited in a KEEP claim is live"
+
+
+def _broken_keep_claim_reasons():
+    """A live fact cited by a KEEP claim is flipped to retracted: the check must WARN
+    naming it. Citations of facts already retracted in the real repo are blanked first
+    (dot -> underscore, so the id regex no longer matches) -- without that the world
+    WARNs on the real repo's own stale claims and the mutation proves nothing. runs/ is
+    copied, not linked, same as the sibling broken world."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    # facts/ is symlinked into the world; copy it before mutating or the write lands
+    # in the repo (the _tmp_repo_shaped rule -- measured: this world once flipped two
+    # real facts to retracted before the copy was added).
+    facts = os.path.join(d, "facts")
+    if os.path.islink(facts):
+        os.unlink(facts)
+    elif os.path.isdir(facts):
+        shutil.rmtree(facts)
+    shutil.copytree(os.path.join(ROOT, "facts"), facts)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    assert listings, "broken world found no candidates listing"
+    path = listings[-1]
+    text = open(path, encoding="utf-8").read()
+    # Blank every citation of an ALREADY-retracted fact so a WARN can only come from
+    # the mutation; otherwise the world WARNs on the real repo's own stale claims.
+    retracted = set()
+    for fp in glob.glob(os.path.join(d, "facts", "*.json")):
+        try:
+            obj = json.load(open(fp))
+        except (OSError, ValueError):
+            continue
+        for e in obj.get("facts", []):
+            if e.get("id") and str(e.get("status", "")).lower() == "retracted":
+                retracted.add(e["id"])
+    assert retracted, "broken world: no retracted facts to strip -- the repo changed shape"
+    for fid in retracted:
+        text = text.replace(fid, fid.replace(".", "_"))
+    open(path, "w", encoding="utf-8").write(text)
+    for fp in sorted(glob.glob(os.path.join(d, "facts", "*.json"))):
+        obj = json.load(open(fp))
+        for e in obj.get("facts", []):
+            if e.get("id") == "be.l1_below_constant_guess":
+                assert str(e.get("status", "")).lower() != "retracted", \
+                    "broken world: target fact already retracted"
+                e["status"] = "retracted"
+                json.dump(obj, open(fp, "w"), indent=1, ensure_ascii=False)
+                return d
+    raise AssertionError("broken world: be.l1_below_constant_guess not found in facts/")
+
+
 def _gpu_present():
     """Whether this machine can train. The strict branch of mix_shards_present guards the
     pod; a dev box with a partial corpus is normal. HARNESS_GPU_PRESENT=1/0 overrides -- the
@@ -7090,6 +7179,13 @@ CHECKS = [
         _broken_ckpt_facts_sources,
     ),
     (
+        "keep_claim_reasons_live",
+        "no KEEP claim in the candidates listing cites a fact whose status is retracted",
+        "step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment'; that fact was retracted the same day by 52aec31 and the claim stood",
+        check_keep_claim_reasons_live,
+        _broken_keep_claim_reasons,
+    ),
+    (
         "no_oversized_blob",
         f"no file over {MAX_TRACKED_MB}MB is tracked by git",
         "gitignore does not cover already-tracked paths; a 40MB file committed once because of it",
@@ -9255,7 +9351,7 @@ def _demo():
     # force the tier back. What its world must still prove is that removing a review row
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
-                 "no_shared_stash"}
+                 "no_shared_stash", "keep_claim_reasons_live"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
