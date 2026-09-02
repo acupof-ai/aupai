@@ -361,6 +361,19 @@ def main():
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
+        # Kept rather than deleted in de-21, and listed here so the reason it is not run is
+        # recorded rather than absent. It is the ONLY assertion that _encode_domain(workers>1)
+        # is element-identical to workers=1 (train.py:1682, the live path that writes every
+        # run's /data00 token cache; `harness pretokenize --workers 8` is the documented
+        # entry). .srcfp fingerprints the source directory, not the encode path, so nothing
+        # else would notice a divergence. It has NO --selftest flag -- its whole body IS the
+        # assertion, run as `python3 scripts/test_parallel_encode.py` -- so the hook could
+        # not invoke it even where the data existed; the honest entry says pod-only, which is
+        # true for both reasons. selftests_are_gated does not require it (42 selftest-carrying
+        # files, and this is not one).
+        "scripts/test_parallel_encode.py": "needs data/tokenizer.json and the math_seed "
+                                           "corpus, both gitignored, and carries no "
+                                           "--selftest flag; run it on the pod by hand",
         "eval/base_matrix.py": ("asserts data/tokenizer.json, which is gitignored; the "
                                 "partial flag runs ONLY _selftest_floor (the MC floor "
                                 "arithmetic, 0.05s), NOT the minimal-pair construction or "
