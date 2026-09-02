@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# A/B (3) of the speedrun set: zero-init every output projection, vs the same run without it.
-#   CUDA_VISIBLE_DEVICES=3,4,5,6 STEPS=500 scripts/run_ab_zero_init.sh [extra train.py args...]
+# One speedrun A/B: baseline vs one flag, at equal tokens. ARM picks which flag.
+#   CUDA_VISIBLE_DEVICES=3,4,5,6 ARM=zeroinit scripts/run_ab_speedrun.sh   # A/B (3)
+#   CUDA_VISIBLE_DEVICES=3,4,5,6 ARM=shapelr  scripts/run_ab_speedrun.sh   # A/B (2a)
 #
 # Two arms, equal tokens, equal seed, equal data, same process shape. The ONLY difference is
 # --zero_init_out, and the parameter count is IDENTICAL between arms -- unlike run_ablation.sh's
@@ -48,12 +49,22 @@ if [ -z "$CARDS" ]; then
 fi
 NGPU=$(awk -F, '{print NF}' <<<"$CARDS")   # NF on the comma-split line; `seq -s,` miscounts
 
-trap 'python3 scripts/card_claim.py release --name ab_zero_init || true' EXIT
-python3 scripts/card_claim.py acquire --name ab_zero_init --cards "$CARDS"
+# ARM is the variable under test: zeroinit (A/B 3) or shapelr (A/B 2a). One launcher, because
+# the two A/Bs differ only in which flag the second arm carries -- everything the comparison
+# depends on (tokens, seed, data, process shape, parameter count) is identical either way.
+ARM=${ARM:-zeroinit}
+case "$ARM" in
+  zeroinit) ARM_FLAG="--zero_init_out" ;;
+  shapelr)  ARM_FLAG="--muon_shape_lr" ;;
+  *) echo "refusing: ARM must be zeroinit or shapelr, got '$ARM'" >&2; exit 1 ;;
+esac
 
-for v in base zeroinit; do
+trap 'python3 scripts/card_claim.py release --name "ab_$ARM" || true' EXIT
+python3 scripts/card_claim.py acquire --name "ab_$ARM" --cards "$CARDS"
+
+for v in base "$ARM"; do
   extra=""
-  [ "$v" = zeroinit ] && extra="--zero_init_out"
+  [ "$v" = "$ARM" ] && extra="$ARM_FLAG"
   echo "=== arm $v (cards $CARDS, $STEPS steps) $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   torchrun --nproc_per_node="$NGPU" --master_port="$PORT" train.py \
     --mix "$MIX" --max_steps "$STEPS" --name "ab_zi_$v" \
@@ -62,12 +73,14 @@ for v in base zeroinit; do
     --save_every "$STEPS" $extra "$@"
 done
 
-python3 - <<'PY'
+ARM="$ARM" python3 - <<'PY'
+import os
 import re
 out = {}
-for v in ("base", "zeroinit"):
+arm = os.environ.get("ARM", "zeroinit")
+for v in ("base", arm):
     try:
-        xs = [float(m) for m in re.findall(r"loss ([\d.]+)", open(f"runs/ab_zi_{v}.log").read())]
+        xs = [float(m) for m in re.findall(r"loss ([\d.]+)", open(f"runs/ab_{arm}_{v}.log").read())]
     except FileNotFoundError:
         print(f"{v}: no log"); continue
     if not xs:
@@ -75,8 +88,8 @@ for v in ("base", "zeroinit"):
     out[v] = sum(xs[-10:]) / len(xs[-10:])
     print(f"{v:9s} last10 mean loss {out[v]:.4f}  ({len(xs)} loss lines)")
 if len(out) == 2:
-    d = out["zeroinit"] - out["base"]
-    print(f"\ndelta (zeroinit - base) {d:+.4f} nat")
+    d = out[arm] - out["base"]
+    print(f"\ndelta ({arm} - base) {d:+.4f} nat")
     # ds.seed_variance_0p2b: sd 0.0516 nat, readable move 0.24 nat.
     print("READABLE" if abs(d) >= 0.24 else
           f"NOT READABLE: |{d:+.4f}| < 0.24 nat (ds.seed_variance_0p2b). Train loss is a "

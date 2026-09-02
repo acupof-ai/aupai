@@ -225,6 +225,8 @@ class Cfg:
     # named .o) and FFN's `w2`; NOT AttnRes's final_ar, which mixes sources rather than
     # writing to the residual stream (1e's ruling 2026-09-03).
     zero_init_out = False
+    # A/B (2a): Muon lr scaled by max(1, out/in)^0.5 per parameter shape (modded-nanogpt).
+    muon_shape_lr = False
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
@@ -501,6 +503,13 @@ class Muon(torch.optim.Optimizer):
     """Nesterov momentum + Polar Express orthogonalization + cautious weight decay."""
 
     def __init__(self, params, lr=0.02, momentum=0.95, ns_steps=5, weight_decay=0.28):
+        # Read ONCE, here, not per step: hasattr rather than getattr-with-default, because
+        # getattr returns the same False whether the field is missing or present-and-False, so
+        # a renamed field would make the arm silently run the baseline while still reporting as
+        # the arm (de's shape 7, docs/lessons/fact_and_inference.md).
+        assert hasattr(Cfg, "muon_shape_lr"), (
+            "Cfg.muon_shape_lr is gone; A/B (2a) cannot tell its arm from the baseline")
+        self._shape_lr = Cfg.muon_shape_lr
         defaults = dict(lr=lr, momentum=momentum, ns_steps=ns_steps, weight_decay=weight_decay)
         super().__init__(params, defaults)
         self._compiled = {}  # (shape, ns_steps, tall, device) -> compiled function
@@ -591,7 +600,19 @@ class Muon(torch.optim.Optimizer):
             # 0-D tensors, not floats: Dynamo value-specializes floats and recompiled every step
             device = sg["params"][0].device
             lr_t, mom_t, wd_t = self._get_scalar_tensors(device)
-            lr_t.fill_(sg["lr"])
+            # A/B (2a), modded-nanogpt's shape-based lr: max(1, out/in)^0.5, where the weight
+            # is PyTorch's [out, in]. Muon's update is orthogonalised, so every column of X has
+            # roughly unit RMS regardless of shape -- for a tall (fan-out) matrix that means the
+            # per-element step is smaller relative to the weight, and the factor puts it back.
+            # Wide matrices get exactly 1.0 from the clamp, so they are untouched.
+            #
+            # It goes HERE, not in the group lr, because params are already batched by shape:
+            # every tensor in this call has the same [out, in], so the factor is one scalar per
+            # group and costs no recompile. Sharing a group lr across shapes would be wrong.
+            shape_mult = 1.0
+            if self._shape_lr and len(shape) >= 2:
+                shape_mult = max(1.0, shape[-2] / shape[-1]) ** 0.5
+            lr_t.fill_(sg["lr"] * shape_mult)
             mom_t.fill_(sg["momentum"])
             wd_t.fill_(sg["wd"])
             if n == 1:
@@ -1850,6 +1871,9 @@ def main():
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
+    parser.add_argument(
+        "--muon_shape_lr", action="store_true",
+        help="A/B (2a): Muon lr x max(1, out/in)^0.5 per parameter shape (modded-nanogpt)")
     parser.add_argument(
         "--zero_init_out", action="store_true",
         help="A/B (3): zero-init output projections (every .o and FFN .w2), so each sublayer "
