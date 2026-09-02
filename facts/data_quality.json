@@ -953,6 +953,23 @@
       },
       "uncertainty": "Measured on shard 0000 only; other shards may differ marginally but the strict join is structurally ~0 across github py tests.",
       "status": "measured"
+    },
+    {
+      "id": "dq.near_dedup_code_rate",
+      "value": "code domains (code_py_starcoder + code_py_rp1t) near-dup rate, FULL 6,389,842 docs, est-based (char 5-gram J): th0.7 0.0704 CI[0.07018,0.07058], th0.8 0.0418 CI[0.04166,0.04197], th0.9 0.0213 CI[0.02123,0.02145]",
+      "measured": "2026-09-02",
+      "source": "commit 9b14c05f (near_dedup_scale.py v6) + runs/3b8_code_dedup.json (pod)",
+      "config": {
+        "n_perm": 96,
+        "bands": 12,
+        "shingle": "char 5-gram",
+        "sample": "FULL 6,389,842 docs",
+        "method": "MinHash-J estimate (est>=th clusters, Wilson CI)",
+        "verify": "n=200 est>=0.85, mean_est 0.9225 vs mean_exact 0.9110, delta -0.0115 <= 0.05"
+      },
+      "boundary": "est-based rate (verified est≈exact on char 5-gram); near-threshold band [0.6,0.85) 2,683,833 pairs not exact-resolved",
+      "status": "measured",
+      "uncertainty": "est-based (MinHash-J proxy, verified est≈exact delta -0.0115 on char 5-gram over n=200); near-threshold band [0.6,0.85) 2,683,833 pairs not exact-resolved adds small residual"
     }
   ]
 }
