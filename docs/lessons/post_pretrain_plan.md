@@ -1,5 +1,5 @@
 ---
-question: base checkpoint 落地后做什么——SFT → RL 门 → RL 配方的可执行计划,轨迹校准方案按落点分段
+question: base checkpoint 落地后做什么——SFT → RL 门 → 两条并行 RL 轨道(数学 RLVR / 代码 agent RL)的可执行计划,轨迹校准方案按落点分段
 status: open
 source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + trajectory_calibration_survey.md (方案分级) + scale_36b_plan.md (SFT 约束) + facts/base_eval.json (200M 读数)
 ---
@@ -31,14 +31,32 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 - **读法**:n≥1000;gap 是配对差(pass@8⊇pass@1 同题相关,SE ~1-2pt@1036),15pt 阈值远在可读性之上。三态:动了(≥15pt)/ 平了(可读但 <15pt)/ 地板(pass@8 本身在地板,不可判)。200M 上的读数是 3.5pt = 平了,不是地板。
 - **预算**:pass@8 = 8 次生成/题,n=1000 → 8000 次生成;lane 卡上跑,生成式评测与训练块互斥(06:50 规则:run 活着时 block 卡只跑似然类),所以门的测量窗口 = run 结束后或空卡期。
 
-## 3. RL 段(algorithms/rlvr)
+## 3. RL 段:两条并行轨道
+
+用户 2026-09-02 16:05 裁定(docs/lessons/claude_code_rl.md Ruling,main 52ff763):RL 主线 = Claude Code 外壳 + tileRL 引擎/训练器 + 容器 + 测试奖励。数学 RLVR 是两条并行轨道之一,不是唯一。
+
+### 3a. 数学 RLVR(GSPO,boxed 奖励)
 
 - **配方**(algorithms/README.md,已实现):RLVR GSPO 循环,fp32 master 权重(1e-6 AdamW 更新低于 bf16 ULP),FP8 训练副本 + bf16 生成分离(FP8 量化噪声降采样质量),DDP 同 prompt 不同响应、adv=0 时 loss 精确为 0。
 - **数据**:`data/rl/rlvr_math.jsonl`(school_math_r1_zh + gsm8k_zh,`algorithms/prepare_rlvr.py` 产出)。
 - **入口闸**:RL 门 ≥15pt(§2)+ SFT checkpoint。
-- **出口数**:math-hard pass@1 相对 SFT 起点的提升(预登记阈值:8.8pt @ n≥1000,2δ);退化率 beside 报告。
+- **出口数**:math-hard pass@1 相对 SFT 起点 +8.8pt(n≥1000,2δ);退化率 beside 报告。
 - **失败决策**:pass@1 不动或退化 → 回 SFT 段查 pack,或判 RL 配方在这个规模不成立(读数,不是猜)。
-- **预算**:RL 是生成式训练,8 卡全占;按 GSPO 每步 8 卡生成+更新,具体步数以落地前的实测吞吐填。
+- **预算**:8 卡全占的生成式训练;吞吐按 tilerl-17 实测中位数 11.87K tok/s/gpu 换算(见 §5②)。
+
+### 3b. 代码 agent RL(tileRL GRPO,测试奖励)
+
+- **形态**:Claude Code 是 agent 外壳,tileRL 是推理引擎和训练器,容器是环境,测试是奖励。策略先 27B(Qwen3.8-27B NVFP4,LoRA on frozen fp4 base),500M 在能驱动 tool loop 后作为被服务策略进同一 API,不进 tileRL 引擎做模型类。
+- **五阶段**(裁定固定顺序,前一阶段的 done 成为产物才开下一阶段;1-4 不需要 GPU,现在就能开):
+  1. API 适配(tilerl-19):tileRL OpenAI server 前的 Anthropic Messages 兼容层;done = `claude -p` 对 tiny 模型完成一次 tool call + 最终回答。
+  2. 镜像(tilerl-19):tileRL server + shim + Claude Code CLI + python3 + 任务库,一命令启动;done = 冷启动端到端跑通阶段 1。
+  3. 沙箱(de-28):每 rollout 一容器,任务库读写挂载,测试在容器内跑,K=8 并行;done = 8 个 rollout 的 diff 与测试结果收齐。
+  4. 奖励+轨迹(e1-24):奖励 = 测试通过;轨迹 = 会话 transcript JSONL → token ids(同 shim 渲染的 ChatML)+ server 返回的 per-token logprobs;done = 一条 rollout 的 transcript 复现 server 采样的精确 token 序列。
+  5. 训练(tilerl-19):tileRL GRPO over K rollouts,LoRA on served weights,sampler=trainer 无权重同步;done = 20 任务试点奖励上升且 MMLU 不降(噪声内)。
+- **入口闸**:阶段 4 的 done(一条 rollout transcript 复现采样序列)。
+- **出口数**:20 任务试点奖励上升 + MMLU 不降。
+- **失败决策**:500M 不进这条轨道,只做 SFT。
+- **预算**:阶段 1-4 零 GPU;阶段 5 一卡(run 结束后),27B GRPO pilot 约一卡日。
 
 ## 4. 轨迹校准方案按落点分段(trajectory_calibration_survey.md)
 
@@ -57,6 +75,6 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 ## 5. 开放项(落地前必须填)
 
 1. SFT pack 的确切路径与行数(3b 填)。
-2. SFT 与 RL 的实测吞吐 → 预算的卡时数字(落地后用实测填,不用外推)。
+2. SFT 与 RL 的实测吞吐 → 预算的卡时数字:用 tilerl-17 的 11.87K tok/s/gpu 中位数换算(数学 RLVR 轨道);代码 agent 轨道阶段 5 按 27B GRPO pilot 实测填。
 3. pass@8 的生成温度与 max_new(预登记,进 panel 配置)。
 4. RL 门的题目版本(math-hard v2,与 200M 读数同一份)。
