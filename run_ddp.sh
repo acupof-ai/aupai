@@ -39,6 +39,36 @@ if [ ! -d .git ] && [ "${ALLOW_UNSYNCED:-}" != "1" ]; then
     exit 1
   fi
   echo "pod code: $_sha (clean, synced $_when, manifest verified)"
+  # THE THIRD CLAUSE, which had no code behind it (de-14). :23 refuses dirty!=0 and :34
+  # refuses drift, but "the stamp's sha is the commit the repository says the pod should
+  # hold" was only PRINTED on the line above -- verified by a human reading two hex strings
+  # off a 66-hour log, when the point of freezing condition 2' was that anyone could verify
+  # it unattended.
+  #
+  # WHAT IS ANSWERABLE HERE, and the honest limit: the pod has no git and no route back, so
+  # it cannot ask whether main's HEAD is still $_sha. It CAN refuse a stamp that is not a
+  # full 40-char sha, which is what a hand-edit or a truncating writer produces -- and that
+  # is not hypothetical: exp.py wrote 7- and 8-character shas for the same commit until
+  # de-38, because `rev-parse --short` auto-scales with the object count. A stamp abbreviated
+  # by any writer resolves for nobody.
+  #
+  # "Is $_sha main's HEAD" is answered where git is: harness check pod_stamp_is_main. Split
+  # this way on purpose -- a check that cannot be run where the evidence lives returns a
+  # believable answer from a filesystem that cannot hold the evidence, which is worse than
+  # no answer (launch_gate.run's rule).
+  case "$_sha" in
+    *[!0-9a-f]* | "")
+      echo "REFUSING: the stamp's sha is not hexadecimal: '$_sha'" >&2
+      echo "  data/pod_synced_head is written only by scripts/pod_push.sh --all." >&2
+      exit 1 ;;
+  esac
+  if [ ${#_sha} -ne 40 ]; then
+    echo "REFUSING: the stamp holds a ${#_sha}-character sha ('$_sha'), not a full 40." >&2
+    echo "  An abbreviated sha is not an identity: git's short form auto-scales with the" >&2
+    echo "  object count, so the same commit prints 7 characters on one day and 8 on the" >&2
+    echo "  next (de-38). Re-run: scripts/pod_push.sh --all" >&2
+    exit 1
+  fi
 fi
 
 torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py --fp8 "$@"

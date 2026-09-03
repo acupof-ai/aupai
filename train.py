@@ -218,6 +218,11 @@ class Cfg:
     attn_res = True  # blocks=0 -> Full (every sublayer a source); N>0 -> exactly N blocks
     attn_res_blocks = 0
     attn_res_dyn_q = False
+    # One autograd node for the whole AttnRes call instead of the eager loop. Same value,
+    # half the graph edges: the eager form reads every source twice (logits, then mixing)
+    # and add_ per step is exactly n(n+1); fused it is n(n+1)/2, measured 2.00x at
+    # L=2/3/4/12. Default OFF until the A/B; algorithms/attnres_fused.py holds the gates.
+    attn_res_fused = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
     # A/B (3), speedrun record: zero-init every OUTPUT projection, so each sublayer starts as
     # an identity on the residual stream and learns its way out. Off by default -- this is an

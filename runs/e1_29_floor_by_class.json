@@ -1,0 +1,161 @@
+{
+ "classes_defined_by": "e1, from measured content -- NOT the data's own `src` field, which labels 99.8% code_general while 8.3% of answers contain code",
+ "code_marks": [
+  "```",
+  "def ",
+  "class ",
+  "function ",
+  "import ",
+  "SELECT ",
+  "public ",
+  "#include",
+  "println",
+  "print(",
+  "return "
+ ],
+ "zh_min_frac": 0.05,
+ "zh_short_item_chars": 40,
+ "ours_ckpt": "ckpt_p200m_4b_0902.pt",
+ "ctrl_dir": "/tmp/e1_untrained.hf",
+ "population_sha": "cae4daf7ad59388c",
+ "arms": {
+  "ours": {
+   "total_nll": 4759488.226890564,
+   "tokens": 2844458,
+   "dropped": 0,
+   "n_scored": 10421,
+   "bytes": 10554038,
+   "nll_per_byte": 0.4509637189946222,
+   "by_class": {
+    "zh-prose": {
+     "n": 8799,
+     "nll": 2288629.752295792,
+     "bytes": 4829642,
+     "tokens": 1301257,
+     "nll_per_byte": 0.47387151103452224
+    },
+    "en-prose": {
+     "n": 733,
+     "nll": 1018600.4314504862,
+     "bytes": 2332340,
+     "tokens": 657052,
+     "nll_per_byte": 0.4367289638090871
+    },
+    "zh-code": {
+     "n": 185,
+     "nll": 78501.72854423523,
+     "bytes": 227984,
+     "tokens": 68336,
+     "nll_per_byte": 0.34432999045650237
+    },
+    "en-code": {
+     "n": 704,
+     "nll": 1373756.3232879639,
+     "bytes": 3164072,
+     "tokens": 817813,
+     "nll_per_byte": 0.434173534384794
+    }
+   }
+  },
+  "control": {
+   "total_nll": 9538300.020111084,
+   "tokens": 3658306,
+   "dropped": 0,
+   "n_scored": 10421,
+   "bytes": 10554038,
+   "nll_per_byte": 0.9037583548695849,
+   "by_class": {
+    "en-prose": {
+     "n": 733,
+     "nll": 1613012.10887146,
+     "bytes": 2332340,
+     "tokens": 602592,
+     "nll_per_byte": 0.6915853215532298
+    },
+    "zh-prose": {
+     "n": 8799,
+     "nll": 5731894.9673137665,
+     "bytes": 4829642,
+     "tokens": 2197667,
+     "nll_per_byte": 1.1868157033821072
+    },
+    "zh-code": {
+     "n": 185,
+     "nll": 193910.43738555908,
+     "bytes": 227984,
+     "tokens": 74963,
+     "nll_per_byte": 0.8505440618006487
+    },
+    "en-code": {
+     "n": 704,
+     "nll": 1999482.51071167,
+     "bytes": 3164072,
+     "tokens": 783084,
+     "nll_per_byte": 0.631933315901683
+    }
+   }
+  }
+ },
+ "scored_population": {
+  "n": 10421,
+  "sha": "cae4daf7ad59388c",
+  "dropped_by_ours_only": 0,
+  "dropped_by_control_only": 0,
+  "why": "both arms scored EXACTLY these ids, checked here rather than assumed from the caller's --ids. On this data it is a no-op: the published floors already restrict to ids_shared.txt and both report evaluated_ids_sha256 cae4daf7ad59388c over 10,421 items, so 2.004x is sound. (I first misread floor_*.json's dropped_overlong 28 vs 220 as evidence of two populations; that field is counted before the --ids restriction and describes the 10,641-row file, not the scored set.)"
+ },
+ "gap_shared_population": 2.004060009271749,
+ "gap_by_class": {
+  "en-code": {
+   "ours_nll_per_byte": 0.434173534384794,
+   "ctrl_nll_per_byte": 0.631933315901683,
+   "gap": 1.4554855739816257,
+   "n": 704,
+   "bytes": 3164072,
+   "ours_nll": 1373756.3232879639,
+   "ctrl_nll": 1999482.51071167
+  },
+  "en-prose": {
+   "ours_nll_per_byte": 0.4367289638090871,
+   "ctrl_nll_per_byte": 0.6915853215532298,
+   "gap": 1.583557260597791,
+   "n": 733,
+   "bytes": 2332340,
+   "ours_nll": 1018600.4314504862,
+   "ctrl_nll": 1613012.10887146
+  },
+  "zh-code": {
+   "ours_nll_per_byte": 0.34432999045650237,
+   "ctrl_nll_per_byte": 0.8505440618006487,
+   "gap": 2.470142262871215,
+   "n": 185,
+   "bytes": 227984,
+   "ours_nll": 78501.72854423523,
+   "ctrl_nll": 193910.43738555908
+  },
+  "zh-prose": {
+   "ours_nll_per_byte": 0.47387151103452224,
+   "ctrl_nll_per_byte": 1.1868157033821072,
+   "gap": 2.504509504678043,
+   "n": 8799,
+   "bytes": 4829642,
+   "ours_nll": 2288629.752295792,
+   "ctrl_nll": 5731894.9673137665
+  }
+ },
+ "gap_dispersion": {
+  "min_class": "en-code",
+  "min": 1.4554855739816257,
+  "max_class": "zh-prose",
+  "max": 2.504509504678043,
+  "range": 1.0490239306964173,
+  "byte_weighted_mean": 1.9857510745245133,
+  "reading": "a language artifact predicts zh-prose well ABOVE the en-* classes; all four near the mean means the confound is small regardless of what en-only reads"
+ },
+ "english_only": {
+  "ours_nll_per_byte": 0.43525790183458773,
+  "ctrl_nll_per_byte": 0.6572459669295405,
+  "gap": 1.5100150144530071,
+  "n": 1437,
+  "bytes": 5496412
+ }
+}
