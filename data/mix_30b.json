@@ -3,24 +3,14 @@
  "domains": {},
  "_blocked": {
   "code_rp1t": {
-   "weight": 0.26667,
+   "weight": 0.33334,
    "epochs": 1,
-   "anneal": 0.26667,
+   "anneal": 0.33334,
    "role": "code raw (RedPajama-1T github)",
-   "tokens": 8000000000,
-   "source": "RedPajama-1T github, 73.6B reachable, exact count",
-   "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b)",
+   "tokens": 10000000000,
+   "source": "RedPajama-1T github, 73.6B reachable, exact count. Carries the 2.0B that was code_tests until 2026-09-04: the impl+test pairing route was measured and dropped (runs/ct_overlap.json, runs/cs_probe.json), so the role folds back into code raw",
+   "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b). Demand is now 10.0B against 73.6B reachable",
    "status": "blocked: raw fetched, corpus build+stamp pending"
-  },
-  "code_tests": {
-   "weight": 0.06667,
-   "epochs": 1,
-   "anneal": 0.06667,
-   "role": "code with execution annotation (impl+test pairs, two-turn tool-call rendering per plan section 'tool-call')",
-   "tokens": 2000000000,
-   "source": "mined from code_rp1t: 7.6% of repos have impl+test, 26.96% of docs in such repos (ds.code_exec_supply)",
-   "supply": "5.6B mineable from the 73.6B raw; filter only, zero generation",
-   "status": "blocked: mining pending (3b)"
   },
   "math_owm": {
    "weight": 0.18333,
@@ -93,5 +83,5 @@
    "status": "landed: exact 2.397B; NOT a doc-subset of en_c4/ (0 overlap, subset check 2026-09-03); share {f2:.4f} by size; near-dup pass + stamp pending (3b)"
   }
  },
- "_comment": "30B pretrain mix (t30, fb 2026-08-31). Source of truth: docs/lessons/scale_36b_plan.md section 1 (role table) + 1b (recipe). Weights are token shares of 30e9, carried to the token from the plan table (8.0/2.0/5.5/4.5/5.5/3.3/1.0/0.2 B). `domains` is EMPTY today: no domain is stamped yet. Every domain not on disk is declared in `_blocked` with its full contract (weight/epochs/anneal/role/source/supply/status) -- the composition must not silently shrink to what exists. As 3b lands and stamps each corpus dir, the entry moves from `_blocked` to `domains` unchanged. t22 MUST NOT launch until `_blocked` is empty and weights(domains) sum to 1.0. Directory naming: NEW stamped dirs only, never a frozen ladder directory (web_hq/textbook/en/math/code/wiki/chat are ladder names and are banned by the mix_30b_contract harness check). epochs: 1 for all (supply >= need at landing; zh_web measured 21.29B supply vs 3.3B need at epochs 1, t49 44 2026-08-31). anneal=weight (constant, same convention as the ladder mixes; plan 1b changes no anneal rule). zh:en language split: MEASURED on stamped shards, not estimated by source name -- math_owm/cot/textbook_30b carry Chinese sources, so the source-name split (~85:15 en:zh) is not the content-language split. 44's t24 audit emits the per-domain language fraction as domains land; the number is written at facts/multilingual.json#mlm.ratio.30b_measured when it exists, never estimated (fb ruling 2026-08-31; the table is authoritative, the earlier 35:65 prose was a rough estimate and is superseded by the measurement). The tool-call two-turn rendering is not a separate domain: it is the rendering of code_tests (2.0B) and the math domain's <<expr=result>> subset, per plan section 'tool-call' and t19. en role source: RedPajama-1T c4 via data.together.xyz (en_c4) since 2026-08-31 -- hf-mirror unreachable from the pod; fineweb-edu sample/10BT stays preferred if the mirror returns before en is half landed (fb ruling). math_owm/cot keep their contracts; arxiv+stackexchange from the same host are fetched as reachable stand-ins, role attribution pending 44's content read."
+ "_comment": "30B pretrain mix (t30, fb 2026-08-31). Source of truth: docs/lessons/scale_36b_plan.md section 1 (role table) + 1b (recipe). Weights are token shares of 30e9, carried to the token from the plan table (8.0/2.0/5.5/4.5/5.5/3.3/1.0/0.2 B); the code role's 8.0 and 2.0 are one 10.0B entry since 2026-09-04, see the code_tests note below. `domains` is EMPTY today: no domain is stamped yet. Every domain not on disk is declared in `_blocked` with its full contract (weight/epochs/anneal/role/source/supply/status) -- the composition must not silently shrink to what exists. As 3b lands and stamps each corpus dir, the entry moves from `_blocked` to `domains` unchanged. t22 MUST NOT launch until `_blocked` is empty and weights(domains) sum to 1.0. Directory naming: NEW stamped dirs only, never a frozen ladder directory (web_hq/textbook/en/math/code/wiki/chat are ladder names and are banned by the mix_30b_contract harness check). epochs: 1 for all (supply >= need at landing; zh_web measured 21.29B supply vs 3.3B need at epochs 1, t49 44 2026-08-31). anneal=weight (constant, same convention as the ladder mixes; plan 1b changes no anneal rule). zh:en language split: MEASURED on stamped shards, not estimated by source name -- math_owm/cot/textbook_30b carry Chinese sources, so the source-name split (~85:15 en:zh) is not the content-language split. 44's t24 audit emits the per-domain language fraction as domains land; the number is written at facts/multilingual.json#mlm.ratio.30b_measured when it exists, never estimated (fb ruling 2026-08-31; the table is authoritative, the earlier 35:65 prose was a rough estimate and is superseded by the measurement). The tool-call two-turn rendering is not a separate domain and no longer has a code_tests domain behind it: the impl+test pairing route was MEASURED and dropped 2026-09-04 (user decision, option A). The mine reproduced code_py_starcoder at 100.00% overlap -- 15 novel rows of 1,474,440, ~28K tokens (runs/ct_overlap.json) -- because it is a subset by construction, and the one distinct source on disk, code_supply, pairs at 0.65% because it is row-sampled at 3.48 files/repo (runs/cs_probe.json); pair yield tracks repo coverage, so closing 2.0B needs a repo-shaped fetch of 150-200 GB, which does not fit a 150 GB emptyDir. code_tests' 0.06667/2.0B therefore folds into code_rp1t (0.26667 -> 0.33334, 8.0B -> 10.0B). The rendering now rides the math domain's <<expr=result>> subset and wiki_chat's 0.2B, per plan section 'tool-call' and t19. en role source: RedPajama-1T c4 via data.together.xyz (en_c4) since 2026-08-31 -- hf-mirror unreachable from the pod; fineweb-edu sample/10BT stays preferred if the mirror returns before en is half landed (fb ruling). math_owm/cot keep their contracts; arxiv+stackexchange from the same host are fetched as reachable stand-ins, role attribution pending 44's content read."
 }
