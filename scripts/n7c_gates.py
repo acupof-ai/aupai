@@ -66,7 +66,7 @@ def main():
 
     # (model, cfg) -- two values. Read from scripts/loader.py:44 after I guessed three and the
     # gate crashed on the unpack; cfg carries vocab_id rather than it being returned separately.
-    mdl, _cfg = load_checkpoint(CKPT)
+    mdl, _cfg = load_checkpoint(CKPT, dtype=torch.bfloat16)
     mdl = mdl.cuda().eval()
     pack = torch.load(PACK, map_location="cpu", weights_only=False)
     # THE PACK STORES 4097 COLUMNS AND THE MODEL TAKES 4096: sft_math.py:156-157 feeds
@@ -111,7 +111,14 @@ def main():
 
         M.flash_attn_varlen_func = patched
         try:
-            with torch.no_grad():
+            # bf16 UNDER AUTOCAST, matching eval/domain_loss.py:613/228 -- it loads the checkpoint
+            # with dtype=torch.bfloat16 and wraps the forward in autocast, and that is the only
+            # configuration these kernels are exercised in. My first version ran fp32 with no
+            # autocast and chunk_kda died with CUDA "misaligned address" on the plain baseline
+            # forward. I first blamed the pack's odd 4097 length, fixed that (it was a real second
+            # bug -- the labels were unshifted), and the crash survived unchanged, which is what
+            # said the length was not the cause.
+            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
                 logits = mdl(ids)
                 lv = torch.nn.functional.cross_entropy(
                     logits.float().view(-1, logits.shape[-1]), labels.view(-1),
