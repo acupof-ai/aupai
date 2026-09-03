@@ -233,7 +233,15 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
         if rows is None:
             skipped.append(name)
             continue
-        loss, ntok = domain_loss_seqs(model, rows, device)
+        # per_row=True IS LOAD-BEARING AND COSTS NOTHING HERE. b0-23 pairs on BLOCKS, and
+        # the blocks only exist if the scorer asks for them: this call is where the data
+        # leg's end-of-run score lost them. That record was written 32 min before the
+        # per-block code landed, so it carried 9 domain scalars and no blocks, and the leg
+        # had to be rescored on a lane card to get an N2 exit number. The reported scalar
+        # is unaffected -- domain_loss_seqs keeps the flat reduction="sum" as its return
+        # value and adds the rows beside it (verified: the rescore reproduced all 9 domains
+        # and the mean 1.9443 to the digit).
+        loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True)
         if loss is None:
             skipped.append(name)
             continue
@@ -241,7 +249,8 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
         # the two sides disagree AND when the field is absent (62/b0, 2026-09-01), so a
         # record written here without it would be unreadable by the guard rather than
         # merely unverified.
-        out[name] = {"loss": round(loss, 4), "tokens": ntok, "head_fp": seqs_fp(rows)}
+        out[name] = {"loss": round(loss, 4), "tokens": ntok, "head_fp": seqs_fp(rows),
+                     "blocks": [{"ce_sum": ce, "n_tokens": nt} for ce, nt in per]}
     if not out:
         return None, f"no domain had val rows to score ({len(skipped)} skipped: {skipped[:5]})"
     vals = [d["loss"] for d in out.values()]
@@ -822,6 +831,44 @@ def selftest():
                    and n.args] if _dl_main else []
     assert _files_args == ["mix_path"], \
         f"domain_loss.py passes {_files_args} to domain_files, not the checkpoint's mix"
+
+    # THIS FILE'S OWN domain_loss_seqs CALL MUST ASK FOR per_row, AND THE RECORD MUST CARRY
+    # THE BLOCKS. The data leg's end-of-run score was written here without per_row: 9 domain
+    # scalars, no blocks, and b0-23 had to rescore the leg on a lane card to get a pairing
+    # unit. Nothing failed -- the record was well-formed and the scalars were right, which is
+    # why it shipped. An AST read of THIS module, on the same terms as the _mix_for check
+    # above and for the same reason: a substring search passes on a commented-out call, and
+    # the arity is the half that a copy-paste breaks (per_row=True returns THREE values).
+    _sm_src = open(os.path.abspath(__file__), encoding="utf-8").read()
+    _seq_calls = [n for n in _ast.walk(_ast.parse(_sm_src)) if isinstance(n, _ast.Call)
+                  and _ast.unparse(n.func) == "domain_loss_seqs"]
+    assert _seq_calls, "no domain_loss_seqs call found in score_matrix.py -- the scorer moved"
+    for _c in _seq_calls:
+        _kw = {k.arg: _ast.unparse(k.value) for k in _c.keywords}
+        assert _kw.get("per_row") == "True", (
+            "score_matrix's domain_loss_seqs call does not pass per_row=True, so every record "
+            "it writes carries domain scalars and no blocks -- b0-23 cannot pair on it and the "
+            "loss is silent (this is exactly how the data leg's score shipped blockless)")
+    # and the record built from it must actually store them under "blocks". AN AST READ, NOT A
+    # SUBSTRING: my first version of this line was `assert '"blocks": [{"ce_sum"' in _sm_src`,
+    # and it was GREEN against a mutation that deleted the storing code -- because the literal
+    # inside the assertion is itself part of the source it searches, so the check found ITSELF.
+    # A guard that reads the whole file for a string it contains can never fail. So: find the
+    # dict assigned to out[name] and require a "blocks" key whose value is built from `per`.
+    _out_dicts = [n.value for n in _ast.walk(_ast.parse(_sm_src))
+                  if isinstance(n, _ast.Assign) and isinstance(n.value, _ast.Dict)
+                  and any(_ast.unparse(t).startswith("out[") for t in n.targets)]
+    assert _out_dicts, "no `out[...] = {...}` record literal found -- the writer moved"
+    for _d in _out_dicts:
+        _keys = {_ast.unparse(k).strip("'\"") for k in _d.keys if k is not None}
+        assert "blocks" in _keys, (
+            f"the record score_matrix writes has keys {sorted(_keys)} and no 'blocks': per_row "
+            "is requested but the rows are dropped on the floor, which is indistinguishable "
+            "from the blockless record the data leg shipped")
+        _blocks_val = next(_ast.unparse(v) for k, v in zip(_d.keys, _d.values)
+                           if k is not None and _ast.unparse(k).strip("'\"") == "blocks")
+        assert "per" in _blocks_val, (
+            f"'blocks' is present but not built from the per_row rows: {_blocks_val}")
 
     # kind stamp wins over sft epochs; epochs>1 is sft; no stamp, no ledger row -> base
     assert classify({"kind": "rl", "epochs": 3}, "ckpt_x.pt", log="/nonexistent") == "rl"
