@@ -85,12 +85,17 @@ def load_population():
     with open(IDS, encoding="utf-8") as fh:
         ids = [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
     fp = hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()[:16]
-    keep = set(ids)
+    # COMPARE AS STRINGS ON BOTH SIDES. ids_shared.txt holds "0" while the JSONL holds the int 0, so
+    # `r["id"] in set(ids)` matched NOTHING -- 0 of 10,421 -- and the row-count assertion is what
+    # caught it. Without that assertion this would have built an empty index, scanned 160.97 GB, and
+    # reported zero contamination: a clean bill of health from having compared nothing, which is the
+    # exact shape of the vacuous pass that already cost a day on the N8 probe.
+    keep = {str(i) for i in ids}
     rows = []
     with open(HELDOUT, encoding="utf-8") as fh:
         for ln in fh:
             r = json.loads(ln)
-            if r["id"] in keep:
+            if str(r["id"]) in keep:
                 rows.append(r)
     return rows, ids, fp
 
@@ -251,6 +256,16 @@ def selftest():
     zh = words("模型 在 预训练 语料 上 记住 了 答案")
     if len(zh) < 5:
         print(f"  FAIL zh text tokenized to {len(zh)} tokens; zh_web would scan as empty")
+        bad += 1
+    # THE ID TYPE CASE, from the real failure: ids_shared.txt holds "0" and the JSONL holds int 0, so
+    # an un-coerced membership test matched 0 of 10,421 items. A scan on that empty index would have
+    # read 160.97 GB and reported zero contamination.
+    if str(0) not in {str(i) for i in ["0", "50"]}:
+        print("  FAIL int/str id coercion does not match a string id list")
+        bad += 1
+    if "0" in {0, 50}:
+        print("  FAIL the un-coerced comparison unexpectedly matched; this fixture no longer "
+              "reproduces the defect it was written for")
         bad += 1
     print(f"e1_28 selftest: {'OK' if not bad else f'{bad} FAILURE(S)'}")
     return 1 if bad else 0
