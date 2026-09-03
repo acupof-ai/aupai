@@ -85,8 +85,13 @@ def load_golds(path):
     return name, recs
 
 
-def needles(texts_by_type, use_char=True):
-    """texts_by_type: {needle_type: [text...]} -> {needle_type: (ws_need, ch_need)}."""
+def needles(texts_by_type, use_char=False):
+    """texts_by_type: {needle_type: [text...]} -> {needle_type: (ws_need, ch_need)}.
+    use_char defaults FALSE: e1-28's design applies the char-13 window only to the
+    dense-chardomains (zh_web/chatml/chat_qa); on code/math/English it 'shreds
+    indentation and identifiers into matches that mean nothing' -- a measured
+    18,000%/doc false hit on the math corpus when left on. Whitespace 13-gram is
+    the containment unit for everything else."""
     out = {}
     for ty, texts in texts_by_type.items():
         ws, ch = {}, {}
