@@ -8,8 +8,12 @@
 WHY THIS IS NOT paired_stats. eval/domain_loss.py:267 pairs by DOMAIN: n=9, and its own
 docstring says the sd measures cross-domain consistency and must not be read as a reseeding
 claim. N2's exit number needs the SAMPLING ERROR of a delta, and the sample available is the
-val-cache blocks -- hundreds to thousands of them, not nine. Same data, two orders of
-magnitude more pairing units, and a different question.
+val-cache blocks -- 64 per domain, 576 over the nine, not nine. MEASURED 2026-09-03, because
+this docstring first said "hundreds to thousands" from an estimate I never checked: 64 blocks
+per domain of 4096 tokens each. n=576 is still two orders of magnitude more pairing units than
+9, and the paired sd is what makes it enough -- on the first real pair (e1's n7 Stage B arms)
+the within-domain sd is 0.34-0.44 unpaired and 0.0437 paired, 9.2x tighter, giving SE 0.0018
+over 576 blocks and 0.001-0.003 per domain at n=64.
 
 The unit is the BLOCK because that is what both runs actually share. val_seqs is
 deterministic given a vocabulary and a seed, so run A's block i and run B's block i are the
@@ -21,9 +25,12 @@ rounding of the other:
   row     the mean of the per-block mean CEs -- every block counts once
   token   total CE difference over total tokens -- every TOKEN counts once
 They coincide only when every block has the same token count. Real val blocks are packed to a
-fixed width so they often do; the selftest fixture deliberately does not (10/90/400 tokens),
-because a fixture where they coincide cannot tell a correct implementation from one that
-silently uses the wrong one.
+fixed width, and MEASURED 2026-09-03 they are ALWAYS the same width -- distinct n_tokens over
+every block of every arm is [4096], one value -- so on production data the two are an identity
+and their agreement is not evidence of anything. The selftest fixture deliberately is not
+(10/90/400 tokens), because a fixture where they coincide cannot tell a correct implementation
+from one that silently uses the wrong one, and that fixture is the only place the distinction
+is ever exercised.
 
 THE BLOCK SETS MUST MATCH EXACTLY AND THE REFUSAL IS THE POINT. Taking the intersection would
 silently change which blocks the mean is over, and at block granularity that has NO visible
@@ -152,6 +159,16 @@ def print_block_paired(bp):
     if abs(bp["row_weighted_mean"] - bp["token_weighted_mean"]) > 1e-9:
         print("    the two differ, so the blocks are NOT equal-length; say which one a "
               "reported number is.")
+    else:
+        # SILENCE HERE READS AS AGREEMENT, WHICH IS THE ONE THING IT IS NOT. On equal-length
+        # blocks the two weightings are the same arithmetic, so a match is an identity and
+        # carries no information about whether this code picked the right one. Measured
+        # 2026-09-03 on the real val cache: every block is 4096 tokens, distinct n_tokens =
+        # [4096], so this branch is what production always takes. The only evidence that the
+        # weightings are implemented correctly is --selftest, whose fixture is 10/90/400.
+        print("    IDENTITY, not a check: every block has the same token count, so the two "
+              "weightings are the same arithmetic here and agreeing tells you nothing about "
+              "either. Correctness of the weighting lives in --selftest (10/90/400 fixture).")
     print(f"  sign: {bp['positive']} up, {bp['negative']} down, {bp['ties']} tie; "
           f"one-sided p {bp['sign_test_p_one_sided']:.2e}")
     print("  THE SE IS THE SAMPLING ERROR OF THIS DELTA over blocks. It is not seed spread: "
