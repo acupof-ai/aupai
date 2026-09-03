@@ -44,7 +44,12 @@ def run(cell, ckpt, loop):
            "--out", summary, "--preds", preds]
     if loop:
         cmd += ["--loop", *loop]
-    print(f"== {cell}: trained={'looped' if 'looped' in ckpt else 'unlooped'} "
+    # "looped" is a SUBSTRING of "unlooped", so `'looped' in ckpt` is True for both checkpoints and
+    # every cell printed trained=looped. Display only -- the cell key and its checkpoint come from
+    # CELLS and were always right, so no number was affected -- but a label that says the opposite
+    # of what ran is how a correct number gets read as the wrong cell. Test the actual name.
+    trained = "unlooped" if "unlooped" in ckpt else "looped"
+    print(f"== {cell}: trained={trained} "
           f"scored={'looped_4_7' if loop else 'unlooped'}", flush=True)
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
@@ -104,8 +109,13 @@ def main():
         zz = r.get("z")
         se_s = "unavailable" if se is None else f"{se:.4f}"
         z_s = "unavailable" if zz is None else f"{zz:+.1f}"
-        print(f"\n{label}: delta {r['delta_bpb']:+.4f}  SE {se_s}  z {z_s}  "
-              f"n {r['n_items']}  bytes {r.get('total_bytes')}")
+        # SIGN: paired_se computes A - B (n3_report.py's contrib line), and A is the BASELINE cell
+        # here, so a NEGATIVE delta means the second cell is WORSE -- the same finding the cell
+        # table above prints as a positive number. Printing both orientations unlabelled read as a
+        # contradiction, so the direction is stated in words rather than left to the reader.
+        worse = "second cell worse" if r["delta_bpb"] < 0 else "second cell better"
+        print(f"\n{label}: delta {r['delta_bpb']:+.4f} (baseline minus cell, so {worse})  "
+              f"SE {se_s}  z {z_s}  n {r['n_items']}  bytes {r.get('total_bytes')}")
         if r.get("note"):
             print(f"  note: {r['note']}")
         if r.get("seed_sigma") is None:

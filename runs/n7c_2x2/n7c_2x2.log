@@ -1,0 +1,32 @@
+== UtSu: trained=looped scored=unlooped
+   bpb 0.4643  (164 tasks, 29662 bytes)
+== UtSl: trained=looped scored=looped_4_7
+   bpb 0.4883  (164 tasks, 29662 bytes)
+== LtSu: trained=looped scored=unlooped
+   bpb 0.4852  (164 tasks, 29662 bytes)
+== LtSl: trained=looped scored=looped_4_7
+   bpb 0.4676  (164 tasks, 29662 bytes)
+
+== 500 steps, against the 250-step run (two runs, not one curve)
+cell        500      250     delta
+UtSu     0.4643   0.4635   +0.0008
+LtSl     0.4676   0.4658   +0.0018
+UtSl     0.4883   0.4899   -0.0016
+LtSu     0.4852   0.4828   +0.0024
+
+DIAGONAL (the experiment)  looped-trained/looped-scored minus unlooped/unlooped: +0.0033
+  250-step diagonal was +0.0023
+MISMATCH cells (the control): +0.0240 and +0.0209
+  If these stay far larger than the diagonal, the mismatch is again the dominant effect and any single-topology reading of this experiment is measuring it.
+
+diagonal: delta -0.0033  SE 0.0006  z -5.7  n 164  bytes 29662
+
+mismatch-A (unlooped weights, looped scoring): delta -0.0240  SE 0.0022  z -11.0  n 164  bytes 29662
+
+mismatch-B (looped weights, unlooped scoring): delta -0.0209  SE 0.0023  z -9.0  n 164  bytes 29662
+
+== per-item win count (separate measurement, not from paired_se)
+  diagonal: 112/164 items worse
+  mismatch-A (unlooped weights, looped scoring): 131/164 items worse
+  mismatch-B (looped weights, unlooped scoring): 123/164 items worse
+  250-step diagonal for comparison: 103/164 worse (a separate run, reproduced from runs/n7_2x2 with this same recipe)
