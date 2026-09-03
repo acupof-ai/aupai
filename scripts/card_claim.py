@@ -233,6 +233,54 @@ def claims():
     return live, stale
 
 
+FOREIGN_MARKERS = ("NEVER TAKE", "FOREIGN OCCUPANT", "not an aupai job", "another container")
+# Where runs/card_assignment.json is read from. Separate from CLAIM_DIR because the two move
+# independently: a claim dir belongs to the tree the JOB runs in, the grant file to the repo.
+FOREIGN_ROOT = ROOT
+
+
+def foreign_cards(root=ROOT):
+    """{card: why} for cards runs/card_assignment.json says are not ours to take.
+
+    ORPHAN means "memory held by nobody, find it and reclaim it". For a card holding the USER'S
+    own job or another container's, that instruction is wrong and acting on it is destructive --
+    e1 read "ORPHAN card 7 27,809 MiB" for the user's job on 2026-09-04, and it was the third
+    reader of that line (6e). The claim files cannot say this: a claim records OUR intent, and
+    another container writes none, so the absence of a claim is exactly what a foreign job looks
+    like. The controller's grant file is the only place the distinction is written down.
+
+    Read from the `cards` values' own text rather than a new field, because the text is already
+    there and already maintained -- a parallel schema would be a second thing to keep in step
+    with the prose, and the prose is what the controller actually edits.
+    """
+    p = os.path.join(root, "runs", "card_assignment.json")
+    try:
+        with open(p, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for card, why in (obj.get("cards") or {}).items():
+        if not isinstance(why, str):
+            continue
+        hit = next((m for m in FOREIGN_MARKERS if m.lower() in why.lower()), None)
+        if not hit:
+            continue
+        # Keys are single indices ("5") or RANGES ("0-3"): the file uses both, so a plain
+        # string compare against an nvidia-smi index silently misses every ranged entry.
+        key = str(card).strip()
+        if "-" in key:
+            try:
+                lo, hi = (int(x) for x in key.split("-", 1))
+                for i in range(lo, hi + 1):
+                    out[str(i)] = (hit, why)
+                continue
+            except ValueError:
+                pass
+        out[key] = (hit, why)
+    return out
+
+
 def card_memory():
     """{index: MiB} from nvidia-smi, or None when there is no nvidia-smi.
 
@@ -421,12 +469,25 @@ def status():
     for c, names in dup.items():
         lines.append(f"CONFLICT card {c} claimed by {names} -- acquire should have refused")
     orphans = []
+    # ROOT, not a path derived from CLAIM_DIR: the selftest swaps CLAIM_DIR to a temp directory,
+    # and deriving the repo root from it would look for card_assignment.json under /tmp and find
+    # nothing -- the foreign case would then silently never fire and the world would prove the
+    # ORPHAN branch twice. FOREIGN_ROOT is the seam the selftest moves instead.
+    foreign = foreign_cards(FOREIGN_ROOT)
     if mem is None:
         lines.append("CARDS  not measured (no nvidia-smi here) -- claims listed above are all "
                      "this can say")
     else:
         for card, m in sorted(mem.items(), key=lambda kv: kv[0]):
-            if m > FREE_MIB and card not in held:
+            if m > FREE_MIB and card not in held and card in foreign:
+                # FOREIGN, not ORPHAN, and it does not go in `orphans`: ORPHAN's instruction is
+                # "find it and reclaim it", which for the user's own job or another container's
+                # is destructive advice. Exits 0 for this card -- nothing is wrong.
+                hit, why = foreign[card]
+                lines.append(f"FOREIGN card {card} holds {m} MiB, no claim, and "
+                             f"runs/card_assignment.json says {hit!r} -- not ours to take or "
+                             f"reclaim: {why[:110]}")
+            elif m > FREE_MIB and card not in held:
                 orphans.append((card, m))
                 lines.append(f"ORPHAN card {card} holds {m} MiB with no claim -- find it with "
                              f"nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory")
@@ -673,6 +734,53 @@ def _selftest():
                     pass
             tree.kill()
             tree.wait()
+
+    # ------------------------------------------------------------------ 6e ruling 2026-09-04
+    # FOREIGN: a card runs/card_assignment.json marks as another container's or the user's must
+    # NOT print as ORPHAN. ORPHAN's instruction is "find it and reclaim it", and e1 got
+    # "ORPHAN card 7 27,809 MiB" for the user's own job -- the third reader of that line would
+    # have acted on it. Both directions, and the negative is the load-bearing one: the SAME
+    # memory on an UNMARKED card must still read ORPHAN, or the change has simply silenced the
+    # warning everywhere.
+    _saved_foreign_root = FOREIGN_ROOT
+    froot = tempfile.mkdtemp(prefix="foreign_")
+    try:
+        os.makedirs(os.path.join(froot, "runs"), exist_ok=True)
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"cards": {
+                "3": "lane, but HELD by the user's container job -- NEVER TAKE while held",
+                "0-1": "params leg block, ours",
+            }}, fh)
+        globals()["FOREIGN_ROOT"] = froot
+        got = foreign_cards(froot)
+        _case(set(got) == {"3"},
+              f"only the marked card is foreign, and a ranged ours-key is not: {sorted(got)}")
+
+        # A ranged FOREIGN key must expand, since the file uses both forms and a string
+        # compare against an nvidia-smi index would miss every range.
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"cards": {"4-6": "FOREIGN OCCUPANT: another container's pids"}}, fh)
+        got = foreign_cards(froot)
+        _case(set(got) == {"4", "5", "6"},
+              f"a ranged foreign key expands to every index in it: {sorted(got)}")
+
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"cards": {"7": "the user's own job, NEVER TAKE"}}, fh)
+        real = card_memory
+        globals()["card_memory"] = lambda: {"7": 27809, "2": 27809}
+        orphans, dup, lines = status()
+        said_foreign = [x for x in lines if x.startswith("FOREIGN")]
+        said_orphan = [x for x in lines if x.startswith("ORPHAN")]
+        _case(any("card 7" in x and "NEVER TAKE" in x for x in said_foreign),
+              "a marked card holding memory prints FOREIGN with the reason, not ORPHAN")
+        _case(not any("card 7" in x for x in said_orphan) and ("7", 27809) not in orphans,
+              "and it is NOT counted as an orphan, so nothing tells anyone to reclaim it")
+        _case(any("card 2" in x for x in said_orphan) and ("2", 27809) in orphans,
+              "THE SAME memory on an unmarked card still reads ORPHAN (the negative case)")
+        globals()["card_memory"] = real
+    finally:
+        globals()["FOREIGN_ROOT"] = _saved_foreign_root
+        shutil.rmtree(froot, ignore_errors=True)
 
     # ------------------------------------------------------------------ 6e ruling 2026-09-03
     # ZOMBIE, the third disagreement. A REAL zombie, made with fork+exit and deliberately not

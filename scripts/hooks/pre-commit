@@ -12,10 +12,11 @@ the set of paths that may be committed; anything else under data/ is refused
 because large data belongs in .gitignore, not history (d535674 swept 234MB
 under data/_corpus_unsanitized/ into one commit).
 
-The manifest regeneration writes data/pod_head_manifest.txt from the INDEX
-(staged blobs, git show :path), not HEAD or the working tree, so the committed
-manifest matches HEAD after the commit lands. This eliminates the "manifest
-stale" CI red that required a separate "regenerate pod manifest" commit.
+This hook no longer touches data/pod_head_manifest.txt: it is untracked, and
+scripts/pod_push.sh generates it from the HEAD it ships (shape A, 2026-09-04).
+Regenerating a derived file on every commit made it the top friction cause, and
+in a merge commit the regen ran after git had built the tree, so it could only
+ever land in the index -- permanently dirty, aborting the next merge.
 """
 import atexit
 import fnmatch
@@ -37,7 +38,6 @@ ALLOWED = [
     "data/corpus/.counts.json",
     "data/PROVENANCE.md",
     "data/MANIFEST.tsv",
-    "data/pod_head_manifest.txt",
     "data/env_fp_baseline.json",
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
@@ -155,42 +155,6 @@ def _shared_repo_state(root):
     idx = subprocess.run(["git", "-C", root, "diff", "--cached", "--name-only"],
                          capture_output=True, text=True, env=env).stdout.split()
     return digest, frozenset(idx)
-
-
-_MANIFEST_RESTORE = {}
-
-
-def _restore_manifest(repo):
-    """Put data/pod_head_manifest.txt back to HEAD's bytes. Never raises.
-
-    ARMED AT THE WRITE, DISARMED AT THE `git add`, and run by atexit -- not called at
-    each refusal, which is the version that shipped in 3f5231c and was only accidentally
-    complete. That one restored at the two exits that existed below the write; the
-    manifest stage simply happens to be the LAST stage today, so there were no others.
-    Measured by appending one hypothetical gate after it: the residue came straight back
-    (' M data/pod_head_manifest.txt') and with it the livelock. A cleanup whose
-    correctness depends on nothing ever being added after it is a trap for whoever adds
-    the next gate -- and this file's whole history is gates being added.
-
-    The file is wholly derived -- pod_drift.write_manifest_index builds each line from
-    the index and HEAD's own manifest -- so restoring destroys no authored work, which
-    is what makes it safe to do on every path that does not commit it.
-
-    A checkout that itself fails is swallowed: this runs while the hook is already
-    exiting for a reason worth reporting, and replacing that reason with a git error
-    about cleanup loses the finding.
-    """
-    subprocess.run(["git", "-C", repo, "checkout", "HEAD", "--",
-                    "data/pod_head_manifest.txt"], capture_output=True)
-
-
-def _restore_manifest_atexit():
-    repo = _MANIFEST_RESTORE.pop("repo", None)
-    if repo:
-        _restore_manifest(repo)
-
-
-atexit.register(_restore_manifest_atexit)
 
 
 def main():
@@ -1017,92 +981,16 @@ def main():
                 print(f"  TIMED OUT (did not run): {ln.strip()}", file=sys.stderr)
     print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 
-    # Regenerate pod manifest from staged content so it matches HEAD after commit.
-    # Run the STAGED pod_drift.py (git show :path), never the working-tree copy:
-    # a hook that executes uncommitted code is the fingerprint rule turned against us
-    # (2026-08-31: an uncommitted 3-column format wrote a manifest the pod's parser
-    # could not read, 147 false "missing", held a launch).
-    # The staged copy is written inside the repo so its ROOT (__file__-relative) resolves.
-    t0 = time.time()
-    repo = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True
-    ).stdout.strip()
-    if repo:
-        staged_py = subprocess.run(
-            ["git", "show", ":scripts/pod_drift.py"], capture_output=True
-        )
-        if staged_py.returncode != 0:
-            staged_py = subprocess.run(
-                ["git", "show", "HEAD:scripts/pod_drift.py"], capture_output=True
-            )
-        if staged_py.returncode == 0:
-            # NOT in scripts/: restartability_audit.py scans that directory, so a
-            # concurrent commit sees this temp file, finds a .py absent from its
-            # baseline, and FAILs with "[NEW] scripts/.pod_drift_staged.py" -- a file
-            # that is gone by the time anyone looks. Cleanup here was never the
-            # problem; the location was. Same lesson as the holdout slice sitting in
-            # the corpus dir: correct artifact, wrong directory, and the reader
-            # downstream cannot tell it from real content.
-            tmp_py = os.path.join(
-                subprocess.run(["git", "-C", repo, "rev-parse", "--git-path",
-                                "pod_drift_staged.py"],
-                               capture_output=True, text=True).stdout.strip()
-                or os.path.join(repo, ".git", "pod_drift_staged.py"))
-            try:
-                with open(tmp_py, "wb") as f:
-                    f.write(staged_py.stdout)
-                # POD_DRIFT_ROOT: in a linked worktree tmp_py lives under
-                # <common>.git/worktrees/<name>/, so pod_drift's __file__-relative
-                # ROOT resolves to <common>.git/worktrees and the manifest is written
-                # to a phantom path while this hook's check below reads the
-                # unregenerated worktree manifest -- a false refusal on any commit
-                # that deletes a scoped file (measured 2026-09-02, 44-15). Pass the
-                # real root explicitly.
-                # Arm the restore BEFORE the write, so a pod_drift that dies after
-                # opening the file is covered too -- that failure is deliberately not
-                # fatal here, so its half-written residue would otherwise outlive an
-                # error nobody was told about.
-                _MANIFEST_RESTORE["repo"] = repo
-                r = subprocess.run(
-                    [sys.executable, tmp_py, "--write-index"],
-                    capture_output=True, text=True,
-                    env={**os.environ, "POD_DRIFT_ROOT": repo},
-                )
-                if r.returncode == 0:
-                    # Consistency: every manifest path must resolve in the index
-                    # this commit is built from. In a shared tree the working index
-                    # holds everyone's staged paths; GIT_INDEX_FILE (set by git for
-                    # `git commit <paths>`) is the commit's actual index.
-                    manifest = os.path.join(repo, "data", "pod_head_manifest.txt")
-                    if os.path.exists(manifest):
-                        bad = []
-                        for line in open(manifest):
-                            parts = line.strip().split("  ", 2)
-                            if len(parts) >= 2:
-                                p = parts[1]
-                                chk = subprocess.run(
-                                    ["git", "show", f":{p}"], capture_output=True,
-                                )
-                                if chk.returncode != 0:
-                                    bad.append(p)
-                        if bad:
-                            print(f"REFUSING: manifest names path(s) not in this commit's index: {bad[:5]}",
-                                  file=sys.stderr)
-                            sys.exit(1)
-                    subprocess.run(["git", "add", "data/pod_head_manifest.txt"], capture_output=True)
-            finally:
-                if os.path.exists(tmp_py):
-                    os.unlink(tmp_py)
-        # If neither staged nor HEAD has pod_drift.py (fresh temp repo), skip
-        # manifest regeneration -- the hook must not fail a commit it cannot serve.
-    print(f"hook: manifest regen {time.time() - t0:.2f}s", file=sys.stderr)
-    # THE LAST LINE OF main() IS THE DISARM, and it has to be here rather than beside the
-    # `git add` that stages the manifest. Staging is not approval: a gate that refuses
-    # after the manifest stage still aborts the commit, and a guard disarmed at the `git
-    # add` is already down by then -- world 10 measured exactly that and stayed red under
-    # my first atexit draft. Reaching this line is the only thing that means every gate
-    # passed, so it is the only safe place to stop guarding.
-    _MANIFEST_RESTORE.pop("repo", None)
+    # THE MANIFEST REGEN LIVED HERE AND IS GONE (shape A, 6e ruling 2026-09-04).
+    # data/pod_head_manifest.txt is no longer tracked: scripts/pod_push.sh generates it from
+    # the HEAD it ships and ships it last. Regenerating it on every commit is what made it
+    # the top friction cause -- 4 of 15 rows in runs/friction.jsonl -- because any two
+    # branches that both committed collided on it. Worse, MEASURED 2026-09-04: in a merge
+    # commit this ran AFTER git had already built the tree, so the regenerated bytes landed
+    # in the index and never in the commit, leaving the file permanently dirty against HEAD
+    # and aborting the NEXT merge; and at 81f091af a clean textual merge spliced one side's
+    # manifest line with the other side's file content, so main asserted d07a474f for a
+    # roadmap whose tree held 8dc68958 (1 stale of 423 entries).
     print(f"hook: total {time.time() - t_start:.2f}s", file=sys.stderr)
 
 
@@ -1311,212 +1199,18 @@ def _selftest():
     finally:
         shutil.rmtree(d3, ignore_errors=True)
 
-    # WORLDS 7-9 (e1-19): the manifest must not survive a refusal. b0's livelock was
-    # three mutually-blocking rules, and only one of them is a bug: the hook regenerates
-    # data/pod_head_manifest.txt, refuses for an unrelated reason, and LEAVES the file
-    # dirty. main rewrites that file on 30 of its last 30 commits, so `git merge main`
-    # then aborts with "your local changes would be overwritten" -- and the behind-main
-    # gate refuses every commit until exactly that merge happens. Neither gate is wrong;
-    # the residue is. World 9 is the other half of the property: a manifest the developer
-    # really is committing must still land, or the fix trades a livelock for silent data
-    # loss.
-    d4 = tempfile.mkdtemp()
-    try:
-        def git4(*a, cwd=d4):
-            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
-                                  text=True, env=clean)
-        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
-                  ("config", "user.name", "t")):
-            git4(*a)
-        os.makedirs(os.path.join(d4, "data"))
-        os.makedirs(os.path.join(d4, "scripts"))
-        mpath = os.path.join(d4, "data", "pod_head_manifest.txt")
-        with open(os.path.join(d4, "code.py"), "w") as fh:
-            fh.write("x = 1\n")
-        with open(mpath, "w") as fh:
-            fh.write("aaa  code.py  docs\n")
-        # A pod_drift stand-in: writes the manifest, and STUB_GHOST decides whether it
-        # names a path absent from the index -- which is the hook's own consistency
-        # refusal. Both settings are needed: worlds 7 and 8 need the refusal, world 9
-        # needs the success path, and a stub that always emits the ghost makes every
-        # commit through it refuse (which is how my first world 9 went red -- it was
-        # asserting the success path in a world that could not have one). The real
-        # pod_drift needs the whole repo; what is under test is the hook's cleanup.
-        with open(os.path.join(d4, "scripts", "pod_drift.py"), "w") as fh:
-            fh.write(
-                "import os, sys\n"
-                "ROOT = os.environ.get('POD_DRIFT_ROOT') or os.path.dirname(\n"
-                "    os.path.dirname(os.path.abspath(__file__)))\n"
-                "if '--write-index' in sys.argv:\n"
-                "    rows = 'ZZZ  code.py  docs\\n'\n"
-                "    if os.environ.get('STUB_GHOST') == '1':\n"
-                "        rows += 'ZZZ  ghost_absent_from_index.py  docs\\n'\n"
-                "    open(os.path.join(ROOT, 'data', 'pod_head_manifest.txt'), 'w').write(rows)\n"
-                "    sys.exit(int(os.environ.get('STUB_RC', '0')))\n")
-        git4("add", "-A")
-        git4("commit", "-q", "-m", "base")
-        head_bytes = open(mpath, "rb").read()
-        hooks4 = os.path.join(d4, ".git", "hooks")
-        os.makedirs(hooks4, exist_ok=True)
-        shutil.copyfile(hook, os.path.join(hooks4, "pre-commit"))
-        os.chmod(os.path.join(hooks4, "pre-commit"), 0o755)
-
-        # WORLD 7 (must REFUSE and leave no residue).
-        with open(os.path.join(d4, "code.py"), "w") as fh:
-            fh.write("x = 2\n")
-        git4("add", "code.py")
-        r7 = subprocess.run(["git", "commit", "-q", "-m", "w7"], cwd=d4,
-                            capture_output=True, text=True,
-                            env=dict(clean, STUB_GHOST="1"))
-        if "REFUSING: manifest names path" not in (r7.stdout + r7.stderr):
-            fails.append("world 7 precondition: the consistency check did not refuse, so "
-                         "the cleanup path never ran")
-        elif open(mpath, "rb").read() != head_bytes:
-            fails.append("world 7: the hook refused and left its own manifest on disk -- "
-                         "`git merge main` will abort while behind-main demands it")
-
-        # WORLD 8 (must PASS): the END-TO-END lock, with the residue produced the way it
-        # is really produced -- by a refused commit, not by hand. Three earlier drafts of
-        # this world were red under a correct fix, each for its own reason:
-        #   wrote the residue itself    only git could satisfy that, by ignoring a dirty
-        #                               file, which no hook can arrange
-        #   staged code.py to trip it   behind-main refuses at stage 2, LONG before the
-        #                               manifest is written at stage 7, so there was no
-        #                               residue and the merge aborted on code.py -- my own
-        #                               fixture's file, reported as the finding
-        #   staged note.txt to trip it  the refusal leaves it staged, and a staged path is
-        #                               enough to abort the merge by itself, so a pass
-        #                               would not have been about the manifest
-        # The trigger must therefore stage NOTHING: --allow-empty reaches the manifest
-        # stage with a clean index, so the only file that can be dirty afterwards is the
-        # one the hook wrote. AUPAI_BEHIND_MAIN_OK gets it past stage 2 to the stage under
-        # test -- being behind main is world 8's premise, not its subject.
-        git4("commit", "-q", "-m", "w8-base", "--no-verify")
-        git4("branch", "-q", "feat")
-        with open(os.path.join(d4, "code.py"), "w") as fh:
-            fh.write("x = 3\n")
-        with open(mpath, "w") as fh:
-            fh.write("bbb  code.py  docs\n")  # main's churn: 30/30 commits touch it
-        git4("add", "-A")
-        git4("commit", "-q", "-m", "main-ahead", "--no-verify")
-        git4("checkout", "-q", "feat")
-        r8a = subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "w8-refused"],
-                             cwd=d4, capture_output=True, text=True,
-                             env=dict(clean, AUPAI_BEHIND_MAIN_OK="1",
-                                      STUB_GHOST="1"))
-        dirty8 = [ln[3:] for ln in git4("status", "--short").stdout.splitlines()]
-        behind8 = git4("rev-list", "--count", "HEAD..main").stdout.strip()
-        r8 = git4("merge", "--no-edit", "main")
-        if "REFUSING: manifest names path" not in (r8a.stdout + r8a.stderr):
-            fails.append("world 8 precondition: the refusal reached was not the manifest's "
-                         f"own, so no residue was produced: {(r8a.stdout + r8a.stderr).strip()[:120]!r}")
-        elif behind8 == "0":
-            fails.append("world 8 precondition: not behind main, proves nothing")
-        elif dirty8 not in ([], ["data/pod_head_manifest.txt"]):
-            fails.append(f"world 8 precondition: other dirty paths {dirty8} would abort the "
-                         "merge on their own, so a pass says nothing about the manifest")
-        elif "would be overwritten by merge" in (r8.stdout + r8.stderr):
-            fails.append("world 8: after a refused commit, `git merge main` aborts on the "
-                         "manifest the hook itself wrote -- the livelock is open")
-
-        # WORLD 9 (must NOT restore): a manifest the developer staged deliberately must
-        # reach the commit. The cleanup above is unconditional on the refusal paths, so
-        # this is the assertion that it never fires on the success path.
-        git4("checkout", "-q", "-f", "main")
-        with open(mpath, "w") as fh:
-            fh.write("ddd  code.py  docs\n")
-        git4("add", "data/pod_head_manifest.txt")
-        env9 = dict(clean, STUB_RC="0", STUB_GHOST="0")
-        subprocess.run(["git", "commit", "-q", "-m", "w9"], cwd=d4,
-                       capture_output=True, text=True, env=env9)
-        got9 = git4("show", "HEAD:data/pod_head_manifest.txt").stdout
-        if "ddd" not in got9 and "ZZZ" not in got9:
-            fails.append("world 9: a deliberately staged manifest reached neither the "
-                         f"commit nor regeneration (HEAD holds {got9.strip()!r}) -- the "
-                         "cleanup fires on the success path and eats real content")
-    finally:
-        shutil.rmtree(d4, ignore_errors=True)
-
-    # WORLD 10 (must PASS): a gate added AFTER the manifest stage must not reopen the
-    # livelock. Worlds 7-9 pass under a restore that is merely positional -- calling
-    # _restore_manifest at each refusal below the write -- because the manifest stage
-    # happens to be the LAST stage today, so those are all the exits there are. That is
-    # what 3f5231c shipped, and it was accidentally complete, not complete.
-    #
-    # This world is the only one that separates the two designs, and it needs a MUTATED
-    # copy of the hook: the future gate does not exist yet, so the world has to add it.
-    # Copying the hook and appending a refusal after the last stage is the smallest thing
-    # that asks the real question -- would the next person to add a gate reintroduce b0's
-    # three-way lock without touching the manifest code at all. Measured before the fix:
-    # ' M data/pod_head_manifest.txt' came straight back. atexit passes because the
-    # cleanup is armed at the write and disarmed at the `git add`, so it covers every exit
-    # between them, including ones nobody has written yet.
-    d5 = tempfile.mkdtemp()
-    try:
-        def git5(*a, cwd=d5):
-            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
-                                  text=True, env=clean)
-        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
-                  ("config", "user.name", "t")):
-            git5(*a)
-        os.makedirs(os.path.join(d5, "data"))
-        os.makedirs(os.path.join(d5, "scripts"))
-        m5 = os.path.join(d5, "data", "pod_head_manifest.txt")
-        with open(os.path.join(d5, "code.py"), "w") as fh:
-            fh.write("x = 1\n")
-        with open(m5, "w") as fh:
-            fh.write("aaa  code.py  docs\n")
-        with open(os.path.join(d5, "scripts", "pod_drift.py"), "w") as fh:
-            fh.write(
-                "import os, sys\n"
-                "ROOT = os.environ.get('POD_DRIFT_ROOT') or os.path.dirname(\n"
-                "    os.path.dirname(os.path.abspath(__file__)))\n"
-                "if '--write-index' in sys.argv:\n"
-                "    open(os.path.join(ROOT, 'data', 'pod_head_manifest.txt'), 'w').write(\n"
-                "        'ZZZ  code.py  docs\\n')\n")
-        git5("add", "-A")
-        git5("commit", "-q", "-m", "base")
-        head5 = open(m5, "rb").read()
-        with open(hook, encoding="utf-8") as fh:
-            src5 = fh.read()
-        # Inject the future gate at the DISARM, not at the "hook: total" line. Those are
-        # adjacent, and the difference decides what this world measures: a gate added
-        # after the disarm is by construction outside the guarded region, so anchoring
-        # there tests the fixture rather than the design. A real gate goes where every
-        # other gate goes -- above the point that means "the hook approved this commit".
-        anchor = '    _MANIFEST_RESTORE.pop("repo", None)\n'
-        hooks5 = os.path.join(d5, ".git", "hooks")
-        os.makedirs(hooks5, exist_ok=True)
-        if src5.count(anchor) != 1:
-            fails.append("world 10 precondition: could not locate the single disarm line "
-                         "to add a gate above, so the future-gate case is untested")
-        else:
-            dst5 = os.path.join(hooks5, "pre-commit")
-            with open(dst5, "w", encoding="utf-8") as fh:
-                fh.write(src5.replace(
-                    anchor,
-                    '    print("REFUSING: a gate added after the manifest stage",\n'
-                    '          file=sys.stderr)\n'
-                    '    sys.exit(1)\n' + anchor, 1))
-            os.chmod(dst5, 0o755)
-            with open(os.path.join(d5, "code.py"), "w") as fh:
-                fh.write("x = 2\n")
-            git5("add", "code.py")
-            r10 = subprocess.run(["git", "commit", "-q", "-m", "w10"], cwd=d5,
-                                 capture_output=True, text=True, env=clean)
-            if "REFUSING: a gate added after the manifest stage" not in (r10.stdout + r10.stderr):
-                fails.append("world 10 precondition: the appended gate did not refuse, so "
-                             "nothing was tested")
-            elif open(m5, "rb").read() != head5:
-                fails.append("world 10: a gate added after the manifest stage leaves the "
-                             "residue behind -- the cleanup is positional, so the next "
-                             "person to add a gate reopens the livelock")
-    finally:
-        shutil.rmtree(d5, ignore_errors=True)
-
+    # WORLDS 7-10 ARE GONE, and their absence is the point (shape A, 6e ruling 2026-09-04).
+    # All four tested that the hook's manifest regeneration left no residue on a refusal:
+    # world 7 a refusal, 8 the end-to-end livelock, 9 a deliberately staged manifest
+    # surviving, 10 a gate added after the manifest stage. The hook no longer regenerates
+    # anything -- data/pod_head_manifest.txt is untracked and pod_push.sh generates it from
+    # the HEAD it ships -- so there is no residue to leave and nothing for those worlds to
+    # measure. Deleting them rather than keeping them green on a code path that no longer
+    # exists: a world that cannot fail certifies nothing, and four passing worlds guarding
+    # deleted code would read as coverage.
     for f in fails:
         print("SELFTEST FAIL: " + f, file=sys.stderr)
-    print("pre-commit selftest: %s (10 worlds)" % ("FAIL" if fails else "ok"),
+    print("pre-commit selftest: %s (6 worlds)" % ("FAIL" if fails else "ok"),
           file=sys.stderr)
     return 1 if fails else 0
 
