@@ -92,7 +92,23 @@ find_emptydir() {
 # matches, because /work/aupai/scripts/foo.sh contains it as a suffix; that direction
 # of looseness is the safe one (a false refusal, never a false permit).
 running_on_pod() {
-  [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] || return 1
+  if [ -n "${POD_PUSH_ALLOW_RUNNING_SH:-}" ]; then
+    # THE OVERRIDE IS NOW CHECKED, NOT TRUSTED. It used to return 1 unconditionally: the
+    # operator asserted the edit was safe and nothing recomputed it. The safety is a
+    # property of the DIFF, not of the flag -- on 2026-09-04 an edit to the scoring block
+    # was pushed under this override while two runs were mid-script and it WAS safe, because
+    # every added byte landed after byte 4391, which both shells had already read. The same
+    # flag on an edit touching byte 4000 would have been unsafe with no warning at all.
+    # pod_sh_offset.py reads each live shell's offset from /proc/<pid>/fdinfo and refuses
+    # unless every differing byte is at or after the earliest of them.
+    if python3 scripts/pod_sh_offset.py --check "$1"; then
+      return 1   # verified safe: allow the push
+    fi
+    echo "  POD_PUSH_ALLOW_RUNNING_SH is set, but the offset check above REFUSED." >&2
+    echo "  The flag asserts the edit is safe; that assertion is now recomputed and it does" >&2
+    echo "  not hold. Wait for the run to finish." >&2
+    return 0     # treated as running: refuse
+  fi
   ~/bin/pod "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -qF '$1'" \
     >/dev/null 2>&1
 }
