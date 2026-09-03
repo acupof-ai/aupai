@@ -973,15 +973,15 @@
   },
   {
    "id": "dq.control_sft_answer_error_filter",
-   "value": "filter, not redo; residual error rate 1.0% (2/200, Wilson CI [0.28%,3.57%]) after dropping 21,963 rows (4.21%)",
+   "value": "math-subdomain residual 6.5% (Wilson95[3.8,10.8], n=200); 13/13 modeling errors, machine-check 0/13 -> filter is complete for machine-checkable errors",
    "measured": "2026-09-03",
    "source": "datagen/sft_answer_machine_check.py (regex NUM op NUM = NUM, LHS!=RHS) over data/sft/control_sft_text_train.jsonl; residual by hand-read of 200 filtered survivors, seed 42",
    "config": {
-    "note": "three calibers: 19.47% = share of wrong equations among eqs_found (46,101/236,748), not rows; 4.21% = distinct rows carrying >=1 bad eq (21,963/521,386); 1.0% = residual genuine error among 200 filtered-survivor hand-read. Filter drops rows with a detectable LHS!=RHS eq (P-only semantics) to control_sft_text_train_filtered.jsonl (kept 499,423)."
+    "note": "corrected: frame = 76,447 eq-bearing survivor rows (499,423 x 15.31%, post-filter; NOT 0.155 x 521,386). 13/200 genuine errors, ALL MODELING-ERROR (internally-consistent equations, wrong setup/quantity/self-contradiction/fabricated premise). Filter removes the regex-detectable class; residue is exactly the structurally-unreachable class. Redo closed (Wilson upper 10.8 < 15). The 5% line is not resolved and won't be (4% vs 6.5% residual -> same action: re-test at next corpus generation). 6.5% = generator modeling-error baseline, beatable only by changing generation, not by filtering."
    },
-   "uncertainty": "blind-zone: the 2 residual errors are model/mis-modeling errors where arithmetic is correct (id124678 girls share mis, id202111 per-friend pen count) -- structurally un-machine-checkable (no equation has unequal sides), so the 1.0% is not reducible by extending the regex; a redo of that class needs a human/model judge and 1.0% does not justify one",
+   "uncertainty": "point estimate 6.5%, Wilson95[3.8,10.8]; baseline to beat at next corpus-generation change; not reducible by extending the regex (0/13 reachable)",
    "status": "measured",
-   "boundary": "machine check covers only simple NUM op NUM = NUM RHS mismatches; src field untrustworthy (content math share ~45.4% vs src 'math_cot' 0.22%)",
+   "boundary": "residual rate is on the eq-bearing math subdomain, not the whole corpus; the earlier 2/200=1.0% used the wrong denominator and is superseded",
    "guard_phrases": [
     "SFT answer errors are fully machine-checkable",
     "control SFT is likely redo-needed"
