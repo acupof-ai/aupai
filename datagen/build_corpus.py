@@ -916,7 +916,7 @@ def _near_emit_slice(args):
     return emit
 
 
-def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg):
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg, workers):
     """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
     carry the near-dedup configuration and result: they are part of the artifact's
     meaning, and the removed-fraction fact reads them off the stamp."""
@@ -930,7 +930,7 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
         "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
-        "filters": "near-dedup-postpass", "workers": getattr(cfg, "workers", 1), "n_shards": nshards,
+        "filters": "near-dedup-postpass", "workers": workers, "n_shards": nshards,
         "filters_fp": _fp_filters(),
         "fingerprint": _fp_dir(out),
         "near_dedup": True,
@@ -1113,6 +1113,7 @@ def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccar
     _near_write_stats(
         a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
         {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
+        a.workers,
     )
     return 0
 

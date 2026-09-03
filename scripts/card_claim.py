@@ -101,6 +101,86 @@ def _is_zombie(pid):
     return _proc_stat(pid).startswith("Z")
 
 
+def _cvd(pid):
+    """pid's CUDA_VISIBLE_DEVICES AS IT WAS AT EXEC, "" if it had none, None if unreadable.
+
+    EXEC-TIME is the whole design constraint, and it is why the original ruling's "refuse when
+    absent" half is not implemented. Both readers below see the environment the process was
+    started with, so a job that sets the variable ITSELF reads absent here -- MEASURED
+    2026-09-04, a child assigning os.environ["CUDA_VISIBLE_DEVICES"] read ABSENT while a child
+    given it by its parent read its value. Four scripts in this repo do exactly that
+    (scripts/test_e2e.py:37, bench_eff/{bench_eff,bench_eff2,bench_opt}.py's
+    os.environ.setdefault), so absent is the normal reading for correct code and only a
+    DISAGREEING value is evidence of anything.
+
+    /proc first (the pod), `ps eww` second (macOS, where the selftest runs). The ps path strips
+    the command prefix before scanning, because `ps eww` prints command then environment with no
+    delimiter and run_ddp.sh's wrapper argv CONTAINS `CUDA_VISIBLE_DEVICES=3,4,5,6`. MEASURED on
+    a child given NO such variable but the literal string as argv[1]: the naive scan returned
+    '7' out of the command, the strip returned absent. Same trap that made every substring test
+    bind to the wrapper rather than the job (_argv0_is_shell).
+
+    A parse failure returns "" rather than a value, which is the safe direction: absent never
+    refuses, so an unreadable process gets no opinion instead of a wrong one. The cost is that
+    this cannot tell absent from a deliberate CUDA_VISIBLE_DEVICES="" (harness.py's CPU-only
+    shape) -- a claim on cards the job cannot see. status()'s idle-card note catches that one's
+    consequence.
+    """
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            raw = fh.read().decode("utf-8", "replace")
+        for item in raw.split("\0"):
+            if item.startswith("CUDA_VISIBLE_DEVICES="):
+                return item.split("=", 1)[1]
+        return ""
+    except OSError:
+        pass
+    try:
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        full = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not cmd or not full.strip():
+        return None
+    i = full.find(cmd)
+    env = full[i + len(cmd):] if i >= 0 else ""
+    for tok in env.split():
+        if tok.startswith("CUDA_VISIBLE_DEVICES="):
+            return tok.split("=", 1)[1]
+    return ""
+
+
+def _cvd_mismatch(pid, cards):
+    """(value, why) when pid's exec-time CUDA_VISIBLE_DEVICES DISAGREES with `cards`, else None.
+
+    Compared as sets of physical indices, which is what both sides hold: a claim's `cards` are
+    the controller's indices and the variable is a list of the same. The claimed pid is the
+    torchrun/python descendant harness names (harness.py:12931), and in torchrun's DEFAULT mode
+    ranks INHERIT the parent's value -- read 2026-09-04 in
+    torch/distributed/elastic/agent/server/local_elastic_agent.py:468, "In traditional mode,
+    don't override CUDA_VISIBLE_DEVICES", with virtual_local_rank defaulting to False
+    (api.py:105) and run_ddp.sh not passing it. So the descendant's value IS the block's.
+
+    THE BOUNDARY, since it would make this refuse a correct launch: under
+    `torchrun --virtual_local_rank` each worker gets a SINGLE card
+    (local_elastic_agent.py:460, `worker_env["CUDA_VISIBLE_DEVICES"] = visible_gpu`), so a
+    per-rank pid would read one index against a seven-card claim and this would call it a
+    mismatch. Nothing in this repo passes that flag today. If a launcher starts to, the fix is
+    subset-not-equality for a rank pid, not deleting the check.
+
+    Unreadable and absent both return None. See _cvd: absent is the normal reading for a job
+    that sets the variable itself, and refusing there would refuse four correct scripts."""
+    val = _cvd(pid)
+    if not val:
+        return None
+    got = {t.strip() for t in val.split(",") if t.strip()}
+    want = {str(c).strip() for c in cards}
+    if got == want:
+        return None
+    return val, f"visible {sorted(got) or ['none']} vs claimed {sorted(want)}"
+
+
 def _alive(pid):
     """Whether pid exists IN THIS NAMESPACE. signal 0, not /proc: this also has to work on
     a Mac, where the selftest runs.
@@ -379,6 +459,27 @@ def acquire(name, cards, wait=0, note="", pid=None):
                 return False, msg
             claim = {"name": name, "cards": list(cards), "pid": holder,
                      "cmdline": _cmdline(holder), "acquired": _now(), "note": note}
+            # REFUSE A DISAGREEING CUDA_VISIBLE_DEVICES. The claim says which cards this job may
+            # touch and the variable says which it CAN touch; when they differ the claim protects
+            # the wrong cards, and the job runs on cards nobody claimed -- which is how an ORPHAN
+            # is produced by a healthy-looking claim. AGENTS.md, harness.py's device_set_honoured:
+            # the variable is not additive, a child REPLACES its parent's set.
+            #
+            # Only a DISAGREEMENT refuses. Absent does not, and that is a correction to the
+            # original ruling rather than an omission -- /proc/<pid>/environ and `ps eww` are both
+            # exec-time readers, so the four scripts that set the variable themselves
+            # (scripts/test_e2e.py:37, bench_eff/*'s setdefault) read absent while being right.
+            # Measured 2026-09-04; see _cvd.
+            bad_cvd = _cvd_mismatch(holder, cards)
+            if bad_cvd:
+                val, why = bad_cvd
+                return False, (
+                    f"pid {holder}'s CUDA_VISIBLE_DEVICES={val!r} does not match the cards being "
+                    f"claimed: {why}. The claim would protect cards the job cannot touch while it "
+                    f"runs on cards nobody claimed -- an orphan behind a healthy claim. Claim the "
+                    f"cards the job can see, or relaunch with the variable set to "
+                    f"{','.join(str(c) for c in cards)}. (Read at exec time: a value set inside "
+                    f"the process after start is invisible here and never refuses.)")
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
             try:
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -471,6 +572,30 @@ def status():
                      f"process is a corpse, so the job ended; claimed since {since}. "
                      f"os.kill(pid,0) and /proc BOTH report it alive, `ps -o stat=` does not. "
                      f"A human releases: `card_claim.py release --name {name}`")
+    # CVD-MISMATCH: the fourth disagreement, and the only one between a claim and the JOB'S OWN
+    # VIEW of the cards rather than between a claim and the hardware. The claim names cards the
+    # job cannot touch, so the job runs on cards nobody claimed -- an orphan sitting behind a
+    # claim that every other line here reads as healthy.
+    #
+    # NO GRACE PERIOD, which corrects the original ruling's "after a grace period". The variable
+    # is fixed at exec and both readers are exec-time readers (see _cvd), so this cannot be a
+    # startup transient the way an idle card can -- a wait would only delay a verdict that is
+    # already final. The idle-card note below stays as it is: it answers "is the job up yet",
+    # a different question with a real transient.
+    mismatches = []
+    for c in live:
+        p = c.get("pid")
+        if not isinstance(p, int) or _is_zombie(p):
+            continue
+        got = _cvd_mismatch(p, c.get("cards", []))
+        if got:
+            mismatches.append((c.get("name"), p, got[0], got[1]))
+    for name, p, val, why in mismatches:
+        lines.append(f"CVD-MISMATCH {name} claims cards it cannot touch: pid {p} was started with "
+                     f"CUDA_VISIBLE_DEVICES={val!r}, {why}. The job runs on cards nobody claimed "
+                     f"while this claim protects cards it never touches. Fix the claim or the "
+                     f"launch: `card_claim.py release --name {name}` and acquire the cards the "
+                     f"job can see.")
     orphan_shells = []
     for c in live:
         p = c.get("pid")
@@ -531,6 +656,12 @@ def status():
         dup = dict(dup)
         for name, p, st, _since, _cards in zombies:
             dup[f"zombie:{name}"] = [f"pid {p} {st}"]
+    # Same reasoning as the two above: a printed state nobody exits on is print-and-continue. A
+    # claim guarding the wrong cards needs a person as much as memory held by nobody does.
+    if mismatches:
+        dup = dict(dup)
+        for name, p, val, _why in mismatches:
+            dup[f"cvd-mismatch:{name}"] = [f"pid {p} CUDA_VISIBLE_DEVICES={val}"]
     return orphans, dup, lines
 
 
@@ -878,6 +1009,85 @@ def _selftest():
         release("zdead")
     finally:
         os.waitpid(zpid, 0)
+
+    # CVD-MISMATCH, the fourth disagreement. A REAL child with a REAL environment, not a fake:
+    # the whole question is what an exec-time reader sees, so a fabricated pid or a hand-written
+    # claim would test the comparison and skip the reader -- which is the half that has a trap in
+    # it. Runs on macOS via the `ps eww` path (measured 2026-09-04), so this is not a SKIP.
+    child = os.path.join(d, "cvd_child.py")
+    with open(child, "w", encoding="utf-8") as fh:
+        # argv CARRIES the literal string while the environment does NOT, which is the trap: `ps
+        # eww` prints command then environment with no delimiter, and run_ddp.sh's wrapper argv
+        # contains `CUDA_VISIBLE_DEVICES=3,4,5,6`. A naive scan of that output returns the
+        # COMMAND's value. Measured: naive '7', after stripping the command, absent.
+        fh.write("import time\ntime.sleep(30)\n")
+    env_set = dict(os.environ)
+    env_set["CUDA_VISIBLE_DEVICES"] = "2,3"
+    env_bare = {k: v for k, v in os.environ.items() if k != "CUDA_VISIBLE_DEVICES"}
+    kid_set = subprocess.Popen([sys.executable, child], env=env_set,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    kid_trap = subprocess.Popen([sys.executable, child, "CUDA_VISIBLE_DEVICES=7"], env=env_bare,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        time.sleep(1.0)
+        _case(_cvd(kid_set.pid) == "2,3",
+              f"_cvd reads the exec-time value ({_cvd(kid_set.pid)!r} for a child given 2,3)")
+        # THE TRAP, asserted directly. Without the command-prefix strip this reads '7' and the
+        # check would refuse every run_ddp launch, whose wrapper argv names the variable.
+        _case(_cvd(kid_trap.pid) == "",
+              f"a cmdline CONTAINING CUDA_VISIBLE_DEVICES=7 with none in the environment reads "
+              f"absent, not '7' ({_cvd(kid_trap.pid)!r}) -- the command prefix is stripped")
+        _case(_cvd_mismatch(kid_set.pid, ["2", "3"]) is None,
+              "a matching claim is not a mismatch")
+        _case(_cvd_mismatch(kid_set.pid, ["3", "2"]) is None,
+              "and order does not matter -- compared as sets, which is what both sides hold")
+        got_m = _cvd_mismatch(kid_set.pid, ["4"])
+        _case(got_m is not None and got_m[0] == "2,3" and "claimed ['4']" in got_m[1],
+              f"a disagreeing claim IS a mismatch, and says both sides ({got_m and got_m[1]})")
+        # ABSENT DOES NOT REFUSE, and this is the case that keeps four correct scripts working.
+        # scripts/test_e2e.py:37 and bench_eff/*'s setdefault assign CUDA_VISIBLE_DEVICES INSIDE
+        # the process, which no exec-time reader can see. The original ruling said to refuse on
+        # absent; measured 2026-09-04, that refuses them.
+        _case(_cvd_mismatch(kid_trap.pid, ["0"]) is None,
+              "absent never refuses -- a job that sets the variable itself reads absent here "
+              "(test_e2e.py:37, bench_eff/*'s setdefault)")
+        # CARD 4 ONLY, and unclaimed by every case above: runC holds 5,6 and the de34/zombie cases
+        # hold 7. My first fixture claimed 4,5 and the clash check refused it FIRST with "cards
+        # ['5'] are claimed by runC" -- correct precedence, and the CVD assertion never ran. A
+        # negative that fails for the wrong reason certifies nothing.
+        ok_cvd, msg_cvd = acquire("de_cvd", ["4"], pid=kid_set.pid)
+        _case(not ok_cvd and "CUDA_VISIBLE_DEVICES" in msg_cvd and "'2,3'" in msg_cvd,
+              f"acquire REFUSES a claim on cards the job cannot see: {msg_cvd[:78]}")
+        _case(not ok_cvd and "relaunch with the variable set to 4" in msg_cvd,
+              "and the message names the cards to relaunch with, not just the disagreement")
+        ok_cvd2, msg_cvd2 = acquire("de_cvd_ok", ["2", "3"], pid=kid_set.pid)
+        # WITHOUT THIS the negative above would pass on a check that refuses every acquire.
+        _case(ok_cvd2, f"a claim on the cards it CAN see is accepted ({msg_cvd2})")
+        if ok_cvd2:
+            _, dup_c, lines_c = status()
+            said_c = [x for x in lines_c if "CVD-MISMATCH" in x]
+            _case(not said_c, "a matching claim produces no CVD-MISMATCH line")
+            _case(not any(k.startswith("cvd-mismatch:") for k in dup_c),
+                  "and does not drive a nonzero exit")
+            release("de_cvd_ok")
+        # status's own line, on a hand-placed claim: acquire refuses this state, so the only way
+        # it exists on disk is a launch that changed the variable after the claim -- which is
+        # exactly the state status has to report.
+        with open(os.path.join(d, "de_cvd_bad.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "de_cvd_bad", "cards": ["6", "7"], "pid": kid_set.pid,
+                       "cmdline": _cmdline(kid_set.pid), "acquired": _now(), "note": ""}, fh)
+        _, dup_c2, lines_c2 = status()
+        said_c2 = [x for x in lines_c2 if "CVD-MISMATCH" in x]
+        _case(bool(said_c2) and any("de_cvd_bad" in x for x in said_c2),
+              "status names it: CVD-MISMATCH with the value and both card sets")
+        _case(any(k.startswith("cvd-mismatch:") for k in dup_c2),
+              "and it drives a nonzero exit, not a printed line nobody acts on")
+        release("de_cvd_bad")
+    finally:
+        kid_set.kill()
+        kid_set.wait()
+        kid_trap.kill()
+        kid_trap.wait()
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")

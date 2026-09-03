@@ -583,7 +583,8 @@
    "status": "retracted",
    "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
    "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
-   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names."
+   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names.",
+   "retracted_value": []
   },
   {
    "id": "ds.beta_data_leg_206m_early",
@@ -717,6 +718,89 @@
     "beta = 0.647 +- 0.007",
     "beta = 0.6215 +- 0.007"
    ]
+  },
+  {
+   "id": "ds.n2_params_vs_data_matched_compute",
+   "value": -0.01077,
+   "unit": "nats/token, paired per-block delta (params leg minus data leg); negative = params leg better",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "runs/b0_23_n2_verdict.json; eval/block_paired.py --from runs/b0_23_blocks.jsonl runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt ckpt_params_leg_438m_3p76b.pt",
+   "config": {
+    "statistic": "paired delta over BLOCKS, n=576 (9 domains x 64 blocks x 4096 tokens = 2,359,296 tokens)",
+    "sd": 0.039713,
+    "se": 0.001655,
+    "t": -6.51,
+    "sign_test": "227 up, 349 down, 0 tie; one-sided p 2.10e-07",
+    "arms": {
+     "data_leg": "206.1282M (d1024 L12 h8 ffn3072) x 7.999586B tokens (15258 steps)",
+     "params_leg": "438.363756M (d1536 L12 h12 ffn4608) x 3.761766B tokens (7175 steps)"
+    },
+    "compute_match": "params x tokens 1649.0219 vs 1648.9403 = 1.000049x, i.e. 0.005% apart. This is what makes the comparison a BUDGET ALLOCATION result and not 'a bigger model scores better': parameter ratio 2.127x, token ratio 0.470x.",
+    "shared": "both legs: same mix data/mix_200m_8b.json, same seed 42, same schedule (warmup 300, warmdown 0.1, anneal_frac 0), batch 16 accum 2 world 4, fp8, no grad_ckpt; identical vocab_id 0bce3584bc24f255, identical corpus_fp on all 9 domains, identical env_fp",
+    "per_domain": {
+     "chatml": {
+      "mean_d": -0.03752,
+      "se": 0.0088,
+      "t": -4.26,
+      "down_of_64": 51
+     },
+     "cot": {
+      "mean_d": -0.02177,
+      "se": 0.00185,
+      "t": -11.79,
+      "down_of_64": 61
+     },
+     "chat_qa": {
+      "mean_d": -0.02168,
+      "se": 0.00909,
+      "t": -2.39,
+      "down_of_64": 39
+     },
+     "textbook_30b": {
+      "mean_d": -0.00866,
+      "se": 0.00239,
+      "t": -3.62,
+      "down_of_64": 42
+     },
+     "math_owm_stage2": {
+      "mean_d": -0.00737,
+      "se": 0.00263,
+      "t": -2.8,
+      "down_of_64": 37
+     },
+     "code_py_starcoder": {
+      "mean_d": -0.00155,
+      "se": 0.00154,
+      "t": -1.01,
+      "down_of_64": 34
+     },
+     "en_c4_stage2": {
+      "mean_d": -0.00026,
+      "se": 0.00203,
+      "t": -0.13,
+      "down_of_64": 30
+     },
+     "code_py_rp1t": {
+      "mean_d": 0.00088,
+      "se": 0.002,
+      "t": 0.44,
+      "down_of_64": 25
+     },
+     "zh_web": {
+      "mean_d": 0.001,
+      "se": 0.00393,
+      "t": 0.25,
+      "down_of_64": 30
+     }
+    },
+    "reading": "7 of 9 domains favour the params leg and 5 are individually significant at |t|>2, but the gain is CONCENTRATED in chatml/cot/chat_qa. Both code domains and en_c4 sit inside noise, and code_py_rp1t and zh_web have the opposite sign. Since the project targets coding and math, the headline negative must not be read as 'more parameters help code': at this budget they did not measurably.",
+    "scale_reference": "0.0142 nat is the mixing-weight lesson (docs/lessons); this delta is 0.76x that -- same order, so neither negligible nor route-changing.",
+    "weighting": "row- and token-weighted means are IDENTICAL (-0.010770) because every block is 4096 tokens. That is an identity on this data, not a check: weight correctness rests on eval/block_paired.py --selftest's 10/90/400 fixture.",
+    "integrity": "block-sum reconstruction 9/9: each domain's summed ce_sum / 262,144 reproduces its own reported loss, drift 2.4e-07 to 4.5e-05, all of it from the reported value keeping 4 decimals. A file truncated mid-write still parses, so this is the check that separates complete from parseable (gate_failure_shapes 158)."
+   },
+   "uncertainty": "BOTH CHECKPOINTS POSTDATE THE CHECKPOINT LISTING and therefore read [absent] to ckpt_facts_sources_present: runs/pod_ckpt_candidates_2026-09-02.txt is a 13:58Z snapshot, while ckpt_data_leg_206m_8b.pt was written 2026-09-03 12:40 and ckpt_params_leg_438m_3p76b.pt 2026-09-03 18:47 (both verified present on the pod at 19:10Z, 892,199,291 and 1,854,896,463 bytes). The check's own docstring says a FAIL on a checkpoint newer than the listing means REFRESH THE LISTING, not KEEP-claim -- and that file carries five sessions' KEEP claims, so refreshing it is not a single session's edit. This note is the interim unblock the check names. THE FOLD THAT ALMOST LOST THE MEASUREMENT: both source files key ckpt_data_leg_206m_8b.pt -- runs/b0_23_blocks.jsonl with 576 blocks, runs/score_matrix.jsonl with 0 (scored 32 min before per_row output existed, because score_matrix.py called domain_loss_seqs without per_row; fixed 370cbc20). The ledger convention fold-by-key-last-row-wins, applied literally, kept the blockless row and made block_paired refuse with 'no per-block data' for a checkpoint whose blocks were in hand. The two rows are not two versions of one measurement -- one payload strictly contains the other -- so _rec_by_name now folds by payload (28cad589). Also: the params leg's steps 4400-4550 shared card 0 with another job, 21.0K vs 47.0K tok/s/gpu; the 47.0K rate is the median EXCLUDING that range, not a whole-run average. Loss inside minus outside is -0.0642 +/- 0.0564 (t -1.14), but the step-to-step loss sd of 0.1715 is 95x this delta's SE, so those windows have no resolution to detect a contention effect on the weights; the evidence that there was none is e1 reproducing its arm's loss to 0.001 on another card.",
+   "boundary": "SEED SIGMA IS UNMEASURED for this pair. The SE 0.001655 is the sampling error of the delta over the shared val blocks; it is NOT reseeding spread, which ds.seed_variance_0p2b measures at 0.24 nat for a different question. Whether 0.0108 exceeds seed noise needs one more leg per arm at a different seed and that was not run. Both legs also share one mix and one val set, so this is the exchange rate ON THIS CORPUS at ~1.65e3 (M-params x B-tokens), not a general Chinchilla claim; a single point in the ratio 2.127x/0.470x, with no third arm to say whether the optimum lies beyond it."
   }
  ]
 }

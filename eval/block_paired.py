@@ -47,6 +47,27 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _domains(rec):
+    """The per-domain dict, from EITHER record shape.
+
+    THE TWO PRODUCERS NEST IT DIFFERENTLY AND ONLY ONE WAS HANDLED. domain_loss.py's CLI
+    writes {"ckpt", "domains", "unweighted_mean"}; score_matrix.py writes it under
+    {"metrics": {"domain_loss": {...}}}. b0-23 pairs the data leg (scored by the first, on a
+    lane card) against the params leg (scored by the second, at end of run), so a reader that
+    knows one shape returns {} for the other -- and an empty block set reaches the "no
+    per-block data" refusal, which names the record rather than the shape mismatch and sends
+    the reader looking for a truncated file. Verified against the real files 2026-09-03:
+    score_matrix records have NO top-level "domains" key.
+
+    metrics.domain_loss also carries non-domain entries -- "_split" (a string), "_wall_s" and
+    "unweighted_mean" (floats) -- so the caller must skip anything that is not a dict rather
+    than assume every key is a domain.
+    """
+    if rec.get("domains"):
+        return rec["domains"]
+    return ((rec.get("metrics") or {}).get("domain_loss") or {})
+
+
 def _blocks(rec):
     """{block_id: (ce_sum, n_tokens)} from one score record.
 
@@ -55,7 +76,9 @@ def _blocks(rec):
     silently dropping every domain but the last.
     """
     out = {}
-    for dom, d in sorted((rec.get("domains") or {}).items()):
+    for dom, d in sorted(_domains(rec).items()):
+        if not isinstance(d, dict):
+            continue  # _split, _wall_s, unweighted_mean -- see _domains
         rows = d.get("blocks")
         if not rows:
             continue
@@ -176,13 +199,37 @@ def print_block_paired(bp):
           "(ds.seed_variance_0p2b) measures that one.")
 
 
-def _rec_by_name(path):
+def _rec_by_name(paths):
+    """Load score records from one or more JSONL files, keyed by ckpt.
+
+    Multiple files because b0-23's two legs are scored by different producers (see --from).
+
+    LAST ROW WINS, EXCEPT THAT A BLOCKLESS ROW NEVER DISPLACES ONE WITH BLOCKS. The ledger
+    convention is fold-by-key-last-row-wins, and applying it literally here destroyed the very
+    record this tool needs: MEASURED 2026-09-03, runs/b0_23_blocks.jsonl holds
+    ckpt_data_leg_206m_8b.pt with 576 blocks and runs/score_matrix.jsonl holds THE SAME ckpt
+    name with 0 blocks (it was scored before per_row existed). Loading both in that order left
+    the blockless row, and block_paired then refused with "no per-block data" -- naming the
+    checkpoint as unscored when a good record for it was in hand. The two rows are not two
+    versions of one measurement: one carries a strictly larger payload, so the fold has to be
+    by payload and not by position.
+
+    Ties -- both rows blockless, or both with blocks -- still go to the later row, which is the
+    convention where it actually applies.
+    """
+    if isinstance(paths, str):
+        paths = [paths]
     out = {}
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
+    for path in paths:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
                 r = json.loads(line)
-                out[r["ckpt"]] = r
+                k = r["ckpt"]
+                if k in out and _blocks(out[k]) and not _blocks(r):
+                    continue
+                out[k] = r
     return out
 
 
@@ -193,6 +240,90 @@ def _selftest():
         return {"ckpt": name, "domains": {d: {"blocks": [{"ce_sum": c, "n_tokens": t}
                                                          for c, t in rows]}
                                           for d, rows in per_dom.items()}}
+
+    def mk_sm(name, per_dom):
+        """The OTHER producer's shape: score_matrix.py nests it under metrics.domain_loss and
+        writes no top-level "domains". b0-23 pairs one of each, so a reader that knows only
+        mk()'s shape returns {} here and the failure surfaces as "no per-block data" -- which
+        names the record and not the shape, sending the reader after a truncated file."""
+        inner = {d: {"blocks": [{"ce_sum": c, "n_tokens": t} for c, t in rows]}
+                 for d, rows in per_dom.items()}
+        # the real file carries these three non-domain entries beside the domains
+        inner.update({"_split": "val", "_wall_s": 124.8, "unweighted_mean": 1.9443})
+        return {"ckpt": name, "metrics": {"domain_loss": inner}, "type": "base"}
+
+    # BOTH SHAPES MUST READ, AND THE NON-DOMAIN KEYS MUST NOT BECOME BLOCKS. _split is a
+    # string and _wall_s a float, so a reader that treats every key as a domain raises
+    # AttributeError inside _blocks -- and a crash is not a refusal. Both halves are therefore
+    # probed through _domains FIRST, with an early return, so each mutation fails through a
+    # named assertion rather than through a traceback from somewhere downstream: dropping the
+    # metrics.domain_loss branch otherwise surfaces as block_paired's unrelated "no per-block
+    # data" ValueError, which sends the reader after a truncated file.
+    _sm = mk_sm("SM", {"cot": [(3.0, 10), (5.0, 10)], "zh_web": [(7.0, 10)]})
+    _sm_doms = _domains(_sm)
+    if not _sm_doms:
+        print("block_paired selftest FAILED: _domains returns {} for a score_matrix-shaped "
+              "record (no top-level 'domains', nested under metrics.domain_loss). b0-23 pairs "
+              "one record of each shape, so this reader sees no blocks in the params leg and "
+              "block_paired raises its 'no per-block data' error -- which names the record, "
+              "not the shape, and sends the reader looking for a truncated file.")
+        return 1
+    _nondict = sorted(k for k, v in _sm_doms.items() if not isinstance(v, dict))
+    if _nondict != ["_split", "_wall_s", "unweighted_mean"]:
+        print(f"block_paired selftest FAILED: fixture's non-domain keys are {_nondict}; the "
+              f"real metrics.domain_loss carries _split (str), _wall_s and unweighted_mean "
+              f"(float) beside the domains, and the fixture must carry them too or the "
+              f"isinstance guard in _blocks is never exercised.")
+        return 1
+    _sm_blocks = None
+    try:
+        _sm_blocks = _blocks(_sm)
+    except AttributeError as e:
+        # _blocks iterated a non-domain entry: metrics.domain_loss holds _split (str) and
+        # _wall_s/unweighted_mean (float) beside the domains. Caught and NAMED here because a
+        # traceback from `d.get("blocks")` tells the reader nothing about which key did it.
+        print(f"block_paired selftest FAILED: _blocks treats every metrics.domain_loss key as "
+              f"a domain and crashed on a non-dict entry ({e}). The real record carries "
+              f"_split, _wall_s and unweighted_mean beside the nine domains; skip anything "
+              f"that is not a dict.")
+        return 1
+    if set(_sm_blocks) != {("cot", 0), ("cot", 1), ("zh_web", 0)}:
+        fails.append(f"score_matrix-shaped record read as {sorted(_sm_blocks)}; the "
+                     f"metrics.domain_loss nesting is not handled, or _split/_wall_s/"
+                     f"unweighted_mean leaked in as domains")
+    # A BLOCKLESS ROW MUST NOT DISPLACE ONE WITH BLOCKS, even though it comes later. Both real
+    # files key ckpt_data_leg_206m_8b.pt: b0_23_blocks.jsonl with 576 blocks, score_matrix.jsonl
+    # with 0 (scored before per_row existed). Literal last-row-wins left the blockless one and
+    # block_paired refused with "no per-block data" for a checkpoint whose blocks were in hand.
+    import tempfile as _tf
+    with _tf.TemporaryDirectory() as _td:
+        _good = os.path.join(_td, "good.jsonl")
+        _bare = os.path.join(_td, "bare.jsonl")
+        with open(_good, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps(mk("K", {"cot": [(3.0, 10)]})) + "\n")
+        with open(_bare, "w", encoding="utf-8") as _f:
+            _f.write(json.dumps({"ckpt": "K", "metrics": {"domain_loss": {"cot": {"loss": 1.0}}}}) + "\n")
+        _folded = _rec_by_name([_good, _bare])          # blockless comes LAST
+        if not _blocks(_folded["K"]):
+            print("block_paired selftest FAILED: a blockless row loaded after a row with "
+                  "blocks displaced it. Both real files key ckpt_data_leg_206m_8b.pt -- "
+                  "b0_23_blocks.jsonl with 576 blocks, score_matrix.jsonl with 0 -- so literal "
+                  "last-row-wins reports the checkpoint as unscored while its blocks are in "
+                  "hand. Fold by payload, not by position.")
+            return 1
+        _folded2 = _rec_by_name([_bare, _good])          # and the other order still works
+        if not _blocks(_folded2["K"]):
+            print("block_paired selftest FAILED: a row with blocks did not win over an "
+                  "earlier blockless row.")
+            return 1
+
+    # and pairing ACROSS the two shapes must work, since that is exactly b0-23's case
+    _mixed = block_paired({"A": mk("A", {"cot": [(3.0, 10), (5.0, 10)], "zh_web": [(7.0, 10)]}),
+                           "SM": _sm}, "A", "SM")
+    if _mixed["n_blocks"] != 3 or abs(_mixed["row_weighted_mean"]) > 1e-12:
+        fails.append(f"pairing a domain_loss-shaped record against a score_matrix-shaped one "
+                     f"gave n={_mixed['n_blocks']} mean={_mixed['row_weighted_mean']}, want "
+                     f"n=3 mean=0 (identical values in both shapes)")
 
     # BLOCK IDS ARE (domain, index), CHECKED FIRST. A bare index collapses two domains' block 0
     # onto one key and every domain but the last vanishes -- with a clean-looking n. This sits
@@ -317,7 +448,14 @@ def _selftest():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from", dest="src", help="a JSONL of score records (one per checkpoint)")
+    ap.add_argument("--from", dest="src", nargs="+", metavar="JSONL",
+                    help="one or more JSONL files of score records (one record per "
+                         "checkpoint). MORE THAN ONE IS THE NORMAL CASE for b0-23: the two "
+                         "legs are scored by different producers into different files -- the "
+                         "data leg's blocks are in runs/b0_23_blocks.jsonl (domain_loss.py, "
+                         "lane card) and the params leg's in runs/score_matrix.jsonl "
+                         "(score_matrix.py, end of run). Later files win on a repeated ckpt, "
+                         "matching the ledger convention.")
     ap.add_argument("--arms", nargs="+", metavar="CKPT",
                     help="A B [C]: baseline, test, optional control. With C the statistic is "
                          "(B-A)-(C-A).")
