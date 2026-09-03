@@ -66,25 +66,30 @@
   "note": "Peak is LINEAR in batch. A first reading that grad_ckpt made activations sub-linear was wrong. Extrapolations from this line assume activation memory scales with seq the way it scales with batch, which is UNTESTED -- attention's quadratic term and the KDA recurrent state need not move together. On that assumption seq 8192 puts b32 at ~136 GiB (does not fit) and b16a2 at ~70 GiB (fits), making b32 the ceiling for this card at seq 4096."
  },
  "4": {
-  "peak_GiB": 61.01,
-  "config": "b16 accum2 d1024 L12 h8 ffn3072 seq4096 NO grad_ckpt uncompiled fp8=False attn_res-Full/0 doc_mask",
+  "peak_GiB": 49.53,
+  "config": "b16 accum2 d1024 L12 h8 ffn3072 seq4096 NO grad_ckpt fp8=True attn_res-Full/0 doc_mask -- the LAUNCHED configuration",
   "params_M": 206.1,
   "tok_per_step": 524288,
   "card_usable_GiB": 95.58,
-  "headroom_GiB": 34.57,
-  "steps": 500,
+  "headroom_GiB": 46.05,
+  "steps": "measured live on the launched run, steps 10/20/30",
   "stable_across_windows": [
    10,
-   100,
-   250,
-   500
+   20,
+   30
   ],
   "cards": "4 of them, world 4",
-  "log": "runs/ab_shapelr_base.log (pod)",
-  "measured": "2026-09-02",
-  "source": "NOT a new probe. This is the peak the A/B (2a) baseline arm REPORTED while running the data leg's exact configuration: params 206.1M, world 4, and a cfg line that matches the leg flag for flag (batch 16 accum 2 seq 4096 grad_ckpt False lr_scale 1.0 attn_every 4). Running w7_peak.sh again would have spent 30 steps on four cards to re-derive a number already on disk, and w7_peak.sh could not have produced it anyway: it hardcodes --layers 32 and refuses any world but 7.",
+  "log": "runs/data_leg_206m_8b.log (pod)",
+  "measured": "2026-09-03",
+  "source": "MEASURED ON THE LEG ITSELF. This replaces the 61.01 GiB I recorded before launch, which was read off the A/B (2a) baseline arm as a same-shape reuse. The shape matched and the recipe matched flag for flag, but the DTYPE did not: run_ddp.sh:74 passes --fp8, and that arm was launched by scripts/run_ab_speedrun.sh, which calls torchrun directly and does not. Its log says `fp8 False`, this run's says `fp8 True`.",
   "range_over_50_windows": "60.95 - 61.01 GiB, spread 0.06 GiB (8/16/14/8/3/1 windows at 60.95/.96/.97/.98/.99/61.01). The MAX is recorded, not the mean or the modal value -- a fits/does-not-fit call is made against the worst window, and the mean would understate it by 0.05 GiB.",
   "mix_difference_is_not_a_memory_difference": "The arm ran data/mix_200m_4b.json and the leg runs data/mix_200m_8b.json. Checked rather than waved past: same 9 domains, and all 9 weight deltas are exactly 0.0 -- the two files differ only in total_tokens (3,999,997,952 vs 8,000,000,000), which sets how many steps run, not what one step allocates. Peak is a per-step high-water mark.",
-  "_caveat_applies": "Rank 0 only, like every other row here, so this is a LOWER bound on the worst rank. The file's own rule is that ruling from it needs about 25 GiB of headroom; 34.57 GiB clears that. It clears it by less than the 493.6M/b16a2 arm's 58.93 GiB, because this leg runs WITHOUT grad_ckpt -- 206M unchecked costs more activation memory than 493.6M checkpointed."
+  "_caveat_applies": "Rank 0 only, like every other row here, so this is a LOWER bound on the worst rank. The file's own rule is that ruling from it needs about 25 GiB of headroom; 34.57 GiB clears that. It clears it by less than the 493.6M/b16a2 arm's 58.93 GiB, because this leg runs WITHOUT grad_ckpt -- 206M unchecked costs more activation memory than 493.6M checkpointed.",
+  "superseded_reuse": {
+   "peak_GiB": 61.01,
+   "why_it_was_wrong": "I checked params, world, batch, accum, seq, grad_ckpt, lr_scale, attn_every and the mix's nine weights, and did not check fp8. The arm's own header printed `fp8 False` in the line above the cfg line I read, so the evidence was on screen and I matched on the fields I had thought to list.",
+   "direction": "OVER by 11.48 GiB (23%). The reuse was conservative, so the fits/does-not-fit call it licensed was not endangered -- but that is luck about the sign, not a property of the method. Had fp8 cost memory instead of saving it, the same procedure would have licensed a launch that OOMs.",
+   "rule": "A same-shape peak reuse must enumerate the DTYPE and the LAUNCHER, not only the model and recipe flags. Two launchers for one shape (run_ddp.sh appends --fp8, run_ab_speedrun.sh calls torchrun directly and does not) differ in what reaches argv, and the reused number was measured under the other one. AND THE SAME UNCHECKED FIELD BROKE A SECOND METRIC THE SAME HOUR: MFU. train.py:2242 sets peak_tflops = 296 if fp8 else 148 (H20 FP8 vs bf16), so this leg's 34% and the anchor arm's 48% are ratios against denominators that differ 2x. Actual throughput is 82K vs 56K tok/s/gpu -- 1.46x FASTER at the lower MFU, and 68.5% if scored on the anchor's bf16 peak. MFU IS NOT COMPARABLE ACROSS DTYPES because its denominator is a function of dtype; tok/s is. One unenumerated field, two metrics, wrong both times -- once predicting memory from a non-fp8 run, once comparing an fp8 run's efficiency to a non-fp8 one."
+  }
  }
 }
