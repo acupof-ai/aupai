@@ -210,6 +210,7 @@ def main():
                      "demands bit-exactness between two different summation orders")
     for drift, total, want_ok in ((0.0087, 4759488.226891, True),   # the real drift: must pass
                                   (0.0087, 2.0, False),            # same drift, tiny total: fail
+                                  (18.0, 4759488.226891, False),   # one lost 40-byte item: fail
                                   (60.0, 4759488.226891, False)):  # 1.3e-5 relative: a real defect
         ok = drift <= max(1e-6 * abs(total), 1e-3)
         if ok != want_ok:

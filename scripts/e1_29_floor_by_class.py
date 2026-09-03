@@ -220,6 +220,12 @@ def main():
         # 1e-3 was calibrated on the selftest's 2-row fixture, where it means ~1e-4 relative; at
         # 4.76M it means 2e-10 and demands bit-exactness across two summation trees. A guard whose
         # strictness scales with the data fires first on the largest and most real run.
+        #
+        # THE LOOSENING DOES NOT COST THE GUARD ITS POWER, checked with the real numbers rather
+        # than asserted: at total 4,759,488 the gate is 4.76, the observed arithmetic drift was
+        # 0.0087 (548x of headroom), and mean per-item nll is 457 -- so dropping even a 40-byte
+        # item would shift the sum by ~18 and still refuse, with ~4x margin. It tolerates
+        # non-associativity and catches one lost item, which is what it is for.
         s = sum(r["nll"] for r in items)
         if abs(s - tot) > max(1e-6 * abs(tot), 1e-3):
             sys.exit(f"REFUSING: {arm} per-item NLLs sum to {s:.6f} but the pass totalled "
