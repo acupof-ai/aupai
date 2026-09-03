@@ -33,3 +33,6 @@ step 300/1525 20% [main] | loss 3.674 | lr 1.00e-02 | gnorm 2.41 | 0.04B tok | 8
 step 310/1525 20% [main] | loss 3.834 | lr 1.00e-02 | gnorm 1.62 | 0.04B tok | 80K tok/s/gpu | MFU 34% | ETA 0.5h
 step 310/1525 20% [main] | loss 3.834 | lr 1.00e-02 | gnorm 1.62 | 0.04B tok | 80K tok/s/gpu | MFU 34% | ETA 0.5h
 killed by tilerl at 16:14 pod time: profiler window (wait 1 + warmup 55 + active 20) completed at step 76 and wrote bench_eff/ddp_trace_rank0.json; --profile does not shorten the run so the rest was idle. Deliberate kill of 929665 to free lane GPU7 before the 8B milestone. NOT a crash.
+# END OF SNAPSHOT -- committed excerpt, 4,163B of the pod's 10,911B. NOT the whole log.
+# the job is OVER; 21 of the 22 figures those facts cite are computed from the trace, not printed in either copy.
+# Cited by eff.steady_state_composition, eff.two_x_not_reachable_by_architecture. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/t57_steady.log".

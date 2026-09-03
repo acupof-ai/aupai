@@ -469,6 +469,13 @@ def main():
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
         # truncate a solution. All four verified red on their broken worlds.
         "eval/humaneval_bpb.py",
+        # b0-23's per-BLOCK paired SE. Pure arithmetic over two JSONL score records -- no
+        # tokenizer, no model, no card -- so it runs on every commit. Its fixture is
+        # deliberately non-uniform (10/90/400 tokens) because row-weighting and
+        # token-weighting coincide on equal-length blocks, and a fixture where they coincide
+        # cannot tell a correct implementation from one using the wrong weighting. Eight
+        # mutations verified red, each through a named assertion rather than a traceback.
+        "eval/block_paired.py",
         # math gold BPB (N3's second metric): it IMPORTS humaneval_bpb's solution_bpb rather
         # than re-implementing it, and its selftest runs that file's selftest too -- so the
         # shared arithmetic is verified against the shared implementation, not against a second
