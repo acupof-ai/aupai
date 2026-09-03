@@ -3604,7 +3604,19 @@ def check_merge_complete(root):
     n_both = len(set(subprocess.run(
         ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
         capture_output=True, text=True).stdout.split()))
-    return PASS, f"{n_both} file(s) changed by the merge, {contested} contested file(s) taken whole"
+    # BOTH SIDES' COUNTS, because one of them is legitimately zero. `HEAD^1..HEAD` is what
+    # the merge brought into OURS, and it is 0 whenever ours already contained everything
+    # the other side had that survived -- a fast-forward-shaped merge, or one whose only
+    # contested path resolved to a DELETION on our side (a0e401e0: 0 against parent 1, 6
+    # against parent 2). The selftest's own vacuity rule then reads "0 file(s) changed,
+    # 0 contested" as a scan that examined nothing, and refuses a correct PASS. Reporting
+    # the second parent's count as well makes the difference visible: 0 and 0 is a merge
+    # with no content anywhere, 0 and N is a merge whose changes all came from ours.
+    n_theirs = len(set(subprocess.run(
+        ["git", "-C", root, "diff", "--name-only", "HEAD^2", "HEAD"],
+        capture_output=True, text=True).stdout.split()))
+    return PASS, (f"{n_both} file(s) changed by the merge into ours, {n_theirs} vs the other "
+                  f"parent, {contested} contested file(s) taken whole")
 
 
 def _broken_merge_complete():
