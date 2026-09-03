@@ -166,7 +166,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eval.json  docs  644
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
-d4b07fdb565a4a77401872de0d672b63ce7b18bddd9c474ac52ce075994ff3b3  facts/corpus_supply.json  docs  644
+cc2844dbf684214a67c9e6fce8d2e75f3b576ec147489e13a0c5fde6abe6ceab  facts/corpus_supply.json  docs  644
 f0b85346c19cd577a48b673de1b7d9299f842930b2cfd9f69cf55737baa3a365  facts/data_quality.json  docs  644
 ae60ce856a06b7a85de108c792f5d5064de10c51be17f66a8ff71265a9750516  facts/data_scaling.json  docs  644
 bb6150cdb45d110117183e25cbf3a4c9d0bdfe9ad0e8d2b0ab31f42cbab70881  facts/efficiency.json  docs  644
@@ -229,7 +229,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 0e913b75e56153115c55a91ebd52290efb2297ef1b7dbc46f2e2f0940bbd5154  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
 a807ca39bc92f8c6b7acae1dbd650e790ea06383e85120354448781a5c9d652d  runs/card_assignment.json  docs  644
-c7cc89bdb05cc3e6aa317738857f2ae035f40e8af5593b21c5575d2a4f60bfcc  runs/experiments.jsonl  docs  644
+a4bcc7947c78d34a69569b07d952c1dfba040c4b9386f5ce8611a7df3abba925  runs/experiments.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
 95f931aa5d2991f6782535c0ab1224aa1dfc935df7747eacb9622b76fa4ee2ba  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.en.hf.jsonl  docs  644
@@ -242,7 +242,7 @@ a64ed761a9464f00e88cbe3ded8dab405a1d51ad56f5c2e3a6585ad9cd3eecb0  runs/retro.jso
 c3935e6bbaa49fbcfbf1d8e4db33a4ee4ac378d3176cd13147c7152e46ab215d  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-7035cf4c1e85696abbf0bcb0656398ae90e815f63e35fa0acc07ef308df3bb95  runs/tasks.jsonl  docs  644
+0966838992e79226f6499ae42de2f1c98bd59b7e727fbb596194f13624490647  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
@@ -288,7 +288,7 @@ aa44b448dd95287eda13d7ede1a40e868d85d9ae2949b9786c57ebceb38934ee  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-fc470111d004bc2f2b3940853d480e0e0c1da73e0ed195a613bf501926c05e08  scripts/hooks/pre-commit  docs  755
+94b96737d9fba53dc6b4c9e0470f53d7171313cc3932e8d1219d295113be56c9  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
