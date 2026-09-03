@@ -113,7 +113,7 @@ def _selftest():
     _me_tree = _a0.parse(src_me)
     _me_main = next((n for n in _me_tree.body
                      if isinstance(n, _a0.FunctionDef) and n.name == "main"), None)
-    tok_expr = reset_line = loop_line = None
+    tok_expr = reset_line = loop_line = loop_node = None
     for n in _a0.walk(_me_main) if _me_main else ():
         if isinstance(n, _a0.Assign) and any(
                 isinstance(t, _a0.Name) and t.id == "tok_step" for t in n.targets):
@@ -123,15 +123,37 @@ def _selftest():
             reset_line = n.lineno
         elif isinstance(n, _a0.For) and _a0.unparse(n.iter).replace(" ", "") \
                 == "range(a.steps+a.warmup)":
-            loop_line = n.lineno
+            loop_line, loop_node = n.lineno, n
+    def _loop_end():
+        return max((getattr(x, "lineno", 0) for x in _a0.walk(loop_node)), default=0) if loop_node else 0
+
+    def _reset_ok():
+        """Before the loop, or inside it under `if st == a.warmup` -- both mean the peak
+        describes the timed steps. The previous form was `reset_line < loop_line`, a line
+        comparison that named the property but tested position: it rejected the placement
+        that excludes compile and warmup, which is the STRICTER of the two, while claiming
+        to be about what the peak carries (fb, resolving the b0-split merge 2026-09-03)."""
+        if None in (reset_line, loop_line):
+            return False
+        if reset_line < loop_line:
+            return True
+        if reset_line > _loop_end():
+            return False
+        for n in _a0.walk(loop_node):
+            if isinstance(n, _a0.If) and _a0.unparse(n.test).replace(" ", "") == "st==a.warmup":
+                if any(getattr(x, "lineno", None) == reset_line for b in n.body for x in _a0.walk(b)):
+                    return True
+        return False
+
     for ok, why, hint in (
         (tok_expr == "B*train.Cfg.accum*SEQ", "tok/s/gpu counts batch*accum*seq",
          f"tok_step is {tok_expr!r}; a rate over one micro-batch reports the b8a4 arm at 4x"),
         (reset_line is not None, "the peak is reset in main()",
          "the peak would carry setup both arms pay identically, not the step's own cost"),
-        (None not in (reset_line, loop_line) and reset_line < loop_line,
-         "the peak reset comes BEFORE the timed loop",
-         f"reset at line {reset_line}, loop at {loop_line} -- resetting after measures nothing"),
+        (_reset_ok(), "the peak reset covers the timed steps and nothing else",
+         f"reset at line {reset_line}, loop {loop_line}-{_loop_end()}: it must sit before the "
+         "loop or inside it under `if st == a.warmup`. After the loop measures nothing; "
+         "under any later gate the first timed steps' peak is lost"),
     ):
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {why}" + ("" if ok else f" -- {hint}"))
@@ -406,6 +428,9 @@ def main():
                     help="how many steps the trace covers. Keep it small: record_shapes holds "
                          "per-kernel shape metadata for the whole window and OOMed the 206M "
                          "shape at 93.8/95.2 GiB over a longer one")
+    ap.add_argument("--peak-only", action="store_true",
+                    help="memory probe: run --steps steps, report peak GiB and tok/s/gpu, "
+                         "skip save/val/nccl. For the L18 feasibility question.")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -482,6 +507,9 @@ def main():
     if fp8:
         raw = raw.to(torch.bfloat16)
         train.convert_to_fp8_compute(raw)
+    # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
+    # :2491 compile). Building the optimizers first would hand Muon fp32 parameter references
+    # that the cast then replaces, so the optimizer would step tensors the model no longer uses.
     optimizers = train.build_optimizers(raw, train.Cfg)
     model = raw
     if ddp:
@@ -521,26 +549,33 @@ def main():
     # A Chrome trace of the LAST --trace-steps timed steps, for scripts/trace_classes.py.
     # record_shapes is REQUIRED by trace_classes: it derives a GEMM's ideal time from
     # 2*M*N*K, and a kernel whose shapes the trace does not carry is reported as unknown
-    # rather than given a guessed ideal. It is also what OOMed b0's trace at the 206M shape
-    # -- per-kernel shape metadata is held for the whole profiled window, 93.8 of 95.2 GiB on
-    # a config that trains fine. So the window is the last few steps only, and with_flops
-    # stays OFF: trace_classes computes FLOPs itself from the shapes, so with_flops buys a
-    # column nothing reads and pays for it in the same memory (b0, measured).
+    # rather than given a guessed ideal. with_flops stays OFF: trace_classes computes FLOPs
+    # itself from the shapes, so it buys a column nothing reads (b0, measured).
+    #
+    # THE MEMORY COST OF record_shapes IS UNKNOWN, NOT MEASURED (fb retraction, 2026-09-02).
+    # The trace OOMed at 93.8/95.22 GiB with batch 32 accum 1 and I blamed the profiler.
+    # eff.microbatch_32_oom measured b32a1 OOMing at the same 93.8/95.2 GB with no profiler
+    # attached at all, and p200m OOMed at 95.1 GiB the same way. Three OOMs at one number,
+    # one of them profiler-free: the batch was the variable. Trace at the RUN's shape (b16a2)
+    # first; only if that does not fit is the batch reduced, and then the batch becomes part
+    # of the trace's provenance, because a share measured at a smaller batch is not the run's.
     prof = None
     trace_from = a.steps + a.warmup - a.trace_steps
     if a.trace:
-        from torch.profiler import ProfilerActivity, profile
+        from torch.profiler import ProfilerActivity, profile  # noqa: PLC0415
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                        record_shapes=True, with_flops=False, with_stack=False)
 
-    # Reset before the loop, not after setup: the peak must describe the STEP, and building the
-    # model, the optimizers and the pinned buffers all allocate. An arm that OOMs is decided by
-    # this number, so it may not carry setup that both arms pay identically.
-    torch.cuda.reset_peak_memory_stats()
-
+    wall0 = None
     for st in range(a.steps + a.warmup):
         if prof is not None and st == trace_from:
             prof.start()
+        # Peak over the TIMED steps only. Resetting here rather than before the loop keeps
+        # construction, compile and warmup's transient allocations out of a number that decides
+        # whether a shape FITS -- the question is whether the steady-state step fits.
+        if st == a.warmup:
+            torch.cuda.reset_peak_memory_stats()
+            wall0 = time.perf_counter()
         torch.cuda.synchronize()
         t_step = time.perf_counter()
         t_fwd = None
@@ -591,7 +626,9 @@ def main():
             loader.append(t_fwd - t_step)
             steps.append(time.perf_counter() - t_step)
 
-        if ddp and st >= a.warmup:
+        # NOT under --peak-only: this allocates n_par floats (1.75 GB at 438M) inside the
+        # window whose peak is the answer, so the probe would measure itself.
+        if ddp and st >= a.warmup and not a.peak_only:
             g = torch.zeros(n_par, device=dev)
             torch.cuda.synchronize()
             t0 = time.perf_counter()
@@ -599,6 +636,19 @@ def main():
             torch.cuda.synchronize()
             nccl.append(time.perf_counter() - t0)
             del g
+
+    wall = time.perf_counter() - wall0
+    peak_gib = torch.cuda.max_memory_allocated() / 1024**3
+    peak_res_gib = torch.cuda.max_memory_reserved() / 1024**3
+    tok_s_gpu = a.steps * B * SEQ / wall
+    if is_main:
+        print(f"\nPEAK {peak_gib:.2f} GiB allocated, {peak_res_gib:.2f} GiB reserved | "
+              f"{tok_s_gpu / 1e3:.1f}K tok/s/gpu over {a.steps} timed steps "
+              f"(L={train.Cfg.layers} d={train.Cfg.d} batch={B} accum={train.Cfg.accum} "
+              f"grad_ckpt={a.grad_ckpt} fp8={a.fp8} world={world})", flush=True)
+        print("  reserved is the number that decides whether it FITS -- allocated omits the "
+              "caching allocator's fragmentation, and OOM is raised against reserved.",
+              flush=True)
 
     trace_path = None
     if prof is not None:
@@ -615,6 +665,11 @@ def main():
             print(f"trace: {trace_path} ({sz:.1f} MB, {a.trace_steps} steps, record_shapes=True) "
                   f"-> python3 scripts/trace_classes.py {os.path.relpath(trace_path, ROOT)} "
                   f"--steps {a.trace_steps}", flush=True)
+
+    if a.peak_only:
+        if ddp:
+            torch.distributed.destroy_process_group()
+        return 0
 
     # vars() on a CLASS returns a mappingproxy, which pickle refuses -- train.py never hits
     # this because train.py:964 passes vars(cfg) through a dict comprehension first. The save

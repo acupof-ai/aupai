@@ -303,7 +303,7 @@ f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_dr
 168408844b89ed59c501aa303acf9f33efaa65819e6e43c6ba00e82bc387dcf7  scripts/pod_pull_ledgers.py  training  644
 0cc2f4d7e2178903d1d47698d8a2a540bb2309e907d9a5205150ec1fc519ab0e  scripts/pod_push.sh  training  755
 80c9fa99e13f0d0d3c99738df4d24e19b1f8c14c4fb1a34df9d36492f1a54f18  scripts/probe_gradckpt_sources.py  docs  644
-1ca5509970c175cc9609eb1b23ddb6d38950e8b5b2a65801713a48c9dbe9a3ca  scripts/profile_step_cost.py  docs  644
+55d35f0cce96c40c1d3fd7b90373c21a112d6bcbb2c9b0e2fc9b62ad92204377  scripts/profile_step_cost.py  docs  644
 795123ded74b4bd0e7a12e13c5c09f47f4780f28c063b1c4328c5f733638cc9e  scripts/progress_feed.py  docs  644
 eca0c619973240d88c3451de6e97d099505e62a44cf3d7ecf9f4538c6350c62f  scripts/prove_resume.sh  docs  644
 6dafd639734d95ff8a198bf01099968edee85762387b255d5fa18bbdc925afd3  scripts/reachability.py  docs  644
@@ -328,7 +328,7 @@ e83c9e50ec14c6e6a26231ba1efdfd532bceb26d34e27237a972758a17924640  scripts/sft_hf
 a0b98b74bcccc37494a410472423455ed731d470036baddd5161c3e9c6789ea7  scripts/stamp_cache_seeds.py  docs  644
 070eefce69baad8524e27f7dbd5b8d0a8ebf75d9ef879622f3ef91c758c2525b  scripts/supervise_run.sh  docs  644
 e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1  scripts/test_arch_L32.py  docs  644
-136c2fecfe7519b0aa0ad07376be4c12bcdc71795c866302a65b21d1da612ea2  scripts/test_arch_compat.py  docs  644
+5dccd4bb6f4d90aab211d4c568255716ddeeed68d0a4e619883658b4a7ec4ba1  scripts/test_arch_compat.py  docs  644
 8a4934e13fdede89f337675b6a4d65711870911d1296e5037f4115e75a49aae8  scripts/test_artifact_path_ckpt.py  docs  644
 e2ba8c4a980df71944fd82c8e5e03def0dd9d8cd32b3a2d14bbc94f114cd3ae0  scripts/test_attest_cases.py  docs  644
 90ec0814d97ea9d55c4850a730c778736c31e95e155e54370ec69c6ebb6099db  scripts/test_attn_res_fp32_logits.py  docs  644
