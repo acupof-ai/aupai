@@ -268,6 +268,14 @@ def foreign_cards(root=ROOT):
             continue
         # Keys are single indices ("5") or RANGES ("0-3"): the file uses both, so a plain
         # string compare against an nvidia-smi index silently misses every ranged entry.
+        #
+        # AND THEY OVERLAP. As of 2026-09-04 the file carries both "0-3" and "0".."3", so one
+        # card can be named twice. Overlap resolves FOREIGN-WINS by construction, not by
+        # ordering: a key with no marker hits the `continue` above and is never inserted, so a
+        # non-foreign entry cannot clear a foreign one whichever order the dict yields them.
+        # That is the safe direction -- the failure this function prevents is telling someone
+        # to reclaim a card that is not ours, so a false FOREIGN costs a question and a false
+        # ORPHAN costs the user's job.
         key = str(card).strip()
         if "-" in key:
             try:
@@ -755,6 +763,20 @@ def _selftest():
         got = foreign_cards(froot)
         _case(set(got) == {"3"},
               f"only the marked card is foreign, and a ranged ours-key is not: {sorted(got)}")
+
+        # OVERLAPPING KEYS, which the real file has carried since 2026-09-04 ("0-3" alongside
+        # "0".."3"). A card named by a foreign range AND by a non-foreign single key must stay
+        # foreign whichever order the dict yields, since the wrong direction tells someone to
+        # reclaim a card that is not ours.
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"cards": {
+                "2-3": "FOREIGN OCCUPANT: another container",
+                "2": " | after the run ends: granted to e1",
+                "3": " | after the run ends: granted to e1",
+            }}, fh)
+        got = foreign_cards(froot)
+        _case(set(got) == {"2", "3"},
+              f"a non-foreign single key does not clear a foreign range over it: {sorted(got)}")
 
         # A ranged FOREIGN key must expand, since the file uses both forms and a string
         # compare against an nvidia-smi index would miss every range.
