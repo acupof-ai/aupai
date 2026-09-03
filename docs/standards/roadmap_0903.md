@@ -35,7 +35,7 @@ Supply against the 30B contracts (tokens, `facts/corpus_supply.json`):
 | code_tests | 2.0B | 0 (Phase A mining running) | 2.0B |
 | math_owm | 5.5B | 6.51B | none |
 | cot | 4.5B | 0.42B | 4.1B |
-| en_c4 | 5.5B | 4.801B exact in en_c4/ (frozen tokenizer, 3b 2026-09-03); the 2.40B was en_c4_stage2/'s 3-shard extrapolation | 0.70B, tilerl fetching ~5 files |
+| en_c4 | 5.5B | 7.844B exact across three directories: en_c4/ 4.801B, en_c4_stage2/ 2.397B, en_c4_30b/ 0.646B (tilerl 2026-09-04, frozen tokenizer full pass; build_corpus's own 1.51B was chars/1.5, ratio 2.34, §155 second instance) | surplus 2.34B; en_c4_30b stats stamp pending (3b) |
 | textbook | 1.0B | 1.61B | surplus (the 3.3B written here earlier was zh_web's contract) |
 | code_py_starcoder | — | 8.78B | surplus |
 | arxiv | stand-in | 3.10B | role undecided |
