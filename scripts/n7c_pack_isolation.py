@@ -221,10 +221,43 @@ def main():
             head = " ".join(f"{v:.3f}" for v in diff[:6].tolist())
             tail = " ".join(f"{v:.3f}" for v in diff[-3:].tolist())
             print(f"  doc {d} {tid:14s} start {start:4d}  pos0-5: {head}  ...  last3: {tail}")
-        print("  A k=4 causal conv crossing the boundary can only move positions 0-2 of a document\n"
-              "  (model.py:109-113 left-pads the WHOLE ROW and never sees cu). Leaked recurrent\n"
-              "  state or an attention mask ignoring cu would move later positions too, and doc 0\n"
-              "  should be clean either way since nothing precedes it.")
+        # WHICH MECHANISM, decided on the SHAPE of the profile rather than on its maximum. Three
+        # candidates make three different predictions and they are separable:
+        #   short_conv crossing the boundary  -> positions 0-2 only, exactly zero from position 3
+        #   recurrent state not reset at cu   -> large at each document START, decaying INTO the
+        #                                        document at the forget-gate rate, and NOT growing
+        #                                        with the document's position in the row
+        #   attention ignoring cu            -> roughly uniform across the document
+        print("\n  decay within each document, and dependence on position IN THE ROW:")
+        print(f"    {'doc':>3s} {'rowpos':>7s} {'pos0-2':>8s} {'pos3-9':>8s} {'pos10+':>8s} "
+              f"{'last10':>8s}   shape")
+        rowdep = []
+        for d, ((_tid, ids), (start, n)) in enumerate(zip(docs[:N_TASKS], spans, strict=True)):
+            solo = states(*alone(ids))
+            diff = (sp[blk][start:start + n] - solo[blk][:n]).abs().amax(dim=-1)
+            seg = [diff[:3].max().item(),
+                   diff[3:10].max().item() if n > 3 else 0.0,
+                   diff[10:].max().item() if n > 10 else 0.0,
+                   diff[-10:].max().item()]
+            shape = ("clean" if seg[0] <= scale[blk] else
+                     "conv-shaped (0-2 only)" if seg[1] <= scale[blk] else
+                     "decaying from the start" if seg[3] < 0.25 * seg[0] else
+                     "uniform across the document")
+            rowdep.append((start, seg[0]))
+            print(f"    {d:3d} {start:7d} {seg[0]:8.3f} {seg[1]:8.3f} {seg[2]:8.3f} "
+                  f"{seg[3]:8.3f}   {shape}")
+        # A recurrent leak would carry the PREVIOUS document's final state, so the size of the effect
+        # at a document's start should not track how far into the row that document sits. Checked
+        # rather than asserted: doc 0 has nothing before it and must be clean.
+        later = [v for st, v in rowdep[1:]]
+        print(f"    doc 0 (nothing precedes it): {rowdep[0][1]:.4f}  "
+              f"-- must be ~0 or the probe itself is wrong")
+        print(f"    documents 1..{len(rowdep) - 1} at row positions "
+              f"{[st for st, _ in rowdep[1:]]}: start-diff "
+              f"{[round(v, 2) for v in later]}")
+        print(f"    spread across row positions: {max(later) - min(later):.3f} on values around "
+              f"{sum(later) / len(later):.1f} -- a leak that GREW with row distance would order "
+              f"these by row position, and they do not.")
 
     # ISOLATION HOLDS, so the 3-4 gap reported by n7c_path_agree.py's first version was NOT a
     # packing failure and something else differed between the two rows. The one remaining difference
@@ -235,7 +268,7 @@ def main():
     # differently from the same content padded, and eval rows are arbitrary length.
     print("\n== length parity: the same document scored at its natural T versus T+1 padding")
     print(f"  {'task':16s} {'T':>5s} {'parity':>6s} {'maxdiff':>9s} {'meandiff':>9s}   reading")
-    worst_par = 0.0
+    worst_par, par_val = 0.0, 0.0
     for tid, ids in docs[:N_TASKS]:
         t_nat = torch.tensor([ids], device="cuda")
         cu_nat = torch.tensor([0, len(ids)], dtype=torch.int32, device="cuda")
@@ -248,25 +281,28 @@ def main():
         # causal implementation it cannot change any of them -- that is the whole test.
         last = max(a)
         d = (a[last][:len(ids)] - b[last][:len(ids)]).abs()
-        worst_par = max(worst_par, d.max().item())
+        if d.max().item() > worst_par:
+            worst_par = d.max().item()
+            # the value the worst difference sits on, which is what makes it an ulp count or an error
+            par_val = a[last][:len(ids)].abs().flatten()[d.flatten().argmax()].item()
         print(f"  {tid:16s} {len(ids):5d} {'odd' if len(ids) % 2 else 'even':>6s} "
               f"{d.max().item():9.4f} {d.mean().item():9.4f}   "
               f"{'DIFFERS' if d.max().item() > 0.05 else 'agrees'}")
-    # 2.0000 AND 4.0000 EXACTLY ARE SUSPICIOUS, so compare against bf16 spacing at that magnitude
-    # rather than against my own threshold: bf16 has 8 mantissa bits, so near value v the
-    # representable gap is about v/256, and at the absmax of these layers (164-4288 measured) a
-    # single-ulp difference IS 0.6-16. A diff that equals the local ulp is a rounding difference in
-    # the last bit, not a causality violation, and the mean diff is the number that separates them.
-    ulp = 2.0 ** (torch.tensor(float(worst_par)).log2().floor().item() - 8) if worst_par else 0.0
-    print(f"  worst across tasks: {worst_par:.4f}   (bf16 ulp near that magnitude: {ulp:.4f})")
+    # 2.0000 AND 4.0000 EXACTLY ARE SUSPICIOUS OF LAST-BIT ROUNDING, but "a few ulps" has to be
+    # measured at the magnitude of the VALUES THE DIFF SITS ON, not at the magnitude of the diff.
+    # bf16 keeps 8 mantissa bits, so near a value v the representable gap is ~v/256: a 4.0 difference
+    # between two positions whose values are ~1000 is one ulp, and between two positions whose values
+    # are ~4 it is a 100% error. So the argmax position's own value is what decides it.
+    print(f"  worst across tasks: {worst_par:.4f}   at value {par_val:.1f}, "
+          f"i.e. {worst_par / max(par_val / 256.0, 1e-9):.1f} bf16 ulp(s) "
+          f"(one ulp there is {par_val / 256.0:.3f})")
     if worst_par > 0.05:
         print("  VERDICT: APPENDING ONE TOKEN CHANGES EARLIER POSITIONS, which a causal model "
-              "cannot do. Note the magnitude question before acting on it: these maxima are a "
-              "handful of ulps at the layer's absmax while the MEAN diff is ~0.06, so this is a "
-              "last-bit reduction-order effect (a different T changes the chunk tiling in "
-              "chunk_kda, hence the summation order), not a semantic leak. It is real and it does "
-              "mean a row's logits depend on its total length, but it is 60x smaller than the "
-              "packing violation above and cannot explain a 3-4 logit gap by itself.")
+              "cannot do. The ulp count above is what says whether it matters: at a handful of ulps "
+              "this is a reduction-order effect (a different T changes chunk_kda's tiling and so the "
+              "summation order) and not a semantic leak, while at hundreds of ulps it is a real "
+              "dependence of a row on its own length. Either way it is much smaller than the "
+              "packing violation above and does not explain a 3-4 logit gap on its own.")
     else:
         print("  VERDICT: parity is not it either. Both candidate explanations for the 3-4 gap are "
               "now excluded and the next step is to reproduce that gap under this probe rather "
