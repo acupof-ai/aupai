@@ -1,0 +1,21 @@
+{
+ "ckpt": "ckpt_n7c_p7.pt",
+ "hf": false,
+ "n_tasks": 164,
+ "n_tasks_total": 164,
+ "n_params": 206128200,
+ "loop_blocks": [
+  4,
+  7
+ ],
+ "prefix_arm": "p7",
+ "prefix_layers": [
+  7
+ ],
+ "gold_bpb_per_task_mean": 0.589454724453532,
+ "gold_bpb_byte_weighted": 0.46732428838816087,
+ "total_solution_bytes": 29662,
+ "errors": [],
+ "reading": "bits per UTF-8 byte of the canonical solution, teacher-forced, prompt carries no loss; cross-tokenizer comparable by construction",
+ "boundary": "NOT a pass@k substitute: this says the real solution gets higher likelihood, not that the model would generate it. At 200M pass@k is 0 for both arms (be.gold_bpb_falls_while_generation_scores_zero: code_500 generative 0.0 across a ladder while gold BPB fell 1.087 -> 0.918), so this is the reading with resolution at this scale, and the two numbers must not be read as one."
+}
