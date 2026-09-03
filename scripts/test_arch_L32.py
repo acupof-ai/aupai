@@ -230,11 +230,21 @@ def kda_decay_init():
 
 
 def legacy_roundtrip():
-    """A 12-layer checkpoint into a 32-layer model must FAIL, and fail at the shape
-    boundary with a message naming the mismatch. fb's requirement: every existing
-    checkpoint becomes unloadable and that is fine, but it must not silently
-    mis-shape. strict=True is what enforces it; this pins that it stays that way."""
-    Cfg.layers = 12
+    """A checkpoint of a DIFFERENT depth must FAIL, and fail at the shape boundary with a
+    message naming the mismatch. fb's requirement: every existing checkpoint becomes
+    unloadable and that is fine, but it must not silently mis-shape. strict=True is what
+    enforces it; this pins that it stays that way.
+
+    The other depth is DERIVED from L, not the literal 12 it used to be (b0, 2026-09-03).
+    With the shape settable, a launch at L=12 made `Cfg.layers = 12` build the small model
+    at the SAME depth as the big one -- so the load succeeded, correctly, and this check
+    reported "loaded WITHOUT error" as a failure. The fixture was wrong, not the model:
+    at L=12 a 12-layer state_dict SHOULD load into a 12-layer model. L-1 differs at every
+    launch depth by construction, which is the property being pinned.
+    """
+    other = L - 1
+    assert other >= 1, f"L={L} leaves no smaller depth to test the refusal with"
+    Cfg.layers = other
     small = HybridLM(Cfg)
     sd = small.state_dict()
     Cfg.layers = L
@@ -247,8 +257,8 @@ def legacy_roundtrip():
             f"refused, but the message does not name the shape problem: {msg[:200]}")
         return
     raise AssertionError(
-        "a 12-layer state_dict loaded into a 32-layer model WITHOUT error -- the extra "
-        "20 blocks would hold random init and nothing would say so")
+        f"a {other}-layer state_dict loaded into a {L}-layer model WITHOUT error -- the "
+        f"extra {L - other} block(s) would hold random init and nothing would say so")
 
 
 def roundtrip_32():
@@ -304,14 +314,14 @@ def dynamo_cache_limit():
 
 for name, fn in [
     ("head_dim == 128", head_dim),
-    ("AttnRes Full fwd/bwd at L=32", fwd_bwd),
+    (f"AttnRes Full fwd/bwd at L={L}", fwd_bwd),
     ("AttnRes Full block ends == every sublayer", ar_block_ends),
     ("AttnRes Block(5) over 64 sublayers", block_mode),
     ("KDA layer count > 0 and matches", kda_layer_count),
     ("optimizer grouping covers every param once", optimizer_grouping),
     ("KDA decay init at 8 heads", kda_decay_init),
-    ("12-layer ckpt into 32-layer model FAILS cleanly", legacy_roundtrip),
-    ("save/load round-trip at L=32", roundtrip_32),
+    (f"L{L-1} ckpt into L{L} model FAILS cleanly", legacy_roundtrip),
+    (f"save/load round-trip at L={L}", roundtrip_32),
     ("dynamo cache_size_limit covers 1+2*layers", dynamo_cache_limit),
 ]:
     check(name, fn)
