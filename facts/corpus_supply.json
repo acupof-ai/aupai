@@ -1,6 +1,23 @@
 {
  "facts": [
   {
+   "id": "cs.code_py_starcoder_landed",
+   "value": 8780736158,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/code_py_starcoder (count_code_dirs.py exact run, shards=284 kept_docs=6180174)",
+   "config": {
+    "note": "EXACT frozen-tokenizer count by datagen/count_code_dirs.py (not extrapolation); 8B-leg largest domain, weight 0.3297 needs 2.638B; margin 3.3x"
+   },
+   "uncertainty": "exact for the current code_py_starcoder/ dir; does not cover future re-filtering",
+   "status": "measured",
+   "boundary": "exact count of the landed dir; not a projection for a larger/smaller filter",
+   "guard_phrases": [
+    "starcoder supply confirmed",
+    "starcoder supply settled"
+   ]
+  },
+  {
    "id": "cs.code_rp1t_landed",
    "value": 7569415401,
    "unit": "tokens",
