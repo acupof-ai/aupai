@@ -100,40 +100,67 @@ def needles(texts_by_type, use_char=True):
     return out
 
 
-def scan(paths, golds, use_char=True):
-    """[(name, loaded_by_type)] x corpus shard rows -> {name: {type: [hits]}}."""
+_G_LOADED = []  # (name, gold_file, needles_by_type, n_records) set once for pool workers
+
+
+def _scan_shard(path):
+    """One shard's hits: {name: {needle_type: [hit records]}}. Runs in a pool worker."""
+    shard_hits = {n: {ty: [] for ty in ("question", "answer", "other")} for n, *_ in _G_LOADED}
+    with open(path, encoding="utf-8") as f:
+        for ln, line in enumerate(f):
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            t = d.get("content") or d.get("text")
+            if not t:
+                continue
+            for name, gp, by_type, nrec in _G_LOADED:
+                for ty, (w, c) in by_type.items():
+                    ws, ch, _ = E.scan_text(t, w, c, True)
+                    if ws or ch:
+                        shard_hits[name][ty].append({"gold_file": gp, "gold_records": nrec,
+                                                     "corpus_doc": f"{path}:{ln}", "needle_type": ty,
+                                                     "hit": t[:300]})
+    return shard_hits
+
+
+def _init_loaded(loaded):
+    global _G_LOADED
+    _G_LOADED = loaded
+
+
+def scan(paths, golds, use_char=True, pool_n=8):
+    """(name, needles_by_type) x corpus shards -> {name: {type: [hits]}}, shards in
+    parallel. Use mp.Pool over the shards (aupai-6e 2026-09-03): the serial scan
+    was minutes-plus on a big domain and offered no progress signal per shard."""
+    import multiprocessing as mp
     loaded = []
     for gp in golds:
         name, recs = load_golds(gp)
         by_type = {}
         for r in recs:
             for key, t in tagged_leaves(r):
-                ty = needle_type(key)
-                by_type.setdefault(ty, []).append(t)
+                by_type.setdefault(needle_type(key), []).append(t)
         loaded.append((name, gp, needles(by_type, use_char), len(recs)))
-    hits = {n: {ty: [] for ty in ("question", "answer", "other")} for n, *_ in loaded}
-    n_shard = 0
-    for path in paths:
-        n_shard += 1
-        with open(path, encoding="utf-8") as f:
-            for ln, line in enumerate(f):
-                if not line.strip():
-                    continue
-                try:
-                    d = json.loads(line)
-                except Exception:
-                    continue
-                t = d.get("content") or d.get("text")
-                if not t:
-                    continue
-                for name, gp, by_type, nrec in loaded:
-                    for ty, (w, c) in by_type.items():
-                        ws, ch, _ = E.scan_text(t, w, c, use_char)
-                        if ws or ch:
-                            hits[name][ty].append({"gold_file": gp, "gold_records": nrec,
-                                                   "corpus_doc": f"{path}:{ln}", "needle_type": ty,
-                                                   "hit": t[:300]})
-    return hits, n_shard
+    if pool_n <= 1:
+        return merge(_scan_shard(p) for p in paths), len(paths)
+    with mp.Pool(pool_n, initializer=_init_loaded, initargs=(loaded,)) as pool:
+        return merge(pool.imap_unordered(_scan_shard, paths, chunksize=1)), len(paths)
+
+
+def merge(parts):
+    """Merge per-shard hit dicts {name: {type: [..]}}. Row identity preserved; a hit
+    is appended to its (eval, type)."""
+    merged = {}
+    for part in parts:
+        for name, by_type in (part or {}).items():
+            merged.setdefault(name, {ty: [] for ty in ("question", "answer", "other")})
+            for ty, hh in by_type.items():
+                merged[name].setdefault(ty, []).extend(hh)
+    return merged
 
 
 def main():
@@ -141,6 +168,7 @@ def main():
     ap.add_argument("--domains", nargs="+", default=[])
     ap.add_argument("--golds", nargs="+", default=DEFAULT_GOLDS)
     ap.add_argument("--out", default="runs/scan_eval_golds.json")
+    ap.add_argument("--pool", type=int, default=8, help="pool size for the shard-parallel scan; keep modest to leave cores for training")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
 
@@ -182,14 +210,18 @@ def main():
     if not a.domains:
         raise SystemExit("REFUSING: need --domains; a scan with no corpus measures nothing")
 
+    import time
     result = {}
     for dom in a.domains:
         base = os.path.join(ROOT, "data", "corpus", dom)
         if not os.path.isdir(base):
             raise SystemExit(f"REFUSING: corpus dir {dom} missing")
         shards = sorted(glob.glob(os.path.join(base, "*.jsonl")))
-        print(f"{dom}: scanning {len(shards)} shards", flush=True)
-        hits, n_shard = scan(shards, a.golds)
+        print(f"{dom}: scanning {len(shards)} shards (pool {a.pool})", flush=True)
+        t0 = time.perf_counter()
+        hits, n_shard = scan(shards, a.golds, pool_n=a.pool)
+        wall = round(time.perf_counter() - t0)
+        print(f"  {dom}: {len(shards)} shards in {wall}s", flush=True)
         per_eval = {}
         for name, ghits in hits.items():
             per_eval[name] = {ty: {"corpus_docs_hit": len(hh), "hit_rate": round(len(hh) / max(1, n_shard), 6)}
