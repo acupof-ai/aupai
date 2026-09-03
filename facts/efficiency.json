@@ -2849,6 +2849,35 @@
     "we pre-registered the threshold",
     "only 2 real math changes so the gate is viable"
    ]
+  },
+  {
+   "id": "eff.two_legs_same_pure_compute_code",
+   "value": "identical on all ten pure-computation units",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's launcher-side AST fingerprint over 6925ce02..HEAD, plus a read of the three default sites; verified by fb against the leg's own log header",
+   "config": {
+    "data_leg_baseline": "6925ce0226da239296729411ed50b90c11f7a5d6, the sha runs/data_leg_206m_8b.log's header records as the pod's code at launch (synced 2026-09-03T05:41:43Z, manifest verified)",
+    "pure_compute_differing": "NONE",
+    "reported_layer_differing": [
+     "model:AttnRes",
+     "model:Block",
+     "model:HybridLM",
+     "train:Cfg"
+    ],
+    "the_one_commit": "169da865 feat(train): --attn_res_fp32_logits -- pure: NONE, reported: those four",
+    "default_off_read_not_inferred": {
+     "train.py:230": "attn_res_fp32_logits = False in the Cfg class body",
+     "train.py:1961": "action='store_true', so absent means False",
+     "model.py:300": "_f32 = getattr(cfg, 'attn_res_fp32_logits', False)",
+     "AttnRes.forward": "if self.fp32_logits: <new> else: <the original logits = torch.stack([...])>, the else branch line-for-line unchanged"
+    }
+   },
+   "uncertainty": "Exact over the ten whitelisted units. Says nothing about the four reported units beyond the three default sites read by hand.",
+   "boundary": "This is what lets the params leg launch without rerunning the data leg. The HARD constraint is the ten pure-computation units: a change there means the two legs compute differently and the equal-FLOPs comparison is confounded, so the data leg must be rerun. A wiring-layer change does NOT require a rerun but DOES require this fingerprint check to be re-run before launch and its result recorded -- the wiring layer has already changed once and the legs stayed comparable. fb's freeze order was whole-file, which is stricter than necessary and stays the operational rule because it is cheaper to follow than to adjudicate each time; the distinction is recorded so the next person knows which half is the real constraint. b0's first attempt at this used `git log --before` without TZ=UTC and git read it as +0800, selecting a baseline 8 hours early -- the answer was the same from the wrong baseline, which is why the correction matters and the answer does not.",
+   "guard_phrases": [
+    "train.py changed so the comparison is confounded"
+   ]
   }
  ]
 }
