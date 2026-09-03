@@ -3723,17 +3723,25 @@ def check_entrypoint_help(root):
 
     checked = 0
     bad = []
+    # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
+    # This loop covered five subdirectories and no root file, so train.py -- the entry point
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 carried
+    # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
+    # with the exact TypeError this check names, and the check passed the whole time. A guard
+    # that skips the most-used file in the repo reports on the files that matter least.
+    roots = sorted(glob.glob(os.path.join(root, "*.py")))
     for d in ("eval", "scripts", "datagen", "probes", "algorithms"):
-        for path in sorted(glob.glob(os.path.join(root, d, "*.py"))):
-            try:
-                src = open(path, encoding="utf-8").read()
-            except OSError:
-                continue
-            if "argparse" not in src:
-                continue
-            checked += 1
-            for text, exc, msg in _bad_help_strings(src):
-                bad.append(f"{os.path.relpath(path, root)}: {exc}: {text!r}")
+        roots += sorted(glob.glob(os.path.join(root, d, "*.py")))
+    for path in roots:
+        try:
+            src = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        if "argparse" not in src:
+            continue
+        checked += 1
+        for text, exc, msg in _bad_help_strings(src):
+            bad.append(f"{os.path.relpath(path, root)}: {exc}: {text!r}")
     if not checked:
         return SKIP, "no argparse entrypoints found"
     if bad:
@@ -4597,6 +4605,24 @@ FACTS_DIR = os.path.join(ROOT, "facts")
 FACT_REQUIRED = {"id", "value", "measured", "source", "config", "uncertainty", "status"}
 FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
 FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
+# A retracted entry must say, as data, WHICH numbers died -- and `[]` is a real answer.
+#
+# THE FIELD EXISTS BECAUSE `value` CANNOT ANSWER IT. On a retracted entry, `value` is rewritten
+# into a narration of the retraction, so one field holds the dead number AND the number that
+# replaced it, separated only by prose: eff.depth_is_not_the_mfu_gap carries retracted 14.2/16.0
+# beside correct 43.5/23.7, and eff.dynamo_recompile_not_a_lever's 54.9/260/72% are ALL from the
+# measurement that superseded it. Any tool that greps a retracted entry's numbers hunts correct
+# values, which is worse than not checking: it spends the reader's trust in everything the tool
+# says (§159's addendum, de and e1, 2026-09-04).
+#
+# WHY A LIST AND NOT A FLAG, from reading all nine retracted entries rather than pattern-matching
+# them: FIVE of the nine retract a CONCLUSION while their numbers stand. be.l1_3shot_retracted's
+# rerun reproduced 0.2/63.6/8.9; cont.sft_all_code_holdout_leak's v2 2.2% and v3 40.0% are
+# restored; ds.second_resume_rereads_one_segment's 8,192 rows was true of every checkpoint written
+# before 52aec31. A field that marked all nine's numbers dead would kill five entries' correct
+# values -- the same defect in a new place. So the list holds only values that are wrong, and an
+# empty list states that no number died, which is the common case.
+FACT_RETRACTED_VALUE = "retracted_value"
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
@@ -5367,6 +5393,32 @@ def check_facts_well_formed(root):
                 for k in ("claim", "audit", "refuted_by"):
                     if not e.get(k):
                         errors.append(f"{tag}: {e['status']} fact needs {k}")
+            # RETRACTED ONLY, and `[]` counts as present -- the absence of the KEY is the defect,
+            # not an empty list. Five of nine retracted entries have no dead number (see
+            # FACT_RETRACTED_VALUE), so requiring a non-empty list would force someone to invent
+            # one. `is None` rather than a falsy test for exactly that reason.
+            if e["status"] == "retracted":
+                rv = e.get(FACT_RETRACTED_VALUE)
+                if rv is None:
+                    errors.append(
+                        f"{tag}: retracted fact needs {FACT_RETRACTED_VALUE} -- the list of values "
+                        f"that are WRONG, as data. Use [] when the conclusion was retracted but "
+                        f"its numbers stand (5 of 9 entries), which is a statement, not a gap")
+                elif not isinstance(rv, list) or any(not isinstance(x, str) for x in rv):
+                    errors.append(f"{tag}: {FACT_RETRACTED_VALUE} must be a list of strings, "
+                                  f"got {type(rv).__name__}")
+                else:
+                    # A value listed as dead must appear in the entry, or the two disagree about
+                    # what was retracted and neither can be trusted. Checked against value+claim
+                    # because a retraction rewrites `value` into narration and the original number
+                    # often survives only in `claim`.
+                    hay = f"{e.get('value', '')} {e.get('claim', '')}"
+                    for x in rv:
+                        if x not in hay:
+                            errors.append(
+                                f"{tag}: {FACT_RETRACTED_VALUE} lists {x!r}, which appears in "
+                                f"neither value nor claim -- a dead value nobody can find is not "
+                                f"a retraction anyone can act on")
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
@@ -5452,7 +5504,10 @@ def _broken_facts():
     them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
     exist` for facts nobody mutated -- so the selftest was green on absence, and would
     have stayed green with both mutations removed. Verified by removing them
-    (de, 2026-09-01)."""
+    (de, 2026-09-01).
+
+    Four mutations now, the last two for retracted_value: one entry's key deleted, and one
+    entry's list naming a value the entry does not contain. See the comments at each."""
     import shutil
 
     d = _tmp_repo_shaped()
@@ -5465,6 +5520,24 @@ def _broken_facts():
     del obj["facts"][0]["config"]
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
+    # THE RETRACTED-VALUE HALF, on the real retracted entries. Two mutations, because the
+    # branch has two ways to be wrong and one world that exercised only the missing key would
+    # leave the disagreement half unguarded:
+    #   1. the key deleted -> "retracted fact needs retracted_value"
+    #   2. a value listed that appears in neither `value` nor `claim` -> the disagreement error.
+    # Mutation 2 is the one that matters in practice: the field is hand-maintained, so the way
+    # it rots is someone editing `value` and leaving the list behind, and a check that only
+    # asserts presence would call that entry well-formed. Both are on REAL entries -- the
+    # entries whose `value` narrates its own retraction are exactly what the field is for.
+    cf = os.path.join(d, "facts", "efficiency.json")
+    obj2 = json.load(open(cf, encoding="utf-8"))
+    hit = [e for e in obj2["facts"] if e.get("status") == "retracted"]
+    if len(hit) < 2:
+        raise SelftestSkip(f"facts/efficiency.json holds {len(hit)} retracted entries; the world "
+                           "needs two to break both halves of the retracted_value branch")
+    hit[0].pop("retracted_value", None)
+    hit[1]["retracted_value"] = ["1234.5678 no such number in this entry"]
+    json.dump(obj2, open(cf, "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -11845,6 +11918,14 @@ _FROZEN_KEYS = (
     "untie_head",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
+    # N7 Stage D (b0, 2026-09-03): --loop changes the TOPOLOGY from step 0 -- blocks LO..HI are
+    # visited twice -- so two segments of one run that disagree on it are not comparable, and it
+    # belongs here for zero_init_out's reason rather than in the allow-list for no_attn_res's.
+    # It is an A/B knob, but unlike head_lr the two arms are two SEPARATE RUNS, never two
+    # segments of one: a resume that dropped --loop would continue looped weights with an
+    # unlooped body and the logs would show nothing. Cfg.loop_blocks in the checkpoint is the
+    # other half of that guard -- the flag says what was asked for, the metadata says what ran.
+    "loop",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -12384,6 +12465,15 @@ def _allocation_cards(training, root=None):
             return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
     else:
         if ladder and set(ladder) != set(granted):
+            # SAY IT HERE, REFUSE AT THE LAUNCH. This function is not the place to exit from:
+            # `harness check` calls it twice (check_allocation_reads_the_grant, 8678-8679) and so
+            # does free-card (12535), so raising here took the WHOLE check run down -- measured
+            # 2026-09-04, `harness check` printed this message and zero of 58 checks. A guard that
+            # disables the instrument that would have caught it is worse than the warning it
+            # replaced.
+            #
+            # The refusal lives in cmd_launch, where the thing being refused is a launch and the
+            # blast radius is one job. The message is identical; only the exit moved.
             print(f"WARNING: card sources DISAGREE -- runs/card_assignment.json grants "
                   f"{_csv(granted)}, data/mix_scale_run_config.json says "
                   f"{_csv(ladder)}. Using the grant. The ladder config's `cards` "
@@ -12791,6 +12881,43 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
+
+    # 1b. TWO ALLOCATION SOURCES THAT DISAGREE REFUSE THE LAUNCH (6e's ruling 2026-09-04).
+    # _allocation_cards resolves the disagreement correctly -- the grant wins -- and says so on
+    # stderr, which is where this stopped being enough: the params leg launched with
+    # "card sources DISAGREE -- grants 0,1,2,3, says 0,1,2,3,4,5,6. Using the grant" in its own
+    # launch output, and nobody read it until afterwards. The resolution was right and the
+    # staleness stayed, so the next launcher faced the same ambiguity.
+    #
+    # REFUSED HERE, not inside _allocation_cards: that function is called by `harness check`
+    # itself (check_allocation_reads_the_grant) and by free-card, and raising there took the whole
+    # 58-check run down with it -- measured while writing this. The blast radius of a refusal
+    # belongs at the launch, where the thing refused is one job.
+    #
+    # NOT A CHECK AGAINST THE FROZEN `world`: the grant is 4 cards and the ladder's world is 7,
+    # and `world` is deliberately un-editable because the six points ran at 7 (the config's own
+    # _comment). The rank-vs-card check below is the one that can be made -- two live quantities.
+    if args.training and not args.no_gpu:
+        _gp = os.path.join(ROOT, "runs", "card_assignment.json")
+        _lp = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+        try:
+            with open(_gp, encoding="utf-8") as _fh:
+                _grant = json.load(_fh)
+            with open(_lp, encoding="utf-8") as _fh:
+                _ladder = _expand_cards(json.load(_fh).get("cards", ""))
+        except (OSError, ValueError):
+            _grant, _ladder = {}, []
+        _granted = _expand_cards(_grant.get("block_cards", "")) if _grant.get("launch_block_granted") else []
+        if _granted and _ladder and set(_granted) != set(_ladder):
+            print(f"REFUSING: {args.name} -- two allocation sources disagree, so which cards a "
+                  f"training job owns depends on which file the reader trusts.\n"
+                  f"  runs/card_assignment.json grants {_csv(_granted)}  <- the authority\n"
+                  f"  data/mix_scale_run_config.json says {_csv(_ladder)}  <- the ladder's record\n"
+                  f"The ladder config's `cards` records what the six mix_scale_* points ran on, "
+                  f"not today's allocation. If today's block is {_csv(_granted)}, narrow `cards` "
+                  f"there too; the launch then agrees with both files. No ledger row written.",
+                  file=sys.stderr)
+            return 2
 
     # 2a-0. World size follows the CARDS, and a command that states its own rank count
     # must agree with them (6e's ruling, 2026-09-03). NGPU below is derived from

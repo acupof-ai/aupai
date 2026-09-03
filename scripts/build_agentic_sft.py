@@ -690,10 +690,22 @@ REAL_CREDENTIAL = frozenset({
 #: and the set is genuinely mixed: 4 Lark device codes, a `plat_` API token, a session id and
 #: a base64 `user:password` sit beside SWE-bench instance ids
 #: (`PyCQA__flake8.cf1542ce.func_pm_ctrl_shuffle__7e1ipwsu`) and log filenames, which are
-#: harmless. ALL 164 GO. Separating them needs a classifier for "credential vs identifier"
-#: with no ground truth, built to rescue 3.6% of a pack that has 4344 episodes left -- the
-#: trade is not close, and a wrong call in that classifier ships a live credential into
-#: training data. Over-dropping costs episodes; under-dropping is unrecoverable.
+#: harmless.
+#:
+#: THE "ALL 164 GO" RULING THAT STOOD HERE IS SUPERSEDED, and by a third option rather than by
+#: a better classifier. It weighed dropping 3.6% of episodes against building a
+#: credential-vs-identifier classifier with no ground truth, and correctly chose dropping. What
+#: neither side costed is REDACTING THE SPAN: the mixed set stops mattering, because a
+#: SWE-bench instance id and a Lark device code are both replaced, and replacing an identifier
+#: costs one span of one turn instead of a whole episode.
+#:
+#: Re-measured on the 10,000-episode pack 2026-09-04 (facts/data_quality.json
+#: #dq.agentic_credential_split): 866 episodes (8.7%) carry a span, but only 1,768 of 359,663
+#: TURNS do (0.49%), and 863 of the 866 carry NO provider-rule credential. So redaction keeps
+#: 863 episodes at the cost of blanking half a percent of turns. The reasoning that survives
+#: unchanged is the direction of the residual risk -- over-dropping costs episodes,
+#: under-dropping is unrecoverable -- which is why a span too long to vouch for still drops the
+#: episode (OPAQUE_MAX_REDACT) and why a provider hit still drops it.
 OPAQUE_TOKEN = re.compile(r"[A-Za-z0-9_\-.]{32,}")
 OPAQUE_ENTROPY = 4.5
 
@@ -704,17 +716,74 @@ def opaque_credential(text):
     Shannon entropy over the token's own characters, the same measure detect_secrets applies,
     but over the token as written rather than over base64-only fragments of it.
     """
+    return bool(opaque_spans(text))
+
+
+#: A span longer than this is content, not a credential, and redacting it deletes real text.
+#:
+#: MEASURED over the 10,000-episode pack 2026-09-04: 5,342 spans clear the entropy gate, and
+#: their lengths are 3,131 at 32-63 chars, 2,025 at 64-127, 145 at 128-511, 35 at 512-2047,
+#: and 6 at 2048+ -- the longest 10,943 chars at 5.997 bits over `-._` plus alphanumerics. No
+#: provider issues a five-figure credential; at that length the regex has run together a blob
+#: of adjacent tokens, a minified file, or an encoded payload. Redaction is per-span, so an
+#: over-long span is the one case where redacting is WORSE than dropping the episode: it
+#: silently removes content while leaving the episode in the pack looking intact.
+#:
+#: 512 rather than a rounder number because it sits above every real credential shape this
+#: corpus holds (the Lark device code that motivated the detector is 86 chars, JWTs run a few
+#: hundred) and below the 41 spans that are evidently not credentials. An episode holding a
+#: span over the limit DROPS -- the conservative direction, and the same call OPAQUE_TOKEN's
+#: own comment makes for the ambiguous 3.6%.
+OPAQUE_MAX_REDACT = 512
+
+#: What replaces a redacted span. Fixed width so it carries no information about what it
+#: replaced, and named so a reader of the pack knows a tool did this rather than a person.
+OPAQUE_PLACEHOLDER = "[REDACTED-CREDENTIAL]"
+
+
+def opaque_spans(text):
+    """[(start, end)] of high-entropy opaque tokens in `text`, in order, non-overlapping.
+
+    The span list is what redaction needs and the boolean is derived from it, so the detector
+    has ONE definition of what a hit is. Two copies of an entropy loop would be two things to
+    keep in step -- the same reason _job_pids_for imports card_claim's predicate rather than
+    reimplementing it.
+    """
+    out = []
     for m in OPAQUE_TOKEN.finditer(text):
         s = m.group(0)
         counts = collections.Counter(s)
         h = -sum(c / len(s) * math.log2(c / len(s)) for c in counts.values())
         if h >= OPAQUE_ENTROPY:
-            return True
-    return False
+            out.append((m.start(), m.end()))
+    return out
+
+
+def redact_opaque(text):
+    """(new_text, n_redacted, n_too_long). Replace each opaque span with the placeholder.
+
+    n_too_long counts spans over OPAQUE_MAX_REDACT, which are NOT redacted -- the caller drops
+    the episode instead. Returning the count rather than redacting them keeps the two decisions
+    in one place: this function never silently deletes content it cannot vouch for.
+    """
+    spans = opaque_spans(text)
+    if not spans:
+        return text, 0, 0
+    out, last, n, long = [], 0, 0, 0
+    for a, b in spans:
+        if b - a > OPAQUE_MAX_REDACT:
+            long += 1
+            continue
+        out.append(text[last:a])
+        out.append(OPAQUE_PLACEHOLDER)
+        last = b
+        n += 1
+    out.append(text[last:])
+    return "".join(out), n, long
 
 
 def drop_credential_rows(rows):
-    """(kept, dropped) -- episodes carrying a real credential shape are removed entirely.
+    """(kept, dropped, redactions) -- see the ruling below for which class does which.
 
     TWO detectors, because one of them cannot see the other's cases. find_secrets covers the
     shapes with a provider rule; opaque_credential covers a high-entropy token with no rule,
@@ -722,24 +791,57 @@ def drop_credential_rows(rows):
     -- a live Lark device code passed the scanner and reached a sample I was about to send to
     a peer).
 
+    THE SPLIT (6e's ruling 2026-09-04, refined by what the pack measures):
+
+      A REAL_CREDENTIAL hit DROPS the whole episode, unchanged from before. A provider rule
+      firing means a live credential, and a masked line still teaches the model that a
+      credential belongs at that position.
+
+      An OPAQUE hit REDACTS the span and KEEPS the episode. What changed my reading of
+      OPAQUE_TOKEN's "ALL 164 GO": that argument weighed dropping 3.6% of episodes against a
+      classifier with no ground truth, and redaction is a third option neither side costed.
+      Measured over the 10,000-episode pack: 866 episodes (8.7%) carry an opaque span, but
+      only 1,768 of 359,663 TURNS do (0.49%). Redaction buys back 866 episodes at the cost of
+      blanking half a percent of turns, and it needs no credential-vs-identifier judgment --
+      a SWE-bench instance id and a device code are both replaced, and replacing an identifier
+      costs one span of a turn rather than a whole episode.
+
+      A span over OPAQUE_MAX_REDACT drops the episode: see that constant. Redacting content is
+      worse than dropping it, because the episode stays in the pack looking intact.
+
     Per-turn scan, because the location is what gets reported to a human: fb needs the file
     path and line of any true credential so the user can be told it is sitting in a
     transcript, and "somewhere in the pack" is not a report. The content is never printed or
-    written anywhere.
+    written anywhere, redacted or not.
     """
-    kept, dropped = [], []
+    kept, dropped, redactions = [], [], []
     for r in rows:
-        hits = set()
+        real, n_red, n_long = set(), 0, 0
         for m in r["messages"]:
-            hits.update(t for t in (find_secrets(m["content"]) or []) if t in REAL_CREDENTIAL)
-            if opaque_credential(m["content"]):
-                hits.add("Opaque High Entropy Token")
-        if hits:
-            dropped.append({"project": r["project"], "types": sorted(hits),
-                            "turns": len(r["messages"])})
-        else:
-            kept.append(r)
-    return kept, dropped
+            real.update(t for t in (find_secrets(m["content"]) or []) if t in REAL_CREDENTIAL)
+        # REAL FIRST, and no redaction on a row that is about to drop: redacting a dropped
+        # episode's turns is work whose result is discarded, and it would make the counts read
+        # as if a kept row had been cleaned.
+        if real:
+            dropped.append({"project": r["project"], "types": sorted(real),
+                            "turns": len(r["messages"]), "why": "REAL_CREDENTIAL"})
+            continue
+        for m in r["messages"]:
+            new, n, long = redact_opaque(m["content"])
+            n_red += n
+            n_long += long
+            if n:
+                m["content"] = new
+        if n_long:
+            dropped.append({"project": r["project"], "types": ["Opaque Span Over Limit"],
+                            "turns": len(r["messages"]),
+                            "why": f"{n_long} span(s) over {OPAQUE_MAX_REDACT} chars"})
+            continue
+        if n_red:
+            redactions.append({"project": r["project"], "spans": n_red,
+                               "turns": len(r["messages"])})
+        kept.append(r)
+    return kept, dropped, redactions
 
 
 def scan_rows(rows, sample=None):
@@ -915,10 +1017,13 @@ def _selftest():
         if not find_secrets(soft[0]["messages"][1]["content"]):
             fails.append("the heuristic fixture trips no detector at all, so the "
                          "keep-heuristic-hits assertion below proves nothing")
-        kept, dropped = drop_credential_rows(real)
+        kept, dropped, _red = drop_credential_rows(real)
         if len(dropped) != 1 or kept:
             fails.append(f"an episode carrying a GitHub token was kept: {len(kept)} kept")
-        kept, dropped = drop_credential_rows(soft)
+        if dropped and dropped[0].get("why") != "REAL_CREDENTIAL":
+            fails.append(f"a provider hit was dropped for the wrong reason: {dropped[0].get('why')!r} "
+                         "-- the report tells a human which class fired, so it must be right")
+        kept, dropped, _red = drop_credential_rows(soft)
         if len(kept) != 1 or dropped:
             fails.append("an episode with only a heuristic hit was discarded -- dropping every "
                          "heuristic hit empties the pack while removing nothing real")
@@ -957,15 +1062,71 @@ def _selftest():
     opaque = [{"project": "p", "messages": [
         {"role": "user", "content": "log in"},
         {"role": "assistant", "content": f"device_code: {fake}"}]}]
-    kept, dropped = drop_credential_rows(opaque)
-    if len(dropped) != 1 or kept:
-        fails.append("an episode carrying an opaque high-entropy token was kept")
+    kept, dropped, red = drop_credential_rows(opaque)
+    # THE ASSERTION IS INVERTED from the version before 2026-09-04, deliberately: an opaque hit
+    # is now redacted and the episode is KEPT (6e's ruling). What must still hold is that the
+    # token is GONE from what is kept -- "kept" alone would pass on an implementation that
+    # detected nothing at all.
+    if len(kept) != 1 or dropped:
+        fails.append(f"an opaque hit was dropped rather than redacted: {len(kept)} kept, "
+                     f"{len(dropped)} dropped")
+    if kept and fake in kept[0]["messages"][1]["content"]:
+        fails.append("the opaque token SURVIVED in a kept episode -- redaction did nothing and "
+                     "the row now ships the credential it used to drop")
+    if kept and OPAQUE_PLACEHOLDER not in kept[0]["messages"][1]["content"]:
+        fails.append("the kept episode carries no placeholder, so nothing was replaced")
+    if kept and "device_code: " not in kept[0]["messages"][1]["content"]:
+        fails.append("redaction ate the surrounding text, not just the span")
+    if len(red) != 1 or red[0]["spans"] != 1:
+        fails.append(f"the redaction was not reported: {red}")
+    # A SPAN TOO LONG TO VOUCH FOR DROPS. 41 spans in the real pack are over the limit, the
+    # longest 10,943 chars -- no provider issues a five-figure credential, so the regex has run
+    # together a blob. Redacting it would delete content while leaving the episode looking
+    # intact, which is worse than dropping it. The fixture repeats the fixture token, so it
+    # clears the entropy gate by construction rather than by luck.
+    # A FIXED 1200 CHARS, not a multiple of OPAQUE_MAX_REDACT. Deriving the fixture from the
+    # constant makes it scale WITH the constant, so the case cannot fail no matter what the
+    # limit becomes: measured 2026-09-04 against a world with OPAQUE_MAX_REDACT = 10**9 -- i.e.
+    # nothing is ever too long to redact, the exact defect this case exists to catch -- and
+    # every assertion here passed. A fixture that moves with the value under test tests nothing.
+    # 1200 is between the 512 limit and the 2048 bucket the real pack's over-long spans sit in.
+    long_tok = (fake + "_") * (1200 // len(fake) + 1)
+    if OPAQUE_MAX_REDACT >= len(long_tok):
+        fails.append(f"OPAQUE_MAX_REDACT is {OPAQUE_MAX_REDACT}, at or above the {len(long_tok)}-char "
+                     "fixture -- the over-limit case cannot fire, so raise the fixture rather "
+                     "than letting this case pass vacuously")
+    if not opaque_credential(long_tok):
+        fails.append(f"the over-long fixture ({_h(long_tok):.2f} entropy) does not even trip the "
+                     "detector, so it cannot test what happens to a span that does")
+    toolong = [{"project": "p", "messages": [
+        {"role": "user", "content": "dump it"},
+        {"role": "assistant", "content": f"blob: {long_tok}"}]}]
+    kept_l, dropped_l, red_l = drop_credential_rows(toolong)
+    if len(dropped_l) != 1 or kept_l or red_l:
+        fails.append(f"an over-limit span was not dropped: {len(kept_l)} kept, "
+                     f"{len(dropped_l)} dropped, {len(red_l)} redacted")
+    if dropped_l and str(OPAQUE_MAX_REDACT) not in str(dropped_l[0].get("why")):
+        fails.append(f"the drop reason does not name the limit that caused it: "
+                     f"{dropped_l[0].get('why')!r}")
     # And the gate must not eat ordinary text: a long identifier at low entropy stays.
     for benign in ("scripts/test_eval_base_prompt_format.py",
                    "p500m_20b_0902_step_0000012000_loss_2p31",
                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"):
         if opaque_credential(benign):
             fails.append(f"opaque_credential fires on benign text ({_h(benign):.2f}): {benign!r}")
+        if redact_opaque(benign)[0] != benign:
+            fails.append(f"redact_opaque changed benign text: {benign!r}")
+    # TWO SPANS IN ONE TURN, because a single-span fixture passes on a loop that returns after
+    # the first replacement -- and the real pack has episodes with up to 45 hit turns.
+    two = [{"project": "p", "messages": [
+        {"role": "user", "content": "both"},
+        {"role": "assistant", "content": f"a={fake} and b={fake[::-1]}"}]}]
+    kept2, _d2, red2 = drop_credential_rows(two)
+    if not kept2 or kept2[0]["messages"][1]["content"].count(OPAQUE_PLACEHOLDER) != 2:
+        fails.append("two spans in one turn were not both redacted: "
+                     f"{kept2 and kept2[0]['messages'][1]['content'][:60]!r}")
+    if red2 and red2[0]["spans"] != 2:
+        fails.append(f"the span count is wrong for a two-span turn: {red2}")
 
     # 5. An episode quoting a ChatML marker must be refused: the tokenizer turns the quote
     #    into the real special token, so it would inject a role boundary into a completion.
@@ -1162,15 +1323,32 @@ def main():
         rows += srows
         rep["subagent_files"] = len(subs)
         rep["subagent_pairs"] = len(srows)
-    rows, cred = drop_credential_rows(rows)
+    rows, cred, redacted = drop_credential_rows(rows)
     if cred:
-        print(f"\nDISCARDED {len(cred)} episode(s) carrying a real credential shape "
-              "(whole episode, not masked -- a masked line still teaches the model that a "
-              "credential belongs there):")
+        by_why = collections.Counter(c.get("why", "?") for c in cred)
+        print(f"\nDISCARDED {len(cred)} episode(s): "
+              + ", ".join(f"{n} {w}" for w, n in sorted(by_why.items())))
+        print("  A REAL_CREDENTIAL drops the episode -- a masked line still teaches the model "
+              "that a credential belongs there. An over-limit opaque span drops it because "
+              f"redacting >{OPAQUE_MAX_REDACT} chars deletes content while leaving the episode "
+              "looking intact.")
         for c in cred:
-            print(f"  {c['types']}  {c['turns']} turns  {c['project']}")
+            print(f"  {c['types']}  {c['turns']} turns  {c['project']}  [{c.get('why')}]")
         print("  Content is not printed or written anywhere. The source files still hold "
               "these; that is a separate problem for whoever owns the machine.")
+    if redacted:
+        spans = sum(r["spans"] for r in redacted)
+        turns = sum(r["turns"] for r in redacted)
+        print(f"\nREDACTED {spans} opaque span(s) in {len(redacted)} kept episode(s) "
+              f"({len(redacted) / max(len(rows) + len(cred), 1):.1%} of episodes, "
+              f"{spans} span(s) over {turns} turns), each replaced with "
+              f"{OPAQUE_PLACEHOLDER}. These episodes are KEPT: an opaque hit needs no "
+              "credential-vs-identifier judgment, because replacing an identifier costs one "
+              "span and dropping the episode costs the episode.")
+        for r in sorted(redacted, key=lambda x: -x["spans"])[:10]:
+            print(f"  {r['spans']:4} span(s)  {r['turns']} turns  {r['project']}")
+        if len(redacted) > 10:
+            print(f"  ... {len(redacted) - 10} more")
     rows, n_dup = dedupe(rows)
     tokens_note = ""
     if os.path.exists(a.tokenizer):

@@ -74,13 +74,100 @@ def load_tasks(path, limit=None):
 
 
 class OursModel:
-    def __init__(self, ckpt, tok_path, device):
+    def __init__(self, ckpt, tok_path, device, prefix_arm=None):
         from scripts.loader import load_checkpoint, load_tokenizer  # noqa: PLC0415
 
         self.model, self.cfg = load_checkpoint(ckpt, device=device, dtype=torch.bfloat16)
         self.tok = load_tokenizer(tok_path, self.cfg)
         self.device = device
         self.n_params = sum(p.numel() for p in self.model.parameters())
+        self.prompt_len = None
+        self._prefix = None
+        if prefix_arm:
+            self._prefix = self._install_prefix(prefix_arm)
+
+    def _install_prefix(self, arm):
+        """Apply the arm's prefix-LM mask at SCORING time, matching how it trained.
+
+        WHY THIS IS NEEDED AT ALL. A prefix-trained model scored causally is a topology mismatch,
+        the same mismatch that made N7 Stage A's +0.0273 turn out to be measuring the mismatch and
+        not the loop. So each arm is scored in its own mask, and the causal cell is kept as the
+        control -- exactly the 2x2 that separated the two before.
+
+        cu IS REQUIRED. model.py:189 reaches flash_attn_varlen_func -- the only varlen entry point --
+        only when cu is not None, and this scorer called self.model(x) with no cu, so every forward
+        took flash_attn_func at :194 and any mask would have been silently ignored. That is the
+        identical trap that made scripts/n7c_gates.py print three passes while testing nothing. Here
+        the batch is ONE row, so cu is simply [0, T]: one document, and the prompt length is that
+        document's own, which is what makes the eval side simpler than training's per-document
+        projection.
+
+        THE MASK IS THE TWO-CALL DECOMPOSITION, the same one the arms train through, not
+        flash_attn.cute's mask_mod. mask_mod's forward is sound, so scoring through it would give
+        correct numbers -- its BACKWARD is what is broken
+        (facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90) and scoring has no
+        backward. But then training and eval would run two different implementations of the same
+        mask, and the only thing keeping them equal would be my belief that they agree.
+        """
+        import model as model_mod  # noqa: PLC0415
+        from eval.prefix_mask import PREFIX_ARMS, prefix_two_call  # noqa: PLC0415
+
+        if arm not in PREFIX_ARMS:
+            raise SystemExit(f"REFUSING: unknown prefix arm {arm!r}; PREFIX_ARMS defines "
+                             f"{sorted(PREFIX_ARMS)}")
+        if not model_mod.HAS_FA:
+            raise SystemExit(
+                "REFUSING: HAS_FA is False, so GatedMLA takes the SDPA fallback at model.py:196 "
+                "and no varlen call is ever made. Scoring would silently be CAUSAL while reporting "
+                "a prefix cell.")
+        layers = PREFIX_ARMS[arm]
+        targets = []
+        for li in layers:
+            mixer = self.model.blocks[li].mixer
+            if not isinstance(mixer, model_mod.GatedMLA):
+                raise SystemExit(f"REFUSING: block {li}'s mixer is {type(mixer).__name__}, not "
+                                 f"GatedMLA; arm {arm} names MLA layers {list(layers)}")
+            targets.append(mixer)
+        orig = model_mod.flash_attn_varlen_func
+        depth = [0]
+        aux = [None]
+
+        # THE SAME TWO-CALL PATH THE ARMS TRAIN ON, not a mask_mod. mask_mod's forward is sound, so
+        # scoring through it would give correct numbers -- but then training and eval would run two
+        # different implementations of the same mask, and the only thing keeping them equal would be
+        # my belief that they agree. One implementation, exercised on both sides, cannot drift.
+        # (mask_mod's BACKWARD is what is broken:
+        # facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90.)
+        def patched(q, k, v, **kw):
+            if aux[0] is None or depth[0] == 0:
+                return orig(q, k, v, **kw)
+            cu_in = kw.pop("cu_seqlens_q", None)
+            kw.pop("cu_seqlens_k", None)
+            if cu_in is None:
+                raise SystemExit(
+                    "REFUSING: the prefix path needs cu_seqlens_q and model.py passes it on the "
+                    "varlen path only, so the mask would be silently absent.")
+            return prefix_two_call(orig, q, k, v, cu_in, aux[0][0], **kw)
+
+        # WRAPPING forward, not hooking it: hooks do not fire inside a grad_ckpt recompute, which
+        # crashed the p7 training arm with CheckpointError. Scoring runs under no_grad so there is
+        # no recompute here, but using the same mechanism in both places means the eval cell and
+        # the training arm cannot diverge in which layers got the mask.
+        def wrap(mod):
+            inner = mod.forward
+
+            def fwd(*a, **k):
+                depth[0] += 1
+                try:
+                    return inner(*a, **k)
+                finally:
+                    depth[0] -= 1
+            mod.forward = fwd
+
+        for t in targets:
+            wrap(t)
+        model_mod.flash_attn_varlen_func = patched
+        return aux, list(layers)
 
     def encode(self, s):
         return self.tok.encode(s, add_special_tokens=False).ids
@@ -88,8 +175,23 @@ class OursModel:
     def logprobs(self, ids):
         """log p over the vocabulary at every position, given ids."""
         x = torch.tensor([ids], device=self.device)
+        cu = None
+        if self._prefix is not None:
+            aux, _layers = self._prefix
+            if self.prompt_len is None:
+                raise SystemExit("REFUSING: prefix scoring needs the prompt length, and "
+                                 "solution_bpb did not set it. Without it the mask would be built "
+                                 "from a default and the cell would not be the arm's mask.")
+            # ONE ROW, ONE DOCUMENT: cu = [0, T]. The prompt length is this document's own, so no
+            # projection is needed -- unlike training, where a row packs 10 to 23 documents.
+            cu = torch.tensor([0, len(ids)], dtype=torch.int32, device=self.device)
+            aux[0] = [torch.tensor([self.prompt_len], dtype=torch.int32, device=self.device)]
         with torch.no_grad():
-            out = self.model(x)
+            # cu BY KEYWORD: forward is (idx, targets=None, cu=None, ...) at model.py:533, so a
+            # positional second argument would bind to TARGETS and the method would return hidden
+            # states instead of logits. cu stays None for a causal cell, which keeps that cell
+            # byte-identical to how the twins were scored.
+            out = self.model(x, cu=cu) if cu is not None else self.model(x)
         lg = (out[0] if isinstance(out, tuple) else out)[0].float()
         return torch.log_softmax(lg, -1)
 
@@ -137,6 +239,12 @@ def solution_bpb(m, prompt, solution, max_ctx=2048):
             return None, f"solution alone is {len(s_ids)} tokens, over the {max_ctx} context"
         p_ids = p_ids[-keep:]
         ids = p_ids + s_ids
+    # THE PROMPT LENGTH IS SET AFTER TRUNCATION, not before. A prefix cell built from the
+    # pre-truncation length would call solution tokens "prompt" on every task that overflowed
+    # max_ctx and let them attend bidirectionally -- reading their own labels, so the leak would
+    # LOWER the BPB and read as an improvement. Set here, next to the truncation, because the two
+    # facts have to move together. Harmless for a causal cell, which ignores it.
+    m.prompt_len = len(p_ids)
     lp = m.logprobs(ids)
     # Position i's distribution predicts token i+1, so the token at index len(p_ids)+j is
     # predicted by the row at len(p_ids)+j-1.
@@ -233,6 +341,16 @@ def main():
                          "implements THIS model's source ledger and an HF model has no _body to "
                          "patch. The summary records loop_blocks so a looped row cannot be read "
                          "as the unlooped one it is compared against.")
+    ap.add_argument("--prefix", choices=("p3", "p7"),
+                    help="N7 Stage C: apply the arm's prefix-LM mask at SCORING time "
+                         "(eval/prefix_mask.py PREFIX_ARMS), so a prefix-trained checkpoint is "
+                         "scored in the mask it trained in. Without this a prefix arm is a topology "
+                         "MISMATCH against its own weights -- the same mismatch that made Stage A's "
+                         "+0.0273 turn out to measure the mismatch rather than the loop -- so each "
+                         "arm gets both cells: its own mask and the causal control. Ours only. "
+                         "Needs cu, which this scorer did not pass: model.py:189 reaches the only "
+                         "varlen entry point solely when cu is not None, so a mask without "
+                         "it is silently ignored. The summary records prefix_arm and prefix_layers.")
     a = ap.parse_args()
 
     if a.selftest:
@@ -249,7 +367,12 @@ def main():
                  f"broken download; scoring it would produce a number that looks like the "
                  f"published metric and is not.")
 
-    m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
+    if a.prefix and a.hf:
+        sys.exit("REFUSING: --prefix with --hf. The mask is applied through OUR model.py's "
+                 "flash_attn_varlen_func seam; an HF model has no such seam and would be scored "
+                 "CAUSALLY while the summary claimed a prefix cell.")
+    m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device,
+                                                         prefix_arm=a.prefix)
     if a.loop:
         if a.hf:
             sys.exit("REFUSING: --loop with --hf. loop_wrapper implements OUR AttnRes source "
@@ -283,6 +406,16 @@ def main():
                         f"{r.get('loop_blocks')} and this run is loop_blocks="
                         f"{list(a.loop) if a.loop else None}. Resuming would mix two models under "
                         f"one mean. Use a separate --preds path per arm.")
+                # THE SAME CHECK FOR THE MASK, for the same reason: a prefix cell and a causal cell
+                # produce identically-shaped rows for the same task_id, and the 2x2 asks for BOTH
+                # cells of the same checkpoint. Without this, scoring the causal cell into the prefix
+                # cell's --preds would reuse every prefix row and report it as causal -- the mismatch
+                # control would silently become a copy of the matched cell.
+                if r.get("prefix_arm") != a.prefix:
+                    sys.exit(
+                        f"REFUSING: {a.preds} holds rows scored with prefix_arm="
+                        f"{r.get('prefix_arm')!r} and this run is prefix_arm={a.prefix!r}. The two "
+                        f"cells of a 2x2 must not share a --preds path.")
                 done[r["task_id"]] = r
         print(f"resuming: {len(done)} tasks already in {a.preds}", flush=True)
 
@@ -297,7 +430,11 @@ def main():
                  # compares like with like. Files written before this field existed carry no
                  # loop_blocks, and .get() reads them as None -- which is correct, because --loop
                  # is introduced by this same change and no pre-stamp file can be looped.
-                 "loop_blocks": list(a.loop) if a.loop else None}
+                 "loop_blocks": list(a.loop) if a.loop else None,
+                 # Stamped for the same reason loop_blocks is. A file written before this field
+                 # existed reads as None, which is correct: --prefix is introduced by this change,
+                 # so no pre-stamp row can be a prefix row.
+                 "prefix_arm": a.prefix}
             if a.preds:
                 with open(a.preds, "a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -321,6 +458,11 @@ def main():
         "ckpt": a.ckpt, "hf": a.hf, "n_tasks": len(vals), "n_tasks_total": len(tasks),
         "n_params": m.n_params,
         "loop_blocks": list(a.loop) if a.loop else None,
+        # THE MASK IS PART OF THE CELL'S IDENTITY. Without these two fields a prefix cell and its
+        # causal control are two files with the same shape and no way to tell which is which -- the
+        # same failure the repo paid for with .stepN checkpoints whose metadata was identical.
+        "prefix_arm": a.prefix,
+        "prefix_layers": list(m._prefix[1]) if getattr(m, "_prefix", None) else None,  # noqa: SLF001
         "gold_bpb_per_task_mean": per_task,
         "gold_bpb_byte_weighted": byte_weighted,
         "total_solution_bytes": tot_bytes,

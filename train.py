@@ -1960,7 +1960,7 @@ def main():
     parser.add_argument(
         "--attn_res_fp32_logits", action="store_true",
         help="accumulate the AttnRes logit dot product in fp32 (bf16 puts the mixing "
-             "weights 14% off against fp64 truth)")
+             "weights 14%% off against fp64 truth)")
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )
@@ -1987,6 +1987,15 @@ def main():
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1%% vs 100, eff.bucket_cap_mb_ab)")
     parser.add_argument("--no_static_graph", action="store_true", help="disable DDP static_graph (A/B: 5K overhead hunt)")
+    parser.add_argument(
+        "--loop", nargs=2, type=int, metavar=("LO", "HI"),
+        help="N7 Stage D: pretrain FROM SCRATCH with blocks LO..HI visited twice "
+             "(eval/loop_wrapper.py, AttnRes option 3 -- the second visit merges into the first "
+             "visit's done entry, so the source count is unchanged and no downstream AttnRes "
+             "softmax denominator moves). Patched on raw_model after build_optimizers and before "
+             "DDP; the arm is recorded in the checkpoint as Cfg.loop_blocks. Costs 16/12 = 1.333x "
+             "the compute per token, so a comparison at equal tokens is not a comparison at equal "
+             "FLOPs -- state which one is being reported.")
     parser.add_argument("--no_bucket_view", action="store_true", help="disable DDP gradient_as_bucket_view (A/B: 5K overhead hunt)")
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
@@ -2304,6 +2313,29 @@ def main():
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
             opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
+
+    if args.loop:
+        # N7 Stage D: TRAIN with blocks LO..HI visited twice, from step 0.
+        #
+        # PLACEMENT IS THE WHOLE CORRECTNESS ARGUMENT, and it is sft_math.py:278-292's, which
+        # already runs this seam for Stage B. AFTER build_optimizers because the loop adds no
+        # parameters -- so the optimizer groups are byte-identical between the arms, which is
+        # the point of the comparison -- and BEFORE DDP because patching _body after DDP has
+        # built its buckets changes the graph those buckets were built for (and static_graph
+        # makes that an error, not a slowdown).
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+        from loop_wrapper import patch_body
+
+        patch_body(raw_model, tuple(args.loop))
+        # ON Cfg, so save_checkpoint carries it into the final ckpt AND every .stepN. Without
+        # this the looped and unlooped arms write byte-different checkpoints whose metadata is
+        # identical, and nothing but the filename says which is which -- the failure this repo
+        # has already paid for with .stepN files holding earlier weights.
+        Cfg.loop_blocks = list(args.loop)
+        if is_main:
+            print(f"LOOPED TRAINING: blocks {args.loop[0]}..{args.loop[1]} run twice "
+                  f"(AttnRes option 3, second visit merges into the first visit's done entry "
+                  f"so the source count is unchanged); grad_ckpt {Cfg.grad_ckpt}", flush=True)
 
     model = raw_model
     if ddp:
