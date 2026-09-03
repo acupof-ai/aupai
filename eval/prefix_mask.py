@@ -81,12 +81,24 @@ def build_mask_mods():
         # simply `val[0]`, so a scalar is recovered by subscripting. My first version wrote
         # `aux_tensors[0][batch_idx]` and cutlass raised "Expected Coord, whose leaves are
         # integers or None, but got tensor_value<vector<1xi32> o 1>" -- a tensor cannot be
-        # indexed by an SSA vector. The comparisons below work on SSA values directly; only the
-        # tensor lookup needs the scalar.
+        # indexed by an SSA vector.
+        #
+        # batch_idx IS THE DOCUMENT INDEX, NOT THE ROW, and q_idx/kv_idx are DOCUMENT-LOCAL.
+        # Both were measured on the pod (2026-09-04), not inferred, because getting either wrong
+        # produces a mask that runs and is silently wrong:
+        #   - aux of length 4 (one per row) made gate C read 0.848 against a causal 1.614; the
+        #     same all-zero aux at length 61 (one per document) reproduces causal EXACTLY. So b
+        #     ranges over documents -- 61 of them for a 4x4096 batch -- and a row-sized tensor was
+        #     being read out of bounds for 57 of them. Out-of-bounds garbage reads large, every
+        #     position lands "inside the prompt", and the mask goes bidirectional everywhere,
+        #     which is exactly the collapse gates B and C reported.
+        #   - the LAST document is flat 16355..16383. Giving it alone P=4096 moved the loss by
+        #     -9.9e-04. Under flat-stream indices none of its positions are below 4096 and the
+        #     loss could not have moved at all, so the indices are document-local.
+        # A prompt length must therefore be supplied PER DOCUMENT; doc_prompt_lengths below maps
+        # the pack's row-relative boundary onto that space.
         b = batch_idx[0]
         p = aux_tensors[0][b]
-        #
-        # aux_tensors[0][b] is this row's prompt length P, in tokens.
         #
         # A query INSIDE the prompt (q_idx < P) may see any prompt key (kv_idx < P), including
         # later ones -- that is the bidirectional half, and it is safe because prompt positions
@@ -108,8 +120,9 @@ def build_mask_mods():
         # PRODUCES such a vector and the kernel immediately unwraps it with ssa_to_scalar.
         # The kernel's own mask code does the same thing -- block_sparsity.py:226 pulls the
         # callback's result through ssa_to_scalar and only THEN combines it with `&` on
-        # scalars (:237-238). So: subscript every argument to a scalar, do the boolean algebra
-        # there, and hand back one i1 vector built the way scalar_to_ssa builds it.
+        # scalars (:237-238), and mask.py:242 uses a plain `or` on scalars. So: subscript every
+        # argument to a scalar, do the boolean algebra there, and hand back one i1 vector built
+        # the way scalar_to_ssa builds it.
         q = q_idx[0]
         k = kv_idx[0]
         in_prompt_q = q < p
@@ -118,6 +131,45 @@ def build_mask_mods():
         return fa_utils.scalar_to_ssa(cutlass.Boolean(keep), cutlass.Boolean)
 
     return causal_mod, prefix_mod
+
+
+def doc_prompt_lengths(labels, cu, ignore_index=-100):
+    """Per-DOCUMENT prompt length, in document-local coordinates, for aux_tensors[0].
+
+    WHY THIS EXISTS. The pack's prompt/response boundary is per ROW, but the kernel's masking
+    unit is the DOCUMENT: doc_cu_seqlens (train.py:669) opens a document at every row start and
+    after every <eos> run, and mask_mod is called with a document index and document-local
+    positions. On the four gate rows that is 61 documents over 4 rows -- 10 to 23 per row, with
+    9 to 22 boundaries falling INSIDE the supervised span. So the boundary has to be projected
+    from row coordinates into document coordinates, and a row-sized tensor is not merely
+    mislabelled: it is read out of bounds for most documents.
+
+    THE PROJECTION. Document d starts at flat position cu[d], which is row cu[d] // T at
+    row-offset cu[d] % T. The row's prompt ends at row-offset `end`, so within d the prompt
+    covers the first `end - (cu[d] % T)` positions, clamped to [0, len(d)]. Documents that start
+    at or after the row's prompt end get 0 and are therefore fully causal, which is both correct
+    and the safe direction.
+
+    ON THE FOUR GATE ROWS THE PROMPT LIES ENTIRELY INSIDE THE FIRST DOCUMENT (66 < 70, 45 < 49,
+    43 < 614, 215 < 1969), so the clamp is not exercised there. It is written anyway because
+    nothing in the pack guarantees it -- an <eos> inside a prompt would split it, and then a
+    formula that only handled the first document would silently drop the rest of the prompt to
+    causal.
+
+    A SEPARATE FACT THIS MADE VISIBLE, and it is not something this mask introduces: because
+    varlen attention never crosses a document boundary, response tokens after an internal <eos>
+    ALREADY cannot see the prompt at all, in both arms. That is what doc_mask training means
+    here. It bounds how much of the sequence the prefix intervention can even reach, and belongs
+    in the Stage C exp row beside the one-layer caveat.
+    """
+    import torch  # noqa: PLC0415
+
+    T = labels.shape[1]
+    row_end = prompt_lengths(labels, ignore_index).to(torch.int64)
+    start = cu[:-1].to(torch.int64)
+    doc_len = (cu[1:] - cu[:-1]).to(torch.int64)
+    within = row_end[start // T] - (start % T)
+    return torch.clamp(within, min=0).minimum(doc_len)
 
 
 def reference_mask(q_idx, kv_idx, prompt_len, prefix):
@@ -206,7 +258,33 @@ def _selftest():
     check("prompt_lengths reads the first supervised position", got == [2, 1, 4], f"{got}")
     check("a fully masked row becomes fully causal, not fully bidirectional", got[2] == 4)
 
-    # 7. THE SIGNATURE IS THE KERNEL'S, NOT THE DOCSTRING'S. Six parameters; following
+    # 7. THE PROJECTION FROM ROW COORDINATES TO DOCUMENT COORDINATES. This is the test that would
+    #    have caught the aux-length defect off-pod: a row-sized tensor is not just mislabelled,
+    #    it is read out of bounds for most documents, and the on-pod symptom (gate C reading
+    #    0.848 against a causal 1.614) said "leak" rather than "wrong length". Two rows of T=8,
+    #    documents at flat 0, 3, 8, 12 -- so row 0 holds two documents and row 1 holds two.
+    #    Prompt ends at row-offset 5 in row 0 and 2 in row 1.
+    #      doc 0: flat 0-2,   row 0 offset 0, len 3 -> prompt covers 5-0=5, clamped to len 3
+    #      doc 1: flat 3-7,   row 0 offset 3, len 5 -> prompt covers 5-3=2
+    #      doc 2: flat 8-11,  row 1 offset 0, len 4 -> prompt covers 2-0=2
+    #      doc 3: flat 12-15, row 1 offset 4, len 4 -> prompt covers 2-4=-2, clamped to 0
+    #    The clamps are the point: doc 0 exercises the upper clamp (a prompt longer than the
+    #    document) and doc 3 the lower one (a document starting after the prompt ends, which must
+    #    be fully causal rather than fully bidirectional).
+    labels2 = torch.tensor([[-100, -100, -100, -100, -100, 9, 9, 9],
+                            [-100, -100, 9, 9, 9, 9, 9, 9]])
+    cu2 = torch.tensor([0, 3, 8, 12, 16], dtype=torch.int32)
+    dp = doc_prompt_lengths(labels2, cu2).tolist()
+    check("doc_prompt_lengths projects the row boundary onto documents", dp == [3, 2, 2, 0], f"{dp}")
+    check("a prompt longer than its document is clamped to the document", dp[0] == 3, f"{dp[0]}")
+    check("a document starting after the prompt is fully causal, not bidirectional",
+          dp[3] == 0, f"{dp[3]}")
+    # ONE ENTRY PER DOCUMENT, never per row: length 4 here, not 2. The kernel indexes this tensor
+    # by document (measured on the pod), so a row-sized tensor reads past its end.
+    check("doc_prompt_lengths returns one entry per document", len(dp) == cu2.numel() - 1,
+          f"{len(dp)} for {cu2.numel() - 1} documents")
+
+    # 8. THE SIGNATURE IS THE KERNEL'S, NOT THE DOCSTRING'S. Six parameters; following
     #    flash_fwd.py:77's five would drop seqlen_info and break the call at mask.py:232.
     import inspect  # noqa: PLC0415
     src = inspect.getsource(build_mask_mods)
