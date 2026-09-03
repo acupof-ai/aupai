@@ -1,0 +1,18 @@
+{
+ "mined_keys": 1519047,
+ "rows_seen": 1519076,
+ "rows_kept": 1474441,
+ "kept_rate": 0.9706170066540449,
+ "reject_reasons": {
+  "short": 43907,
+  "long": 662,
+  "bad_bytes": 66
+ },
+ "kept_distinct_hashes": 1474440,
+ "rows_code_py_starcoder": 6180174,
+ "overlap_code_py_starcoder": 0.9999898266460486,
+ "rows_code_dedup08": 6239038,
+ "overlap_code_dedup08": 0.988776755920892,
+ "overlap_union": 0.9999898266460486,
+ "novel_rows": 15
+}
