@@ -2754,9 +2754,9 @@
   },
   {
    "id": "eff.layer9_branch_scale_is_architectural",
-   "value": "flags in 4 of 4 runs; not an anomaly",
+   "value": "RETRACTED: the flag is real, not architectural",
    "measured": "2026-09-03",
-   "status": "measured",
+   "status": "retracted",
    "source": "b0-10 offline checkpoint health run over data_leg_206m_8b step6000->7000 and e1_27's three lr arms, b0 2026-09-03",
    "config": {
     "metric": "branch output-scale, mixer.o / ffn, per layer, compared against the median and MAD OF THE OTHER LAYERS",
@@ -2787,11 +2787,14 @@
     "diagnosis": "The criterion compares a layer against the OTHER LAYERS, which assumes the layers are exchangeable. Under attn_every=4 they are not: a layer's position in the attention cycle fixes its mixer.o/ffn ratio, so layer 9 is low by construction. Same layer, same sign, four runs, two run families, four learning rates."
    },
    "uncertainty": "Four runs is enough to establish the flag is not run-specific; it does not establish WHICH architectural property fixes layer 9's ratio, and that was not investigated.",
-   "boundary": "A flag that fires on every run carries no information and readers learn to skip it -- the same failure as a permanent red. RULING (fb 2026-09-03): the metric stays, the COMPARISON changes -- group layers by their position in the attn_every cycle before taking median and MAD, or record a per-layer baseline. Also NOT answered: the data leg reads 0.439 against the other three at 0.590, 25% lower, but that comparison confounds training stage (6000->7000 vs 800->1000) with run family. Separating them needs this leg's own early checkpoints, and checkpoint rotation has deleted them -- the cleanest control, a run against its own earlier self, is permanently unavailable for this leg. The MLA layer-11 flag (z +17.46) is a separate artefact: MLA has n=3, where MAD is the distance from the middle value to its neighbours and any difference inflates z. Its ratio 1.0267 sits near KDA's 1.037; it deviates from its two smaller siblings, not from a healthy range. A z score on n=3 is not a criterion.",
+   "boundary": "The measured part stands: the flag does fire in 4 of 4 runs at z -12 to -30. What was wrong was the inference from that. fb ruled 'the criterion is measuring architecture' from cross-run consistency alone, and b0's grouping fix followed from that ruling; neither of us checked whether the thing being measured is simply sick in every run. It is. See eff.layer9_mixer_o_lags.",
    "guard_phrases": [
-    "layer 9 shows a branch-scale anomaly",
-    "MLA layer 11 deviates"
-   ]
+    "layer 9's ratio is fixed by its position in the attn_every cycle",
+    "group layers by cycle position before taking median and MAD"
+   ],
+   "claim": "layer 9's low mixer.o/ffn ratio is fixed by its position in the attn_every cycle, so the flag carries no information and the criterion should group layers by cycle position",
+   "audit": "b0 implemented the grouping and measured it, 2026-09-03: at cycle position 1 the three layers read L1=0.8491, L5=0.8869, L9=0.4390 -- position does not explain L9. Grouping also dropped n to 3 per group and produced two NEW flags on differences of 0.002 (L8 z-3.13, L2 z+3.59), so it made the criterion noisier, not quieter.",
+   "refuted_by": "eff.layer9_mixer_o_lags"
   },
   {
    "id": "eff.code_fingerprint_gate_unusable",
@@ -2877,6 +2880,47 @@
    "boundary": "This is what lets the params leg launch without rerunning the data leg. The HARD constraint is the ten pure-computation units: a change there means the two legs compute differently and the equal-FLOPs comparison is confounded, so the data leg must be rerun. A wiring-layer change does NOT require a rerun but DOES require this fingerprint check to be re-run before launch and its result recorded -- the wiring layer has already changed once and the legs stayed comparable. fb's freeze order was whole-file, which is stricter than necessary and stays the operational rule because it is cheaper to follow than to adjudicate each time; the distinction is recorded so the next person knows which half is the real constraint. b0's first attempt at this used `git log --before` without TZ=UTC and git read it as +0800, selecting a baseline 8 hours early -- the answer was the same from the wrong baseline, which is why the correction matters and the answer does not.",
    "guard_phrases": [
     "train.py changed so the comparison is confounded"
+   ]
+  },
+  {
+   "id": "eff.layer9_mixer_o_lags",
+   "value": 30.92,
+   "unit": "Frobenius norm of layer 9's mixer.o at step 7000 (neighbours 57.78 and 61.59)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's per-layer norm read over data_leg_206m_8b checkpoints and e1_27's lr arms, plus a seed-42 fresh-init instantiation, 2026-09-03",
+   "config": {
+    "shape": "206.1M d1024 L12 h8 ffn3072, attn_res_blocks=0 (verified by fb: the Cfg default is 0 at train.py:219 and the leg's 'cfg non-default' line does not list it, so n_blocks = n_sub = 24, one block per sublayer)",
+    "at_init_seed42": {
+     "all_twelve_layers": "20.47-20.49",
+     "layer9": 20.4843,
+     "reading": "L9 is NOT born low; 30.92 is trained"
+    },
+    "data_leg": {
+     "step6500": 30.54,
+     "step7000": 30.92,
+     "step7500": 31.24,
+     "L8": "56.3->58.9",
+     "L10": "59.9->62.8"
+    },
+    "e1_27_lr0.03": {
+     "step800": 46.81,
+     "step1000": 46.81,
+     "L8": 66.9,
+     "L10": 64.43,
+     "caveat": "both L9 and its neighbours are static to 0.001 across those two steps, so this run cannot judge GROWTH; what it shows is that L9's absolute level is low there too"
+    },
+    "ffn_is_normal": {
+     "L8": 67.61,
+     "L9": 70.44,
+     "L10": 69.79
+    }
+   },
+   "uncertainty": "Norms from single checkpoints, no repeat. The effect is a factor of two against neighbours, far outside any reading noise.",
+   "boundary": "Says layer 9's mixer.o grows but persistently lags its neighbours in two run families, and that it starts level with them. Does NOT say why, and does NOT say it matters. Two hypotheses, neither verified: smaller gradients reaching the KDA o-projection at that depth, or an attn_res block-boundary effect -- the second is CLOSED, because attn_res_blocks=0 gives one block per sublayer and no boundary differs. The cheapest next discriminator is a read, no card: Muon's per-parameter momentum buffer for that weight is in the checkpoint, and its norm separates 'small gradients' from everything else. This does NOT block the params-vs-data comparison: both legs carry the same architecture, so the effect is common to both arms.",
+   "guard_phrases": [
+    "layer 9 is frozen",
+    "layer 9's mixer.o does not train"
    ]
   }
  ]
