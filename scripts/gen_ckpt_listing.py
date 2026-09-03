@@ -94,16 +94,78 @@ def _pod_scan():
 
 
 def _read_keep_lines(path):
-    """The verbatim `# KEEP` lines of an existing listing, in order.
+    """The verbatim `# KEEP` and `# RETIRED` lines of an existing listing, in order.
 
     VERBATIM, not parsed and re-emitted. Every claim line carries its author, its timestamp and
     its stated reason, and a regeneration that rewrote them would be one session editing five
     others' claims. The names inside them are re-verified against the scan; the text is not
     touched.
+
+    RETIRED LINES COME TOO, and they are why this function returns both kinds. A KEEP whose files
+    are gone is retired IN PLACE by a following `# RETIRED` line rather than deleted, so the
+    listing keeps the record that a claim was made and did not hold -- which is the evidence for
+    §162. Carrying the KEEP without its RETIRED would make a dead claim read as live; dropping
+    both would erase the incident.
     """
     if not path or not os.path.isfile(path):
         return []
-    return [ln for ln in open(path, encoding="utf-8").read().splitlines() if ln.startswith("# KEEP")]
+    return [
+        ln
+        for ln in open(path, encoding="utf-8").read().splitlines()
+        if ln.startswith("# KEEP") or ln.startswith("# RETIRED")
+    ]
+
+
+def _retired_names(lines):
+    """Names retired by `# RETIRED` lines -- claims already known not to have held.
+
+    A RETIRED line is the author's own record that files a KEEP named are gone (e1, listing line
+    8: "THE CLAIM DID NOT HOLD ... verified by stat"). Presence-checking those names would refuse
+    every future regeneration over a fact the listing already states, so they are exempted.
+
+    SCOPED TO THE PRECEDING KEEP LINE'S NAMES, intersected with what the RETIRED line mentions --
+    and the intersection is the fix, not a nicety. A RETIRED line is PROSE, so parsing it as a
+    claim line fails both ways: measured against the real listing 2026-09-04, `_keep_names` on
+    line 8 returned `ckpt_p200m_4b_0902.pt.step1000` but MISSED `.pt.step1500` (it follows the
+    word "and", not a comma, so the shorthand-continuation rule never fires) and INVENTED two
+    unrelated names from later in the same sentence (`ckpt_p500m_20b_0902.pt.step2000` and a
+    milestone file, which the sentence mentions as survivors). Missing a name leaves the guard
+    refusing a retired claim -- exactly what e1 hit; inventing one silently un-protects a live
+    file.
+    So: a RETIRED line retires names from the KEEP line above it, and a name is retired when the
+    retirement text mentions it at all -- as a whole token or as a `.tail` continuation. Nothing
+    outside the preceding claim can be retired by prose, which bounds the damage a loosely-worded
+    retirement can do to exactly the claim it is about.
+    """
+    out, pending = set(), set()
+    for ln in lines:
+        if ln.startswith("# KEEP"):
+            pending = _keep_names([ln])
+            continue
+        if not ln.startswith("# RETIRED"):
+            continue
+        for name in pending:
+            # The full name, or the tail after the run's `.pt` -- ".pt.step1500", which is how a
+            # human writes the second file of a pair.
+            #
+            # THE TAIL TEST ALSO RETIRES THE PARSER'S IMPOSSIBLE VARIANTS, and that is required,
+            # not incidental. _parse_ckpt_listing emits both readings of a shorthand claim, so
+            # `.pt.step1500` yields the real `ckpt_X.pt.step1500` AND the doubled
+            # `ckpt_X.pt.pt.step1500`, which cannot exist on any disk. Retiring only the exact
+            # names left the doubled one in the guard, and the live run still refused -- measured
+            # twice, 17 variants first and then this single one. Both variants share the tail, so
+            # matching on the tail retires the pair together.
+            tail = name[name.index(".pt") :] if ".pt" in name else name
+            if name in ln or (len(tail) > 4 and tail in ln):
+                out.add(name)
+            elif ".pt.pt" in name:
+                # The doubled-`.pt` reading of a name whose real form is retired: collapse and
+                # re-test, so a retirement of the real file covers its impossible twin.
+                real = name.replace(".pt.pt", ".pt", 1)
+                rtail = real[real.index(".pt") :] if ".pt" in real else real
+                if real in ln or (len(rtail) > 4 and rtail in ln):
+                    out.add(name)
+    return out
 
 
 def _old_sections(path):
@@ -153,7 +215,13 @@ def build(scan, keep_lines, old, now=None):
     now = now or time.strftime("%Y-%m-%d %H:%M", time.gmtime())
     present = {n for _m, _s, n in scan}
     problems = []
-    claimed = _keep_names(keep_lines)
+    claimed = _keep_names([ln for ln in keep_lines if not ln.startswith("# RETIRED")])
+    # RETIRED LINES ARE EXCLUDED FROM `claimed` as well, not only from the presence guard.
+    # `claimed` decides which files are held back from the candidate sections, so leaving a retired
+    # name in it would protect a file from listing on the strength of a claim its own author
+    # withdrew. The files in question are gone, so today it changes nothing visible -- but a name
+    # that reappears (a rerun writing the same .stepN) would silently inherit a dead claim's
+    # protection.
     # PER CLAIM LINE, NOT PER GENERATED NAME, and the difference is the whole correctness of this
     # guard. _parse_ckpt_listing deliberately emits BOTH readings of a shorthand continuation
     # (`X.pt.step2000, .pt.step2500` yields the bare-core and the `.pt`-boundary attachment), and
@@ -167,8 +235,21 @@ def build(scan, keep_lines, old, now=None):
     # So: a claim LINE is satisfied when at least one name it yields is present. That still
     # catches the case this exists for -- a claim protecting a file that is genuinely gone yields
     # NO present name -- while the parser's spare readings cost nothing, exactly as it intended.
+    #
+    # A RETIRED CLAIM IS NOT CHECKED FOR PRESENCE (e1 via 6e, 2026-09-04). `# RETIRED` is the
+    # author's own record that the files a KEEP named are gone -- listing line 8 says "THE CLAIM
+    # DID NOT HOLD ... verified by stat" about line 7's two files. Presence-checking those names
+    # refuses every future regeneration over a fact the listing already states, which is what e1
+    # hit: --dry blocked on a claim the file itself marks dead. The retirement is carried forward
+    # as history (see _read_keep_lines) and exempted from the guard.
+    retired = _retired_names(keep_lines)
     for line in keep_lines:
+        if line.startswith("# RETIRED"):
+            continue
         names = _keep_names([line])
+        # SET DIFFERENCE, so a retirement naming two of a claim's three files retires exactly
+        # those two and the third is still guarded. A line-level skip would drop the whole claim.
+        names -= retired
         if names and not (names & present):
             problems.append(f"KEEP line protects nothing present: {sorted(names)} -- {line[:110]}")
     total = sum(b for _m, b, _n in scan)
@@ -182,7 +263,13 @@ def build(scan, keep_lines, old, now=None):
     # inheriting a deadline it was never given.
     buckets = {"A": [], "B": [], "C": []}
     for mtime, size, name in scan:
-        if name in claimed:
+        # `claimed - retired`, not `claimed`. A retired claim protects nothing, so a file that
+        # REAPPEARS under a retired name (a rerun writing the same .stepN) must be listed rather
+        # than shielded by a claim its own author withdrew. My first version subtracted retired
+        # names only in the presence guard and left them in `claimed`, and the selftest case for
+        # the reappearing name caught it -- the comment there predicted the defect while the code
+        # still had it, which is why the case exists rather than the comment.
+        if name in claimed and name not in retired:
             continue
         if name in old:
             _om, sec, deadline = old[name]
@@ -326,6 +413,67 @@ def _selftest():
         )
     finally:
         globals()["POD"] = saved
+
+    # RETIRED. e1 hit this in production: --dry refused on the listing's line 7 KEEP although line
+    # 8 RETIRES it with the files verified gone by stat, so a fact the file itself states blocked
+    # every regeneration.
+    retired_lines = [
+        "# KEEP (claim z 15:16Z): ckpt_gone_a.pt, ckpt_gone_b.pt -- only source of some fact",
+        "# RETIRED (z 20:13Z): THE CLAIM DID NOT HOLD. ckpt_gone_a.pt and ckpt_gone_b.pt are GONE "
+        "from the pod, verified by stat",
+    ]
+    _t4, problems4 = build([("2026-09-03_21:55", 1, "ckpt_other.pt")], retired_lines, {})
+    case(not problems4, f"a RETIRED claim does not block generation ({problems4})")
+    _t4b, _p4b = build([("2026-09-03_21:55", 1, "ckpt_other.pt")], retired_lines, {})
+    case(
+        "# RETIRED" in _t4b and "# KEEP (claim z" in _t4b,
+        "and both lines are carried forward -- the record that a claim did not hold is the "
+        "evidence for §162, so neither half is dropped",
+    )
+    # A RETIRED NAME IS NOT PROTECTED FROM LISTING EITHER. Its own author withdrew the claim, so a
+    # file that reappears under that name (a rerun writing the same .stepN) must not inherit dead
+    # protection.
+    _t4c, _p4c = build([("2026-09-03_21:55", 1, "ckpt_gone_a.pt")], retired_lines, {})
+    case(
+        "ckpt_gone_a.pt" in _t4c.replace(retired_lines[0], "").replace(retired_lines[1], ""),
+        "a retired name that REAPPEARS is listed as a candidate, not shielded by the dead claim",
+    )
+    # PARTIAL RETIREMENT: retiring two of a claim's three files must leave the third guarded.
+    # Without this, `if line.startswith("# RETIRED"): continue` at claim level would read as
+    # correct while silently exempting files nobody retired.
+    partial = [
+        "# KEEP (claim z): ckpt_p_a.pt, ckpt_p_b.pt, ckpt_p_c.pt -- three files",
+        "# RETIRED (z): ckpt_p_a.pt and ckpt_p_b.pt are GONE",
+    ]
+    _t5, problems5 = build([("2026-09-03_21:55", 1, "ckpt_unrelated.pt")], partial, {})
+    case(
+        bool(problems5) and any("ckpt_p_c.pt" in x for x in problems5),
+        f"retiring two of three files leaves the THIRD guarded ({problems5})",
+    )
+    _t6, problems6 = build([("2026-09-03_21:55", 1, "ckpt_p_c.pt")], partial, {})
+    case(not problems6, f"and the same claim passes once that third file is present ({problems6})")
+
+    # THE REAL LISTING MUST GENERATE (6e's requirement). Uses the live KEEP/RETIRED lines and a
+    # scan synthesised from the files those lines name as PRESENT, so the case tests the generator
+    # against the real claim text rather than a fixture's.
+    real = os.path.join(ROOT, "runs", "pod_ckpt_candidates_2026-09-02.txt")
+    if os.path.isfile(real):
+        real_lines = _read_keep_lines(real)
+        live_names = _keep_names([x for x in real_lines if not x.startswith("# RETIRED")])
+        live_names -= _retired_names(real_lines)
+        fake_scan = sorted((("2026-09-03_12:00", 1, nm) for nm in live_names))
+        _t7, problems7 = build(fake_scan, real_lines, _old_sections(real))
+        case(
+            not problems7,
+            f"the REAL listing's claim lines generate when their live files are present "
+            f"({len(problems7)} problem(s): {problems7[:1]})",
+        )
+        case(
+            any(x.startswith("# RETIRED") for x in real_lines),
+            f"...and the real listing really does carry a RETIRED line, without which this case "
+            f"tests nothing ({sum(1 for x in real_lines if x.startswith('# RETIRED'))} found)",
+        )
+
     print(f"gen_ckpt_listing selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
