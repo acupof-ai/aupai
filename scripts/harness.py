@@ -4456,6 +4456,58 @@ FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
 CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
 
 
+def _cat_file_exists(root, specs):
+    """{spec: True/False} for many `git cat-file` specs in ONE subprocess.
+
+    `git cat-file --batch-check` reads specs on stdin and prints one line per line of
+    input, in order, `<sha> <type> <size>` for a hit and `<spec> missing` for a miss.
+    Order and one-line-per-input are what make the mapping safe, and both are asserted
+    on the real repository in _selftest_batched_git_probes.
+
+    WHY THIS EXISTS: the per-spec form was one subprocess per probe, and the probe count
+    grows with the register. Measured on this repo 2026-09-03, 86 closed tasks: 86
+    `rev-parse` calls cost 1.43 s of tasks_closed_by_commit's 2.15 s, and one
+    `--batch-check` for the same 86 costs 0.023 s -- 62x. The 5 s deadline was not the
+    defect; a cost that grows one subprocess per row is, and raising the deadline only
+    moves the date the check goes permanently red (98 reported exactly that today, two
+    consecutive timeouts on this check plus facts_well_formed).
+
+    Returns every spec as False when git cannot answer at all (no .git, as on the pod),
+    which is what both callers did before."""
+    out = dict.fromkeys(specs, False)
+    if not specs:
+        return out
+    try:
+        r = subprocess.run(
+            ["git", "-C", root, "cat-file", "--batch-check"],
+            input="".join(s + "\n" for s in specs),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return out
+    # Same split as _resolve_shas: rc != 0 is git declining to answer (not a repository),
+    # so every spec stays False -- what `cat-file -e` returned there. A truncated
+    # SUCCESSFUL answer is the different, louder case below.
+    if r.returncode != 0:
+        return out
+    lines = r.stdout.split("\n")
+    # A SHORT OUTPUT MUST NOT PASS SILENTLY. zip stops at the shorter side, so if git
+    # printed fewer lines than specs, every unmatched spec would keep its `False` default
+    # -- which reads as "this rev does not hold the path", i.e. a fact citation refused for
+    # a reason that never happened. One line per input line is the property the whole
+    # mapping rests on, so it is asserted rather than assumed.
+    if len(lines) < len(specs):
+        raise RuntimeError(
+            f"git cat-file --batch-check returned {len(lines)} line(s) for {len(specs)} "
+            f"spec(s) -- the one-line-per-input contract this mapping needs does not hold"
+        )
+    for spec, line in zip(specs, lines[: len(specs)], strict=True):
+        out[spec] = bool(line) and not line.endswith(" missing")
+    return out
+
+
 def _rev_has_path(root, rev, path):
     """Does `path` exist in the tree at `rev`? False when git cannot answer.
 
@@ -4463,53 +4515,148 @@ def _rev_has_path(root, rev, path):
     the syntax without checking would turn the retirement form into a way to make any
     dead citation pass -- which is the shape this repo keeps paying for (metadata is a
     claim, not a fact about content). False on the pod, where there is no .git; the
-    caller only reaches this on a full checkout."""
-    try:
-        r = subprocess.run(["git", "cat-file", "-e", f"{rev}:{path}"],
-                           cwd=root, capture_output=True, timeout=10)
-        return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    caller only reaches this on a full checkout.
+
+    One spec at a time. check_facts_well_formed batches instead (_cat_file_exists);
+    this stays for the single-probe callers and for the selftest that pins the two
+    against each other."""
+    return _cat_file_exists(root, [f"{rev}:{path}"])[f"{rev}:{path}"]
 
 
-def _is_gitignored(path, root):
-    """True if path is covered by .gitignore. Tries `git check-ignore` (dev/CI);
-    on the pod (no .git) falls back to a minimal .gitignore reader. The fallback
-    handles this repo's patterns (directory globs, file globs); it skips negation,
-    which this repo uses only for !data/corpus/primary/ (no fact source points there).
+def _gitignored_set(paths, root):
+    """{path: True/False} for many paths in ONE `git check-ignore` subprocess.
 
-    Tries both path and path+/ so a directory pattern (data/corpus/*/) matches a
-    source written without a trailing slash (data/corpus/web_hq)."""
-    import subprocess
+    Same reasoning as _cat_file_exists: the per-path form was one subprocess per fact
+    source, and 50 of them cost 0.84 s of check_facts_well_formed's 1.49 s on this repo
+    (measured 2026-09-03); one batched call over the same 50 costs 0.017 s.
 
+    `--stdin --verbose --non-matching` is the combination that yields one output line per
+    input line whether or not it matched -- without --non-matching, non-ignored paths
+    print nothing and the output can no longer be zipped to the input. Each line is
+    `<source>:<lineno>:<pattern>\\t<path>`, and `::\\t<path>` for a non-match, so the
+    ignored test is "the prefix before the tab is not `::`".
+
+    Falls back to the same minimal .gitignore reader as the single-path form when git
+    cannot answer (rc 128 on the pod, no .git). Each path is probed as itself AND with a
+    trailing slash, so a directory pattern (data/corpus/*/) matches a source written
+    without one -- the behaviour the single-path form had, kept because dropping it made
+    every gitignored pod-only artifact a fact cites read as rot."""
+    paths = list(dict.fromkeys(paths))
+    if not paths:
+        return {}
+    probes = [p for path in paths for p in (path, path + "/")]
+    hit = {}
     try:
         r = subprocess.run(
-            ["git", "check-ignore", path, path + "/"], capture_output=True, text=True, cwd=root, timeout=5
+            ["git", "-C", root, "check-ignore", "--stdin", "--verbose", "--non-matching"],
+            input="".join(p + "\n" for p in probes),
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
-        if r.returncode == 0:
-            return True
-        if r.returncode == 1:
-            return False
+        if r.returncode in (0, 1):
+            lines = r.stdout.split("\n")
+            # A short output falls through to the reader rather than zipping against it:
+            # the reader answers the same question and its disagreement with git is
+            # bounded and asserted, while a truncated zip silently answers "not ignored"
+            # for every probe past the end.
+            if len(lines) >= len(probes):
+                for probe, line in zip(probes, lines[: len(probes)], strict=True):
+                    hit[probe] = not line.startswith("::\t")
+                return {path: hit.get(path, False) or hit.get(path + "/", False) for path in paths}
         # 128: git unavailable or not a repo (pod) -> fall through to the reader
     except (OSError, subprocess.SubprocessError):
         pass
+    return {path: _gitignore_reader(path, root) for path in paths}
+
+
+def _gitignore_rx(pat):
+    """One .gitignore pattern -> a compiled regex over a repo-relative path.
+
+    fnmatch is the wrong tool and was the second half of the reader's defect: its `*`
+    crosses `/`, git's does not. `data/*.jsonl` therefore matched
+    `data/eval/math_test_500.jsonl` under fnmatch while git says it does not -- measured
+    2026-09-03 in the agreement sweep below.
+
+    Translated here rather than pulled from a library: `pathspec` is not a dependency of
+    this repo and the pod installs nothing at check time."""
+    anchored = "/" in pat.rstrip("/")
+    body = pat.strip("/") if pat.startswith("/") else pat.rstrip("/")
+    out, i = [], 0
+    while i < len(body):
+        c = body[i]
+        if body.startswith("**", i):
+            out.append(".*")
+            i += 2
+            if body.startswith("/", i):
+                i += 1
+        elif c == "*":
+            out.append("[^/]*")
+            i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    core = "".join(out)
+    # Unanchored: match at any depth. Anchored: from the repo root.
+    prefix = r"(?:.*/)?" if not anchored else ""
+    # Trailing `(/.*)?$` so an ignored directory also ignores everything beneath it.
+    return re.compile(rf"^{prefix}{core}(?:/.*)?$")
+
+
+def _gitignore_reader(path, root):
+    """The pod fallback: read .gitignore directly, when `git check-ignore` cannot answer.
+
+    TWO DEFECTS, both found by the selftest that pins this against git rather than by
+    reading it, and both invisible where they mattered -- this code only runs where git
+    cannot answer, which is the pod, so a divergence FAILs a check nobody can reproduce
+    on a laptop. The comment above check_facts_well_formed's broken world already
+    recorded the first hazard ("it missed data/corpus/math/") and the reader was never
+    fixed.
+
+      1. A directory pattern was compared LITERALLY after its slash was stripped
+         (`path == pat` or `path.startswith(pat + "/")`), so `data/corpus/*/` -- the
+         pattern covering every corpus domain -- matched nothing: `data/corpus/web_hq`
+         is neither equal to `data/corpus/*` nor under `data/corpus/*/`.
+      2. fnmatch's `*` crosses `/` and git's does not, so `data/*.jsonl` matched
+         `data/eval/math_test_500.jsonl`. Fixed in _gitignore_rx.
+
+    Negation is honoured now (last match wins, as git does): once prefix matching worked,
+    `!data/corpus/primary/` became reachable and the old "skips negation, no fact source
+    points there" excuse stopped holding -- data/corpus/primary is exactly such a source.
+
+    KNOWN, MEASURED DIVERGENCE from `git check-ignore`, and it is git's behaviour rather
+    than a defect here: git consults the index, so a path with a TRACKED file under it
+    reads as not-ignored (data/synthetic/ holds one tracked .jsonl; `check-ignore` says
+    no, `check-ignore --no-index` says yes). This reader answers the question .gitignore
+    asks and cannot see an index. The selftest asserts agreement on paths with no tracked
+    content and records this one exception by name."""
     gi = os.path.join(root, ".gitignore")
     if not os.path.exists(gi):
         return False
-    import fnmatch
-
+    rel = path.rstrip("/")
+    verdict = False
     for line in open(gi, encoding="utf-8"):
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("!"):
+        line = line.rstrip("\n").strip()
+        if not line or line.startswith("#"):
             continue
-        dir_only = line.endswith("/")
-        pat = line[:-1] if dir_only else line
-        if dir_only:
-            if path == pat or path.startswith(pat + "/"):
-                return True
-        elif fnmatch.fnmatch(path, pat) or fnmatch.fnmatch(path + "/", pat):
-            return True
-    return False
+        neg = line.startswith("!")
+        pat = line[1:] if neg else line
+        if not pat:
+            continue
+        if _gitignore_rx(pat).match(rel):
+            verdict = not neg
+    return verdict
+
+
+def _is_gitignored(path, root):
+    """True if path is covered by .gitignore. One path at a time; batching callers use
+    _gitignored_set. Kept so the selftest can pin the two implementations against each
+    other on the real .gitignore -- a batched form that disagrees with the single form
+    is the defect the batching would otherwise introduce silently."""
+    return _gitignored_set([path], root)[path]
 
 
 #: Ledgers that merge by union. Every one must be one JSON object per physical line.
@@ -4626,12 +4773,15 @@ def check_tasks_closed_by_commit(root):
     if not scope:
         return SKIP, f"no task closed since the rule took effect ({TASK_COMMIT_FROM})"
     bad = []
+    # One subprocess for every sha, not one each: see _resolve_shas.
+    resolved = _resolve_shas(root, [t.get("commit") for t in scope if t.get("commit")])
     for t in scope:
         sha = t.get("commit")
         if not sha:
             bad.append(f"{t['id']}: closed with no commit")
             continue
-        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"], t.get("closed"))
+        why = _commit_delivers(sha, t.get("evidence") or "", root, t["id"], t.get("closed"),
+                               resolved=resolved)
         if why:
             bad.append(f"{t['id']}: {why}")
     if bad:
@@ -4901,6 +5051,7 @@ def check_facts_well_formed(root):
     source_baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
     errors, ids, entries = [], {}, []
     baselined = []
+    pending = []  # (tag, path, rev-or-None) for every source path absent from the tree
     for p in files:
         fn = os.path.basename(p)
         try:
@@ -4948,16 +5099,28 @@ def check_facts_well_formed(root):
                     # scripts/ would have failed. Verify the rev, do not just accept the
                     # syntax: a sha that names nothing is a dead citation wearing the
                     # durable form.
+                    # COLLECTED, NOT PROBED HERE. Every git probe in this loop was one
+                    # subprocess, and the loop runs once per fact source: 34 cat-file plus
+                    # 50 check-ignore calls, 0.84 s of the check's 1.49 s, and the count
+                    # grows with facts/. Two batched calls after the loop cost 0.04 s.
                     rev = re.search(re.escape(m) + r"@([0-9a-f]{7,40})\b", src)
-                    if rev and _rev_has_path(root, rev.group(1), m):
-                        continue
-                    if _is_gitignored(m, root):
-                        continue  # pod-only artifact; this machine doesn't have it
-                    if m in source_baseline:
-                        baselined.append(m)
-                        continue  # registered debt; gaps reports it
-                    errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
+                    pending.append((tag, m, rev.group(1) if rev else None))
             entries.append((fn, e))
+    # Resolve every collected candidate in two subprocesses, then apply the SAME order of
+    # precedence the loop used: rev holds the path -> gitignored -> baselined -> error.
+    if pending:
+        rev_specs = [f"{r}:{m}" for _tag, m, r in pending if r]
+        rev_ok = _cat_file_exists(root, rev_specs) if rev_specs else {}
+        ignored = _gitignored_set([m for _tag, m, _r in pending], root)
+        for tag, m, rev in pending:
+            if rev and rev_ok.get(f"{rev}:{m}"):
+                continue
+            if ignored.get(m):
+                continue  # pod-only artifact; this machine doesn't have it
+            if m in source_baseline:
+                baselined.append(m)
+                continue  # registered debt; gaps reports it
+            errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
     agents = os.path.join(root, "AGENTS.md")
     prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
     for fn, e in entries:
@@ -6578,19 +6741,76 @@ def _main_touched(root):
     return _MAIN_TOUCHED[root]
 
 
-def _commit_delivers(sha, evidence, root=None, tid=None, closed=None):
+def _resolve_shas(root, shas):
+    """{sha as given: full sha or None} in ONE subprocess (_cat_file_exists' sibling).
+
+    _commit_delivers ran `rev-parse --verify` per task: 86 closed tasks were 86
+    subprocesses and 1.43 s of the check's 2.15 s, measured 2026-09-03, and the count
+    grows by one every time a task closes. `cat-file --batch-check` resolves all 86 in
+    0.023 s. Its output is one line per input line, in order -- `<full sha> commit <n>`
+    for a hit, `<spec> missing` otherwise.
+
+    A short sha resolves to its full form here, which is what the caller needs to index
+    _main_touched. Verified on the real repo in _selftest_batched_git_probes, including
+    that a duplicate input yields a duplicate output line, so zip stays aligned."""
+    out = dict.fromkeys(shas, None)
+    todo = [s for s in dict.fromkeys(shas) if s]
+    if not todo:
+        return out
+    try:
+        r = subprocess.run(
+            ["git", "-C", root, "cat-file", "--batch-check"],
+            input="".join(f"{s}^{{commit}}\n" for s in todo),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return out
+    # rc != 0 is git declining to answer at all -- not a repository (the broken worlds and
+    # the pod), a bad object database. Every spec then reads as unresolved, which is
+    # exactly what the per-sha `rev-parse --verify -q` did, so the callers' behaviour is
+    # unchanged. Distinguished from a TRUNCATED successful answer below, because those two
+    # want opposite handling and one empty line looks like both: caught by the full
+    # --selftest, where a temp repo with no .git made the guard raise instead of report.
+    if r.returncode != 0:
+        return out
+    lines = r.stdout.split("\n")
+    # Same contract as _cat_file_exists, and the same reason to assert it: an unresolved
+    # sha here becomes "is not a commit in this repo", so a truncated output would refuse
+    # a real delivery.
+    if len(lines) < len(todo):
+        raise RuntimeError(
+            f"git cat-file --batch-check returned {len(lines)} line(s) for {len(todo)} "
+            f"sha(s) -- one line per input line does not hold"
+        )
+    for s, line in zip(todo, lines[: len(todo)], strict=True):
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == "commit":
+            out[s] = parts[0]
+    return out
+
+
+def _commit_delivers(sha, evidence, root=None, tid=None, closed=None, resolved=None):
     """Empty string if sha reaches main and its diff touches a path named in evidence.
 
     The register's evidence field was free text: a path that never existed closed a
     task, and the register read as delivered. A commit hash is the one claim the repo
     can refute by itself -- it either resolves, reaches main, and moved that file, or
     it does not (user ruling 2026-09-01: the conversation is notification, the commit
-    is the truth)."""
+    is the truth).
+
+    `resolved` is an optional {sha: full-or-None} from _resolve_shas, so a caller with
+    many shas pays one subprocess instead of one each. Absent, this resolves its own."""
     root = root or ROOT
     g = ["git", "-C", root]
     main_log = _main_touched(root)
-    full = subprocess.run(g + ["rev-parse", "--verify", "-q", f"{sha}^{{commit}}"],
-                          capture_output=True, text=True).stdout.strip()
+    if resolved is not None and sha in resolved:
+        full = resolved[sha] or ""
+    else:
+        full = subprocess.run(
+            g + ["rev-parse", "--verify", "-q", f"{sha}^{{commit}}"], capture_output=True, text=True
+        ).stdout.strip()
     if not full:
         return f"{sha} is not a commit in this repo"
     if full not in main_log:
@@ -9659,6 +9879,124 @@ def _selftest_merge_reverted_content():
           "deliberate deletion not flagged")
 
 
+def _selftest_batched_git_probes():
+    """The three batched git probes agree with the per-item form they replaced, on the
+    REAL repository, and the properties the zip depends on hold.
+
+    Batching a probe is a rewrite of a criterion, so the risk is not that it is slow --
+    it is that it silently answers a different question. Two of the three properties the
+    mapping rests on are undocumented behaviour of `git cat-file --batch-check` and
+    `git check-ignore --stdin`: one output line per input line, in input order, INCLUDING
+    for a repeated input and for a non-match. Asserted, not assumed.
+
+    A vacuous version of this test is easy to write and worthless: if the candidate list
+    were empty, or the two forms were called on inputs where every answer is the same,
+    it would pass with the batched form completely broken. So the worlds below include a
+    known hit AND a known miss on each probe, and assert the two answers differ."""
+    # 1. _cat_file_exists / _rev_has_path -- a live path and one that never existed.
+    head = subprocess.run(
+        ["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    if not head:
+        print("  batched git probes: SKIP (not a git checkout)")
+        return
+    live, dead = "scripts/harness.py", "scripts/definitely_not_a_file_xyz.py"
+    batched = _cat_file_exists(ROOT, [f"{head}:{live}", f"{head}:{dead}"])
+    assert batched[f"{head}:{live}"] is True, "a live path read as missing at HEAD"
+    assert batched[f"{head}:{dead}"] is False, "a nonexistent path read as present"
+    assert _rev_has_path(ROOT, head, live) is True
+    assert _rev_has_path(ROOT, head, dead) is False
+    # A repeated spec must produce a repeated line, or every later spec shifts by one.
+    rep = _cat_file_exists(ROOT, [f"{head}:{live}", f"{head}:{dead}", f"{head}:{live}"])
+    assert rep[f"{head}:{live}"] is True and rep[f"{head}:{dead}"] is False, rep
+
+    # 2. _gitignored_set / _is_gitignored -- a gitignored path and a tracked one. The
+    # batched form must agree with the single form on BOTH, and they must differ from
+    # each other, so an implementation that returns one constant fails here.
+    ig, tracked = "data/corpus/web_hq", "scripts/harness.py"
+    s = _gitignored_set([ig, tracked], ROOT)
+    assert s[ig] is True, f"{ig} is gitignored but the batched form said no"
+    assert s[tracked] is False, f"{tracked} is tracked but the batched form said ignored"
+    assert _is_gitignored(ig, ROOT) is True and _is_gitignored(tracked, ROOT) is False
+
+    # The READER FALLBACK must agree with git on the same population, because it is the
+    # only implementation that runs on the pod -- a divergence there FAILs a check nobody
+    # can reproduce on a laptop, and two such divergences were live until this assertion
+    # was written (a literal compare that could not match `data/corpus/*/`, and fnmatch's
+    # `*` crossing `/` so `data/*.jsonl` swallowed `data/eval/math_test_500.jsonl`).
+    #
+    # Swept over EVERY fact source path plus controls for each pattern form, not over a
+    # hand-picked pair: a pair proves the two agree somewhere, which is what the broken
+    # version also did.
+    import glob as _glob
+
+    probe = set()
+    for f in _glob.glob(os.path.join(ROOT, "facts", "*.json")):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                for e in json.load(fh)["facts"]:
+                    probe.update(FACT_SOURCE_PATH.findall(str(e.get("source", ""))))
+        except Exception:
+            continue
+    probe.update(
+        {
+            "scripts/harness.py",
+            "data/corpus/web_hq",
+            "data/corpus/primary",
+            "data/corpus/primary/x.jsonl",
+            "runs/tasks.jsonl",
+            "__pycache__/x.pyc",
+            "x.pyc",
+            "ckpt_foo.pt",
+            "runs/trace_x.json",
+            "data/math/a.jsonl",
+            "data/sft/a.parquet",
+            "data/eval/math_test_500.jsonl",
+            "data/eval/preds_l1.jsonl",
+            "data/deep/nested/x.pt",
+        }
+    )
+    # data/synthetic/ is the ONE known exception and it is git's behaviour, not a defect
+    # here: git consults the index, so a directory holding a tracked file reads as
+    # not-ignored, while this reader answers only what .gitignore says.
+    # `check-ignore --no-index` agrees with the reader. Named, so a NEW divergence
+    # cannot hide behind it.
+    INDEX_EXCEPTIONS = {"data/synthetic/", "data/synthetic"}
+    git_says = _gitignored_set(sorted(probe), ROOT)
+    disagree = [
+        p for p in sorted(probe) if p not in INDEX_EXCEPTIONS and git_says[p] != _gitignore_reader(p, ROOT)
+    ]
+    assert not disagree, (
+        f"the .gitignore reader disagrees with git on {len(disagree)} of {len(probe)} "
+        f"path(s): {disagree[:5]} -- the pod runs the reader, so this is a FAIL only "
+        f"reproducible there"
+    )
+    # And the sweep must not be vacuous: it has to contain both answers.
+    assert any(git_says.values()) and not all(git_says.values()), (
+        "the agreement sweep is one-sided, so it would pass against a constant"
+    )
+    assert _gitignore_reader("data/corpus/web_hq", ROOT) is True
+    assert _gitignore_reader("data/eval/math_test_500.jsonl", ROOT) is False, (
+        "fnmatch's * crossing / is back: data/*.jsonl must not match data/eval/..."
+    )
+    assert _gitignore_reader("data/corpus/primary", ROOT) is False, (
+        "!data/corpus/primary/ negation is not honoured"
+    )
+
+    # 3. _resolve_shas -- a short sha resolves to full, a non-sha resolves to None.
+    short = head[:8]
+    got = _resolve_shas(ROOT, [short, "notacommit", short])
+    assert got[short] == head, f"a short sha did not resolve to full: {got[short]!r}"
+    assert got["notacommit"] is None, "a non-sha resolved to something"
+    # Empty input must not spawn a subprocess or raise.
+    assert _resolve_shas(ROOT, []) == {} and _cat_file_exists(ROOT, []) == {}
+    assert _gitignored_set([], ROOT) == {}
+    print(
+        "  batched git probes: cat-file/check-ignore/resolve agree with the per-item "
+        "form on a hit and a miss each, order survives a repeat, reader matches git"
+    )
+
+
 def _selftest_commit_delivers_fact_ref():
     """_commit_delivers understands facts/<f>.json#<id>: the fragment is stripped for the
     touched-file comparison and the id must exist in that file at HEAD (44-26).
@@ -10674,6 +11012,7 @@ def _demo():
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
+    _selftest_batched_git_probes()
     _selftest_review_present_legacy()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
