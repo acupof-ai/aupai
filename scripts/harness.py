@@ -183,7 +183,7 @@ _RULE_CHECKS = {
     "Outbound network: curl -4, always": "curl_ipv4",
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
-    "A commit that touches a file in data/pod_head_manifest.txt": "pod_drift",
+    "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
     "Corpus directories named by any ladder mix": "ladder_config_frozen",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
@@ -270,9 +270,14 @@ _MANUAL_RULES = {
     "Only a refusing: line means nothing shipped":
         "how a human reads pod_push's stdout. The transcript is not an artifact, so nothing "
         "records whether the reader's filter could see a refusal at all",
-    "pod_drift.py --write regenerates from HEAD, --write-index from the index":
-        "which flag a session typed is not recoverable from the manifest it produced -- both "
-        "write the same file, and a manifest built from the wrong side is well-formed",
+    "data/pod_head_manifest.txt is NOT tracked. scripts/pod_push.sh generates it":
+        "pod_drift gates the pod side and .gitignore stops the file being committed by "
+        "accident, so the tracking half IS enforced. What stays manual is the push ORDER -- "
+        "that the manifest ships AFTER the files, so an interrupted push leaves an old "
+        "manifest that reads as drift rather than a new one vouching for files that never "
+        "landed. pod_drift's selftest asserts that property against a pod-shaped fixture in "
+        "both directions, but whether the real pod_push.sh ran in that order is not "
+        "recoverable from any artifact it leaves behind",
     "The index must equal HEAD before you merge: commit your paths, or `git reset`":
         "which order a session ran merge and add in is not recoverable from the repo. What "
         "IS checked is the consequence: a wip commit lands on the branch where dirty_aged "
