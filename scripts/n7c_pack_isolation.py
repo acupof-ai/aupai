@@ -84,27 +84,38 @@ def main():
             if len(docs) >= N_TASKS:
                 break
 
-    # CAPTURE EVERY BLOCK'S OUTPUT. Wrapping forward rather than registering a hook: a hook does not
-    # fire inside a grad_ckpt recompute (memory/hooks-dont-fire-in-recompute), and while this script
-    # runs under no_grad, wrapping is the form that stays correct if it is ever reused under one.
+    # CAPTURE EACH MIXER'S OUTPUT, NOT Block.forward. The first version of this probe wrapped
+    # Block.forward and printed "ALL BLOCKS AGREE" for both packings -- a VACUOUS PASS: this
+    # checkpoint has attn_res=True (verified on the pod: cfg attn_res True, ar_block_ends 1..24), and
+    # under AttnRes _body iterates `b.sublayers(cu)` and calls the sublayer callables directly
+    # (model.py:502-511), so Block.forward is never invoked. The capture dict stayed empty, the loop
+    # over it ran zero times, and "no divergence found" printed because nothing was compared. Same
+    # shape as memory/crash-is-not-a-refusal: an empty collection produced a clean-looking result.
+    # The mixer is what the isolation question is about anyway, since cu is its argument.
     caught = {}
 
-    def wrap(i, b):
-        inner = b.forward
+    def wrap(key, mod):
+        inner = mod.forward
 
         def fwd(*a, **k):
             out = inner(*a, **k)
-            caught[i] = (out[0] if isinstance(out, tuple) else out).detach().float()
+            caught[key] = (out[0] if isinstance(out, tuple) else out).detach().float()
             return out
-        b.forward = fwd
+        mod.forward = fwd
         return inner
 
-    originals = [wrap(i, b) for i, b in enumerate(mdl.blocks)]
+    originals = [(b.mixer, wrap(i, b.mixer)) for i, b in enumerate(mdl.blocks)]
 
     def states(ids_row, cu):
         caught.clear()
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             mdl(ids_row, cu=cu)
+        # AN EMPTY CAPTURE IS A BROKEN PROBE, NOT A PASSING TEST. Asserted because the silent
+        # version of this already reported a false all-clear once.
+        if len(caught) != len(mdl.blocks):
+            raise SystemExit(f"REFUSING: captured {len(caught)} of {len(mdl.blocks)} mixers -- the "
+                             f"wrap is not on the path the forward takes, so any 'agree' verdict "
+                             f"from this probe would be vacuous.")
         return {i: v[0].clone() for i, v in caught.items()}
 
     def pack(sel):
@@ -224,8 +235,8 @@ def main():
               "now excluded and the next step is to reproduce that gap under this probe rather "
               "than reason about it.")
 
-    for i, b in enumerate(mdl.blocks):
-        b.forward = originals[i]
+    for mod, inner in originals:
+        mod.forward = inner
     return 0
 
 
