@@ -156,7 +156,47 @@ def main():
         fails.append("a per-class n/bytes mismatch between arms does not refuse; after the "
                      "intersection it is unreachable, so it must assert rather than warn")
 
-    # 6. THE PASS MUST BE RECONSTRUCTED, i.e. the script refuses when per-item does not sum to the
+    # 6b. THE SCORER'S ARGUMENTS MUST BE THE RIGHT KINDS, checked without a GPU. `pad_id` goes
+    #     straight into `torch.tensor(xs, dtype=torch.long)`, so a non-int kills the run AFTER the
+    #     model is loaded and 10,421 items are tokenized -- which is exactly what happened:
+    #     load_ours returns (model, ck.get("vocab_id")), a vocab identifier STRING, and
+    #     load_control returns (model, None). Destructuring either as `model, pad` and passing it
+    #     on died with "'str' object cannot be interpreted as an integer". A two-tuple's second
+    #     slot is not labelled by what the caller needs it to be.
+    if fn is not None:
+        # Written as a plain loop. The comprehension version of this -- `[... for n in walk if
+        # cond for t in n.targets for e in t.elts if ...]` -- read as if the guard applied to the
+        # whole chain and reported 0 FAIL on the very bug it was written for; the same walk in a
+        # loop finds `pad_id` immediately. A check whose own logic is subtle enough to be wrong
+        # silently is worth less than a longer one that is obviously right.
+        loader_pad = []
+        for n in ast.walk(fn):
+            if not (isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)):
+                continue
+            f = n.value.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if name not in ("load_ours", "load_control"):
+                continue
+            for t in n.targets:
+                if not isinstance(t, ast.Tuple):
+                    continue
+                for e in t.elts:
+                    if isinstance(e, ast.Name) and "pad" in e.id.lower():
+                        loader_pad.append((e.id, n.lineno))
+        if loader_pad:
+            nm, ln = loader_pad[0]
+            fails.append(f"line {ln} takes pad from a loader's return tuple (`{nm}`) -- load_ours "
+                         f"returns a vocab-id string there and load_control returns None; neither "
+                         f"is a pad id, and score() puts it into a long tensor")
+
+        if "not isinstance(pad_id, int)" not in src:
+            fails.append("nothing asserts pad_id is an int before score() -- a string there "
+                         "crashes only after the model is loaded and every item tokenized")
+        for want in ("token_to_id", "eos_token_id"):
+            if want not in src:
+                fails.append(f"pad_id is not derived via {want}, which is how eval_heldout's own "
+                             f"main() gets it (lines 563-569)")
+
     #    total it splits. Grepped rather than executed because the alternative needs two GPU
     #    models; a refusal that exists only in intent is not a refusal.
     if "the split is not a split of this number" not in src:
