@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The three gates N7 Stage C must pass on the pod BEFORE either arm trains.
+"""The gates N7 Stage C must pass on the pod BEFORE either arm trains.
 
 Order matters and is not cosmetic. Gate A comes first because B and C are uninterpretable if
 the mask_mod is not a correct causal mask to begin with: a callback that silently dropped
@@ -10,6 +10,9 @@ would tell me which.
      interface.py:270 sets causal=False whenever mask_mod is not None, so the callback must
      encode causality itself. If A fails, the callback is not a causal mask and nothing else
      said about it means anything.
+  A2. a deliberately WRONG mask -- fully bidirectional -- must MOVE the loss. 6e's addition, and
+     it is the gate A cannot be: bitwise equality is also what a mask that never reaches the
+     kernel produces.
   B. prefix with prompt_len = the FULL ROW must not read BELOW the causal loss. With P = T
      every position is inside the prompt, so attention is bidirectional everywhere -- if the
      mask leaks, this is where the loss collapses. A loss below causal here means the mask
@@ -18,19 +21,28 @@ would tell me which.
      This separates mask CONSTRUCTION from mask APPLICATION: with no prompt the prefix
      predicate reduces to `kv <= q`, so any difference is in how the mask is wired in, not in
      what it says.
+  D. a prompt length on ONE document alone must move the loss, by less than the all-document
+     case. B and C both hold for a mask that ignores aux_tensors entirely -- B by being
+     bidirectional, C by being causal -- so neither shows the per-document lookup is read.
 
 WHY THE LOSS AND NOT THE MASK. eval/prefix_mask.py's selftest already checks the predicate as
-pure python, off-pod, nine ways. What that cannot check is whether the kernel APPLIES what the
-predicate says -- a mask_mod that never reaches the kernel, or reaches it with permuted
-arguments, passes every predicate test and trains a different model. So these gates read the
-LOSS through the real forward pass on the real checkpoint, which is the only observable that
-moves when the mask is actually in effect.
+pure python, off-pod, thirteen ways. What that cannot check is whether the kernel APPLIES what
+the predicate says -- a mask_mod that never reaches the kernel, or reaches it with permuted
+arguments, or indexes aux_tensors in the wrong space, passes every predicate test and trains a
+different model. So these gates read the LOSS through the real forward pass on the real
+checkpoint, which is the only observable that moves when the mask is actually in effect.
 
 GATE B'S DIRECTION IS THE SUBTLE ONE. A leaking mask makes the loss LOWER, not higher, because
 leakage is free information. So the failure condition is `prefix_loss < causal_loss`, and a
 prefix loss ABOVE causal is fine at this gate -- bidirectional prompt attention on a model
 trained causally should hurt. Testing for "close to causal" would reject the healthy case and
 accept nothing useful.
+
+AND A LOW LOSS IS NOT ONLY A LEAK. The first run of B and C read 0.792 and 0.848 against a
+causal 1.614 and both said "THE MASK LEAKS" -- while the mask was correct and the AUX TENSOR was
+the wrong shape: row-sized (4) against 61 documents, so most lookups were out of bounds and read
+large enough to put every position inside the prompt. Gate D exists because that failure looked
+exactly like the one B was written to catch.
 """
 import os
 import sys
@@ -48,7 +60,11 @@ def main():
     import torch  # noqa: PLC0415
 
     import model as M  # noqa: PLC0415
-    from eval.prefix_mask import PREFIX_LAYER, build_mask_mods, prompt_lengths  # noqa: PLC0415
+    from eval.prefix_mask import (  # noqa: PLC0415
+        PREFIX_LAYER,
+        build_mask_mods,
+        doc_prompt_lengths,
+    )
     from scripts.loader import load_checkpoint  # noqa: PLC0415
 
     if not M.HAS_FA:
@@ -209,22 +225,58 @@ def main():
           "sees the future changed nothing, so the mask is not being applied")
 
     T = ids.shape[1]
-    full = torch.full((ids.shape[0],), T, device=ids.device)
+    ndoc = cu.numel() - 1
+    # ONE ENTRY PER DOCUMENT, NOT PER ROW, and the gates are written in document space for a
+    # measured reason. mask_mod's batch_idx is the DOCUMENT index and q_idx/kv_idx are
+    # DOCUMENT-LOCAL (both measured 2026-09-04, see eval/prefix_mask.py). My first version passed
+    # a 4-element row-sized tensor against 61 documents, so 57 of them read out of bounds; the
+    # garbage read large, every position landed "inside the prompt", and gates B and C reported
+    # 0.792 and 0.848 against a causal 1.614 -- diagnosed as A LEAK when the mask was correct and
+    # the TENSOR was the wrong shape. The two-point test that settled it: all-zero aux at length
+    # 4 moved the loss by -7.65e-01, the same all-zero aux at length 61 reproduced causal
+    # bitwise. A gate that reads "leak" for an out-of-bounds index is a gate that would have
+    # blocked a correct mask, so the length is now derived from cu rather than from ids.shape[0].
+    full = torch.full((ndoc,), T, device=ids.device)
     b, _ = loss_with(prefix_mod, full)
     check("B: full-row prompt does not read BELOW causal (no leak)", b >= base,
           f"prefix {b:.10f} < causal {base:.10f} by {base - b:.3e} -- THE MASK LEAKS")
 
-    zero = torch.zeros((ids.shape[0],), device=ids.device)
+    zero = torch.zeros((ndoc,), device=ids.device)
     c, _ = loss_with(prefix_mod, zero)
     check("C: zero prompt length reproduces causal exactly", c == base,
           f"prefix@P=0 {c:.10f} vs causal {base:.10f}, diff {c - base:.3e}")
 
-    real = prompt_lengths(labels)
+    # GATE D -- THE PROJECTION IS LIVE PER DOCUMENT. Gates B and C both hold for a mask that
+    # ignores aux_tensors entirely: B by being bidirectional, C by being causal. Neither shows
+    # that the per-document lookup is READ. Giving exactly one document a full prompt length and
+    # leaving every other at zero must move the loss, and by less than the all-bidirectional
+    # case -- that is a change only a live per-document read can produce.
+    one = torch.zeros((ndoc,), device=ids.device)
+    one[0] = T
+    d, _ = loss_with(prefix_mod, one)
+    check("D: a prompt length on ONE document alone moves the loss (per-document read is live)",
+          abs(d - base) > 1e-6 and abs(d - base) < abs(b - base),
+          f"one-document {d:.10f} vs causal {base:.10f} (diff {d - base:.3e}); all-documents was "
+          f"{b - base:+.3e}. Equal to causal means aux_tensors is not read; equal to the "
+          "all-documents case means the index is ignored and every document gets the same value")
+
+    real = doc_prompt_lengths(labels, cu).to(ids.device)
     r, _ = loss_with(prefix_mod, real)
-    print(f"  informational: real prompt lengths {real.tolist()} -> loss {r:.6f} "
-          f"({r - base:+.6f} vs causal). NOT a gate: a higher loss here is the expected "
-          f"cost of bidirectional prompt attention on a causally trained model. A delta of "
-          f"EXACTLY zero is not good news -- it is the signature of a mask that is not applied.")
+    nz = int((real > 0).sum())
+    print(f"  informational: {ndoc} documents over {ids.shape[0]} rows, {nz} carry a prompt "
+          f"(lengths {real[real > 0].tolist()}) -> loss {r:.6f} ({r - base:+.6f} vs causal). "
+          f"NOT a gate: a higher loss here is the expected cost of bidirectional prompt "
+          f"attention on a causally trained model. A delta of EXACTLY zero is not good news -- "
+          f"it is the signature of a mask that is not applied.")
+    # WHAT THE DOCUMENT COUNT MEANS FOR THE EXPERIMENT, printed because it bounds the result and
+    # is not visible anywhere else: doc_cu_seqlens opens a document at every row start and after
+    # every <eos> run, so a 4x4096 SFT batch holds 61 documents and only the FIRST document of
+    # each row contains the prompt. Varlen attention never crosses a document boundary in either
+    # arm, so response tokens after an internal <eos> cannot see the prompt at all, prefix or
+    # causal. The intervention therefore reaches a minority of the sequence.
+    print(f"  informational: prompt-carrying documents {nz}/{ndoc}; the other "
+          f"{ndoc - nz} are fully causal in BOTH arms because varlen attention does not cross "
+          f"document boundaries. This bounds how much of the batch Stage C can affect.")
 
     print(f"\n{'ALL GATES PASS' if not fails else 'GATES FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0
