@@ -7395,18 +7395,44 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None, resolved=N
     # touched-file comparison, then assert the id lives in that file at HEAD.
     fact_refs = FACT_REF_RE.findall(evidence)
     paths = []
+    tried = []
     for w in re.split(r"\s+", evidence):
-        w = w.strip(" ,;:'\"")
-        if not ("/" in w or w.endswith((".py", ".json", ".md", ".sh", ".jsonl"))):
+        # STRIP THE PUNCTUATION PROSE PUTS AROUND A PATH, both ends. `,;:'"` alone was not
+        # enough: evidence is written as prose, so a path arrives parenthesised
+        # ("(facts/efficiency.json)"), backticked, bracketed, or ending a sentence. MEASURED
+        # 2026-09-04 on eight forms -- 4 missed, and the refusal then said the commit does
+        # not touch the named files, which points at the wrong cause entirely (e1's report;
+        # its trailing-comma case already passed, `,` was in the old set).
+        #
+        # The parenthesised FACT CITATION is the one that failed twice over: "(facts/x.json#id)"
+        # never matched the `"#" in w` split either, so the id check below was skipped in
+        # silence -- a citation nobody verified, reading as a citation that resolved.
+        #
+        # A trailing `.` is stripped only from a token that ALREADY looks like a path, never
+        # before the test: stripping first turns "done." into "done" and prose starts matching.
+        # And the test is on the EXTENSION, not on the slash -- my first version asked "is this
+        # path-shaped" first, so "facts/efficiency.json." passed on its slash and kept the dot,
+        # which is the defect being fixed, one form later (measured, 11/12 before this line).
+        w = w.strip(" ,;:'\"`()[]{}<>")
+        exts = (".py", ".json", ".md", ".sh", ".jsonl")
+        if w.endswith(".") and ("/" in w or w.rstrip(".").endswith(exts)):
+            w = w.rstrip(".")
+        if not ("/" in w or w.endswith(exts)):
             continue
         if w.startswith("facts/") and "#" in w:
             w = w.split("#", 1)[0]
+        tried.append(w)
         paths.append(w)
     if not paths:
         return f"evidence names no path, so nothing can be checked against {sha[:8]}"
     if not any(any(t == p or t.startswith(p.rstrip("/") + "/") for t in touched) for p in paths):
+        # NAME THE TOKENS TRIED AS PATHS. Without them this refusal says "the commit does not
+        # deliver what the evidence claims" for two different causes -- a genuinely wrong
+        # commit, and a path this function failed to parse out of prose -- and the reader
+        # cannot tell which (e1, 2026-09-04).
         return (f"{sha[:8]} touches {touched[:3]} but evidence names {paths[:3]} -- "
-                "the commit does not deliver what the evidence claims")
+                f"the commit does not deliver what the evidence claims "
+                f"(tokens read as paths: {tried[:5]})")
     for fname, fid in fact_refs:
         r = subprocess.run(g + ["show", f"HEAD:facts/{fname}.json"],
                            capture_output=True, text=True)
@@ -10731,10 +10757,42 @@ def _selftest_commit_delivers_fact_ref():
         # world 3: bare path unchanged
         assert _commit_delivers(sha, "facts/efficiency.json", d) == "", \
             "a bare path was refused"
+        # worlds 4+: THE PUNCTUATION PROSE PUTS AROUND A PATH. Evidence is written as prose,
+        # so a path arrives parenthesised, backticked, bracketed, or ending a sentence, and
+        # the refusal then said the commit does not touch the named files -- pointing at the
+        # wrong cause entirely (e1, 2026-09-04; its trailing-comma case already passed).
+        # The parenthesised FACT CITATION failed twice over: "(facts/x.json#id)" never matched
+        # the fragment split either, so the id check was skipped in silence.
+        for ev in ("the ratio (facts/efficiency.json) is measured",
+                   "measured in facts/efficiency.json.",
+                   "see `facts/efficiency.json` for the value",
+                   "[facts/efficiency.json] holds it",
+                   "<facts/efficiency.json>",
+                   "facts/efficiency.json, and the run log"):
+            why = _commit_delivers(sha, ev, d)
+            assert why == "", f"punctuation around a real path was refused: {ev!r} -> {why}"
+        # ...and the fragment is still stripped when the citation is parenthesised, so a FAKE
+        # id inside parens is still caught. Without this, widening the strip could have made
+        # every parenthesised citation pass unverified -- a looser gate reading as a fixed one.
+        why = _commit_delivers(sha, "(facts/efficiency.json#eff.fake)", d)
+        assert "eff.fake" in why, f"a fake id inside parens was not caught: {why}"
+        assert _commit_delivers(sha, "(facts/efficiency.json#eff.real)", d) == "", \
+            "a real id inside parens was refused"
+        # NEGATIVES. Stripping `.` must not turn prose into a path: a gate that accepts
+        # anything is the failure mode this widening could introduce, and it is silent.
+        for ev in ("measured the ratio and it holds", "this is done.", "..."):
+            why = _commit_delivers(sha, ev, d)
+            assert "names no path" in why, f"prose was read as a path: {ev!r} -> {why}"
+        # The refusal must NAME the tokens it read as paths: without them, a wrong commit and
+        # an unparsed path give the same message and the reader cannot tell which (e1).
+        why = _commit_delivers(sha, "scripts/nonexistent_xyz.py", d)
+        assert "tokens read as paths" in why and "scripts/nonexistent_xyz.py" in why, \
+            f"the refusal does not name the tokens tried: {why}"
     finally:
         import shutil
         shutil.rmtree(d, ignore_errors=True)
-    print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path unchanged")
+    print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path "
+          "unchanged, prose punctuation stripped (6 forms), prose still names no path")
 
 
 def _selftest_review_present_legacy():
