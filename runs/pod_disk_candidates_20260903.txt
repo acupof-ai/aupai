@@ -11,7 +11,16 @@ DELETED 2026-09-03 (tier 1, zero references, 18.4 GB):
   data/pretrain_1b_tokens.pt 3.99 GB  train.py:93 names /data00/pretrain_1b_tokens.pt, which
                                       does not exist; only os.path.dirname() of it is used
 
-CANDIDATES, claim by name before 2026-09-04:
+DELETED 2026-09-03 08:1xZ (tier 2, 10.7 GB, ruled by their owner not by the 24h timeout):
+  runs/dedup_ck/            5.0 GB  3b ruled DELETE: it served 3b-8 and code_dedup08, both closed.
+                                    The C++/Java/JS filters build NEW domains on code_rp1t, whose
+                                    dedup would hash the new domain -- these sigs do not apply. And
+                                    re-hashing the code domains is minutes, so the loss is reversible.
+  data/skypile_extra.jsonl  2.7 GB  } 3b has no counterexample: zh comes from data/raw/cci3_hq and
+  data/skypile_raw.jsonl    1.4 GB  } nothing in *.py/*.sh reads these three.
+  data/minimind_dataset/    1.6 GB  }
+
+STILL CANDIDATES, claim by name before 2026-09-04:
   /data00/tokens_code_rp1t.pt      30.28 GB  named only by a mix nobody is running
   /data00/tokens_en_c4.pt          19.24 GB  stage1; the live mix uses en_c4_stage2
   /data00/tokens_math_owm.pt       16.14 GB  stage1; the live mix uses math_owm_stage2
