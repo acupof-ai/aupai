@@ -186,6 +186,44 @@ def main():
               "  state or an attention mask ignoring cu would move later positions too, and doc 0\n"
               "  should be clean either way since nothing precedes it.")
 
+    # ISOLATION HOLDS, so the 3-4 gap reported by n7c_path_agree.py's first version was NOT a
+    # packing failure and something else differed between the two rows. The one remaining difference
+    # is LENGTH PARITY: this probe pads both sides to an even number of tokens, that test padded only
+    # the packed side and left each single row at its natural length. So the question becomes whether
+    # the same tokens give the same logits at odd versus even T, which is a property of the row and
+    # nothing to do with documents or masks. If they do not, every eval row of odd length is scored
+    # differently from the same content padded, and eval rows are arbitrary length.
+    print("\n== length parity: the same document scored at its natural T versus T+1 padding")
+    print(f"  {'task':16s} {'T':>5s} {'parity':>6s} {'maxdiff':>9s} {'meandiff':>9s}   reading")
+    worst_par = 0.0
+    for tid, ids in docs[:N_TASKS]:
+        t_nat = torch.tensor([ids], device="cuda")
+        cu_nat = torch.tensor([0, len(ids)], dtype=torch.int32, device="cuda")
+        t_pad = torch.tensor([[*ids, eos]], device="cuda")
+        cu_pad = torch.tensor([0, len(ids) + 1], dtype=torch.int32, device="cuda")
+        a = states(t_nat, cu_nat)
+        b = states(t_pad, cu_pad)
+        # COMPARE ONLY THE SHARED PREFIX, and only the LAST block, since a divergence anywhere shows
+        # up here. The appended token is causally after every compared position, so under a correct
+        # causal implementation it cannot change any of them -- that is the whole test.
+        last = max(a)
+        d = (a[last][:len(ids)] - b[last][:len(ids)]).abs()
+        worst_par = max(worst_par, d.max().item())
+        print(f"  {tid:16s} {len(ids):5d} {'odd' if len(ids) % 2 else 'even':>6s} "
+              f"{d.max().item():9.4f} {d.mean().item():9.4f}   "
+              f"{'DIFFERS' if d.max().item() > 0.05 else 'agrees'}")
+    print(f"  worst across tasks: {worst_par:.4f}")
+    if worst_par > 0.05:
+        print("  VERDICT: APPENDING ONE TOKEN CHANGES EARLIER POSITIONS. That is a causality "
+              "violation independent of packing, masks and documents, and it means a row's logits "
+              "depend on its total length -- so n7c_path_agree.py's first version was comparing "
+              "padded against unpadded rows, which is where its 3-4 came from. Every eval that "
+              "pads or truncates a row is affected.")
+    else:
+        print("  VERDICT: parity is not it either. Both candidate explanations for the 3-4 gap are "
+              "now excluded and the next step is to reproduce that gap under this probe rather "
+              "than reason about it.")
+
     for i, b in enumerate(mdl.blocks):
         b.forward = originals[i]
     return 0
