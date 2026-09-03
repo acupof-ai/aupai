@@ -72,6 +72,18 @@ _CHECK_TIMEOUTS = {
     # to build and 0.49s to search, so it is 3x SLOWER than the linear scan it would
     # replace. Measured before choosing (de).
     "sft_pack_uncontaminated": 60,
+    # Measured on this checkout, 2026-09-03: 8.2s wall -- it walks git log once per
+    # closed task (86 of them), so it was never going to fit 5s; it timed out on 2
+    # consecutive runs and FAILed with "has not actually run since", blocking a commit
+    # whose changes it has nothing to say about. 30s is ~4x the measured total.
+    "tasks_closed_by_commit": 30,
+    # Measured on this checkout under load (load avg 28, 25 users), 2026-09-03:
+    # getattr_cfg_names_exist 6.5s, restartability 4.5s (291 files scanned) -- both
+    # pass by hand but cross 5s when the shared machine is busy, and each banked
+    # 2 consecutive timeout strikes and FAILed a commit with 'has not actually run
+    # since'. ~4x the measured wall time, same ratio as the entries above.
+    "getattr_cfg_names_exist": 30,
+    "restartability": 20,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
