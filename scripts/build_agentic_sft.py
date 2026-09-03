@@ -538,18 +538,53 @@ def token_filter(rows, tok_path, max_tokens=4096):
     that stood in for this while no tokenizer was on the machine was loose in the right
     direction -- it dropped nothing this would have kept -- but it was never the bound, and
     the report said so rather than implying it had run.
+
+    ENCODES THE LAST PAIR ONLY, AND THAT IS THIS FUNCTION'S WHOLE COST PROFILE. Encoding every
+    pair made this the dominant stage of the build and killed three v11 attempts on their own
+    timeout with nothing written. The reason is quadratic: format_agentic emits one pair per
+    assistant turn and each prompt carries every prior turn, so a 26-turn episode re-encodes its
+    early turns 26 times. MEASURED on 40 real sessions: 2,168 rows, 56,113 pairs, 25.9 pairs per
+    row, 4,507 MB of text to encode -- 2,079 KB per row whose stored form is a few KB. Scaled to
+    all 2,588 transcript files that is ~291 GB at a measured 4.18 MB/s, about 1,163 minutes,
+    against a 180-minute timeout. Encoding the last pair only is ~1/26 of that.
+
+    The docstring above already asserted the last pair is the longest; it is now CHECKED per row
+    rather than trusted, because that claim is what makes the cheap path equivalent. A
+    format_agentic change that ever shortened the final pair would otherwise start passing
+    over-length rows silently, and the pack's only real bound would be gone. The check compares
+    STRING LENGTHS, which is free -- re-encoding every pair to verify would restore the cost this
+    exists to avoid. Tested independently on 140 real rows before the change: 0 counterexamples.
     """
-    from loader import format_agentic
-    from tokenizers import Tokenizer
+    import time  # noqa: PLC0415
+
+    from loader import format_agentic  # noqa: PLC0415
+    from tokenizers import Tokenizer  # noqa: PLC0415
     tok = Tokenizer.from_file(tok_path)
-    kept, dropped = [], 0
+    kept, dropped, t0, n_enc = [], 0, time.time(), 0
     for r in rows:
-        longest = max((len(tok.encode(pr + co).ids)
-                       for pr, co in format_agentic(r["messages"])), default=0)
+        pairs = list(format_agentic(r["messages"]))
+        if not pairs:
+            continue
+        sizes = [len(pr) + len(co) for pr, co in pairs]
+        if sizes.index(max(sizes)) != len(sizes) - 1:
+            raise RuntimeError(
+                f"REFUSING: the longest format_agentic pair is #{sizes.index(max(sizes))} of "
+                f"{len(sizes)}, not the last, in an episode from {r.get('project')}. This "
+                "function encodes ONLY the last pair on the premise that cumulative prompts make "
+                "it the longest -- if that no longer holds, the token bound is not being measured "
+                "and over-length rows would enter the pack unnoticed. Encode all pairs again "
+                "(and accept ~26x the cost) or fix the invariant before rebuilding.")
+        pr, co = pairs[-1]
+        longest = len(tok.encode(pr + co).ids)
+        n_enc += len(pr) + len(co)
         if longest > max_tokens:
             dropped += 1
         else:
             kept.append(dict(r, tokens=longest))
+    dt = time.time() - t0
+    print(f"  token_filter: {len(rows)} rows in {dt:.1f}s, {n_enc / 1e6:.0f} MB encoded "
+          f"({n_enc / 1e6 / max(dt, 1e-9):.2f} MB/s), {dropped} over {max_tokens} tokens",
+          flush=True)
     return kept, dropped
 
 
