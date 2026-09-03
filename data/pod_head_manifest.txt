@@ -152,6 +152,7 @@ fabfba1c52a8fb34fb39918d99f1c9699034ed9c34268489ea9ad8a5c73e3db6  eval/math_bpb.
 cfe89e772c9fdfc87e440ca91db155bccff73654b5c8cc47a417dc9c6e200bf2  eval/math_v2_like.py  docs  644
 50eff28cc6e41b11972e67129e0ee67520efe488bba69167cb46fe1771a78450  eval/math_zh.py  training  644
 c7835891339dcf30c741b49fd85f024300213f4e4e207aee398f6f5b4bb62e30  eval/mmlu.py  docs  644
+04ad7c868f6f0fea3989099ff5976c937fe62dbc282c723f400045812d0ead27  eval/n3_report.py  docs  644
 b4a0949ee7fc6ce3e5abe6f190e2d6a9827c770c1018b5f7646a4a439e356444  eval/nan_probe.py  docs  644
 b66c75352bc519af13c256a4644bf41b563e0c85488a6b85bfd626f5d1182de0  eval/openbookqa.py  docs  644
 eb5263ff7b275a45d37f671e474e2eff1a5ecc0e850417d04250fba8c95c58d8  eval/pairwise_judge.py  docs  644
@@ -291,7 +292,7 @@ e209cbbe784705b8f393aaddaa3a65edb014c09435f8923d0851023f44af3031  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-769c04b8884b03ce08a6a4485d0c53ec831a69a894e2939940f3e56d08f71ec5  scripts/hooks/pre-commit  docs  755
+22cc4c1d7001e386286b5319c941591e4cdb79c4a1fb906b7c073fdb9ad08450  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
