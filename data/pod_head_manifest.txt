@@ -1,4 +1,4 @@
-5d916f9de59472761c977b73b5a627e9e4c03e65490132cad1e982519194fbab  AGENTS.md  docs  644
+b596349451cc2da60ffaafbe31a7ed09386d1b25f22834a9becae05c0dee1eb3  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 8ff35228786ec39043bb7c7ba80eaae2b64bf0066851f9f347c0c34982fd7754  algorithms/attnres_fused.py  training  644
 8a62cdebba747d0897025b0795547b8f2df5419f4f1660d59a4b0a73c77193bb  algorithms/attnres_triton.py  docs  644
@@ -121,7 +121,7 @@ f012667c4472acca03f3d61181bc80a1ae3a9f6fed9197b430b7104fd2f125d6  docs/standards
 4dbb129a8b094dcd44eea07f74e349ea69faeddcdb843fc29523940fc1ea0f91  docs/standards/launch_ready_guards.md  docs  644
 944fa9ab2354df9b7d9b62187b7f17d2032f8c7b1fb0e6546fbae97e93d6f384  docs/standards/model_module_split.md  docs  644
 5587ccb6baedaf232e2ecc7136818535c88b978c81d068887c9ca5f253654119  docs/standards/resume_row_cursor.md  docs  644
-2ac2b9b245b2533fea113645d1b7a22687d0dd4a9a403c8044f9e7b944e85ee5  docs/standards/roadmap_0903.md  docs  644
+9d5955a4383b97dcfdcea9694ed79dd8732f70a963ecc43a0895a84cd1a18273  docs/standards/roadmap_0903.md  docs  644
 d651c7486cb99ba0dbdf5af990af8a4e1bb8a00d62141cc18bc132d4fa3bb62b  docs/standards/sop.md  docs  644
 99bd50b7c2affbf878b3761dad837bd6fe9a0662dd13934bf27f655493ba779e  docs/standards/structure_experiments.md  docs  644
 a8aafb577d77c4dfd3ecae231724bb562ac7d6f6f267f14ce084f3725a0ba88f  docs/standards/synthetic_data_standard.md  docs  644
@@ -243,6 +243,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
 4d3e2076c64394a227e1a8392e37b3280dff4fa13848b2d707599b7df90a3f4b  runs/card_assignment.json  docs  644
 d8015ae1bf79d175d1fffcab1c1287feb323bf673ca7b8bc65c034e5c01426e0  runs/experiments.jsonl  docs  644
+27b614af4db4775204ddeb3b4c40f42bb3c01bf2f886d0643b9ae5cfb23156f0  runs/friction.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
 95f931aa5d2991f6782535c0ab1224aa1dfc935df7747eacb9622b76fa4ee2ba  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.en.hf.jsonl  docs  644
@@ -296,12 +297,12 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-e3cb7a0fe382b62cb4d0af42a6a18cd048b012de20ce28eb04cd28cba9202a0a  scripts/harness.py  training  644
+b314b1c7d9d83e4969df86ce8040a30fd66919e2c1954de38dd1f84f970d1275  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-08e35497120cbecd204ce882013ef85a1d1793bfe34a6ccac59d051396d70068  scripts/hooks/pre-commit  docs  755
+371150f0767b16a092bd3775c61795303884bd3a1ef82c8c7b8028bef6a4d9d8  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
@@ -312,6 +313,7 @@ e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch
 aac9375c7e478d15e19359c33e9419ba8b683324dccc7c3cee7ee8902ba084ca  scripts/logit_dist.py  docs  644
 ca2773d596083d41dbc8292a4227e0539ba16130c5047f9009d17d75c6b3c1fb  scripts/lr_probe.sh  docs  644
 e2f7cb2f6158c4d78455d19b9fdccbc48b54a0f9d994eca21bcd95517a44c93d  scripts/measure_mix_startup.py  docs  644
+ce54de4ac0e08af914dc9f35624b6fcf68e563ec7064e5f04adf4d3bd9aec040  scripts/merge_drivers.py  training  644
 40b339110c0b72abe7176e241ec3296c51094a5757aa7e99b92a375a8859ac9e  scripts/merge_score_row.py  docs  644
 ed794304e4494801517489745451bd8d95e3f15c4bb74954cf3f762e235cb028  scripts/plot_curves.py  training  644
 f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_drift.py  training  644
