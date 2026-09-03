@@ -602,6 +602,22 @@ def _assert_canonical_stats(stats, where):
     assert not missing, f"{where} stats missing canonical keys: {missing}"
 
 
+ZH_WEB_ALLOWED = {"zh_web", "web_hq", "chatml", "chat_qa", "wiki_chat", "chat"}
+
+
+def _check_filter_tier(domain, filters):
+    """Web (CJK-preserving, has not_zh) is allowed only for the explicit zh
+    whitelist (aupai-6e 2026-09-04); a non-whitelisted domain with web refuses --
+    a missed code domain is deleted to zero by not_zh. Every other domain uses
+    light."""
+    if filters == "web" and domain not in ZH_WEB_ALLOWED:
+        raise SystemExit(
+            f"REFUSE: --filters web (CJK-preserving, has not_zh) is allowed only for the zh"
+            f" whitelist {sorted(ZH_WEB_ALLOWED)}; domain {domain} is not CJK-majority and"
+            f" a web filter would delete it (not_zh rejects <60% CJK docs). Use --filters light."
+        )
+
+
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
 
@@ -1292,12 +1308,12 @@ def _preflight(a):
         raise SystemExit(
             f"REFUSE: another build is writing {a.domain} (live pid {who} holds {out}/.build.lock)"
         )
-    # (c) filter family matches the domain family
-    CODE_DOMAINS = {"code", "code_rp1t", "en", "en_c4", "math", "math_owm", "cot"}
-    if a.domain in CODE_DOMAINS and a.filters != "light":
-        raise SystemExit(
-            f"REFUSE: domain {a.domain} is code-family; --filters must be light, got {a.filters}"
-        )
+    # (c) filter family matches the domain family -- INVERTED (aupai-6e 2026-09-04).
+    # The old guard was a hand-written CODE_DOMAINS that --filters web was refused on;
+    # suffix renames (code_py_starcoder, math_owm_stage2, ...) fell out of the set and
+    # the DEFAULT web filter ran on them, whose not_zh (>=60% CJK) deletes a code corpus
+    # outright. Web is now allowed only for the zh whitelist; non-whitelisted REFUSES.
+    _check_filter_tier(a.domain, a.filters)
     # (d) a 1000-doc sample passes end-to-end: 0-keep or a single reject reason
     # dominating the sample means the filter set is wrong for this source. The
     # existing REJECT_EARLY_AT catches it mid-run at 20k docs; this is the same
@@ -1369,6 +1385,22 @@ def _selftest_preflight():
     class A:  # a fake argparse namespace
         def __init__(self, **kw):
             self.__dict__.update(kw)
+
+    # (aa) filter-tier inversion (aupai-6e 2026-09-04): web on a non-whitelisted
+    #      code domain MUST refuse (not_zh would delete it); web on a zh domain PASSES.
+    try:
+        _check_filter_tier("code_py_starcoder", "web")
+        raise AssertionError("code_py_starcoder+web did not refuse")
+    except SystemExit:
+        ok += 1
+    try:
+        _check_filter_tier("code_py_rp1t", "web")
+        raise AssertionError("code_py_rp1t+web did not refuse")
+    except SystemExit:
+        ok += 1
+    _check_filter_tier("zh_web", "web")  # must NOT raise
+    _check_filter_tier("zh_web", "light")
+    ok += 2
 
     # (b) frozen-name output -> REFUSE
     frozen = _ladder_frozen_domains()
