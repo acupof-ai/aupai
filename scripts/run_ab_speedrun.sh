@@ -68,7 +68,8 @@ case "$ARM" in
   # which is exactly what A/B (4) could not close.
   untiehead)     ARM_FLAG="--untie_head" ;;
   untieheadlr)   ARM_FLAG="--untie_head --head_lr 0.003464" ;;
-  *) echo "refusing: ARM must be zeroinit, shapelr, valueembed, untiehead or untieheadlr, got '$ARM'" >&2; exit 1 ;;
+  fp32logits)    ARM_FLAG="--attn_res_fp32_logits" ;;
+  *) echo "refusing: ARM must be zeroinit, shapelr, valueembed, untiehead, untieheadlr or fp32logits, got '$ARM'" >&2; exit 1 ;;
 esac
 
 # SKIP_BASE reuses an existing base checkpoint instead of retraining it. Only valid when that

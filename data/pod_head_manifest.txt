@@ -37,7 +37,7 @@ c53012ffa88f8901ef29476cad420320cb33e0e194ec43b68c20e550f6d75704  data/mix_sampl
 90f3c27d207c56904c3f339706667ab873914b2c557380707a6a601503709c02  data/mix_scale_0.8b.json  docs  644
 81e3b6b7f1865617947cc5c9712ad298df29b034f4c33d76ec21f58df5f4142d  data/mix_scale_1.6b.json  docs  644
 885ecca1b4dbf764bdfc2e12ca2facc2b7c55ab96cababc71ac217e306ab9ba0  data/mix_scale_3.24b.json  docs  644
-e87b33fd930c5e1437398b1c3a7a9039646721ce6b1baf87bef93ddf12b31116  data/mix_scale_run_config.json  docs  644
+5a6448641e121ea457f21b755aec7059f522f38f36b4e1cbe597546fcfb596db  data/mix_scale_run_config.json  docs  644
 7ab9e021a03b37121611fce8d4eecf40b704c1a0e71748d0da143d67d1ffede9  data/mix_smoke_warmup.json  docs  644
 95b777bd38f76ea5b37ea5e7305cacedc17226c42f94d266bbbb3c139f111b99  data/mix_t31_rehearsal.json  docs  644
 adda35f375ce8e1f83622fbb74bee0a556a017e92a6a2cb1743f4c1c7266f3fb  datagen/audit_source_score.py  docs  644
@@ -99,7 +99,7 @@ a662ac4320fc799314934b3df78e15056886d66837260432c0db3300b78b2633  datagen/scan_m
 8597056aef0ba761f2c51ce889f0b50cb317d74ab3456d99be076988625638bd  datagen/score_corpus.py  docs  644
 286504ee539c5c9875a5410816dd23ec5e3ef8cbb3f9a7484b870171c60fbde5  datagen/score_corpus.sh  docs  755
 946c88b4a566e833fc504ec205d8fd39fa2ec789c74b499c6bb5532dde09ee41  datagen/score_web_27b.py  docs  644
-8b5ec8e2498364fbc12317ec590ee51fd32cb6af0fdc2e7bdba1f704295c7280  datagen/sft_answer_machine_check.py  docs  644
+aaf5220f73660a2dd30136711b247b4b54123f7186e2c033080f9c89077d57b6  datagen/sft_answer_machine_check.py  docs  644
 020460ae45a9286b057ea094bb16ce894f7efb671d819f7ee1077f2326357ba1  datagen/starcoder_shape.py  docs  644
 70bc879467c638db5e3787bfb57c062d69c087e8a9d92ab04a1267f775481e2c  datagen/t2s_corpus.py  docs  644
 49ef650cc56311e4f48b4ad4f278a5ee39574d117e6e07d9be073e58bb1fda1a  datagen/test_near_dedup_known.py  docs  644
@@ -167,7 +167,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
 d30b31d878eb2866fb54e8d992a26f744d00447818eca0cbae4dcf7c4ad8aaab  facts/corpus_supply.json  docs  644
-d1bbda566c815bc293351303e3d6d2b11c28c68dd407ce588bf6392f37247872  facts/data_quality.json  docs  644
+7419a4e5b0607df8237ebee994be9a72c9022bdb7d668455e9e58e5fd9381e64  facts/data_quality.json  docs  644
 13a9b59ef84ebc8fed2c53c3616564ee2a9a42970f9624625f9202bea38ed6a5  facts/data_scaling.json  docs  644
 dc9691361194bb22b6ed4257925953c786dba28fadf9127604f2e92c82c7b742  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
@@ -218,7 +218,7 @@ bb8ae0603176edec9b45c0a941b5b566507bb45629e29afefdb846a2a0c5c021  mathbank/run_m
 34cecaa73eb45803e70ccad33e31ce4ee7946051ec00fc74a2f85a174b906775  mathbank/run_short_sol.py  docs  644
 820dda489bfa2c313c181d4c3dd92810dd2bdf16e5f6326c268f999598dc3e98  mathbank/split_bank.py  docs  644
 77428c2c82c230c5ff682385a212c2bbcbed6051a9efcf1216d1ced418f518af  mathbank/vet_programs.py  docs  644
-2567a382cb072021243f19fc7ff24326251b40d7ce3c7054f484d4648922f506  model.py  training  644
+7b73c487123f0ef606cff503881e59dd3babd88a65e25f77cf2a0bf69f821f3a  model.py  training  644
 56b79d1e330b780f6688689b2313f41afc887aea28912798a0c9c5d3c2b40c90  probes/a2a_bandwidth.py  docs  644
 0c0f60bcc8a767a8f26b94cb5845c2e6624ab5f11d80c9fd7c175f11b6250c41  probes/chatml_in_corpus.py  docs  644
 3e687495055dd2d795abe5a7ed72c6ba53cfd23e22291de2eae366b92ab28417  probes/fone_digit_acc.py  docs  644
@@ -228,7 +228,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 b804f5796818352eac0b8aab9ce203df6bb2585398f15e1faa730ea5da7057dd  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
-7798229ae26ca86081358311676c787e91d8ac987ed5607d415687d6e8c7048b  runs/card_assignment.json  docs  644
+cc95108d0b8ba30bc5ffb58b1e197884e64adc51998c25f856a676e374132410  runs/card_assignment.json  docs  644
 2e6a9bb452b48760ba22ba9b81aa85f4f13e29f5eef8a0121dc664a4a813cd3a  runs/experiments.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
@@ -280,7 +280,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-7454f8a3a89208f32efbf04fbde7f96a9978e9bbff77ed783ec975ad3c14a4f7  scripts/harness.py  training  644
+f5a99dd5cebac9e850dd9f03d661ed9288e57e69e9fdf4ec780c2a9caa438ba9  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -298,7 +298,7 @@ ca2773d596083d41dbc8292a4227e0539ba16130c5047f9009d17d75c6b3c1fb  scripts/lr_pro
 e2f7cb2f6158c4d78455d19b9fdccbc48b54a0f9d994eca21bcd95517a44c93d  scripts/measure_mix_startup.py  docs  644
 ed794304e4494801517489745451bd8d95e3f15c4bb74954cf3f762e235cb028  scripts/plot_curves.py  training  644
 f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_drift.py  training  644
-bd0995a27c6462c809b5700073e0d1a17c935047b9fb02990ca08e580e448af4  scripts/pod_pull_ledgers.py  training  644
+168408844b89ed59c501aa303acf9f33efaa65819e6e43c6ba00e82bc387dcf7  scripts/pod_pull_ledgers.py  training  644
 0cc2f4d7e2178903d1d47698d8a2a540bb2309e907d9a5205150ec1fc519ab0e  scripts/pod_push.sh  training  755
 80c9fa99e13f0d0d3c99738df4d24e19b1f8c14c4fb1a34df9d36492f1a54f18  scripts/probe_gradckpt_sources.py  docs  644
 1ca5509970c175cc9609eb1b23ddb6d38950e8b5b2a65801713a48c9dbe9a3ca  scripts/profile_step_cost.py  docs  644
@@ -312,7 +312,7 @@ f00fac35bc17d8f4c43707844c0d1f750285565f5ac55e1d46e03ed6d5f03e00  scripts/read_l
 9bb299f1436b1d3bf4a5b489a425b80a8819ce9c7946fe1b0b60b6ef8a2f7f85  scripts/restartability_audit.py  docs  644
 8965e5b9856385a6798f2bb6a31777f48f0c21607f17d3ef4a375ed286693988  scripts/restartability_baseline.json  docs  644
 96fd418f9c80647e688c661e6c79997f215950d067a5f06335ac2a82e7dbe285  scripts/retract.py  docs  644
-ec74939fd6d07a81bc7c1697368f65b0ba9c90c49e3d71f64d34c19b6b7a4df2  scripts/run_ab_speedrun.sh  docs  755
+9b4e0a6608fd5a75bddb65394bbee7e9cde53929b375b741b11c9da5405cec3c  scripts/run_ab_speedrun.sh  docs  755
 58e25be47f558b151d5bc18e18bb0355cabe758523a2170a10ad634f2e91d637  scripts/run_ablation.sh  docs  755
 4cd1157bc6b8f29e7b472ba3e2bfd1eaf5b47cbf8cf051088ee76b8d9da886af  scripts/run_pipeline.sh  docs  644
 bb350a80ca24c4645bc816f434a19cea9bd8cac96a6ee1828fd7989f2f2a51fe  scripts/run_pretrain.sh  docs  755
@@ -329,6 +329,7 @@ e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1  scripts/test_a
 136c2fecfe7519b0aa0ad07376be4c12bcdc71795c866302a65b21d1da612ea2  scripts/test_arch_compat.py  docs  644
 8a4934e13fdede89f337675b6a4d65711870911d1296e5037f4115e75a49aae8  scripts/test_artifact_path_ckpt.py  docs  644
 e2ba8c4a980df71944fd82c8e5e03def0dd9d8cd32b3a2d14bbc94f114cd3ae0  scripts/test_attest_cases.py  docs  644
+90ec0814d97ea9d55c4850a730c778736c31e95e155e54370ec69c6ebb6099db  scripts/test_attn_res_fp32_logits.py  docs  644
 a68f2726832dc82bb3bc5626db6d68e8e171aef45d3c5d6c035ab803a30b868f  scripts/test_cache_dir_knob.py  docs  644
 25f277fe853797e63c99b26d0d496864dc16d19ba05e58b7c2e8a1dbb2057b2e  scripts/test_check_summary.py  docs  644
 ab1322056ff9678281095a559b15984acc6d661b683e41986359b47f8d2805e4  scripts/test_cursor_save.py  docs  644
@@ -392,4 +393,4 @@ ecdde15605f9297804316cee03ff02a1b37b6c67e203e0c5254ec9d381e35c8d  scripts/write_
 161b4c4d2eef465a9e366ae537e4d97731d89e3683c0d7491587cc6aea080c8c  serve.py  docs  644
 b6901ed2aa05254ca9a9a404e5971d174b291ad2cc119410d6351e41fbdf7622  sft.py  training  644
 c7b3fb76fd5f7326a21df47d65d1ae76e531b9ed077fc0da6812dda34ba9ef82  sft_math.py  training  644
-11073f5b7194faf629664c0a2750dc34db453aa70782f2151556be1fc1efa0b6  train.py  training  644
+f631a6f08195e23d807ae446572e755ec7dd91fe6ec7bba3c664f987942d991b  train.py  training  644
