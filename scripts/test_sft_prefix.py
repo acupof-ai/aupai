@@ -98,9 +98,20 @@ def main():
     # 4. THE MASK IS SCOPED BY IDENTITY, and the other MLA layers pass through. This is the
     #    defect that survived four commits in the gate script: patching the module global masks
     #    EVERY GatedMLA, because model.py:191 looks the name up at call time.
-    check("the wrapper passes through when no target layer is active",
-          'getattr(t, "_n7c_active", False) for t in targets' in src,
-          "the wrapper must test the target flags, not mask every varlen call")
+    check("the wrapper passes through when no target layer is executing",
+          "_depth[0] == 0" in src,
+          "the wrapper must test the depth counter, not mask every varlen call")
+    # THE COUNTER MUST BE RAISED BY WRAPPING forward, NOT BY A HOOK. The hook version crashed p7
+    # with CheckpointError: --loop enables grad_ckpt, hooks do not fire inside a checkpoint
+    # recompute, so the recomputed layer ran unmasked and its activations did not match the saved
+    # ones. --loop alone and --prefix p3 alone both pass; only both together fail, so nothing short
+    # of running that combination finds it -- hence this check on the mechanism.
+    check("the depth counter is raised by wrapping forward, not by a forward hook",
+          "mod.forward = fwd" in src and "register_forward_pre_hook" not in src,
+          "register_forward_pre_hook does not fire during a grad_ckpt recompute")
+    check("the counter is released in a finally",
+          "finally:\n                    _depth[0] -= 1" in src,
+          "an exception inside the mixer would otherwise leave every later layer masked")
     check("causal= is dropped when a mask_mod is passed",
           'kw.pop("causal", None)' in src,
           "interface.py:270 sets causal=False whenever mask_mod is not None")
