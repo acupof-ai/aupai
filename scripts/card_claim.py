@@ -395,6 +395,21 @@ def acquire(name, cards, wait=0, note="", pid=None):
                     if holder != old and holder in {p for p, _ in _descendants(old)}:
                         os.unlink(mine)
                         continue
+                    # SAY IT IS A ZOMBIE WHEN IT IS ONE. e1 hit this in production 2026-09-04:
+                    # arm 1's pid went Zs, acquire for arm 2 refused with "already holds a live
+                    # claim", and the reader has no way from that message to know the process
+                    # has exited -- the advice "release first" is right but reads as "wait for
+                    # the running job". _is_zombie had one call site, in status(), so the
+                    # classification existed and the refusal path could not see it (6e).
+                    # Same no-auto-break policy: a human releases, acquire does not.
+                    if _is_zombie(old):
+                        return False, (
+                            f"{name}'s claim pid {old} is a ZOMBIE (exited, not reaped; "
+                            f"state {_proc_stat(old)!r}) -- the job is over and the claim is "
+                            f"not. Nothing is auto-broken: `card_claim.py release --name "
+                            f"{name}`, then acquire again. os.kill(pid,0) and /proc both "
+                            f"report a zombie as alive; `ps -o stat=` is the only reader "
+                            f"that does not.")
                     return False, (f"{name} already holds a live claim (pid {existing['pid']}"
                                    f"{', a shell' if _argv0_is_shell(existing.get('cmdline', '')) else ''})"
                                    f". If pid {holder} is the real job and not a descendant of "
@@ -843,6 +858,17 @@ def _selftest():
         ok_z, msg_z = acquire("zother", ["7"], wait=0, pid=me)
         _case(not ok_z and "claimed by" in msg_z,
               f"and the card is still refused to a second acquirer ({msg_z[:52]})")
+        # ACQUIRE'S OWN MESSAGE must name the zombie, not just status's line. e1 got
+        # "already holds a live claim" for a Zs pid in production, where the advice reads as
+        # "wait for the running job" (6e, 2026-09-04). Asserted on the SAME name, which is the
+        # case that arises: arm 2 re-acquiring the name arm 1 left behind.
+        ok_same, msg_same = acquire("zdead", ["7"], wait=0, pid=me)
+        _case(not ok_same and "ZOMBIE" in msg_same,
+              f"acquire on the zombie's own claim name says ZOMBIE, not 'a live claim': "
+              f"{msg_same[:60]}")
+        _case(not ok_same and "release --name zdead" in msg_same,
+              "and it names the release command rather than leaving the reader to guess")
+
         _, dup_z, lines_z = status()
         said_z = [x for x in lines_z if "ZOMBIE" in x]
         _case(bool(said_z) and any("zdead" in x for x in said_z),
