@@ -3285,6 +3285,51 @@ def merge_took_one_side(root, merge_sha="HEAD"):
     return out
 
 
+def _is_fresh_render(root, staged_blob):
+    """Is the staged EXPERIMENTS.md exactly what exp.py render produces from the merged
+    ledger?
+
+    EXPERIMENTS.md is derived: its content is a function of runs/experiments.jsonl, which
+    .gitattributes already union-merges. So a merge never RESOLVES it -- whichever side is
+    taken whole is stale by construction, and the fix is to re-render, not to splice lines.
+    merge_complete cannot see that: it compares lines, and a row whose newer side carries a
+    finding the older side lacked reads as content lost (2026-09-03, the 3b merge -- three
+    rows de-38 had amended with 'commit was c304b37, which names no object in this
+    repository' read as three rows dropped).
+
+    Exempting the path outright would be the wrong fix, and the repo has the incident for
+    it: a derived artifact that stays valid after its source changes with nothing raising.
+    So the exemption IS the freshness test -- stale gets no pass."""
+    import shutil
+    import tempfile
+
+    led = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.isfile(led):
+        return False
+    r = subprocess.run(["git", "-C", root, "cat-file", "-p", staged_blob],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return False
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    try:
+        import exp as _exp
+    except Exception:
+        return False
+    with tempfile.TemporaryDirectory() as t:
+        os.makedirs(os.path.join(t, "runs"))
+        shutil.copy(led, os.path.join(t, "runs", "experiments.jsonl"))
+        old = _exp.ROOT
+        try:
+            _exp.set_root(t)
+            _exp.render()
+            want = open(os.path.join(t, "EXPERIMENTS.md"), encoding="utf-8").read()
+        except Exception:
+            return False
+        finally:
+            _exp.set_root(old)
+    return want == r.stdout
+
+
 def _content_restored(root, base, losing, path, staged_blob):
     """Is the losing side's own new content back in the staged blob?
 
@@ -3347,6 +3392,13 @@ def check_merge_complete(root):
     # when only that side appended; that is the merge driver working, not a drop.
     took = [t for t in took if not t[0].endswith(".jsonl")
             and t[0] != "data/pod_head_manifest.txt"]
+    # EXPERIMENTS.md is rendered from that union-merged ledger. Exempt it only when the
+    # staged blob IS the render; a stale one still FAILs.
+    took = [t for t in took
+            if t[0] != "EXPERIMENTS.md"
+            or not _is_fresh_render(root, subprocess.run(
+                ["git", "-C", root, "rev-parse", ":EXPERIMENTS.md"],
+                capture_output=True, text=True).stdout.strip())]
     # 0 commits lost means the other side had no commits touching that path: the file
     # matches one parent because only one parent's history reached it, not because a
     # resolution discarded anything. Seven of the nine hits over one day's 93 merges
