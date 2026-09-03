@@ -170,11 +170,10 @@ if [ $ALL -eq 1 ]; then
   # and be reachable from main; the pod's last manifest defines the delete set, so
   # throwaway probes (never in any manifest) are untouched.
   [ $# -eq 0 ] || { echo "pod_push --all takes no file arguments" >&2; exit 2; }
-  if ! python3 scripts/pod_drift.py --check-head >/dev/null 2>&1; then
-    echo "pod_push --all: manifest stale vs HEAD -- regenerate, commit, merge, then re-run" >&2
-    exit 1
-  fi
-  push_one data/pod_head_manifest.txt >/dev/null  # main-reachability gate on the manifest itself
+  # Generate from HEAD; not tracked, so there is nothing to be stale against and no
+  # main-reachability gate to apply to it (shape A). The old `push_one manifest` call
+  # existed only to run that gate on a tracked file.
+  python3 scripts/pod_drift.py --write >/dev/null
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
   ~/bin/pod cat /work/aupai/data/pod_head_manifest.txt > "$tmp/old" 2>/dev/null || true
@@ -219,16 +218,13 @@ if [ $ALL -eq 1 ]; then
   exit 0
 fi
 
-# The manifest must describe HEAD. A scoped change without a regenerated manifest
-# makes the post-push drift line report the pusher's own file as drifted -- a false
-# alarm that trains people to ignore it. Regenerate and refuse; the pusher commits
-# the manifest and re-runs, so the commit discipline stays and the pod gate can
-# never be satisfied by an unregenerated manifest.
-if ! python3 scripts/pod_drift.py --check-head >/dev/null 2>&1; then
-  echo "pod_push: manifest was stale, regenerated -- commit it and push again" >&2
-  python3 scripts/pod_drift.py --write >/dev/null
-  exit 1
-fi
+# GENERATE the manifest from the HEAD being pushed. It is not tracked (shape A, 6e ruling
+# 2026-09-04): a file that is a pure function of HEAD does not belong in the tree, and
+# tracking it was the source of every "local changes would be overwritten" abort -- the
+# pre-commit hook regenerated it on every commit, so any two branches that both committed
+# collided on it, 4 of 15 rows in runs/friction.jsonl. The tree check above already refuses
+# a dirty push, so HEAD is what these files are.
+python3 scripts/pod_drift.py --write >/dev/null
 
 for f in "$@"; do
   push_one "$f"
