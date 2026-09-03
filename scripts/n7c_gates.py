@@ -13,10 +13,9 @@ would tell me which.
   A2. a deliberately WRONG mask -- fully bidirectional -- must MOVE the loss. 6e's addition, and
      it is the gate A cannot be: bitwise equality is also what a mask that never reaches the
      kernel produces.
-  B. prefix at the REAL per-document prompt lengths must not read BELOW the causal loss. The
-     prompt ends before the first supervised token by construction, so no supervised position may
-     become visible and the loss cannot fall. This is the configuration the arms train in, which
-     is the only configuration whose leak matters.
+  B. NO newly visible key may carry loss. Decided on the MASK, exactly, by enumerating every pair
+     prefix allows that causal forbids and requiring each to have an ignore_index key seen by a
+     prompt query. Not decided on the loss -- see "GATE B HAS BEEN WRONG FOUR TIMES" below.
   B2. P = T MUST collapse the loss, as a positive control. With every position inside the prompt
      each supervised token attends to its own label, so the loss has to fall far below causal. If
      it does not, the bidirectional half never reached the kernel and B would pass by being
@@ -59,25 +58,27 @@ arguments, or indexes aux_tensors in the wrong space, passes every predicate tes
 different model. So these gates read the LOSS through the real forward pass on the real
 checkpoint, which is the only observable that moves when the mask is actually in effect.
 
-A LOW LOSS IS NOT BY ITSELF A LEAK, and B has now been wrong twice for that reason.
-  First: B and C read 0.792 and 0.848 against a causal 1.614 and both said "THE MASK LEAKS" --
-  while the mask was correct and the AUX TENSOR was the wrong shape, row-sized (4) against 61
-  documents, so most lookups ran out of bounds and read large enough to put every position inside
-  the prompt.
-  Second: with the shape fixed, B at P = T read 0.087. Also not a leak -- P = T ASKS for
-  bidirectional attention everywhere. The false premise was in the comment beside it, "with P = T
-  the pack supervises nothing": the loss mask lives in `labels`, which P does not touch, so every
-  supervised position was still supervised and now saw its own label. The collapse was guaranteed
-  by construction and the gate could only ever fail.
-So B now runs at the real lengths and P = T is kept as B2, a positive control that REQUIRES the
-collapse. Gate D exists because the first failure looked exactly like the leak B was written to
-catch.
-
-GATE B'S DIRECTION IS THE SUBTLE ONE. A leaking mask makes the loss LOWER, not higher, because
-leakage is free information. So the failure condition is `prefix_loss < causal_loss`, and a
-prefix loss ABOVE causal is fine at this gate -- bidirectional prompt attention on a model
-trained causally should hurt. Testing for "close to causal" would reject the healthy case and
-accept nothing useful.
+GATE B HAS BEEN WRONG FOUR TIMES, all four by inferring a mask property from a loss number.
+  1. B and C read 0.792 and 0.848 against a causal 1.614 and both said "THE MASK LEAKS" -- while
+     the mask was correct and the AUX TENSOR was row-sized (4) against 61 documents, so most
+     lookups ran out of bounds and read large enough to put every position inside the prompt.
+  2. With the shape fixed, B at P = T read 0.087. Also not a leak: P = T ASKS for bidirectional
+     attention everywhere. The false premise was beside it -- "with P = T the pack supervises
+     nothing" -- when the loss mask lives in `labels`, which P does not touch. Every supervised
+     position was still supervised and now saw its own label, so the collapse was guaranteed and
+     the gate could only ever fail. P = T became B2, a positive control that REQUIRES the collapse.
+  3. At the real lengths on layer 11 alone, B read +0.000000 and PASSED, because `prefix >= causal`
+     is satisfied by equality -- while the loss was bitwise identical and the arms could not have
+     differed at all. That is gate F.
+  4. Arm p7 (layer 7 alone) read 1.6136748791, LOWER than causal by 2.16e-04, and B called it a
+     leak. It is not: a lower loss is also what an IMPROVEMENT looks like, and whether
+     bidirectional prompt encoding helps is the hypothesis this experiment tests. A gate that
+     rejects the effect it was built to measure is not a gate.
+So B no longer reads the loss. Leakage is decidable from the MASK, exactly: enumerate every pair
+prefix allows that causal forbids and require that each has an ignore_index key and a query inside
+the prompt. At the real lengths over 61 documents that is 292919 newly visible pairs, 0 with a
+supervised key, 0 with a query outside the prompt. A proof, not a comparison. The loss is still
+printed because its size and direction are the experiment's first signal, but it gates nothing.
 """
 import os
 import sys
@@ -97,6 +98,7 @@ def main():
     import model as M  # noqa: PLC0415
     from eval.prefix_mask import (  # noqa: PLC0415
         PREFIX_ARMS,
+        reference_mask,
         build_mask_mods,
         doc_prompt_lengths,
     )
@@ -349,15 +351,53 @@ def main():
         real = doc_prompt_lengths(labels, cu).to(ids.device)
         r, _ = L(prefix_mod, real)
         nz = int((real > 0).sum())
-        check("B: at the REAL prompt lengths the loss does not fall BELOW causal (no leak)",
-              r >= base,
-              f"prefix {r:.10f} < causal {base:.10f} by {base - r:.3e} -- a supervised position is "
-              "visible to some query, which is a leak in the configuration the arms train in")
-        print(f"       {ndoc} documents over {ids.shape[0]} rows, {nz} carry a prompt "
-              f"(lengths {real[real > 0].tolist()}); loss {r:.6f} ({r - base:+.6f} vs causal). A "
-              f"loss ABOVE causal is the expected cost of bidirectional prompt attention on a "
-              f"causally trained model. A delta of EXACTLY zero would not be good news -- it is the "
-              f"signature of a mask that is not applied.")
+        # GATE B -- THE LEAK TEST, DECIDED ON THE MASK AND NOT ON THE LOSS, and this is the fourth
+        # time B has had to be rewritten. The first three were premise errors; this one is a
+        # category error.
+        #
+        # B USED TO ASSERT `prefix_loss >= causal_loss` at the real prompt lengths, reasoning that
+        # leakage is free information so a leak shows up as a lower loss. Arm p7 (layer 7 alone)
+        # read 1.6136748791 against a causal 1.6138908863 -- LOWER by 2.16e-04 -- and B called it a
+        # leak. It is not. A loss drop is also what a genuine improvement looks like, and "does
+        # bidirectional prompt encoding help" is the HYPOTHESIS THIS EXPERIMENT TESTS. A gate that
+        # rejects the effect it was built to measure is not a gate.
+        #
+        # LEAKAGE IS DECIDABLE FROM THE MASK ALONE, exactly, with no reference to any loss: a leak
+        # means some position can read a token that carries loss and is not already causally
+        # visible. So enumerate the pairs prefix allows that causal forbids, and require that every
+        # one of them has an ignore_index key -- a prompt token, which is not a label -- and a query
+        # inside the prompt. Measured over all 61 documents at the real lengths: 292919 newly
+        # visible pairs, 0 with a supervised key, 0 with a query outside the prompt, and prefix
+        # never forbids a pair causal allows. That is a proof, not a comparison.
+        #
+        # The loss is still printed, because its SIZE and DIRECTION are the experiment's first
+        # signal -- but it decides nothing here.
+        leak_sup, leak_q, wider = 0, 0, 0
+        _flat = labels.reshape(-1)
+        _start = cu[:-1].to(torch.int64)
+        _dlen = (cu[1:] - cu[:-1]).to(torch.int64)
+        for _d in range(ndoc):
+            _P, _L, _s = int(real[_d]), int(_dlen[_d]), int(_start[_d])
+            _sup = (_flat[_s:_s + _L] != -100)
+            for _q in range(_L):
+                for _k in range(_L):
+                    _pre = reference_mask(_q, _k, _P, prefix=True)
+                    _cau = reference_mask(_q, _k, _P, prefix=False)
+                    if _pre and not _cau:
+                        wider += 1
+                        leak_sup += int(bool(_sup[_k]))
+                        leak_q += int(_q >= _P)
+                    elif _cau and not _pre:
+                        leak_sup += 1  # narrower than causal: the response half is broken
+        check("B: no newly visible key carries loss (leak decided on the mask, not the loss)",
+              leak_sup == 0 and leak_q == 0,
+              f"{wider} pairs prefix allows that causal forbids; {leak_sup} have a SUPERVISED key "
+              f"and {leak_q} have a query outside the prompt. Either is a position reading a "
+              "label it must not see")
+        print(f"       {wider} newly visible pairs over {ndoc} documents, all "
+              f"ignore_index keys seen by prompt queries; loss {r:.10f} vs causal {base:.10f} "
+              f"({r - base:+.3e}). The SIGN is the experiment's signal, not a gate: a drop is what "
+              f"an improvement looks like, and rejecting it would reject the hypothesis.")
 
         # B2 -- P = T IS STILL RUN, as a POSITIVE CONTROL rather than as a leak test. With every
         # position inside the prompt each supervised token attends to its own label, so the loss MUST
