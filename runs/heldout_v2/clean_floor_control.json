@@ -1,0 +1,23 @@
+{
+  "arm": "control",
+  "ckpt": "e1_untrained.hf",
+  "seq": 4096,
+  "text": "data/sft/control_sft_text_heldout.jsonl",
+  "examples_in_text": 10641,
+  "examples_scored": 10105,
+  "dropped_overlong": 26,
+  "evaluated_ids_sha256": "7231156c5698c210",
+  "restricted_to_ids": "ids_clean.txt",
+  "total_nll": 8806444.002868652,
+  "supervised_tokens": 3359091,
+  "supervised_bytes": 9509777,
+  "nll_per_supervised_byte": 0.9260410630941874,
+  "nll_per_supervised_token": 2.621674733690946,
+  "note": "nll_per_supervised_byte is the cross-arm number, and only when both arms report the same evaluated_ids_sha256. per_supervised_token is arm-internal: the tokenizers segment the same text into different counts.",
+  "ln_vocab_sentinel": {
+    "alarm": false,
+    "note": "sanity: 2.6217 nat/token = 24.2% of ln(V)=10.8253 (V=50,279) -- below the no-information baseline, so the alignment is carrying signal"
+  },
+  "skip_one_nll_per_token": 10.167609471434533,
+  "next_token_nll_per_token": 2.621674733690946
+}

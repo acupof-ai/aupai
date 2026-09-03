@@ -213,8 +213,15 @@ def load_control(path, device):
     return model, None
 
 
-def score(model, arm, kept, device, batch, pad_id):
-    """(total NLL, supervised tokens) summed over `kept`. Sum, not mean -- see module doc."""
+def score(model, arm, kept, device, batch, pad_id, per_item=None):
+    """(total NLL, supervised tokens) summed over `kept`. Sum, not mean -- see module doc.
+
+    Pass per_item=[] to also collect one row per item. It exists because the aggregate cannot
+    answer "what does this benchmark actually test": the held-out set's own `src` field says
+    99.8% code_general while only 8.3% of the answers contain code, and 84.3% are Chinese
+    prose. Splitting the number by content needs per-row NLL, and this is that hook --
+    computed from the SAME logits as the aggregate, never a second scoring path.
+    """
     import torch
 
     # Length-sorted so a batch pads to its own longest row, not the file's. Purely a speed
@@ -257,6 +264,22 @@ def score(model, arm, kept, device, batch, pad_id):
                 ignore_index=-100, reduction="sum")
             tot_loss += loss.item()
             tot_tok += int((y[:, 1:] != -100).sum())
+            if per_item is not None:
+                # PER-ROW NLL, from the SAME logits the aggregate used -- not a second
+                # forward pass. reduction="none" gives one value per position; masking on
+                # the label and summing per row reproduces the batch total exactly, which
+                # the selftest asserts. A separate scoring path here would be a second
+                # implementation of one quantity, and this file already carries the scar of
+                # that (the reimplemented corpus fingerprint, 8 false "SRCFP CHANGED").
+                flat = torch.nn.functional.cross_entropy(
+                    logits.reshape(-1, logits.shape[-1]).float(), y[:, 1:].reshape(-1),
+                    ignore_index=-100, reduction="none").view(y.shape[0], -1)
+                keepmask = (y[:, 1:] != -100)
+                rows_nll = (flat * keepmask).sum(dim=1)
+                rows_tok = keepmask.sum(dim=1)
+                for (rid, _p, c), nll, ntok in zip(chunk, rows_nll.tolist(),
+                                                   rows_tok.tolist()):
+                    per_item.append({"id": rid, "nll": nll, "tokens": int(ntok)})
     return tot_loss, tot_tok
 
 
@@ -886,6 +909,59 @@ def selftest():
         fails.append(f"a tuple-shaped output scored differently: {t_loss:.6f}/{t_tok} vs "
                      f"{a2:.6f}/{t2}")
 
+    # 4e. PER-ITEM MUST RECONSTRUCT THE AGGREGATE EXACTLY. This is the known answer for the
+    #     new hook: sum the per-row NLLs and you must get back the number the aggregate path
+    #     produced, to floating-point equality, because both come from the same logits. If a
+    #     per-item column and a published total can disagree, the per-item split of a
+    #     published number is not a split of it -- it is a second measurement wearing the
+    #     first one's name, which is the shape that put two statistics under `eval_loss` and
+    #     eight false "SRCFP CHANGED" rows in this repo.
+    items = []
+    p_loss, p_tok = score(m, "ours", [short, long], "cpu", 2, 0, per_item=items)
+    if abs(p_loss - a2) > 1e-9 or p_tok != t2:
+        fails.append(f"passing per_item changed the aggregate: {p_loss:.9f}/{p_tok} vs "
+                     f"{a2:.9f}/{t2} -- the hook must not touch the number it splits")
+    if len(items) != 2:
+        fails.append(f"per_item collected {len(items)} rows for 2 inputs")
+    else:
+        s = sum(r["nll"] for r in items)
+        if abs(s - a2) > 1e-4:
+            fails.append(f"per-item NLLs sum to {s:.6f}, aggregate is {a2:.6f} -- the split "
+                         f"does not reconstruct the total")
+        if sum(r["tokens"] for r in items) != t2:
+            fails.append(f"per-item tokens sum to {sum(r['tokens'] for r in items)}, "
+                         f"aggregate counted {t2}")
+        if {r["id"] for r in items} != {short[0], long[0]}:
+            fails.append(f"per_item ids {[r['id'] for r in items]} are not the input ids "
+                         f"{[short[0], long[0]]} -- length-sorting lost the mapping")
+        # EACH id MUST CARRY ITS OWN VALUE, not just the right set of values. `tokens` is the
+        # witness: the fixture's two rows have 2 and 4 supervised tokens, and those are known
+        # from the inputs rather than from the model. Checking only the id SET and "the NLLs
+        # differ" passed a mutation that reversed the chunk before zipping -- every id present,
+        # every value present, each attached to the wrong row. A per-item table that swaps rows
+        # is worse than none: it names the wrong question as the one we score badly.
+        want_tok = {short[0]: len(short[2]), long[0]: len(long[2])}
+        got_tok = {r["id"]: r["tokens"] for r in items}
+        if got_tok != want_tok:
+            fails.append(f"per-item tokens are attached to the wrong ids: {got_tok} vs "
+                         f"{want_tok} -- the id-to-row mapping is broken")
+        # And the longer completion must carry the larger NLL here, since Ramp's logits are
+        # position-independent: more supervised tokens, more summed loss.
+        by_id = {r["id"]: r["nll"] for r in items}
+        if by_id[long[0]] <= by_id[short[0]]:
+            fails.append(f"the 4-token row scored {by_id[long[0]]:.6f} <= the 2-token row's "
+                         f"{by_id[short[0]]:.6f} under position-independent logits")
+        # The rows must differ: a hook that returned the batch mean for every row would pass
+        # every check above.
+        if len({round(r["nll"], 6) for r in items}) == 1:
+            fails.append("both per-item NLLs are identical -- the hook is reporting a batch "
+                         "aggregate per row, not a per-row value")
+        # And per_item=None must stay the default path, or every existing caller changes
+        # behaviour silently.
+        n_loss, _ = score(m, "ours", [short, long], "cpu", 2, 0)
+        if abs(n_loss - p_loss) > 1e-9:
+            fails.append("the default (per_item=None) path disagrees with the per_item path")
+
     # 5. THE NAMES load_ours AND load_control IMPORT MUST EXIST. No checkpoint needed: import
     #    the symbols and check they are constructible types. The first version of load_ours
     #    imported `Transformer` from train.py, which has no such class -- copied from the file
@@ -1176,7 +1252,8 @@ def selftest():
         for s in skips:
             print(f"  - {s}")
     print("eval_heldout selftest OK (denominator tracks the scored set, missing id refuses, "
-          "templates match both trainers, score() sums and is padding-invariant)"
+          "templates match both trainers, score() sums and is padding-invariant, per-item "
+          "reconstructs the aggregate and each id carries its own row)"
           + (f" -- {len(skips)} case(s) skipped, see above" if skips else ""))
     return 0
 
