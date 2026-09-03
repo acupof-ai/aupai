@@ -734,3 +734,32 @@ model.HybridLM(_sub_cfg)  # the real Block still constructs under attn_res=True
 _sub_cfg.attn_res = False
 model.HybridLM(_sub_cfg)
 print("attn_res sublayers() contract: raises at construction, real Block unaffected OK")
+
+# attn_res_fused: the flag must be a pure value-preserving swap, and its default OFF.
+# Checked on the GRADIENT, not just the forward: Source.scale is rms_scale(v), so v
+# reaches the output by two routes, and a fused node that owns only one still matches
+# the forward to 1.5e-07 while dV lands 7.6% low (docs/lessons/forward_check_hides_
+# gradient_error.md). A forward-only assertion here would be green for that bug.
+assert model.AttnRes(8).fused is False, "attn_res_fused must default OFF"
+assert getattr(train.Cfg, "attn_res_fused", None) is False, "Cfg.attn_res_fused must default OFF"
+_fd, _fB, _fT, _fn = 64, 2, 8, 6
+_fref_out = _fref_g = None
+for _fused in (False, True):
+    torch.manual_seed(3)
+    _ar = model.AttnRes(_fd, fused=_fused)
+    with torch.no_grad():
+        _ar.q.normal_(std=0.5)
+        _ar.g.normal_(mean=1.0, std=0.2)
+    _vs = [torch.randn(_fB, _fT, _fd, generator=torch.Generator().manual_seed(20 + i),
+                       requires_grad=True) for i in range(_fn)]
+    _o = _ar([model.Source.of(x) for x in _vs])
+    _o.backward(torch.randn(_fB, _fT, _fd, generator=torch.Generator().manual_seed(77)))
+    if not _fused:
+        _fref_out, _fref_g = _o.detach().clone(), [x.grad.clone() for x in _vs]
+    else:
+        _do = (_o.detach() - _fref_out).abs().max().item()
+        _dg = max((x.grad - r).abs().max().item() for x, r in zip(_vs, _fref_g, strict=True))
+        assert _do < 1e-5, f"fused forward differs by {_do:.2e}"
+        assert _dg < 1e-5, f"fused dV differs by {_dg:.2e}"
+print("attn_res_fused: default OFF; ON matches OFF in forward AND dV "
+      f"(max {_do:.2e} / {_dg:.2e}) OK")
