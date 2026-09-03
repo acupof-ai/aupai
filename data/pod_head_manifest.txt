@@ -1,4 +1,4 @@
-97558021edfda21611b97a4cd525635b63a8a1ac8d8817e5c1fc039b0397ea0e  AGENTS.md  docs  644
+d7bd0741f2f4c65c2f6b6d64a2f40365b3db42735fbe2bc0371051d7bf24f30f  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 8ff35228786ec39043bb7c7ba80eaae2b64bf0066851f9f347c0c34982fd7754  algorithms/attnres_fused.py  training  644
 8a62cdebba747d0897025b0795547b8f2df5419f4f1660d59a4b0a73c77193bb  algorithms/attnres_triton.py  docs  644
@@ -245,7 +245,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
 4d3e2076c64394a227e1a8392e37b3280dff4fa13848b2d707599b7df90a3f4b  runs/card_assignment.json  docs  644
 96f6abbb66d9f6dd1ae09c526e185ace6ac8872bb2a49ccb34931ff681a0d2b5  runs/experiments.jsonl  docs  644
-6d57de9e740ee4b2f76a5c6370ae7f445994dd95064c9babb865db8e99a2a2a7  runs/friction.jsonl  docs  644
+743aad8324276634e6da5e345ee5f4e55dfd414af89368f728db5203b4d2dbbe  runs/friction.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
 95f931aa5d2991f6782535c0ab1224aa1dfc935df7747eacb9622b76fa4ee2ba  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.en.hf.jsonl  docs  644
@@ -258,7 +258,7 @@ f0fef15929e21c771ba835199c454827821cf4fc8b976a4d80c5bca837ab4fd6  runs/n7_2x2/n7
 3e7706d5be3eb07bfcdb233ba4c7f1bfb26d0e84773ab66e75e865036e004fc8  runs/n7_2x2/n7_2x2_UtSu.preds.jsonl  docs  644
 162c39105b0b71046b5830e9da39503b75a8090a0b6639f6f9187864aadee1dc  runs/prereg.jsonl  docs  644
 628fbbcfa3daaeacfd68a53f6239e0099b0e7e20ac0847d4b2ab45cd18a697a3  runs/retro.jsonl  docs  644
-fe89e054461b12aae8dca6ef480e81fa5a6695ab62ef0dc808fe88e091b026b2  runs/review.jsonl  docs  644
+eb46e1e6ce4e8e5d210d9db6f77a431250fdb1f5eaf0cd8136be5ac5f86b3562  runs/review.jsonl  docs  644
 99dd1f9d10c33f6b748d87fb1bcf1c39561e107e519867a3bbc2e5a28a5b089b  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
@@ -303,7 +303,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-eec772fb5ce1f76a6d1c8cb3f3400ccc135e31000782785ff5ef7c685d5ff178  scripts/harness.py  training  644
+3b66b2ad1c9070d2de786acb9f5d8c184b7f24115e5aa5e4455c32c304952966  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
