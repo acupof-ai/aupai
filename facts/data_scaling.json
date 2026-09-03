@@ -587,11 +587,11 @@
   },
   {
    "id": "ds.beta_data_leg_206m_early",
-   "value": 0.647,
+   "value": 0.6215,
    "unit": "dimensionless (exponent beta in L = E + B*D^-beta)",
    "measured": "2026-09-03",
    "status": "measured",
-   "source": "runs/data_leg_206m_8b.log val points at steps 500/1500/4500 (2.718/2.321/2.126)",
+   "source": "runs/data_leg_206m_8b.log, 10 val points steps 500..5000 (2.718 2.436 2.321 2.269 2.215 2.179 2.153 2.147 2.126 2.111)",
    "config": {
     "run": "data_leg_206m_8b",
     "model": "206.1M d1024 L12 h8 ffn3072",
@@ -602,7 +602,7 @@
     "fp8": true,
     "grad_ckpt": false,
     "triple": "geometric k=3 on STEPS (500,1500,4500) = 0.262B/0.786B/2.359B tokens",
-    "estimator": "beta = -ln((L1500-L4500)/(L500-L1500))/ln(3), closed form on a geometric triple",
+    "estimator": "10-point least squares on L = E + B*D^-beta, D in TOKENS. The pre-registered estimator was the closed form on the geometric triple (500,1500,4500); it is kept below as triple_500_1500_4500 but is NOT the reported value -- see uncertainty.",
     "nine_point_fit": {
      "E": 1.9261,
      "B": 147800.0,
@@ -610,13 +610,64 @@
      "max_abs_residual": 0.01078,
      "residual_signs": "-++--++--",
      "longest_same_sign_run": 2
+    },
+    "triple_500_1500_4500": {
+     "beta": 0.6471,
+     "ratio": 2.0359,
+     "infimum": 1.0,
+     "margin": 1.0359
+    },
+    "triple_spread": {
+     "(500,1000,1500)": {
+      "beta": 0.6468,
+      "ratio": 2.4522,
+      "infimum": 1.7095,
+      "margin": 0.7427
+     },
+     "(1000,1500,2000)": {
+      "beta": 1.2838,
+      "ratio": 2.2115,
+      "infimum": 1.4094,
+      "margin": 0.8021
+     },
+     "(500,1500,4500)": {
+      "beta": 0.6471,
+      "ratio": 2.0359,
+      "infimum": 1.0,
+      "margin": 1.0359
+     },
+     "(1000,2000,4000)": {
+      "beta": 0.453,
+      "ratio": 1.3689,
+      "infimum": 1.0,
+      "margin": 0.3689
+     },
+     "(500,2000,5000)": {
+      "beta": 0.5363,
+      "ratio": 2.8418,
+      "infimum": 1.5129,
+      "margin": 1.3288
+     }
+    },
+    "existence_pretest": "(L1-L2)/(L2-L3) > ln(d2/d1)/ln(d3/d2). The infimum is 1 ONLY for a geometric triple; stating the gate as '> 1' passes triples that have no beta>0 -- b0 found a ladder level at ratio 1.6364 whose infimum is 1.7095. Report the margin, not the pass.",
+    "ten_point_fit": {
+     "E": 1.9225,
+     "B_tokens": 135700.0,
+     "beta": 0.6215,
+     "max_abs_residual": 0.01074,
+     "at_step": 2000,
+     "residual_signs": "-++--++--+",
+     "longest_same_sign_run": 2,
+     "sign_changes": 5,
+     "expected_sign_changes_if_random": 4.5
     }
    },
-   "uncertainty": "+-0.007 from print precision alone (val prints 3 decimals, eps=0.0005, propagated through both differences with L1500 entering twice). VAL-TO-VAL NOISE IS UNMEASURED AND IS THE LARGER TERM -- this run has no repeat at a fixed step, so the true bound is wider by an unknown factor. Quote the 0.007 as a floor, never as the error bar.",
-   "boundary": "Measured over 0.262B-2.359B tokens of an 8.000B run, i.e. the first 29%. It describes the EARLY curve, still carrying warmup and the schedule's transient, and is not the asymptotic data exponent. It also does NOT enter the params-vs-data comparison: that comparison is two legs at equal FLOPs (9.8942e18) read off their final val, and needs no exponent at all.",
+   "uncertainty": "THE DOMINANT TERM IS ESTIMATOR CHOICE, NOT MEASUREMENT NOISE. Five three-point triples on this same curve give beta from 0.4530 to 1.2838, a spread of 0.83 -- more than a hundred times the +-0.007 that print precision alone would suggest. The pre-registered triple's 0.647 owes its apparent precision to the choice of triple, not to the data: b0 and fb computed 0.6468 and 0.6471 independently and agreed because they had selected the SAME triple, which certifies the arithmetic and says nothing about the estimator. Quote 0.6215 with the 0.83 spread; never quote a three-point beta with a rounding-derived error bar. Val-to-val noise remains unmeasured (this run has no repeated step) and is a separate, also-unbounded term.",
+   "boundary": "Measured over 0.262B-2.621B tokens of an 8.000B run, the first 33%. It describes the EARLY curve, still carrying warmup and the schedule's transient, and is not the asymptotic data exponent. It does NOT enter the params-vs-data comparison: that reads two equal-FLOPs legs off their final domain loss and needs no exponent. Residual magnitude 21.5x print precision says an error source 20x larger than rounding exists; the sign test (longest run 2, 5 changes against 4.5 expected) only rules out a systematic one-way deviation and does NOT establish that the rest is random. Two separate statements, recorded separately.",
    "guard_phrases": [
     "the data exponent is 0.647",
-    "beta = 0.647 +- 0.007"
+    "beta = 0.647 +- 0.007",
+    "beta = 0.6215 +- 0.007"
    ]
   }
  ]

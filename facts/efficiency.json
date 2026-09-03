@@ -2631,6 +2631,49 @@
    "uncertainty": "RANK ORDER DISAGREES: observed minimum is step 800, predicted minimum step 500; observed maximum 700, predicted maximum 600. pearson r = 0.724 on FOUR points, not significant. The residual 0.258 nat is UNATTRIBUTED, three candidates untested: (1) within-domain document variance, which a domain-mean model cannot express; (2) step 500 is the checkpoint-write step and carries the largest residual (0.508); (3) THE PREDICTION USED ANOTHER MODEL'S per-domain losses (ckpt_p200m_4b_0902) to explain this leg's behaviour -- the most likely of the three, and the same error class as reusing a peak measured under a different dtype. Closing it needs this leg's own per-domain losses, which needs a card; not spent, because the residual enters no launch or quality criterion (6e's ruling).",
    "boundary": "THE UPPER BOUND HELD; THE INFERENCE FROM IT DID NOT. 0.495 does not exceed what mix wobble can produce -- the nine domains span 2.959 nat (cot 0.9902 to zh_web 3.9489), so 0.495 is 16.7% of that range -- and that bound was and remains correct. What was wrong was reading a bound as an expectation: a bound says the observation is POSSIBLE under the benign explanation, never that the benign explanation PRODUCED it. Corollary for the method: rebuilding the plan is cheap and reusable for any future loss jump, but it yields an UPPER BOUND unless the domain losses come from the same checkpoint being explained.",
    "status": "measured"
+  },
+  {
+   "id": "eff.pa_split_206m_438m",
+   "value": 1.34,
+   "unit": "GiB (params+optimizer resident, data leg)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "scripts/profile_step_cost.py peak 49.53 GiB (runs/data_leg_206m_8b.log) minus the byte account below; b0 instantiated both shapes and counted by build_optimizers' grouping",
+   "config": {
+    "data_leg": {
+     "shape": "206.1M d1024 L12 h8 ffn3072 b16 accum2 seq4096 world4 fp8 no grad_ckpt",
+     "groups": {
+      "muon": 172376064,
+      "embed": 33619968,
+      "scalar": 69704,
+      "arq": 62464,
+      "total": 206128200
+     },
+     "bytes": "bf16 param 2B + bf16 grad 2B + Muon one bf16 state per param (train.py:625 st['mb']) + AdamW two fp32 states on non-muon params; --fp32_master NOT set on this leg",
+     "P_GiB": 1.34,
+     "A_GiB": 48.19,
+     "A_share": 0.973,
+     "measured_peak_GiB": 49.53
+    },
+    "params_leg": {
+     "shape": "438.4M d1536 L12 h12 ffn4608, same batch/seq/world",
+     "groups": {
+      "muon": 387735552,
+      "embed": 50429952,
+      "scalar": 104556,
+      "arq": 93696,
+      "total": 438363756
+     },
+     "P_GiB": 2.732
+    },
+    "cross_check": "runs/memory_peaks.json _model predicts fixed_GiB from 493.6M x 2B x 3 copies = 2.76 against 2.95 measured, the same method on a third shape"
+   },
+   "uncertainty": "P is arithmetic over an instantiated model, not an estimate. What is UNMEASURED is the exponent e in A ∝ d^e, and it is the only quantity that decides the params leg: e=1 gives 75.02 GiB, e=2 gives 111.16 GiB, and the card holds 95.22. A 1 GiB error in P moves the answer 1.13 GiB; e moving 1 to 2 moves it 60.2 GiB.",
+   "boundary": "Does NOT answer whether the params leg fits. memory_peaks.json holds no pair of runs differing only in d, so no recorded point constrains e. The cheap measurement of e is two --peak-only runs at batch 4 differing only in d (13.39 GiB and 20.80-29.84 GiB predicted); activations are linear in batch so the exponent measured at b4 is the exponent at b16. Every activation term nameable from the architecture scales as d or as heads, both 1.5x here, which ARGUES for e near 1 -- an argument, not a measurement, and not a basis for launching.",
+   "guard_phrases": [
+    "P decides whether the params leg fits",
+    "the interval collapses to a point once P is known"
+   ]
   }
  ]
 }
