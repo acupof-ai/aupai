@@ -149,7 +149,7 @@ def main():
             worst = f3 = rest = 0.0
             for d, (start, n) in enumerate(spans):
                 a = sp[i][start:start + n]
-                b = solo[d][:n]
+                b = solo[d][i][:n]
                 diff = (a - b).abs().amax(dim=-1)  # per position
                 worst = max(worst, diff.max().item())
                 f3 = max(f3, diff[:3].max().item())
