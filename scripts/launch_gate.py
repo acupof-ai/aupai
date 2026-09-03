@@ -1049,6 +1049,15 @@ def selftest():
     # stopped reading the field, so it certifies nothing about WHERE the expected shape
     # comes from. Both calls run against the same tree and the same file, so the only
     # thing that differs is LAUNCH_SHAPE.
+    #
+    # WHAT THIS CATCHES THAT NOTHING ELSE DOES, measured on two mutants: a gate that
+    # compares shapes but reads a HARD-CODED expected shape stays green under every
+    # negative world above, and that is exactly what the first version of this fix would
+    # have shipped -- a `shape=None` parameter threaded through nine call sites, where any
+    # caller omitting it silently gets L32. The negative worlds establish THAT a
+    # comparison happens; only this one establishes WHERE its right-hand side comes from.
+    # That gap is why 1e withdrew their first criterion and why de's replacement is
+    # stronger: the withdrawn one would have passed the broken version.
     _saved = dict(LAUNCH_SHAPE)
     try:
         other = dict(_saved, layers=_saved["layers"] + 1)
