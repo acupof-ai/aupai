@@ -7540,6 +7540,29 @@ def check_allocation_reads_the_grant(root):
         return PASS, (f"grant {_csv(granted)} decides the block; "
                       f"{'disagreement announced' if set(ladder_cards) != set(granted) else 'sources agree'}; "
                       f"lane {lane_s or 'none (grant says null)'}")
+    # 6. An explicit launch_block_granted:false must RAISE, not fall back. "I say no" and
+    #    "I have not spoken" are different answers, and on the pod they were worlds apart:
+    #    the pod held a false grant from 2026-09-01 and the launcher happily fell back to
+    #    cards 0-6, the user's card 4 included. Built as a throwaway world rather than by
+    #    damaging `root`, because the property is about a value this tree does not hold.
+    import shutil as _sh
+    import tempfile as _tf
+
+    _d = _tf.mkdtemp(prefix="grant_false_")
+    try:
+        os.makedirs(os.path.join(_d, "runs"), exist_ok=True)
+        with open(os.path.join(_d, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"launch_block_granted": False, "block_cards": None}, fh)
+        try:
+            _grant_cards(_d)
+            return FAIL, ("an explicit launch_block_granted:false did not refuse -- a "
+                          "controller saying NO is being treated as a value to fall back "
+                          "from, which is how the pod allocated 0-6 under a false grant")
+        except SystemExit:
+            pass
+    finally:
+        _sh.rmtree(_d, ignore_errors=True)
+
     # No grant: the fallback is the ladder config, and it must SAY so -- a silent fallback
     # is indistinguishable from a grant that happens to agree.
     if set(block) != set(ladder_cards):
@@ -10946,6 +10969,22 @@ def _grant_cards(root=None):
 
     Same shape as recipe_provenance's, one file over: a record can be right, current, and
     read by a gate, and still not reach the code that acts (gate_failure_shapes.md §142).
+
+    Returns (cards, "") when the block is granted, (None, why) when no grant is READABLE,
+    and RAISES SystemExit when the file says launch_block_granted is false.
+
+    "I SAY NO" AND "I HAVE NOT SPOKEN" ARE DIFFERENT ANSWERS (6e's ruling, b0 2026-09-03).
+    Both used to return None and fall back to the ladder config, which is the same
+    collapse §140 is about: a value domain with no slot for "not answered" folds it into a
+    normal answer. On the pod the two are worlds apart -- an explicit false is the
+    controller saying the block is NOT available, and a missing file only means nothing was
+    synced. Falling back on the explicit false is how the pod came to allocate cards 0-6
+    with a false grant sitting right there, the user's card 4 included.
+
+    The refusal is deliberately NARROW: only an explicit false raises. A missing or
+    unreadable file still falls back with a note, because a blanket refusal would stop
+    every training launch on a pod that has never received this file -- other sessions'
+    included, and narrowing a rule for my own leg must not sweep them in (6e).
     """
     root = ROOT if root is None else root
     p = os.path.join(root, "runs", "card_assignment.json")
@@ -10956,8 +10995,17 @@ def _grant_cards(root=None):
             a = json.load(fh)
     except (OSError, ValueError) as e:
         return None, f"card_assignment.json unreadable: {e}"
+    if "launch_block_granted" in a and not a["launch_block_granted"]:
+        raise SystemExit(
+            f"REFUSING: {os.path.relpath(p, root)} says launch_block_granted is false -- "
+            f"the controller has NOT granted a card block here. That is a decision, not a "
+            f"missing value, so it is not something to fall back from: falling back on it "
+            f"is what put a launch on cards 0-6 with this file reading false "
+            f"(granted_by {a.get('granted_by', 'unknown')}, {a.get('granted', 'undated')}). "
+            f"Get a grant, or push the current one -- runs/card_assignment.json is in "
+            f"pod_drift's SCOPE as of 2026-09-03 and reaches the pod with `pod_push.sh --all`.")
     if not a.get("launch_block_granted"):
-        return None, "card_assignment.json does not grant the block"
+        return None, "card_assignment.json has no launch_block_granted key"
     cards = _expand_cards(a.get("block_cards", ""))
     if not cards:
         return None, "card_assignment.json grants the block but names no block_cards"
