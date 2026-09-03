@@ -149,7 +149,18 @@
   "max": 2.504509504678043,
   "range": 1.0490239306964173,
   "byte_weighted_mean": 1.9857510745245133,
-  "reading": "a language artifact predicts zh-prose well ABOVE the en-* classes; all four near the mean means the confound is small regardless of what en-only reads"
+  "reading": "a language artifact predicts zh-prose well ABOVE the en-* classes; all four near the mean means the confound is small regardless of what en-only reads",
+  "noise_baseline": {
+   "trials": 2000,
+   "seed": 20260903,
+   "method": "class LABELS permuted, class SIZES preserved -- a baseline of four equal groups would understate the noise in the 227,984-byte class and flatter the observed range",
+   "median": 0.09274324957830915,
+   "p95": 0.20175707637932083,
+   "max": 0.40272342143826356,
+   "observed": 1.0490239306964173,
+   "n_at_or_above_observed": 0,
+   "p_value": 0.0
+  }
  },
  "english_only": {
   "ours_nll_per_byte": 0.43525790183458773,
