@@ -58,6 +58,11 @@ answer_marker = _L.answer_marker
 
 SPAN = 12          # characters; long enough that a shared span is not a coincidence of common words
 REPEAT_MIN = 3     # a span occurring this often inside one generation is a loop
+# The stop-ON cells (rep_stop asymmetric between the arms -- the defect d165a905 voided). Kept as
+# the default so the published numbers stay reproducible from this script, NOT because they are the
+# current reading: the arm comparison on them is retracted. --preds names the four files for any
+# other run, e.g. the shared-decoder rerun's .norepstop cells. Hardcoding one filename set is how a
+# script silently keeps answering about last week's artifacts after the experiment moved.
 CELLS = (("ours", "zh", "preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl"),
          ("ours", "en", "preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl"),
          ("control", "zh", "preds_l1_d3_e1_untrained.hf.zh.hf.jsonl"),
@@ -127,7 +132,18 @@ def main():
     ap.add_argument("--test", default="data/eval/math_test_500.jsonl")
     ap.add_argument("--demos", type=int, default=3)
     ap.add_argument("--out", default="runs/l1_2x2_diagnose.json")
+    ap.add_argument("--preds", nargs=4, metavar=("OURS_ZH", "OURS_EN", "CTRL_ZH", "CTRL_EN"),
+                    help="the four cell files, in that fixed order, relative to --preds_dir. "
+                         "Order is positional and NOT inferred from the filenames: guessing the arm "
+                         "from a substring would mislabel the arms on any naming scheme that does "
+                         "not contain the guessed token, and a swapped arm label reverses every "
+                         "conclusion while every number stays plausible. Default: the stop-ON "
+                         "cells, whose ARM comparison is retracted (the arms ran different "
+                         "decoders); pass the .norepstop four for the shared-decoder rerun.")
     a = ap.parse_args()
+
+    cells = CELLS if not a.preds else tuple(
+        (arm, lang, fname) for (arm, lang, _), fname in zip(CELLS, a.preds))
 
     test_path = os.path.join(ROOT, a.test)
     if not os.path.exists(test_path):
@@ -139,20 +155,35 @@ def main():
     # slice would compare generations against text that was never in their prompt.
     demo_text = " ".join(d["output"] for d in items[:a.demos])
 
+    # THE PROVENANCE NOTE FOLLOWS THE FILES, not the script. The retraction below is a fact about the
+    # stop-ON cells (different decoders per arm); carrying it onto a shared-decoder rerun would
+    # brand clean numbers as retracted, and carrying the clean text onto the stop-on cells would
+    # erase a live retraction. Which set is in play is decided by --preds, so the note is too.
+    RETRACTED = (
+        "RETRACTED AS AN ARM COMPARISON. The two arms generated under DIFFERENT stop rules "
+        "(our arm had no repetition stop, the control had one), and marker_pos shows why "
+        "that is fatal rather than cosmetic: our markers sit at character 287 (median) while "
+        "the control's entire generation is 86 characters. The control was cut off before "
+        "the position where format appears, so it had no opportunity to produce any -- its "
+        "0.6% measures the stop rule. Scoring happening after model_turn does NOT rescue "
+        "this: truncating later cannot restore characters never generated. Fix, not yet run: "
+        "--no_rep_stop, both arms, all four cells. Even then the column measures FORMAT "
+        "ACQUISITION, not accuracy -- accuracy is floored in all four cells (2*delta=12.6%).")
+    SHARED_DECODER = (
+        "Cell files given explicitly via --preds. If these are the .norepstop four, both arms ran "
+        "the SAME decoder and the arm comparison is defined -- the retraction that applies to the "
+        "stop-ON cells does not apply here. What the column measures is unchanged: FORMAT "
+        "ACQUISITION, an extractable answer exists in the model's turn, position-independent "
+        "(pinned 2026-09-03Z before this rerun produced a number). That is not accuracy, and it is "
+        "not capability: our corpus holds Chinese math solutions with boxed answers and the Pile "
+        "does not, so an arm gap is a distribution fact and a PRECONDITION for capability. Read "
+        "accuracy from the run's own summary JSON, not from this file.")
     out = {"span_chars": SPAN, "repeat_min": REPEAT_MIN, "demos": a.demos,
-           "what_answer_present_measures":
-               "RETRACTED AS AN ARM COMPARISON. The two arms generated under DIFFERENT stop rules "
-               "(our arm had no repetition stop, the control had one), and marker_pos shows why "
-               "that is fatal rather than cosmetic: our markers sit at character 287 (median) while "
-               "the control's entire generation is 86 characters. The control was cut off before "
-               "the position where format appears, so it had no opportunity to produce any -- its "
-               "0.6% measures the stop rule. Scoring happening after model_turn does NOT rescue "
-               "this: truncating later cannot restore characters never generated. Fix, not yet run: "
-               "--no_rep_stop, both arms, all four cells. Even then the column measures FORMAT "
-               "ACQUISITION, not accuracy -- accuracy is floored in all four cells (2*delta=12.6%).",
+           "cells_from": "--preds" if a.preds else "default stop-ON cells",
+           "what_answer_present_measures": SHARED_DECODER if a.preds else RETRACTED,
            "cells": {}}
 
-    for arm, lang, fname in CELLS:
+    for arm, lang, fname in cells:
         p = os.path.join(ROOT, a.preds_dir, fname)
         if not os.path.exists(p):
             sys.exit(f"REFUSING: {p} absent")
@@ -172,9 +203,16 @@ def main():
           "OTHER arm's median length: a marker at 287 cannot appear inside an 86-character "
           "generation, so the arm that was stopped first never had the chance to produce format, "
           "and its answer-present rate measures the stop rule rather than the model.")
-    with open(os.path.join(ROOT, a.out), "w", encoding="utf-8") as f:
+    out_path = os.path.join(ROOT, a.out)
+    # THE OUTPUT PATH FOLLOWS THE INPUT SET. runs/l1_2x2_diagnose.json is the artifact the audit
+    # cites for the stop-ON marker positions (267/497 at char 287); a --preds run writing that same
+    # path would overwrite the evidence for a retraction with numbers from a different experiment,
+    # and both files look equally valid afterwards. Only --out given explicitly overrides this.
+    if a.preds and a.out == ap.get_default("out"):
+        out_path = out_path[:-len(".json")] + ".preds.json"
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(out, f, indent=1, ensure_ascii=False)
-    print(f"wrote {a.out}")
+    print(f"wrote {os.path.relpath(out_path, ROOT)}")
     return 0
 
 

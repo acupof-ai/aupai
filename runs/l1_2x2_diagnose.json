@@ -2,6 +2,7 @@
  "span_chars": 12,
  "repeat_min": 3,
  "demos": 3,
+ "cells_from": "default stop-ON cells",
  "what_answer_present_measures": "RETRACTED AS AN ARM COMPARISON. The two arms generated under DIFFERENT stop rules (our arm had no repetition stop, the control had one), and marker_pos shows why that is fatal rather than cosmetic: our markers sit at character 287 (median) while the control's entire generation is 86 characters. The control was cut off before the position where format appears, so it had no opportunity to produce any -- its 0.6% measures the stop rule. Scoring happening after model_turn does NOT rescue this: truncating later cannot restore characters never generated. Fix, not yet run: --no_rep_stop, both arms, all four cells. Even then the column measures FORMAT ACQUISITION, not accuracy -- accuracy is floored in all four cells (2*delta=12.6%).",
  "cells": {
   "ours-zh": {
