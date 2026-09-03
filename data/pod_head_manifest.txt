@@ -229,7 +229,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 0e913b75e56153115c55a91ebd52290efb2297ef1b7dbc46f2e2f0940bbd5154  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
-8c6fd5d04f6a676e71e9d09dffc0d32e41846dc56204453f5139ba0220101d9a  runs/card_assignment.json  docs  644
+6d5b2532ad51a612510e21a6d226be21ecab340332647c1623a6503a3bd13737  runs/card_assignment.json  docs  644
 a4bcc7947c78d34a69569b07d952c1dfba040c4b9386f5ce8611a7df3abba925  runs/experiments.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644

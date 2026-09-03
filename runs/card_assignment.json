@@ -10,7 +10,7 @@
   "cuts both ways: a card's owner is not the nvidia-smi row, and it is not a superseded",
   "grant either."
  ],
- "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7); fb 2026-09-03 08:24Z (lane 5 -> b0's two b8 memory probes, one at a time); fb 2026-09-03 (lane grant SPENT: b0's two probes done, card 5 taken by another container within seconds of release); fb 2026-09-03 10:2xZ (lane 6 -> score_matrix on the leg's step10000 ckpt, USER REQUEST -- 6 was headroom for the user's container and the user is who asked for this job)",
+ "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7); fb 2026-09-03 08:24Z (lane 5 -> b0's two b8 memory probes, one at a time); fb 2026-09-03 (lane grant SPENT: b0's two probes done, card 5 taken by another container within seconds of release); fb 2026-09-03 10:2xZ (lane 6 -> score_matrix on the leg's step10000 ckpt, USER REQUEST -- 6 was headroom for the user's container and the user is who asked for this job); fb 2026-09-03 11:0xZ (5 released by tilerl, ungranted; 7 idle but NOT reassigned)",
  "granted": "2026-09-03",
  "launch_block_granted": true,
  "block_cards": "0-3",
@@ -25,9 +25,9 @@
  "cards": {
   "0-3": "data leg, 206M x 8.000B, world 4 -- this grant. Free at 2026-09-03 04:59Z (0 MiB / 381 / 569 / 0; the sub-GiB rows on 1 and 2 are context, not a job).",
   "4": "0 MiB at 08:24Z. NOT granted -- headroom for the user's container.",
-  "5": "TAKEN by pid 862745, 38,778 MiB, 0% util, within SECONDS of b0 releasing it. Not ours. The grant is spent.",
+  "5": "RELEASED by tilerl 2026-09-03 ~11:0xZ, 0 MiB / 0% verified. Ungranted. Card 5 has been reclaimed by another container inside the release window before; a grant made from this row is stale the moment it is written -- read and claim in ONE command.",
   "6": "GRANTED to the lane: score_matrix.py on ckpt_data_leg_206m_8b.pt.step10000, one job at a time. 0 MiB / 0% read at 10:24Z in the same command that claimed it. Measured cost 46 s (eval.score_matrix, four likelihood metrics) against the run's own 78 s save every 500 steps -- it costs less than what the leg already spends on itself, so it does not wait for the leg.",
-  "7": "THE USER'S OWN WORK: 37,181 MiB, 0% util. 0% is NOT idle -- held memory at 0% util is torch.compile as often as it is a finished job. NEVER TAKE."
+  "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so."
  },
  "lane_note": "LANE = CARD 6 as of 2026-09-03 10:2xZ, one job at a time. Previously held as headroom for the user's container; the user asked for this benchmark, so the reservation and the job have the same owner. Cards 0-3 stay the leg's block: a 10-minute eval on a block card stops a 7-card job completely, and this eval has no reason to touch them.",
  "superseded_2026_09_02": {
