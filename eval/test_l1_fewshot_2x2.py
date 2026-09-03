@@ -163,6 +163,48 @@ def main():
         fails.append("the preds path omits the rep_stop state, so a stop-off rerun overwrites the "
                      "stop-on rows")
 
+    # 9. answer_marker IS THE WHOLE PREDICATE, AND EVERY READER CALLS IT. answer-present is a
+    #    DISJUNCTION -- \boxed OR ANS_RE -- and l1_2x2_diagnose imported ANS_RE alone as "the
+    #    marker". That agreed with the scorer on one BRANCH and read as full agreement: it reported
+    #    0/497 markers for cells published at 37.0%, because the boxed branch is the one our arm
+    #    uses. A shared constant is not enough when the predicate spans two operators; the predicate
+    #    itself has to be the shared thing.
+    for text, want, why in (("答案是：42", True, "ANS_RE branch alone"),
+                            ("所以 \\boxed{42}", True, "boxed branch alone"),
+                            ("The answer is: 42", True, "English ANS_RE branch"),
+                            ("这里没有答案", False, "neither branch")):
+        got = L.answer_marker(text) is not None
+        if got != want:
+            fails.append(f"answer_marker({text!r}) -> {got}, want {want} ({why} dropped) -- a "
+                         f"reader taking only the other branch would report zero markers on rows "
+                         f"that have one")
+    # THE POSITION IS THE MIN OF THE BRANCHES, so "did the decoder reach a marker" is answered by
+    # the FIRST marker, not by whichever branch is checked first in the source.
+    if L.answer_marker("答案是：1 然后 \\boxed{2}") != 0:
+        fails.append("answer_marker does not return the EARLIEST marker; the position would depend "
+                     "on branch order and would overstate how far the decoder had to run")
+    dsrc = open(os.path.join(ROOT, "eval", "l1_2x2_diagnose.py"), encoding="utf-8").read()
+    if "_L.answer_marker" not in dsrc:
+        fails.append("l1_2x2_diagnose does not import answer_marker, so its marker-position column "
+                     "and the published answer-present rate can count different things")
+    # AST, NOT grep. The first version of this check read the source text and went RED on the
+    # COMMENT that explains the bug -- the fixed file failed its own guard for describing what it
+    # fixed. Same shape as the two greps that stayed GREEN by matching a print(): a name in prose
+    # and a name in an expression are different facts, and only the parser separates them.
+    import ast
+    dtree = ast.parse(dsrc)
+    ans_re_uses = [n for n in ast.walk(dtree)
+                   if (isinstance(n, ast.Name) and n.id == "ANS_RE")
+                   or (isinstance(n, ast.Attribute) and n.attr == "ANS_RE")]
+    if ans_re_uses:
+        fails.append(f"l1_2x2_diagnose USES ANS_RE at line(s) "
+                     f"{sorted({n.lineno for n in ans_re_uses})} -- that is one branch of the "
+                     f"predicate, and taking it for the whole is the 0/497-vs-37.0% bug")
+
+    if src.count("answer_marker(turn) is not None") < 2:
+        fails.append("a present-rate counter still spells out the disjunction instead of calling "
+                     "answer_marker; the resume path and the live path would be able to drift")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:
@@ -170,7 +212,8 @@ def main():
         return 1
     print("l1_fewshot 2x2 OK: scaffold switches while questions do not; truncation fires in "
           "both languages; answer markers and scoring are language-symmetric; the present-rate "
-          "derives from ANS_RE; all four cells write distinct predictions files")
+          "calls answer_marker(), the WHOLE disjunction rather than one branch of it; the arms "
+          "share one decoder and the run records which; all four cells write distinct preds files")
     return 0
 
 
