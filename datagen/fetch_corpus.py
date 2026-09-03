@@ -208,6 +208,38 @@ def _manifest_hf_numma():
     return [(n, base + n, 0) for n in names]
 
 
+def _manifest_hf_tree(dataset, data_dir="data"):
+    """List parquet under HF <dataset>/<data_dir>/ via the tree API, pin the
+    resolve base. Self-contained (no prebuilt manifest file); source_fp hashes
+    the urls. curl -4: the pod's IPv6 egress is broken and urllib does not fall
+    back (cot 2026-09-03, cot_criterion_0903)."""
+    import subprocess
+    api = f"https://hf-mirror.com/api/datasets/{dataset}/tree/main/{data_dir}"
+    out = subprocess.run(["curl", "-4", "-sL", "-m", "20", api],
+                         capture_output=True, text=True)
+    entries = json.loads(out.stdout)
+    files = [n for n in entries if n.get("type") == "file" and n.get("path", "").endswith(".parquet")]
+    base = f"https://hf-mirror.com/datasets/{dataset}/resolve/main/{data_dir}/"
+    return [(os.path.basename(n["path"]), base + os.path.basename(n["path"]), n.get("size") or 0)
+            for n in files]
+
+
+def _manifest_cot_open_thoughts():
+    return _manifest_hf_tree("open-thoughts/OpenThoughts-114k")
+
+
+def _manifest_cot_skywork_or1():
+    return _manifest_hf_tree("Skywork/Skywork-OR1-RL-Data")
+
+
+def _manifest_cot_ot3():
+    return _manifest_hf_tree("open-thoughts/OpenThoughts3-1.2M")
+
+
+def _manifest_cot_openr1():
+    return _manifest_hf_tree("open-r1/OpenR1-Math-220k")
+
+
 SOURCES = {
     "fineweb2": _manifest_fineweb2,
     "cci3_hq": _manifest_cci3_hq,
@@ -221,6 +253,10 @@ SOURCES = {
     "hf_finemath_4plus": _manifest_hf_finemath_4plus,
     "hf_om2": _manifest_hf_om2,
     "hf_numma": _manifest_hf_numma,
+    "cot_open_thoughts": _manifest_cot_open_thoughts,
+    "cot_skywork_or1": _manifest_cot_skywork_or1,
+    "cot_ot3": _manifest_cot_ot3,
+    "cot_openr1": _manifest_cot_openr1,
     "ms_starcoder_py": _manifest_ms_starcoder_py,
 }
 
