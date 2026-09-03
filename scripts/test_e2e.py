@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# restartable: a 6-step smoke test whose writes all land in a mktemp dir plus two
+# ckpt_e2e_tmp* files it removes itself; an interrupt costs one rerun of ~6 steps. It
+# REFUSES to touch a shared token cache (stage 2), so an interrupt cannot leave a
+# pretrain's cache half-written -- which is the state this check exists to prevent.
 """Run the whole pipeline end to end on the shipped sample corpus, asserting the JOINS, not the stages.
 
     mix -> tokenize -> pretrain N steps -> checkpoint
@@ -15,6 +19,7 @@ on the current device. It will not pick a card on its own: the pod's cards are s
     E2E_GPU=7 python scripts/test_e2e.py
 """
 
+import glob
 import json
 import os
 import shutil
@@ -92,6 +97,58 @@ def rm(*paths):
                 os.remove(q)
 
 
+def _read(path):
+    """Stripped contents, or None when absent -- the stamp files _would_rebuild compares."""
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return f.read().strip()
+
+
+def _would_rebuild(dom, vocab_id):
+    """(bool, why) -- would _domain_seqs REWRITE this domain's cache, or reuse it?
+
+    THE REAL PREDICATE, replacing "does the name collide with the default mix" (6e's
+    ruling, 2026-09-03). The name test is a proxy, and it is wrong in both directions:
+    it refused a mix whose nine domains would all REUSE (measured: every .vocab stamp
+    equal to the live vocab id, every .srcfp equal to the live source fingerprint, so
+    the run writes nothing), and it would pass a differently-named domain whose cache
+    is stale and therefore WOULD be rewritten -- which is the actual hazard.
+
+    The conjuncts are train.py's own (train.py:1411-1419), read from that module rather
+    than restated here: cache exists, shards exist, same vocab, same source fingerprint,
+    same sample seed, and the cache newer than every shard. A copy of a six-part
+    condition is a second thing to keep correct, and the mtime clause is the one a
+    hand-written copy drops -- I nearly did.
+    """
+    import train
+
+    cache = train._domain_cache_path(dom)
+    ddir = os.path.join(ROOT, "data", "corpus", dom)
+    shards = sorted(glob.glob(os.path.join(ddir, "*.jsonl")))
+    if not os.path.exists(cache):
+        return True, f"{dom}: no cache at {cache} -- this run would CREATE it"
+    if not shards:
+        return True, f"{dom}: no shards, so _domain_seqs cannot judge freshness"
+    stamp, srcfp, seedfp = cache + ".vocab", cache + ".srcfp", cache + ".seed"
+    got = _read(stamp)
+    if got != vocab_id:
+        return True, (f"{dom}: cache vocab {(got or 'unstamped')[:16]!r} != live "
+                      f"{vocab_id[:16]!r} -- would retokenize")
+    live_fp = train._corpus_fp(ddir)
+    if _read(srcfp) != live_fp:
+        return True, f"{dom}: cache .srcfp != the source's fingerprint -- would retokenize"
+    want_seed = str(train._sample_seed())
+    was = _read(seedfp)
+    if was != want_seed:
+        return True, (f"{dom}: cache shuffled at sample_seed {was or 'unstamped'}, now "
+                      f"{want_seed} -- would retokenize")
+    newest = max(os.path.getmtime(p) for p in shards)
+    if os.path.getmtime(cache) < newest:
+        return True, f"{dom}: a shard is newer than the cache -- would retokenize"
+    return False, f"{dom}: reuse"
+
+
 def main():
     from tokenizers import Tokenizer
 
@@ -111,35 +168,9 @@ def main():
             k = len([s for s in os.listdir(ddir) if s.endswith(".jsonl")])
             assert k, f"data/corpus/{dom} has no shards"
             n_shard += k
-        # train.py has no knob for the token-cache location (_domain_cache_path writes
-        # /data00/tokens_<domain>[_fone].pt), so the domain NAME is the only thing keeping
-        # this six-step run out of a multi-day pretrain's cache file.
-        sys.path.insert(0, os.path.join(ROOT, "scripts"))
-        import harness
-
-        real_mix = os.path.join(ROOT, harness.cfg_default("mix"))
-        if os.path.exists(real_mix):
-            real = list(json.load(open(real_mix, encoding="utf-8"))["domains"])
-            shared = [d for d in doms if d in real]
-            # On the sample mix this must be empty. On a REAL mix every domain is shared by
-            # construction, and that is the whole hazard: this test would tokenize into the
-            # live run's /data00/tokens_<domain>.pt. E2E_MIX therefore refuses rather than
-            # warns -- a six-step run must never be the thing that writes a pretrain's cache
-            # (the 0-byte vocab stamp de wrote on the shared cot cache cost tilerl's gate run
-            # 5 minutes of 8 idle cards, 2026-09-02).
-            if shared and not E2E_MIX:
-                raise AssertionError(
-                    f"domains {shared} are also in the default mix; both would share the token "
-                    f"cache /data00/tokens_<domain>.pt and this test would clobber a pretrain's."
-                )
-            if shared and E2E_MIX:
-                raise SystemExit(
-                    f"REFUSING: E2E_MIX={MIX} names {len(shared)} domain(s) the default mix also "
-                    f"names ({shared[:4]}), so this run would tokenize into the live cache at "
-                    f"/data00/tokens_<domain>.pt. Run it on a card whose /data00 is not shared "
-                    f"with a live pretrain, or point E2E_MIX at a mix with its own domain dirs. "
-                    f"This is the launch-mix half of the test and it is REFUSED, not skipped."
-                )
+        # THE CACHE GUARD MOVED TO STAGE 2, where the vocabulary fingerprint exists.
+        # The real predicate needs it, and the name test that stood here did not -- which
+        # is why it could run this early. Proxy replaced by the thing itself (6e's ruling).
         print(f"    {n_shard} shards, domains={doms}")
 
         stage(2, "the vocabulary the pipeline will use, and its fingerprint")
@@ -147,6 +178,30 @@ def main():
         assert os.path.exists(tok_path), "data/tokenizer.json missing"
         fp = vocab_fingerprint(Tokenizer.from_file(tok_path))
         print(f"    fingerprint {fp}")
+
+        # WOULD THIS RUN REWRITE A CACHE? The guard that stood in stage 1 asked whether a
+        # domain NAME collides with the default mix's. That proxy is wrong in both
+        # directions: it refused mix_200m_8b, whose nine domains would every one REUSE
+        # (measured 2026-09-03), and a differently-named domain with a stale cache -- the
+        # actual hazard -- passed it. What must never happen is a six-step test WRITING a
+        # multi-day pretrain's cache (de's 0-byte vocab stamp on the shared cot cache cost
+        # tilerl's gate run 5 minutes of 8 idle cards, 2026-09-02); rewriting is the
+        # hazard, and now it is the question. REFUSED, not skipped.
+        rebuilds = []
+        for dom in doms:
+            hot, why = _would_rebuild(dom, fp)
+            print(f"    cache: {why}")
+            if hot:
+                rebuilds.append(why)
+        if rebuilds:
+            raise SystemExit(
+                f"REFUSING: {len(rebuilds)} of {len(doms)} domain(s) in {MIX} would have their "
+                f"token cache REWRITTEN by this run, and a six-step test must never be what "
+                "writes a pretrain's cache:\n  " + "\n  ".join(rebuilds) +
+                "\nRun it on a card whose /data00 is not shared with a live pretrain, or point "
+                "E2E_MIX at a mix whose caches are already fresh. This is the launch-mix half "
+                "of the test and it is REFUSED, not skipped."
+            )
 
         stage(3, f"pretrain {STEPS} steps on the sample mix -> a checkpoint")
         name = "e2e_tmp"
@@ -320,7 +375,23 @@ def main():
                            real_kernel=True, mix=MIX)
         return 0
     finally:
-        stage(11, "resume from the step-less final save refuses (fb 2026-09-02)")
+        # STAGE 11 ONLY IF THE RUN GOT FAR ENOUGH TO NEED IT. This `finally` runs on the
+        # refusal paths too, and `name` is bound at stage 4 -- so a stage-1/2 refusal fell
+        # through to here and raised `UnboundLocalError: cannot access local variable
+        # 'name'` WHILE HANDLING THE SystemExit. The refusal text printed, then the stack
+        # top said UnboundLocalError: a reader seeing the last line judges "the tool is
+        # broken" when the truth is "this mix may not run here". Refusal and crash shared
+        # one exit (gate_failure_shapes §140), and the guard's REFUSAL PATH had never been
+        # run -- which is more basic than whether the guard blocks the right thing.
+        #
+        # `locals()` rather than a flag: the condition is exactly "did the body reach the
+        # point that created what stage 11 consumes", and the binding IS that fact.
+        _have = {"name", "ckpt"} <= set(locals())
+        if not _have:
+            print("\n[11] skipped: the run refused before a checkpoint existed, so there "
+                  "is nothing to attempt a resume from (and nothing was written)")
+        else:
+            stage(11, "resume from the step-less final save refuses (fb 2026-09-02)")
         # The end-of-run save writes neither step nor opt, so a resume from it would
         # silently restart at step 0 with a cold optimizer. The guard is field-based,
         # not filename-based: milestone hardlinks without stepN in the name pass.

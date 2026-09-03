@@ -194,6 +194,15 @@ def gate_corpora(root, mix_path, world):
 
 
 ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
+# Which of them actually READ the launch data. The mix requirement below applies to these
+# and only these (6e's ruling, 2026-09-03): test_arch_L32 builds models from random ids and
+# opens no corpus -- every "mix" in that file is a `mixer`, the model component -- so its
+# row records mix=None truthfully, and demanding it prove which data it ran on is demanding
+# proof of something it does not do. A gate that asks an impossible question of an honest
+# row cannot be satisfied except by a dishonest one. test_e2e is the test that tokenizes,
+# so the mix half stays there, where the incident it was written for happened (de-10: e2e
+# green on the sample mix while the 20B launch died at step 0 on KeyError('content')).
+READS_LAUNCH_DATA = ("scripts/test_e2e.py",)
 
 
 def _launch_shape_from_env():
@@ -333,7 +342,7 @@ def gate_arch_tests(root, mix_path, world):
         elif not row.get("real_kernel"):
             problems.append(f"{name}: real_kernel is not true -- a stand-in chunk_kda "
                             f"passes every case without touching a KDA kernel")
-        elif row.get("mix") is None:
+        elif name in READS_LAUNCH_DATA and row.get("mix") is None:
             # UNRECORDED and WRONG are separate problems for the same reason absence and
             # failure are separate outcomes above: a row predating the mix field cannot be
             # shown to have touched the launch data either way, and saying "ran on None"
@@ -341,7 +350,7 @@ def gate_arch_tests(root, mix_path, world):
             problems.append(f"{name}: the row records no mix, so it cannot be shown to "
                             f"have run on {want_mix} -- a pass on the sample mix is what "
                             f"this field exists to distinguish")
-        elif row.get("mix") != want_mix:
+        elif name in READS_LAUNCH_DATA and row.get("mix") != want_mix:
             problems.append(f"{name}: ran on {row['mix']}, launch is {want_mix} -- "
                             f"the sample mix's corpus dir holds no holdout slices, so a "
                             f"pass there cannot see the launch mix's step-0 failures")
@@ -1077,15 +1086,56 @@ def selftest():
         "restoring LAUNCH_SHAPE did not restore the GO -- the two calls above were not "
         "measuring the shape, and every assertion in this block is about something else")
 
+    # THE MIX EXEMPTION IS NARROW (6e's ruling, 2026-09-03). A test that reads no corpus
+    # records mix=None truthfully and must not be asked to prove which data it ran on --
+    # but exempting it from the MIX must not exempt it from anything else. My first version
+    # wrote `elif name not in READS_LAUNCH_DATA: pass`, which fell past the else branch and
+    # silently dropped the test_sha256 check for that test: a data-free test would no longer
+    # be pinned to its own content, and nothing would have said so. Both halves asserted
+    # here, because the hole was invisible in the passing case.
+    def _mixworld(d, over):
+        write_mix(d, lambda m: None)
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        rows = {}
+        for n in ARCH_TESTS:
+            r = {"result": "pass", "real_kernel": True, "shape": dict(LAUNCH_SHAPE),
+                 "test_sha256": _sha256(os.path.join(d, n)),
+                 "mix": mix_rel if n in READS_LAUNCH_DATA else None}
+            r.update(over.get(n, {}))
+            rows[n] = r
+        with open(os.path.join(d, "runs", "launch_tests.json"), "w", encoding="utf-8") as f:
+            json.dump(rows, f)
+
+    dx = world(lambda d: _mixworld(d, {}))
+    st, why = gate_arch_tests(dx, os.path.join(dx, mix_rel), 7)
+    assert st == GO, f"a data-free test's mix=None must not refuse the gate: {why}"
+    # ...and the exemption reaches ONLY the mix.
+    arch = [n for n in ARCH_TESTS if n not in READS_LAUNCH_DATA]
+    assert arch, "no data-free arch test to check the exemption's width with"
+    dy = world(lambda d: _mixworld(d, {arch[0]: {"test_sha256": "0" * 64}}))
+    st, why = gate_arch_tests(dy, os.path.join(dy, mix_rel), 7)
+    assert st != GO, (
+        f"{arch[0]} is exempt from the mix requirement, and its test_sha256 went unchecked "
+        f"too -- the exemption widened past what it was written for: {why}")
+    assert "test changed after it passed" in why, (
+        f"refused, but not for the tampered sha, so this world proves nothing about the "
+        f"exemption's width: {why}")
+
     # THE MIX HALF (de-10), and the first world is the incident: e2e passed on the sample
     # mix while the launch mix died at step 0 on KeyError('content'), because the sample
     # mix's corpus dir holds zero holdout slices. Both worlds mutate the record the gate
     # is written to ACCEPT, so the only thing that differs is the field under test -- an
     # empty tree would fail for the absence of everything and prove nothing (de's rule).
+    # MUTATE THE TEST THAT READS DATA, not ARCH_TESTS[0]. It was [0] -- test_arch_L32 --
+    # and once that test became exempt from the mix requirement (it reads no corpus), both
+    # worlds went GREEN: they were mutating a field the gate no longer reads for that test,
+    # so they asserted nothing while looking untouched. READS_LAUNCH_DATA[0] is the test
+    # whose mix the gate does read, which is what these two worlds were always about.
+    _mixed_test = READS_LAUNCH_DATA[0]
     for label, mutate, want_phrase in (
-        ("a pass recorded on the sample mix", lambda rows: rows[ARCH_TESTS[0]].update(
+        ("a pass recorded on the sample mix", lambda rows: rows[_mixed_test].update(
             {"mix": "data/mix_sample.json"}), "data/mix_sample.json"),
-        ("a row predating the mix field", lambda rows: rows[ARCH_TESTS[0]].pop("mix"),
+        ("a row predating the mix field", lambda rows: rows[_mixed_test].pop("mix"),
          "records no mix"),
     ):
         def _mixed(d, mutate=mutate):
