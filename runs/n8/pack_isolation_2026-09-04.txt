@@ -1,0 +1,88 @@
+# scripts/n7c_pack_isolation.py -- run output, the citation for eff.kda_document_isolation_violated
+# pod, card 4 (CUDA_VISIBLE_DEVICES=4), captured 2026-09-04
+# repo commit at capture: c690e0122bbf9f2e6a30cf63ddd2ae87e00ce3c8
+# ckpt_n7c_p3.pt, written 2026-09-03 20:04 on the pod, NOT covered by any KEEP claim in
+#   runs/pod_ckpt_candidates_2026-09-02.txt -- train.py:2618-2622's rolling window can delete it,
+#   which is why this output is committed rather than left as something to re-run.
+# Reproduce: CUDA_VISIBLE_DEVICES=4 python3 scripts/n7c_pack_isolation.py
+#
+12 blocks: 0:KDA 1:KDA 2:KDA 3:MLA 4:KDA 5:KDA 6:KDA 7:MLA 8:KDA 9:KDA 10:KDA 11:MLA
+
+== baseline: the same row forwarded twice, and each mixer's own scale
+  blk kind     rerun   absmean    absmax   tol used below
+    0 KDA     0.0000    3.7013    164.00   0.9253
+    1 KDA     0.0000    1.7181     30.38   0.4295
+    2 KDA     0.0000    3.7277    280.00   0.9319
+    3 MLA     0.0000   16.1445    540.00   4.0361
+    4 KDA     0.0000    2.5968    135.00   0.6492
+    5 KDA     0.0000    2.2534    110.00   0.5634
+    6 KDA     0.0000    1.6421    117.00   0.4105
+    7 MLA     0.0000    4.0933    191.00   1.0233
+    8 KDA     0.0000    1.4399     94.00   0.3600
+    9 KDA     0.0000    8.4768   4416.00   2.1192
+   10 KDA     0.0000    0.8132     84.00   0.2033
+   11 MLA     0.0000    5.7378    784.00   1.4345
+  rerun agreement: worst 0.000000 -- the forward is deterministic, so a diff below is a real difference and not kernel noise
+
+== control, two documents: 2 documents, 402 tokens, 2 segments
+  blk kind   maxdiff    first3      rest   where it lives
+    0 KDA    35.7500   35.7500   27.5000   throughout the document
+    1 KDA    42.5000   42.5000    6.1250   throughout the document
+    2 KDA    16.7500   16.7500    8.0000   throughout the document
+    3 MLA    69.0000   69.0000   55.0000   throughout the document
+    4 KDA    16.0000   16.0000   16.0000   throughout the document
+    5 KDA    13.5000   13.5000    4.7500   throughout the document
+    6 KDA    38.0000   38.0000    9.7500   throughout the document
+    7 MLA    25.5000   25.5000   11.5000   throughout the document
+    8 KDA    34.2500   34.2500   10.7500   throughout the document
+    9 KDA   900.0000  900.0000  368.0000   throughout the document
+   10 KDA     8.2500    8.1250    8.2500   throughout the document
+   11 MLA   319.0000  319.0000   68.0000   throughout the document
+  FIRST DIVERGENCE: block 0, mixer KDA, max 35.7500 (first3 35.7500, rest 27.5000)
+
+== the reported case, 6 documents: 6 documents, 938 tokens, 6 segments
+  blk kind   maxdiff    first3      rest   where it lives
+    0 KDA    48.8750   48.8750   27.5000   throughout the document
+    1 KDA    46.7500   46.7500    6.8750   throughout the document
+    2 KDA    21.7500   21.7500   14.0000   throughout the document
+    3 MLA    77.5625   77.5625   56.8281   throughout the document
+    4 KDA    16.0000   16.0000   16.0000   throughout the document
+    5 KDA    13.5000   13.5000    5.2500   throughout the document
+    6 KDA    40.2500   40.2500   10.0000   throughout the document
+    7 MLA    26.7812   26.7812   12.8125   throughout the document
+    8 KDA    34.7500   34.7500   11.5000   throughout the document
+    9 KDA   900.0000  900.0000  384.0000   throughout the document
+   10 KDA     9.7500    8.1250    9.7500   throughout the document
+   11 MLA   319.0000  319.0000   70.0000   throughout the document
+  FIRST DIVERGENCE: block 0, mixer KDA, max 48.8750 (first3 48.8750, rest 27.5000)
+
+== per-position profile at block 0 (KDA), max|diff| by position within each document
+  doc 0 HumanEval/0    start    0  pos0-5: 0.000 0.000 0.000 0.000 0.000 0.000  ...  last3: 0.000 0.000 0.000
+  doc 1 HumanEval/1    start  170  pos0-5: 20.938 35.750 5.000 27.500 12.500 21.000  ...  last3: 1.000 0.500 1.000
+  doc 2 HumanEval/2    start  401  pos0-5: 48.875 35.500 16.000 6.500 2.000 2.781  ...  last3: 0.281 0.078 0.500
+  doc 3 HumanEval/3    start  493  pos0-5: 20.688 35.250 5.000 27.000 12.500 20.500  ...  last3: 0.500 0.500 1.000
+  doc 4 HumanEval/4    start  639  pos0-5: 20.938 35.750 5.000 27.500 12.500 21.000  ...  last3: 0.125 1.000 1.000
+  doc 5 HumanEval/5    start  796  pos0-5: 20.938 35.750 5.000 27.500 12.500 20.500  ...  last3: 0.500 0.500 1.000
+
+  decay within each document, and dependence on position IN THE ROW:
+    doc  rowpos   pos0-2   pos3-9   pos10+   last10   shape
+      0       0    0.000    0.000    0.000    0.000   clean
+      1     170   35.750   27.500    5.000    1.500   decaying from the start
+      2     401   48.875    6.500    6.500    0.594   decaying from the start
+      3     493   35.250   27.000    7.500    1.500   decaying from the start
+      4     639   35.750   27.500    6.000    1.000   decaying from the start
+      5     796   35.750   27.500    8.000    1.000   decaying from the start
+    doc 0 (nothing precedes it): 0.0000  -- must be ~0 or the probe itself is wrong
+    documents 1..5 at row positions [170, 401, 493, 639, 796]: start-diff [35.75, 48.88, 35.25, 35.75, 35.75]
+    spread across row positions: 13.625 on values around 38.3 -- a leak that GREW with row distance would order these by row position, and they do not.
+
+== length parity: the same document scored at its natural T versus T+1 padding
+  task                 T parity   maxdiff  meandiff   reading
+  HumanEval/0        169    odd    2.0000    0.0627   DIFFERS
+  HumanEval/1        230   even    4.0000    0.0562   DIFFERS
+  HumanEval/2         91    odd    4.0000    0.0596   DIFFERS
+  HumanEval/3        145    odd    2.0000    0.0644   DIFFERS
+  HumanEval/4        156   even    2.0000    0.0582   DIFFERS
+  HumanEval/5        140   even    2.0000    0.0703   DIFFERS
+  worst across tasks: 4.0000   at value 152.0, i.e. 6.7 bf16 ulp(s) (one ulp there is 0.594)
+  VERDICT: APPENDING ONE TOKEN CHANGES EARLIER POSITIONS, which a causal model cannot do. The ulp count above is what says whether it matters: at a handful of ulps this is a reduction-order effect (a different T changes chunk_kda's tiling and so the summation order) and not a semantic leak, while at hundreds of ulps it is a real dependence of a row on its own length. Either way it is much smaller than the packing violation above and does not explain a 3-4 logit gap on its own.
