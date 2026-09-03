@@ -1,18 +1,22 @@
-# tilerl-22: N6 runs/ prune — the listing
+# tilerl-22: N6 runs/ prune — the listing, and why nothing is deleted
 
-**This is the list, not the deletion.** Broadcast now, held 24 h per the deletion
-rule; unclaimed entries are deleted 2026-09-05. A file whose reason cannot be
-written is not on the list.
+Owner tilerl, pair b0, 2026-09-04. **Verdict: KEEP ALL 63. Nothing deleted from
+any of the three categories.**
 
-Owner tilerl, pair b0, 2026-09-04.
+## The fact that decides it: /work is an emptyDir
 
-## Result: 43 files, 1021 KB. The other two categories are empty.
+`scripts/pod_push.sh:71` discovers the pod's `/work` as
+`/var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work` — a kubernetes
+**emptyDir**, which is destroyed when the pod restarts. So for every committed
+log, the git copy is the durable one and the pod copy is the volatile one.
 
-The task named three populations. Measured, two contain nothing safely
-deletable, and reporting that is the deliverable — a prune list padded with rows
-that carry unique information is worse than a short one.
+That inverts the premise. "Byte-identical to the pod" is **a fact about today,
+not a reason to delete**: the pod copy can vanish on any restart, and then the
+deletion has destroyed the only remaining copy of all 43. I had proposed
+deleting them and raised the objection against my own list; 6e ruled on the
+objection with the emptyDir fact, which I confirmed at that line.
 
----
+**What was done instead: the 7 stale snapshots were refreshed from the pod.**
 
 ## 1. score_matrix duplicate `(ckpt, profile)` keys — **none exist**
 
@@ -48,108 +52,62 @@ Three reasons they stay, each measured:
   2026-09-04 note that steps 4400-4550 shared card 0. Deleting L269 orphans the
   amendment; deleting L274 deletes the disclosure.
 
-## 3. Committed log snapshots — **43 of 63, by hash**
+## 3. Committed log snapshots — **63 of 63 kept, 7 refreshed**
 
 63 `.log` files are committed under `runs/`. Compared each against the pod copy
 **by md5, not by existence**:
 
 | | count | disposition |
 |---|---|---|
-| byte-identical to the pod copy | **43** | **deletable — the list below** |
-| same path, different content | 7 | keep: the committed bytes exist nowhere else |
-| not on the pod at all | 13 | keep: git is the only copy |
+| byte-identical to the pod copy | 43 | **keep** — see the emptyDir fact above |
+| same path, different content | 7 | **refreshed from the pod**, listed below |
+| not on the pod at all | 13 | keep: git is the only copy, and always was |
 
-**Existence was not a sufficient test and nearly cost two files.** My first pass
+**Existence was not a sufficient test and nearly cost two files.** A first pass
 proposed `runs/ab_base_a_first.log` because the path exists on the pod — but the
-pod's copy is **3.8 MB against the committed 8.4 KB**, starts with torchrun
+pod's copy is **3.8 MB against a committed 8.4 KB**, starts with torchrun
 warnings where the committed file starts with the mix line, and the committed
-content is not even a prefix. `runs/b0_17_readout.log` is 21 KB on the pod
-against 5.6 KB committed. Same path, different file, both times.
+content is **not even a prefix** of it. `runs/b0_17_readout.log` was 21 KB on the
+pod against 5.6 KB committed. Same path, different file, both times. Switching
+the test from existence to md5 is what caught it.
 
-The 7 that differ, all kept:
+### The 7 stale snapshots, refreshed 2026-09-04
 
-```
-runs/ab_base_a_first.log   runs/b0_17_readout.log   runs/data_leg_206m_8b.log
-runs/pretrain_15b_s1.log   runs/t56_profile.log
-runs/t57_recompile.log     runs/t57_steady.log
-```
+Each was checked for growth first — two size reads 30 s apart, **all seven
+unchanged**, so every one is a finished run and no refresh captured a
+half-written log. After refreshing, all 7 md5-match the pod copy.
 
-The 13 that are git-only, all kept — **deleting these destroys the sole copy**:
+| file | was | now |
+|---|---|---|
+| runs/ab_base_a_first.log | 8,359 | 3,819,506 |
+| runs/t57_recompile.log | 6,705 | 3,301,291 |
+| runs/data_leg_206m_8b.log | 1,268 | 310,366 |
+| runs/pretrain_15b_s1.log | 2,807 | 241,940 |
+| runs/b0_17_readout.log | 5,573 | 20,992 |
+| runs/t57_steady.log | 4,523 | 10,911 |
+| runs/t56_profile.log | 2,693 | 7,584 |
 
-```
-runs/0830v1_0.2b.log          runs/l1_2x2_ctrl_en.log   runs/l1_2x2_ours_en.log
-runs/ab_shipment.log          runs/l1_2x2_ctrl_zh.log   runs/l1_2x2_ours_zh.log
-runs/e1_29_floor_by_class.log runs/n7c_2x2/n7c_2x2.log  runs/t57_pad_ab.log
-runs/eval_v2_fmt.log          runs/t57_seam.log         runs/t57_twin.log
-runs/heldout_v2/clean_ctrl_lr1e-3.log
-```
+The committed copies were truncated excerpts — `ab_base_a_first.log` held 0.2% of
+the run. **A stale snapshot is worse than no snapshot: it looks like the record
+and is not.**
 
-### The 43 proposed for deletion
+### None growing, so none deferred
 
-Reason, identical for every one: **byte-identical to `/work/aupai/<same path>` on
-the pod, which is the live copy; the committed file is a snapshot that has
-diverged from nothing and adds no information.**
-
-```
-runs/ab_chunk.log
-runs/ab_vocab.log
-runs/ab_vocab_32784.log
-runs/ab_vocab_32784_lr003.log
-runs/ab_vocab_32784_zeroinit.log
-runs/b0_16_rescale.log
-runs/b0_16_table.log
-runs/b0_17_arm3_dl.log
-runs/bf16_update_loss.log
-runs/bf16_update_loss2.log
-runs/code_base_0shot.log
-runs/code_zero_sft_v1.log
-runs/codezh_sft_v2.log
-runs/e1_27_step0/repro_lr0.1.log
-runs/e1_27_step0/repro_lr1.0.log
-runs/e1_28_clean_run.log
-runs/heldout_v2/clean_floor_control.log
-runs/heldout_v2/clean_floor_ours.log
-runs/heldout_v2/clean_ours_sft.log
-runs/heldout_v2/ctrl_lr1e-3.log
-runs/heldout_v2/ctrl_lr1e-4.log
-runs/heldout_v2/ctrl_lr3e-3.log
-runs/heldout_v2/ctrl_lr3e-4.log
-runs/heldout_v2/ctrl_lr3e-5.log
-runs/heldout_v2/floor_control.log
-runs/heldout_v2/floor_ours.log
-runs/heldout_v2/ours_lr0.01.log
-runs/heldout_v2/ours_lr0.03.log
-runs/heldout_v2/ours_lr0.3.log
-runs/heldout_v2/ours_lr1.0.log
-runs/heldout_v2/ours_sft_reguarded.log
-runs/l1_p324.log
-runs/p02_sc_base.log
-runs/p02_sc_patched.log
-runs/pretrain_30b_s2.log
-runs/scan_code_holdout.log
-runs/scan_code_holdout_sft.log
-runs/t38_ref.log
-runs/t38_resume.log
-runs/t52_p1_b32.log
-runs/t52_p1_base.log
-runs/t52_p2_maxauto.log
-runs/w7_b16a2.log
-```
-
-**Objection worth raising against my own list:** deleting these makes the repo
-depend on the pod for 43 files, and the pod is not backed up. The counter-case is
-that a snapshot nobody refreshes is a stale copy waiting to disagree with the
-live one — which is exactly the 7 above. If b0 prefers keeping them, the reason
-to state is "the pod is not a durable store", and that is a fair objection to the
-whole category rather than to any file on the list.
+No committed log is attached to a live run right now; the params leg writes
+`runs/params_leg_438m_3p76b.log`, which is not among the 63.
 
 ## What the listing changed about the premise
 
-Two of three populations were empty, and the third was mostly traps: **20 of 63
-committed logs must not be deleted** — 13 because git holds the only copy, 7
-because the pod's file at the same path is a different file. A prune that trusted
-"the pod holds the live logs" would have destroyed content in both groups, with
-nothing in the filename to distinguish them.
+All three populations came back empty of anything deletable. Two were empty on
+the data; the third was emptied by a fact about the storage — **`/work` is an
+emptyDir, so "the pod has it too" is not durability**. A prune that trusted "the
+pod holds the live logs" would have deleted 43 files whose remaining copy dies at
+the next pod restart, plus, on the first pass, 2 whose pod file was a different
+file with the same name.
+
+What the task actually surfaced was the opposite of a prune: **7 committed logs
+had silently decayed into truncated excerpts of the runs they claim to record**,
+and refreshing them was the useful work.
 
 Same shape as §156 one directory up: two things share a name, and only comparing
 each one against the other store separates them. Existence is not identity;
