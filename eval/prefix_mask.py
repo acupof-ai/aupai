@@ -96,9 +96,13 @@ def build_mask_mods():
         # this as `(q_idx < P) or (kv_idx <= q_idx)` would be wrong -- it would let a prompt
         # query at q_idx read every key in the row, response included, and the loss would then
         # drop by leakage through the residual stream feeding the head.
+        # BITWISE, NOT `and`/`or`/`not`. The comparisons produce SSA booleans (vector<1xi1>), and
+        # python's boolean operators call __bool__ on them, which cutlass cannot lower --
+        # "Unsupported DSL type: vector<1xi1>" from typing.py:1268. `&`, `|` and `~` stay in the
+        # SSA domain. Same reason numpy and torch masks use them.
         in_prompt_q = q_idx < p
         in_prompt_k = kv_idx < p
-        return (in_prompt_q and in_prompt_k) or ((not in_prompt_q) and kv_idx <= q_idx)
+        return (in_prompt_q & in_prompt_k) | (~in_prompt_q & (kv_idx <= q_idx))
 
     return causal_mod, prefix_mod
 
