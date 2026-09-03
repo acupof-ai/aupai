@@ -53,6 +53,18 @@ SCOPE = [
     "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",
+    # ONE path out of runs/, and it is the exception that proves the directory's rule
+    # (b0 2026-09-03, 6e ruled). Everything else here flows POD -> MAIN: the pod produces
+    # the rows and the committed copy lags, which is why runs/ is excluded from pushes at
+    # all. card_assignment.json flows the other way -- the controller writes the grant on
+    # main and the launcher must READ it on the pod. Left out of SCOPE it never entered
+    # the manifest (grep -c '^runs/' pod_head_manifest.txt was 0) and never reached the
+    # pod, so after _allocation_cards started reading it, main held the corrected grant
+    # (0-3) while the pod still held the 2026-09-01 file and fell back to cards 0-6 --
+    # the user's card 4 included. Named as ONE path, not runs/*.json: the several dozen
+    # other .json files here ARE pod-written results, and putting them in scope makes
+    # pod_drift report every one of them as drift.
+    "runs/card_assignment.json",
     "AGENTS.md",
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
@@ -64,6 +76,20 @@ SCOPE = [
 # behind main and the corpus was built with it (fb: ~0.25% residue, not rebuilt), while
 # pod_drift read zero drift throughout.
 EXCLUDE_DIRS = ("workflows",)
+
+# The one runs/ path that flows MAIN -> POD. Every other file under runs/ is written on
+# the pod (results) or appended to by both (ledgers), which is why the three places below
+# treat a runs/ path as "divergence expected, never pushed". This one is a controller
+# decision the launcher READS on the pod, so it must be pushed and must be held to the
+# same match as code. Defined once: the same predicate is needed at four sites, and four
+# copies of `p.startswith("runs/")` with one exception each is how the exception gets
+# dropped from one of them (b0 2026-09-03).
+PUSHED_RUNS = ("runs/card_assignment.json",)
+
+
+def _pod_written(path):
+    """Is this a runs/ file the pod produces, so drift is expected and pushes skip it?"""
+    return path.startswith("runs/") and path not in PUSHED_RUNS
 
 # git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
 # to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
@@ -333,11 +359,11 @@ def check_pod(root=ROOT, scope=None):
             # be there. The gate treated diverged runs/ files as expected but missing
             # ones as fatal -- so adding runs/retro.jsonl turned the gate red on a file
             # nothing is allowed to push (fb, 2026-08-31).
-            (runs_div if p.startswith("runs/") else bad).append(
-                p if p.startswith("runs/") else f"missing {p}"
+            (runs_div if _pod_written(p) else bad).append(
+                p if _pod_written(p) else f"missing {p}"
             )
         elif sha_disk(fp) != want:
-            if p.startswith("runs/"):
+            if _pod_written(p):
                 runs_div.append(p)
             else:
                 bad.append(f"diff {p}")
@@ -447,12 +473,12 @@ def plan_sync(new_path, old_path, pod_path):
                 pod[p] = sha
     plan = []
     for p, (want, _cls, _mode) in new.items():
-        if p.startswith("runs/"):
+        if _pod_written(p):
             continue
         if pod.get(p) != want:
             plan.append(("push", p))
     for p in old:
-        if p not in new and not p.startswith("runs/"):
+        if p not in new and not _pod_written(p):
             plan.append(("del", p))
     return plan
 
