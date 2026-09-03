@@ -228,7 +228,7 @@ def _ce(model, x, y, bs, per_row=False, cu_path="cu_none"):
     """
     tot = cnt = 0.0
     rows = [] if per_row else None
-    # cu_path="cu_doc" PASSES THE DOCUMENT MASK, which this function did not do for weeks. Without it
+    # cu_path="doc_cu" PASSES THE DOCUMENT MASK, which this function did not do for weeks. Without it
     # every packed row was scored as one undivided sequence while training used doc_cu_seqlens, and
     # b0 measured the artifact at -0.082 nat/token pooled over nine domains, with a dose-response in
     # eos-per-row (chatml/chat_qa -0.20..-0.28) -- 7.6x N2's own delta, so it was large enough to
@@ -240,13 +240,13 @@ def _ce(model, x, y, bs, per_row=False, cu_path="cu_none"):
     # scripts/b0_sd_cu_rescore.py:76 already scored Stage D one row at a time. Matching that exactly
     # is the point: 6e's ruling is that the repo ends with ONE cu path, not two that agree by
     # assumption, so this loop reproduces b0's construction rather than a defensible variant of it.
-    step = 1 if cu_path == "cu_doc" else bs
+    step = 1 if cu_path == "doc_cu" else bs
     _cu_of = None
-    if cu_path == "cu_doc":
+    if cu_path == "doc_cu":
         from train import doc_cu_seqlens  # noqa: PLC0415  (import here: CPU callers need no train)
         _cu_of = doc_cu_seqlens
     elif cu_path != "cu_none":
-        raise ValueError(f"cu_path must be 'cu_doc' or 'cu_none', got {cu_path!r}")
+        raise ValueError(f"cu_path must be 'doc_cu' or 'cu_none', got {cu_path!r}")
     for i in range(0, len(x), step):
         xb = x[i : i + step]
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
@@ -302,7 +302,7 @@ def selftest(model, tok, texts, seq, device):
     #    cap back to the same sequences. `texts * 2` with a doubled cap reads FURTHER INTO THE
     #    SAME STREAM, so it compares two different samples and fails on sampling noise -- a
     #    check that fires on correct code is as useless as one that never fires.
-    #    cu_path="cu_none" EXPLICITLY: under cu_doc the loop steps one row at a time whatever bs
+    #    cu_path="cu_none" EXPLICITLY: under doc_cu the loop steps one row at a time whatever bs
     #    says, so this assertion would compare bs=4 against bs=4 and pass without testing anything.
     #    A check that cannot fail is worse than no check, because it reads as coverage.
     a, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=4, cu_path="cu_none")
@@ -319,7 +319,7 @@ def selftest(model, tok, texts, seq, device):
             "accumulator is batch-dependent"
         )
         ok = False
-    # 3. cu_doc ISOLATES DOCUMENTS, 6e's gate for this change. Two documents packed into one row,
+    # 3. doc_cu ISOLATES DOCUMENTS, 6e's gate for this change. Two documents packed into one row,
     #    scored through the new path, must give each document the loss it gets alone -- up to the
     #    isolation fix's residual, measured on the pod as 0.2-2.3 bf16 ulps against a T-parity floor
     #    of 6.7 ulps (runs/n8/pack_isolation_FIXED_2026-09-04.txt).
@@ -334,7 +334,7 @@ def selftest(model, tok, texts, seq, device):
                        dtype=torch.long, device=device)
     if two.shape[1] % 2:  # odd length misaligns chunk_kda (model.py:125): a crash, not a warning
         two = torch.cat([two, two.new_full((1, 1), EOS_ID)], dim=1)
-    packed, n_p = domain_loss_seqs(model, two, device, cu_path="cu_doc")
+    packed, n_p = domain_loss_seqs(model, two, device, cu_path="doc_cu")
     # The same two documents as separate ROWS: cu marks every row start too (train.py:669), so this
     # is the same document set with the same boundaries and no packing.
     d1 = tok.encode(texts[0]).ids + [EOS_ID]
@@ -350,10 +350,10 @@ def selftest(model, tok, texts, seq, device):
         # cu_none on the SAME packed row is the positive control: if it does not differ, this probe
         # cannot see cross-document effects at all and case 3's pass would mean nothing.
         leaky, _ = domain_loss_seqs(model, two, device, cu_path="cu_none")
-        print(f"  selftest cu_doc {packed:.4f} | cu_none {leaky:.4f} on the same packed row "
+        print(f"  selftest doc_cu {packed:.4f} | cu_none {leaky:.4f} on the same packed row "
               f"({n_p} tokens)")
         if abs(packed - leaky) < 1e-6:
-            print("  FAIL cu_doc and cu_none give the same loss on a two-document row; cu is not "
+            print("  FAIL doc_cu and cu_none give the same loss on a two-document row; cu is not "
                   "reaching the forward, so case 3 tests nothing")
             ok = False
 
@@ -364,9 +364,9 @@ def selftest(model, tok, texts, seq, device):
     if noeos.shape[1] % 2:
         noeos = noeos[:, :-1]
     if noeos.shape[1] >= 4:
-        x1, _ = domain_loss_seqs(model, noeos, device, cu_path="cu_doc")
+        x1, _ = domain_loss_seqs(model, noeos, device, cu_path="doc_cu")
         x0, _ = domain_loss_seqs(model, noeos, device, cu_path="cu_none")
-        print(f"  selftest no-eos row: cu_doc {x1:.6f} vs cu_none {x0:.6f}")
+        print(f"  selftest no-eos row: doc_cu {x1:.6f} vs cu_none {x0:.6f}")
         if abs(x1 - x0) > 1e-4:
             print(f"  FAIL a row with no <eos> moved by {x1 - x0:+.6f} between cu paths; with no "
                   f"interior boundary the two must agree")
@@ -621,8 +621,8 @@ def main():
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
-    ap.add_argument("--cu_path", choices=("cu_doc", "cu_none"), default="cu_doc",
-                    help="cu_doc (default) passes doc_cu_seqlens as training does; cu_none is the "
+    ap.add_argument("--cu_path", choices=("doc_cu", "cu_none"), default="doc_cu",
+                    help="doc_cu (default) passes doc_cu_seqlens as training does; cu_none is the "
                          "pre-2026-09-04 behaviour, kept only to reproduce published rows")
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     ap.add_argument("--paired_selftest", action="store_true",
@@ -758,7 +758,7 @@ def main():
         # written before 2026-09-04 carry no such field and score_matrix's reader treats their
         # absence as "cu_none" -- which is what they were, so absence is informative rather than
         # unknown. Recording it is the difference between two comparable numbers and two numbers that
-        # look comparable: cu_none and cu_doc differ by -0.082 nat/token pooled (b0, nine domains),
+        # look comparable: cu_none and doc_cu differ by -0.082 nat/token pooled (b0, nine domains),
         # and nothing in a row previously said which one it was.
         row = {"ckpt": os.path.basename(ck_path), "path": a.cu_path, "domains": {}}
         if a.loop:
@@ -767,6 +767,13 @@ def main():
             # runs/*.jsonl -- and the whole point is comparing them.
             row["ckpt"] += f"#loop{a.loop[0]}-{a.loop[1]}"
             row["loop_blocks"] = list(a.loop)
+        if a.cu_path == "doc_cu":
+            # THE NAME CARRIES THE PATH, and AFTER the loop suffix because that is the order
+            # scripts/b0_sd_cu_rescore.py already wrote on the pod: "ckpt_b0_sd_looped.pt#loop4-7#cu".
+            # Every other logged field is identical between a cu_none row and a doc_cu row of the same
+            # checkpoint, so without the suffix they collide on the (ckpt) key that folds rows
+            # downstream and one silently replaces the other -- and they differ by up to 0.28 nat.
+            row["ckpt"] += "#cu"
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
         for name in cache:
             # val, not the shard head: the head stopped being val when train.py started
