@@ -286,7 +286,7 @@ c1d723e6cc310bde609ba86233bf5ea4d2fc499d7c8b991b668c72c09549b04b  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-4a690be20598a6cdf42ad59e26c5abfa675a0e4a68b71dc2c5c0be5b587cbf43  scripts/hooks/pre-commit  docs  755
+1b61270ff538d8471d80d2140cbbef971443291cc7574e820bed0cce7cb92a56  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
@@ -301,7 +301,8 @@ e2f7cb2f6158c4d78455d19b9fdccbc48b54a0f9d994eca21bcd95517a44c93d  scripts/measur
 ed794304e4494801517489745451bd8d95e3f15c4bb74954cf3f762e235cb028  scripts/plot_curves.py  training  644
 f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_drift.py  training  644
 168408844b89ed59c501aa303acf9f33efaa65819e6e43c6ba00e82bc387dcf7  scripts/pod_pull_ledgers.py  training  644
-0cc2f4d7e2178903d1d47698d8a2a540bb2309e907d9a5205150ec1fc519ab0e  scripts/pod_push.sh  training  755
+aa7e19d83f6d16754e8235a687e7e4629301b1a7d4eff825ee688f17fa5b252f  scripts/pod_push.sh  training  755
+234092cfaa0c9e34a2165513016dc12cdc8e5f78da2dea4c99cb456b852cc310  scripts/pod_verify_landed.py  training  644
 80c9fa99e13f0d0d3c99738df4d24e19b1f8c14c4fb1a34df9d36492f1a54f18  scripts/probe_gradckpt_sources.py  docs  644
 55d35f0cce96c40c1d3fd7b90373c21a112d6bcbb2c9b0e2fc9b62ad92204377  scripts/profile_step_cost.py  docs  644
 795123ded74b4bd0e7a12e13c5c09f47f4780f28c063b1c4328c5f733638cc9e  scripts/progress_feed.py  docs  644
