@@ -203,17 +203,23 @@ def main():
                                torch.tensor([0, LENS[0]], dtype=torch.int32, device=dev), LENS[0]),
                           attn(aq[LENS[0]:], ak[LENS[0]:], av[LENS[0]:],
                                torch.tensor([0, LENS[1]], dtype=torch.int32, device=dev), LENS[1])]
-            at2 = 0
+            # THE OFFSET MUST ADVANCE. It did not in the first version, so document 1 was compared
+            # against packed_a[0:232] -- document 0's rows -- and the 4.328125 that printed was two
+            # different token sets, not a leak. An SDPA reference settled it: packed and solo are both
+            # 0.005710 from it and 0.000000 from each other. Third time this family of bug has cost a
+            # false finding here, so the loop now derives the span from cu itself.
             attn_leaks = False
             for i, n in enumerate(LENS):
-                d = (packed_a[at2:at2 + n] - solo_a[i]).abs().max().item()
+                lo, hi = int(cu_a[i]), int(cu_a[i + 1])
+                assert hi - lo == n, (i, lo, hi, n)
+                d = (packed_a[lo:hi] - solo_a[i]).abs().max().item()
                 attn_leaks = attn_leaks or (i > 0 and d > 0.05)
                 print(f"  doc {i} ({n} tokens): max|diff| packed vs alone {d:.6f}   "
                       f"{'DIFFERS' if d > 0.05 else 'agrees'}")
             print("  " + ("THE ATTENTION ALSO LEAKS -- a second independent site, and the fix at "
-                          "model.py:109-113 would not cover it. Before reporting that, check this "
-                          "call against model.py:191-192 kwarg by kwarg: omitting max_seqlen "
-                          "produced a false 4.33 here once."
+                          "model.py:109-113 would not cover it. Before reporting that: check the "
+                          "span arithmetic and the kwargs against model.py:191-192, because a "
+                          "non-advancing offset already produced a false 4.328125 here."
                           if attn_leaks else
                           "THE ATTENTION ISOLATES. So block 7's uniform profile in b0's run is a "
                           "clean layer fed inputs block 0 already contaminated, not a second site: "
