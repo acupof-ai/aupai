@@ -214,10 +214,25 @@ def _manifest_hf_tree(dataset, data_dir="data"):
     the urls. curl -4: the pod's IPv6 egress is broken and urllib does not fall
     back (cot 2026-09-03, cot_criterion_0903)."""
     import subprocess
+    import time
     api = f"https://hf-mirror.com/api/datasets/{dataset}/tree/main/{data_dir}"
-    out = subprocess.run(["curl", "-4", "-sL", "-m", "20", api],
-                         capture_output=True, text=True)
-    entries = json.loads(out.stdout)
+    entries = None
+    # The tree API flaps (a single curl can return an empty body while the mirror
+    # is transiently down); the shard downloads survive via --retry but this
+    # manifest read had none -- an empty response crashed the launch. Retry
+    # before declaring failure (concurrent with the flapping, 2026-09-03).
+    for attempt in range(4):
+        out = subprocess.run(["curl", "-4", "-sL", "-m", "20", api],
+                             capture_output=True, text=True)
+        if out.stdout.strip():
+            try:
+                entries = json.loads(out.stdout)
+                break
+            except json.JSONDecodeError:
+                pass
+        time.sleep(3 * (attempt + 1))
+    if entries is None:
+        raise SystemExit(f"REFUSING: tree API for {dataset} returned no parseable JSON across 4 retries -- mirror down")
     files = [n for n in entries if n.get("type") == "file" and n.get("path", "").endswith(".parquet")]
     base = f"https://hf-mirror.com/datasets/{dataset}/resolve/main/{data_dir}/"
     return [(os.path.basename(n["path"]), base + os.path.basename(n["path"]), n.get("size") or 0)
