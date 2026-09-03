@@ -329,22 +329,42 @@ def main():
         orig_varlen = model_mod.flash_attn_varlen_func
         aux_box = [None]
 
-        # SCOPED BY IDENTITY, not by patching the layer. model.py:191 looks the name up at call
-        # time, so the module global is the only hook -- but it is global, so the wrapper must
-        # decide which layer is calling. Hooks set a flag that is true only during a target's own
-        # forward; every other MLA layer passes through causal and unmasked. Getting this wrong is
-        # not hypothetical: the gates masked all three MLA layers for four commits while claiming
-        # one, and the tell ("3 varlen calls") was printed by every green run.
+        # SCOPED BY A DEPTH COUNTER RAISED INSIDE THE TARGET'S OWN forward, not by a hook.
+        # model.py:191 looks flash_attn_varlen_func up at call time, so the module global is the
+        # only hook -- but it is global, so the wrapper must decide which layer is calling.
+        #
+        # THE FIRST VERSION USED forward HOOKS to raise a flag during a target's forward, and that
+        # crashed p7 with CheckpointError: "Recomputed values ... have different metadata than
+        # during the forward pass". --loop turns on grad_ckpt, which RECOMPUTES the forward inside
+        # backward, and hooks do not fire inside a checkpoint recompute -- so the recomputed layer 7
+        # ran UNMASKED and produced activations that did not match the saved ones. --loop alone and
+        # --prefix p3 alone both pass; the failure needs both, which is what located it.
+        #
+        # WRAPPING forward FIXES IT because the wrapper is part of the function the checkpoint
+        # recomputes: the counter is raised identically in the original pass and in the recompute.
+        # try/finally, so an exception inside the mixer cannot leave the counter raised and silently
+        # mask every layer that runs after it.
+        _depth = [0]
+
         def _prefix_varlen(q, k, v, **kw):
-            if aux_box[0] is None or not any(
-                    getattr(t, "_n7c_active", False) for t in targets):
+            if aux_box[0] is None or _depth[0] == 0:
                 return orig_varlen(q, k, v, **kw)
             kw.pop("causal", None)  # mask_mod REPLACES causality (interface.py:270)
             return orig_varlen(q, k, v, mask_mod=prefix_mod, aux_tensors=aux_box[0], **kw)
 
+        def _wrap(mod):
+            inner = mod.forward
+
+            def fwd(*a, **k):
+                _depth[0] += 1
+                try:
+                    return inner(*a, **k)
+                finally:
+                    _depth[0] -= 1
+            mod.forward = fwd
+
         for t in targets:
-            t.register_forward_pre_hook(lambda m, _i: setattr(m, "_n7c_active", True))
-            t.register_forward_hook(lambda m, _i, _o: setattr(m, "_n7c_active", False))
+            _wrap(t)
         model_mod.flash_attn_varlen_func = _prefix_varlen
         # ON Cfg, for the same reason loop_blocks is: the prefix and causal arms write
         # byte-different checkpoints whose metadata would otherwise be identical, and a checkpoint
