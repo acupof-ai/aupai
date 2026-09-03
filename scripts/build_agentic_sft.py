@@ -1039,6 +1039,55 @@ def _selftest():
         fails.append(f"max_chars {ceiling} is within 4x of the 4096-token bound at 2.56 "
                      "chars/token; it would shadow the exact criterion")
 
+    # THE PACK SURVIVES A KILL DURING THE SECRET SCAN. Both v11 builds died inside that scan
+    # (~2 ms/line by find_secrets' own measurement, so ~100 min at --limit 100000) and lost every
+    # row, because the only write came after it.
+    #
+    # TESTED BY RUNNING main(), NOT BY READING ITS SOURCE. The first version of this check searched
+    # main()'s text for ".unscanned"/"scan_rows"/"os.replace" and asserted their order -- and it
+    # stayed GREEN when `staged` was set to None, because the strings were all still there while
+    # the write was dead. A guard that reads the spelling passes any edit that keeps the words.
+    # So: run the real main() against a fixture session, with scan_rows monkey-patched to raise the
+    # way a kill would, and require the staged file to exist afterwards with every row in it.
+    import tempfile as _tf
+    _d = _tf.mkdtemp()
+    _sess = os.path.join(_d, "s.jsonl")
+    with open(_sess, "w", encoding="utf-8") as fh:
+        for i in range(3):
+            fh.write(json.dumps({"type": "user", "message": {"role": "user",
+                     "content": f"question {i} " + "x" * 200}}) + "\n")
+            fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
+                     "content": [{"type": "text", "text": f"answer {i} " + "y" * 200}]}}) + "\n")
+    _out = os.path.join(_d, "pack.jsonl")
+    _mod = sys.modules[__name__]
+    _real_scan, _real_argv, _real_sessions = _mod.scan_rows, sys.argv, _mod.SESSIONS
+    # SESSIONS is the glob build() reads when no explicit list is passed, and there is no --sessions
+    # flag; pointing it at the fixture is how main() runs on 3 pairs instead of 3.8 GB.
+    _mod.SESSIONS = _sess
+    _mod.scan_rows = lambda rows, sample=None: (_ for _ in ()).throw(KeyboardInterrupt("killed"))
+    try:
+        sys.argv = ["build_agentic_sft.py", "--out", _out]
+        try:
+            main()
+            fails.append("main() completed although scan_rows raised; the kill was not simulated")
+        except KeyboardInterrupt:
+            pass
+        except SystemExit as e:
+            fails.append(f"main() exited ({e}) before the write; the fixture cannot reach it")
+        if os.path.exists(_out):
+            fails.append(f"{_out} exists after a kill INSIDE the secret scan -- rows reached the "
+                         f"real --out path without being cleared")
+        elif not os.path.exists(_out + ".unscanned"):
+            fails.append("a kill during the secret scan left NO file: the pack is written after "
+                         "the scan again, which is what lost both v11 builds")
+        else:
+            _n = sum(1 for line in open(_out + ".unscanned", encoding="utf-8") if line.strip())
+            if _n < 1:
+                fails.append(f"the staged file holds {_n} rows; the write is not flushed before "
+                             f"the scan, so a kill still loses the pack")
+    finally:
+        _mod.scan_rows, sys.argv, _mod.SESSIONS = _real_scan, _real_argv, _real_sessions
+
     for f in fails:
         print(f"  FAIL {f}")
     print(f"\n{len(fails)} failure(s)")
@@ -1097,7 +1146,35 @@ def main():
     else:
         tokens_note = (f"TOKEN FILTER DID NOT RUN: no {a.tokenizer} -- the character "
                        "pre-filter is not the real bound, and this is not a measured result")
+    # THE PACK IS WRITTEN BEFORE THE SECRET SCAN, to a .unscanned path, and renamed to --out only
+    # after the scan clears. The scan is THE dominant stage -- find_secrets' own docstring measures
+    # ~2 ms/line, "about ten minutes for a 10K-pair pack", so ~100 min at --limit 100000 -- and it
+    # is where both v11 build attempts died on their own `timeout`, at 30 and 90 minutes, each
+    # losing every row after doing all the work. Writing after the scan would not have saved
+    # either run.
+    #
+    # WHY A .unscanned NAME RATHER THAN --out: a real-credential shape discards its episode, so
+    # rows on disk before the scan are not yet the pack. The rename is what promotes them, and a
+    # kill mid-scan leaves a file whose NAME says it was never cleared -- which is the honest
+    # state, and recoverable, instead of nothing at all.
+    staged = (a.out + ".unscanned") if a.out else None
+    if staged:
+        os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
+        with open(staged, "w", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+            fh.flush()
+            # fsync is for a MACHINE crash, and this repo's selftest cannot test it: an in-process
+            # kill still runs `with`'s close, so removing these two lines leaves the fixture GREEN
+            # (verified as a mutation). Kept because the cost is one syscall and the case it covers
+            # -- power loss or a container kill between write and rename -- is real but unobservable
+            # from here. Labelled rather than claimed as covered.
+            os.fsync(fh.fileno())
+        print(f"staged {len(rows)} rows -> {staged} (not yet scanned for secrets)", flush=True)
     hits, scanned, ran = scan_rows(rows)
+    if staged:
+        os.replace(staged, a.out)
+        print(f"wrote {len(rows)} rows -> {a.out}", flush=True)
     print(f"\nsessions       {rep['sessions']}")
     print(f"episodes       {rep['episodes']}")
     print(f"kept           {rep['kept']}")

@@ -1,0 +1,18 @@
+{
+ "ckpt": "ckpt_n7_stageb_looped.pt",
+ "hf": false,
+ "n_tasks": 164,
+ "n_tasks_total": 164,
+ "n_params": 206128200,
+ "loop_blocks": null,
+ "gold_bpb_per_task_mean": 0.5919787503264252,
+ "gold_bpb_byte_weighted": 0.4828084601380761,
+ "total_solution_bytes": 29662,
+ "errors": [],
+ "reading": "bits per UTF-8 byte of the canonical solution, teacher-forced, prompt carries no loss; cross-tokenizer comparable by construction",
+ "boundary": "NOT a pass@k substitute: this says the real solution gets higher likelihood, not that the model would generate it. At 200M pass@k is 0 for both arms (be.gold_bpb_falls_while_generation_scores_zero: code_500 generative 0.0 across a ladder while gold BPB fell 1.087 -> 0.918), so this is the reading with resolution at this scale, and the two numbers must not be read as one.",
+ "cell": "LtSu",
+ "trained": "looped_4_7",
+ "scored": "unlooped",
+ "cell_note": "the filename says only looped/unlooped, which names ONE axis of two -- runs/n7b_he_looped.json is the L-U MISMATCH cell (looped-trained scored WITHOUT the loop), not the diagonal. 44 caught this; the same ambiguity produced the wrong Stage B verdict, so the cell/trained/scored fields are authoritative and the filename is not."
+}
