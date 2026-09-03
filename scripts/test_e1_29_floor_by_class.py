@@ -75,12 +75,80 @@ def main():
         fails.append("Chinese prose containing braces and semicolons was called code")
 
     # 5. THE ENGLISH-ONLY AGGREGATION IS BYTE-WEIGHTED, NOT A MEAN OF RATIOS. Averaging two
-    #    classes' nll/byte would weigh a 100-byte class like a 100,000-byte one. Checked against
-    #    the source, because this is the arithmetic the headline number is computed with.
+    #    classes' nll/byte would weigh a 100-byte class like a 100,000-byte one. Tested as the
+    #    ARITHMETIC PROPERTY on a fixture, not by grepping for an expression: the first version of
+    #    this check grepped `ours_nll_per_byte * bytes_ours` and went red when the script started
+    #    summing the stored per-class nll directly -- which is the same quantity without the
+    #    round-trip through a rate. A test that pins the spelling fails on an improvement.
+    tiny = {"en-code": {"ours_nll": 1.0, "ctrl_nll": 1.0, "bytes": 10, "n": 1},
+            "en-prose": {"ours_nll": 100.0, "ctrl_nll": 900.0, "bytes": 10000, "n": 99}}
+    weighted = sum(d["ctrl_nll"] for d in tiny.values()) / sum(d["ours_nll"] for d in tiny.values())
+    mean_of_ratios = sum(d["ctrl_nll"] / d["ours_nll"] for d in tiny.values()) / len(tiny)
+    if abs(weighted - 8.9218) > 0.01 or abs(mean_of_ratios - 5.0) > 0.01:
+        fails.append(f"fixture is wrong: weighted={weighted:.4f} mean_of_ratios={mean_of_ratios}")
     src = open(os.path.join(ROOT, "scripts", "e1_29_floor_by_class.py")).read()
-    if 'gaps[c]["ours_nll_per_byte"] * gaps[c]["bytes_ours"]' not in src:
-        fails.append("the english_only figure is not byte-weighted -- a mean of per-class ratios "
-                     "would let a tiny class swing the headline number")
+    import re as _re
+    eo = _re.search(r'out\["english_only"\] = \{(.*?)\}\n', src, _re.S)
+    if not eo:
+        fails.append("english_only is not assigned as a dict literal; the aggregation cannot be "
+                     "checked, and a mean of per-class ratios would let a 10-byte class swing it")
+    elif "/ len(" in eo.group(1) or "statistics" in eo.group(1) or "mean(" in eo.group(1):
+        fails.append(f"english_only averages per-class values: {eo.group(1)[:120]!r}")
+    elif 'sum(gaps[c]["ctrl_nll"] for c in en)' not in src or \
+         'sum(gaps[c]["bytes"] for c in en)' not in src:
+        fails.append("english_only does not sum per-class nll and bytes before dividing -- that "
+                     "is the only form that is byte-weighted")
+
+    # 6a. BOTH ARMS MUST SCORE ONE POPULATION. This is the defect in the published pair, not a
+    #     hypothetical: floor_ours.json and floor_control.json both carry supervised_bytes
+    #     10554038 while dropping 28 and 220 overlong items, so the control's 0.903758 divides a
+    #     10201-item loss by a 10421-item byte count. Inherited per class it would be worse than
+    #     a small bias -- the dropped items are the longest, and length tracks code and English,
+    #     the two axes being split on.
+    #
+    #     Checked by PARSING, not by grepping for a substring. Two earlier versions of this check
+    #     grepped `tok["control"][0]` and `gap_shared_population`; both stayed green when the
+    #     computation was deleted, because the same strings appear later in a print() and in a
+    #     dict key. A mention is not a computation, and a `not in src` grep cannot tell them
+    #     apart. Executing it instead needs two GPU models, so the middle path is the AST.
+    import ast
+    tree = ast.parse(src)
+    fn = next((n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
+    if fn is None:
+        fails.append("main() not found; the checks below cannot be made")
+    else:
+        assigns = {}
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Assign):
+                for t in n.targets:
+                    if isinstance(t, ast.Name):
+                        assigns[t.id] = n.value
+                    elif isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant):
+                        assigns[f"[{t.slice.value}]"] = n.value
+        both = assigns.get("both")
+        if both is None:
+            fails.append("main() never assigns `both`: the two arms are not intersected, so each "
+                         "scores its own kept-set and every per-class ratio compares two "
+                         "populations")
+        elif not (isinstance(both, ast.BinOp) and isinstance(both.op, ast.BitAnd)):
+            got = (type(both.op).__name__ if isinstance(both, ast.BinOp)
+                   else type(both).__name__)
+            fails.append(f"`both` is built with {got}, not a set intersection (BitAnd) -- it must "
+                         f"be the AND of both arms' kept ids; a union would ADD each arm's "
+                         f"unscorable items instead of removing them")
+        else:
+            arms = {c.value for c in ast.walk(both) if isinstance(c, ast.Constant)
+                    and c.value in ("ours", "control")}
+            if arms != {"ours", "control"}:
+                fails.append(f"`both` intersects {sorted(arms)}, not both arms")
+        if "[gap_shared_population]" not in assigns:
+            fails.append("no whole-population gap is COMPUTED on the shared population (a "
+                         "print() mentioning it does not count) -- the per-class split then has "
+                         "no headline it is a split OF")
+    if "REFUSING: class" not in src:
+        fails.append("a per-class n/bytes mismatch between arms does not refuse; after the "
+                     "intersection it is unreachable, so it must assert rather than warn")
 
     # 6. THE PASS MUST BE RECONSTRUCTED, i.e. the script refuses when per-item does not sum to the
     #    total it splits. Grepped rather than executed because the alternative needs two GPU
