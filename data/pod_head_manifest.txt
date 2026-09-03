@@ -5,7 +5,7 @@ b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__i
 2618743641a26a505480fb1b698beb16e164875283a82fbc5cff4cf94477f778  algorithms/code_reward.py  docs  644
 cd288db3529cda9b1ee9fa8472c9308dd72970140aed1bbc9d8b577a84d4dec5  algorithms/isolate.py  docs  644
 583e906f13c5cbed90fdce5cb5d865b6628123f83d76c9aa4d1c8c41ca639ba1  algorithms/rlvr.py  docs  644
-827d2750fc217abf70ebcca0496aea4d90f653ec8b8678db3d0a19795f6d11e7  algorithms/rlvr_data.py  docs  644
+5d5acb92d4788d32c9eb99572f1b2bf354d345b3cd9846efa29499b53b1aee49  algorithms/rlvr_data.py  docs  644
 6d33d02e2d47f6a9fa3cae64ffce7a0f0aadbb19be982e675d0e432f32381d59  algorithms/rlvr_generate.py  docs  644
 47980992587380ba4b0621c7b9e8de94d9bde463e9bc08575e9d0572f46cdc0d  algorithms/rlvr_reward.py  training  644
 c18f4d19e7ef3e8d15fe610643f5b33021694285472fba91613e1f98710e77ca  algorithms/rlvr_trainer.py  docs  644
@@ -301,7 +301,7 @@ e3cb7a0fe382b62cb4d0af42a6a18cd048b012de20ce28eb04cd28cba9202a0a  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-651b0bb81c6c32bba55eddacfb47c8abbd14f8c1abd7288d9e3ded2724daa455  scripts/hooks/pre-commit  docs  755
+08e35497120cbecd204ce882013ef85a1d1793bfe34a6ccac59d051396d70068  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644

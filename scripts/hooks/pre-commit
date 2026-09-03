@@ -502,6 +502,16 @@ def main():
         # stub cannot see. Six broken worlds verified red, one per reading plus n-double-advance,
         # a silent no-op loop, and the removed attn_res guard.
         "eval/loop_wrapper.py",
+        # RLVR pool: no card, no model, no data -- the selftest builds a two-row fixture and
+        # stubs the holdout predicate, so the expected drop count is known independently of the
+        # live holdout file (which changes). Pins that a held-out question reaches NEITHER pool
+        # and is written to the dropped file, that the holdout_fp stamp is row 0 and load_problems
+        # pulls it out rather than counting it as an unrewardable row, and that an unreadable
+        # holdout set REFUSES instead of writing an unfiltered pool. That last one is the failure
+        # this repo already paid for: absent read as "nothing is held out" let 19 of 20 questions
+        # into SFT. The first real build found 515 of 218,095 rows (0.2361%) were holdout
+        # questions, so this filter is not hypothetical.
+        "algorithms/rlvr_data.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.
