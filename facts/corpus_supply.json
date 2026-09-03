@@ -150,7 +150,7 @@
    "measured": "2026-09-04",
    "source": "no corpus directory exists: data/corpus/ has code, code_dedup08, code_py_rp1t, code_py_starcoder, code_rp1t, code_rp1t_rest and no code_tests. The only artefact is data/raw/code_tests_trial/, a YIELD STUDY (pair_yield.py + result.json + two selection pickles), which writes result.json and no shards",
    "config": {
-    "note": "supply = 0 until a miner writes shards; 30b target 2B; ds.code_exec_supply estimates 5.6B mineable",
+    "note": "supply = 0 until a miner writes shards; 30b target 2B was retired 2026-09-04 (user decision, option A: the 2.0B folded into code_rp1t). The '5.6B mineable' figure that justified the target cited ds.code_exec_supply, WHICH DOES NOT EXIST: grepping the whole tree finds one reference (this note, written 2026-09-03) and no definition anywhere. The 7.6% of repos / 26.96% of docs in mix_30b.json's code_tests source line carried the same dangling citation. Superseded by measurement either way: cs.code_tests_supply (100.00% overlap) and cs.code_supply_pair_yield (0.65% pair rate, 6.41% overlap)",
     "trial_paired_tokens": 2824660809,
     "trial_basis": "data/raw/code_tests_trial/result.json, 59 shards of data/raw/ms_starcoder_py, frozen tokenizer (pair_yield.py:5,41 tokenizers.Tokenizer on data/tokenizer.json, len(encode(t).ids)) -- NOT chars/1.5",
     "trial_is_not_supply": "2.82B counts tokens in the SOURCE PARQUET ROWS the miner would select, not tokens in a built corpus. kept_impl.pickle and kept_test.pickle hold (repo, path) keys -- which rows to keep, not their content. Nothing has been extracted, filtered, deduped or sharded",
