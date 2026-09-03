@@ -251,7 +251,7 @@ c973fdfafbd537ddcfff5f809ed62d7f312869b1301fcd141610011c58234704  runs/l1_2x2/pr
 97c9a21e7f8950c8629102b73d945d609b7815accd7b179535d72959bfcb88f8  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-a69635696f8751d46adb6a4373fff4e50036afadef7bb22f24eee852912c2243  runs/tasks.jsonl  docs  644
+da7b0bee92d145c1ce2d577d175833f44592e7b01ff1152d26f58d2430b1fb22  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
