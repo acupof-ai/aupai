@@ -225,7 +225,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 b804f5796818352eac0b8aab9ce203df6bb2585398f15e1faa730ea5da7057dd  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
-f65473430f5b4f4c0b5d8ec1bf9a0f2a7d65d8a9d3c7ec5cd85856d2fe5e5fda  runs/card_assignment.json  docs  644
+830d9397d1d829a20066061f402b88e4d467feb25bc825670d19d633373ee731  runs/card_assignment.json  docs  644
 2e6a9bb452b48760ba22ba9b81aa85f4f13e29f5eef8a0121dc664a4a813cd3a  runs/experiments.jsonl  docs  644
 8100a43b4a1ebe6b15805da7450c66e5aa17869af7490fcbcb09f5cdcf890f76  runs/ledger_resolutions.jsonl  docs  644
 6b5c788e92bcd3860fcbe937b3c53d657b48e5542ceea2062c81598010f09353  runs/milestones.jsonl  docs  644
