@@ -4852,6 +4852,138 @@ def _broken_owner_queue_depth():
     return d
 
 
+PEER_STALL_MIN = 120
+
+
+def check_peer_stalled(root):
+    """A roster member holding an open task with no commit and no ledger row for two hours.
+
+    The register says who OWNS work; nothing said whether anyone is DOING it. The idleness
+    owner_queue_depth catches is an empty queue; this is the opposite shape -- a full queue
+    and no output, which reads identically to a session working hard on something not yet
+    committed. That ambiguity is why it WARNs and never FAILs: the check cannot see a
+    session mid-edit, so the honest reading is "nothing has reached the repo from here in
+    two hours", not "this session is stopped".
+
+    One source of truth with cmd_who: scripts/board.liveness, so the terminal column and
+    this check can never disagree about how old a member is. Its docstring carries the two
+    facts that decide the number -- every branch a member owns counts (b0's eponymous tip
+    was 23h old while b0-ve-rownorms was 3 minutes old), and ledger rows are UTC while git
+    dates are +08 local."""
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    try:
+        from board import liveness
+    except Exception as e:
+        return SKIP, f"scripts/board.py not importable: {type(e).__name__}: {e}"
+    live = liveness(root)
+    if not live:
+        return SKIP, "no runs/roster.json"
+    stalled = []
+    for name, d in sorted(live.items()):
+        if not d["open_tasks"]:
+            continue
+        ages = [x for x in (d["commit_min"], d["ledger_min"]) if x is not None]
+        # No branch AND no ledger row is not a stall -- it is a member who has never
+        # appeared, which is a roster question rather than a liveness one.
+        if not ages:
+            continue
+        if min(ages) >= PEER_STALL_MIN:
+            stalled.append(f"{name} {min(ages)}m ({d['open_tasks']} open)")
+    if stalled:
+        return WARN, (f"{len(stalled)} member(s) with an open task and nothing in the repo for "
+                      f"{PEER_STALL_MIN}m: {', '.join(stalled)}")
+    return PASS, f"{len(live)} roster member(s), none quiet for {PEER_STALL_MIN}m with work open"
+
+
+def _broken_peer_stalled():
+    """A REAL roster with one added member whose branch does not exist and whose only
+    ledger row is three days old, so the check must name it.
+
+    Mutated, not hand-written: the roster and the register are the real files, and the
+    fake member's task row is a copy of a real row with the owner and dates changed.
+
+    KNOWN CEILING, stated because the world is WEAKER than it looks: _tmp_repo carries no
+    branches, so `commit_min` is None for EVERY member here and ledger age alone decides.
+    The world therefore also names real members whose ledger row is old but whose commits
+    are minutes fresh (98, tilerl) -- it goes WARN partly for a reason the real tree does
+    not have. _selftest_peer_stalled_names_the_fixture pins the part that matters: the
+    fixture member is named, and the same roster without it does not name it."""
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    for rel in ("runs/roster.json", "runs/tasks.jsonl", "runs/review.jsonl", "runs/board.jsonl"):
+        src = os.path.join(ROOT, rel)
+        if os.path.exists(src):
+            _sh.copy(src, os.path.join(d, rel))
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    _sh.copy(os.path.join(ROOT, "scripts", "board.py"), os.path.join(d, "scripts", "board.py"))
+    rp = os.path.join(d, "runs", "roster.json")
+    with open(rp, encoding="utf-8") as fh:
+        roster = json.load(fh)
+    roster["members"].append({"name": "ghost", "role": "research", "socket": "uds:/tmp/none.sock",
+                              "topics": [], "note": "fixture"})
+    with open(rp, "w", encoding="utf-8") as fh:
+        json.dump(roster, fh, ensure_ascii=False, indent=1)
+    tp = os.path.join(d, "runs", "tasks.jsonl")
+    with open(tp, encoding="utf-8") as fh:
+        rows = [json.loads(x) for x in fh if x.strip()]
+    seed = dict(rows[-1], id="ghost-1", owner="ghost", state="open",
+                opened="2026-08-31 00:00", closed=None, commit=None, evidence=None)
+    with open(tp, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    return d
+
+
+def _selftest_peer_stalled_names_the_fixture():
+    """peer_stalled names the stalled member and not the working ones, both directions.
+
+    The broken world alone does not prove this: it has no branches, so it warns on ledger
+    age for real members too, and "WARN happened" would pass with the check reading only
+    one field. Two worlds over one roster -- with the fixture member and without -- plus
+    the real tree, where every member has a fresh branch.
+    """
+    import shutil as _sh
+
+    d = _broken_peer_stalled()
+    state, ev = check_peer_stalled(d)
+    assert state == WARN and "ghost" in ev, f"the fixture member was not named: {state} {ev}"
+
+    # Same world, fixture removed from the roster: ghost must disappear from the message.
+    rp = os.path.join(d, "runs", "roster.json")
+    with open(rp, encoding="utf-8") as fh:
+        roster = json.load(fh)
+    roster["members"] = [m for m in roster["members"] if m["name"] != "ghost"]
+    with open(rp, "w", encoding="utf-8") as fh:
+        json.dump(roster, fh, ensure_ascii=False, indent=1)
+    _s2, ev2 = check_peer_stalled(d)
+    assert "ghost" not in ev2, f"ghost is named after leaving the roster: {ev2}"
+
+    # A COMMIT IS ENOUGH TO CLEAR A STALL EVEN WITH AN OLD LEDGER ROW, which is the whole
+    # reason liveness reads both. Give the world a git repo with a `ghost` branch committed
+    # now, restore the fixture, and the member must stop being named.
+    with open(rp, "w", encoding="utf-8") as fh:
+        roster["members"].append({"name": "ghost", "role": "research", "socket": "uds:/x.sock",
+                                  "topics": [], "note": "fixture"})
+        json.dump(roster, fh, ensure_ascii=False, indent=1)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_COMMON_DIR")}
+    for args in (["init", "-q", "-b", "ghost"], ["config", "user.email", "t@t"],
+                 ["config", "user.name", "t"], ["add", "runs/roster.json"],
+                 ["commit", "-qm", "fixture"]):
+        subprocess.run(["git", "-C", d, *args], capture_output=True, env=env)
+    _s3, ev3 = check_peer_stalled(d)
+    assert "ghost" not in ev3, (
+        f"a member with a commit made seconds ago is still called stalled: {ev3} -- "
+        f"liveness is reading only the ledger")
+
+    # And the real tree: nobody is stalled today, so a check that always warns fails here.
+    state_real, ev_real = check_peer_stalled(ROOT)
+    assert state_real in (PASS, WARN), (state_real, ev_real)
+    _sh.rmtree(d, ignore_errors=True)
+    print("  peer_stalled: fixture named; unnamed once off the roster; a fresh commit clears "
+          "it despite an old ledger row")
+
+
 def check_review_present(root):
     """Every done task has a review row from the reviewer it named.
 
@@ -8330,6 +8462,13 @@ CHECKS = [
         _broken_owner_queue_depth,
     ),
     (
+        "peer_stalled",
+        "no roster member holds an open task while nothing has reached the repo from them for two hours",
+        "the register said who owned work and nothing said whether anyone was doing it; six sessions sat idle under 16 open rows and the freeze that caused it was recorded but never read as idleness (user, 2026-09-02)",
+        check_peer_stalled,
+        _broken_peer_stalled,
+    ),
+    (
         "review_present",
         "every done task carries a review row from the peer it named",
         "the controller review caught four evidenced errors in one day while every other session's deliveries shipped with one reader",
@@ -8665,6 +8804,7 @@ EVIDENCE = {
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
+    "peer_stalled": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
@@ -10608,7 +10748,8 @@ def _demo():
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
-                 "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled"}
+                 "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
+                 "peer_stalled"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -11013,6 +11154,7 @@ def _demo():
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
     _selftest_batched_git_probes()
+    _selftest_peer_stalled_names_the_fixture()
     _selftest_review_present_legacy()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.

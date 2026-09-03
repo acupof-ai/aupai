@@ -255,7 +255,7 @@ efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert
 02f82d508399316970f0134a0659d27f205790b25ea520677e6c8665ffc093c4  scripts/attnres_triton_bf16_gate.py  docs  644
 2520cdbe4b0fb9130398f8767109ea8bb6acb4b926fd1947e0abc687e1899094  scripts/attnres_triton_gate.py  docs  644
 dcd26e58afcfc7dfbb8239a3cd31f769175bd132cdb5d97c576201c9e8a98322  scripts/audit_population_universals.py  docs  644
-5500e1339212ab88799df6d2f46b1765de6619c176e3af59b96f9334383c05f3  scripts/board.py  docs  644
+b97be8f33853cce5c6fa999419c5d89705c615e2c0c3cfc653c68e1805423e30  scripts/board.py  training  644
 11de19acc1ae41ace532fbbcff1623af9bb0148ba02833180625146c5bd69717  scripts/bootstrap_pod.sh  docs  644
 74fa7cc46876cb9c3897f0a77a3f1f1bb225695d37f819f7cd3becf4e5403bfc  scripts/build_agentic_sft.py  docs  644
 50ec7da3f9923a76cbfebcc529eb749b779889dd41b64bcc288bb380c9dd8b45  scripts/build_tokenizer.py  docs  644
@@ -287,7 +287,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-e209cbbe784705b8f393aaddaa3a65edb014c09435f8923d0851023f44af3031  scripts/harness.py  training  644
+2606480fe507c6eb23611e29a04ebafc3d43f9a2af32921578c5169237e8d981  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
