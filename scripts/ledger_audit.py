@@ -284,11 +284,17 @@ def _superseded_by_ruling(path, finding, index_lines, root=None):
 #                       attribution: 21 from 7464dc1's profile-field migration, 1 a real
 #                       re-measurement). The .lock serializes one tree; a merge is not in it, so
 #                       commit time is the only place this is visible.
-#   everything else     YES, by design. exp.py:82 appends a close event under the START row's
-#                       (name, started), so ab_shapelr's 11 rows are one run's 11 events -- and
-#                       not one of them is byte-identical to an earlier row (measured). Applying
-#                       this predicate file-wide would refuse tasks 99 keys, experiments 23,
-#                       board 18, retro 5 -- i.e. the writers' normal output. (de, 1e's ruling)
+#   everything else     YES, by design. exp.py:322 appends a close event under the START row's
+#                       (name, started), so two rows share one key legitimately. Applying this
+#                       predicate file-wide would refuse tasks 99 keys, experiments 23, board 18,
+#                       retro 5 -- i.e. the writers' normal output. (de, 1e's ruling)
+#
+#                       AN EARLIER VERSION OF THIS LINE ALSO CLAIMED "and not one of them is
+#                       byte-identical to an earlier row (measured)" of ab_shapelr's 11 rows.
+#                       That was false: 11 rows, 4 distinct, one line eight times (b0,
+#                       2026-09-03). The by-design argument holds for two DIFFERENT rows under
+#                       one key and only for that; repeated_lines() covers the rest, unscoped,
+#                       because no writer here emits the same bytes twice.
 DUP_IS_FAULT = {"runs/score_matrix.jsonl"}
 
 
@@ -309,8 +315,11 @@ def duplicates(path, index_lines):
     produce duplicates? score_matrix.py:573 replaces the same (ckpt, profile), so it cannot, and
     a second row is necessarily foreign. Every other ledger produces them BY DESIGN -- exp.py:82
     appends a close event under the START row's key, so ab_shapelr's 11 rows are one run's 11
-    events and not one is byte-identical to an earlier row. Unscoped, this refuses tasks 99 keys,
-    experiments 23, board 18, retro 5: the writers' normal output. (de, 1e's ruling 2026-09-03)
+    events. Unscoped, this refuses tasks 99 keys, experiments 23, board 18, retro 5: the
+    writers' normal output. (de, 1e's ruling 2026-09-03)
+
+    That scoping argument is about two DIFFERENT rows under one key. The same bytes twice is a
+    separate question with a different answer -- see repeated_lines(), which is unscoped.
     """
     if path not in DUP_IS_FAULT:
         return []
@@ -322,6 +331,34 @@ def duplicates(path, index_lines):
         except (AttributeError, TypeError):
             continue
     return sorted(k for k, c in counts.items() if c > 1)
+
+
+def repeated_lines(path, index_lines):
+    """(line, count) for lines that appear BYTE-IDENTICALLY more than once. Any ledger.
+
+    duplicates() is scoped to score_matrix because every other writer produces two rows
+    under one key by design -- exp.py:322 appends a close event under the START row's
+    (name, started). That reasoning covers two DIFFERENT rows sharing a key. It does not
+    cover the same bytes twice, and no writer here can emit those: exp.py's close event
+    carries `ended=now()`, so two closes of one run differ in that field, and a second
+    identical line therefore records no second event.
+
+    THE CLAIM THIS REPLACES WAS FALSE. DUP_IS_FAULT's rationale block said of
+    ab_shapelr's 11 rows "not one of them is byte-identical to an earlier row (measured)".
+    Measured again 2026-09-03: 11 rows, 4 distinct, one line present EIGHT times. They
+    entered in 41f6f8db, a plain non-merge commit, so the union-merge mechanism the same
+    block names does not explain them either. A wrong justification in the place that
+    decides scope is worse than none, because the scope then looks derived.
+
+    Why this is not folded into duplicates(): they answer different questions. Two rows
+    under one key can be legitimate history; the same bytes twice is never history. So
+    this returns counts for every ledger and leaves DUP_IS_FAULT alone.
+    """
+    counts = defaultdict(int)
+    for line in index_lines.splitlines():
+        if line.strip():
+            counts[line] += 1
+    return sorted(((ln, c) for ln, c in counts.items() if c > 1), key=lambda x: -x[1])
 
 
 def vanished_values(path, head_lines, index_lines):
@@ -568,6 +605,37 @@ def _selftest():
             fails.append("dropping an unruled row was excused; the exemption must be per-key")
     finally:
         _lr.index = _real_index
+
+    # 9. repeated_lines(): the same BYTES twice, on any ledger. Three worlds, and the third is
+    #    the one that matters -- it is the live file, so this assertion fails until the 12
+    #    redundant lines are actually folded and stays armed against the next one.
+    _rl_world = (json.dumps({"name": "a", "started": "t", "status": "running"}) + "\n"
+                 + json.dumps({"name": "a", "started": "t", "status": "done", "ended": "u"}) + "\n"
+                 + json.dumps({"name": "a", "started": "t", "status": "done", "ended": "u"}) + "\n")
+    got = repeated_lines("runs/experiments.jsonl", _rl_world)
+    if [c for _, c in got] != [2]:
+        fails.append(f"repeated_lines misses a doubled line in a 3-row world: {got}")
+    # The by-design case must stay CLEAN: two different rows under one key is history, and a
+    # predicate that flagged it would refuse every close event exp.py writes.
+    two_events = (json.dumps({"name": "a", "started": "t", "status": "running"}) + "\n"
+                  + json.dumps({"name": "a", "started": "t", "status": "done", "ended": "u"}) + "\n")
+    if repeated_lines("runs/experiments.jsonl", two_events):
+        fails.append("repeated_lines flags a start+close pair; that is one run's two events and "
+                     "is exactly what DUP_IS_FAULT's scoping argument protects")
+    # UNSCOPED, unlike duplicates(): a ledger outside DUP_IS_FAULT must still be judged, which is
+    # the whole point -- all 12 redundant lines on main are in experiments and retro.
+    if not repeated_lines("runs/retro.jsonl", _rl_world.replace('"name": "a"', '"owner": "a"')):
+        fails.append("repeated_lines is scoped like duplicates(); it must judge every ledger")
+    for _lf in ("runs/experiments.jsonl", "runs/retro.jsonl"):
+        _live = _blob("", _lf) or _blob("HEAD", _lf)
+        if _live:
+            _rep = repeated_lines(_lf, _live)
+            if _rep:
+                _n = sum(c - 1 for _, c in _rep)
+                fails.append(f"{_lf} holds {_n} redundant byte-identical line(s) across "
+                             f"{len(_rep)} line(s), worst x{_rep[0][1]}. No writer here can emit "
+                             f"these: exp.py's close carries ended=now(), so two closes of one "
+                             f"run differ in that field. Fold them.")
 
     for f in fails:
         print(f"  FAIL {f}")

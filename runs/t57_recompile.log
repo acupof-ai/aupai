@@ -48,3 +48,6 @@ Recompiling function <lambda> in /work/aupai/train.py:550
     triggered by the following guard failure(s):
     - 6/0: ___check_type_id(self._modules['mixer'], 229347920), type=<class '__main__.DeltaRecurrence'>  # return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))  # ork/aupai/train.py:550 in <lambda> (HINT: type DeltaRecurrence)
 Recompiling function to_cute_tensor in /usr/local/lib/python3.12/dist-packages/flash_attn/cute/cute_dsl_utils.py:62
+# END OF SNAPSHOT -- committed excerpt, 6,359B of the pod's 3,301,291B. NOT the whole log.
+# the pod copy is 3.3 MB of dynamo recompile lines; the 54.9 timestamp the fact cites is only there.
+# Cited by eff.recompile_reason_named, eff.recompile_recurrence_explained. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/t57_recompile.log".

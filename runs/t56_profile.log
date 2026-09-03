@@ -16,3 +16,6 @@ step 130/1525 9% [main] | loss 4.683 | lr 1.00e-02 | gnorm 2.36 | 0.02B tok | 81
 step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
 step 140/1525 9% [main] | loss 4.518 | lr 1.00e-02 | gnorm 2.62 | 0.02B tok | 80K tok/s/gpu | MFU 34% | ETA 0.6h
 killed by tilerl at 13:32 pod time: profiler schedule (wait 1 + warmup 10 + active 20) completed at step 31 and wrote bench_eff/ddp_trace_rank0.json; --profile does not shorten the run, so the remaining 1494 steps were idle. Deliberate kill of PID 859627 to free lane GPU7 before the 22:30 local milestone. NOT a crash.
+# END OF SNAPSHOT -- committed excerpt, 2,256B of the pod's 7,584B. NOT the whole log.
+# the job is OVER (killed after its profiler window), so this misleads about NUMBERS rather than status: 30 of the 36 figures those facts cite are computed from the trace and are in neither copy.
+# Cited by eff.step_remainder_attribution, eff.dynamo_recompile_not_a_lever. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/t56_profile.log".
