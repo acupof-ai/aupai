@@ -99,12 +99,18 @@ def main():
         fails.append("english_only does not sum per-class nll and bytes before dividing -- that "
                      "is the only form that is byte-weighted")
 
-    # 6a. BOTH ARMS MUST SCORE ONE POPULATION. This is the defect in the published pair, not a
-    #     hypothetical: floor_ours.json and floor_control.json both carry supervised_bytes
-    #     10554038 while dropping 28 and 220 overlong items, so the control's 0.903758 divides a
-    #     10201-item loss by a 10421-item byte count. Inherited per class it would be worse than
-    #     a small bias -- the dropped items are the longest, and length tracks code and English,
-    #     the two axes being split on.
+    # 6a. BOTH ARMS MUST SCORE ONE POPULATION, checked here rather than assumed from whatever
+    #     --ids the caller passed. On the published floors this is a no-op -- both restrict to
+    #     ids_shared.txt and report evaluated_ids_sha256 cae4daf7ad59388c over 10,421 items, so
+    #     2.004x is sound. (I reported the opposite first, reading floor_*.json's dropped_overlong
+    #     28 vs 220 as two populations; that field is counted at eval_heldout.py:515, BEFORE the
+    #     --ids restriction at 531-547, and describes the 10,641-row file rather than the scored
+    #     set. A field name is not the field's definition.)
+    #
+    #     The check still earns its place: if a class ever holds different items in the two arms,
+    #     every per-class ratio silently becomes two measurements side by side, and per class that
+    #     is worse than a small bias because the longest items are also the likeliest to be code
+    #     and English -- the two axes this splits on.
     #
     #     Checked by PARSING, not by grepping for a substring. Two earlier versions of this check
     #     grepped `tok["control"][0]` and `gap_shared_population`; both stayed green when the
