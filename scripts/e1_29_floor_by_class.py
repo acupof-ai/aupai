@@ -14,12 +14,20 @@ in OUR favour, and it is measurable, which is why it gets measured rather than n
     On the ENGLISH items alone, how much of 2.00x survives?
 
 A LARGE DROP AND A SMALL DROP BOTH MEAN SOMETHING, and both readings are fixed here so neither can
-be chosen after the fact:
-  - if the English-only gap is far below 2.00x, the published gap is substantially a language
-    artifact and section 4's "made in pretraining" reading is over-claimed;
-  - if it stays near 2.00x, the gap survives the confound and the reading is strengthened;
-  - if it INVERTS on English, the published direction is wrong on the items the control was
-    actually trained for.
+be chosen after the fact. REVISED once the composition below was measured, and revised BEFORE any
+score existed -- the original version of these readings was written against a 15.7% English share
+and does not survive a 52.5% one:
+  - en-only NEAR the whole-population gap is an EMPTY result, not "the confound is excluded".
+    English already carries most of the bytes, so composition alone keeps the two close. This is
+    the most likely outcome and it settles nothing by itself;
+  - en-only well BELOW means Chinese was inflating our score, and the pretraining reading in
+    section 4 is over-claimed;
+  - en-only well ABOVE means we are stronger still on English and Chinese is HOLDING US BACK --
+    unfavourable to us on the Chinese majority, and reported just as prominently;
+  - THE ACTUAL DISCRIMINANT IS DISPERSION ACROSS THE FOUR CLASSES. A real language advantage
+    predicts zh-prose's gap well above the en-* classes. Four gaps clustered near the mean means
+    the confound is small no matter what en-only reads. Range and byte-weighted mean are printed
+    with the table for exactly this reason.
 
 WHY THE FLOORS AND NOT THE SFT POINTS. The two floor models both still exist
 (ckpt_p200m_4b_0902.pt and /tmp/e1_untrained.hf, the directory behind the published 0.903758 --
@@ -202,10 +210,22 @@ def main():
 
         # PER-ITEM MUST RECONSTRUCT THE PASS, here too and not only in the selftest: the split
         # below is only a split of this number if it adds back up to it.
+        #
+        # THE TOLERANCE IS RELATIVE, because an absolute one is a different test at every
+        # magnitude. At 1e-3 absolute this refused a real run after both models had scored:
+        # 4759488.235578 against 4759488.226891, off by 0.0087 -- 1.8e-9 RELATIVE. The two paths
+        # sum the same values in different orders (the aggregate is one fused float32 reduction
+        # per batch; per-item is reduction="none", then .sum(dim=1), then a Python sum over
+        # 10,421 floats), so drift at 1e-9 is float addition being non-associative, not a defect.
+        # 1e-3 was calibrated on the selftest's 2-row fixture, where it means ~1e-4 relative; at
+        # 4.76M it means 2e-10 and demands bit-exactness across two summation trees. A guard whose
+        # strictness scales with the data fires first on the largest and most real run.
         s = sum(r["nll"] for r in items)
-        if abs(s - tot) > 1e-3:
+        if abs(s - tot) > max(1e-6 * abs(tot), 1e-3):
             sys.exit(f"REFUSING: {arm} per-item NLLs sum to {s:.6f} but the pass totalled "
-                     f"{tot:.6f} -- the split is not a split of this number")
+                     f"{tot:.6f} (relative {abs(s - tot) / abs(tot):.2e}) -- the split is not a "
+                     f"split of this number")
+
         byid = {int(rid): (q, ans) for rid, q, ans in rows}
         agg = {}
         for r in items:
@@ -259,13 +279,36 @@ def main():
     out["gap_by_class"] = gaps
 
     # THE SPLIT MUST RECONSTRUCT THE HEADLINE, not merely sit beside it: byte-weighting the four
-    # classes back together has to return the whole-population gap.
+    # classes back together has to return the whole-population gap. Bytes are integers and must
+    # match EXACTLY; the nll tolerance is relative for the same reason as the per-item one above.
     for arm in ("ours", "control"):
         sb = sum(d["bytes"] for d in out["arms"][arm]["by_class"].values())
         sn = sum(d["nll"] for d in out["arms"][arm]["by_class"].values())
-        if sb != out["arms"][arm]["bytes"] or abs(sn - out["arms"][arm]["total_nll"]) > 1e-3:
+        ref = out["arms"][arm]["total_nll"]
+        if sb != out["arms"][arm]["bytes"] or abs(sn - ref) > max(1e-6 * abs(ref), 1e-3):
             sys.exit(f"REFUSING: {arm}'s classes sum to {sn:.3f} nll / {sb} bytes but the pass "
-                     f"was {out['arms'][arm]['total_nll']:.3f} / {out['arms'][arm]['bytes']}")
+                     f"was {ref:.3f} / {out['arms'][arm]['bytes']}")
+
+
+    # THE DISCRIMINANT IS THE SPREAD ACROSS CLASSES, NOT THE ENGLISH SUBSET. Since English already
+    # carries 52.5% of the bytes, en-only cannot move far from the whole-population gap for
+    # compositional reasons alone -- so en-only near 2.00x is an EMPTY result, not "the confound is
+    # excluded". What separates the two hypotheses is dispersion: if the language advantage is
+    # real, zh-prose's gap sits well above the English classes; if all four sit near 2, the
+    # confound is small whatever en-only reads. Range and byte-weighted mean, printed together.
+    if gaps:
+        gv = {c: gaps[c]["gap"] for c in gaps}
+        lo_c, hi_c = min(gv, key=gv.get), max(gv, key=gv.get)
+        tb = sum(gaps[c]["bytes"] for c in gaps)
+        wmean = sum(gaps[c]["gap"] * gaps[c]["bytes"] for c in gaps) / tb
+        out["gap_dispersion"] = {"min_class": lo_c, "min": gv[lo_c], "max_class": hi_c,
+                                 "max": gv[hi_c], "range": gv[hi_c] - gv[lo_c],
+                                 "byte_weighted_mean": wmean,
+                                 "reading": "a language artifact predicts zh-prose well ABOVE the "
+                                            "en-* classes; all four near the mean means the "
+                                            "confound is small regardless of what en-only reads"}
+        print(f"\nDISPERSION: {gv[lo_c]:.3f}x ({lo_c}) .. {gv[hi_c]:.3f}x ({hi_c})  "
+              f"range {gv[hi_c] - gv[lo_c]:.3f}  byte-weighted mean {wmean:.3f}x")
 
     en = [c for c in gaps if c.startswith("en-")]
     if en:
