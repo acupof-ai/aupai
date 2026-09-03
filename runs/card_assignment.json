@@ -10,11 +10,11 @@
   "cuts both ways: a card's owner is not the nvidia-smi row, and it is not a superseded",
   "grant either."
  ],
- "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7)",
+ "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7); fb 2026-09-03 08:24Z (lane 5 -> b0's two b8 memory probes, one at a time)",
  "granted": "2026-09-03",
  "launch_block_granted": true,
  "block_cards": "0-3",
- "lane_card": "4,5",
+ "lane_card": "5",
  "note": "REVISED 2026-09-03: the block is cards 0-3 for the 206M data leg at world 4. The 2026-09-02 grant of ALL EIGHT cards is SUPERSEDED -- it was made for the 500M/20B run, that run is not running, and two of its eight cards are now held by the user's own tilerl and acc_spec containers. card_claim reports 4 and 7 as ORPHAN because it can see our claims and not another container's ownership; their pids are invisible to ps in this namespace, so they are not ours to read and not ours to kill. Recorded as a BOUNDARY, not as an orphan to reclaim. || The superseded grant's own text is kept below under superseded_2026_09_02 rather than deleted: it holds the costs that were accepted when the lane was given up, and the reasons a decision was taken do not stop being true when the decision is narrowed.",
  "verified": "2026-09-03: memory_measured at world=4 is a real measurement for THIS shape, not an extrapolation from another world size and not from another model -- 61.01 GiB peak (max over 50 windows, range 60.95-61.01) at 206.1M d1024 L12 b16 accum2 seq4096 without grad_ckpt, 34.57 GiB headroom, recorded in runs/memory_peaks.json as world 4. The world=8 verification below belongs to the 493.6M L32 model and covers nothing about this leg; all three earlier peaks are that model's.",
  "next_grant": {
@@ -24,12 +24,12 @@
  },
  "cards": {
   "0-3": "data leg, 206M x 8.000B, world 4 -- this grant. Free at 2026-09-03 04:59Z (0 MiB / 381 / 569 / 0; the sub-GiB rows on 1 and 2 are context, not a job).",
-  "4": "LANE, granted: tilerl's 3-step smoke test (minutes). 0 MiB.",
-  "5": "LANE, granted: e1's pass@k. 0 MiB.",
-  "6": "0 MiB, DELIBERATELY NOT GRANTED -- headroom for the user's container, which has launched a new job every few minutes all evening.",
-  "7": "THE USER'S OWN WORK: scripts/probe_fp8_arm.py under /work/tl013/bin/python (host pid 353421, 33,225 MiB). NEVER TAKE."
+  "4": "0 MiB at 08:24Z. NOT granted -- headroom for the user's container.",
+  "5": "LANE, GRANTED 08:24Z to b0: two --peak-only probes (d1024 b8 control, then d1536 b8), ONE AT A TIME, minutes each, yield on contention.",
+  "6": "0 MiB at 08:24Z. NOT granted -- second headroom card.",
+  "7": "THE USER'S OWN WORK: 37,181 MiB, 0% util. 0% is NOT idle -- held memory at 0% util is torch.compile as often as it is a finished job. NEVER TAKE."
  },
- "lane_note": "Lane is cards 4 and 5. The user's three grpo lr arms (--steps 20) ENDED, and the same container immediately started probe_fp8_arm.py on card 7 -- so 4/5/6 reading 0 MiB is a real release, not an inter-arm gap, and the evidence for that is the NEW job on 7 rather than the empty rows on 4-6. Card 6 is left ungranted on purpose: this container has started a new job every few minutes all evening, and leaving it one free card is cheaper than a collision. Every earlier attempt to name a stable lane was wrong within the hour, so: read nvidia-smi immediately before claiming, take one card, yield rather than contend. Block stays 0-3.",
+ "lane_note": "READ AT 08:24Z: cards 4, 5, 6 all 0 MiB. This SUPERSEDES the 07:0xZ reading b0 was working from, where 4 and 5 held ~38 GB of the user's tilerl -- those jobs ended. The change is in b0's favour and changes the probe's design margin: the d1536 b8 probe was sized against 57.2 GiB of headroom on an occupied card and would have grazed the ceiling at exponent 2 (56.95 predicted); on a free card it has 95.22 and no squeeze. The grant file has now gone stale in BOTH directions on separate days -- by cards being taken, and by cards being released -- so the rule stands unchanged: read nvidia-smi immediately before claiming, take one card, yield rather than contend. The block is 0-3, all four at 52.5 GB / 100%: the data leg, untouched.",
  "superseded_2026_09_02": {
   "block_cards": "0-7",
   "note": "Granted for the 500M/20B run on ALL EIGHT cards, user ruling 2026-09-02. The lane is gone by that ruling and the cost was stated before it was taken: in-run milestone generation sweeps cannot run, because the scorer needs a whole 95 GiB card and not a gap -- observed, not derived, when the probe's scorer took card 7 alone after training exited. End-of-run scoring is unaffected: run_ddp.sh scores after torchrun exits, when all eight are free. Second cost: the 200M comparison axis loses its free pin at step 17,500 and needs 15,313 plus conversion. Both were on the table before the decision. Resume was PROVEN before this grant, per the user's order of 2026-09-02: six conditions, nine domains character-for-character, plus a reverse test that made the guard fire. --auto-resume is 1 and not more: the cursor is per-segment, so a second resume re-reads 10,240 rows and nothing has ever tested it.",
