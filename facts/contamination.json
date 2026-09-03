@@ -454,7 +454,10 @@
    "uncertainty": null,
    "status": "retracted",
    "audit": "the metric answered template identity, not contamination; it read as 'this was checked' while the contamination rate was 10x higher",
-   "refuted_by": "cont.math_short_leak -- containment >= 0.8 does not require template identity; measured textual near-duplication is 3.5% on the pod (36/1032), 30.0% locally"
+   "refuted_by": "cont.math_short_leak -- containment >= 0.8 does not require template identity; measured textual near-duplication is 3.5% on the pod (36/1032), 30.0% locally",
+   "retracted_value": [
+    "0.3%"
+   ]
   },
   {
    "id": "cont.eval_surface_matching",
@@ -468,7 +471,8 @@
    "uncertainty": null,
    "status": "retracted",
    "audit": "optimizing training data toward the eval's surface statistics and contaminating it are the same act described twice -- it pushes the batch distribution onto the eval distribution and was an aggravator of cont.math_short_leak",
-   "refuted_by": "cont.math_short_leak -- v11 REJECTs with 33 holdout hits at 0.8"
+   "refuted_by": "cont.math_short_leak -- v11 REJECTs with 33 holdout hits at 0.8",
+   "retracted_value": []
   },
   {
    "id": "cont.gate",
@@ -739,7 +743,8 @@
    "boundary": "Says nothing about the base checkpoint's numbers, which were never trained on SFT data, and nothing about the math SFT numbers, which this same probe found clean.",
    "refuted_by": "be.sft_v3_code500",
    "claim": "data/sft/sft_all.pt contained 19/20 sampled code-500 questions verbatim, so the SFT zero-shot code-500 reading of 16.6% was declared VOID.",
-   "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild."
+   "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild.",
+   "retracted_value": []
   }
  ]
 }

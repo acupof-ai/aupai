@@ -583,7 +583,8 @@
    "status": "retracted",
    "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
    "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
-   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names."
+   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names.",
+   "retracted_value": []
   },
   {
    "id": "ds.beta_data_leg_206m_early",
