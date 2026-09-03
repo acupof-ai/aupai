@@ -239,25 +239,33 @@ def prefix_two_call(orig, q, k, v, cu, plens, **kw):
     """
     import torch  # noqa: PLC0415
 
-    y1 = orig(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu, **kw)
-    # THE PROMPT INDEX. A document's prompt is its first P positions, so the gathered rows are one
-    # contiguous slice per document -- built here as an explicit index because the slices are not
-    # contiguous with each other in the flat stream.
+    # THE VARLEN FUNCTION RETURNS A TUPLE on this build, not a bare tensor -- (out, lse) when lse is
+    # requested and a 1-tuple otherwise; model.py assigns `y = flash_attn_varlen_func(...)` and uses
+    # y directly, so whatever it returns is what GatedMLA consumes. Both calls are unwrapped here
+    # and the SAME shape is rebuilt on the way out, so this function is transparent to the caller.
+    # Found by running it: `'tuple' object has no attribute 'index_copy'`.
+    r1 = orig(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu, **kw)
+    y1, rest1 = (r1[0], r1[1:]) if isinstance(r1, tuple) else (r1, None)
+
+    def _wrap(y):
+        return (y, *rest1) if rest1 is not None else y
+
     starts = cu[:-1].to(torch.int64)
     pl = plens.to(torch.int64)
     if int(pl.sum()) == 0:
-        return y1  # no prompt anywhere: prefix reduces to causal, and call 2 would be empty
+        return _wrap(y1)  # no prompt anywhere: prefix reduces to causal, call 2 would be empty
     idx = torch.cat([torch.arange(int(s), int(s) + int(p), device=q.device)
                      for s, p in zip(starts.tolist(), pl.tolist(), strict=True) if p > 0])
     cu2 = torch.zeros(int((pl > 0).sum()) + 1, dtype=torch.int32, device=q.device)
     cu2[1:] = torch.cumsum(pl[pl > 0], 0).to(torch.int32)
     mx = int(pl.max())
     kw2 = {kk: vv for kk, vv in kw.items() if kk not in ("causal", "max_seqlen_q", "max_seqlen_k")}
-    y2 = orig(q[idx], k[idx], v[idx], cu_seqlens_q=cu2, cu_seqlens_k=cu2,
+    r2 = orig(q[idx], k[idx], v[idx], cu_seqlens_q=cu2, cu_seqlens_k=cu2,
               max_seqlen_q=mx, max_seqlen_k=mx, causal=False, **kw2)
+    y2 = r2[0] if isinstance(r2, tuple) else r2
     # OUT-OF-PLACE index_copy: the in-place form would mutate a tensor autograd still needs, and
     # this runs inside the training graph.
-    return y1.index_copy(0, idx, y2.to(y1.dtype))
+    return _wrap(y1.index_copy(0, idx, y2.to(y1.dtype)))
 
 
 def reference_mask(q_idx, kv_idx, prompt_len, prefix):
