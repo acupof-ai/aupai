@@ -90,8 +90,15 @@ def filter_rows(src, dst):
                 continue
             d = json.loads(line)
             ans = d.get("answer") or ""
-            bad = any(abs(OP[m.group(2)](float(m.group(1)), float(m.group(3))) -
-                          float(m.group(4))) > 1e-6 for m in P.finditer(ans))
+            bad = False
+            for m in P.finditer(ans):
+                try:
+                    lhs = OP[m.group(2)](float(m.group(1)), float(m.group(3)))
+                except Exception:
+                    continue
+                if abs(lhs - float(m.group(4))) > 1e-6:
+                    bad = True
+                    break
             if bad:
                 r_drop += 1
                 if r_drop <= 5000:
