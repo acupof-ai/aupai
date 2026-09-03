@@ -2919,7 +2919,7 @@
      "step6500": 0.5256,
      "step7000": 0.5134,
      "step8000": 0.5229,
-     "reading": "NON-MONOTONE. fb computed -2.33% per 1000 steps from the first two points and extrapolated it to 0.43 at step 15258; b0's third point did not continue it. TWO POINTS ALWAYS GIVE A SLOPE -- under the null of no trend they give a nonzero one -- which is shape 148, and fb had corrected b0 for the same class of error (a sample range read as a change in the data) three hours earlier. The rate claim is withdrawn. What survives is weaker and still enough: the ratio sits near 0.52 across 1500 steps and is nowhere near zero. No noise estimate exists because no step was measured twice."
+     "reading": "fb computed -2.33% per 1000 steps from the first two points and extrapolated it to 0.43 at step 15258. TWO POINTS ALWAYS GIVE A SLOPE -- under the null of no trend they give a nonzero one (shape 148), and fb had corrected b0 for the same class three hours earlier when a sample range was read as a change in the data. The rate claim is withdrawn. BUT THE THIRD POINT DOES NOT REFUTE IT EITHER, and saying it did was the same error a second time (b0's correction): all three are single readings with no noise estimate, so 'non-monotone' and 'a trend with noise' are indistinguishable here. Reading a checkpoint twice is deterministic, so the missing quantity is step-to-step training jitter, which needs checkpoints denser than the 500-step rotation and was not measured. THE ONLY CLAIM THAT DEPENDS ON NO NOISE ASSUMPTION: three readings across 1500 steps all fall in 0.513-0.526, nowhere near zero."
     },
     "update_geometry_step8000": {
      "measured_by": "b0, offline from ck['opt'] and ck['model'], index map verified shape-by-shape across all 63 Muon matrices",
