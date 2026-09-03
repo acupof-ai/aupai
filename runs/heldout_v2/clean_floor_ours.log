@@ -1,0 +1,14 @@
+arm ours  seq 4096  text data/sft/control_sft_text_heldout.jsonl
+  10,641 examples -> 10,613 fit, 28 dropped (0.26%)
+  restricted to --ids: 10,105 examples
+  scored examples          10,105
+  evaluated ids sha256     7231156c5698c210   <- must match the other arm
+  supervised tokens        2,552,004
+  supervised bytes         9,509,777
+  total NLL                4,350,363.9
+  NLL / supervised BYTE    0.457462   <- compare across arms
+  NLL / supervised token   1.704685   (arm-internal)
+  sanity: 1.7047 nat/token = 16.4% of ln(V)=10.3974 (V=32,773) -- below the no-information baseline, so the alignment is carrying signal
+  skip-one  (t+2)          10.087069   (alignment check)
+  alignment OK: next-token beats skip-one by 5.92x
+wrote runs/heldout_v2/clean_floor_ours.json
