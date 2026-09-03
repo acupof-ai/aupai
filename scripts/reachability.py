@@ -88,7 +88,26 @@ FATE = {
     "scripts/e1_27_read.py": "KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py:848 stores lr_scale in neither Cfg nor the checkpoint, so nothing else can recover it)",
     "scripts/e1_27_score.sh": "KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)",
     "scripts/e1_28_clean_score.sh": "KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)",
+    # b0/62's ruling, 2026-09-03, after running all six on the pod. TWO OF MY "same-name
+    # trap" readings were BACKWARDS: I read a citation that does not match the path as
+    # naming a different file, when it was the CITATION that carried the typo. Checking
+    # which of the two is wrong takes one `git log --all` per path, and I skipped it.
+    "scripts/attnres_bench.py": "KEEP (it IS the file docs/lessons/fused_attnres_is_slower_in_torch.md cites: both created by 3ed56306, its docstring is the source of that doc's 'nothing is imported' line, and its :144-149 print columns are the doc's table header. The doc's /tmp/ path is where it lived before entering git, not another file)",
+    "scripts/logit_dist.py": "KEEP (docs/standards/structure_experiments.md:529 cites scripts/_logit_dist.py, which has never existed on any branch -- `git log --all` is empty for it. The underscore belongs to the OUTPUT: this file's :112 writes runs/_logit_dist.json, whose head_row_norm_med 76.61315 and cos_to_argmax_row_mean 0.22061723 are that doc table's 76.61 and 0.2206, field names identical)",
+    "scripts/attnres_triton_gate.py": "KEEP (PASSes on the pod at 3 shapes, bar 1e-05; ModuleNotFoundError here is its hardcoded sys.path.insert(0, '/work/aupai') at :12, so a Mac run cannot work by construction. Its :5 names attnres_triton_bf16_gate.py -- cited by docs/lessons/upper_bound_is_not_an_effect.md:4 -- and explains the split of labour, so deleting the fp32 half leaves the bf16 half's docstring pointing at a control that does not exist)",
+    "bench_eff/parse_ddp.py": "KEEP (runs on the pod and produces its result: 'HtoD memcpy: 0.00 ms/step (0.00%)'. My 'missing trace file' reading was of a Mac run only)",
 }
+
+# Awaiting a measurement, not a ruling: these two build the model and compile, then OOM
+# because another job holds the card (b0/62, 2026-09-03: 'Process 2569878 has 83.88 GiB in
+# use'). PYTHONPATH=. clears their ModuleNotFoundError, so they are card-blocked rather than
+# broken, and a candidate is judged after it runs. They stay unruled deliberately --
+# unreached_files_ruled keeps naming them, which is the correct state for "nobody has run
+# this yet" and is what an empty FATE entry cannot say.
+NEEDS_A_FREE_CARD = (
+    "bench_eff/bench_eff.py",
+    "bench_eff/bench_opt.py",
+)
 
 # Collect all .py/.sh files (excluding noise)
 ALL_FILES = set()
