@@ -1,0 +1,176 @@
+{
+ "facts": [
+  {
+   "id": "cs.code_py_starcoder_landed",
+   "value": 8780736158,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/code_py_starcoder (count_code_dirs.py exact run, shards=284 kept_docs=6180174)",
+   "config": {
+    "note": "EXACT frozen-tokenizer count by datagen/count_code_dirs.py (not extrapolation); 8B-leg largest domain, weight 0.3297 needs 2.638B; margin 3.3x"
+   },
+   "uncertainty": "exact for the current code_py_starcoder/ dir; does not cover future re-filtering",
+   "status": "measured",
+   "boundary": "exact count of the landed dir; not a projection for a larger/smaller filter",
+   "guard_phrases": [
+    "starcoder supply confirmed",
+    "starcoder supply settled"
+   ]
+  },
+  {
+   "id": "cs.code_rp1t_landed",
+   "value": 7569415401,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/code_rp1t/build_corpus_stats.json",
+   "config": {
+    "note": "existing code_rp1t/ dir; filters=light; tokens over first-3-shards byte-extrapolated (old stamp, predates 3b-10 instrument)"
+   },
+   "uncertainty": "sample extrapolation not exact; needs rebuild+restamp for 30b primary (weight 0.2667); exact via datagen/count_code_dirs.py",
+   "status": "measured",
+   "guard_phrases": [
+    "code_rp1t is landed for 30b",
+    "code_rp1t supply is settled"
+   ]
+  },
+  {
+   "id": "cs.code_py_rp1t_landed",
+   "value": 421239303,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/code_py_rp1t/build_corpus_stats.json",
+   "config": {
+    "note": "new ast-filtered build (filters=rp1t-python-ast); tokens over 3/15 shard byte-extrapolated"
+   },
+   "uncertainty": "sample extrapolation; exact count pending count_code_dirs run (rp1t=0.421B exact, done)",
+   "status": "measured",
+   "boundary": "ast-filtered subset, not the full rp1t raw",
+   "guard_phrases": []
+  },
+  {
+   "id": "cs.math_owm_landed",
+   "value": 6513304690,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/math_owm_stage2/build_corpus_stats.json",
+   "config": {
+    "note": "math_owm_stage2/ dir; filters=light; tokens over 3/206 shard byte-extrapolated"
+   },
+   "uncertainty": "sample extrapolation not exact; stage2 build for the 200m-era mix, may need a fresh 30b-linkable stamp",
+   "status": "measured",
+   "guard_phrases": [
+    "math_owm is unfetched"
+   ]
+  },
+  {
+   "id": "cs.en_c4_landed",
+   "value": 2403694865,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/en_c4_stage2/build_corpus_stats.json",
+   "config": {
+    "note": "en_c4_stage2/ dir; filters=light; tokens over 3/83 shard byte-extrapolated"
+   },
+   "uncertainty": "sample extrapolation; short vs 30b target 5.5B by ~3.1B",
+   "status": "measured",
+   "boundary": "shortfall means a supplement source or a cut to 2.4B",
+   "guard_phrases": [
+    "en_c4 is unfetched"
+   ]
+  },
+  {
+   "id": "cs.cot_landed",
+   "value": 424056227,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/cot/build_corpus_stats.json",
+   "config": {
+    "note": "cot/ dir; filters=light"
+   },
+   "uncertainty": "genuine shortfall vs 30b target 4.5B (~4.1B short); needs fetch+rebuild; one of two truly-unfetched domains",
+   "status": "measured",
+   "boundary": "cot_seed/ exists separately; shortfall is vs the 30b target",
+   "guard_phrases": [
+    "cot supply is covered"
+   ]
+  },
+  {
+   "id": "cs.zh_web_landed",
+   "value": 21293403945,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/zh_web/build_corpus_stats.json",
+   "config": {
+    "note": "zh_web/ dir (ladder web_hq domain, FROZEN); filters=light"
+   },
+   "uncertainty": "frozen-ladder dir cannot feed 30b in place; must copy to a NEW dir data/corpus/zh_web_30b/ and restamp. 21.3B is available supply, not the 3.3B 30b allocation",
+   "status": "measured",
+   "boundary": "frozen-ladder rule: new 30b corpus goes to data/corpus/zh_web_30b/, never written into data/corpus/zh_web/",
+   "guard_phrases": [
+    "zh_web is reusable in place",
+    "zh_web frozen dir feeds 30b"
+   ]
+  },
+  {
+   "id": "cs.textbook_landed",
+   "value": 1610210330,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/textbook_30b/build_corpus_stats.json",
+   "config": {
+    "note": "textbook_30b/ dir; filters=light"
+   },
+   "uncertainty": "sample extrapolated; ladder-named textbook dir is frozen, restamp into a new dir for 30b",
+   "status": "measured",
+   "guard_phrases": []
+  },
+  {
+   "id": "cs.wiki_chat_landed",
+   "value": 283903257,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/wiki_chat/build_corpus_stats.json",
+   "config": {
+    "note": "wiki_chat/ dir; filters=light"
+   },
+   "uncertainty": "sample extrapolated; 0.28B above the 0.2B fixture",
+   "status": "measured",
+   "guard_phrases": []
+  },
+  {
+   "id": "cs.code_tests_supply",
+   "value": 0,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "mined from code_rp1t (impl+test pairs); no mined corpus dir exists yet",
+   "config": {
+    "note": "supply = 0 until task-3 mining lands; 30b target 2B; ds.code_exec_supply estimates 5.6B mineable"
+   },
+   "uncertainty": "mineable estimate only; actual yield unknown until the miner runs; one of two truly-unfetched domains",
+   "status": "unmeasured",
+   "claim": "mined impl+test pairs from code_rp1t",
+   "audit": "fb 3b 2026-09-03: task 3, mining pending",
+   "refuted_by": "no count yet; superseded by the task-3 miner's actual yield",
+   "guard_phrases": [
+    "code_tests has supply"
+   ]
+  },
+  {
+   "id": "cs.headline",
+   "value": "six of eight 30b domains have bytes on disk; only cot (~4B short) and code_tests (0) are genuinely unfetched",
+   "unit": null,
+   "measured": "2026-09-03",
+   "source": "measured 2026-09-03 from existing dir build_corpus_stats.json stamps",
+   "config": {
+    "note": "every token number is sample-extrapolated; exact counts via datagen/count_code_dirs.py (running on pod: starcoder 8.78B done, rp1t 0.42B done, code_dedup08 pending) supersede the sample numbers"
+   },
+   "uncertainty": "monolithic scale numbers are 200m-era stamps, sampled not exact; code_rp1t 7.57B is a 3-shard byte extrapolation over filters=light and must be rebuilt+restamped for 30b primary",
+   "status": "measured",
+   "boundary": "landed supply (what COULD land), not the mix_30b allocation (target weights); frozen-ladder dirs need a copy into a new dir before use",
+   "guard_phrases": [
+    "30b supply is exhausted",
+    "supply table is settled"
+   ]
+  }
+ ]
+}
