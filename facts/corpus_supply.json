@@ -73,7 +73,7 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/en_c4 (166 shards): datagen/count_code_dirs.py en_c4 exact frozen-tokenizer count, 7,767,463 kept_docs",
    "config": {
-    "note": "exact count of the 30B en_c4 domain (data/corpus/en_c4/, 166 shards) resolves the two-dir dispute: stats.tokens 4.809B approx==exact 4.801B (0.2% off); the smaller en_c4_stage2/ (83 shards, ~2.5B) is NOT the 30B domain"
+    "note": "en_c4/ (166 shards) exact 4.801B; 30B role 5.5B split proportional across en_c4/ + en_c4_stage2/ (3.668B+1.832B, controller 2026-09-03); total supply 7.2B > contract"
    },
    "uncertainty": "exact for data/corpus/en_c4/ as of 2026-09-03; mix gap vs 5.5B = 0.70B",
    "status": "measured",
@@ -282,6 +282,23 @@
    "guard_phrases": [
     "arxiv fills the cot gap",
     "cot is landed"
+   ]
+  },
+  {
+   "id": "cs.en_c4_stage2_landed",
+   "value": 2397256429,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/en_c4_stage2 (83 shards): datagen/count_code_dirs.py en_c4_stage2 exact frozen-tokenizer count, 3,887,759 kept_docs",
+   "config": {
+    "note": "exact count; NOT a doc-subset of en_c4/ (0/3,887,759 content-identical, subset check 2026-09-03) -> separate same-label supply; controller split the 5.5B en_c4 role across en_c4/ (3.668B) + stage2 (1.832B)"
+   },
+   "uncertainty": "exact for en_c4_stage2/ as of 2026-09-03",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [
+    "en_c4_stage2 is a subset of en_c4",
+    "en_c4 total is 4.8B only"
    ]
   }
  ]
