@@ -1,0 +1,15 @@
+  1/9 files: rows 49985 repos 29235 mean 1.71 pairs 50 (0.100%) pair_bytes 0.001GB
+  2/9 files: rows 98534 repos 46774 mean 2.11 pairs 192 (0.195%) pair_bytes 0.005GB
+  3/9 files: rows 145866 repos 61152 mean 2.39 pairs 370 (0.254%) pair_bytes 0.010GB
+  4/9 files: rows 194750 repos 74233 mean 2.62 pairs 667 (0.342%) pair_bytes 0.017GB
+  5/9 files: rows 241831 repos 85709 mean 2.82 pairs 967 (0.400%) pair_bytes 0.026GB
+  6/9 files: rows 290724 repos 96518 mean 3.01 pairs 1353 (0.465%) pair_bytes 0.037GB
+  7/9 files: rows 338745 repos 106533 mean 3.18 pairs 1819 (0.537%) pair_bytes 0.048GB
+  8/9 files: rows 387350 repos 116091 mean 3.34 pairs 2324 (0.600%) pair_bytes 0.062GB
+  9/9 files: rows 435233 repos 124998 mean 3.48 pairs 2842 (0.653%) pair_bytes 0.077GB
+  starcoder 80/284: 7973 hits
+  starcoder 160/284: 15792 hits
+  starcoder 240/284: 23743 hits
+
+code_supply distinct 435233, already in code_py_starcoder: 27905 = 6.41%
+wrote runs/cs_probe.json
