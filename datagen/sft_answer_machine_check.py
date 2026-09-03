@@ -92,10 +92,12 @@ def negtest(fn):
             continue
         if abs(lhs - cval) > 1e-6:
             wrong += 1
-    fp = (wrong / matched) if matched else None
-    fp_s = f"{fp:.2%}" if fp is not None else "NA"
+    # sentinel at the computation, never format None: matched==0 is a statement
+    # ("file has no NUM op NUM = NUM shape"), not a false-positive signal.
+    signal = "n/a (0 matches in this file)" if matched == 0 else f"{wrong / matched:.2%}"
     print(f"NEGTEST file={fn} matched={matched} wrongly_flagged={wrong} "
-          f"(false-positive signal vs known-good code={fp_s})", flush=True)
+          f"(false-positive signal vs known-good code={signal})", flush=True)
+    return matched, wrong
 
 
 if __name__ == "__main__":
