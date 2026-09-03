@@ -1,0 +1,38 @@
+# scripts/n8_kda_kernel_repro.py -- run output, the citation for eff.kda_document_isolation_violated
+# pod, card 4 (CUDA_VISIBLE_DEVICES=4), captured 2026-09-04
+# repo commit at capture: c690e0122bbf9f2e6a30cf63ddd2ae87e00ce3c8
+# ckpt_n7c_p3.pt, written 2026-09-03 20:04 on the pod, NOT covered by any KEEP claim in
+#   runs/pod_ckpt_candidates_2026-09-02.txt -- train.py:2618-2622's rolling window can delete it,
+#   which is why this output is committed rather than left as something to re-run.
+# Reproduce: CUDA_VISIBLE_DEVICES=4 python3 scripts/n8_kda_kernel_repro.py
+#
+versions: flash-linear-attention=0.5.2, triton=3.6.0, torch=2.11.0+cu129
+fla at /usr/local/lib/python3.12/dist-packages/fla
+chunk_kda from fla.ops.kda.chunk
+
+== two documents of 170 and 232 tokens, H=8 HD=64 chunk_size=64, dtype torch.bfloat16
+  doc  tokens   maxdiff   pos0-2   pos3-9   pos10+   reading
+    0     170    0.0000   0.0000   0.0000   0.0000   agrees
+    1     232    0.0000   0.0000   0.0000   0.0000   agrees
+  document 0 must agree exactly (nothing precedes it); document 1 is the test.
+
+  document 1 placed FIRST instead of second: maxdiff vs alone 0.0000 (agrees, so its earlier diff came from what preceded it)
+  initial_state=None passed explicitly: maxdiff vs the default call 0.0000 (identical, so the default is already None)
+
+== VERDICT
+  THE KERNEL ISOLATES. With random inputs and cu_seqlens, document 1's output is identical packed or alone, so chunk_kda honours the boundaries and the leak measured by n7c_pack_isolation.py is in model.py's plumbing between the reshape and this call. The candidates, in order: the short_conv at model.py:109-113, which left-pads the WHOLE ROW and never sees cu, so positions 0-2 of k/v/g in every document after the first are convolved with the previous document's last tokens -- and the kernel then writes those bad values into the recurrent state and decays them forward, which reproduces the decaying profile that I WRONGLY read as evidence against the short_conv; and the gate path at model.py:119-121, which computes g and beta from x with no boundary handling either.
+
+== which tensor model.py hands the kernel is already contaminated
+  tensor                     maxdiff   pos0-2   pos3-9   pos10+   reading
+  short_conv out              2.0605   2.0605   0.0000   0.0000   CONTAMINATED
+  q                           0.4729   0.4729   0.0000   0.0000   CONTAMINATED
+  k                           0.5254   0.5254   0.0000   0.0000   CONTAMINATED
+  v                           0.5109   0.5109   0.0000   0.0000   CONTAMINATED
+  g (from gb, gate path)      0.0000   0.0000   0.0000   0.0000   clean
+  beta (from gb)              0.0000   0.0000   0.0000   0.0000   clean
+  A tensor contaminated ONLY at positions 0-2 is the k=4 short_conv reading across
+  the boundary (model.py:109-113). The kernel then writes those values into the
+  recurrent state and decays them forward, which is how a 3-position input error
+  becomes the 48.88 output difference over many positions that n7c_pack_isolation.py
+  measured. gb is a per-position Linear on x, so g and beta must be clean -- if they
+  are not, the mechanism is something else and this table says so.

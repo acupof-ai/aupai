@@ -166,6 +166,45 @@ def main():
               "short_conv; and the gate path at model.py:119-121, which computes g and beta from x "
               "with no boundary handling either.")
 
+        # THE ATTENTION TWIN, b0's request via 6e. b0 reproduced the invariant on a second checkpoint
+        # and data source and saw block 7 (MLA) read "uniform" rather than decaying. That alone proves
+        # nothing -- block 7's inputs are already contaminated everywhere by block 0, so a uniform
+        # profile there is what a clean layer fed dirty inputs looks like. The question it raises is
+        # whether the varlen ATTENTION also fails to honour cu, and that needs the same random-input
+        # control the KDA kernel got: nothing upstream, so nothing to inherit.
+        print("\n== attention twin: flash_attn_varlen_func with cu, packed vs alone, random inputs")
+        if not M.HAS_FA:
+            print("  SKIPPED: HAS_FA is False.")
+        else:
+            aq, ak, av = (torch.randn(sum(LENS), H, HD, device=dev, dtype=dt) for _ in range(3))
+            cu_a = torch.tensor([0, LENS[0], sum(LENS)], dtype=torch.int32, device=dev)
+
+            def attn(q_, k_, v_, cu_):
+                # model.py:191's exact call shape: [total, H, HD] with cu_seqlens on both sides.
+                out = M.flash_attn_varlen_func(q_, k_, v_, cu_seqlens_q=cu_, cu_seqlens_k=cu_,
+                                               causal=True)
+                return (out[0] if isinstance(out, tuple) else out).float()
+
+            with torch.no_grad():
+                packed_a = attn(aq, ak, av, cu_a)
+                solo_a = [attn(aq[:LENS[0]], ak[:LENS[0]], av[:LENS[0]],
+                               torch.tensor([0, LENS[0]], dtype=torch.int32, device=dev)),
+                          attn(aq[LENS[0]:], ak[LENS[0]:], av[LENS[0]:],
+                               torch.tensor([0, LENS[1]], dtype=torch.int32, device=dev))]
+            at2 = 0
+            attn_leaks = False
+            for i, n in enumerate(LENS):
+                d = (packed_a[at2:at2 + n] - solo_a[i]).abs().max().item()
+                attn_leaks = attn_leaks or (i > 0 and d > 0.05)
+                print(f"  doc {i} ({n} tokens): max|diff| packed vs alone {d:.6f}   "
+                      f"{'DIFFERS' if d > 0.05 else 'agrees'}")
+            print("  " + ("THE ATTENTION ALSO LEAKS -- a second independent site, and the fix at "
+                          "model.py:109-113 would not cover it."
+                          if attn_leaks else
+                          "THE ATTENTION ISOLATES. So block 7's uniform profile in b0's run is a "
+                          "clean layer fed inputs block 0 already contaminated, not a second site: "
+                          "flash_attn_varlen_func honours cu with nothing upstream to inherit."))
+
         # NAME THE LINE. The kernel is clean, so the contamination enters through one of the tensors
         # model.py builds before the call. Run the REAL DeltaRecurrence on two packed documents and
         # on each alone, and diff each intermediate at document 1's positions: whichever tensor first
