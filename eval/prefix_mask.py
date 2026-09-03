@@ -136,40 +136,48 @@ def build_mask_mods():
 def doc_prompt_lengths(labels, cu, ignore_index=-100):
     """Per-DOCUMENT prompt length, in document-local coordinates, for aux_tensors[0].
 
-    WHY THIS EXISTS. The pack's prompt/response boundary is per ROW, but the kernel's masking
-    unit is the DOCUMENT: doc_cu_seqlens (train.py:669) opens a document at every row start and
-    after every <eos> run, and mask_mod is called with a document index and document-local
-    positions. On the four gate rows that is 61 documents over 4 rows -- 10 to 23 per row, with
-    9 to 22 boundaries falling INSIDE the supervised span. So the boundary has to be projected
-    from row coordinates into document coordinates, and a row-sized tensor is not merely
-    mislabelled: it is read out of bounds for most documents.
+    WHY THIS EXISTS. The pack's loss mask is per row, but the kernel's masking unit is the
+    DOCUMENT: doc_cu_seqlens (train.py:669) opens a document at every row start and after every
+    <eos> run, and mask_mod is called with a document index and document-local positions
+    (measured 2026-09-04, see build_mask_mods). A row-sized tensor is not merely mislabelled --
+    it is read out of bounds for most documents.
 
-    THE PROJECTION. Document d starts at flat position cu[d], which is row cu[d] // T at
-    row-offset cu[d] % T. The row's prompt ends at row-offset `end`, so within d the prompt
-    covers the first `end - (cu[d] % T)` positions, clamped to [0, len(d)]. Documents that start
-    at or after the row's prompt end get 0 and are therefore fully causal, which is both correct
-    and the safe direction.
+    EACH DOCUMENT IS EXACTLY ONE PROMPT/RESPONSE TURN. Measured over 32 rows / 359 documents of
+    control_sft_ours.pt: 359 of 359 have exactly ONE masked->supervised transition, none begins
+    supervised, none is entirely masked, and the per-document prompt length runs 12 to 1143
+    (mean 71.7). documents-per-row and masked->supervised-transitions-per-row are the same
+    distribution (min 2, max 23, mean 11.2). format_agentic emits one prompt/response pair per
+    assistant turn and each pair ends with <eos>, so the document boundary and the turn boundary
+    are the same boundary.
 
-    ON THE FOUR GATE ROWS THE PROMPT LIES ENTIRELY INSIDE THE FIRST DOCUMENT (66 < 70, 45 < 49,
-    43 < 614, 215 < 1969), so the clamp is not exercised there. It is written anyway because
-    nothing in the pack guarantees it -- an <eos> inside a prompt would split it, and then a
-    formula that only handled the first document would silently drop the rest of the prompt to
-    causal.
+    SO THE PROMPT LENGTH IS LOCAL: the offset of the document's first supervised token within
+    that document. An earlier version projected the ROW's single boundary onto documents, which
+    gave a prompt to each row's first document only and left the other ~10 fully causal -- 32 of
+    359 documents covered instead of 359 of 359. The gates passed on it, because a mask that is
+    causal on most documents leaks nothing and still moves the loss; only counting which
+    documents got a nonzero length showed it. The "4/61 documents" scope reported from the
+    earlier gate run was that artifact, not a property of the pack.
 
-    A SEPARATE FACT THIS MADE VISIBLE, and it is not something this mask introduces: because
-    varlen attention never crosses a document boundary, response tokens after an internal <eos>
-    ALREADY cannot see the prompt at all, in both arms. That is what doc_mask training means
-    here. It bounds how much of the sequence the prefix intervention can even reach, and belongs
-    in the Stage C exp row beside the one-layer caveat.
+    A document with no supervised token at all gets its full length, which makes it fully causal
+    rather than fully bidirectional -- the safe direction, and the same rule prompt_lengths uses
+    per row. It does not occur in this pack (0 of 359) but nothing guarantees it.
     """
     import torch  # noqa: PLC0415
 
-    T = labels.shape[1]
-    row_end = prompt_lengths(labels, ignore_index).to(torch.int64)
+    flat = labels.reshape(-1)
     start = cu[:-1].to(torch.int64)
     doc_len = (cu[1:] - cu[:-1]).to(torch.int64)
-    within = row_end[start // T] - (start % T)
-    return torch.clamp(within, min=0).minimum(doc_len)
+    assert int((start + doc_len).max()) <= flat.numel(), \
+        "cu extends past the label tensor; it was built for a different batch"
+    # Vectorised per-document argmax of the supervised mask, over a [ndoc, max_len] index grid
+    # masked to each document's own length. A python loop is correct too, but this runs once per
+    # training step and B=16 packs ~250 documents.
+    idx = start.unsqueeze(1) + torch.arange(int(doc_len.max()), device=labels.device).unsqueeze(0)
+    inside = idx < (start + doc_len).unsqueeze(1)
+    sup = (flat[idx.clamp(max=flat.numel() - 1)] != ignore_index) & inside
+    any_sup = sup.any(dim=1)
+    first = torch.argmax(sup.to(torch.int32), dim=1)
+    return torch.where(any_sup, first, doc_len)
 
 
 def reference_mask(q_idx, kv_idx, prompt_len, prefix):
@@ -260,31 +268,35 @@ def _selftest():
     check("prompt_lengths reads the first supervised position", got == [2, 1, 4], f"{got}")
     check("a fully masked row becomes fully causal, not fully bidirectional", got[2] == 4)
 
-    # 7. THE PROJECTION FROM ROW COORDINATES TO DOCUMENT COORDINATES. This is the test that would
-    #    have caught the aux-length defect off-pod: a row-sized tensor is not just mislabelled,
-    #    it is read out of bounds for most documents, and the on-pod symptom (gate C reading
-    #    0.848 against a causal 1.614) said "leak" rather than "wrong length". Two rows of T=8,
-    #    documents at flat 0, 3, 8, 12 -- so row 0 holds two documents and row 1 holds two.
-    #    Prompt ends at row-offset 5 in row 0 and 2 in row 1.
-    #      doc 0: flat 0-2,   row 0 offset 0, len 3 -> prompt covers 5-0=5, clamped to len 3
-    #      doc 1: flat 3-7,   row 0 offset 3, len 5 -> prompt covers 5-3=2
-    #      doc 2: flat 8-11,  row 1 offset 0, len 4 -> prompt covers 2-0=2
-    #      doc 3: flat 12-15, row 1 offset 4, len 4 -> prompt covers 2-4=-2, clamped to 0
-    #    The clamps are the point: doc 0 exercises the upper clamp (a prompt longer than the
-    #    document) and doc 3 the lower one (a document starting after the prompt ends, which must
-    #    be fully causal rather than fully bidirectional).
-    labels2 = torch.tensor([[-100, -100, -100, -100, -100, 9, 9, 9],
-                            [-100, -100, 9, 9, 9, 9, 9, 9]])
+    # 7. THE PER-DOCUMENT PROMPT LENGTH IS LOCAL TO THE DOCUMENT. Two rows of T=8 with documents
+    #    at flat 0, 3, 8, 12 -- so each row holds two documents, and EACH document carries its own
+    #    masked prompt, which is what control_sft_ours.pt actually looks like (359 of 359
+    #    documents have exactly one masked->supervised transition).
+    #      doc 0: flat 0-2   labels [-100,-100,9]      -> local prompt 2
+    #      doc 1: flat 3-7   labels [-100,9,9,9,9]     -> local prompt 1
+    #      doc 2: flat 8-11  labels [-100,-100,-100,9] -> local prompt 3
+    #      doc 3: flat 12-15 labels [-100,9,9,9]       -> local prompt 1
+    #    THIS IS THE TEST THAT WOULD HAVE CAUGHT THE ROW-LEVEL PROJECTION, which gave doc 1 and
+    #    doc 3 a length of 0 and left them fully causal. Every pod gate still passed on that,
+    #    because a mask that is causal on most documents leaks nothing and still moves the loss --
+    #    only the per-document coverage count showed it.
+    labels2 = torch.tensor([[-100, -100, 9, -100, 9, 9, 9, 9],
+                            [-100, -100, -100, 9, -100, 9, 9, 9]])
     cu2 = torch.tensor([0, 3, 8, 12, 16], dtype=torch.int32)
     dp = doc_prompt_lengths(labels2, cu2).tolist()
-    check("doc_prompt_lengths projects the row boundary onto documents", dp == [3, 2, 2, 0], f"{dp}")
-    check("a prompt longer than its document is clamped to the document", dp[0] == 3, f"{dp[0]}")
-    check("a document starting after the prompt is fully causal, not bidirectional",
-          dp[3] == 0, f"{dp[3]}")
+    check("doc_prompt_lengths reads each document's OWN prompt", dp == [2, 1, 3, 1], f"{dp}")
+    check("a document after the row's first still gets a nonzero prompt",
+          dp[1] > 0 and dp[3] > 0, f"{dp}")
     # ONE ENTRY PER DOCUMENT, never per row: length 4 here, not 2. The kernel indexes this tensor
     # by document (measured on the pod), so a row-sized tensor reads past its end.
     check("doc_prompt_lengths returns one entry per document", len(dp) == cu2.numel() - 1,
           f"{len(dp)} for {cu2.numel() - 1} documents")
+    # A DOCUMENT WITH NO SUPERVISED TOKEN gets its full length -> fully causal, not fully
+    # bidirectional. Does not occur in this pack (0 of 359) and is asserted anyway.
+    labels3 = torch.tensor([[-100, -100, -100, -100, -100, 9, 9, 9]])
+    cu3 = torch.tensor([0, 4, 8], dtype=torch.int32)
+    dp3 = doc_prompt_lengths(labels3, cu3).tolist()
+    check("a document with no supervised token becomes fully causal", dp3 == [4, 1], f"{dp3}")
 
     # 8. THE SIGNATURE IS THE KERNEL'S, NOT THE DOCSTRING'S. Six parameters; following
     #    flash_fwd.py:77's five would drop seqlen_info and break the call at mask.py:232.
