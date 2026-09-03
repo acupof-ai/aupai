@@ -147,16 +147,21 @@
    "id": "cs.code_tests_supply",
    "value": 0,
    "unit": "tokens",
-   "measured": "2026-09-03",
-   "source": "mined from code_rp1t (impl+test pairs); no mined corpus dir exists yet",
+   "measured": "2026-09-04",
+   "source": "no corpus directory exists: data/corpus/ has code, code_dedup08, code_py_rp1t, code_py_starcoder, code_rp1t, code_rp1t_rest and no code_tests. The only artefact is data/raw/code_tests_trial/, a YIELD STUDY (pair_yield.py + result.json + two selection pickles), which writes result.json and no shards",
    "config": {
-    "note": "supply = 0 until task-3 mining lands; 30b target 2B; ds.code_exec_supply estimates 5.6B mineable"
+    "note": "supply = 0 until a miner writes shards; 30b target 2B; ds.code_exec_supply estimates 5.6B mineable",
+    "trial_paired_tokens": 2824660809,
+    "trial_basis": "data/raw/code_tests_trial/result.json, 59 shards of data/raw/ms_starcoder_py, frozen tokenizer (pair_yield.py:5,41 tokenizers.Tokenizer on data/tokenizer.json, len(encode(t).ids)) -- NOT chars/1.5",
+    "trial_is_not_supply": "2.82B counts tokens in the SOURCE PARQUET ROWS the miner would select, not tokens in a built corpus. kept_impl.pickle and kept_test.pickle hold (repo, path) keys -- which rows to keep, not their content. Nothing has been extracted, filtered, deduped or sharded",
+    "trial_yield": 0.3217,
+    "trial_pairs": 490666
    },
-   "uncertainty": "mineable estimate only; actual yield unknown until the miner runs; one of two truly-unfetched domains",
+   "uncertainty": "2.82B is a ceiling on the mine, measured on the source rows before any build-time filter, dedup or holdout slice. en_c4 lost 3.7% of docs to light filters alone; a code-family build has not been run here, so the loss between 2.82B selected and what a corpus would hold is UNMEASURED, not small",
    "status": "unmeasured",
    "claim": "mined impl+test pairs from code_rp1t",
-   "audit": "fb 3b 2026-09-03: task 3, mining pending",
-   "refuted_by": "no count yet; superseded by the task-3 miner's actual yield",
+   "audit": "tilerl 2026-09-04 (tilerl-23, pair 3b): checked data/corpus/ for a code_tests dir (absent), read pair_yield.py for its token method (frozen tokenizer) and its writes (result.json only), and checked for a live miner by cmdline in the container AND on the host -- none running. The roadmap's 'Phase A mining running' is not true as of 2026-09-04 09:5xZ",
+   "refuted_by": "the first miner run that writes shards; count them by a full frozen-tokenizer pass",
    "guard_phrases": [
     "code_tests has supply"
    ]
