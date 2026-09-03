@@ -1261,6 +1261,19 @@ def check_shapes_table_covers_doc(root):
         return FAIL, "shape heading number(s) used more than once: " + ", ".join(
             f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
     doc = set(nums)
+    # A GAP is invisible to every assertion above and below. Duplicates are caught, coverage
+    # is caught, arithmetic is caught -- but a SKIPPED number passes all three, because a
+    # number nobody wrote is in neither the doc nor the table and the two therefore agree.
+    # tilerl renumbered to 156/157 on 2026-09-03 and left 155 empty; that read as green
+    # (6e). The doc is a numbered sequence, so 1..max must be contiguous: a hole means a
+    # shape was written and lost, or a renumber dropped one, and the reader who follows a
+    # §ref chain finds nothing there.
+    gaps = [i for i in range(1, max(nums) + 1) if i not in doc]
+    if gaps:
+        return FAIL, (f"shape numbering has {len(gaps)} gap(s) in 1..{max(nums)}: "
+                      + ", ".join(f"§{g}" for g in gaps[:12])
+                      + " -- a skipped number is a shape that was written and lost, or a "
+                        "renumber that dropped one; renumber to close it")
 
     a = os.path.join(root, "AGENTS.md")
     if not os.path.exists(a):
@@ -1354,6 +1367,40 @@ def _broken_shapes_table_doc_grew():
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
         text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
+    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    return d
+
+
+def _broken_shapes_table_gap():
+    """The REAL doc with one section RENUMBERED past its neighbour, leaving a hole.
+
+    tilerl's near-miss (6e, 2026-09-03): renumbered to 156/157 and left 155 empty, and the
+    check was green. It has to be a renumber and not a deletion, because a deletion also
+    removes the §ref's target from coverage and would fail the coverage half instead -- the
+    world would then prove nothing about the gap assertion. Renumbering the LAST heading to
+    max+2 keeps every other property intact: no duplicate, and the table's refs still resolve
+    to a heading that exists (the old number's row is now dangling, which is a second FAIL
+    reason, so the assertion below reads the message rather than only the state).
+    """
+    import shutil as _sh
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
+        return None
+    text = open(src, encoding="utf-8").read()
+    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    if not nums:
+        raise SelftestSkip("no shape headings; update _broken_shapes_table_gap")
+    top = max(nums)
+    # Same symlink hazard as the neighbours: docs/ is a link into the real repo.
+    link = os.path.join(d, "docs")
+    if os.path.islink(link):
+        os.unlink(link)
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(
+        re.sub(rf"^## {top}\.", f"## {top + 2}.", text, count=1, flags=re.M))
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -11189,6 +11236,22 @@ def _demo():
                     untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
+
+    # The gap world asserts the REASON, not only the state. A renumber leaves a hole AND a
+    # dangling table ref, so the check would FAIL on this world even with no gap assertion at
+    # all -- reading only the state would certify a check that cannot see gaps (6e's near-miss
+    # is precisely a world where the other halves stayed green).
+    _d = _broken_shapes_table_gap()
+    if _d:
+        try:
+            _st, _why = check_shapes_table_covers_doc(_d)
+            if _st != FAIL:
+                untested.append(f"shapes_table_covers_doc reported {_st} on a numbering gap")
+            elif "gap" not in _why:
+                untested.append("shapes_table_covers_doc FAILs on a numbering gap for the wrong "
+                                f"reason -- it does not name the gap: {_why[:70]}")
+        finally:
+            shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
