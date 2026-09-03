@@ -10,12 +10,25 @@ L=2/3/4/12. One node reads v once and emits one gradient per source.
 
 Design and gates: docs/standards/attnres_logits_kernel.md, scripts/attnres_logits_reference.py.
 
-WHAT IS AND IS NOT HERE. This is the autograd node and its torch implementation --
-correct, one traversal, and already removing the double read. The Triton kernel that
-takes it to the bandwidth roofline is the next commit; this file's `_forward_impl` and
-`_backward_impl` are where it plugs in, and the gates do not change when it does.
-# ponytail: torch ops, so it does not yet hit the 10.9 ms byte floor -- the kernel is
-# the upgrade path, and this node is the interface it needs either way.
+MEASURED SLOWER IN TORCH -- 2.2x, and the flag stays OFF because of it. The double read
+IS gone (add_ per step n(n+1) -> n(n+1)/2, exactly 2.00x at L=2/3/4/12), but the online
+softmax rescales the whole [B,T,D] fp32 accumulator on every source, and in torch each
+rescale is a full HBM round trip:
+
+    saved:  v reads 50 -> 25                        -0.84 GB
+    spent:  fp32 accumulator, rescaled per source   +1.68 GB
+    net:                                            +0.84 GB
+
+so this implementation loses bytes. In a Triton kernel that accumulator lives in SMEM,
+the rescale is a register operation, and only the final store reaches HBM -- which is
+why Triton is not a faster version of this, it is the premise the design rests on.
+Details and the sequencing mistake behind it:
+docs/lessons/fused_attnres_is_slower_in_torch.md.
+
+This file is therefore the CORRECT reference and the interface the kernel plugs into
+(`_forward_impl` / `_backward_impl`, gates unchanged), NOT a usable fast path.
+# ponytail: torch ops, 2.2x slower than eager and known to be -- do not enable the flag
+# on this implementation; the kernel is the upgrade path.
 """
 
 from __future__ import annotations

@@ -1,28 +1,30 @@
 {
  "scripts/test_arch_L32.py": {
   "host": "iv-yeozpb5g5cbw80bls64e",
+  "mix": null,
   "real_kernel": true,
-  "recorded": "2026-09-01 14:23",
+  "recorded": "2026-09-03 03:16",
   "result": "pass",
   "shape": {
    "d": 1024,
    "ffn_hidden": 3072,
    "heads": 8,
-   "layers": 32
+   "layers": 12
   },
-  "test_sha256": "98f8fcb77c180a9259522420de65777c3504ad6f56aa49d5808f86b0e6f53ee5"
+  "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
  },
  "scripts/test_e2e.py": {
   "host": "iv-yeozpb5g5cbw80bls64e",
+  "mix": "data/mix_200m_8b.json",
   "real_kernel": true,
-  "recorded": "2026-09-01 20:22",
+  "recorded": "2026-09-03 03:49",
   "result": "pass",
   "shape": {
    "d": 1024,
    "ffn_hidden": 3072,
    "heads": 8,
-   "layers": 32
+   "layers": 12
   },
-  "test_sha256": "1d25095e2ec9f70506936d4c1aa75550f8941624cf2e655a0cb390be6dcad97a"
+  "test_sha256": "217fdf6acbed17de688f83eb8891b7b28d19a054685d68a0a8348f91f182f2a8"
  }
 }
