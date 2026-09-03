@@ -34,6 +34,11 @@ CKPT = "ckpt_data_leg_206m_8b.pt"
 PACK = "data/sft/control_sft_ours.pt"
 ROWS = 2  # two rows: enough for a per-tensor cosine, small enough for a dense TxT mask per doc
 ARM = "p3"
+# THE CAUSAL CONTROL RUNS FIRST, and it is the check the first version of this file lacked. If
+# kernel-vs-SDPA gradients already disagree with NO prefix mask -- plain causal, the configuration
+# the twins trained in and that this repo has run for weeks -- then the REFERENCE is wrong and the
+# prefix comparison says nothing. Without it, "166 of 175 tensors disagree" is unattributable: it
+# could be my mask, my SDPA reference, or an inherent kernel/SDPA difference in backward.
 
 
 def main():
@@ -81,10 +86,24 @@ def main():
                     ref[s + q, s + k] = True
     print(f"  dense reference mask: {int(ref.sum())} allowed pairs of {flat_T * flat_T}")
 
+    # THE CAUSAL DENSE MASK, same construction, prefix=False: block-diagonal and causal within a
+    # document. This is what causal=True means on the varlen path.
+    cau = torch.zeros((flat_T, flat_T), dtype=torch.bool)
+    for _d, (s_, L_) in enumerate(zip(starts, lens, strict=True)):
+        for q_ in range(L_):
+            for k_ in range(L_):
+                if reference_mask(q_, k_, 0, prefix=False):
+                    cau[s_ + q_, s_ + k_] = True
+    print(f"  dense causal mask:    {int(cau.sum())} allowed pairs")
+
     _causal_mod, prefix_mod = build_mask_mods()
 
-    def grads(path):
-        """(loss, {name: grad}) for 'kernel' or 'sdpa'. Same weights, same batch, bf16, no fp8."""
+    def grads(path, mask="prefix"):
+        """(loss, {name: grad}) for 'kernel' or 'sdpa'. Same weights, same batch, bf16, no fp8.
+
+        mask='causal' is the CONTROL: no prefix at all, both paths computing plain block-diagonal
+        causal attention. Any disagreement there is in the reference or in the kernel itself, not in
+        the prefix mask, and it bounds what the prefix comparison can mean."""
         mdl.zero_grad(set_to_none=True)
         orig = M.flash_attn_varlen_func
         targets = [mdl.blocks[li].mixer for li in layers]
@@ -94,6 +113,8 @@ def main():
             if depth[0] == 0:
                 return orig(q, k, v, **kw)
             if path == "kernel":
+                if mask == "causal":
+                    return orig(q, k, v, **kw)  # causal=True as model.py passes it
                 kw.pop("causal", None)
                 return orig(q, k, v, mask_mod=prefix_mod,
                             aux_tensors=[plens.to(torch.int32)], **kw)
@@ -101,7 +122,7 @@ def main():
             # are reshaped to [1, h, B*T, hd] -- one sequence, the block-diagonal mask supplying
             # every boundary the varlen kernel would have got from cu.
             qq, kk, vv = (t.unsqueeze(0).transpose(1, 2) for t in (q, k, v))
-            m = ref.to(q.device).unsqueeze(0).unsqueeze(0)
+            m = (cau if mask == "causal" else ref).to(q.device).unsqueeze(0).unsqueeze(0)
             y = torch.nn.functional.scaled_dot_product_attention(qq, kk, vv, attn_mask=m)
             return y.transpose(1, 2).squeeze(0)
 
@@ -133,34 +154,44 @@ def main():
             for t, inner in zip(targets, inners, strict=True):
                 t.forward = inner
 
-    la, ga = grads("kernel")
-    lb, gb = grads("sdpa")
-    print(f"\nforward loss: kernel {la:.10f}  sdpa {lb:.10f}  diff {la - lb:+.3e}")
-    print("  bf16 tolerance is ~1e-2 relative; a larger gap means the two masks are not the "
-          "same mask and the gradient comparison below is meaningless.")
+    def compare(tag, mask):
+        la_, ga_ = grads("kernel", mask)
+        lb_, gb_ = grads("sdpa", mask)
+        ks = sorted(set(ga_) & set(gb_))
+        rr = []
+        for n in ks:
+            a, b = ga_[n].flatten(), gb_[n].flatten()
+            na, nb = a.norm().item(), b.norm().item()
+            c = float(torch.dot(a, b) / (a.norm() * b.norm())) if na > 0 and nb > 0 else float("nan")
+            rr.append((c, n, na, nb))
+        rr.sort()
+        live = [r for r in rr if r[2] > 0 or r[3] > 0]
+        bad_ = [r for r in live if not (r[0] > 0.99)]
+        ratios = [r[2] / r[3] for r in live if r[3] > 0]
+        print(f"\n== {tag}: loss kernel {la_:.10f} sdpa {lb_:.10f} diff {la_ - lb_:+.3e}")
+        print(f"   {len(live)} tensors with a nonzero grad; cosine <= 0.99 on {len(bad_)}")
+        if ratios:
+            ratios.sort()
+            print(f"   |kernel|/|sdpa| ratio: min {ratios[0]:.3f} median "
+                  f"{ratios[len(ratios) // 2]:.3f} max {ratios[-1]:.3f}")
+        for c, n, na, nb in bad_[:6]:
+            print(f"     {c:+.6f}  {n}  |kernel| {na:.4e} |sdpa| {nb:.4e}")
+        return bad_, live
 
-    keys = sorted(set(ga) & set(gb))
-    rows = []
-    for n in keys:
-        a, b = ga[n].flatten(), gb[n].flatten()
-        na, nb = a.norm().item(), b.norm().item()
-        cos = float(torch.dot(a, b) / (a.norm() * b.norm())) if na > 0 and nb > 0 else float("nan")
-        rows.append((cos, n, na, nb))
-    rows.sort()
-    print(f"\nper-tensor gradient cosine over {len(rows)} tensors:")
-    print(f"  min {rows[0][0]:.6f} ({rows[0][1]})")
-    print(f"  max {rows[-1][0]:.6f}")
-    bad = [r for r in rows if not (r[0] > 0.99)]
-    print(f"  tensors with cosine <= 0.99: {len(bad)}")
-    for cos, n, na, nb in bad[:12]:
-        print(f"    {cos:+.6f}  {n}  |kernel| {na:.4e}  |sdpa| {nb:.4e}")
-    print("\nVERDICT: " + (
-        "GRADIENTS AGREE -- the backward is not the defect; the divergence is an optimisation "
-        "effect, so read the --no_fp8 probe and the LR question."
-        if not bad else
-        f"GRADIENTS DISAGREE on {len(bad)} tensor(s) -- the names above locate the defect."))
+    bad_c, live_c = compare("CONTROL causal (no prefix)", "causal")
+    bad_p, live_p = compare("PREFIX arm p3", "prefix")
+    print("\nVERDICT:")
+    if bad_c:
+        print(f"  THE REFERENCE IS NOT TRUSTWORTHY: {len(bad_c)} of {len(live_c)} tensors already "
+              f"disagree with NO prefix mask, so the prefix comparison cannot attribute anything. "
+              f"Fix the SDPA reference before reading the prefix row.")
+    elif bad_p:
+        print(f"  THE PREFIX BACKWARD IS WRONG: causal agrees on all {len(live_c)} tensors while "
+              f"prefix disagrees on {len(bad_p)}. The names above locate it.")
+    else:
+        print("  GRADIENTS AGREE in both rows -- the backward is not the defect, so the divergence "
+              "is an optimisation effect.")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
