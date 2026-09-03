@@ -74,7 +74,17 @@ def build_mask_mods():
 
     @cute.jit
     def prefix_mod(batch_idx, head_idx, q_idx, kv_idx, seqlen_info, aux_tensors):
-        # aux_tensors[0][batch_idx] is this row's prompt length P, in tokens.
+        # EVERY ARGUMENT ARRIVES AS A SHAPE-(1,) SSA VECTOR, not a python int. mask.py:228-231
+        # wraps each one with utils.scalar_to_ssa before the call, and utils.ssa_to_scalar is
+        # simply `val[0]`, so a scalar is recovered by subscripting. My first version wrote
+        # `aux_tensors[0][batch_idx]` and cutlass raised "Expected Coord, whose leaves are
+        # integers or None, but got tensor_value<vector<1xi32> o 1>" -- a tensor cannot be
+        # indexed by an SSA vector. The comparisons below work on SSA values directly; only the
+        # tensor lookup needs the scalar.
+        b = batch_idx[0]
+        p = aux_tensors[0][b]
+        #
+        # aux_tensors[0][b] is this row's prompt length P, in tokens.
         #
         # A query INSIDE the prompt (q_idx < P) may see any prompt key (kv_idx < P), including
         # later ones -- that is the bidirectional half, and it is safe because prompt positions
@@ -86,10 +96,13 @@ def build_mask_mods():
         # this as `(q_idx < P) or (kv_idx <= q_idx)` would be wrong -- it would let a prompt
         # query at q_idx read every key in the row, response included, and the loss would then
         # drop by leakage through the residual stream feeding the head.
-        p = aux_tensors[0][batch_idx]
+        # BITWISE, NOT `and`/`or`/`not`. The comparisons produce SSA booleans (vector<1xi1>), and
+        # python's boolean operators call __bool__ on them, which cutlass cannot lower --
+        # "Unsupported DSL type: vector<1xi1>" from typing.py:1268. `&`, `|` and `~` stay in the
+        # SSA domain. Same reason numpy and torch masks use them.
         in_prompt_q = q_idx < p
         in_prompt_k = kv_idx < p
-        return (in_prompt_q and in_prompt_k) or ((not in_prompt_q) and kv_idx <= q_idx)
+        return (in_prompt_q & in_prompt_k) | (~in_prompt_q & (kv_idx <= q_idx))
 
     return causal_mod, prefix_mod
 

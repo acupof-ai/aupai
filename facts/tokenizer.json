@@ -22,10 +22,12 @@
     {
       "id": "tok.padded_vocab",
       "value": 32832,
-      "measured": "2026-08-30",
-      "source": "train.py: padded_vocab = ceil(vocab/64)*64",
-      "config": {"vocab": 32773, "multiple": 64, "note": "adding [NUM] resized nothing"},
-      "uncertainty": null,
+      "measured": "2026-09-03",
+      "source": "model.py:340 self.padded_vocab = ((cfg.vocab + 63) // 64) * 64, with cfg.vocab from train.py:164; verified by constructing HybridLM(d=768,heads=6,ffn=2304,L=12) on the pod: tok.weight is (32832, 768)",
+      "config": {"vocab": 32784, "vocab_real": 32773, "multiple": 64, "note": "adding [NUM] resized nothing",
+                 "three_widths": "32773 = tok.vocab_size, the frozen tokenizer's real size (32,768 BPE merges incl <unk>/<eos>, 4 chat specials, [NUM]). 32784 = train.py:164 Cfg.vocab, the LIVE compute width: a multiple of 16 so the cuBLAS aligned kernel is reached (32773 fell back and cost 215.6 ms/step against 96.8, eff.vocab_align_parity) and so the fp8 head stays possible; the 11 columns above vocab_real are alignment padding, never targets, zero-initialized since 06d52cd. 32832 = model.py:340, the EMBEDDING AND HEAD WIDTH, ceil(Cfg.vocab/64)*64. AGENTS.md's '32,784-slot vocabulary' is Cfg.vocab and is correct; it is not the tokenizer's size and not the head's.",
+                 "tied": "model.py:374 head = Linear(d, padded_vocab, bias=False) and its weight IS tok.weight (verified `m.head.weight is m.tok.weight` -> True), so this width is paid once, not twice: 25.215M of the 122.30M at d=768"},
+      "uncertainty": "the previous version of this entry named train.py as the source (the formula is in model.py:340) and recorded config.vocab as 32773 (the formula reads Cfg.vocab = 32784). BOTH INPUTS RETURN 32832 -- ceil(32773/64)*64 and ceil(32784/64)*64 land in the same 64-block -- so the wrong input was invisible in the output and no check could have caught it. Corrected 2026-09-03 from the source lines.",
       "status": "measured"
     },
     {
