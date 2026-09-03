@@ -145,8 +145,8 @@
   },
   {
    "id": "cs.code_tests_supply",
-   "value": 0,
-   "unit": "tokens",
+   "value": 15,
+   "unit": "novel rows (0 tokens of new supply)",
    "measured": "2026-09-04",
    "source": "no corpus directory exists: data/corpus/ has code, code_dedup08, code_py_rp1t, code_py_starcoder, code_rp1t, code_rp1t_rest and no code_tests. The only artefact is data/raw/code_tests_trial/, a YIELD STUDY (pair_yield.py + result.json + two selection pickles), which writes result.json and no shards",
    "config": {
@@ -155,13 +155,20 @@
     "trial_basis": "data/raw/code_tests_trial/result.json, 59 shards of data/raw/ms_starcoder_py, frozen tokenizer (pair_yield.py:5,41 tokenizers.Tokenizer on data/tokenizer.json, len(encode(t).ids)) -- NOT chars/1.5",
     "trial_is_not_supply": "2.82B counts tokens in the SOURCE PARQUET ROWS the miner would select, not tokens in a built corpus. kept_impl.pickle and kept_test.pickle hold (repo, path) keys -- which rows to keep, not their content. Nothing has been extracted, filtered, deduped or sharded",
     "trial_yield": 0.3217,
-    "trial_pairs": 490666
+    "trial_pairs": 490666,
+    "dry_run_kept_rate": 0.9706,
+    "dry_run_basis": "full 59/59 scan of data/raw/ms_starcoder_py, joined to the trial's (repo,path) keys, filtered by build_corpus.reject_light IMPORTED not copied: 1519076 rows seen, 1474441 kept; rejects short 43907 / long 662 / bad_bytes 66. Tier is `light` because reject_reason (the web tier) requires >=60% CJK (build_corpus.py:119) and would reject every python file as not_zh",
+    "overlap_vs_code_py_starcoder": 0.99999,
+    "overlap_vs_union": 0.99999,
+    "novel_rows": 15,
+    "overlap_basis": "content-hash join (blake2b-64 of the raw content string), runs/ct_overlap.json. Valid key because build_corpus.py:332 writes `text` verbatim from the parquet column -- no normalization sits between the two stores. 1474425 of 1474440 distinct kept hashes are already in code_py_starcoder",
+    "why_total": "structural, not incidental: code_py_starcoder consumed all 59 of the same raw shards (.built_shards, n=59) under filter ast.parse+non-empty (build_starcoder_py.py:62-67), and code_dedup08's only inputs are code_py_starcoder + code_py_rp1t (its build_corpus_stats.json inputs block). A mined row is a starcoder row that also has a test pair, so it was already kept"
    },
-   "uncertainty": "2.82B is a ceiling on the mine, measured on the source rows before any build-time filter, dedup or holdout slice. en_c4 lost 3.7% of docs to light filters alone; a code-family build has not been run here, so the loss between 2.82B selected and what a corpus would hold is UNMEASURED, not small",
-   "status": "unmeasured",
-   "claim": "mined impl+test pairs from code_rp1t",
-   "audit": "tilerl 2026-09-04 (tilerl-23, pair 3b): checked data/corpus/ for a code_tests dir (absent), read pair_yield.py for its token method (frozen tokenizer) and its writes (result.json only), and checked for a live miner by cmdline in the container AND on the host -- none running. The roadmap's 'Phase A mining running' is not true as of 2026-09-04 09:5xZ",
-   "refuted_by": "the first miner run that writes shards; count them by a full frozen-tokenizer pass",
+   "uncertainty": "the 2.82B ceiling is unchanged and still real as a count of source tokens; what is now measured is that those tokens are NOT new. Overlap is exact on content identity, so it cannot see near-duplicates (a mined row differing from its corpus twin by one byte counts as novel here); that direction would only lower the 15, never raise it",
+   "status": "measured",
+   "claim": "mined impl+test pairs from starcoder python -- 100.00% already in code_py_starcoder",
+   "audit": "tilerl 2026-09-04 (tilerl-23, pair 3b): checked data/corpus/ for a code_tests dir (absent), read pair_yield.py for its token method (frozen tokenizer) and its writes (result.json only), and checked for a live miner by cmdline in the container AND on the host -- none running. The roadmap's 'Phase A mining running' is not true as of 2026-09-04 09:5xZ; 2026-09-04 second pass: ran the granted two CPU steps (dry-run kept rate, content-hash overlap) on the pod, runs/ct_overlap.json. Kept 97.1%, overlap 100.00%, 15 novel rows of 1474440",
+   "refuted_by": "a mining filter that selects rows code_py_starcoder does NOT hold -- i.e. one that does not reduce to a subset of ast.parse over the same 59 shards. Re-run the content-hash join to check",
    "guard_phrases": [
     "code_tests has supply"
    ]
@@ -278,9 +285,9 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/rp1t_arxiv_papers (RedPajama-1T arxiv slice via data.together.xyz; exact frozen-tokenizer count, 97 shards, 169,593 docs)",
    "config": {
-    "note": "role UNATTRIBUTED — 60-doc read: full arXiv papers (avg 57K chars, \\section 98%, proof env 22%, step-markers 2%); this is math-reasoning prose, NOT CoT. The _comment in mix_30b suspended arxiv/stackexchange role attribution until a content read, which did not exist; now it does. cot gap stays OPEN. fetch_stats first-in-repo: /work/aupai/data/raw/rp1t_arxiv/fetch_stats.json, 15 files 13.99GB, all data.together.xyz. filters_fp 88ee503b38941bf4, tier reproducible."
+    "note": "role UNATTRIBUTED \u2014 60-doc read: full arXiv papers (avg 57K chars, \\section 98%, proof env 22%, step-markers 2%); this is math-reasoning prose, NOT CoT. The _comment in mix_30b suspended arxiv/stackexchange role attribution until a content read, which did not exist; now it does. cot gap stays OPEN. fetch_stats first-in-repo: /work/aupai/data/raw/rp1t_arxiv/fetch_stats.json, 15 files 13.99GB, all data.together.xyz. filters_fp 88ee503b38941bf4, tier reproducible."
    },
-   "uncertainty": "exact count 3.104B; the earlier sampled estimate 0.3461 tok/byte overshot the exact 0.329 by +3.74% (sample biased to shard-head longer docs) — next slice-extrapolations on this source should expect that +~3.7% bias",
+   "uncertainty": "exact count 3.104B; the earlier sampled estimate 0.3461 tok/byte overshot the exact 0.329 by +3.74% (sample biased to shard-head longer docs) \u2014 next slice-extrapolations on this source should expect that +~3.7% bias",
    "status": "measured",
    "role": "unattributed",
    "boundary": "not a CoT supply; does not fill the cot gap. CoT needs visible intermediate steps; viable paths in order: (1) stackexchange 80GB (same host, sample-read 60 first), (2) extract \\begin{proof} envs from this arxiv (20-22% of docs, order-of-magnitude smaller, no new fetch), (3) true CoT set",

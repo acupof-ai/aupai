@@ -1,0 +1,82 @@
+mined keys: impl 1028383 test 490664 union 1519047 (hashed 1519047)
+  raw 1/59: seen 25313 kept 24560
+  raw 2/59: seen 51027 kept 49528
+  raw 3/59: seen 76665 kept 74373
+  raw 4/59: seen 102694 kept 99608
+  raw 5/59: seen 128302 kept 124482
+  raw 6/59: seen 154272 kept 149698
+  raw 7/59: seen 180046 kept 174749
+  raw 8/59: seen 206028 kept 199981
+  raw 9/59: seen 231282 kept 224467
+  raw 10/59: seen 256744 kept 249160
+  raw 11/59: seen 282745 kept 274410
+  raw 12/59: seen 308646 kept 299563
+  raw 13/59: seen 334354 kept 324491
+  raw 14/59: seen 360050 kept 349464
+  raw 15/59: seen 385917 kept 374577
+  raw 16/59: seen 411735 kept 399641
+  raw 17/59: seen 437422 kept 424507
+  raw 18/59: seen 463158 kept 449497
+  raw 19/59: seen 488782 kept 474350
+  raw 20/59: seen 514598 kept 499451
+  raw 21/59: seen 540326 kept 524417
+  raw 22/59: seen 566202 kept 549518
+  raw 23/59: seen 592071 kept 574642
+  raw 24/59: seen 617630 kept 599437
+  raw 25/59: seen 643520 kept 624581
+  raw 26/59: seen 669022 kept 649291
+  raw 27/59: seen 694816 kept 674346
+  raw 28/59: seen 720456 kept 699205
+  raw 29/59: seen 746049 kept 723995
+  raw 30/59: seen 771859 kept 749046
+  raw 31/59: seen 797911 kept 774345
+  raw 32/59: seen 823250 kept 798950
+  raw 33/59: seen 849235 kept 824211
+  raw 34/59: seen 874974 kept 849165
+  raw 35/59: seen 900435 kept 873890
+  raw 36/59: seen 926133 kept 898819
+  raw 37/59: seen 951954 kept 923913
+  raw 38/59: seen 978034 kept 949262
+  raw 39/59: seen 1003696 kept 974116
+  raw 40/59: seen 1029587 kept 999239
+  raw 41/59: seen 1055471 kept 1024351
+  raw 42/59: seen 1081176 kept 1049311
+  raw 43/59: seen 1107057 kept 1074432
+  raw 44/59: seen 1133007 kept 1099652
+  raw 45/59: seen 1159003 kept 1124904
+  raw 46/59: seen 1184624 kept 1149788
+  raw 47/59: seen 1210285 kept 1174673
+  raw 48/59: seen 1235832 kept 1199451
+  raw 49/59: seen 1261569 kept 1224473
+  raw 50/59: seen 1287235 kept 1249377
+  raw 51/59: seen 1312858 kept 1274211
+  raw 52/59: seen 1338596 kept 1299192
+  raw 53/59: seen 1364158 kept 1324027
+  raw 54/59: seen 1390475 kept 1349594
+  raw 55/59: seen 1416231 kept 1374609
+  raw 56/59: seen 1442023 kept 1399680
+  raw 57/59: seen 1467572 kept 1424485
+  raw 58/59: seen 1493082 kept 1449214
+  raw 59/59: seen 1519076 kept 1474441
+
+FULL (59/59): seen 1519076, kept 1474441 (97.1%), 1474440 distinct after collapsing duplicate content
+  short             43907  2.89%
+  long                662  0.04%
+  bad_bytes            66  0.00%
+  code_py_starcoder 50/284: 1093553 rows, 261127 matched
+  code_py_starcoder 100/284: 2190902 rows, 522507 matched
+  code_py_starcoder 150/284: 3287510 rows, 783898 matched
+  code_py_starcoder 200/284: 4383808 rows, 1046307 matched
+  code_py_starcoder 250/284: 5477255 rows, 1307307 matched
+
+overlap vs code_py_starcoder: 1474425/1474440 = 100.00%  (6180174 corpus rows)
+  code_dedup08 50/298: 902744 rows, 182051 matched
+  code_dedup08 100/298: 1988635 rows, 441539 matched
+  code_dedup08 150/298: 3074372 rows, 700881 matched
+  code_dedup08 200/298: 4157429 rows, 959945 matched
+  code_dedup08 250/298: 5236230 rows, 1218366 matched
+
+overlap vs code_dedup08: 1457892/1474440 = 98.88%  (6239038 corpus rows)
+
+overlap vs union: 1474425/1474440 = 100.00%   NOVEL 15
+wrote /work/aupai/runs/ct_overlap.json
