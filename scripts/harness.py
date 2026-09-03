@@ -1807,6 +1807,70 @@ def _broken_curl_ipv4():
     return d
 
 
+def check_running_sh_override_verified(root):
+    """POD_PUSH_ALLOW_RUNNING_SH must reach the offset check, not return unconditionally.
+
+    The override used to be one line -- `[ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] || return 1`
+    -- so setting it skipped the running-script refusal entirely on the operator's word. The
+    safety is a property of the DIFF, not of the flag: an edit whose every changed byte lands
+    after a live shell's offset is safe, and the same flag on an edit touching an earlier byte
+    is not, with no warning either way (de-48, 2026-09-04).
+
+    Source-level because the alternative is running a push. What it catches is the wiring
+    being removed -- pod_sh_offset.py's own 17 assertions all keep passing if nothing calls
+    it, which is the shape a guard fails in silence.
+    """
+    sh = os.path.join(root, "scripts", "pod_push.sh")
+    gate = os.path.join(root, "scripts", "pod_sh_offset.py")
+    if not os.path.exists(sh):
+        return SKIP, "scripts/pod_push.sh not present"
+    if not os.path.exists(gate):
+        return FAIL, ("scripts/pod_sh_offset.py is gone, so POD_PUSH_ALLOW_RUNNING_SH has "
+                      "nothing to verify the operator's byte-offset claim against")
+    text = open(sh, encoding="utf-8").read()
+    body = strip_docstrings(text)
+    lines = [ln.split("#", 1)[0] for ln in body.split("\n")]
+    mentions = [ln for ln in lines if "POD_PUSH_ALLOW_RUNNING_SH" in ln]
+    if not mentions:
+        return FAIL, ("scripts/pod_push.sh no longer reads POD_PUSH_ALLOW_RUNNING_SH; the "
+                      "running-script gate has no override and no offset check")
+    # The defect shape verbatim: the flag short-circuiting straight to a permit.
+    for ln in mentions:
+        if re.search(r"POD_PUSH_ALLOW_RUNNING_SH[^\n]*\|\|\s*return\s", ln):
+            return FAIL, (
+                f"POD_PUSH_ALLOW_RUNNING_SH returns unconditionally ({ln.strip()[:70]}) -- "
+                "the override permits a push on the operator's word. It must call "
+                "scripts/pod_sh_offset.py --check and refuse when that refuses"
+            )
+    if "pod_sh_offset.py" not in body:
+        return FAIL, ("scripts/pod_push.sh does not call scripts/pod_sh_offset.py, so "
+                      "POD_PUSH_ALLOW_RUNNING_SH is trusted rather than verified")
+    return PASS, "the running-.sh override calls the byte-offset check"
+
+
+def _broken_running_sh_override_verified():
+    """The REAL pod_push.sh with the override restored to its unconditional form."""
+    import shutil as _sh
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "pod_push.sh")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    if "pod_sh_offset.py" not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    _sh.copy(os.path.join(ROOT, "scripts", "pod_sh_offset.py"),
+             os.path.join(d, "scripts", "pod_sh_offset.py"))
+    # Cut the verified branch back to the one line it replaced.
+    start = text.index('  if [ -n "${POD_PUSH_ALLOW_RUNNING_SH:-}" ]; then')
+    end = text.index("  ~/bin/pod \"ps -eo stat,args", start)
+    broken = (text[:start]
+              + '  [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] || return 1\n'
+              + text[end:])
+    open(os.path.join(d, "scripts", "pod_push.sh"), "w", encoding="utf-8").write(broken)
+    return d
+
+
 def check_root_durable(root):
     """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys
     everything on /work; the durable NVMe drives are not visible inside the
@@ -9244,6 +9308,13 @@ CHECKS = [
         _broken_curl_ipv4,
     ),
     (
+        "running_sh_override_verified",
+        "POD_PUSH_ALLOW_RUNNING_SH reaches the byte-offset check instead of permitting on the operator's word",
+        "the override was one line returning unconditionally: an edit to a RUNNING script was pushed on an assertion nobody recomputed, and the same flag on an edit touching an earlier byte would corrupt the live shell's resume position with no warning (de-48, 2026-09-04)",
+        check_running_sh_override_verified,
+        _broken_running_sh_override_verified,
+    ),
+    (
         "no_foreground_pod_training",
         "no training process on the pod outside a setsid session",
         "a foreground pod job becomes an orphan holding a whole card at 100% when the tn tunnel dies; one silently contaminated a seven-card profile",
@@ -9394,6 +9465,7 @@ EVIDENCE = {
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
+    "running_sh_override_verified": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "getattr_cfg_names_exist": "repo",
