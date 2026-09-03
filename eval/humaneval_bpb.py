@@ -94,16 +94,23 @@ class OursModel:
         not the loop. So each arm is scored in its own mask, and the causal cell is kept as the
         control -- exactly the 2x2 that separated the two before.
 
-        cu IS REQUIRED. model.py:189 reaches flash_attn_varlen_func -- the only entry point that
-        takes mask_mod -- only when cu is not None, and this scorer called self.model(x) with no cu,
-        so every forward took flash_attn_func at :194 and a mask_mod would have been silently
-        ignored. That is the identical trap that made scripts/n7c_gates.py print three passes while
-        testing nothing. Here the batch is ONE row, so cu is simply [0, T]: one document, and the
-        prompt length is that document's own, which is what makes the eval side simpler than
-        training's per-document projection.
+        cu IS REQUIRED. model.py:189 reaches flash_attn_varlen_func -- the only varlen entry point --
+        only when cu is not None, and this scorer called self.model(x) with no cu, so every forward
+        took flash_attn_func at :194 and any mask would have been silently ignored. That is the
+        identical trap that made scripts/n7c_gates.py print three passes while testing nothing. Here
+        the batch is ONE row, so cu is simply [0, T]: one document, and the prompt length is that
+        document's own, which is what makes the eval side simpler than training's per-document
+        projection.
+
+        THE MASK IS THE TWO-CALL DECOMPOSITION, the same one the arms train through, not
+        flash_attn.cute's mask_mod. mask_mod's forward is sound, so scoring through it would give
+        correct numbers -- its BACKWARD is what is broken
+        (facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90) and scoring has no
+        backward. But then training and eval would run two different implementations of the same
+        mask, and the only thing keeping them equal would be my belief that they agree.
         """
         import model as model_mod  # noqa: PLC0415
-        from eval.prefix_mask import PREFIX_ARMS, build_mask_mods  # noqa: PLC0415
+        from eval.prefix_mask import PREFIX_ARMS, prefix_two_call  # noqa: PLC0415
 
         if arm not in PREFIX_ARMS:
             raise SystemExit(f"REFUSING: unknown prefix arm {arm!r}; PREFIX_ARMS defines "
@@ -111,7 +118,7 @@ class OursModel:
         if not model_mod.HAS_FA:
             raise SystemExit(
                 "REFUSING: HAS_FA is False, so GatedMLA takes the SDPA fallback at model.py:196 "
-                "and no mask_mod is ever called. Scoring would silently be CAUSAL while reporting "
+                "and no varlen call is ever made. Scoring would silently be CAUSAL while reporting "
                 "a prefix cell.")
         layers = PREFIX_ARMS[arm]
         targets = []
@@ -121,16 +128,26 @@ class OursModel:
                 raise SystemExit(f"REFUSING: block {li}'s mixer is {type(mixer).__name__}, not "
                                  f"GatedMLA; arm {arm} names MLA layers {list(layers)}")
             targets.append(mixer)
-        _causal, prefix_mod = build_mask_mods()
         orig = model_mod.flash_attn_varlen_func
         depth = [0]
         aux = [None]
 
+        # THE SAME TWO-CALL PATH THE ARMS TRAIN ON, not a mask_mod. mask_mod's forward is sound, so
+        # scoring through it would give correct numbers -- but then training and eval would run two
+        # different implementations of the same mask, and the only thing keeping them equal would be
+        # my belief that they agree. One implementation, exercised on both sides, cannot drift.
+        # (mask_mod's BACKWARD is what is broken:
+        # facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90.)
         def patched(q, k, v, **kw):
             if aux[0] is None or depth[0] == 0:
                 return orig(q, k, v, **kw)
-            kw.pop("causal", None)  # mask_mod REPLACES causality (interface.py:270)
-            return orig(q, k, v, mask_mod=prefix_mod, aux_tensors=aux[0], **kw)
+            cu_in = kw.pop("cu_seqlens_q", None)
+            kw.pop("cu_seqlens_k", None)
+            if cu_in is None:
+                raise SystemExit(
+                    "REFUSING: the prefix path needs cu_seqlens_q and model.py passes it on the "
+                    "varlen path only, so the mask would be silently absent.")
+            return prefix_two_call(orig, q, k, v, cu_in, aux[0][0], **kw)
 
         # WRAPPING forward, not hooking it: hooks do not fire inside a grad_ckpt recompute, which
         # crashed the p7 training arm with CheckpointError. Scoring runs under no_grad so there is
@@ -332,7 +349,7 @@ def main():
                          "+0.0273 turn out to measure the mismatch rather than the loop -- so each "
                          "arm gets both cells: its own mask and the causal control. Ours only. "
                          "Needs cu, which this scorer did not pass: model.py:189 reaches the only "
-                         "entry point taking mask_mod solely when cu is not None, so a mask without "
+                         "varlen entry point solely when cu is not None, so a mask without "
                          "it is silently ignored. The summary records prefix_arm and prefix_layers.")
     a = ap.parse_args()
 
