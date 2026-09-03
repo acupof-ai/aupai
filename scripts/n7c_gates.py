@@ -28,6 +28,10 @@ would tell me which.
   D. a prompt length on ONE document alone must move the loss, by less than the all-document
      case. B2 and C both use a uniform aux tensor -- B2 all bidirectional, C all causal -- so
      neither shows the lookup varies with the document index.
+  E. EVERY document must get a nonzero prompt length. A-D all passed while the mask reached 4 of
+     61 documents: a mask that is causal on the other 57 leaks nothing, collapses under P=T,
+     reproduces causal at P=0 and moves under a single-document write. Coverage is invisible to
+     every loss comparison, so it is a gate of its own.
 
 WHY THE LOSS AND NOT THE MASK. eval/prefix_mask.py's selftest already checks the predicate as
 pure python, off-pod, thirteen ways. What that cannot check is whether the kernel APPLIES what
@@ -309,15 +313,32 @@ def main():
           f"{b - base:+.3e}. Equal to causal means aux_tensors is not read; equal to the "
           "all-documents case means the index is ignored and every document gets the same value")
 
-    # WHAT THE DOCUMENT COUNT MEANS FOR THE EXPERIMENT, printed because it bounds the result and
-    # is not visible anywhere else: doc_cu_seqlens opens a document at every row start and after
-    # every <eos> run, so a 4x4096 SFT batch holds 61 documents and only the FIRST document of
-    # each row contains the prompt. Varlen attention never crosses a document boundary in either
-    # arm, so response tokens after an internal <eos> cannot see the prompt at all, prefix or
-    # causal. The intervention therefore reaches a minority of the sequence.
-    print(f"  informational: prompt-carrying documents {nz}/{ndoc}; the other "
-          f"{ndoc - nz} are fully causal in BOTH arms because varlen attention does not cross "
-          f"document boundaries. This bounds how much of the batch Stage C can affect.")
+    # GATE E -- COVERAGE. Every gate above passed while the mask reached 4 of 61 documents,
+    # because doc_prompt_lengths projected the ROW's single boundary and gave a prompt to each
+    # row's first document only. A mask that is causal on 57 of 61 documents leaks nothing (B),
+    # collapses under P=T (B2), reproduces causal at P=0 (C) and moves under a single-document
+    # write (D). None of them can see the coverage, so it is a gate of its own.
+    #
+    # THE PACK'S STRUCTURE, measured over 32 rows / 359 documents of control_sft_ours.pt: every
+    # document is exactly ONE masked-prompt/supervised-response turn -- 359 of 359 with a single
+    # masked->supervised transition, none beginning supervised, none entirely masked, local prompt
+    # lengths 12 to 1143 (mean 71.7). format_agentic emits one pair per assistant turn and each
+    # pair ends with <eos>, so the turn boundary and the document boundary are the same boundary.
+    # Every document therefore carries a prompt, and anything short of full coverage is a defect
+    # in this file rather than a property of the pack.
+    check("E: every document carries a nonzero prompt length (full coverage)", nz == ndoc,
+          f"{nz} of {ndoc} documents have a nonzero prompt. Each document is one "
+          "prompt/response turn in this pack, so a document without one means the prompt length "
+          "is being derived at the wrong granularity -- the row-level projection gave 4 of 61 "
+          "and every other gate passed on it")
+    print(f"       local prompt lengths: min {int(real.min())}, max {int(real.max())}, "
+          f"mean {float(real.float().mean()):.1f} over {ndoc} documents")
+    # WHAT THE EVAL SIDE SEES, stated beside the training number because they differ and the
+    # comparison is what the exp row needs: HumanEval BPB scores one prompt+solution per task,
+    # so every one of its 164 tasks has a real prompt and the intervention is in effect on
+    # 164/164 there. Training sees it on ndoc/ndoc documents per batch.
+    print(f"  informational: training coverage {nz}/{ndoc} documents per batch; eval coverage "
+          f"164/164 HumanEval tasks (one prompt per task). Both sides see the intervention.")
 
     print(f"\n{'ALL GATES PASS' if not fails else 'GATES FAILED: ' + ', '.join(fails)}")
     return 1 if fails else 0
