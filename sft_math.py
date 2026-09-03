@@ -128,7 +128,11 @@ def main():
              "(eval/prefix_mask.py PREFIX_ARMS -- p3 = blocks 3,7,11; p7 = block 7 alone). Prompt "
              "tokens attend bidirectionally among the prompt tokens of their own DOCUMENT; response "
              "tokens stay causal, so no position ever reads a token that carries loss. Runs on the "
-             "training kernel via flash_attn.cute's mask_mod, not the SDPA fallback. "
+             "TRAINING kernel as two varlen calls -- causal=True over the documents plus "
+             "causal=False over the prompt segments -- and NOT through flash_attn.cute's mask_mod, "
+             "whose forward is exact on SM 9.0 and whose backward is wrong (160 of 169 gradient "
+             "tensors disagree with a same-mask SDPA reference, norm ratio median 21.65; "
+             "facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90). "
              "BLOCK 11 ALONE IS NOT AN ARM and cannot be: prefix and causal differ only for prompt "
              "queries, prompt positions are ignore_index, and block 11 is the last block, so a "
              "changed prompt position has no path to a supervised one -- measured bitwise-identical "
@@ -300,7 +304,12 @@ def main():
         # IMPORTED AS model_mod, not `model`: that name is the wrapped (DDP / compiled) model in
         # this function, and rebinding it here would hand torch.compile a module object.
         import model as model_mod  # noqa: PLC0415
-        from eval.prefix_mask import PREFIX_ARMS, build_mask_mods, doc_prompt_lengths  # noqa: PLC0415
+        from eval.prefix_mask import (  # noqa: PLC0415
+            PREFIX_ARMS,
+            doc_prompt_lengths,
+            prefix_two_call,
+        )
+
 
         if not model_mod.HAS_FA:
             raise SystemExit(
@@ -325,7 +334,6 @@ def main():
                     f"{Cfg.layers}, attn_every {Cfg.attn_every}); this asserts them against the "
                     "built model rather than trusting the arithmetic.")
             targets.append(mixer)
-        _causal_mod, prefix_mod = build_mask_mods()
         orig_varlen = model_mod.flash_attn_varlen_func
         aux_box = [None]
 
@@ -346,11 +354,27 @@ def main():
         # mask every layer that runs after it.
         _depth = [0]
 
+        # TWO CALLS, NOT A mask_mod, and this is not a style choice. mask_mod's FORWARD is exact on
+        # SM 9.0 and its BACKWARD is wrong: a mask_mod bitwise-identical to causal=True in the
+        # forward (1.5946985483 to ten decimals) disagrees with a same-mask SDPA reference on 160 of
+        # 169 gradient tensors, norm ratio median 21.65, cosines negative -- measured in
+        # scripts/n7c_grad_check.py, recorded as
+        # facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90. Two 500-step arms
+        # diverged on it (loss climbing to 3.07 while the causal twin fell to 1.158) and every static
+        # gate passed, because they all read a frozen forward. prefix_two_call decomposes the same
+        # mask into causal=True over the documents plus causal=False over the prompt segments, both
+        # of which the kernel gets right; the identity is asserted in prefix_mask's selftest.
         def _prefix_varlen(q, k, v, **kw):
             if aux_box[0] is None or _depth[0] == 0:
                 return orig_varlen(q, k, v, **kw)
-            kw.pop("causal", None)  # mask_mod REPLACES causality (interface.py:270)
-            return orig_varlen(q, k, v, mask_mod=prefix_mod, aux_tensors=aux_box[0], **kw)
+            cu_in = kw.pop("cu_seqlens_q", None)
+            kw.pop("cu_seqlens_k", None)
+            if cu_in is None:
+                raise SystemExit(
+                    "REFUSING: the prefix path needs cu_seqlens_q, and model.py:191 passes it on "
+                    "the varlen path only. Without it the document boundaries are unknown and the "
+                    "prompt segments cannot be built.")
+            return prefix_two_call(orig_varlen, q, k, v, cu_in, aux_box[0][0], **kw)
 
         def _wrap(mod):
             inner = mod.forward

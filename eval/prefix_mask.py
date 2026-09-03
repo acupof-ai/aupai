@@ -208,6 +208,58 @@ def doc_prompt_lengths(labels, cu, ignore_index=-100):
     return torch.where(any_sup, first, doc_len)
 
 
+def prefix_two_call(orig, q, k, v, cu, plens, **kw):
+    """Prefix-LM attention as TWO calls the kernel already gets right, instead of one mask_mod.
+
+    WHY: flash_attn_4-4.0.0b15's mask_mod has a correct FORWARD and a WRONG BACKWARD on SM 9.0.
+    Measured (facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90): a mask_mod
+    bitwise-identical to causal=True in the forward disagrees with a same-mask SDPA reference on 160
+    of 169 gradient tensors, norm ratio median 21.65. So training cannot go through mask_mod at all,
+    whatever the predicate says. The SDPA fallback is the correct reference but materialises a dense
+    (B*T)^2 mask -- 17 GiB at B=16, T=4096, before any scores.
+
+    THE DECOMPOSITION (6e, 2026-09-04), and it is exact rather than an approximation:
+      call 1  causal=True over the documents, exactly as the causal arm runs today.
+      call 2  causal=False over the PROMPT SEGMENTS ONLY, cu built from the prompt lengths.
+      output  call 2's rows at prompt positions, call 1's rows everywhere else.
+    Check both rows against the predicate in reference_mask:
+      a RESPONSE query (q >= P) takes call 1, which gives it every k <= q -- prompt keys and its
+        own causal past. reference_mask's response branch is exactly `k <= q`.
+      a PROMPT query (q < P) takes call 2, which gives it every prompt key k < P, in both
+        directions. reference_mask's prompt branch is exactly `k < P`.
+    Attention is a per-query softmax over that query's own allowed keys, so replacing a whole query
+    ROW is valid -- no row's output depends on another row's. That is what makes this a rewrite of
+    the same function and not an approximation of it.
+
+    COST: one extra varlen call over the prompt tokens only. On the gate batch that is 3721 of
+    16384 positions (22.7%), and the second call is quadratic in P per document rather than in T,
+    so the added work is far below the 20x the SDPA fallback costs.
+
+    Returns the [B*T, h, hd] output the single call would have returned.
+    """
+    import torch  # noqa: PLC0415
+
+    y1 = orig(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu, **kw)
+    # THE PROMPT INDEX. A document's prompt is its first P positions, so the gathered rows are one
+    # contiguous slice per document -- built here as an explicit index because the slices are not
+    # contiguous with each other in the flat stream.
+    starts = cu[:-1].to(torch.int64)
+    pl = plens.to(torch.int64)
+    if int(pl.sum()) == 0:
+        return y1  # no prompt anywhere: prefix reduces to causal, and call 2 would be empty
+    idx = torch.cat([torch.arange(int(s), int(s) + int(p), device=q.device)
+                     for s, p in zip(starts.tolist(), pl.tolist(), strict=True) if p > 0])
+    cu2 = torch.zeros(int((pl > 0).sum()) + 1, dtype=torch.int32, device=q.device)
+    cu2[1:] = torch.cumsum(pl[pl > 0], 0).to(torch.int32)
+    mx = int(pl.max())
+    kw2 = {kk: vv for kk, vv in kw.items() if kk not in ("causal", "max_seqlen_q", "max_seqlen_k")}
+    y2 = orig(q[idx], k[idx], v[idx], cu_seqlens_q=cu2, cu_seqlens_k=cu2,
+              max_seqlen_q=mx, max_seqlen_k=mx, causal=False, **kw2)
+    # OUT-OF-PLACE index_copy: the in-place form would mutate a tensor autograd still needs, and
+    # this runs inside the training graph.
+    return y1.index_copy(0, idx, y2.to(y1.dtype))
+
+
 def reference_mask(q_idx, kv_idx, prompt_len, prefix):
     """The same predicate in pure python, for the off-pod selftest and for the leak tests.
 
@@ -326,7 +378,27 @@ def _selftest():
     dp3 = doc_prompt_lengths(labels3, cu3).tolist()
     check("a document with no supervised token becomes fully causal", dp3 == [4, 1], f"{dp3}")
 
-    # 8. THE SIGNATURE IS THE KERNEL'S, NOT THE DOCSTRING'S. Six parameters; following
+    # 8. THE TWO-CALL DECOMPOSITION IS THE SAME MASK AS THE PREDICATE. This is the claim
+    #    prefix_two_call rests on, checked as a mask identity in pure python rather than trusted
+    #    from the argument: for every (q, k) in a document of length L with prompt length P, the row
+    #    a query takes -- call 2 if q < P, call 1 otherwise -- must allow exactly the keys
+    #    reference_mask allows. Exhaustive over several (L, P) pairs including the degenerate ends.
+    #    Attention is a per-query softmax over that query's own keys, so replacing whole query ROWS
+    #    is valid and this identity is the whole correctness argument.
+    for L, P in ((8, 3), (8, 0), (8, 8), (5, 1), (12, 7)):
+        wrong = []
+        for q in range(L):
+            for k in range(L):
+                want = reference_mask(q, k, P, prefix=True)
+                # call 2 (causal=False over the first P positions) for a prompt query; call 1
+                # (causal=True over the whole document) for a response query.
+                got = (k < P) if q < P else (k <= q)
+                if want != got:
+                    wrong.append((q, k, want, got))
+        check(f"two-call decomposition == the predicate at L={L} P={P}", not wrong,
+              f"{wrong[:4]}")
+
+    # 9. THE SIGNATURE IS THE KERNEL'S, NOT THE DOCSTRING'S. Six parameters; following
     #    flash_fwd.py:77's five would drop seqlen_info and break the call at mask.py:232.
     import inspect  # noqa: PLC0415
     src = inspect.getsource(build_mask_mods)

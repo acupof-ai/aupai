@@ -50,6 +50,7 @@ def main():
         PREFIX_ARMS,
         build_mask_mods,
         doc_prompt_lengths,
+        prefix_two_call,
         reference_mask,
     )
     from scripts.loader import load_checkpoint  # noqa: PLC0415
@@ -115,6 +116,15 @@ def main():
             if path == "kernel":
                 if mask == "causal":
                     return orig(q, k, v, **kw)  # causal=True as model.py passes it
+                if mask == "two_call":
+                    # THE WORKAROUND UNDER TEST. Two calls the kernel gets right instead of one
+                    # mask_mod it does not: causal=True over the documents plus causal=False over
+                    # the prompt segments. Its FORWARD must match the mask_mod row (whose forward is
+                    # sound) and its BACKWARD must match the SDPA reference -- the two claims that
+                    # decide whether the arms can train at all.
+                    cu_in = kw.pop("cu_seqlens_q", None)
+                    kw.pop("cu_seqlens_k", None)
+                    return prefix_two_call(orig, q, k, v, cu_in, plens, **kw)
                 if mask == "causal_mod":
                     # THE DECISIVE TEST. causal_mod is bitwise-identical to causal=True in the
                     # FORWARD -- that is gate A, and it passes. So if its GRADIENTS disagree with
@@ -131,7 +141,7 @@ def main():
             # are reshaped to [1, h, B*T, hd] -- one sequence, the block-diagonal mask supplying
             # every boundary the varlen kernel would have got from cu.
             qq, kk, vv = (t.unsqueeze(0).transpose(1, 2) for t in (q, k, v))
-            dense = cau if mask in ("causal", "causal_mod") else ref
+            dense = cau if mask in ("causal", "causal_mod") else ref  # two_call -> ref
             m = dense.to(q.device).unsqueeze(0).unsqueeze(0)
             y = torch.nn.functional.scaled_dot_product_attention(qq, kk, vv, attn_mask=m)
             return y.transpose(1, 2).squeeze(0)
@@ -191,7 +201,9 @@ def main():
     bad_c, live_c = compare("CONTROL causal=True (no mask_mod)", "causal")
     bad_m, live_m = compare("causal_mod (mask_mod that IS causal -- gate A passes bitwise)",
                             "causal_mod")
-    bad_p, live_p = compare("PREFIX arm p3", "prefix")
+    bad_p, live_p = compare("PREFIX arm p3 via mask_mod (the broken path)", "prefix")
+    bad_t, live_t = compare("PREFIX arm p3 via the TWO-CALL decomposition (the workaround)",
+                            "two_call")
     print("\nVERDICT:")
     if bad_c:
         print(f"  THE REFERENCE IS NOT TRUSTWORTHY: {len(bad_c)} of {len(live_c)} tensors already "
@@ -209,8 +221,13 @@ def main():
               f"with the reference, so the kernel's mask_mod backward is sound and the defect is in "
               f"prefix_mod. Disagrees on {len(bad_p)} tensors; the names above locate it.")
     else:
-        print("  GRADIENTS AGREE in both rows -- the backward is not the defect, so the divergence "
+        print("  GRADIENTS AGREE in every row -- the backward is not the defect, so the divergence "
               "is an optimisation effect.")
+    print("  TWO-CALL WORKAROUND: " + (
+        f"PASSES -- gradients agree with the SDPA reference on all {len(live_t)} tensors, so the "
+        f"arms can train through it."
+        if not bad_t else
+        f"FAILS on {len(bad_t)} of {len(live_t)} tensors. Not usable; the arms stay blocked."))
     return 0
 
 if __name__ == "__main__":
