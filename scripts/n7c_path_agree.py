@@ -200,6 +200,38 @@ def main():
               f"{'not the mask' if dc > 0.5 else 'MASK-SPECIFIC' if d > 0.5 else 'agree'}")
     # bf16 through 12 blocks accumulates; the question is whether the paths AGREE, and a
     # disagreement large enough to move BPB by 0.0228 would be far above numerical noise.
+    # A max|dlogit| IS NOT A BOUND ON BPB, and 0.5 was my threshold, not a derived one. The question
+    # the P3 row turns on is whether a construction difference can move gold BPB by 0.0228, so
+    # compute BPB both ways on these tasks and print the difference in the SAME units. Gold BPB is
+    # sum(-log2 p(gold token)) / solution bytes, which is what eval/humaneval_bpb.py reports.
+    import torch.nn.functional as F  # noqa: PLC0415
+    print("\ngold BPB on these tasks, computed from each construction (the units the row uses):")
+    tot = {"eval": 0.0, "train": 0.0}
+    nbytes = 0
+    for tid, p_ids, s_ids in pairs:
+        plen = len(p_ids)
+        gold = torch.tensor(s_ids, device="cuda")
+        nb = len(tok.decode(s_ids).encode("utf-8"))
+        nbytes += nb
+        for lbl, src in (("eval", eval_logits[tid][0]), ("train", train_logits[tid])):
+            lg = src[plen - 1:plen - 1 + len(s_ids)]
+            nats = F.cross_entropy(lg.float(), gold, reduction="sum").item()
+            tot[lbl] += nats / 0.6931471805599453  # nats -> bits
+    be, bt = tot["eval"] / nbytes, tot["train"] / nbytes
+    print(f"  eval construction  {be:.4f}")
+    print(f"  train construction {bt:.4f}")
+    print(f"  difference         {bt - be:+.4f}   against the P3 delta under test, +0.0228")
+    print(f"  ({nbytes} solution bytes over {len(pairs)} tasks; the row's number is 164 tasks / "
+          f"29662 bytes, so this is a spot check on the construction, not a re-score)")
+    if abs(bt - be) > 0.0228:
+        print("  THIS EXCEEDS THE EFFECT UNDER TEST: the construction difference alone can produce "
+              "a delta the size of P3's, so the max|dlogit| agreement above is not sufficient and "
+              "the row still must not be written from the eval number.")
+    else:
+        print(f"  Bounded BELOW the effect under test by "
+              f"{0.0228 / max(abs(bt - be), 1e-9):.0f}x, so the construction cannot account for "
+              f"P3's delta.")
+
     print(f"\nworst across tasks: prefix {worst:.4f}  causal control {worst_c:.4f}")
     if bad_aux:
         print("VERDICT: THE TWO SITES MASK DIFFERENT SPANS -- doc_prompt_lengths and the eval "
