@@ -272,7 +272,7 @@ d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/
 906bc88d6cb7a262d8853fe993a50c46eaff6f9d9b461bc774f162e796c33830  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
-5984a84c1a52c90a7caba58812ebba12bf7fd20b47e130f9b8a908c202f398ae  scripts/launch_gate.py  docs  644
+1d43732a14d01ef53cf39165b96ec14b181126759e543e6f3ed9e0731da7ed5b  scripts/launch_gate.py  docs  644
 81378df8cb3cc05b2404157c85553cdd9a667de0f2380dcec735a33e2550876c  scripts/launch_tests.py  docs  644
 a65d0adddbdab3ef606d670d8cdedc5c69d46556952bb4b99dd34d18ab191442  scripts/ledger_audit.py  training  644
 4aab11a85ab98f4dd619232deeb5e1a3c75fe9147a648fef7619c7a8ebf880e7  scripts/ledger_resolutions.py  training  644
@@ -323,7 +323,7 @@ cd38da025cd7738a4300f2b79c1335e70512003765a2f2f145c5608d5bf2ff69  scripts/test_d
 64c0b89950931b39d6d5fadc5842dcd58cd87c8059bcb93f484fd35f21d9a2ac  scripts/test_e1_28_leak_scan.py  docs  644
 9bd6bf66053b913a30b2359cd4c55062710fc0d027dfa50df17eec7f4505ac12  scripts/test_e1_28_matched.py  docs  644
 374fabff1a19a6d30760f39ccd191f3afc312885012570a2b6b32928aaffc6ba  scripts/test_e1_29_floor_by_class.py  docs  644
-a5953c86187add6df73c93957f23b46eee56caa5c65f67738620d91f7a87376b  scripts/test_e2e.py  docs  644
+217fdf6acbed17de688f83eb8891b7b28d19a054685d68a0a8348f91f182f2a8  scripts/test_e2e.py  docs  644
 39b76d1563630d73941f9309eb892b19c1a24ea7e0b2c91bd761a30e81a99c46  scripts/test_eval_base_prompt_format.py  docs  644
 3dfdf9a65088d406cf44c6a59c2d59a62420e3c5bc32623b13f64ad6e8338177  scripts/test_eval_load_only.py  docs  644
 ac305d0c6a28a16d8d6df7d3e1b4240a23817e6e1adf3002c8588acc83e476d6  scripts/test_eval_rescore.sh  docs  644
