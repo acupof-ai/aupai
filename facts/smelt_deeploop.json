@@ -5,7 +5,9 @@
    "value": "SMELT: Scaling Laws for Compute-Matched MoE Looped Transformers, arXiv 2609.01343, submitted 2026-09-01, Wang/Zhang/Luo/Wu/Liu/Liu/Huang/Yan/Li (9 authors). SMELT = Sparse MoE Transformer, middle layers Loop Twice: the middle 50% of physical layers execute twice per forward; every layer is a sparse MoE FFN routing top-8 experts; GQA with smaller head size at higher GQA ratio holds KV cache within 4% of baseline; every sublayer update inside the looped span is scaled by 1/r (1/2) to stop correlated weight-tied updates inflating the residual stream.",
    "measured": "2026-09-03",
    "source": "arXiv 2609.01343v1 abstract + Sec. architecture, fetched 2026-09-03",
-   "config": {"source_type": "paper-reported"},
+   "config": {
+    "source_type": "paper-reported"
+   },
    "uncertainty": "single paper, 2 days old at fetch; no independent replication",
    "boundary": "architecture description, not our measurement",
    "status": "recorded"
@@ -15,7 +17,10 @@
    "value": "Compute-matched CE gain (fraction of training FLOPs saved at equal loss), cell-bootstrap 95% intervals: 1e20 FLOPs: S85% 10.0% [1,22], S95% 7.8% [3,15], S97% 6.8% [4,14]; 1e21: 18.0% [8,28] / 15.8% [10,25] / 14.7% [8,25]; 1e22 (extrapolated beyond fit window): 23.5% [8,42] / 20.9% [0,48] / 19.6% [0,51]. Gain grows ~8pp per 10x compute; sparsity affects level not growth rate. Headline 6.8-18.0% is the 1e20-1e21 row range.",
    "measured": "2026-09-03",
    "source": "arXiv 2609.01343v1 Table (CE Gain) + abstract",
-   "config": {"source_type": "paper-reported", "fit_window": "1.3e19-2.2e21 FLOPs, 144 sparse endpoints"},
+   "config": {
+    "source_type": "paper-reported",
+    "fit_window": "1.3e19-2.2e21 FLOPs, 144 sparse endpoints"
+   },
    "uncertainty": "intervals at 1e20 include 1-4pp lower bound; 1e22 row is extrapolation with intervals including 0",
    "boundary": "measured at 100M-1.6B active params, 205B stable training tokens, internal corpus, internal Baseline family",
    "status": "recorded"
@@ -25,7 +30,9 @@
    "value": "L(F,S,D) = E + A(1-S)^b/F^a + K/D^c. Baseline: E=1.4439, a=0.3703, b=0.1530, c=0.6594, RMSE 0.00554. SMELT: E=1.4493, a=0.3892, b=0.1460, c=0.7011, RMSE 0.00952. Frontier exponent gamma=ac/(a+c): 0.237 baseline vs 0.250 SMELT (5.5% higher). E gap 0.005 nats is below either fit RMSE (noise). Compute-optimal TPP at C=1e21: 56-91 across sparsities vs ~20 Chinchilla-dense; SMELT within 6% of Baseline TPP, intervals overlap — savings come from lower loss at equal allocation, not reallocation.",
    "measured": "2026-09-03",
    "source": "arXiv 2609.01343v1 scaling-law table + TPP analysis",
-   "config": {"source_type": "paper-reported"},
+   "config": {
+    "source_type": "paper-reported"
+   },
    "uncertainty": "E floor difference within fit noise, not a claimed asymptotic gap",
    "boundary": "fit window 1.3e19-2.2e21 FLOPs; largest physical config 54B non-embedding (1.6B active, S97%)",
    "status": "recorded"
@@ -35,7 +42,9 @@
    "value": "Loop-span sweep (200M, S85%): 0 layers 1.9445, 2: 1.9384, 4: 1.9275, 6 (50%): 1.9257, 8: 1.9374, 10: 1.9413, 12 (full): 1.9322 — middle half is the optimum, full-stack looping regresses. Loop count: 1x 1.9445 / DCLM Core 24.92; 2x 1.9257 / 27.57; 3x 1.9385 / 27.15; 4x 1.9360 / 27.30 — 2x optimal because matched FLOPs force a thinner model at higher counts. Downstream: DCLM Completion won 96/96 matched pairs, DCLM Core 83/96, MMLU 29/30 (pairs with Baseline >=10pp above chance). Domain CE gain at 1e21, S95%: Code 20.4% > Finance 16.8% > Math/STEM 16.6% > Knowledge 14.9% > Web 14.8%. Length: gain on the four longest buckets (512-4096 tok) is 1.52x the four shortest; Baseline controls stay flat. ICL: few-shot gap 0.9pp at k=0 widening to 1.9pp with demonstrations; Dyck k=32: 29.8% vs 26.4%. Mechanism: attention sink nearly vanishes on the second visit, mass redirected to content-relevant tokens; Q/K stay similar across visits while V diverges; top-8 expert overlap across visits drops from ~8 at S=0 to 2-3 at S97% (still far above random-routing expectation).",
    "measured": "2026-09-03",
    "source": "arXiv 2609.01343v1 ablations, downstream, mechanism sections",
-   "config": {"source_type": "paper-reported"},
+   "config": {
+    "source_type": "paper-reported"
+   },
    "uncertainty": "each ablation trained once — SE reflects evaluation-seed variability, not training-run variability (authors' own caveat)",
    "boundary": "200M-scale ablations; downstream at up to 1.6B active",
    "status": "recorded"
@@ -45,7 +54,9 @@
    "value": "SMELT does not discuss stateful/linear/recurrent-state attention, Mamba-style models, or anything KDA-like. Only standard softmax attention with GQA throughout; KV cache appears solely as a matching budget (held within 4%). The only recurrence is weight-tied block-level looping. How a recurrent state behaves across loop visits is unanswered by the paper.",
    "measured": "2026-09-03",
    "source": "arXiv 2609.01343v1 full-text extraction, section-by-section check",
-   "config": {"source_type": "paper-reported (absence)"},
+   "config": {
+    "source_type": "paper-reported (absence)"
+   },
    "uncertainty": "absence verified on v1 text; v2 could add it",
    "boundary": "the paper's evidence does not cover KDA/stateful hybrids — that cost is ours to pay",
    "status": "recorded"
@@ -55,7 +66,9 @@
    "value": "DeepLoop: Depth Scaling for Looped Transformers, arXiv 2607.13491, v1 2026-07-15, v2 2026-08-06, Li/Zhang/Guo/Gu/Wang. Post-LN DeepNorm block + inner (branch-input) RMSNorm; per-visit recurrence x_{i+1} = Norm(alpha x_i + f_j(Norm(x_i); phi_j)). Scaling rule: alpha=(2N)^{1/2} skip scale, beta=(8N)^{-1/2} per-matrix init gain (applied once at init, not a runtime multiplier), N=K*R unrolled depth, K physical blocks, R loop rounds. beta/alpha = 1/(4N) vs DeepNorm's 1/(2 sqrt(N)).",
    "measured": "2026-09-03",
    "source": "arXiv 2607.13491v2 Sec. 3, fetched 2026-09-03",
-   "config": {"source_type": "paper-reported"},
+   "config": {
+    "source_type": "paper-reported"
+   },
    "uncertainty": "constants (2,8) inherited from DeepNorm for two-sublayer decoders; only the exponent changes 1/4 -> 1/2",
    "boundary": "first-order, init-time perturbation analysis; not a training-dynamics proof",
    "status": "recorded"
@@ -65,7 +78,9 @@
    "value": "Visit-alignment coefficient kappa_R = max_j ||sum_r U_{r,j}|| ||sum_r G_{r,j}|| / (R C_U C_G (beta/alpha)^2), 0 <= kappa_R <= R: O(1) when visits decorrelate, Theta(R) when fully aligned. Perturbation bound ||dF|| <= C'' M kappa_R (beta/alpha)^2 with stability condition M kappa_R (beta/alpha)^2 = O(1). Proposition 3.1: with kappa_R = Theta(R^gamma), uniform stability as R grows iff p >= (1+gamma)/4 for the family alpha=(cN)^p, beta=(dN)^{-p}. Decorrelated (gamma=0): p>=1/4 recovers DeepNorm. Aligned at fixed physical depth (gamma=1): p>=1/2 — DeepNorm's p=1/4 leaves residual growth Theta(R). DeepLoop is the minimal conservative correction for tied depth. kappa_R is not measured directly (future work); p=1/2 may be overly conservative if decorrelation can be induced.",
    "measured": "2026-09-03",
    "source": "arXiv 2607.13491v2 Eq. 13-15, Proposition 3.1",
-   "config": {"source_type": "paper-reported (theory)"},
+   "config": {
+    "source_type": "paper-reported (theory)"
+   },
    "uncertainty": "worst-case bound; empirical alignment unknown",
    "boundary": "assumes standard residual stream; does not cover AttnRes-style softmax-weighted residuals",
    "status": "recorded"
@@ -75,19 +90,25 @@
    "value": "GPT-2 small (768d, L12) and medium (1024d, L24), FineWeb-Edu 50B tokens, 100K steps, ctx 1024, batch 480, H200, single seed. Val loss final: small R=1 2.8627/2.8631 (base/DeepLoop), R=3 2.8077/2.7917 (-0.0160), R=5 2.7910/2.7679 (-0.0231), R=7 2.7700/2.7514 (-0.0186). Medium: R=1 2.6253/2.6264, R=3 2.5779/2.5627 (-0.0153), R=5 2.5640/2.5444 (-0.0196), R=7 2.5558/2.5280 (-0.0278). Tied at R=1; DeepLoop strictly better at every R>=3 both scales. Downstream medium 8-task: 0-shot avg +0.43/+1.06/+0.93 at R=3/5/7; wins 7/8 tasks at R=7. ARC-AGI-1 (HRM, separate config): voted accuracy +3.25pp at K=2 (6 sigma over per-seed std 0.5pp).",
    "measured": "2026-09-03",
    "source": "arXiv 2607.13491v2 experiments",
-   "config": {"source_type": "paper-reported", "hardware": "H200", "seeds": 1},
+   "config": {
+    "source_type": "paper-reported",
+    "hardware": "H200",
+    "seeds": 1
+   },
    "uncertainty": "single-seed runs; authors state multi-seed needed for run-to-run variance",
    "boundary": "GPT-2 dense, no MoE, no AttnRes, ctx 1024, 50B tokens — architecture and data regime differ from ours",
    "status": "recorded"
   },
   {
    "id": "repo.attnres_loop_cost_derived",
-   "value": "AttnRes Full source reads = n(n+1)/2 with n=2L+1 (measured L=2/3/4/12 -> 30/56/90/650, gate_failure_shapes.md:833): 325 at L12, 2145 at L32 (6.6x). If looping executes the middle half twice, effective executed depth L12->18, L32->48; if AttnRes attends over all EXECUTED sublayers, n=2L_exec+1 gives 703 reads at L12-loop2x (2.16x the 325) and 4657 at L32-loop2x (2.17x). At tilerl's measured 19.7% wallclock share for AttnRes at L12 (2026-09-03, not yet in facts/), a linear read-count extrapolation puts the looped share near 42%. The 2.16-2.17x factor is derived from the measured n(n+1)/2 law, not measured on a looped model; whether AttnRes attends across loop visits is an architecture decision, not a given.",
+   "value": "AttnRes Full source reads follow the MEASURED law sources = n(n+1) with n = 2L+1 (measured L=2/3/4/12 -> 30/56/90/650, gate_failure_shapes.md:833 -- the factor 2 vs n(n+1)/2 is in the measured count, not a convention): 650 at L12, 4290 at L32. Looping the middle half (SMELT shape, 1.5L executions: L12->18, L32->48; de's repo.smelt_shape_correction confirms the shape against the paper's own loop-span sweep) gives, if AttnRes attends over all EXECUTED sublayers, 1406 reads at L12 (2.16x) and 9506 at L32 (2.22x). These count READS only. The width factor is a SEPARATE lever: SMELT matches FLOPs by narrowing d (x0.816 at 1.5x executions), so bytes = reads x 0.816 there; a different matching lever (e.g. GQA/KV-cache) leaves width unchanged and the bytes ratio equals the reads ratio. Do not weld the two. Wallclock, fixed-width variant (our pure-looping A/B design, width unchanged): the earlier '19.7% x 2.16 = 42.6%' is RETRACTED (6e 2026-09-03: share is not a rate -- the denominator contains AttnRes itself; share' = kA/(kA+R'), A=0.197/0.378, R=0.803/0.622). Correct range with rest-of-step scaled 1.0-1.22x (de's measured activation-traffic factor, repo.loop_weight_reread_verdict): L12 30-35%, L32 52-57%. Compute-matched variant (k=1.77/1.81 bytes): L12 26-30%, L32 47-52% -- that variant lives in repo.attnres_x_loop_corrected, whose first version's 34.8%/68.4% headline carried the same retracted multiplication; de corrected it to the same intervals (697a8a38, 2026-09-03). The 2.16/2.22x factors are derived from the measured law, not measured on a looped model; whether AttnRes attends across loop visits is an architecture decision, not a given. tilerl's 19.7%/37.8% shares (2026-09-03) are peer-reported, not yet in facts/.",
    "measured": "2026-09-03",
-   "source": "derived: gate_failure_shapes.md:833 (measured read law) + SMELT middle-half-loop-2x (arXiv 2609.01343); 19.7%/37.8% wallclock at L12/L32 per tilerl 2026-09-03 (peer-reported, not yet landed in tree)",
-   "config": {"source_type": "derived + peer-reported"},
-   "uncertainty": "wallclock extrapolation assumes reads dominate AttnRes cost and share scales linearly with read count; the fused kernel (3ed56306) changes the constant, not the law",
-   "boundary": "the O(L^2) law is measured; the looped numbers are derived; the cross-visit attention semantics are undecided",
+   "source": "derived: gate_failure_shapes.md:833 (measured read law n(n+1), n=2L+1) + SMELT middle-half-loop-2x (arXiv 2609.01343); 19.7%/37.8% wallclock per tilerl 2026-09-03 (peer-reported); share-formula correction per 6e ruling 2026-09-03",
+   "config": {
+    "source_type": "derived + peer-reported"
+   },
+   "uncertainty": "wallclock range assumes AttnRes cost scales with reads x bytes/read and rest-of-step scales 1.0-1.22x; the fused kernel (3ed56306) changes the constant, not the law. An earlier draft said 4657 reads / 2.17x at L32 -- arithmetic error, corrected to 9506 / 2.22x (6e's 2026-09-03 ruling text repeated the 2.17x; the ruling's own 52.4% table entry is computed with 2.22x)",
+   "boundary": "the read law is measured; the looped numbers are derived; the cross-visit attention semantics are undecided. Compute-matched wallclock: repo.attnres_x_loop_corrected (de's corrected version, 697a8a38). A loop share cannot be derived from the dense share at all -- closing it needs absolute times for both arms (6e 2026-09-03, recorded in repo.attnres_x_loop_corrected's boundary)",
    "status": "recorded"
   },
   {
@@ -95,9 +116,105 @@
    "value": "Our token/param ratios: 200M@4B tokens = 20 tok/param (19.5 measured at 3.24B, data_scaling_design.md:9); 500M@20B = 40 tok/param. Chinchilla-dense optimum ~20; SMELT's compute-optimal TPP at 1e21 FLOPs is 56-91 (smelt.scaling_law). H20 step profile (200M, 4 cards, 3-step Chrome trace, facts/efficiency.json:2361): wall 1613.47 ms, gemm 825.04 (50.8%), elementwise_cast 497.24 (30.6%), fla_kda 171.94 (10.6%), flash_mla 46.39 (2.9%), nccl 36.85 (2.3%), idle 1.2%. The 30.6% elementwise share is already at the bandwidth roof; looping adds activation traffic to this saturated side. nccl 2.3% is dense all-reduce, not MoE all-to-all — the all-to-all cost on H20 is unmeasured.",
    "measured": "2026-09-03",
    "source": "data_scaling_design.md:9; facts/efficiency.json:2361; arXiv 2609.01343 TPP table",
-   "config": {"source_type": "our-measurement + paper-reported"},
+   "config": {
+    "source_type": "our-measurement + paper-reported"
+   },
    "uncertainty": "TPP 56-91 is at 1e21 FLOPs, 5-50x our 200M budget; the ratio gap is the robust part, the exact number is not",
    "boundary": "MoE all-to-all on our interconnect has no measurement anywhere in this repo",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.nv18_topology_measured",
+   "value": "H20 interconnect on the pod: NV18 between EVERY GPU pair, fully connected (nvidia-smi topo -m, 2026-09-03). 18 lanes x 25 GB/s = 450 GB/s per direction, 900 GB/s bidirectional. THIS REFUTES A READING TAKEN THE SAME DAY: backing an effective link bandwidth out of the traced nccl time (36.85 ms for a 4-card ring allreduce of 412.3 MB bf16 grads, 618.4 MB bus volume) gives 16.8 GB/s, which would have made every collective bandwidth-bound. At the measured 450 GB/s that transfer is 1.37 ms, so the traced 36.85 ms is 27x the transfer time and the residue is ring latency (2(N-1) serialized steps), launch, and sync -- not bytes. Any collective cost derived from the 16.8 GB/s figure is wrong by 27x.",
+   "measured": "2026-09-03",
+   "source": "nvidia-smi topo -m on the pod; traced nccl from facts/efficiency.json eff.step_class_breakdown_p200m_4card",
+   "config": {
+    "source_type": "our-measurement",
+    "host": "pod 8xH20",
+    "tool": "nvidia-smi topo -m"
+   },
+   "uncertainty": "450 GB/s is the link's rated lane count x rated lane speed, not a measured achieved bandwidth; a bus-bandwidth benchmark would give the achievable fraction and has not been run here",
+   "boundary": "says what the fabric can carry, says nothing about what any collective implementation achieves on it",
+   "status": "measured"
+  },
+  {
+   "id": "repo.collective_count_cost_refuted",
+   "value": "A PER-COLLECTIVE overhead model of MoE all-to-all is REFUTED by our own bucket A/B and must not be used. The model: subtract the 1.37 ms link-speed transfer from the traced 36.85 ms nccl, divide the 35.48 ms residue by an assumed 17 DDP buckets, get 2.09 ms per collective, and multiply by the 32-88 collectives MoE would add -- which yields 74-206 ms/step (4.6-12.8% of a 1613 ms step) and would make MoE clearly negative on H20. THE MEASUREMENT THAT KILLS IT: eff.bucket_cap_mb_7gpu_ab measures bucket 50 MB vs 25 MB at 75K vs 75K tok/s/gpu, a tie. 412.3 MB of gradients is ~9 collectives at 50 MB and ~17 at 25 MB, so that A/B doubles the collective count and measures no difference -- the marginal per-collective cost is below its resolution, nowhere near 2.09 ms. eff.bucket_cap_mb_ab shows the same tie at 3 cards. The 35.48 ms residue is ring ALGORITHMIC latency inside a kernel's duration, which does not multiply by the number of kernels.",
+   "measured": "2026-09-03",
+   "source": "facts/efficiency.json eff.bucket_cap_mb_7gpu_ab and eff.bucket_cap_mb_ab (measured A/Bs); the refuted model derived from eff.step_class_breakdown_p200m_4card",
+   "config": {
+    "source_type": "our-measurement",
+    "refuted_model": "residue/bucket_count x new_collective_count"
+   },
+   "uncertainty": "the A/B's resolution is one run per arm reported to 1K tok/s (~1.3%), so it bounds the per-collective cost rather than measuring it: a cost under ~0.06 ms per collective would also read as a tie",
+   "boundary": "bounds DDP allreduce overhead on our stack; an all-to-all is a different collective and no A/B here varies its count",
+   "status": "measured"
+  },
+  {
+   "id": "repo.smelt_shape_correction",
+   "value": "SMELT's compute matching runs through WIDTH, not through a shorter physical stack, and two derivations of it were wrong before this was read off the paper's own ablation. The paper's loop-span sweep is '0 layers 1.9445, 2, 4, 6 (50%), 8, 10, 12 (full)' at 200M (smelt.ablation_and_downstream): a sweep whose endpoint is 12 and whose 50% point is 6 describes 12 PHYSICAL layers with 6 looped, so executions are 1.5L = 18, and the physical stack does NOT shrink. The same fact names the lever -- 'matched FLOPs force a THINNER model at higher counts' -- and smelt.identity names the KV-cache lever separately: 'smaller head size at higher GQA ratio holds KV cache within 4%'. So at our shape, matching 1.5x executions costs d 1024 -> 1024/sqrt(1.5) = 836, non-embedding params fall to 67% of dense, and the freed 33% is what buys the sparse experts. WHAT THIS RETRACTS (de, same day): a derivation that put the physical stack at 2L/3 (8 layers at L12, 21 at L32) so that executions returned to L. It was self-consistent and contradicted by the paper's sweep. Its consequence was the opposite verdict on Q3: with executions equal to dense, cross-visit AttnRes reads came out UNCHANGED, which read as 'no N^2 blow-up'. On the correct shape they are 2.16x.",
+   "measured": "2026-09-03",
+   "source": "smelt.ablation_and_downstream and smelt.identity (both paper-reported, arXiv 2609.01343)",
+   "config": {
+    "source_type": "derived from paper-reported",
+    "our_shape": "d1024 ffn3072, L12 traced / L32 p500m"
+   },
+   "uncertainty": "d/sqrt(1.5) assumes per-layer FLOPs scale as d^2 with ffn proportional to d, which is our shape's own relation; the paper reports no width table, so the specific 836 is our arithmetic on their constraint, not their number",
+   "boundary": "reconstructs the constraint SMELT states; the actual widths and expert counts they trained are not reported in what we fetched",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.moe_a2a_cost_h20",
+   "value": "MoE all-to-all on H20, priced at the measured NV18 450 GB/s (repo.nv18_topology_measured) on SMELT's corrected shape (repo.smelt_shape_correction: every layer a sparse MoE FFN, 1.5L executions, hidden 836). Volume is 8 traversals of the hidden state per MoE execution (dispatch+combine, fwd+bwd, x accum 2) with (N-1)/N of tokens leaving the card, at 65536 tokens per micro-batch. Against a 1613.47 ms traced step: N=4 L12 11.84 GB -> 26.30 ms = 1.63%; N=4 L32 31.56 GB -> 70.14 ms = 4.35%; N=7 L12 13.53 GB -> 30.06 ms = 1.86%; N=7 L32 36.07 GB -> 80.16 ms = 4.97%. At 50% of link speed the L32 figures are 8.7% and 9.9%. SECOND TERM, and it lands in the class that is already saturated: each all-to-all needs a local gather before send and a scatter after receive, HBM read+write of the hidden state -- 63.12 GB at L12 (15.78 ms, 0.98%) and 168.33 GB at L32 (42.08 ms, 2.61%), priced at the same assumed 4.0 TB/s as elementwise_cast, which is measured at 1.30x its roofline ideal. THE STRUCTURAL POINT, not the number: DDP allreduce's traced 2.3% is already overlapped inside backward, while dispatch -> expert -> combine is serial and cannot be hidden. So a nominally comparable percentage is a fully exposed one. REPORTING RULE THIS ENTRY IS THE FIRST INSTANCE OF (6e, 2026-09-03): a communication share is reported together with whether it can overlap. The percentage unit erases the difference, and a hideable cost and a fully exposed one at the same percentage are not the same cost.",
+   "measured": "2026-09-03",
+   "source": "derived: repo.nv18_topology_measured + facts/efficiency.json eff.step_class_breakdown_p200m_4card + repo.smelt_shape_correction",
+   "config": {
+    "source_type": "derived from our-measurement",
+    "step_ms": 1613.47,
+    "tokens_per_microbatch": 65536,
+    "hidden": 836,
+    "dtype_bytes": 2,
+    "traversals_per_moe_execution": 8,
+    "link_gbps": 450,
+    "hbm_tbps": "4.0 assumed, the H20 sheet figure"
+   },
+   "uncertainty": "no all-to-all has ever been run on this machine, so every figure is bytes/bandwidth with no measured efficiency factor; real collectives reach a fraction of link speed, hence the 50%-of-link row. The 4.0 TB/s HBM figure is the same assumed sheet number flagged in eff.step_roofline_p200m_4card. Token routing is assumed uniform across ranks; real top-8 routing is imbalanced and the slowest rank sets the time",
+   "boundary": "an upper bound on throughput and therefore a LOWER bound on cost. It cannot answer whether an all-to-all overlaps with expert compute in a given implementation, and it does not include the router's own gemm or the load-imbalance tail. UNIT, because the original wording did not fix it: every percentage here is a RATE -- added ms over the 1613.47 ms dense step -- not a share of the new step. N=7 L32's 80.16 ms is a 4.97% increase in step time and 4.73% of the resulting 1694 ms step. Both are true and they are different quantities; 'of a step' was ambiguous and is the same confusion 6e ruled on for the AttnRes shares",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.loop_weight_reread_verdict",
+   "value": "Looping's weight re-read is negligible on H20, and NOT for the reason 'free depth' usually names. The looped weight set does not fit cache at either width: at L12 the 6 looped layers are 83.9 MB bf16 against 60 MB of L2 (1.40x); at L32 the 16 looped layers are 335.5 MB (5.6x). A single layer alone is 21.0 MB bf16 / 10.5 MB fp8 and does fit. So the second visit re-reads weights from HBM. That re-read is 335.5 MB at L12 -> 0.084 ms = 0.005% of a 1613 ms step, because weights are three orders of magnitude smaller than activation traffic at seq 4096: 65536 tokens x 836 hidden is 110 MB per traversal and there are 8 per execution. THE COST THAT IS REAL is the other side of the same arithmetic: 1.5L executions at 0.816x width is 1.22x dense activation traffic, which lands on elementwise_cast -- measured at 497.24 ms, 30.6% of the step, and already at 1.30x its roofline ideal, i.e. the saturated class. SAME SHARE-x-RATE DEFECT, FOUND IN THIS ENTRY WHILE APPLYING 6e's RULING TO THE OTHER ONE AND KEPT VISIBLE RATHER THAN OVERWRITTEN: the first version wrote 'that moves the class to ~37.5%', which is 30.6% x 1.22 -- a share multiplied as if it were a rate. Matched FLOPs pin gemm, so the rest of the step does not grow with it: 1.22x on this class alone moves its share to 35.0%, not 37.5%. The 1.22x traffic ratio itself is unaffected; only the share arithmetic was wrong. A THIRD TERM NOT PRICED HERE: with gradient checkpointing on, backward recomputes the looped span, so the second visit is paid twice in compute.",
+   "measured": "2026-09-03",
+   "source": "derived: per-layer params 4d^2+2*d*ffn at d1024 ffn3072 (10.49M/layer, consistent with 206.13M at L12 plus embeddings); H20 L2 60 MB and HBM 97871 MiB read from the device; facts/efficiency.json eff.step_class_breakdown_p200m_4card; repo.smelt_shape_correction",
+   "config": {
+    "source_type": "derived from our-measurement",
+    "l2_bytes": 60000000,
+    "hbm_tbps": "4.0 assumed",
+    "seq": 4096,
+    "tokens_per_microbatch": 65536,
+    "looped_layers": "L/2, N=2 (smelt.identity)"
+   },
+   "uncertainty": "the 1.22x activation ratio assumes elementwise_cast scales linearly with layer executions and with width, which the trace does not separately verify; the recompute term is named and not priced",
+   "boundary": "answers which side of the cache/HBM line the re-read falls on and what it costs. It does not say whether an implementation keeps a layer resident across its own two visits -- that is loop-order, and it would only ever save the 0.005%. AND: 35.0% is still a share derived from the dense share. Any share-to-share step needs absolute times for both arms; the defensible quantity here is the 1.22x traffic ratio, not any percentage computed from it",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.attnres_x_loop_corrected",
+   "value": "AttnRes x looping on the corrected shape, both readings, as INTERVALS -- not as a single number, because a share cannot be recovered from the dense share by any multiplication. The read law is measured: source reads = n(n+1) with n = 2*depth+1 (L=2/3/4/12 -> 30/56/90/650, gate_failure_shapes.md:833, which also attributes the factor 2 -- each call reads every source twice, once for logits at model.py:248 and once to mix at :250-252), giving 650 reads at L12 and 4290 at L32. WRITTEN AS n(n+1)/2 IN THE FIRST VERSION OF THIS ENTRY, a 2x error in every absolute count (325/2145 at dense, 703/4753 looped): the law quoted did not produce the measured points quoted beside it, and 44 caught the contradiction between the two facts. Ratios are unaffected, which is why it survived: a constant factor cancels in a ratio, and every conclusion in this entry is a ratio. THE MASKING IS THE POINT, and it is the second instance in this batch of a defect that no gate can see. The first was the share-x-rate error below, which got the magnitudes wrong while leaving all three qualitative verdicts standing. This one is worse in the same direction: two rounds of ratio arithmetic were done on top of a wrong absolute value and NOTHING downstream is wrong at all -- not the magnitudes, not the intervals, not the verdicts. An error that every later operation divides out leaves no observable trace, so the only thing that finds it is reading the law against the measurements cited beside it, which is what 44 did. TWO DISTINCT RATIOS, and neither supersedes the other: the READ ratio is 2.16x at L12 and 2.22x at L32 (44's repo.attnres_loop_cost_derived); the BYTE ratio multiplies that by the 0.816 width factor matched FLOPs force (d 1024 -> 836), giving 1.77x and 1.81x. The read ratio is invariant to the matching lever; the byte ratio is not -- match KV cache through GQA instead and 0.816 does not hold. Folding width into one stored number would weld two independent quantities together, so both are carried with their unit named. CROSS-VISIT (AttnRes attends over every EXECUTED sublayer): L12 depth 18, n=37, 1406 reads; L32 depth 48, n=97, 9506 reads. Wall share lands in 26-30% at L12 (from a measured 19.7%) and 47-52% at L32 (from 37.8%). PER-PHYSICAL (the loop is invisible to AttnRes): reads unchanged, bytes 0.816x, wall share 14-17% at L12 and 29-33% at L32. RETRACTED, KEPT VISIBLE SO IT IS NOT RE-DERIVED (6e's ruling, 2026-09-03): the first version of this entry gave single values of 34.8% at L12 and 68.4% at L32, and 44's entry gave ~42% at L12. All three are share x rate -- 19.7% x 1.77, 19.7% x 2.16 -- and a share cannot be multiplied like a rate, because its denominator contains the term being scaled. With share' = k*A/(k*A + R') and A = 0.197: k=1.77 gives 30.3% if the rest holds and 26.2% if the rest also grows 1.22x (which repo.loop_weight_reread_verdict says it does). At L32 the naive 68.4% overstates by 16pt. The interval above is the honest form; the point values are wrong. THE QUALITATIVE VERDICT IS UNCHANGED by this correction: cross-visit is dearer, per-physical is CHEAPER than dense and that is the worse outcome, and which reading holds is an architecture decision rather than a property to be measured. Per-physical being cheap means looping would add executions the mechanism cannot see, so SMELT's own reported mechanism -- 'attention sink nearly vanishes on the second visit, V diverges while Q/K stay similar' (smelt.ablation_and_downstream) -- would operate on a residual stream AttnRes does not read.",
+   "measured": "2026-09-03",
+   "source": "derived: the measured n(n+1) law (gate_failure_shapes.md:833) + tilerl's 19.7% L12 / 37.8% L32 wallclock shares (peer-reported 2026-09-03, not yet in facts/) + repo.smelt_shape_correction; share-vs-rate correction ruled by 6e 2026-09-03",
+   "config": {
+    "source_type": "derived from our-measurement + peer-reported",
+    "read_law": "n(n+1), n=2*depth+1 (measured; n(n+1)/2 in the first version was a 2x error)",
+    "width_factor": 0.816,
+    "dense_reads": {
+     "L12": 650,
+     "L32": 4290
+    }
+   },
+   "uncertainty": "the interval's width is the unpriced part: its low end assumes every other class grows with the 1.22x activation traffic and its high end assumes none does, and nothing here measures which. The extrapolation also assumes AttnRes cost is dominated by source reads and scales with reads x bytes per read; the fused kernel (3ed56306) changes the constant, not the law. tilerl's 19.7% and 37.8% are peer-reported with no fact entry yet, so this inherits their measurement basis",
+   "boundary": "A LOOP SHARE CANNOT BE DERIVED FROM THE DENSE SHARE AT ALL -- not by this multiplication and not by any other. A share's denominator moves with its numerator, so closing it needs ABSOLUTE times for both arms, which means building the looped model. This limit sits in front of every other one here. Beyond it: the O(L^2) read law is measured, the looped read counts are derived, and the cross-visit semantics are UNDECIDED -- no looped model has been built, so neither column measures a running system",
    "status": "recorded"
   }
  ]
