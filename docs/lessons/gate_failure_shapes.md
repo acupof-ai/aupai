@@ -2192,7 +2192,36 @@ n tensors 148 vs 184 | bitwise-equal: 0 | differing: 148
 改成把 `saturated_band()` 提成函数、测试导入它调用。**这两件事合起来才让"守卫可信"这句话有内容:
 实现只有一份,而它在两个方向上都被推过。**
 
-## 154. 一个在别的语料上标定的常数,搬过来会静默地把答案改一个数量级(tilerl 当事人,2026-09-03,证据 datagen/build_corpus.py:33 CHARS_PER_TOKEN=1.5 对英文 C4 实测 3.53,§64 族)
+## 154. 声明式的排他机制,写在了读不到它的那台机器上:卡上有我的任务、pod 的 claims/ 里没有我的 claim,而"占着卡没声明"和"没人在跑"在 pod 上长得一模一样(e1 当事人,98 巡检查出,2026-09-03,证据 pod runs/claims/ 只有 params_leg 而卡 5 有 17.9 GB,§15/§33/§126 族,§2 那格)
+
+Stage A 的 15 分钟里,卡 5 跑着我的评测,**pod 的 `runs/claims/` 里只有 params_leg 一个 claim**。
+我确实执行了 `card_claim.py acquire --cards 5`,它也确实打印了 `claimed 5`——
+但我在**本地 tree** 执行的,`CLAIM_DIR` 是 `ROOT/runs/claims`,`ROOT` 解析成笔记本的路径,
+于是 claim 落在 `/Users/.../aupai-e1/runs/claims/`,pod 上从未存在过。
+claim 里还记了 `pid 21584`,一个笔记本 pid——按"PID 只在读它的 namespace 里有意义",这个数在容器里什么都不是。
+
+**后果不是"少了一条记录",是排他机制被绕过了 15 分钟。**
+`card_claim.py` 存在的全部理由是关掉"读 `nvidia-smi`"到"真正分配显存"之间那个窗口
+(它自己的文档记了三次事故),而任何人在 pod 上读 claim 都会把卡 5 看成空闲。
+卡 5 恰好是"释放窗口内被另一个容器抢走过"的那张卡。没撞车是运气,不是设计。
+
+**这条的判据形状:声明式机制的作用域必须和被声明资源的作用域一致。**
+GPU 是机器级的事实,claim 却写在了进程的文件系统视图里——两者不同一个作用域时,
+机制"运行成功"和"机制生效"分家,而**成功的表征照常打印**(§140 同族)。
+`podput`/`pod_push.sh` 那条"本地和 pod 是两个文件系统视图"的纪律,这里换了个方向再犯一次:
+那条防的是把 pod 的产物当本地的,这次是把本地的声明当 pod 的。
+
+**审计判据(de 已接):`memory.used > 0` 而 `runs/claims/` 里没有对应条目 = orphan 信号。**
+`card_claim.py` 的文档已经说了 claim 与显存的**分歧本身是有用的状态、不许静默调和**——
+有 claim 没显存是正在启动,有显存没 claim 是 orphan。我生产的正是它命名的第二种,
+而它在 pod 上和"没人在跑"共用一个表示。**扫一遍这个分歧,一次就能抓到这种错法。**
+
+**顺带记两个被守卫挡住的错法,两次都挡得对:** `acquire` 不带 `--pid` 和 `--pid $$` 都被拒,
+理由是**claim 一个 shell 两头都错**——shell 退出则卡读成 ORPHAN,shell 不退则任务结束后卡还读成被占。
+正确形状是**先起任务、再 claim 它的 pid**:`job & JOB=$!; acquire --pid $JOB || kill $JOB`,退出时 release。
+守卫不但拒了,还把候选 pid 连命令行一起列出来——**拒绝时给出下一步,比拒绝本身值钱**。
+
+## 155. 一个在别的语料上标定的常数,搬过来会静默地把答案改一个数量级(tilerl 当事人,2026-09-03,证据 datagen/build_corpus.py:33 CHARS_PER_TOKEN=1.5 对英文 C4 实测 3.53,§64 族)
 
 补 en_c4 缺口,`build_corpus.py --dry` 打印 `~0.03B tok`,推算每文件 534.5M token,
 而盘上现有 33 个文件是 72.7M/文件——**7.35 倍**。
@@ -2209,7 +2238,7 @@ n tensors 148 vs 184 | bitwise-equal: 0 | differing: 148
 以及把 en_c4 的落盘率估成 4.4 bytes/token(实测 7.61),于是 20 GB 的闸会在 2.82B token 处
 静默截断。**三个都是:一个在别处正确的常数,搬到这里没人重新标定。**
 
-## 155. 两个目录同名一个域,各有一份 stats,一个 measured 一个外推——而"缺口"减哪个数没人问过(tilerl 与 3b 各读一个,6e 裁定,2026-09-03,证据 data/corpus/en_c4/ 与 en_c4_stage2/ 的 build_corpus_stats.json)
+## 156. 两个目录同名一个域,各有一份 stats,一个 measured 一个外推——而"缺口"减哪个数没人问过(tilerl 与 3b 各读一个,6e 裁定,2026-09-03,证据 data/corpus/en_c4/ 与 en_c4_stage2/ 的 build_corpus_stats.json)
 
 事实 `cs.en_c4_landed` 记的是 **2.40B**,据此定出"缺口 3.1B、需 43 个文件、约 35 GB"。
 
