@@ -131,7 +131,7 @@ d808c3f4639a76d9230ffc42f0592f9ae672d853b6340d591bf39550c1d06f76  eval/cache_gua
 3a0aca016fa1632229ba24a29b1b21d282c24b72416b2da7193e93ce1cff18e3  eval/code_l0prime.py  docs  644
 4f31c98cbe0a633bd9ed79a79cbed9464e88b4d117561278b6109c5ddae63419  eval/code_zh.py  training  644
 5658451e32b511c55e3bc2e9846be18ae5698fcc6e62c465c9f9f48dca07eb5f  eval/compare_fewshot_arms.py  docs  644
-028029c47e7830680c9553256dbd6fc88e5eb96371fa9067b92953368bf7f5b5  eval/domain_bpb.py  docs  644
+b5becafca9f27f85190f14cfa05c42f619048294b5fa86b184c5ca63aaefd15b  eval/domain_bpb.py  docs  644
 4058f490d078cd6ea99642b54b4075a7a2357e556b22a25381b38f5be29fd538  eval/domain_loss.py  training  644
 131ae5bd03f4ad0011bd3aa30b55830322fb265de652dbb0ca080bcf185b8a8f  eval/eval_all.sh  training  755
 4011d497d137f0c12fd2088529647cbd3063836c4678449e59e3ec77bef0abc2  eval/eval_code.sh  docs  644
@@ -281,7 +281,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-13764ae24c57038f67a661c676dcfb39d433dd376d96d743506dd2224630ebee  scripts/harness.py  training  644
+aa44b448dd95287eda13d7ede1a40e868d85d9ae2949b9786c57ebceb38934ee  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755

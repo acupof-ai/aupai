@@ -666,11 +666,55 @@ def check_cache_readers_set_vocab_id(root):
     fingerprint it computes), or build_tokenizer. Requiring set_vocab_id by name would
     fail a file that does the right thing another way -- and a check that fires on correct
     input is looser than none, because the next author silences it.
+
+    IT ALSO CHECKS COVERAGE, NOT ONLY EXISTENCE. The first version of this check asked
+    "does a setter appear anywhere in the module" and PASSED eval/domain_bpb.py while that
+    file was still broken: the fix put set_vocab_id under `if not a.hf`, and the val_seqs
+    call at :256 sat outside that branch, so the --hf control arm still walked into the
+    guard. Three rows in runs/score_matrix.jsonl carry that error and one of them is the
+    control. A setter guarded by a condition the reader is NOT guarded by covers only some
+    of the calls.
+
+    The coverage test is WITHIN ONE FUNCTION only. eval/score_matrix.py sets the
+    fingerprint at :1185 inside main's `if` and reads at :232 inside metric_domain_loss,
+    which main calls at :1189 -- correct, but a cross-function depth comparison flags it,
+    and that false positive is what a first version of this coverage rule produced. Branch
+    depth means nothing across function boundaries: the caller decides whether the callee
+    runs. Restricting to one scope still catches the real defect, because domain_bpb's
+    setter and reader were in the same function.
     """
     import ast
 
     READERS = ("val_seqs", "domain_loss_seqs", "_domain_seqs")
     SETTERS = ("set_vocab_id", "build_tokenizer")
+
+    def _depths_in(fn, targets, kinds):
+        """Every `if`/`try` nesting depth at which a target appears inside ONE function.
+
+        Nested function bodies are not descended into: they are separate scopes whose
+        execution their own caller decides.
+        """
+        found = []
+
+        def walk(node, depth):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue
+                hit = False
+                if isinstance(child, ast.Call) and "call" in kinds:
+                    name = (child.func.attr if isinstance(child.func, ast.Attribute)
+                            else getattr(child.func, "id", ""))
+                    hit = name in targets
+                elif isinstance(child, ast.Assign) and "assign" in kinds:
+                    hit = any(isinstance(t, ast.Attribute) and t.attr == "VOCAB_ID"
+                              for t in child.targets)
+                if hit:
+                    found.append(depth)
+                walk(child, depth + 1 if isinstance(child, (ast.If, ast.Try, ast.While)) else depth)
+
+        walk(fn, 0)
+        return found
+
     scan = []
     for sub in ("eval", "scripts", "probes"):
         d = os.path.join(root, sub)
@@ -709,10 +753,21 @@ def check_cache_readers_set_vocab_id(root):
             isinstance(t, ast.Attribute) and t.attr == "VOCAB_ID"
             for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets
         )
+        rel = os.path.relpath(path, root)
+        names = ", ".join(sorted(imports & set(READERS)))
         if not (called & set(SETTERS)) and not assigns_global:
-            rel = os.path.relpath(path, root)
-            names = ", ".join(sorted(imports & set(READERS)))
             bad.append(f"{rel} imports {names} but never sets train.VOCAB_ID")
+            continue
+        # COVERAGE, per function: a setter deeper in the branch nesting than a reader in the
+        # SAME function protects only some of that function's paths.
+        for fn in [n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            rd = _depths_in(fn, set(READERS), {"call"})
+            sd = _depths_in(fn, set(SETTERS), {"call", "assign"})
+            if rd and sd and min(sd) > min(rd):
+                bad.append(f"{rel}:{fn.name} sets train.VOCAB_ID at branch depth {min(sd)} "
+                           f"but reads the cache at depth {min(rd)} in the same function, so "
+                           f"the reader runs on paths the setter does not cover")
     if bad:
         return FAIL, ("; ".join(bad) + " -- every cache stamp will read as a mismatch against "
                       "an empty fingerprint, and the guard will say 'cache dirty' when the "
@@ -722,30 +777,32 @@ def check_cache_readers_set_vocab_id(root):
 
 
 def _broken_cache_readers_set_vocab_id():
-    """The REAL eval/ with domain_bpb.py's set_vocab_id call removed -- the state this
-    file was actually in until 2026-09-03, not a synthetic one.
+    """The REAL eval/ with domain_bpb.py's fingerprint line put back under `if not a.hf` --
+    the state this file was in between the two fixes on 2026-09-03, not a synthetic one.
 
-    Mutating the live file rather than writing a fixture, for the reason de-7.3 records:
-    a fixture encodes the author's assumption twice. It also proves the check would have
-    caught the real defect, which is the only claim worth making about a new check.
+    That intermediate state is the interesting world, not the original: the original had no
+    setter at all, which the existence half already catches. This one HAS a setter and is
+    still broken, because val_seqs at :256 sits outside the branch, so the --hf control arm
+    walks into the guard anyway. It is what the coverage half exists for.
+
+    Mutating the live file rather than writing a fixture, for the reason de-7.3 records: a
+    fixture encodes the author's assumption twice.
     """
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "eval", "domain_bpb.py")
     if not os.path.exists(src):
         return None
     text = open(src, encoding="utf-8").read()
-    if "set_vocab_id(m.cfg)" not in text:
-        return None  # the call is gone or renamed: this world cannot be built
+    line = "    train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"
+    if line not in text:
+        return None  # the fix moved or was renamed: this world cannot be built
     import shutil as _sh
     link = os.path.join(d, "eval")
     if os.path.islink(link):
         os.unlink(link)
     _sh.copytree(os.path.join(ROOT, "eval"), link, ignore=_sh.ignore_patterns("__pycache__"))
-    # Drop BOTH the import and the call: leaving the import would still satisfy the
-    # predicate through `called`, and the world would go green for the wrong reason.
     open(os.path.join(d, "eval", "domain_bpb.py"), "w", encoding="utf-8").write(
-        text.replace("    from cache_guard import set_vocab_id  # noqa: PLC0415\n", "")
-            .replace("    if not a.hf:\n        set_vocab_id(m.cfg)\n", ""))
+        text.replace(line, "    if not a.hf:\n        train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"))
     return d
 
 

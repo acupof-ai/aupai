@@ -214,26 +214,27 @@ def main():
 
     # OUR tokenizer decodes the held-out ids to text; that text is what BOTH arms score. It is
     # loaded even on the control arm, because it is the only thing that can read the cache.
-    from scripts.loader import load_tokenizer  # noqa: PLC0415
-    from cache_guard import set_vocab_id  # noqa: PLC0415
+    from scripts.loader import load_tokenizer, vocab_fingerprint  # noqa: PLC0415
     from domain_loss import val_seqs  # noqa: PLC0415
+    import train  # noqa: PLC0415
 
     ours_tok = load_tokenizer(a.tokenizer, None)
     mix = json.load(open(a.mix, encoding="utf-8"))
     m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
-    # val_seqs -> assert_caches_fresh -> train.VOCAB_ID, which is None until someone sets it.
-    # Without this the module global stays None, every cache stamp reads as a mismatch against
-    # an empty right side, and the guard reports "cache dirty" when the process simply has no
-    # fingerprint -- domain_loss.py:624 carries the same call for the same reason. This file has
-    # never produced a value on the control arm, and this is why.
+    # val_seqs -> _domain_seqs compares every cache stamp against train.VOCAB_ID, which starts
+    # None and is set only by train.build_tokenizer -- which no eval calls. Without this the
+    # guard reports "cache dirty" when the process simply has no fingerprint, and that is why
+    # this file had never produced a value: all three of its rows in runs/score_matrix.jsonl
+    # are that error, one of them the --hf control.
     #
-    # The CONTROL arm (--hf) has no cfg and no vocab_id, so it cannot set one. It must SKIP the
-    # cache path, not walk into the guard: an HF model scores the decoded text, and reaching
-    # val_seqs at all is the bug. That is why the call is conditional on our own arm rather than
-    # unconditional -- an unconditional set_vocab_id(None) would raise CacheWouldRebuild and the
-    # control arm would report a guard failure instead of a skip.
-    if not a.hf:
-        set_vocab_id(m.cfg)
+    # FROM THE TOKENIZER, NOT FROM A CHECKPOINT'S cfg. Both arms score the same decoded rows, so
+    # BOTH must reach val_seqs -- the control has no cfg and no vocab_id, so a cfg-derived
+    # fingerprint (set_vocab_id, which domain_loss.py:624 uses because it has a checkpoint per
+    # arm) can only ever cover our own arm and leaves the control hitting the guard. The rows are
+    # ours_tok's regardless of which model scores them, so ours_tok is the right source for
+    # their fingerprint; scripts/test_domain_loss_val.py:103 does the same for the same reason.
+    # load_tokenizer already refused a tokenizer disagreeing with our checkpoint's vocab_id.
+    train.VOCAB_ID = vocab_fingerprint(ours_tok)
     print(f"Loaded {a.ckpt}: {m.n_params / 1e6:.2f}M params | {len(mix['domains'])} domains",
           flush=True)
 
