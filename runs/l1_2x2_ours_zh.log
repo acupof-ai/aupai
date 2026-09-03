@@ -1,0 +1,14 @@
+L1 few-shot: 3 demos, 497 eval problems
+  64/497 acc=0.0%
+  128/497 acc=1.6%
+  192/497 acc=1.6%
+  256/497 acc=2.7%
+  320/497 acc=4.1%
+  384/497 acc=4.9%
+  448/497 acc=5.1%
+  497/497 acc=5.4%
+L1 math-500 few-shot: 27/497 = 5.4%
+binomial delta=6.3% -> 2*delta=12.6%; instrument exists iff acc > 12.6%
+answer-present rate 37.0%
+preds saved: /work/aupai/data/eval/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl
+EXIT=0
