@@ -1,0 +1,1 @@
+{"correct": 27, "total": 497, "acc": 0.05432595573440644, "binomial_delta": 0.06279858256227591, "answer_present_rate": 0.3702213279678068, "demos": 3, "temperature": 0.0, "demo_lang": "zh", "arm": "ours", "ckpt": "ckpt_p200m_4b_0902.pt", "preds_path": "/work/aupai/data/eval/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl"}
