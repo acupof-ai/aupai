@@ -171,9 +171,53 @@ def sha_disk(path):
         return _sha_bytes(f.read())
 
 
+def git_modes(root=ROOT, ref="HEAD"):
+    """{path: "755"|"644"} from git's own record. ref=None reads the INDEX instead.
+
+    One call rather than a call per path: the manifest covers ~174 files and both
+    writers are on the pre-commit path, where per-file subprocesses already cost two
+    minutes once (4a7dd56). git stores exactly two blob modes, so this collapses to the
+    exec bit and nothing else is representable.
+
+    The index needs `ls-files -s`, not `ls-tree`: a mode staged by
+    `git update-index --chmod=+x` exists in no tree yet, so ls-tree would silently
+    return HEAD's mode for it and the manifest would describe the wrong commit.
+    """
+    # Both forms put the mode first and the path after a tab:
+    #   ls-tree    "<mode> <type> <sha>\t<path>"
+    #   ls-files -s "<mode> <sha> <stage>\t<path>"
+    cmd = ["git", "ls-files", "-s"] if ref is None else ["git", "ls-tree", "-r", ref]
+    r = subprocess.run(cmd, cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        meta, _, p = line.partition("\t")
+        bits = meta.split()
+        if bits and p:
+            out[p] = "755" if bits[0] == "100755" else "644"
+    return out
+
+
+def mode_disk(path):
+    """"755" if the file carries any exec bit, else "644" -- git's own two-value view.
+
+    Collapsed to git's alphabet on purpose: the pod's umask produces 664 and 775 as well
+    (measured: run_ablation.sh is -rwxrwxr-x, run_pipeline.sh is -rw-rw-r--), and
+    comparing raw octal would report those as drift from a 755/644 manifest on files
+    whose EXECUTABILITY is correct. The bit that decides whether a pod call works is the
+    only one this can honestly claim to check.
+    """
+    return "755" if os.stat(path).st_mode & 0o111 else "644"
+
+
 def write_manifest(root=ROOT):
     classes = _classify_files()
-    lines = [f"{sha_head(root, p)}  {p}  {classes.get(p, 'docs')}" for p in scoped_paths(root)]
+    modes = git_modes(root, "HEAD")
+    lines = [
+        f"{sha_head(root, p)}  {p}  {classes.get(p, 'docs')}  {modes.get(p, '644')}"
+        for p in scoped_paths(root)
+    ]
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
@@ -213,6 +257,12 @@ def write_manifest_index(root=ROOT):
     )
     changed |= {p for p in head if sha_head(root, p) not in (None, head[p])}
     lines = []
+    # Mode comes from the INDEX, not HEAD: `git update-index --chmod=+x` stages a mode
+    # change with no content change, and reading HEAD here would write the pre-commit
+    # mode into a manifest that is supposed to describe the commit being made. There is
+    # no cache for this -- one ls-tree covers every path, so the reason write_manifest
+    # caches shas (per-file subprocesses) does not apply.
+    imodes = git_modes(root, ref=None)
     for p in scoped_paths(root):
         if p in changed or p not in head:
             sha = sha_index(root, p)
@@ -220,7 +270,7 @@ def write_manifest_index(root=ROOT):
                 continue
         else:
             sha = head[p]
-        lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}")
+        lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}  {imodes.get(p, '644')}")
     out = os.path.join(root, "data", "pod_head_manifest.txt")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
@@ -229,7 +279,15 @@ def write_manifest_index(root=ROOT):
 
 
 def read_manifest(path=None):
-    """Returns path -> (sha, class). Lines without a class column default to 'docs'."""
+    """Returns path -> (sha, class, mode). Missing columns default to 'docs' and '644'.
+
+    Both defaults are tolerated rather than required so an OLD manifest still reads: the
+    mode column landed 2026-09-03 (b0-19) on a file that already had ~174 three-column
+    rows, and refusing them would have made the reader depend on a regeneration having
+    already happened. '644' is the safe default -- it under-claims (an executable file
+    read as 644 reports drift and a human looks) instead of asserting an exec bit the
+    manifest never recorded.
+    """
     if path is None:
         path = MANIFEST
     m = {}
@@ -238,13 +296,16 @@ def read_manifest(path=None):
             line = line.rstrip("\n")
             if not line:
                 continue
-            parts = line.split("  ", 2)
-            if len(parts) == 3:
+            parts = line.split("  ", 3)
+            if len(parts) == 4:
+                sha, p, cls, mode = parts
+            elif len(parts) == 3:
                 sha, p, cls = parts
+                mode = "644"
             else:
                 sha, p = parts
-                cls = "docs"
-            m[p] = (sha, cls)
+                cls, mode = "docs", "644"
+            m[p] = (sha, cls, mode)
     return m
 
 
@@ -264,7 +325,7 @@ def check_pod(root=ROOT, scope=None):
         manifest = {p: v for p, v in manifest.items() if v[1] == scope}
     bad = []
     runs_div = []
-    for p, (want, _cls) in manifest.items():
+    for p, (want, _cls, want_mode) in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
             # A runs/ ledger absent from the pod is not drift: pod_push skips runs/ in
@@ -280,6 +341,18 @@ def check_pod(root=ROOT, scope=None):
                 runs_div.append(p)
             else:
                 bad.append(f"diff {p}")
+        elif mode_disk(fp) != want_mode:
+            # A DROPPED EXEC BIT IS DRIFT EVEN WHEN THE BYTES MATCH. Neither transport
+            # in pod_push carried the mode until 2026-09-03, so 16 tracked .sh that git
+            # records 100755 sat on the pod as 644 -- and this check read them as
+            # matching, because the content was identical. b0-17's first launch died on
+            # "scripts/run_ab_speedrun.sh: Permission denied" while the drift gate was
+            # green (b0-19).
+            #
+            # Only reported when the sha already matches, so the message names one
+            # cause: same content, wrong mode. A file whose bytes ALSO differ reads as
+            # "diff" above, where mode is not the useful thing to say.
+            bad.append(f"mode {p} (git {want_mode}, here {mode_disk(fp)}; content matches)")
     if bad:
         return False, f"{len(bad)} drifted: {'; '.join(bad)}"
     extra = unregistered_py(root, manifest)
@@ -373,7 +446,7 @@ def plan_sync(new_path, old_path, pod_path):
                 sha, p = line.split(None, 1)
                 pod[p] = sha
     plan = []
-    for p, (want, _cls) in new.items():
+    for p, (want, _cls, _mode) in new.items():
         if p.startswith("runs/"):
             continue
         if pod.get(p) != want:
@@ -395,8 +468,16 @@ def check_head(root=ROOT):
         if sha:
             want[p] = sha
     stale = [p for p in want if have.get(p, (None,))[0] != want[p]]
+    # A `chmod +x` commit changes NO sha, so the sha comparison above is blind to it and
+    # the manifest would keep a stale mode until some unrelated edit rewrote the row.
+    # Then the pod gate compares against a mode HEAD no longer records. Listed
+    # separately from `stale` because the fix is the same (--write) but the cause is not
+    # visible in any content diff (b0-19).
+    hmodes = git_modes(root, "HEAD")
+    mode_stale = [p for p in want
+                  if have.get(p) and have[p][2] != hmodes.get(p, "644")]
     gone = [p for p in have if p not in want]
-    if stale or gone:
+    if stale or gone or mode_stale:
         # Name them. A bare count makes two consecutive "1 changed" indistinguishable:
         # the same file still unfixed, or a second file that arrived with a merge. The
         # operator has to remember which, and on 2026-09-01 de read the second case as
@@ -406,9 +487,13 @@ def check_head(root=ROOT):
         named = "; ".join(f"changed {p}" for p in sorted(stale))
         if gone:
             named += ("; " if named else "") + "; ".join(f"removed {p}" for p in sorted(gone))
-        return False, (f"manifest stale: {len(stale)} changed, {len(gone)} removed; "
-                       f"run --write -- {named}")
-    return True, f"manifest matches HEAD ({len(want)} files)"
+        if mode_stale:
+            named += ("; " if named else "") + "; ".join(
+                f"mode {p} (HEAD {hmodes.get(p, '644')}, manifest {have[p][2]})"
+                for p in sorted(mode_stale))
+        return False, (f"manifest stale: {len(stale)} changed, {len(gone)} removed, "
+                       f"{len(mode_stale)} mode; run --write -- {named}")
+    return True, f"manifest matches HEAD ({len(want)} files, sha and mode)"
 
 
 def is_pod(root=ROOT):
@@ -636,6 +721,70 @@ def selftest():
     finally:
         globals()["MANIFEST"] = _orig_manifest
         shutil.rmtree(m, ignore_errors=True)
+
+    # ---- THE MODE COLUMN (b0-19). Content identical, exec bit dropped: the case that
+    # was invisible until 2026-09-03, when 16 tracked .sh sat on the pod as 644 and this
+    # gate read them as matching because their bytes were right.
+    d = tempfile.mkdtemp()
+    _saved_manifest, _saved_root = MANIFEST, ROOT
+    try:
+        os.makedirs(os.path.join(d, "data"))
+        script = os.path.join(d, "runner.sh")
+        with open(script, "w") as f:
+            f.write("#!/bin/sh\necho hi\n")
+        os.chmod(script, 0o755)
+        sha = sha_disk(script)
+        man = os.path.join(d, "data", "pod_head_manifest.txt")
+
+        def _write_manifest_row(mode):
+            with open(man, "w", encoding="utf-8") as f:
+                f.write(f"{sha}  runner.sh  training  {mode}\n")
+
+        globals()["ROOT"] = d
+        globals()["MANIFEST"] = man
+
+        # 1. Mode agrees -> pass. Without this the next assertion could pass because the
+        #    file is simply always bad.
+        _write_manifest_row("755")
+        ok, ev = check_pod(d)
+        assert ok, f"755 on disk against 755 in the manifest must pass: {ev}"
+
+        # 2. THE REGRESSION. Exec bit dropped, bytes untouched -> must FAIL and say mode.
+        os.chmod(script, 0o644)
+        ok, ev = check_pod(d)
+        assert not ok, (
+            "a dropped exec bit read as MATCHING -- this is exactly b0-17's "
+            "'Permission denied' launch passing a green drift gate")
+        assert "mode runner.sh" in ev, f"the failure must name mode and the file: {ev}"
+        assert "git 755, here 644" in ev, f"the failure must state both modes: {ev}"
+        assert "diff" not in ev, (
+            f"content matches, so calling it a content diff sends the reader to the "
+            f"wrong cause: {ev}")
+
+        # 3. And the reverse: manifest says 644, disk is executable. Also drift -- the
+        #    check must not be a one-directional "is it executable enough" test.
+        os.chmod(script, 0o755)
+        _write_manifest_row("644")
+        ok, ev = check_pod(d)
+        assert not ok, "an UNEXPECTED exec bit is drift too, not a free pass"
+        assert "git 644, here 755" in ev, f"both modes, in the right order: {ev}"
+
+        # 4. A three-column (pre-b0-19) manifest must still read, defaulting to 644 --
+        #    the reader cannot require a regeneration to have happened already.
+        with open(man, "w", encoding="utf-8") as f:
+            f.write(f"{sha}  runner.sh  training\n")
+        old = read_manifest(man)
+        assert old["runner.sh"] == (sha, "training", "644"), (
+            f"an old three-column row must default to 644, got {old['runner.sh']}")
+
+        # 5. A mode-only change in HEAD must make check_head refuse. This is the one no
+        #    sha comparison can see: `git update-index --chmod=+x` alters no content.
+        assert git_modes(d, ref="HEAD") == {}, (
+            "git_modes must return {} outside a repo rather than raising -- the pod "
+            "calls read_manifest, and a throw here would take the whole gate down")
+    finally:
+        globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
+        shutil.rmtree(d, ignore_errors=True)
 
     print("pod_drift selftest OK:", evidence)
 

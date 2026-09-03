@@ -61,9 +61,18 @@ find_emptydir() {
 # not pgrep -f: a ZOMBIE keeps its argv, and run_ddp.sh had three of them beside the
 # one live process, so pgrep would match the dead ones forever and make the guard a
 # permanent refusal -- the trap _drop_zombies exists for.
+#
+# MATCHED ON THE POD PATH, NOT THE BASENAME. The basename version refused a push of
+# scripts/e1_27_sweep.sh because an UNRELATED /tmp/e1_27_sweep.sh was running (e1,
+# 2026-09-03): same basename, different file, and overwriting the tracked one could not
+# have corrupted the running one. The hazard this guard exists for is byte-offset
+# corruption of the file being written, which is a property of the PATH -- so the test
+# is the path podput will write to. A bare `scripts/foo.sh` in someone's argv still
+# matches, because /work/aupai/scripts/foo.sh contains it as a suffix; that direction
+# of looseness is the safe one (a false refusal, never a false permit).
 running_on_pod() {
   [ -z "${POD_PUSH_ALLOW_RUNNING_SH:-}" ] || return 1
-  ~/bin/pod "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -q '$(basename "$1")'" \
+  ~/bin/pod "ps -eo stat,args | awk '\$1 !~ /^Z/' | grep -v grep | grep -qF '$1'" \
     >/dev/null 2>&1
 }
 
@@ -115,6 +124,25 @@ push_one() {
     echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
     tn push "$f" "$EMPTYPATH/aupai/$f"
   fi
+  # RESTORE THE MODE GIT RECORDS. Neither transport carries it: podput pipes into `> $R`
+  # and tn push writes content, so the pod file gets whatever the remote umask says --
+  # 644. Every .sh that git marks 100755 landed non-executable, and a pod call naming
+  # the script path then dies on "Permission denied" (b0-17's first launch, 2026-09-02;
+  # 16 tracked .sh were in that state, measured, not the 5 the task estimated).
+  #
+  # The mode comes from `git ls-files -s` rather than from the local file's stat: the
+  # local bit can be anything (a fresh clone, a copy through a filesystem with no exec
+  # bit), and what the pod should run is what main records. Only the exec bit is
+  # honoured -- git tracks exactly two modes for blobs, 100644 and 100755.
+  local gitmode
+  gitmode=$(git ls-files -s -- "$f" | awk '{print $1}')
+  case "$gitmode" in
+    100755) ~/bin/pod "chmod 755 /work/aupai/$f" >/dev/null 2>&1 || {
+              echo "WARNING: $f pushed but chmod 755 failed -- it will not be executable" >&2; } ;;
+    100644) ;;  # nothing to do: the umask already gives a non-executable file
+    "")     echo "WARNING: $f has no git mode (untracked?) -- mode not set on the pod" >&2 ;;
+    *)      echo "WARNING: $f has unexpected git mode $gitmode -- mode not set on the pod" >&2 ;;
+  esac
 }
 
 if [ $ALL -eq 1 ]; then
