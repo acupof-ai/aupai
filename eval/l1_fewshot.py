@@ -89,6 +89,28 @@ def model_turn(gen, demo_lang="zh"):
     return gen if i < 0 else gen[:i]
 
 
+def answer_marker(text):
+    """Where an extractable answer starts in `text`, or None. THE definition of answer-present.
+
+    A FUNCTION, not a regex, because the predicate is a DISJUNCTION: `\\boxed` OR ANS_RE. Every
+    reader that took ANS_RE alone as "the marker" silently dropped the boxed branch -- which is the
+    branch our arm actually uses. l1_2x2_diagnose imported ANS_RE, believing that was the shared
+    definition, and measured 0/497 markers in cells whose answer-present rate is 37.0%. Importing the
+    regex made the two agree on a SUBSTRING of the predicate and read as full agreement.
+
+    Returns a character offset into `text` as given, so a caller can ask "did the decoder run far
+    enough to reach a marker" -- pass the RAW generation for that, model_turn's output for scoring.
+    """
+    cands = []
+    i = text.find("\\boxed")
+    if i >= 0:
+        cands.append(i)
+    m = ANS_RE.search(text)
+    if m:
+        cands.append(m.start())
+    return min(cands) if cands else None
+
+
 def score(gen, gold, demo_lang="zh"):
     gold_ans = extract_boxed(gold)
     if gold_ans is None:
@@ -371,7 +393,7 @@ def main():
                 correct += int(d["ok"])
                 total += 1
                 turn = model_turn(d["gen"], args.demo_lang)
-                n_box += int("\\boxed" in turn or ANS_RE.search(turn) is not None)
+                n_box += int(answer_marker(turn) is not None)
         print(f"  resuming: {total} already scored, {correct} correct", flush=True)
         evals = [r for r in evals if r["instruction"] not in seen]
         if not evals:
@@ -417,14 +439,15 @@ def main():
                 correct += int(ok)
                 total += 1
                 turn = model_turn(gen, args.demo_lang)
-                # THE ANSWER-PRESENT TEST USES THE SAME MARKERS THE SCORER DOES, derived from
-                # ANS_RE rather than restated. Hardcoded `"答案是" in turn`, this metric would
-                # count an English-demo generation answering "The answer is: 42" as producing NO
-                # answer -- and answer-present rate is the ONE layer where the two arms might
-                # genuinely differ, so a scorer-vocabulary artefact would land precisely on the
-                # comparison the 2x2 exists to make. Two lines apart from the identical bug in
-                # ANS_RE, which is what a restated constant does.
-                n_box += int("\\boxed" in turn or ANS_RE.search(turn) is not None)
+                # THE ANSWER-PRESENT TEST CALLS answer_marker(), the same predicate the scorer
+                # uses -- ONE function, not a re-spelled disjunction. Hardcoded `"答案是" in turn`,
+                # this metric would count an English-demo generation answering "The answer is: 42"
+                # as producing NO answer, and answer-present is the ONE layer where the arms might
+                # genuinely differ. Spelling out `"\\boxed" in turn or ANS_RE.search(turn)` here was
+                # already better than a constant and STILL not enough: l1_2x2_diagnose imported
+                # ANS_RE as "the marker", lost the boxed branch, and reported 0/497 for a cell whose
+                # rate is 37.0%. A predicate spread over two operators can be half-copied.
+                n_box += int(answer_marker(turn) is not None)
                 fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
                 # FLUSHED PER ROW, because the restartability marker promises an interrupt costs
