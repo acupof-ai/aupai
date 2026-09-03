@@ -4822,6 +4822,74 @@ def _entry_exists(root, s):
     return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
 
 
+def check_unreached_files_ruled(root):
+    """Every file reachability reports as unreached carries a FATE ruling (de-5).
+
+    The listing is not a deletion oracle and never was, so the value of a scan is that
+    somebody RULED on each name it raises: keep and make reachable, or delete. Without a
+    check, the unruled ones accumulate -- 25 of them by 2026-09-03, and 23 were last touched
+    that day or the day before, so this is a live accumulation and not a backlog anyone
+    finishes once.
+
+    WARN, not FAIL: an unruled file is a to-do, and the fix is a person reading it and
+    deciding. A FAIL would go red the moment anyone adds a probe, which trains people to
+    bypass rather than to rule.
+
+    This replaces a one-off classifier script. That script sorted the scan's output AFTER the
+    fact, so its 21 false candidates came back on every run and needed a person to re-read
+    them each time; the real fix was teaching the scan the edge it could not see (the
+    pre-commit hook's SELFTEST_FILES), which took 46 unreached to 25. A check on what remains
+    is the part worth keeping every commit.
+
+    READS THE COMMITTED LISTING, not a fresh scan. Running reachability.py here costs more
+    than the 5 s check budget and timed out on the first attempt. The listing cannot go stale
+    behind this check: scripts/test_reachability_fresh.py asserts runs/reachability.txt
+    matches a live scan, it is in the hook's SELFTEST_FILES, and it fired on exactly that
+    during this change."""
+    listing = os.path.join(root, "runs", "reachability.txt")
+    if not os.path.exists(listing):
+        return SKIP, "runs/reachability.txt not present (run scripts/reachability.py > it)"
+    unruled = []
+    for ln in open(listing, encoding="utf-8"):
+        # A row whose REACHED FROM is `none` and whose FATE column is empty. The fate text
+        # is the last column, so a row with a ruling has something after `none`.
+        if re.search(r"\s+none\s*$", ln.rstrip("\n")):
+            unruled.append(ln.split()[0])
+    if not unruled:
+        return PASS, "every unreached file in runs/reachability.txt carries a FATE ruling"
+    return WARN, (f"{len(unruled)} unreached file(s) with no FATE ruling in "
+                  f"scripts/reachability.py: {', '.join(unruled[:6])}"
+                  f"{' ...' if len(unruled) > 6 else ''} -- run each before judging it "
+                  f"(a hook-registered or glob-loaded file is live and invisible here), then "
+                  f"add KEEP or delete it")
+
+
+def _broken_unreached_files_ruled():
+    """The REAL listing with one ruled file's FATE text removed, so a file that IS ruled today
+    reports unruled. Mutating the real artifact rather than writing a world: a hand-written
+    listing would share this check's own idea of the column format."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "reachability.txt")
+    if not os.path.exists(src):
+        raise SelftestSkip("runs/reachability.txt absent; nothing real to mutate")
+    out, hit = [], False
+    for ln in open(src, encoding="utf-8"):
+        m = re.match(r"^(\S+\.(?:py|sh))(\s+.*?)(KEEP|DELETE)\b.*$", ln.rstrip("\n"))
+        if m and not hit:
+            # Same row, ruling stripped and the REACHED FROM forced to `none`: this is what
+            # an unruled file looks like, built from a real row.
+            out.append(f"{m.group(1):<56} 1  deadbeef 2026-09-03   none\n")
+            hit = True
+        else:
+            out.append(ln)
+    if not hit:
+        raise SelftestSkip("no ruled row in runs/reachability.txt to strip")
+    with open(os.path.join(d, "runs", "reachability.txt"), "w", encoding="utf-8") as fh:
+        fh.writelines(out)
+    return d
+
+
 def check_entrypoints_ran(root):
     """A cited script that does not exist is FAIL -- the doc is rotten. A command tried and
     never ok is WARN -- a to-do fixed by running it. Zero log matches is skipped: never
@@ -7843,6 +7911,13 @@ CHECKS = [
         _broken_facts,
     ),
     (
+        "unreached_files_ruled",
+        "every file reachability reports as unreached carries a FATE ruling",
+        "25 unreached files had accumulated with no ruling, 23 of them touched within two days -- and 21 more were false candidates the scan could not see the hook's edge to",
+        check_unreached_files_ruled,
+        _broken_unreached_files_ruled,
+    ),
+    (
         "entrypoints_ran",
         "every script the entry-point table cites exists (FAIL); every tried one has an ok run (WARN)",
         "run_ablation.sh shipped as the AttnRes A/B entry while its rows read killed and OOM-fail",
@@ -8144,7 +8219,7 @@ EVIDENCE = {
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
-    "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
+    "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
@@ -9966,7 +10041,7 @@ def _demo():
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
-                 "run_commits_resolve", "pod_stamp_is_main"}
+                 "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
