@@ -1,4 +1,4 @@
-8799d9f101f0ec69ed1e7d392f235e2ee275156febd3bcecae0ae12c3e3fbfc2  AGENTS.md  docs  644
+d150553d450d83143c1142ad4fa30cb5cc82128175b9e194c91c3ebcc188e8f0  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 8ff35228786ec39043bb7c7ba80eaae2b64bf0066851f9f347c0c34982fd7754  algorithms/attnres_fused.py  training  644
 8a62cdebba747d0897025b0795547b8f2df5419f4f1660d59a4b0a73c77193bb  algorithms/attnres_triton.py  docs  644
@@ -169,7 +169,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 d4b07fdb565a4a77401872de0d672b63ce7b18bddd9c474ac52ce075994ff3b3  facts/corpus_supply.json  docs  644
 f0b85346c19cd577a48b673de1b7d9299f842930b2cfd9f69cf55737baa3a365  facts/data_quality.json  docs  644
 ca0cd0e443af5442dd85c6e0c93e29590dd7cb2f24bd8085473bde9943cc6014  facts/data_scaling.json  docs  644
-dc9691361194bb22b6ed4257925953c786dba28fadf9127604f2e92c82c7b742  facts/efficiency.json  docs  644
+6da6b7e899cd29a402adf8f4b52320b49ab540fd838ff8732f42dd587f4daa93  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
 a4da37eaeb60078f4eaa90d09e4914364b30453cf4c50e96b9a9bb53097fdc74  facts/smelt_deeploop.json  docs  644
 f47daa8ea1decd3d5e0fba8da7eda05ecd5e08089042a2316a105f8c33124b45  facts/source_baseline.json  docs  644
