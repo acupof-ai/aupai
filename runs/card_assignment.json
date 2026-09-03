@@ -12,7 +12,8 @@
  ],
  "granted_by": [
   "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7); fb 2026-09-03 08:24Z (lane 5 -> b0's two b8 memory probes, one at a time); fb 2026-09-03 (lane grant SPENT: b0's two probes done, card 5 taken by another container within seconds of release); fb 2026-09-03 10:2xZ (lane 6 -> score_matrix on the leg's step10000 ckpt, USER REQUEST -- 6 was headroom for the user's container and the user is who asked for this job); fb 2026-09-03 11:0xZ (5 released by tilerl, ungranted; 7 idle but NOT reassigned)",
-  "fb 2026-09-03 14:3xZ (lane moved 6 -> 5: card 6 holds another container's process, host pids 2278278/2291027; 5 granted to the lane: bench_final_score_matrix done, N7 Stage A e1-31 next, one job at a time, read-and-claim in one command)"
+  "fb 2026-09-03 14:3xZ (lane moved 6 -> 5: card 6 holds another container's process, host pids 2278278/2291027; 5 granted to the lane: bench_final_score_matrix done, N7 Stage A e1-31 next, one job at a time, read-and-claim in one command)",
+  "fb 2026-09-04 (card 4 -> e1, N7 Stage B fresh 500 steps per arm, user order; card 5 stays lane, de bench scripts; 7 never taken)"
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
@@ -27,7 +28,7 @@
  },
  "cards": {
   "0-3": "params leg params_leg_438m_3p76b, 438.4M x 3.761775B, world 4, launched 12:52Z after the gate (PEAK/STARTUP 76.36 GiB, code_fp NONE). Data leg done 12:40Z, val 1.836.",
-  "4": "0 MiB at 08:24Z. NOT granted -- headroom for the user's container.",
+  "4": "granted to e1 for N7 Stage B 500-step rerun (user order 2026-09-04), one job, read-and-claim in one command on the pod; back to ungranted when e1 releases",
   "5": "LANE as of 12:5xZ 2026-09-03 while 6 is foreign-held: bench_final_score_matrix (score_matrix.py on ckpt_data_leg_206m_8b.pt). One job at a time; read-and-launch in one command.",
   "6": "FOREIGN OCCUPANT since ~12:5xZ 2026-09-03: host-namespace pids 2278278/2291027 (not in our container), 0.5-12.7 GB, 92-100%. harness launch refused bench_final_score_matrix twice on it. Lane jobs do not queue behind another container: the lane moved to card 5 for bench_final_score_matrix (read-and-launch in one command, 0 MiB). Card 6 returns to lane duty only when its compute-apps list is empty of foreign pids.",
   "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so."
