@@ -197,7 +197,7 @@ def main():
                 "REFUSING: this is the integration tree on main. Commit in your own "
                 "worktree and merge:\n"
                 "  git -C <your worktree> commit <paths>\n"
-                f"  git -C {top} merge --no-edit <your branch>\n"
+                f"  {top}/scripts/merge_main.sh <your branch>\n"
                 "A file left dirty here blocks every other session's move of it and gets "
                 "swept into their commits. Controller: AUPAI_CONTROLLER=1 git commit ...",
                 file=sys.stderr,
