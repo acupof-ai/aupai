@@ -166,7 +166,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 9bbc9567860ce22f686507a4fc2d020cacab59734542f7c09e66e24fbdfcf484  facts/base_eval.json  docs  644
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
-d30b31d878eb2866fb54e8d992a26f744d00447818eca0cbae4dcf7c4ad8aaab  facts/corpus_supply.json  docs  644
+69ed975d4586862d910cb67caf135fc1b5ba4b77cae9315c459d3a10d6519a1e  facts/corpus_supply.json  docs  644
 7419a4e5b0607df8237ebee994be9a72c9022bdb7d668455e9e58e5fd9381e64  facts/data_quality.json  docs  644
 13a9b59ef84ebc8fed2c53c3616564ee2a9a42970f9624625f9202bea38ed6a5  facts/data_scaling.json  docs  644
 dc9691361194bb22b6ed4257925953c786dba28fadf9127604f2e92c82c7b742  facts/efficiency.json  docs  644
@@ -261,6 +261,7 @@ c37b16a0381aa3ccbca66a7c5a6b726c45d92b46364d72a542be983883e1ebf5  scripts/check_
 9e71e20381425d77ddc3bad9f6ba36efd076f69780a81b5cc01b98d65cb4cff0  scripts/ckpt_health.py  docs  644
 f701fec826111c415873ee06eaf0e081ca86954d6c7f8580809535d516be0fc0  scripts/ckpt_info.py  docs  644
 fcb0540acd7e0d92a52f93f3434d6db8a607d9c418a564f6976d0216cdbe350e  scripts/count_tokens.py  docs  644
+c8df55aa617da633e23b717e47edf13e2df6e7f3b908c0677de67a2856fbfe18  scripts/de5_classify.py  docs  644
 3a0423bf4e59def1a8be9bbb4000a4f25d43d0d6058c8c54432fdd209b742b3f  scripts/doc_numbers_check.py  docs  644
 cacf7fbb257959d0c2cbe5fb13f7b09fc8dee47a7ae35f855dbc86835015426b  scripts/e1_27_read.py  docs  644
 d6d8607e3f8918d9e93508a11ab71f1a8597380ce06d33ddd9f58a9db35a20d3  scripts/e1_27_score.sh  docs  644
