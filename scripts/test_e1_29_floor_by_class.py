@@ -172,17 +172,32 @@ def main():
     #    i.e. AFTER loading both models onto a card and scoring both passes: ~4 minutes of GPU
     #    thrown away at the last statement. A static pass over the whole module costs 30ms and
     #    catches the entire class, not just this instance.
+    #     A missing pyflakes must be LOUD, not a silent skip -- a static check that quietly
+    #     disappears on the machine that actually runs the job is the same "guard nobody calls"
+    #     shape this file keeps finding. It is detected by the message, not by an exit code: I
+    #     guessed `python3 -m` returns 2 for a missing module and it returns 1, so the pod's real
+    #     failure surfaced as a generic "pyflakes failed" instead of the sentence written for it.
     import subprocess
     pf = subprocess.run([sys.executable, "-m", "pyflakes",
                          os.path.join(ROOT, "scripts", "e1_29_floor_by_class.py")],
                         capture_output=True, text=True)
-    if pf.returncode == 2 and "No module named" in pf.stderr:
-        fails.append("pyflakes is not installed, so undefined names in main() go unchecked")
-    elif pf.stdout.strip() or pf.returncode not in (0, 1):
+    if "No module named pyflakes" in pf.stderr:
+        alt = subprocess.run(["ruff", "check", "--select", "F821,F811,F841",
+                              os.path.join(ROOT, "scripts", "e1_29_floor_by_class.py")],
+                             capture_output=True, text=True)
+        if "No such file" in alt.stderr or alt.returncode not in (0, 1):
+            fails.append("neither pyflakes nor ruff is available, so an undefined name in main() "
+                         "would only surface after both models are loaded -- install one, or run "
+                         "this check on a machine that has it before spending card time")
+        elif alt.returncode == 1:
+            for line in alt.stdout.strip().splitlines():
+                if line.strip():
+                    fails.append(f"ruff: {line}")
+    elif pf.stdout.strip():
         for line in pf.stdout.strip().splitlines():
             fails.append(f"pyflakes: {line}")
-    elif pf.returncode == 1:
-        fails.append(f"pyflakes failed: {pf.stderr.strip()[:200]}")
+    elif pf.returncode not in (0, 1):
+        fails.append(f"pyflakes exited {pf.returncode}: {pf.stderr.strip()[:200]}")
 
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
