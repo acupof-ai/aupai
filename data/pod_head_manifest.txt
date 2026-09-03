@@ -121,7 +121,7 @@ f012667c4472acca03f3d61181bc80a1ae3a9f6fed9197b430b7104fd2f125d6  docs/standards
 4dbb129a8b094dcd44eea07f74e349ea69faeddcdb843fc29523940fc1ea0f91  docs/standards/launch_ready_guards.md  docs  644
 944fa9ab2354df9b7d9b62187b7f17d2032f8c7b1fb0e6546fbae97e93d6f384  docs/standards/model_module_split.md  docs  644
 5587ccb6baedaf232e2ecc7136818535c88b978c81d068887c9ca5f253654119  docs/standards/resume_row_cursor.md  docs  644
-093ff8498f3de8d61d5937ea2e22c6a4a6aab086a1be7a11b7392903695b0907  docs/standards/roadmap_0903.md  docs  644
+1221703eb0436c4e81151fad7a4e28cf4c956f9f8db62e44fbef87aa0e3cf16b  docs/standards/roadmap_0903.md  docs  644
 d651c7486cb99ba0dbdf5af990af8a4e1bb8a00d62141cc18bc132d4fa3bb62b  docs/standards/sop.md  docs  644
 99bd50b7c2affbf878b3761dad837bd6fe9a0662dd13934bf27f655493ba779e  docs/standards/structure_experiments.md  docs  644
 a8aafb577d77c4dfd3ecae231724bb562ac7d6f6f267f14ce084f3725a0ba88f  docs/standards/synthetic_data_standard.md  docs  644
@@ -180,7 +180,7 @@ b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eva
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
 cc2844dbf684214a67c9e6fce8d2e75f3b576ec147489e13a0c5fde6abe6ceab  facts/corpus_supply.json  docs  644
-0d6d49ea937cdbdde945177a5cf7d7ce121fac2f45ada66fe15038d5390bf3cd  facts/data_quality.json  docs  644
+9b1b43b0249be72439d86100d21133fb4efe0212d147bc8150bf47e8a67ef403  facts/data_quality.json  docs  644
 ae60ce856a06b7a85de108c792f5d5064de10c51be17f66a8ff71265a9750516  facts/data_scaling.json  docs  644
 c66f096e981d362ef1fbe2b42d7b975f7e1432e5d26e33ffc06fdbf652532280  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
@@ -296,7 +296,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-6b5bdbd61ac069911a563e7e029f64e89fbdf9b5d9fdfcaa7b222d2a55703275  scripts/harness.py  training  644
+e3cb7a0fe382b62cb4d0af42a6a18cd048b012de20ce28eb04cd28cba9202a0a  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
