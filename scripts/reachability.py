@@ -54,6 +54,40 @@ FATE = {
     "eval/assemble_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
     "eval/validate_lambda_probe.py": "KEEP (3b's t05, deprioritised, live)",
     "scripts/build_math.py": "DELETE (3b confirmed unclaimed, 2026-08-31)",
+    # N6 pass, de 2026-09-03. Every one of the 23 was RUN before it was judged, and the
+    # per-directory glob/importlib grep found no runtime loader reaching any of them --
+    # the bare `*.py` globs in harness.py and eval_load_cost.py are tree walks that
+    # enumerate for reporting, not loaders, so treating them as edges marks all 23 live
+    # and is a criterion that says yes to everything.
+    #
+    # Citations were counted EXCLUDING data/pod_head_manifest.txt, runs/reachability.txt,
+    # the pod inventories and the previous deletion audit: those list files by name by
+    # construction, so counting them makes every file in the tree look cited. On that
+    # basis exactly four of the 23 have a real citation, and zero are named by any fact.
+    #
+    # KEEP: a live test of live code. Each one RUNS GREEN here and asserts something no
+    # other test covers.
+    "scripts/test_e1_28_leak_scan.py": "KEEP (green; e1-28 open; gram width + refuse-on-missing-field)",
+    "scripts/test_e1_28_matched.py": "KEEP (green; e1-28 open; universal-form exclusion, doubt=contamination)",
+    "scripts/test_e1_29_floor_by_class.py": "KEEP (green; e1-29 open, N3 row; cited by runs/review.jsonl:150)",
+    "datagen/test_near_dedup_known.py": "KEEP (green, PASS with known pos/neg; the only known-answer case for near-dedup)",
+    "scripts/test_attn_res_fp32_logits.py": "KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)",
+    "scripts/attnres_logits_reference.py": "KEEP (green, rejects all three controls; cited by algorithms/attnres_fused.py:11)",
+    # KEEP: named by an owner's open task or an N row, so deleting it deletes work in flight.
+    "datagen/build_code_tests_v1.py": "KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)",
+    "scripts/e1_28_matched.py": "KEEP (e1-28 open; test_e1_28_matched.py is its test)",
+    "scripts/e1_30_case_table.py": "KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)",
+    "datagen/numma_to_jsonl.py": "KEEP (cited by data/PROVENANCE.md as the numina converter)",
+    "datagen/code_dedup_build.py": "KEEP (3b ruled 2026-09-03: the executing half of N4's MinHash 0.8 cross-source dedup; 3b-10's code_dedup08 is its output, near_dedup_scale.py is its report side)",
+    "datagen/rl_task_exercism.py": "KEEP (3b ruled 2026-09-03: the exercism RL task-set source, 3b-9; RL is scheduled after N5, which retires the schedule slot and not the task set)",
+    # e1/58's ruling, 2026-09-03, and its CRITERION SUPERSEDES THE ONE ABOVE: a file is
+    # KEEP because it is the sole producer of a PUBLISHED number, not because a task is
+    # still open. Closing a task is not a reason to delete its production path -- the
+    # number stays published either way, and deleting the producer downgrades it from
+    # recomputable to merely re-readable. Verified against the audit before recording.
+    "scripts/e1_27_read.py": "KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py:848 stores lr_scale in neither Cfg nor the checkpoint, so nothing else can recover it)",
+    "scripts/e1_27_score.sh": "KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)",
+    "scripts/e1_28_clean_score.sh": "KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)",
 }
 
 # Collect all .py/.sh files (excluding noise)
