@@ -98,9 +98,9 @@ def main():
     import model as M  # noqa: PLC0415
     from eval.prefix_mask import (  # noqa: PLC0415
         PREFIX_ARMS,
-        reference_mask,
         build_mask_mods,
         doc_prompt_lengths,
+        reference_mask,
     )
     from scripts.loader import load_checkpoint  # noqa: PLC0415
 
