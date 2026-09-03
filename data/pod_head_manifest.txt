@@ -261,7 +261,6 @@ c37b16a0381aa3ccbca66a7c5a6b726c45d92b46364d72a542be983883e1ebf5  scripts/check_
 9e71e20381425d77ddc3bad9f6ba36efd076f69780a81b5cc01b98d65cb4cff0  scripts/ckpt_health.py  docs  644
 f701fec826111c415873ee06eaf0e081ca86954d6c7f8580809535d516be0fc0  scripts/ckpt_info.py  docs  644
 fcb0540acd7e0d92a52f93f3434d6db8a607d9c418a564f6976d0216cdbe350e  scripts/count_tokens.py  docs  644
-c8df55aa617da633e23b717e47edf13e2df6e7f3b908c0677de67a2856fbfe18  scripts/de5_classify.py  docs  644
 3a0423bf4e59def1a8be9bbb4000a4f25d43d0d6058c8c54432fdd209b742b3f  scripts/doc_numbers_check.py  docs  644
 cacf7fbb257959d0c2cbe5fb13f7b09fc8dee47a7ae35f855dbc86835015426b  scripts/e1_27_read.py  docs  644
 d6d8607e3f8918d9e93508a11ab71f1a8597380ce06d33ddd9f58a9db35a20d3  scripts/e1_27_score.sh  docs  644
@@ -281,7 +280,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-83de48f07ff7e8ee1653b27a36464d16aebd7214ad18d8a823f513783b39ec6c  scripts/harness.py  training  644
+c1d723e6cc310bde609ba86233bf5ea4d2fc499d7c8b991b668c72c09549b04b  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -306,7 +305,7 @@ f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_dr
 1ca5509970c175cc9609eb1b23ddb6d38950e8b5b2a65801713a48c9dbe9a3ca  scripts/profile_step_cost.py  docs  644
 795123ded74b4bd0e7a12e13c5c09f47f4780f28c063b1c4328c5f733638cc9e  scripts/progress_feed.py  docs  644
 eca0c619973240d88c3451de6e97d099505e62a44cf3d7ecf9f4538c6350c62f  scripts/prove_resume.sh  docs  644
-953f8c9a5e502f90ff53a2b4514d2c432eb0f4a61e8d99b1650ff8acb37b99af  scripts/reachability.py  docs  644
+6dafd639734d95ff8a198bf01099968edee85762387b255d5fa18bbdc925afd3  scripts/reachability.py  docs  644
 f00fac35bc17d8f4c43707844c0d1f750285565f5ac55e1d46e03ed6d5f03e00  scripts/read_lr_probe.py  docs  644
 94cfdfde9e8dcfdaa9089b4e49060d0ea58457d2bced59c73ed23489041b6f31  scripts/read_resume_proof.py  docs  644
 52d42096869d93261267eb81a018cf4ef83cae11b4c44537d313aadc3d7da471  scripts/rehearse_cursor.py  docs  644
