@@ -2075,7 +2075,13 @@ def _ckpt_names(text):
                                      for n in m.group(2).split(",")),
                   text)
     names = set()
-    for tok in re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", text):
+    # (?<![A-Za-z0-9_.]) -- the token must START a name, not sit inside a longer one.
+    # Without it, preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl mints a checkpoint called
+    # ckpt_p200m_4b_0902.pt.en that has never existed, and the fact citing that prediction
+    # file goes red forever with no action available. The two guards were in direct
+    # tension: cited_artifacts_attested REQUIRES the artifact's basename in the fact, and
+    # that basename embeds a checkpoint name by naming convention (fb, 2026-09-03).
+    for tok in re.findall(r"(?<![A-Za-z0-9_.])ckpt_[\w.]+?\.pt[\w.]*", text):
         for ext in (".jsonl", ".txt", ".md"):
             if tok.endswith(ext):
                 tok = tok[: -len(ext)]
