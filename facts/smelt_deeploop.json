@@ -1,0 +1,104 @@
+{
+ "facts": [
+  {
+   "id": "smelt.identity",
+   "value": "SMELT: Scaling Laws for Compute-Matched MoE Looped Transformers, arXiv 2609.01343, submitted 2026-09-01, Wang/Zhang/Luo/Wu/Liu/Liu/Huang/Yan/Li (9 authors). SMELT = Sparse MoE Transformer, middle layers Loop Twice: the middle 50% of physical layers execute twice per forward; every layer is a sparse MoE FFN routing top-8 experts; GQA with smaller head size at higher GQA ratio holds KV cache within 4% of baseline; every sublayer update inside the looped span is scaled by 1/r (1/2) to stop correlated weight-tied updates inflating the residual stream.",
+   "measured": "2026-09-03",
+   "source": "arXiv 2609.01343v1 abstract + Sec. architecture, fetched 2026-09-03",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "single paper, 2 days old at fetch; no independent replication",
+   "boundary": "architecture description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "smelt.ce_gain",
+   "value": "Compute-matched CE gain (fraction of training FLOPs saved at equal loss), cell-bootstrap 95% intervals: 1e20 FLOPs: S85% 10.0% [1,22], S95% 7.8% [3,15], S97% 6.8% [4,14]; 1e21: 18.0% [8,28] / 15.8% [10,25] / 14.7% [8,25]; 1e22 (extrapolated beyond fit window): 23.5% [8,42] / 20.9% [0,48] / 19.6% [0,51]. Gain grows ~8pp per 10x compute; sparsity affects level not growth rate. Headline 6.8-18.0% is the 1e20-1e21 row range.",
+   "measured": "2026-09-03",
+   "source": "arXiv 2609.01343v1 Table (CE Gain) + abstract",
+   "config": {"source_type": "paper-reported", "fit_window": "1.3e19-2.2e21 FLOPs, 144 sparse endpoints"},
+   "uncertainty": "intervals at 1e20 include 1-4pp lower bound; 1e22 row is extrapolation with intervals including 0",
+   "boundary": "measured at 100M-1.6B active params, 205B stable training tokens, internal corpus, internal Baseline family",
+   "status": "recorded"
+  },
+  {
+   "id": "smelt.scaling_law",
+   "value": "L(F,S,D) = E + A(1-S)^b/F^a + K/D^c. Baseline: E=1.4439, a=0.3703, b=0.1530, c=0.6594, RMSE 0.00554. SMELT: E=1.4493, a=0.3892, b=0.1460, c=0.7011, RMSE 0.00952. Frontier exponent gamma=ac/(a+c): 0.237 baseline vs 0.250 SMELT (5.5% higher). E gap 0.005 nats is below either fit RMSE (noise). Compute-optimal TPP at C=1e21: 56-91 across sparsities vs ~20 Chinchilla-dense; SMELT within 6% of Baseline TPP, intervals overlap — savings come from lower loss at equal allocation, not reallocation.",
+   "measured": "2026-09-03",
+   "source": "arXiv 2609.01343v1 scaling-law table + TPP analysis",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "E floor difference within fit noise, not a claimed asymptotic gap",
+   "boundary": "fit window 1.3e19-2.2e21 FLOPs; largest physical config 54B non-embedding (1.6B active, S97%)",
+   "status": "recorded"
+  },
+  {
+   "id": "smelt.ablation_and_downstream",
+   "value": "Loop-span sweep (200M, S85%): 0 layers 1.9445, 2: 1.9384, 4: 1.9275, 6 (50%): 1.9257, 8: 1.9374, 10: 1.9413, 12 (full): 1.9322 — middle half is the optimum, full-stack looping regresses. Loop count: 1x 1.9445 / DCLM Core 24.92; 2x 1.9257 / 27.57; 3x 1.9385 / 27.15; 4x 1.9360 / 27.30 — 2x optimal because matched FLOPs force a thinner model at higher counts. Downstream: DCLM Completion won 96/96 matched pairs, DCLM Core 83/96, MMLU 29/30 (pairs with Baseline >=10pp above chance). Domain CE gain at 1e21, S95%: Code 20.4% > Finance 16.8% > Math/STEM 16.6% > Knowledge 14.9% > Web 14.8%. Length: gain on the four longest buckets (512-4096 tok) is 1.52x the four shortest; Baseline controls stay flat. ICL: few-shot gap 0.9pp at k=0 widening to 1.9pp with demonstrations; Dyck k=32: 29.8% vs 26.4%. Mechanism: attention sink nearly vanishes on the second visit, mass redirected to content-relevant tokens; Q/K stay similar across visits while V diverges; top-8 expert overlap across visits drops from ~8 at S=0 to 2-3 at S97% (still far above random-routing expectation).",
+   "measured": "2026-09-03",
+   "source": "arXiv 2609.01343v1 ablations, downstream, mechanism sections",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "each ablation trained once — SE reflects evaluation-seed variability, not training-run variability (authors' own caveat)",
+   "boundary": "200M-scale ablations; downstream at up to 1.6B active",
+   "status": "recorded"
+  },
+  {
+   "id": "smelt.stateful_architectures",
+   "value": "SMELT does not discuss stateful/linear/recurrent-state attention, Mamba-style models, or anything KDA-like. Only standard softmax attention with GQA throughout; KV cache appears solely as a matching budget (held within 4%). The only recurrence is weight-tied block-level looping. How a recurrent state behaves across loop visits is unanswered by the paper.",
+   "measured": "2026-09-03",
+   "source": "arXiv 2609.01343v1 full-text extraction, section-by-section check",
+   "config": {"source_type": "paper-reported (absence)"},
+   "uncertainty": "absence verified on v1 text; v2 could add it",
+   "boundary": "the paper's evidence does not cover KDA/stateful hybrids — that cost is ours to pay",
+   "status": "recorded"
+  },
+  {
+   "id": "deeploop.identity",
+   "value": "DeepLoop: Depth Scaling for Looped Transformers, arXiv 2607.13491, v1 2026-07-15, v2 2026-08-06, Li/Zhang/Guo/Gu/Wang. Post-LN DeepNorm block + inner (branch-input) RMSNorm; per-visit recurrence x_{i+1} = Norm(alpha x_i + f_j(Norm(x_i); phi_j)). Scaling rule: alpha=(2N)^{1/2} skip scale, beta=(8N)^{-1/2} per-matrix init gain (applied once at init, not a runtime multiplier), N=K*R unrolled depth, K physical blocks, R loop rounds. beta/alpha = 1/(4N) vs DeepNorm's 1/(2 sqrt(N)).",
+   "measured": "2026-09-03",
+   "source": "arXiv 2607.13491v2 Sec. 3, fetched 2026-09-03",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "constants (2,8) inherited from DeepNorm for two-sublayer decoders; only the exponent changes 1/4 -> 1/2",
+   "boundary": "first-order, init-time perturbation analysis; not a training-dynamics proof",
+   "status": "recorded"
+  },
+  {
+   "id": "deeploop.kappa_and_exponent",
+   "value": "Visit-alignment coefficient kappa_R = max_j ||sum_r U_{r,j}|| ||sum_r G_{r,j}|| / (R C_U C_G (beta/alpha)^2), 0 <= kappa_R <= R: O(1) when visits decorrelate, Theta(R) when fully aligned. Perturbation bound ||dF|| <= C'' M kappa_R (beta/alpha)^2 with stability condition M kappa_R (beta/alpha)^2 = O(1). Proposition 3.1: with kappa_R = Theta(R^gamma), uniform stability as R grows iff p >= (1+gamma)/4 for the family alpha=(cN)^p, beta=(dN)^{-p}. Decorrelated (gamma=0): p>=1/4 recovers DeepNorm. Aligned at fixed physical depth (gamma=1): p>=1/2 — DeepNorm's p=1/4 leaves residual growth Theta(R). DeepLoop is the minimal conservative correction for tied depth. kappa_R is not measured directly (future work); p=1/2 may be overly conservative if decorrelation can be induced.",
+   "measured": "2026-09-03",
+   "source": "arXiv 2607.13491v2 Eq. 13-15, Proposition 3.1",
+   "config": {"source_type": "paper-reported (theory)"},
+   "uncertainty": "worst-case bound; empirical alignment unknown",
+   "boundary": "assumes standard residual stream; does not cover AttnRes-style softmax-weighted residuals",
+   "status": "recorded"
+  },
+  {
+   "id": "deeploop.gpt2_results",
+   "value": "GPT-2 small (768d, L12) and medium (1024d, L24), FineWeb-Edu 50B tokens, 100K steps, ctx 1024, batch 480, H200, single seed. Val loss final: small R=1 2.8627/2.8631 (base/DeepLoop), R=3 2.8077/2.7917 (-0.0160), R=5 2.7910/2.7679 (-0.0231), R=7 2.7700/2.7514 (-0.0186). Medium: R=1 2.6253/2.6264, R=3 2.5779/2.5627 (-0.0153), R=5 2.5640/2.5444 (-0.0196), R=7 2.5558/2.5280 (-0.0278). Tied at R=1; DeepLoop strictly better at every R>=3 both scales. Downstream medium 8-task: 0-shot avg +0.43/+1.06/+0.93 at R=3/5/7; wins 7/8 tasks at R=7. ARC-AGI-1 (HRM, separate config): voted accuracy +3.25pp at K=2 (6 sigma over per-seed std 0.5pp).",
+   "measured": "2026-09-03",
+   "source": "arXiv 2607.13491v2 experiments",
+   "config": {"source_type": "paper-reported", "hardware": "H200", "seeds": 1},
+   "uncertainty": "single-seed runs; authors state multi-seed needed for run-to-run variance",
+   "boundary": "GPT-2 dense, no MoE, no AttnRes, ctx 1024, 50B tokens — architecture and data regime differ from ours",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.attnres_loop_cost_derived",
+   "value": "AttnRes Full source reads = n(n+1)/2 with n=2L+1 (measured L=2/3/4/12 -> 30/56/90/650, gate_failure_shapes.md:833): 325 at L12, 2145 at L32 (6.6x). If looping executes the middle half twice, effective executed depth L12->18, L32->48; if AttnRes attends over all EXECUTED sublayers, n=2L_exec+1 gives 703 reads at L12-loop2x (2.16x the 325) and 4657 at L32-loop2x (2.17x). At tilerl's measured 19.7% wallclock share for AttnRes at L12 (2026-09-03, not yet in facts/), a linear read-count extrapolation puts the looped share near 42%. The 2.16-2.17x factor is derived from the measured n(n+1)/2 law, not measured on a looped model; whether AttnRes attends across loop visits is an architecture decision, not a given.",
+   "measured": "2026-09-03",
+   "source": "derived: gate_failure_shapes.md:833 (measured read law) + SMELT middle-half-loop-2x (arXiv 2609.01343); 19.7%/37.8% wallclock at L12/L32 per tilerl 2026-09-03 (peer-reported, not yet landed in tree)",
+   "config": {"source_type": "derived + peer-reported"},
+   "uncertainty": "wallclock extrapolation assumes reads dominate AttnRes cost and share scales linearly with read count; the fused kernel (3ed56306) changes the constant, not the law",
+   "boundary": "the O(L^2) law is measured; the looped numbers are derived; the cross-visit attention semantics are undecided",
+   "status": "recorded"
+  },
+  {
+   "id": "repo.tpp_and_step_profile",
+   "value": "Our token/param ratios: 200M@4B tokens = 20 tok/param (19.5 measured at 3.24B, data_scaling_design.md:9); 500M@20B = 40 tok/param. Chinchilla-dense optimum ~20; SMELT's compute-optimal TPP at 1e21 FLOPs is 56-91 (smelt.scaling_law). H20 step profile (200M, 4 cards, 3-step Chrome trace, facts/efficiency.json:2361): wall 1613.47 ms, gemm 825.04 (50.8%), elementwise_cast 497.24 (30.6%), fla_kda 171.94 (10.6%), flash_mla 46.39 (2.9%), nccl 36.85 (2.3%), idle 1.2%. The 30.6% elementwise share is already at the bandwidth roof; looping adds activation traffic to this saturated side. nccl 2.3% is dense all-reduce, not MoE all-to-all — the all-to-all cost on H20 is unmeasured.",
+   "measured": "2026-09-03",
+   "source": "data_scaling_design.md:9; facts/efficiency.json:2361; arXiv 2609.01343 TPP table",
+   "config": {"source_type": "our-measurement + paper-reported"},
+   "uncertainty": "TPP 56-91 is at 1e21 FLOPs, 5-50x our 200M budget; the ratio gap is the robust part, the exact number is not",
+   "boundary": "MoE all-to-all on our interconnect has no measurement anywhere in this repo",
+   "status": "recorded"
+  }
+ ]
+}
