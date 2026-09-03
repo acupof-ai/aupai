@@ -649,9 +649,24 @@ def reconcile_command(cmd, prov, flags=RECIPE_FLAGS):
     both directions -- "a parameter was omitted" does not set severity, and "the
     effective value is correct" does not prove the parameter was passed.
     """
+    # `--no-X` and `--no_X` COUNT AS PRESENT (b0, 2026-09-03). train.py:1992 declares
+    # grad_ckpt, attn_res, attn_res_dyn_q and fone as BooleanOptionalAction, whose whole
+    # point is that absent and False are different values: absent leaves the Cfg default,
+    # `--no-grad_ckpt` writes False. The old pattern's `(?<![\w-])` lookbehind rejected
+    # the `--no-` form, so a command that turned a switch off EXPLICITLY was reported
+    # identically to one that never mentioned it -- "justified but NOT in the command,
+    # falls back to a Cfg default silently". It does not fall back; it was passed.
+    #
+    # Found by running the data leg's real command through this function before launch:
+    # the 206M leg runs uncheckpointed, so its command carries --no-grad_ckpt, and the
+    # gate called it missing. That is shape 140 exactly -- one signal for two worlds, and
+    # the harmless one (explicitly off) is the one that gets the alarm, so the alarm has
+    # to be waved past, which is how the real omission gets waved past with it.
+    optional_prefix = r"(?:no[-_])?"
     missing, unjustified = [], []
     for f in flags:
-        present = re.search(rf"(?<![\w-])--{re.escape(f)}(?![\w-])", cmd) is not None
+        present = re.search(rf"(?<![\w-])--{optional_prefix}{re.escape(f)}(?![\w-])",
+                            cmd) is not None
         justified = str(prov.get(f, "")).strip() != ""
         if justified and not present:
             missing.append(f)
@@ -1241,6 +1256,38 @@ def selftest():
             for r in rows:
                 f.write(json.dumps(r) + "\n")
     reversible["launch_command"] = (dl, ml, _fixcmd)
+
+    # BooleanOptionalAction: `--no-X` is PRESENT, and a real omission is still caught.
+    # Called directly rather than through a world, for reconcile_command's own reason --
+    # it is pure, so a world would add a filesystem that has nothing to do with the
+    # property. Both directions asserted, because the fix is a widened regex and a regex
+    # widened too far reports every flag present and every gate green (b0, 2026-09-03).
+    _sw = "grad_ckpt"
+    if _sw in RECIPE_FLAGS:
+        _prov = {f: "runs/experiments.jsonl:some_run" for f in RECIPE_FLAGS}
+        _full = " ".join(f"--{f}" for f in RECIPE_FLAGS)
+        for _form in (f"--no-{_sw}", f"--no_{_sw}"):
+            _cmd = _full.replace(f"--{_sw}", _form)
+            _miss, _ = reconcile_command(_cmd, _prov)
+            if _sw in _miss:
+                bad.append(
+                    f"reconcile_command calls {_sw} missing from a command carrying "
+                    f"{_form} -- BooleanOptionalAction's explicit OFF reads as an "
+                    f"omission, so 'turned it off on purpose' and 'never passed it, "
+                    f"took the Cfg default' produce one signal (shape 140)")
+        # ...and the omission it exists to catch must still fire. A regex that matched
+        # anything containing the flag name would pass the two cases above by accident.
+        _miss_real, _ = reconcile_command(_full.replace(f"--{_sw}", ""), _prov)
+        if _sw not in _miss_real:
+            bad.append(f"reconcile_command does NOT report {_sw} missing when the "
+                       f"command omits it entirely -- the --no- widening swallowed the "
+                       f"omission this gate exists for")
+        # A flag whose NAME CONTAINS another flag's name must not answer for it: `--no_`
+        # plus a substring is the way a widened alternation starts matching neighbours.
+        _miss_sub, _ = reconcile_command(_full.replace(f"--{_sw}", f"--outer_{_sw}"), _prov)
+        if _sw not in _miss_sub:
+            bad.append(f"--outer_{_sw} satisfied the check for --{_sw}: the pattern "
+                       f"matches inside a longer flag name")
 
     # Citation forms, exercised on the REAL tree rather than in a temp world, because both
     # properties are about git and a world has no .git: `git cat-file -e` returns 128 there
