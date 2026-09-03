@@ -76,9 +76,36 @@ def _cmdline(pid):
         return ""
 
 
+def _proc_stat(pid, table=None):
+    """The process state letter for pid ('Z', 'S', 'R', ...), or "" if unknown.
+
+    `ps -o stat=` is the reader, because it is the only one that answers the question. See
+    _alive: signal 0 and /proc both report a ZOMBIE as present.
+    """
+    try:
+        r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip().split()[0] if r.stdout.strip() else ""
+
+
+def _is_zombie(pid):
+    """Whether pid is a reaped-pending corpse.
+
+    MEASURED on the pod 2026-09-03 against b0's pid 3891063, `Zs`, etime 07:02: os.kill(pid, 0)
+    returned ALIVE and /proc/3891063 was present. Reproduced locally with a real fork+exit.
+    So _alive() is True for a zombie and claims() files it as LIVE, which means the card stays
+    refused after the job ended -- the same trap as fb's 31-minute wait on `[ -d /proc/<pid> ]`
+    (AGENTS.md, Pod). ps's state letter is the only reader that distinguishes the two.
+    """
+    return _proc_stat(pid).startswith("Z")
+
+
 def _alive(pid):
     """Whether pid exists IN THIS NAMESPACE. signal 0, not /proc: this also has to work on
-    a Mac, where the selftest runs."""
+    a Mac, where the selftest runs.
+
+    True for a ZOMBIE: see _is_zombie. Callers that mean "is the job running" must ask both."""
     try:
         os.kill(pid, 0)
     except OSError as e:
@@ -349,6 +376,30 @@ def status():
     # whether the cmdline mentions python -- the pod's wrapper bash mentions torchrun and the
     # master port, which is what made every substring test bind to it.
     table = _ps_table()
+    # ZOMBIE: the third claim/card disagreement, and the only one whose cause is INVISIBLE to
+    # every other line here. The claim reads healthy -- _alive() is True, the pid resolves, the
+    # cmdline is right -- and the job ended minutes ago. MEASURED on the pod 2026-09-03: pid
+    # 3891063 `Zs`, os.kill(pid,0) ALIVE, /proc entry present, its card at 3 MiB. e1 waited ten
+    # minutes on it and its QUEUE_TIMEOUT would have reported "the holder is still running".
+    #
+    # NOT auto-broken, and not filed as stale. claims() deletes stale files inside acquire's
+    # loop, so classifying a zombie as stale would break a live claim during a slow startup --
+    # the disagreement this file explicitly says not to reconcile. A human releases; acquire
+    # keeps refusing until they do. Reported per 6e's ruling 2026-09-03, reviewer e1.
+    #
+    # A zombie is the GUARANTEED outcome of the pod's launch shape, not an anomaly (b0): a
+    # `setsid python3 ... &` whose wrapper exits immediately leaves nobody to wait() the child,
+    # so every such job ends as an unreapable corpse. Hence a printed state, not an incident.
+    zombies = []
+    for c in live:
+        p = c.get("pid")
+        if isinstance(p, int) and _is_zombie(p):
+            zombies.append((c.get("name"), p, _proc_stat(p), c.get("acquired"), c.get("cards", [])))
+    for name, p, st, since, cards in zombies:
+        lines.append(f"ZOMBIE {name} holds cards {','.join(cards)} on pid {p}, state {st!r} -- the "
+                     f"process is a corpse, so the job ended; claimed since {since}. "
+                     f"os.kill(pid,0) and /proc BOTH report it alive, `ps -o stat=` does not. "
+                     f"A human releases: `card_claim.py release --name {name}`")
     orphan_shells = []
     for c in live:
         p = c.get("pid")
@@ -392,6 +443,10 @@ def status():
         dup = dict(dup)
         for name, p in orphan_shells:
             dup[f"orphan-shell:{name}"] = [f"pid {p}"]
+    if zombies:
+        dup = dict(dup)
+        for name, p, st, _since, _cards in zombies:
+            dup[f"zombie:{name}"] = [f"pid {p} {st}"]
     return orphans, dup, lines
 
 
@@ -415,16 +470,27 @@ def _selftest():
     d = tempfile.mkdtemp(prefix="claim_")
     CLAIM_DIR = d
 
-    ok, msg = acquire("runA", ["0", "1"])
+    # pid=os.getpid() ON EVERY IN-PROCESS acquire BELOW, and it is not cosmetic. The default
+    # holder is os.getppid(), so these cases bound to whatever invoked the selftest -- python
+    # when run from a wrapper (22/22 green) and the SHELL when a human types
+    # `python3 scripts/card_claim.py --selftest`, where acquire correctly refuses a shell and
+    # the first four cases go red. Measured 2026-09-03 at 8393d579, before this commit's edits:
+    # red from zsh, green from python, same code. A selftest whose answer depends on its caller
+    # is testing the caller. This process is a python process by construction, so naming it
+    # removes the dependency without weakening any case -- the shell-refusal behaviour has its
+    # own dedicated world further down, built with a real shell on purpose.
+    me = os.getpid()
+
+    ok, msg = acquire("runA", ["0", "1"], pid=me)
     _case(ok, f"a free card set is claimable ({msg})")
 
     # The whole point: the second acquirer must NOT get overlapping cards.
-    ok2, msg2 = acquire("runB", ["1", "2"], wait=0)
+    ok2, msg2 = acquire("runB", ["1", "2"], wait=0, pid=me)
     good = not ok2 and "claimed by" in msg2
     _case(good, f"an overlapping set is refused, not shared ({msg2})")
 
     # Disjoint sets coexist -- a lock that blocks unrelated work gets deleted by hand.
-    ok3, msg3 = acquire("runC", ["5", "6"], wait=0)
+    ok3, msg3 = acquire("runC", ["5", "6"], wait=0, pid=me)
     _case(ok3, f"a disjoint set is granted ({msg3})")
 
     live, stale = claims()
@@ -461,7 +527,7 @@ def _selftest():
     good = [s.get("name") for s in stale] == ["runA"] and len(live) == 1
     _case(good, f"a claim whose pid is gone reads as stale ({stale and stale[0]['why']})")
 
-    ok4, msg4 = acquire("runD", ["0", "1"], wait=0)
+    ok4, msg4 = acquire("runD", ["0", "1"], wait=0, pid=me)
     _case(ok4, f"a stale claim's cards are re-acquirable ({msg4})")
 
     ok5, _ = release("runD")
@@ -607,6 +673,55 @@ def _selftest():
                     pass
             tree.kill()
             tree.wait()
+
+    # ------------------------------------------------------------------ 6e ruling 2026-09-03
+    # ZOMBIE, the third disagreement. A REAL zombie, made with fork+exit and deliberately not
+    # reaped -- NOT a fabricated dead pid, which is the world that cannot tell this defect from
+    # its absence: a fabricated pid is gone, reads stale, and the zombie case is precisely the
+    # one where every liveness reader says ALIVE. Both directions, live claim first.
+    zpid = os.fork()
+    if zpid == 0:
+        os._exit(0)
+    try:
+        # NEGATIVE FIRST, on the live process this test process itself is: no ZOMBIE line for a
+        # claim whose pid is running. Without this the positive could pass on a status() that
+        # printed ZOMBIE for everything.
+        with open(os.path.join(CLAIM_DIR, "zlive.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "zlive", "cards": ["7"], "pid": os.getpid(),
+                       "cmdline": _cmdline(os.getpid()), "acquired": _now()}, fh)
+        _, dup_z, lines_z = status()
+        _case(not any("ZOMBIE" in x for x in lines_z),
+              "no ZOMBIE for a claim whose pid is genuinely running (the negative case)")
+        release("zlive")
+
+        # The defect this fixes, asserted as a fact about the readers rather than trusted:
+        # every liveness test in this file says the corpse is alive.
+        time.sleep(0.3)
+        st = _proc_stat(zpid)
+        _case(st.startswith("Z") and _alive(zpid),
+              f"a zombie reads state {st!r} while _alive() says True -- os.kill(pid,0) cannot "
+              f"see the difference, which is why claims() filed b0's corpse as live")
+
+        with open(os.path.join(CLAIM_DIR, "zdead.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "zdead", "cards": ["7"], "pid": zpid,
+                       "cmdline": "python3 rescore.py", "acquired": _now()}, fh)
+        live_z, stale_z = claims()
+        _case(any(c["name"] == "zdead" for c in live_z)
+              and "zdead" not in [s.get("name") for s in stale_z],
+              "the zombie claim is still LIVE, not stale -- so acquire keeps refusing the card "
+              "and nothing is auto-broken")
+        ok_z, msg_z = acquire("zother", ["7"], wait=0, pid=me)
+        _case(not ok_z and "claimed by" in msg_z,
+              f"and the card is still refused to a second acquirer ({msg_z[:52]})")
+        _, dup_z, lines_z = status()
+        said_z = [x for x in lines_z if "ZOMBIE" in x]
+        _case(bool(said_z) and any("zdead" in x for x in said_z),
+              "status names it: ZOMBIE with the pid state and the claim age")
+        _case(any(k.startswith("zombie:") for k in dup_z),
+              "and it drives a nonzero exit, not a printed line nobody acts on")
+        release("zdead")
+    finally:
+        os.waitpid(zpid, 0)
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")

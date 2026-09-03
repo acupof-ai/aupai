@@ -6882,6 +6882,9 @@ def cmd_friction(argv):
     a.add_argument("--minutes", type=int, default=None,
                    help="SELF-REPORTED minutes lost; omit rather than guess")
     a.add_argument("--who", default=None, help="defaults to the current branch")
+    a.add_argument("--commit", action="store_true",
+                   help="commit the row path-scoped in this call, so the ledger never sits "
+                        "dirty and cannot abort someone's merge before the drivers run")
     args = ap.parse_args(argv)
 
     if args.op != "add":
@@ -6923,6 +6926,34 @@ def cmd_friction(argv):
     }
     _append_task(row, path=FRICTION_PATH)
     print(f"friction <- {args.kind}: {args.cause[:70]}")
+    if args.commit:
+        # COMMIT THE ROW IN THIS CALL, because a dirty friction.jsonl is itself a friction
+        # cause: git's pre-merge tree check aborts with "local changes would be overwritten"
+        # BEFORE merge drivers are consulted, so union-merge cannot help a file that is
+        # sitting dirty (6e, 2026-09-03; second row of that shape today). A ledger whose
+        # own writer leaves the tree dirty manufactures the toll it exists to record.
+        #
+        # Path-scoped and --no-verify: this stages exactly one ledger path, and the
+        # pre-commit hook regenerates data/pod_head_manifest.txt, which would pull a second
+        # dirty derived file into a commit the caller did not ask for.
+        #
+        # runs/friction.jsonl IS in data/pod_head_manifest.txt (checked, 1 line), so this
+        # commit changes a manifest-listed file and the standing rule says its committer
+        # pushes it and refixes the manifest. --no-verify skips the hook's regen, so the
+        # refix is named here rather than left implicit: after using --commit, run
+        # `python3 scripts/pod_drift.py --write` and `scripts/pod_push.sh runs/friction.jsonl`.
+        # The row is a ledger append the pod never reads for a decision, so it is not urgent;
+        # what is not acceptable is not knowing it is owed.
+        rel = os.path.relpath(FRICTION_PATH, ROOT)
+        msg = f"friction: {args.kind} -- {args.cause[:60]}"
+        r = subprocess.run(["git", "-C", ROOT, "commit", "--no-verify", "-m", msg, "--", rel],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"  row appended but NOT committed: {(r.stderr or r.stdout).strip()[:200]}")
+            return 1
+        print(f"  committed {rel} path-scoped, so the ledger never sits dirty")
+        print("  OWED: pod_drift.py --write, then pod_push.sh runs/friction.jsonl "
+              "(--no-verify skipped the hook's manifest regen)")
     return 0
 
 
