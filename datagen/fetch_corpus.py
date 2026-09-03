@@ -248,7 +248,29 @@ def _manifest_cot_skywork_or1():
 
 
 def _manifest_cot_ot3():
-    return _manifest_hf_tree("open-thoughts/OpenThoughts3-1.2M")
+    """32 of 120 slices for the cot_ot3 role (aupai-6e 2026-09-03): depends on
+    NO tree API -- the filenames follow the pattern train-000NN-of-00120.parquet,
+    so the list is built from the pattern, then each resolve path is probed
+    (curl -4 -I, hf-mirror first, modelscope second) and the one that answers 200
+    is used. fetch_stats records which host served each file during the download."""
+    import subprocess
+    base_hf = "https://hf-mirror.com/datasets/open-thoughts/OpenThoughts3-1.2M/resolve/main/data/"
+    base_ms = "https://www.modelscope.cn/api/v1/datasets/open-thoughts/OpenThoughts3-1.2M/repo?FilePath=data/"
+    out = []
+    for i in range(32):
+        name = f"train-{i:05d}-of-00120.parquet"
+        for base, host in ((base_hf, "hf-mirror.com"), (base_ms, "www.modelscope.cn")):
+            url = f"{base}{name}"
+            probe = subprocess.run(["curl", "-4", "-sI", "-m", "10", url],
+                                   capture_output=True, text=True, timeout=12)
+            if probe.returncode == 0 and probe.stdout.startswith("HTTP/") and " 200" in probe.stdout.split("\r\n")[0]:
+                out.append((name, url, 0))
+                break
+        else:
+            print(f"  {name}: no host answered 200 (hf-mirror/modelscope) -- skipped", file=__import__("sys").stderr, flush=True)
+    if not out:
+        raise SystemExit("REFUSING: none of the 32 OT3 slices resolved on hf-mirror or modelscope")
+    return out
 
 
 def _manifest_cot_openr1():
