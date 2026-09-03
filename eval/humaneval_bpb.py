@@ -227,6 +227,12 @@ def main():
     ap.add_argument("--preds", help="jsonl, appended per task; rerun resumes from it")
     ap.add_argument("--out", help="summary json")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--loop", nargs=2, type=int, metavar=("LO", "HI"),
+                    help="N7 Stage A: run blocks LO..HI twice at inference (eval/loop_wrapper.py, "
+                         "AttnRes option 3). Ours only -- refuses with --hf, since the wrapper "
+                         "implements THIS model's source ledger and an HF model has no _body to "
+                         "patch. The summary records loop_blocks so a looped row cannot be read "
+                         "as the unlooped one it is compared against.")
     a = ap.parse_args()
 
     if a.selftest:
@@ -244,6 +250,17 @@ def main():
                  f"published metric and is not.")
 
     m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
+    if a.loop:
+        if a.hf:
+            sys.exit("REFUSING: --loop with --hf. loop_wrapper implements OUR AttnRes source "
+                     "ledger; an HF model has no _body and no ledger, so there is nothing the "
+                     "ruling applies to and a silently-unlooped row would be reported as looped.")
+        # Patched on the instance the scorer already built, so the looped arm goes through this
+        # same solution_bpb, tokenizer and byte divisor as the unlooped arm.
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from loop_wrapper import patch_body  # noqa: PLC0415
+        patch_body(m.model, tuple(a.loop))
+        print(f"looped: blocks {a.loop[0]}..{a.loop[1]} run twice (AttnRes option 3)", flush=True)
     print(f"Loaded {a.ckpt}: {m.n_params / 1e6:.2f}M params | tasks {len(tasks)}", flush=True)
 
     done = {}
@@ -254,6 +271,18 @@ def main():
                     r = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                # THE RESUME KEY MUST CARRY THE INTERVENTION. Rows are keyed by task_id, and a
+                # looped run resuming from an unlooped --preds would reuse every unlooped row and
+                # report it as looped -- the two arms produce identically-shaped rows for the same
+                # task_id. A row whose loop stamp disagrees with this run REFUSES rather than being
+                # skipped, because silently rescoring some tasks and reusing others gives a mean
+                # over a mixture of two models.
+                if r.get("loop_blocks") != (list(a.loop) if a.loop else None):
+                    sys.exit(
+                        f"REFUSING: {a.preds} holds rows scored with loop_blocks="
+                        f"{r.get('loop_blocks')} and this run is loop_blocks="
+                        f"{list(a.loop) if a.loop else None}. Resuming would mix two models under "
+                        f"one mean. Use a separate --preds path per arm.")
                 done[r["task_id"]] = r
         print(f"resuming: {len(done)} tasks already in {a.preds}", flush=True)
 
@@ -263,7 +292,12 @@ def main():
         if r is None:
             bpb, err = solution_bpb(m, prompt, sol, a.max_ctx)
             r = {"task_id": tid, "bpb": bpb, "error": err,
-                 "n_bytes": len(sol.encode("utf-8"))}
+                 "n_bytes": len(sol.encode("utf-8")),
+                 # Stamped on EVERY row, including unlooped ones (None), so the resume check above
+                 # compares like with like. Files written before this field existed carry no
+                 # loop_blocks, and .get() reads them as None -- which is correct, because --loop
+                 # is introduced by this same change and no pre-stamp file can be looped.
+                 "loop_blocks": list(a.loop) if a.loop else None}
             if a.preds:
                 with open(a.preds, "a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -286,6 +320,7 @@ def main():
     result = {
         "ckpt": a.ckpt, "hf": a.hf, "n_tasks": len(vals), "n_tasks_total": len(tasks),
         "n_params": m.n_params,
+        "loop_blocks": list(a.loop) if a.loop else None,
         "gold_bpb_per_task_mean": per_task,
         "gold_bpb_byte_weighted": byte_weighted,
         "total_solution_bytes": tot_bytes,
