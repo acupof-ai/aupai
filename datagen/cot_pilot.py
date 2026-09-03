@@ -32,13 +32,24 @@ def chain_of(schema, d):
     """Bind the multi-step reasoning chain per the schema-verified field map."""
     if schema == "openthoughts":
         for t in d.get("conversations") or []:
-            if t.get("from") == "assistant":
+            if t.get("from") in ("assistant", "gpt"):
                 return t.get("value") or "", ""
         return "", ""
     if schema == "skywork":
         # RL-Data: prompt (user) + reward_model.ground_truth (answer). No chain.
         ans = (d.get("reward_model") or {}).get("ground_truth") or ""
         return "", ans
+    if schema == "openr1":
+        # verified reasoning: problem + generations (long traces) + answer + correctness_*.
+        # chain = first correctness-verified generation (fallback: longest one).
+        gens = d.get("generations") or []
+        cmv = d.get("correctness_math_verify") or []
+        if gens:
+            for g, ok in zip(gens, cmv):
+                if ok and g:
+                    return g, (d.get("answer") or "")
+            return max(gens, key=len, default=""), (d.get("answer") or "")
+        return d.get("solution") or "", (d.get("answer") or "")
     return "", ""
 
 
@@ -67,7 +78,7 @@ def checks_pass(schema, d):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--parquet", required=True)
-    ap.add_argument("--schema", choices=["openthoughts", "skywork"], required=True)
+    ap.add_argument("--schema", choices=["openthoughts", "skywork", "openr1"], required=True)
     ap.add_argument("--source", required=True)
     ap.add_argument("--target_tokens", type=float, default=4.5e9)
     ap.add_argument("--max_rows", type=int, default=0, help="cap row sample for the pilot (0 = full slice)")
