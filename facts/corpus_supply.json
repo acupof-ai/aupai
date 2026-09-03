@@ -77,7 +77,7 @@
    },
    "uncertainty": "exact for data/corpus/en_c4/ as of 2026-09-03; mix gap vs 5.5B = 0.70B",
    "status": "measured",
-   "boundary": "supersedes the previous 2.40B entry, which read en_c4_stage2/ (83 shards, 3/83 byte-extrapolated). RETRACTED to correction: the 30B domain is en_c4/, not stage2. count_code_dirs across both dirs gives en_c4/=4.801B exact; stage2 exact pending",
+   "boundary": "supersedes the previous 2.40B entry, which read en_c4_stage2/ (83 shards, 3/83 byte-extrapolated). RETRACTED to correction: the 30B domain is en_c4/, not stage2. count_code_dirs across both dirs gives en_c4/=4.801B exact; stage2 exact pending en_c4_stage2/ = 2,397,256,429 exact, 0/3,887,759 docs content-identical to en_c4/ (subset check, same field shape) -> NOT a subset, NOT a deletion candidate; its 2.397B is separate same-label supply not to double-count if both feed a mix",
    "guard_phrases": [
     "en_c4 is unfetched",
     "en_c4 supply is 2.40B"
