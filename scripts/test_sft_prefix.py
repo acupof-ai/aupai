@@ -112,9 +112,26 @@ def main():
     check("the counter is released in a finally",
           "finally:\n                    _depth[0] -= 1" in src,
           "an exception inside the mixer would otherwise leave every later layer masked")
-    check("causal= is dropped when a mask_mod is passed",
-          'kw.pop("causal", None)' in src,
-          "interface.py:270 sets causal=False whenever mask_mod is not None")
+    # THE TRAINING PATH MUST NOT USE mask_mod AT ALL. Its forward is exact on SM 9.0 and its
+    # backward is wrong -- a mask_mod bitwise-identical to causal=True in the forward disagrees with
+    # a same-mask SDPA reference on 160 of 169 gradient tensors, norm ratio median 21.65
+    # (facts/efficiency.json#eff.flash_attn_cute_mask_mod_backward_wrong_sm90). Two 500-step arms
+    # diverged on it. So this checks the ABSENCE of the thing that broke, not the presence of the
+    # fix: a future edit that reintroduces mask_mod here would be silently wrong again, and every
+    # static gate would still pass.
+    check("the training path does not PASS mask_mod (its backward is wrong on SM 9.0)",
+          "mask_mod=" not in src,
+          "mask_mod's gradients are wrong on this build; use prefix_two_call. Tests for the "
+          "keyword ARGUMENT, not the word: the file discusses mask_mod in prose and must be able "
+          "to keep doing so")
+    check("the training path uses the two-call decomposition",
+          "prefix_two_call(" in src,
+          "the mask must be built from causal=True plus a causal=False prompt call")
+    # cu IS FORWARDED, not rebuilt. prefix_two_call needs the document boundaries model.py already
+    # computed; a second doc_cu_seqlens call here could disagree with the one the forward used.
+    check("cu_seqlens_q is taken from the call and refused when absent",
+          'kw.pop("cu_seqlens_q", None)' in src and "REFUSING: the prefix path needs cu_seqlens_q"
+          in src)
 
     # 5. THE ARM IS RECORDED ON Cfg, so the checkpoint says which mask trained it. Without this
     #    the prefix and causal arms write byte-different checkpoints with identical metadata --
