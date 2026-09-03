@@ -33,13 +33,18 @@ and the corpus streams past once. One pass, no index, no card.
 
     python3 scripts/e1_28_heldout_contamination.py            # the real run, on the pod
     python3 scripts/e1_28_heldout_contamination.py --selftest  # the known answers
+
+E1_28_WORKERS (default 32) sets the shard-parallel width. The serial version was measured at
+4.18 MB/s, cpu-bound fraction 1.00 on one core -- 10.7 h for the corpus on a 180-core box.
 """
 # restartable: the scan writes a per-domain checkpoint (runs/e1_28_progress.json) after each of the
 # nine domains and resumes from it, so an interrupt costs at most one domain rather than the whole
-# 160.97 GB pass. zh_web alone is 89.85 GB, so "just re-run it" would be an hour thrown away; the
-# hit set is a union over domains, which makes the resume exact rather than approximate.
+# 160.97 GB pass. zh_web alone is 89.85 GB over 909 shards; the hit set is a union over lines and so
+# over shards and domains, which is what makes both the resume and the shard-parallel scan exact
+# rather than approximate.
 import hashlib
 import json
+import multiprocessing
 import os
 import re
 import sys
@@ -100,6 +105,41 @@ def load_population():
     return rows, ids, fp
 
 
+#: Gram-hash key sets, set in the parent before the Pool forks so workers inherit them instead of
+#: receiving a copy per task. Only the KEYS travel: the id-bearing dicts stay in the parent, so a
+#: worker cannot report which items hit -- it reports which grams matched, and the parent maps back.
+_A_KEYS = frozenset()
+_Q_KEYS = frozenset()
+
+
+def _scan_shard(path):
+    """(lines, bytes, matched answer-gram hashes, matched question-gram hashes) for one shard.
+
+    Returns MATCHED HASHES rather than hit ids so the worker needs only the key sets, and returns
+    counts rather than accumulating anywhere: the parent sums them, and a worker that dies takes its
+    shard's counts with it rather than corrupting a shared total.
+    """
+    nl = nb = 0
+    a_m, q_m = set(), set()
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            nl += 1
+            nb += len(ln)
+            try:
+                obj = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            text = obj.get("content") or obj.get("text") or ""
+            if not text:
+                continue
+            for g in grams(words(text)):
+                if g in _A_KEYS:
+                    a_m.add(g)
+                if g in _Q_KEYS:
+                    q_m.add(g)
+    return nl, nb, a_m, q_m
+
+
 def main():
     if "--selftest" in sys.argv:
         return selftest()
@@ -156,6 +196,26 @@ def main():
         else:
             print(f"  ignoring {prog_path}: it is for fingerprint {pr.get('fingerprint')} n="
                   f"{pr.get('n')}, not {fp} n={N}")
+    # SHARD-PARALLEL, because the serial form was measured and it does not finish in a working day.
+    # /proc/<pid>/io on the first serial run: 376.4 MB of rchar in 90.0 s of wall with 90.0 s of CPU
+    # in the same window -- 4.18 MB/s, one core, cpu-bound fraction 1.00. 160.97 GB at that rate is
+    # 10.7 HOURS, on a box with 180 cores at load 27. The cost is not IO and not json: on a 16.4 MB
+    # sample, json.loads 0.05 s, tokenize 0.68 s, gram+hash 2.65 s (78%, of which the " ".join is
+    # 1.05 s). So the only lever that matters is running many shards at once.
+    #
+    # THE UNION IS WHAT MAKES THIS EXACT, and it is the same argument as the per-domain checkpoint
+    # above: an item hits if ANY 13-gram of its answer appears ANYWHERE, so the result is a set union
+    # over lines and therefore over shards, and shard order and grouping cannot change it. This would
+    # NOT hold for a running mean, a first-hit location, or a per-shard rate.
+    #
+    # Workers return MATCHED GRAM HASHES, not ids: the id-bearing dict (1.18M grams -> id sets) stays
+    # in the parent and each worker carries only the frozenset of hashes to test membership against
+    # (~1.18M 8-byte keys). A match is rare, so the returned sets are tiny.
+    global _A_KEYS, _Q_KEYS
+    _A_KEYS, _Q_KEYS = frozenset(a_index), frozenset(q_index)
+    workers = int(os.environ.get("E1_28_WORKERS", "32"))
+    print(f"scanning with {workers} worker process(es) over shards (serial was 4.18 MB/s measured, "
+          f"10.7 h for the corpus)", flush=True)
     for dom in domains:
         if dom in done:
             continue
@@ -165,24 +225,16 @@ def main():
             continue
         before = len(a_hit)
         nl = nb = 0
-        for shard in sorted(f for f in os.listdir(d) if f.endswith(".jsonl")):
-            with open(os.path.join(d, shard), encoding="utf-8", errors="replace") as fh:
-                for ln in fh:
-                    nl += 1
-                    nb += len(ln)
-                    try:
-                        obj = json.loads(ln)
-                    except json.JSONDecodeError:
-                        continue
-                    text = obj.get("content") or obj.get("text") or ""
-                    if not text:
-                        continue
-                    toks = words(text)
-                    for g in grams(toks):
-                        if g in a_index:
-                            a_hit |= a_index[g]
-                        if g in q_index:
-                            q_hit |= q_index[g]
+        shards = [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith(".jsonl")]
+        # fork, so _A_KEYS/_Q_KEYS are inherited rather than pickled per task
+        with multiprocessing.get_context("fork").Pool(min(workers, max(1, len(shards)))) as pool:
+            for s_nl, s_nb, a_m, q_m in pool.imap_unordered(_scan_shard, shards, chunksize=1):
+                nl += s_nl
+                nb += s_nb
+                for g in a_m:
+                    a_hit |= a_index[g]
+                for g in q_m:
+                    q_hit |= q_index[g]
         per_domain[dom] = len(a_hit) - before
         total_lines += nl
         total_bytes += nb
@@ -267,6 +319,46 @@ def selftest():
         print("  FAIL the un-coerced comparison unexpectedly matched; this fixture no longer "
               "reproduces the defect it was written for")
         bad += 1
+    # THE PARALLEL REWRITE MUST GIVE THE SERIAL ANSWER, on a fixture where the answer is known and
+    # where the hit is SPLIT ACROSS SHARDS -- one shard holds the matching span, another holds a
+    # decoy, and a third is a shard that produces nothing. If _scan_shard returned ids instead of
+    # gram hashes, or if the key sets did not reach a forked worker, this is where it shows.
+    import tempfile as _tf
+    global _A_KEYS, _Q_KEYS
+    span = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu"
+    a_index = {}
+    for g in grams(words(span)):
+        a_index.setdefault(g, set()).add("item-1")
+    _A_KEYS, _Q_KEYS = frozenset(a_index), frozenset()
+    with _tf.TemporaryDirectory() as d:
+        paths = []
+        for i, body in enumerate([f"prefix words then {span} and more",
+                                  "nothing to see here at all",
+                                  ""]):
+            p = os.path.join(d, f"s{i}.jsonl")
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"content": body}) + "\n")
+            paths.append(p)
+        serial = set()
+        for p in paths:
+            for g in _scan_shard(p)[2]:
+                serial |= a_index[g]
+        par = set()
+        with multiprocessing.get_context("fork").Pool(3) as pool:
+            for _, _, a_m, _q in pool.imap_unordered(_scan_shard, paths):
+                for g in a_m:
+                    par |= a_index[g]
+        if serial != {"item-1"}:
+            print(f"  FAIL the serial scan found {serial}, expected the planted item-1")
+            bad += 1
+        if par != serial:
+            print(f"  FAIL parallel {par} != serial {serial}: the union over shards is not exact")
+            bad += 1
+        # a worker that never sees the key sets returns nothing and would look like a clean corpus
+        _A_KEYS = frozenset()
+        if _scan_shard(paths[0])[2]:
+            print("  FAIL a shard matched against an EMPTY key set; membership is not being tested")
+            bad += 1
     print(f"e1_28 selftest: {'OK' if not bad else f'{bad} FAILURE(S)'}")
     return 1 if bad else 0
 
