@@ -65,7 +65,9 @@ PREFIX_LAYER = 11  # confirmed from the checkpoint cfg, not assumed; see the mod
 def build_mask_mods():
     """(causal_mod, prefix_mod). Imported lazily: cutlass is a pod-only dependency, and this
     module's selftest runs the pure-python mask logic off-pod without it."""
+    import cutlass  # noqa: PLC0415
     import cutlass.cute as cute  # noqa: PLC0415
+    from flash_attn.cute import utils as fa_utils  # noqa: PLC0415
 
     @cute.jit
     def causal_mod(batch_idx, head_idx, q_idx, kv_idx, seqlen_info, aux_tensors):
@@ -96,13 +98,24 @@ def build_mask_mods():
         # this as `(q_idx < P) or (kv_idx <= q_idx)` would be wrong -- it would let a prompt
         # query at q_idx read every key in the row, response included, and the loss would then
         # drop by leakage through the residual stream feeding the head.
-        # BITWISE, NOT `and`/`or`/`not`. The comparisons produce SSA booleans (vector<1xi1>), and
-        # python's boolean operators call __bool__ on them, which cutlass cannot lower --
-        # "Unsupported DSL type: vector<1xi1>" from typing.py:1268. `&`, `|` and `~` stay in the
-        # SSA domain. Same reason numpy and torch masks use them.
-        in_prompt_q = q_idx < p
-        in_prompt_k = kv_idx < p
-        return (in_prompt_q & in_prompt_k) | (~in_prompt_q & (kv_idx <= q_idx))
+        #
+        # THE LOGIC RUNS ON SCALARS, NOT ON SSA VECTORS, and this took three failed runs to
+        # locate. A comparison of two SSA vectors yields an i1 VECTOR (vector<1xi1>), and
+        # typing.py's _from_mlir_type has no entry for that type in its type_map (:1250) -- so
+        # anything that has to resolve its dtype raises "Unsupported DSL type: vector<1xi1>".
+        # `and`/`or`/`not` fail there, and so do `&`/`|`/`~`: the operator was never the issue,
+        # the vector shape was. causal_mod above survives only because `kv_idx <= q_idx` merely
+        # PRODUCES such a vector and the kernel immediately unwraps it with ssa_to_scalar.
+        # The kernel's own mask code does the same thing -- block_sparsity.py:226 pulls the
+        # callback's result through ssa_to_scalar and only THEN combines it with `&` on
+        # scalars (:237-238). So: subscript every argument to a scalar, do the boolean algebra
+        # there, and hand back one i1 vector built the way scalar_to_ssa builds it.
+        q = q_idx[0]
+        k = kv_idx[0]
+        in_prompt_q = q < p
+        in_prompt_k = k < p
+        keep = (in_prompt_q and in_prompt_k) or ((not in_prompt_q) and k <= q)
+        return fa_utils.scalar_to_ssa(cutlass.Boolean(keep), cutlass.Boolean)
 
     return causal_mod, prefix_mod
 
