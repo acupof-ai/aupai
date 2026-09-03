@@ -223,6 +223,11 @@ class Cfg:
     # and add_ per step is exactly n(n+1); fused it is n(n+1)/2, measured 2.00x at
     # L=2/3/4/12. Default OFF until the A/B; algorithms/attnres_fused.py holds the gates.
     attn_res_fused = False
+    # The AttnRes logit is a D=1024 dot product. In bf16 it accumulates 0.858 off against
+    # a 279.8 spread (measured vs fp64, scripts/attnres_triton_bf16_gate.py), and softmax
+    # turns that into 14% on the mixing weights. Whether 14% on the weights moves the loss
+    # is an A/B, not an inference: default OFF until it wins.
+    attn_res_fp32_logits = False
     attn_res_lr = 0.01  # AdamW lr for the zero-init pseudo-queries (wd=0)
     # A/B (3), speedrun record: zero-init every OUTPUT projection, so each sublayer starts as
     # an identity on the residual stream and learns its way out. Off by default -- this is an
@@ -1952,6 +1957,10 @@ def main():
         "--zero_init_out", action="store_true",
         help="A/B (3): zero-init output projections (every .o and FFN .w2), so each sublayer "
              "starts as an identity on the residual stream")
+    parser.add_argument(
+        "--attn_res_fp32_logits", action="store_true",
+        help="accumulate the AttnRes logit dot product in fp32 (bf16 puts the mixing "
+             "weights 14% off against fp64 truth)")
     parser.add_argument(
         "--track", action="store_true", help="mirror step metrics to trackio (local, TRACKIO_PROJECT)"
     )

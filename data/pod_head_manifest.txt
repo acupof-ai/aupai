@@ -37,7 +37,7 @@ c53012ffa88f8901ef29476cad420320cb33e0e194ec43b68c20e550f6d75704  data/mix_sampl
 90f3c27d207c56904c3f339706667ab873914b2c557380707a6a601503709c02  data/mix_scale_0.8b.json  docs  644
 81e3b6b7f1865617947cc5c9712ad298df29b034f4c33d76ec21f58df5f4142d  data/mix_scale_1.6b.json  docs  644
 885ecca1b4dbf764bdfc2e12ca2facc2b7c55ab96cababc71ac217e306ab9ba0  data/mix_scale_3.24b.json  docs  644
-e87b33fd930c5e1437398b1c3a7a9039646721ce6b1baf87bef93ddf12b31116  data/mix_scale_run_config.json  docs  644
+5a6448641e121ea457f21b755aec7059f522f38f36b4e1cbe597546fcfb596db  data/mix_scale_run_config.json  docs  644
 7ab9e021a03b37121611fce8d4eecf40b704c1a0e71748d0da143d67d1ffede9  data/mix_smoke_warmup.json  docs  644
 95b777bd38f76ea5b37ea5e7305cacedc17226c42f94d266bbbb3c139f111b99  data/mix_t31_rehearsal.json  docs  644
 adda35f375ce8e1f83622fbb74bee0a556a017e92a6a2cb1743f4c1c7266f3fb  datagen/audit_source_score.py  docs  644
@@ -218,7 +218,7 @@ bb8ae0603176edec9b45c0a941b5b566507bb45629e29afefdb846a2a0c5c021  mathbank/run_m
 34cecaa73eb45803e70ccad33e31ce4ee7946051ec00fc74a2f85a174b906775  mathbank/run_short_sol.py  docs  644
 820dda489bfa2c313c181d4c3dd92810dd2bdf16e5f6326c268f999598dc3e98  mathbank/split_bank.py  docs  644
 77428c2c82c230c5ff682385a212c2bbcbed6051a9efcf1216d1ced418f518af  mathbank/vet_programs.py  docs  644
-2567a382cb072021243f19fc7ff24326251b40d7ce3c7054f484d4648922f506  model.py  training  644
+7b73c487123f0ef606cff503881e59dd3babd88a65e25f77cf2a0bf69f821f3a  model.py  training  644
 56b79d1e330b780f6688689b2313f41afc887aea28912798a0c9c5d3c2b40c90  probes/a2a_bandwidth.py  docs  644
 0c0f60bcc8a767a8f26b94cb5845c2e6624ab5f11d80c9fd7c175f11b6250c41  probes/chatml_in_corpus.py  docs  644
 3e687495055dd2d795abe5a7ed72c6ba53cfd23e22291de2eae366b92ab28417  probes/fone_digit_acc.py  docs  644
@@ -280,7 +280,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-7454f8a3a89208f32efbf04fbde7f96a9978e9bbff77ed783ec975ad3c14a4f7  scripts/harness.py  training  644
+f5a99dd5cebac9e850dd9f03d661ed9288e57e69e9fdf4ec780c2a9caa438ba9  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -312,7 +312,7 @@ f00fac35bc17d8f4c43707844c0d1f750285565f5ac55e1d46e03ed6d5f03e00  scripts/read_l
 9bb299f1436b1d3bf4a5b489a425b80a8819ce9c7946fe1b0b60b6ef8a2f7f85  scripts/restartability_audit.py  docs  644
 8965e5b9856385a6798f2bb6a31777f48f0c21607f17d3ef4a375ed286693988  scripts/restartability_baseline.json  docs  644
 96fd418f9c80647e688c661e6c79997f215950d067a5f06335ac2a82e7dbe285  scripts/retract.py  docs  644
-ec74939fd6d07a81bc7c1697368f65b0ba9c90c49e3d71f64d34c19b6b7a4df2  scripts/run_ab_speedrun.sh  docs  755
+9b4e0a6608fd5a75bddb65394bbee7e9cde53929b375b741b11c9da5405cec3c  scripts/run_ab_speedrun.sh  docs  755
 58e25be47f558b151d5bc18e18bb0355cabe758523a2170a10ad634f2e91d637  scripts/run_ablation.sh  docs  755
 4cd1157bc6b8f29e7b472ba3e2bfd1eaf5b47cbf8cf051088ee76b8d9da886af  scripts/run_pipeline.sh  docs  644
 bb350a80ca24c4645bc816f434a19cea9bd8cac96a6ee1828fd7989f2f2a51fe  scripts/run_pretrain.sh  docs  755
@@ -329,6 +329,7 @@ e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1  scripts/test_a
 136c2fecfe7519b0aa0ad07376be4c12bcdc71795c866302a65b21d1da612ea2  scripts/test_arch_compat.py  docs  644
 8a4934e13fdede89f337675b6a4d65711870911d1296e5037f4115e75a49aae8  scripts/test_artifact_path_ckpt.py  docs  644
 e2ba8c4a980df71944fd82c8e5e03def0dd9d8cd32b3a2d14bbc94f114cd3ae0  scripts/test_attest_cases.py  docs  644
+90ec0814d97ea9d55c4850a730c778736c31e95e155e54370ec69c6ebb6099db  scripts/test_attn_res_fp32_logits.py  docs  644
 a68f2726832dc82bb3bc5626db6d68e8e171aef45d3c5d6c035ab803a30b868f  scripts/test_cache_dir_knob.py  docs  644
 25f277fe853797e63c99b26d0d496864dc16d19ba05e58b7c2e8a1dbb2057b2e  scripts/test_check_summary.py  docs  644
 ab1322056ff9678281095a559b15984acc6d661b683e41986359b47f8d2805e4  scripts/test_cursor_save.py  docs  644
@@ -392,4 +393,4 @@ ecdde15605f9297804316cee03ff02a1b37b6c67e203e0c5254ec9d381e35c8d  scripts/write_
 161b4c4d2eef465a9e366ae537e4d97731d89e3683c0d7491587cc6aea080c8c  serve.py  docs  644
 b6901ed2aa05254ca9a9a404e5971d174b291ad2cc119410d6351e41fbdf7622  sft.py  training  644
 c7b3fb76fd5f7326a21df47d65d1ae76e531b9ed077fc0da6812dda34ba9ef82  sft_math.py  training  644
-11073f5b7194faf629664c0a2750dc34db453aa70782f2151556be1fc1efa0b6  train.py  training  644
+f631a6f08195e23d807ae446572e755ec7dd91fe6ec7bba3c664f987942d991b  train.py  training  644

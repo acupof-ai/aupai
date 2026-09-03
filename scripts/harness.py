@@ -10506,6 +10506,11 @@ _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    # Numerics, not init: it changes every step, so a resume DOES honour it -- but two
+    # segments of one run that disagree on it are still incomparable, which is what this
+    # set is for. bf16 vs fp32 accumulation of the AttnRes logit dot product moves the
+    # mixing weights 14% (measured vs fp64).
+    "attn_res_fp32_logits",
     # Initialisation: FROZEN, not measurement. It changes the trajectory from step 0, so two
     # segments of one run that disagree on it are not comparable -- and because it only acts
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
