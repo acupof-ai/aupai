@@ -744,7 +744,7 @@
    "id": "dq.code_rp1t_handread_50",
    "value": "code_rp1t (RedPajama-1T github, stage-1 budget subset, 197 shards) hand-read: 40/50 = 80% keepable. Rejects 10/50: view/template glue (PHP-HTML Yii views) 3, getter/setter POJO boilerplate 3, generated code (Propel base class, protobuf descriptor pool) 2, dead/commented+trivial 2. Visible near-duplicate clusters among the 50 (near_dedup:false accepted risk): 2 clusters touching 6/50 docs -- Yii CRUD view skeleton (3 docs) and Java POJO getter/setter skeleton (3 docs). Composition note: PHP is 16/50 = 32% of the sample (CMS/framework repo skew), Java 8, C/C++ 8, Ruby 7, JS 6, C# 2, Python/Go/Rust 1 each. Near-dup rate 6/50 = 12% (Wilson 95% CI ~5-24% at n=50) -- this is the number that makes stage 2's parallel MinHash re-stamp non-optional. The stage-1 run trains on the set as is.",
    "measured": "2026-08-31",
-   "source": "data/corpus/sample/code_rp1t_handread50.jsonl (50 docs, 128KB); sampler scripts/sample_code_rp1t.py@06e9e3b (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
+   "source": "data/eval/code_rp1t_handread50.jsonl (50 docs, 128KB; moved there from data/corpus/sample/ by cbaa12d5, byte-identical -- sha256 02e0021ba321 both sides); sampler scripts/sample_code_rp1t.py@06e9e3b (seed 20260831); rubric docs/lessons/quality_36b_prereg.md; reader: 44",
    "config": {
     "n": 50,
     "denominator": "all 50 sampled docs, single-reader hand-read",
@@ -773,7 +773,7 @@
    "id": "dq.near_dedup_gate_calibration",
    "value": "Calibrated on the 50-doc t24 hand-read sample (2 template clusters, 6-8 docs: Yii CRUD {3,24,30,38}, Java POJO {5,7,19,35}). Literature standard (raw word 5-gram, J 0.75-0.8) catches 0/8: Yii tops out at raw J 0.181, POJO under 0.01. Chosen gate: normalize (comments/strings/numbers/identifiers stripped, 70-word keyword stoplist), 3-word shingles, Jaccard >= 0.5, union-find, keep one per cluster. Catches 5/8 cluster docs {5,7,19,30,38} with 0 false pairs among the other 42 (nearest false pair 0.462, python-rust boilerplate). Implied removed fraction 5/50 = 10% (Wilson 95% CI 3.4-21%); the sample is language-stratified (PHP 32%) so the corpus-wide fraction is measured by 3b at re-stamp. Misses the most divergent cluster members (docs 24, 35). Normalized containment (threshold 0.77) catches the same 5 with a thinner margin (0.778 vs 0.739).",
    "measured": "2026-08-31",
-   "source": "data/corpus/sample/code_rp1t_handread50.jsonl; docs/lessons/near_dedup_gate.md",
+   "source": "data/eval/code_rp1t_handread50.jsonl (moved from data/corpus/sample/ by cbaa12d5, byte-identical); docs/lessons/near_dedup_gate.md",
    "config": {
     "sample": "t24 stratified 50 docs",
     "shingle": "3-word, normalized",
