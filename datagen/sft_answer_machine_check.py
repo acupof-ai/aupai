@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# restartable: read-only scan / filter re-open dst with 'w' from src; an interrupt costs re-reading src
 """control_sft answer-error lower bound: arithmetic-equation check.
 For each answer, regex-extract simple arithmetic equations NUM OP NUM = NUM
 (also .. = NUM). Evaluate LHS, compare to RHS; a mismatch = definite error.
@@ -80,6 +81,28 @@ def main():
             print(f"WCTX id={did} :: {snippet}", flush=True)
 
 
+def filter_rows(src, dst):
+    r_in = r_drop = 0
+    dropped_ids = []
+    with open(src, encoding="utf-8") as fsrc, open(dst, "w", encoding="utf-8") as fdst:
+        for line in fsrc:
+            if not line.strip():
+                continue
+            d = json.loads(line)
+            ans = d.get("answer") or ""
+            bad = any(abs(OP[m.group(2)](float(m.group(1)), float(m.group(3))) -
+                          float(m.group(4))) > 1e-6 for m in P.finditer(ans))
+            if bad:
+                r_drop += 1
+                if r_drop <= 5000:
+                    dropped_ids.append(d.get("id"))
+                continue
+            fdst.write(line)
+            r_in += 1
+    print(f"filter: kept={r_in} dropped={r_drop} out={dst}", flush=True)
+    print(f"dropped_ids_head={dropped_ids[:20]}", flush=True)
+
+
 def negtest(fn):
     with open(fn, encoding="utf-8") as f:
         t = f.read()
@@ -103,5 +126,7 @@ def negtest(fn):
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[2] == "negtest":
         negtest(sys.argv[1])
+    elif len(sys.argv) >= 4 and sys.argv[2] == "filter":
+        filter_rows(sys.argv[1], sys.argv[3])
     else:
         main()
