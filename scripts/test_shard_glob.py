@@ -118,6 +118,22 @@ def main():
     assert "cci3_audit_400.jsonl" not in _selection(train_py, ["cci3_audit_400.jsonl"])[0], \
         "NON_SHARD_JSONL stopped being applied; a name-shaped non-shard is back in"
 
+    # ...and it must survive IN THE SHIPPED BLOCK, which is a separate claim. The assertion
+    # above reads the set out of train.py and applies it here, so it stays green against a
+    # train.py whose own line 1396 no longer consults it -- measured (b0, 2026-09-03): drop
+    # `b in NON_SHARD_JSONL` from that condition and every check above still passes. The
+    # three sample/ files that match NEITHER pattern then land in `unknown`, so the block
+    # refuses and mix_sample.json -- what test_e2e.py trains on -- gets zero shards and dies
+    # at step 0. This runs the real lines over the real names instead.
+    run = _run_block(train_py, ["batch_001.jsonl", "cci3_audit_400.jsonl",
+                                "cci3_audit_400_labels.jsonl", "cci3_iaa_50.jsonl",
+                                "web_labels.jsonl"])
+    assert run["raised"] is None, (
+        f"the shipped block refuses on data/corpus/sample's own committed audit files, so "
+        f"mix_sample.json reads zero shards: {run['raised']}")
+    assert run["shards"] == ["batch_001.jsonl"], (
+        f"NON_SHARD_JSONL is not applied where it runs: {run}")
+
     # THIRD BRANCH, and it is the one that keeps the original author's property: a file
     # that is neither a shard nor a KNOWN non-shard must be reported, never silently
     # dropped. Silence here means a misnamed real shard disappears from training and
