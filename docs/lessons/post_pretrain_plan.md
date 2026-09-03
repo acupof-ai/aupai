@@ -30,7 +30,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 - **判据**(readout_30b_prereg.md:52,预登记):math-hard 上 pass@8−pass@1 **≥ 15pt** → RL 可开;< 15pt → RL 不开,读数「不是 RL 没用,是这个 checkpoint 上没有 RL 可放大的东西」。这是 continue-to-RL 决策,不是 stop。
 - **读法**:n≥1000;gap 是配对差(pass@8⊇pass@1 同题相关,SE ~1-2pt@1036),15pt 阈值远在可读性之上。三态:动了(≥15pt)/ 平了(可读但 <15pt)/ 地板(pass@8 本身在地板,不可判)。200M 上的读数是 3.5pt = 平了,不是地板。
 - **v5 上的实测(2026-09-03,e1,`data/eval/hard_ckpt_sft_p324_v5.pt.passk1.jsonl`,9,288 行 = 1,032 题 × 9)**:pass@1 = 11/1032 = **1.066%**,pass@8 = 44/1032 = **4.264%**,gap **+3.198pt**(配对 SE 0.628pt,z +5.1)。**门仍然不开**:3.198pt 是 15pt 闸口的 21%,与 v2 上的 3.5pt 同一个读数,SFT 版本从 v2 换到 v5 没有改变结论。gap 本身统计显著(z +5.1)而决策上不显著,这两件事不冲突——闸口问的不是「gap 是否非零」而是「采样可放大的空间是否够大到值得 RL」。
-- **这个 gap 不是嵌套的,报的时候必须带上**:`eval/math_hard.py:177` 是 `lv[2] += int(any(oks[1:]))`,pass@8 只看 8 个采样答案、**不含** greedy 那一次,所以 pass@8 ⊉ pass@1,单题的差可以为负。实测:两边都对 6 题、只有 greedy 对 5 题、只有采样对 38 题。§2 上面「pass@8⊇pass@1 同题相关」的 SE 说法因此对这份数据偏乐观;上面的 0.628pt 是按实际配对差算的,不是按嵌套假设算的。
+- **这个 gap 不是嵌套的,报的时候必须带上**:`eval/math_hard.py:175` 是 `lv[2] += int(any(oks[1:]))`,pass@8 只看 8 个采样答案、**不含** greedy 那一次,所以 pass@8 ⊉ pass@1,单题的差可以为负。实测:两边都对 6 题、只有 greedy 对 5 题、只有采样对 38 题。§2 上面「pass@8⊇pass@1 同题相关」的 SE 说法因此对这份数据偏乐观;上面的 0.628pt 是按实际配对差算的,不是按嵌套假设算的。
 - **预算**:pass@8 = 8 次生成/题,n=1036 → 8288 次生成;lane 卡上跑,生成式评测与训练块互斥(06:50 规则:run 活着时 block 卡只跑似然类),所以门的测量窗口 = run 结束后或空卡期。
 - **生成参数(2026-09-03 钉死,与 200M 读数同源)**:k=8、temperature 0.8、max_new=512——`eval/code_l0prime.py:199` freeze_hard 的默认值,200M 读数用的就是这组(`eval/score_math_formatfree.py:7` 记录 "t=0.8, k=8")。pass@1 与 pass@8 同一份题、同一次运行的两个统计量,不另跑。
 
