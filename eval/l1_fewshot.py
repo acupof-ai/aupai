@@ -447,6 +447,29 @@ def main():
                 # already better than a constant and STILL not enough: l1_2x2_diagnose imported
                 # ANS_RE as "the marker", lost the boxed branch, and reported 0/497 for a cell whose
                 # rate is 37.0%. A predicate spread over two operators can be half-copied.
+                #
+                # PINNED 2026-09-03Z, BEFORE the shared-decoder rerun produced any number (6e's
+                # ruling, my scope refinement). Turning rep_stop OFF on both arms makes
+                # answer-present ambiguous, because a looping generation now runs to max_new and
+                # the answer can sit BEFORE the loop starts. Two readings were available:
+                #   (a) a marker ANYWHERE in the model's turn  <- PINNED
+                #   (b) the generation terminates normally AND ends with an answer
+                # (a), because the question is whether the model PRODUCES an answer, not whether it
+                # stops. Stopping is what rep_stop measured, and we just removed it from the
+                # variables. (b) would score "answered correctly but could not stop" as a failure --
+                # which is our arm's known behaviour, so (b) writes the conclusion into the
+                # definition. Position-independent, hence `answer_marker(turn) is not None` and
+                # never a check on where the marker sits.
+                #
+                # SCOPE: the model's TURN, not the raw buffer. model_turn cuts at the point the
+                # model opens a fabricated next problem, and 43.5% of 3-demo generations do that.
+                # Counting markers in the raw buffer would credit an answer to a question the model
+                # invented for itself -- the same defect the last-box rule had before model_turn
+                # existed. So "anywhere" is bounded by the turn, and that bound is the reason the
+                # metric is about the question that was ASKED.
+                #
+                # Pinned before the run because a definition chosen after the numbers exist is
+                # indistinguishable from one chosen to make them look good.
                 n_box += int(answer_marker(turn) is not None)
                 fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
