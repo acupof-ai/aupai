@@ -524,6 +524,15 @@ def main():
         # retract: a read-only grep over a temp tree -- no data, no card.
         "scripts/retract.py",
         "scripts/test_exp_done_started.py",
+        # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
+        # 2-layer 2-step toy model on CPU and READS IT BACK, because every source-level
+        # criterion for the defect it guards was already true of the broken code: the snapshot
+        # was taken on the line above the save and only the argument was missing. So presence
+        # of opt_snapshot, or of the word opt, proves nothing. The load-bearing case is the
+        # reverse one -- drop the argument, require the file to LOSE the optimizer -- without
+        # which the test cannot tell that it is measuring the argument at all. Imports train.py
+        # only, so it needs no liger_kernel and runs here rather than in NEEDS_DATA.
+        "scripts/test_sft_save_opt.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
         # code_fp: five cases over git history, no data and no card. Two of them are the
         # directions that matter -- a range that must report NONE and a commit that must

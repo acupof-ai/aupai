@@ -70,6 +70,12 @@ def main():
         action="store_true",
         help=argparse.SUPPRESS,  # deprecated spelling, one version only
     )
+    parser.add_argument("--save_every", type=int, default=SAVE_INTERVAL,
+                        help="mid-run checkpoint interval; each one now carries optimizer state, "
+                             "so a later extension resumes on one curve instead of restarting "
+                             "Adam moments and the LR schedule. Was a module constant fixed at "
+                             f"{SAVE_INTERVAL}, which is why N7 Stage B's 250-step arms landed "
+                             "their only mid-run save at 200 and could not be extended from 250.")
     parser.add_argument("--max_steps", type=int, default=None)
     parser.add_argument("--stop_after", type=int, default=None,
                         help="stop after N steps WITHOUT shortening the schedule. --max_steps "
@@ -365,11 +371,27 @@ def main():
                 opt.zero_grad(set_to_none=True)
             step += 1
 
-            if step % SAVE_INTERVAL == 0:
+            if step % args.save_every == 0:
                 good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
                 good_opt = opt_snapshot(optimizers)
                 if is_main:
-                    save_checkpoint(args.out + f".step{step}", good_state, Cfg, ck_vocab, step=step)
+                    # opt=good_opt, and the omission of it is why N7 Stage B's 250-step arms
+                    # could not be extended: save_checkpoint has taken an `opt` argument all
+                    # along (train.py:1024, stored verbatim as ck["opt"]), this site already
+                    # held the snapshot on the line above, and not passing it wrote a
+                    # checkpoint with `step` and no optimizer. A resume from that restarts
+                    # Adam moments and the LR schedule, which is a new run wearing the word
+                    # resume, so the 250 and 500 points could not lie on one curve.
+                    #
+                    # good_opt IS THE NaN-ROLLBACK BUFFER (:283, restored at :351), not an
+                    # artifact built for resuming, and the two want different things: the
+                    # rollback wants the last GOOD state, a resume wants the state AT this
+                    # step. They coincide here only because the line above recomputes the
+                    # snapshot at the save step. If the rollback ever keeps an older good
+                    # state, this call starts writing an optimizer from a different step than
+                    # the weights -- which `step` in the file would not reveal.
+                    save_checkpoint(args.out + f".step{step}", good_state, Cfg, ck_vocab,
+                                    opt=good_opt, step=step)
             if is_main and step % LOG_INTERVAL == 0:
                 # The elapsed figure covers LOG_INTERVAL steps, not one: t0 resets on
                 # every log line. Naming the interval is the whole fix -- read as
