@@ -303,7 +303,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-3b66b2ad1c9070d2de786acb9f5d8c184b7f24115e5aa5e4455c32c304952966  scripts/harness.py  training  644
+44b302ae6b827689fd85827b3cee54a9e57372304d32385fd08ae4ff2e446213  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -330,7 +330,7 @@ aa7e19d83f6d16754e8235a687e7e4629301b1a7d4eff825ee688f17fa5b252f  scripts/pod_pu
 aa6d61120f04c6c0171331dcd3a26cc8bb1fa710f267902c9f3a4280229cbc7c  scripts/profile_step_cost.py  docs  644
 9fd85dc145cf546836ac22983155038de441d4330d10f887265a2de6115bcbed  scripts/progress_feed.py  docs  644
 eca0c619973240d88c3451de6e97d099505e62a44cf3d7ecf9f4538c6350c62f  scripts/prove_resume.sh  docs  644
-378201908aec8b33e3130f1eef9df830dca87aa1ee27fbb6afb01cabb867a951  scripts/reachability.py  docs  644
+babaae66d158dd970ccf8f95ad906108bf08ed850409b254b013f7434fb9eb51  scripts/reachability.py  docs  644
 f00fac35bc17d8f4c43707844c0d1f750285565f5ac55e1d46e03ed6d5f03e00  scripts/read_lr_probe.py  docs  644
 94cfdfde9e8dcfdaa9089b4e49060d0ea58457d2bced59c73ed23489041b6f31  scripts/read_resume_proof.py  docs  644
 52d42096869d93261267eb81a018cf4ef83cae11b4c44537d313aadc3d7da471  scripts/rehearse_cursor.py  docs  644

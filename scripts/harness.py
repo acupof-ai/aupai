@@ -5512,9 +5512,15 @@ def check_unreached_files_ruled(root):
             unruled.append(ln.split()[0])
     if not unruled:
         return PASS, "every unreached file in runs/reachability.txt carries a FATE ruling"
+    # NAME ALL OF THEM. This was `unruled[:6]` with a ` ...`, and the two it elided were the
+    # two nobody could act on: a WARN is a to-do list, and an item a reader cannot see is an
+    # item nobody works off. Measured 2026-09-03: 8 unruled, the printed 6 stopped at
+    # datagen/cot_pilot.py, and datagen/sft_math_share.py and sft_sample_200_eqcheck.py were
+    # invisible until the listing was read by hand. The list is bounded by the tree's own
+    # unreached count, so there is no runaway to cap.
     return WARN, (f"{len(unruled)} unreached file(s) with no FATE ruling in "
-                  f"scripts/reachability.py: {', '.join(unruled[:6])}"
-                  f"{' ...' if len(unruled) > 6 else ''} -- run each before judging it "
+                  f"scripts/reachability.py: {', '.join(unruled)}"
+                  f" -- run each before judging it "
                   f"(a hook-registered or glob-loaded file is live and invisible here), then "
                   f"add KEEP or delete it")
 
