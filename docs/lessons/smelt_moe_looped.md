@@ -42,7 +42,7 @@ source: arXiv 2609.01343 (SMELT, 2026-09-01) + arXiv 2607.13491 (DeepLoop, 2026-
 - DeepLoop 的 κ_R 分析假设标准残差流;AttnRes 把残差流换成 softmax 加权和,bound 不直接覆盖。叠加要自己测稳定性。
 - AttnRes 的"前面的子层"在 loop 下有一半是同一权重的上一轮。若 AttnRes attend 所有**执行过的**子层,read 数从 n(n+1)/2 = 325(L12)涨到 703(L12 执行 18 层),2.16×;按 tilerl 实测的 19.7% 墙钟占比线性外推到 ~42%(repo.attnres_loop_cost_derived;19.7%/37.8% 是 tilerl 2026-09-03 实测,未入库)。**这一条测不过,SMELT 对我们不可用,不管曲线多好看。**
 
-**Q2:我们是 token 受限还是参数受限?** 200M@4B = 20 tok/param,在 Chinchilla 最优点上;500M@20B = 40,偏 token 受限。MoE 的最优 TPP(56–91)远高于 dense(~20),因为每参数只被部分 token 训练。在 20–40 上 MoE 专家欠训练,收益曲线的甜区在我们当前预算之外。500M@20B 的 40 是我们第一次接近可试的位置——但仍只有甜区下界的一半。
+**Q2:我们是 token 受限还是参数受限?** 200M@4B = 20 tok/param,在 Chinchilla 最优点上;500M@20B = 40,偏 token 受限。MoE 的最优 TPP(56–91)远高于 dense(~20),因为每参数只被部分 token 训练。在 20–40 上 MoE 专家欠训练,收益曲线的甜区在我们当前预算之外。**门槛的来源说清:判决里的"TPP>40"是我们这侧的现状上界(500M@20B = 40),不是论文的下界折算——论文的 56–91 是在 10²¹ FLOPs 处测的甜区,两个数不是一个量。40 的意思是"越过我们现在到过的最远位置再评估",不是"论文说的最低条件";论文没有给出 MoE 收益的最低 TPP。**
 
 **Q3:MoE 与 KDA + gated MLA 的兼容性?** 结构上部分成立:专家放 FFN 是常规做法,不碰 KDA 状态(KDA 状态在 DeltaRecurrence 内部,从不穿过 block 接口,model.py:6)。但 looping 中间层时同一 KDA 层被访问两次,**状态是接着算还是重置,论文没答**(smelt.stateful_architectures)——这是我们要自己付的成本,且答案影响数值正确性,不只是性能。
 
