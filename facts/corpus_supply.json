@@ -73,7 +73,7 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/en_c4 (166 shards): datagen/count_code_dirs.py en_c4 exact frozen-tokenizer count, 7,767,463 kept_docs",
    "config": {
-    "note": "en_c4/ (166 shards) exact 4.801B; 30B role 5.5B split proportional across en_c4/ + en_c4_stage2/ (3.668B+1.832B, controller 2026-09-03); total supply 7.2B > contract"
+    "note": "en_c4/ 4.801B (166 shards, exact) is one of THREE en_c4 dirs; with stage2 2.397B + 30b 0.646B = 7.844B total (2026-09-04)"
    },
    "uncertainty": "exact for data/corpus/en_c4/ as of 2026-09-03; mix gap vs 5.5B = 0.70B",
    "status": "measured",
@@ -299,6 +299,23 @@
    "guard_phrases": [
     "en_c4_stage2 is a subset of en_c4",
     "en_c4 total is 4.8B only"
+   ]
+  },
+  {
+   "id": "cs.en_c4_30b_landed",
+   "value": 645640484,
+   "unit": "tokens",
+   "measured": "2026-09-04",
+   "source": "/work/aupai/data/corpus/en_c4_30b (23 shards): /tmp/count_30b.py full frozen-tokenizer pass, no sampling; tilerl exact",
+   "config": {
+    "note": "gap-30b build (tilerl 2026-09-04), kept 1,029,505 / docs_in 1,068,952 / 96.3%, chars_per_token 3.51, bytes 2,338,044,393; restamped with canonical build_corpus_stats schema; fingerprint 12374542ae325541, filters_fp 88ee503b38941bf4 preserved"
+   },
+   "uncertainty": "exact full-pass count, no extrapolation",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [
+    "en_c4 total is two directories",
+    "en_c4_30b is not a separate dir"
    ]
   }
  ]
