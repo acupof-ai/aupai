@@ -1,0 +1,9 @@
+population verified: 10105 7231156c5698c210
+=== floor_ours (ours) ===
+  nll/byte 0.457462  n=None  bytes=9509777  sha 7231156c5698c210
+=== floor_control (control) ===
+  nll/byte 0.926041  n=None  bytes=9509777  sha 7231156c5698c210
+=== ours_sft (ours) ===
+  nll/byte 0.294646  n=None  bytes=9509777  sha 7231156c5698c210
+
+three verdict numbers on 10105 ids (7231156c5698c210); the other six points were NOT recomputed
