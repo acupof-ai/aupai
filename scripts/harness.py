@@ -6953,13 +6953,67 @@ def cmd_friction(argv):
     a.add_argument("--commit", action="store_true",
                    help="commit the row path-scoped in this call, so the ledger never sits "
                         "dirty and cannot abort someone's merge before the drivers run")
+    # RESOLVED IS AN APPEND, NEVER AN EDIT, and that is forced by the merge semantics rather
+    # than chosen. runs/friction.jsonl is `merge=union`: MEASURED 2026-09-04 on a throwaway
+    # repo, when two branches edit the SAME line union keeps BOTH -- so rewriting a row's
+    # cause in place resurrects the wrong cause beside the correction as soon as anyone
+    # merges. The ledger is an event log for the same reason runs/tasks.jsonl is; a
+    # correction is a new event that names what it supersedes.
+    rs = sub.add_parser("resolved")
+    rs.add_argument("--cause-was", required=True,
+                    help="a distinctive substring of the superseded cause; must match at "
+                         "least one existing row or this refuses")
+    rs.add_argument("--now-known", required=True,
+                    help="the measured mechanism that replaces it")
+    rs.add_argument("--fixed-by", default="", help="commit or change that removed the cause")
+    rs.add_argument("--who", default=None)
+    rs.add_argument("--commit", action="store_true")
     args = ap.parse_args(argv)
+
+    if args.op == "resolved":
+        rows = _friction_rows()
+        hit = [r for r in rows if args.cause_was.lower() in (r.get("cause") or "").lower()]
+        if not hit:
+            # REFUSE rather than append an orphan correction. A resolution naming a cause no
+            # row carries is worse than no resolution: the summary would grow a line that
+            # corrects nothing, and nobody reading it could tell which is which.
+            print(f"no friction row's cause contains {args.cause_was!r} -- nothing to resolve; "
+                  f"run `harness friction` and copy a substring from the cause you mean",
+                  file=sys.stderr)
+            return 1
+        row = {
+            "when": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
+            "who": args.who or _current_branch(),
+            "kind": "resolution",
+            "supersedes_cause": args.cause_was,
+            "supersedes_rows": len(hit),
+            "now_known": args.now_known,
+            "fixed_by": args.fixed_by,
+            "sha": _head_sha(),
+        }
+        _append_task(row, path=FRICTION_PATH)
+        print(f"friction <- resolution over {len(hit)} row(s): {args.now_known[:70]}")
+        if args.commit:
+            rel = os.path.relpath(FRICTION_PATH, ROOT)
+            r = subprocess.run(["git", "-C", ROOT, "commit", "-m",
+                                f"friction: resolution -- {args.now_known[:60]}", "--", rel],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                print(f"  row appended but NOT committed: {(r.stderr or r.stdout).strip()[:300]}")
+                return 1
+            print(f"  committed {rel} path-scoped")
+        return 0
 
     if args.op != "add":
         rows = _friction_rows()
         if not rows:
             print(f"no friction rows in {os.path.relpath(FRICTION_PATH, ROOT)}")
             return 0
+        # Resolutions are not causes: they are corrections OVER causes, so they are pulled
+        # out before grouping. Counting them as their own cause would put a line in the
+        # table for every correction and make the top cause look less frequent than it was.
+        resolutions = [r for r in rows if r.get("kind") == "resolution"]
+        rows = [r for r in rows if r.get("kind") != "resolution"]
         by_cause = {}
         for r in rows:
             c = (r.get("cause") or "?")
@@ -6973,13 +7027,24 @@ def cmd_friction(argv):
             if r.get("fix_applied"):
                 d["fixed"] += 1
             d["last"] = max(d["last"], r.get("when") or "")
-        print(f"{len(rows)} row(s), {len(by_cause)} cause(s) -- most rows first\n")
+        print(f"{len(rows)} row(s), {len(by_cause)} cause(s), {len(resolutions)} resolution(s) "
+              f"-- most rows first\n")
         for c, d in sorted(by_cause.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
             mins = (f"~{d['min']} min (self-reported, {d['reported']}/{d['n']} rows)"
                     if d["reported"] else "minutes not reported")
             print(f"{d['n']:>3}x  {','.join(sorted(d['kinds'])):<14} {mins}")
             print(f"      {c}")
             print(f"      {d['fixed']}/{d['n']} row(s) carry a fix; last {d['last']}")
+            # PRINT THE SUPERSESSION UNDER THE CAUSE IT CORRECTS, not in a section of its own.
+            # A resolution row filed away elsewhere leaves the refuted mechanism as the first
+            # and last thing a reader sees -- which is the §159 shape: the retraction was
+            # written down, in a place that did not reach the site that published the number.
+            for r in resolutions:
+                if (r.get("supersedes_cause") or "").lower() in c.lower():
+                    print(f"      SUPERSEDED {r.get('when')} by {r.get('who')}: "
+                          f"{r.get('now_known')}")
+                    if r.get("fixed_by"):
+                        print(f"      fixed by: {r['fixed_by']}")
         return 0
 
     row = {
