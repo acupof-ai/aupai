@@ -2914,10 +2914,40 @@
      "L8": 67.61,
      "L9": 70.44,
      "L10": 69.79
+    },
+    "ratio_to_neighbours": {
+     "step6500": 0.5256,
+     "step7000": 0.5134,
+     "step8000": 0.5229,
+     "reading": "NON-MONOTONE. fb computed -2.33% per 1000 steps from the first two points and extrapolated it to 0.43 at step 15258; b0's third point did not continue it. TWO POINTS ALWAYS GIVE A SLOPE -- under the null of no trend they give a nonzero one -- which is shape 148, and fb had corrected b0 for the same class of error (a sample range read as a change in the data) three hours earlier. The rate claim is withdrawn. What survives is weaker and still enough: the ratio sits near 0.52 across 1500 steps and is nowhere near zero. No noise estimate exists because no step was measured twice."
+    },
+    "update_geometry_step8000": {
+     "measured_by": "b0, offline from ck['opt'] and ck['model'], index map verified shape-by-shape across all 63 Muon matrices",
+     "L9": {
+      "W": 31.8,
+      "mb": 0.0294,
+      "cos_orth_mb_W": -0.02587,
+      "mask_rate": 0.4788
+     },
+     "others": {
+      "W": "56-65",
+      "mb": "0.0006-0.0014",
+      "cos_orth_mb_W": "-0.056 to -0.067",
+      "mask_rate": "0.4791-0.4815"
+     },
+     "discriminator": "cos, not mask: L9's anti-alignment is 2.4x weaker, while mask_rate spans 0.56% across all twelve layers and L9 is not even the lowest",
+     "equilibrium_check": {
+      "condition": "-cos*||X|| = wd*mask*||W||, so ||W|| proportional to -cos/(wd*mask)",
+      "predicted_ratio": 0.4097,
+      "measured_ratio": 0.5229,
+      "off_by": "28%",
+      "note": "||X|| assumed equal across layers, which holds here because orthogonalisation fixes the norm by shape and all twelve mixer.o are 1024x1024. The gap was going to be explained by 'not yet at equilibrium', but the non-monotone third point weakens that: a system still moving toward equilibrium should move in one direction."
+     },
+     "mechanism_retracted": "b0 first read the 28x momentum as 'pushed hard in alternating directions'. Muon's mb is an EMA (momentums.lerp_(grads, 1-momentum), momentum 0.95, train.py:578), so alternating gradients make it SMALL; a large mb means gradients are consistently aligned. And ||mb|| does not set the step at all -- the update is the Newton-Schulz orthogonalised X (train.py:592), whose norm depends only on shape, so 28x momentum moves the weight exactly as far as 1x. A card-minutes gradient-sign experiment was planned on that reading and was cancelled: the EMA has already averaged the thing it would have measured."
     }
    },
    "uncertainty": "Norms from single checkpoints, no repeat. The effect is a factor of two against neighbours, far outside any reading noise.",
-   "boundary": "Says layer 9's mixer.o grows but persistently lags its neighbours in two run families, and that it starts level with them. Does NOT say why, and does NOT say it matters. Two hypotheses, neither verified: smaller gradients reaching the KDA o-projection at that depth, or an attn_res block-boundary effect -- the second is CLOSED, because attn_res_blocks=0 gives one block per sublayer and no boundary differs. The cheapest next discriminator is a read, no card: Muon's per-parameter momentum buffer for that weight is in the checkpoint, and its norm separates 'small gradients' from everything else. This does NOT block the params-vs-data comparison: both legs carry the same architecture, so the effect is common to both arms.",
+   "boundary": "Says layer 9's mixer.o grows but persistently lags its neighbours in two run families, and that it starts level with them. Does NOT say why, and does NOT say it matters. Two hypotheses, neither verified: smaller gradients reaching the KDA o-projection at that depth, or an attn_res block-boundary effect -- the second is CLOSED, because attn_res_blocks=0 gives one block per sublayer and no boundary differs. The discriminator turned out to be cos(orthogonalised mb, W), measured offline: L9's anti-alignment is 2.4x weaker than every other layer's while the cautious-decay mask is flat across all twelve. Why that cosine is weaker is not answered. This does NOT block the params-vs-data comparison: both legs carry the same architecture, so the effect is common to both arms.",
    "guard_phrases": [
     "layer 9 is frozen",
     "layer 9's mixer.o does not train"

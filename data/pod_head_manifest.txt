@@ -169,7 +169,7 @@ b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eva
 d4b07fdb565a4a77401872de0d672b63ce7b18bddd9c474ac52ce075994ff3b3  facts/corpus_supply.json  docs  644
 f0b85346c19cd577a48b673de1b7d9299f842930b2cfd9f69cf55737baa3a365  facts/data_quality.json  docs  644
 ae60ce856a06b7a85de108c792f5d5064de10c51be17f66a8ff71265a9750516  facts/data_scaling.json  docs  644
-d45fb8f1aef18cc2a881360b52d42264c339fd1af063b672b520c3e55a141288  facts/efficiency.json  docs  644
+73c6df269c0bb150704001504928d6ab81580a005e2d15a74a404bcb475e4df0  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
 a4da37eaeb60078f4eaa90d09e4914364b30453cf4c50e96b9a9bb53097fdc74  facts/smelt_deeploop.json  docs  644
 f47daa8ea1decd3d5e0fba8da7eda05ecd5e08089042a2316a105f8c33124b45  facts/source_baseline.json  docs  644
