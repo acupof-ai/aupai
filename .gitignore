@@ -63,3 +63,12 @@ runs/trace_*.json
 # Untracked and unignored, it shows up in `git status` for whoever writes the matrix next and
 # gets swept into a `git add`; a lock is per-machine state, never history.
 runs/*.jsonl.lock
+
+# GENERATED, not authored: scripts/pod_push.sh writes it from the HEAD it ships, and ships it
+# last so a partial push leaves the OLD manifest -- which --check correctly calls drift --
+# rather than a new one vouching for files that never landed. Tracking it was the top friction
+# cause (4 of 15 rows in runs/friction.jsonl): the pre-commit hook regenerated it on every
+# commit, so any two branches that both committed collided on it, and in a merge commit the
+# regen ran after git had built the tree, so it could only land in the index -- permanently
+# dirty against HEAD, aborting the next merge (shape A, 6e ruling 2026-09-04).
+data/pod_head_manifest.txt
