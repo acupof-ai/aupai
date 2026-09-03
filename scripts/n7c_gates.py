@@ -69,8 +69,17 @@ def main():
     mdl, _cfg = load_checkpoint(CKPT)
     mdl = mdl.cuda().eval()
     pack = torch.load(PACK, map_location="cpu", weights_only=False)
-    ids = pack["input_ids"][:ROWS].cuda()
-    labels = pack["labels"][:ROWS].cuda()
+    # THE PACK STORES 4097 COLUMNS AND THE MODEL TAKES 4096: sft_math.py:156-157 feeds
+    # input_ids[:, :-1] against labels[:, 1:], the next-token shift. My first version handed the
+    # raw 4097 straight to the model and it died in chunk_kda with CUDA "misaligned address"
+    # (model.py:125) on the PLAIN baseline forward, before any mask_mod was involved -- an odd
+    # sequence length misaligns that kernel. The crash was the lucky half: without the shift the
+    # labels were also off by one, so every gate number would have been computed against the
+    # wrong targets and gates B and C could have "passed" on a comparison that meant nothing.
+    ids = pack["input_ids"][:ROWS, :-1].long().contiguous().cuda()
+    labels = pack["labels"][:ROWS, 1:].long().contiguous().cuda()
+    assert ids.shape == labels.shape, (ids.shape, labels.shape)
+    assert ids.shape[1] % 2 == 0, f"odd sequence length {ids.shape[1]} misaligns chunk_kda"
     causal_mod, prefix_mod = build_mask_mods()
 
     def loss_with(mod=None, plens=None):
