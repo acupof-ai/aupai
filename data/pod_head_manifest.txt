@@ -1,6 +1,6 @@
 fb060f0699747a132e8b3e7e6bd5667a0f0e764f205ca20817e3147cc7ce2561  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
-6a49ad336fd9760ad688a147d3680d9a7787f9d07d6bfb2d4f518d988752fb2b  algorithms/attnres_fused.py  docs  644
+6a49ad336fd9760ad688a147d3680d9a7787f9d07d6bfb2d4f518d988752fb2b  algorithms/attnres_fused.py  training  644
 2618743641a26a505480fb1b698beb16e164875283a82fbc5cff4cf94477f778  algorithms/code_reward.py  docs  644
 cd288db3529cda9b1ee9fa8472c9308dd72970140aed1bbc9d8b577a84d4dec5  algorithms/isolate.py  docs  644
 583e906f13c5cbed90fdce5cb5d865b6628123f83d76c9aa4d1c8c41ca639ba1  algorithms/rlvr.py  docs  644
@@ -212,7 +212,7 @@ bb8ae0603176edec9b45c0a941b5b566507bb45629e29afefdb846a2a0c5c021  mathbank/run_m
 34cecaa73eb45803e70ccad33e31ce4ee7946051ec00fc74a2f85a174b906775  mathbank/run_short_sol.py  docs  644
 820dda489bfa2c313c181d4c3dd92810dd2bdf16e5f6326c268f999598dc3e98  mathbank/split_bank.py  docs  644
 77428c2c82c230c5ff682385a212c2bbcbed6051a9efcf1216d1ced418f518af  mathbank/vet_programs.py  docs  644
-f36c50e9805960cbc1eb3911daa44c7a0a145d0baabb7a8fcd8eeeec2113026a  model.py  training  644
+2567a382cb072021243f19fc7ff24326251b40d7ce3c7054f484d4648922f506  model.py  training  644
 0c0f60bcc8a767a8f26b94cb5845c2e6624ab5f11d80c9fd7c175f11b6250c41  probes/chatml_in_corpus.py  docs  644
 3e687495055dd2d795abe5a7ed72c6ba53cfd23e22291de2eae366b92ab28417  probes/fone_digit_acc.py  docs  644
 1633b9d5f5cfe478cb86ba9aeced109e5b273002f2b0f35fa967d5451ba8dde4  probes/profile_step.py  docs  644
@@ -310,7 +310,7 @@ e83c9e50ec14c6e6a26231ba1efdfd532bceb26d34e27237a972758a17924640  scripts/sft_hf
 a0b98b74bcccc37494a410472423455ed731d470036baddd5161c3e9c6789ea7  scripts/stamp_cache_seeds.py  docs  644
 070eefce69baad8524e27f7dbd5b8d0a8ebf75d9ef879622f3ef91c758c2525b  scripts/supervise_run.sh  docs  644
 e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1  scripts/test_arch_L32.py  docs  644
-30b4de26e8cbd218dc750fa8e80812bcb08ffe62951353c4787605ff331e7cf8  scripts/test_arch_compat.py  docs  644
+136c2fecfe7519b0aa0ad07376be4c12bcdc71795c866302a65b21d1da612ea2  scripts/test_arch_compat.py  docs  644
 8a4934e13fdede89f337675b6a4d65711870911d1296e5037f4115e75a49aae8  scripts/test_artifact_path_ckpt.py  docs  644
 e2ba8c4a980df71944fd82c8e5e03def0dd9d8cd32b3a2d14bbc94f114cd3ae0  scripts/test_attest_cases.py  docs  644
 a68f2726832dc82bb3bc5626db6d68e8e171aef45d3c5d6c035ab803a30b868f  scripts/test_cache_dir_knob.py  docs  644
@@ -375,4 +375,4 @@ ecdde15605f9297804316cee03ff02a1b37b6c67e203e0c5254ec9d381e35c8d  scripts/write_
 161b4c4d2eef465a9e366ae537e4d97731d89e3683c0d7491587cc6aea080c8c  serve.py  docs  644
 b6901ed2aa05254ca9a9a404e5971d174b291ad2cc119410d6351e41fbdf7622  sft.py  training  644
 c7b3fb76fd5f7326a21df47d65d1ae76e531b9ed077fc0da6812dda34ba9ef82  sft_math.py  training  644
-4b861b4a74ba40afbc06831366b329e34be3315871015cec87cacab7f5ca1afd  train.py  training  644
+11073f5b7194faf629664c0a2750dc34db453aa70782f2151556be1fc1efa0b6  train.py  training  644
