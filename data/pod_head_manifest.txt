@@ -260,7 +260,7 @@ be9942c749bb9bf5545bd41649f212f62fe2e13302798d1f232a53824b769004  runs/review.js
 99dd1f9d10c33f6b748d87fb1bcf1c39561e107e519867a3bbc2e5a28a5b089b  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-7c1d05a2fe44435d9bf0dbc3cd809d3c6cc79875988d7a1f739a19a9dcb5f684  runs/tasks.jsonl  docs  644
+8e34377c38434eeca95a9547e1610aaf99dd6e1367de0708e4d03c1de5d9fbb1  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
