@@ -119,7 +119,10 @@ def main():
             # bug -- the labels were unshifted), and the crash survived unchanged, which is what
             # said the length was not the cause.
             with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
-                logits = mdl(ids)
+                # forward returns (logits, hidden) -- model.py:571. Taking [0] rather than
+                # assuming a bare tensor; the tuple is why the first bf16 run failed on
+                # .float().
+                logits = mdl(ids)[0]
                 lv = torch.nn.functional.cross_entropy(
                     logits.float().view(-1, logits.shape[-1]), labels.view(-1),
                     ignore_index=-100)
