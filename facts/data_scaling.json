@@ -689,10 +689,29 @@
      "(500,2000,5000)": 0.5363,
      "(1000,1500,2000)": 1.2838,
      "(2000,3000,4500)": 1.306
+    },
+    "fixed_estimator_sliding_window": {
+     "estimator": "geometric k=2, (d, 2d, 4d), the SAME shape at three different starts -- not a change of estimator",
+     "(500,1000,2000)": {
+      "beta": 0.7558,
+      "margin": 0.6886,
+      "quantisation_bound": 0.0138
+     },
+     "(1000,2000,4000)": {
+      "beta": 0.453,
+      "margin": 0.3689,
+      "quantisation_bound": 0.0205
+     },
+     "(1500,3000,6000)": {
+      "beta": 0.5204,
+      "margin": 0.4343,
+      "quantisation_bound": 0.0247
+     },
+     "reading": "The three span 0.3028 while each carries a quantisation bound of 0.014-0.025: they disagree by 12 to 22 times their own uncertainty, and all three margins clear the 0.2 usability floor. THE EVIDENCE IS THE DISAGREEMENT, NOT A TREND. A true single-parameter power law returns the same beta from every window within noise; no direction or monotonicity needs to be claimed, and with n=3 none could be. b0 offered this as a weak trend claim; it is a strong consistency failure."
     }
    },
    "uncertainty": "THE DOMINANT TERM IS ESTIMATOR CHOICE. Nine three-point triples on this curve give beta from 0.1146 to 1.3060. Beyond that, the least-squares value itself is NOT STATIONARY: it fell monotonically 0.7694 -> 0.6262 -> 0.6215 -> 0.5909 as the window grew from 4 to 12 points, -0.18 cumulative, reproducing the direction measured on pretrain_15b_s1 (-0.23 over 32 points, converging only near step 16000). A single number with an error bar is the wrong shape for this quantity in this window. Never quote it with a rounding-derived bound.",
-   "boundary": "CLOSED 2026-09-03 at step 6000 by fb+b0: the finding is that this curve does not follow a single-parameter power law over the observed window, and more points make the fit's beta move rather than settle. Evidence: monotone least-squares drift -0.18 over a growing window, max|residual| 20.1x print precision, and the pretrain_15b_s1 precedent. NOT evidence: the widening three-point range, which widened because triples were added. The sign test reads as noise (longest run 3, 5 changes against 5.5 expected) and that only rules out a systematic one-way deviation. beta does NOT enter the params-vs-data comparison, which reads two equal-FLOPs legs off their final domain loss; the step-13500 triple is cancelled because it would add one more three-point estimate to a spread already spanning 1.19.",
+   "boundary": "CLOSED 2026-09-03 at step 6000 by fb+b0: the finding is that this curve does not follow a single-parameter power law over the observed window, and more points make the fit's beta move rather than settle. Evidence: three windows of ONE fixed estimator (geometric k=2) returning 0.7558 / 0.4530 / 0.5204, disagreeing by 12-22x their own quantisation bounds -- a consistency failure that needs no trend; monotone least-squares drift -0.18 over a growing window, max|residual| 20.1x print precision, and the pretrain_15b_s1 precedent. NOT evidence: the widening three-point range, which widened because triples were added. The sign test reads as noise (longest run 3, 5 changes against 5.5 expected) and that only rules out a systematic one-way deviation. beta does NOT enter the params-vs-data comparison, which reads two equal-FLOPs legs off their final domain loss; the step-13500 triple is cancelled because it would add one more three-point estimate to a spread already spanning 1.19.",
    "guard_phrases": [
     "the data exponent is 0.647",
     "beta = 0.647 +- 0.007",
