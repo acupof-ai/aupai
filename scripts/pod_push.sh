@@ -18,6 +18,7 @@
 # container's emptyDir host path via `tn push`. The file lands at /work/aupai/<path> in
 # the container, same as podput.
 set -euo pipefail
+export PODPUT_TRACKED_OK=1
 cd "$(dirname "$0")/.."
 
 # Stamp WHAT is on the pod and from WHERE. The pod has no git and no route back to
@@ -138,7 +139,7 @@ push_one() {
   local b64_size
   b64_size=$(gzip -9c "$f" | base64 | tr -d '\n' | wc -c | tr -d ' ')
   if [ "$b64_size" -le 100000 ]; then
-    ~/bin/podput "$f" "/work/aupai/$f"
+    ~/bin/podput "$f" "/work/aupai/$f" || { echo "REFUSING: podput failed for $f; nothing after it shipped" >&2; exit 1; }
   else
     find_emptydir
     echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
