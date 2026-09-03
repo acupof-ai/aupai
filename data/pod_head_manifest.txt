@@ -259,7 +259,7 @@ ba898922eec7f900499e4096ab841c63df2db30baac3a1c0b3aabf4b3969bd8b  scripts/census
 21e824515275440f51bdff8446660834c70f976f3920ab5c463e9cfc1c94f34a  scripts/check_sft_ready.py  docs  644
 c37b16a0381aa3ccbca66a7c5a6b726c45d92b46364d72a542be983883e1ebf5  scripts/check_split_page_lines.py  docs  644
 9e71e20381425d77ddc3bad9f6ba36efd076f69780a81b5cc01b98d65cb4cff0  scripts/ckpt_health.py  docs  644
-f701fec826111c415873ee06eaf0e081ca86954d6c7f8580809535d516be0fc0  scripts/ckpt_info.py  docs  644
+0e049c095814fc5bde489c668da8e69a7f0f16b335e117835fe200a7a04460c2  scripts/ckpt_info.py  docs  644
 bc7535d728ac7873d915bcdfcbfc89cbfc4feedd6b0214cae3299fc5629c04bc  scripts/corpus_snapshot.py  docs  644
 fcb0540acd7e0d92a52f93f3434d6db8a607d9c418a564f6976d0216cdbe350e  scripts/count_tokens.py  docs  644
 3a0423bf4e59def1a8be9bbb4000a4f25d43d0d6058c8c54432fdd209b742b3f  scripts/doc_numbers_check.py  docs  644
@@ -286,7 +286,7 @@ c1d723e6cc310bde609ba86233bf5ea4d2fc499d7c8b991b668c72c09549b04b  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-4a690be20598a6cdf42ad59e26c5abfa675a0e4a68b71dc2c5c0be5b587cbf43  scripts/hooks/pre-commit  docs  755
+f72fbd24daa13f640c1d268fe9b12363e58a6ace5a78f2658af4b50d325495b5  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
