@@ -44,7 +44,12 @@ def run(cell, ckpt, loop):
            "--out", summary, "--preds", preds]
     if loop:
         cmd += ["--loop", *loop]
-    print(f"== {cell}: trained={'looped' if 'looped' in ckpt else 'unlooped'} "
+    # "looped" is a SUBSTRING of "unlooped", so `'looped' in ckpt` is True for both checkpoints and
+    # every cell printed trained=looped. Display only -- the cell key and its checkpoint come from
+    # CELLS and were always right, so no number was affected -- but a label that says the opposite
+    # of what ran is how a correct number gets read as the wrong cell. Test the actual name.
+    trained = "unlooped" if "unlooped" in ckpt else "looped"
+    print(f"== {cell}: trained={trained} "
           f"scored={'looped_4_7' if loop else 'unlooped'}", flush=True)
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
