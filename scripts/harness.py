@@ -6980,27 +6980,44 @@ def cmd_friction(argv):
         # sitting dirty (6e, 2026-09-03; second row of that shape today). A ledger whose
         # own writer leaves the tree dirty manufactures the toll it exists to record.
         #
-        # Path-scoped and --no-verify: this stages exactly one ledger path, and the
-        # pre-commit hook regenerates data/pod_head_manifest.txt, which would pull a second
-        # dirty derived file into a commit the caller did not ask for.
+        # NOTHING IS OWED WHEN THIS RETURNS, and that is the point of doing it here rather
+        # than printing a reminder. The first version used --no-verify and printed an
+        # "OWED: pod_drift --write" line: print-and-continue, and the thing owed was a
+        # refix of data/pod_head_manifest.txt, which is the TOP CAUSE in this very ledger
+        # at 4 of 15 rows. A writer that leaves the top cause behind manufactures the shape
+        # it was built to remove (6e's ruling, 2026-09-03).
         #
-        # runs/friction.jsonl IS in data/pod_head_manifest.txt (checked, 1 line), so this
-        # commit changes a manifest-listed file and the standing rule says its committer
-        # pushes it and refixes the manifest. --no-verify skips the hook's regen, so the
-        # refix is named here rather than left implicit: after using --commit, run
-        # `python3 scripts/pod_drift.py --write` and `scripts/pod_push.sh runs/friction.jsonl`.
-        # The row is a ledger append the pod never reads for a decision, so it is not urgent;
-        # what is not acceptable is not knowing it is owed.
+        # So: regenerate the manifest first, then commit BOTH paths path-scoped WITH the
+        # hook. runs/friction.jsonl is a manifest-listed path, so its commit changes the
+        # manifest by the standing rule; regenerating before the commit means the hook's own
+        # regen finds nothing to change and the tree is clean afterwards.
         rel = os.path.relpath(FRICTION_PATH, ROOT)
+        man = os.path.join("data", "pod_head_manifest.txt")
+        dr = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "pod_drift.py"),
+                             "--write"], cwd=ROOT, capture_output=True, text=True)
+        if dr.returncode != 0:
+            print(f"  row appended but NOT committed: pod_drift.py --write failed: "
+                  f"{(dr.stderr or dr.stdout).strip()[:200]}")
+            return 1
+        paths = [rel] + ([man] if os.path.exists(os.path.join(ROOT, man)) else [])
         msg = f"friction: {args.kind} -- {args.cause[:60]}"
-        r = subprocess.run(["git", "-C", ROOT, "commit", "--no-verify", "-m", msg, "--", rel],
+        r = subprocess.run(["git", "-C", ROOT, "commit", "-m", msg, "--", *paths],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            print(f"  row appended but NOT committed: {(r.stderr or r.stdout).strip()[:200]}")
+            # A hook refusal is a real answer, not noise: it means something else in the tree
+            # is wrong (behind main, a red check). Surface ITS reason and exit nonzero rather
+            # than retrying with --no-verify, which would hide it. The row stays appended and
+            # uncommitted, which the message says, so the caller knows the tree is dirty.
+            print(f"  row appended but NOT committed: {(r.stderr or r.stdout).strip()[:400]}")
             return 1
-        print(f"  committed {rel} path-scoped, so the ledger never sits dirty")
-        print("  OWED: pod_drift.py --write, then pod_push.sh runs/friction.jsonl "
-              "(--no-verify skipped the hook's manifest regen)")
+        dirty = subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--", *paths],
+                               capture_output=True, text=True).stdout.strip()
+        print(f"  committed {' '.join(paths)} path-scoped, so the ledger never sits dirty")
+        if dirty:
+            # The hook regenerates the manifest during the commit; if that left either path
+            # dirty again, say so instead of reporting a clean tree that is not clean.
+            print(f"  STILL DIRTY after the commit, needs a person: {dirty[:200]}")
+            return 1
     return 0
 
 
