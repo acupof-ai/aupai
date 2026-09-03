@@ -194,7 +194,47 @@ def gate_corpora(root, mix_path, world):
 
 
 ARCH_TESTS = ("scripts/test_arch_L32.py", "scripts/test_e2e.py")
-LAUNCH_SHAPE = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+
+
+def _launch_shape_from_env():
+    """The shape being launched: LAUNCH_SHAPE_JSON if set, else the 493.6M default.
+
+    WHY AN ENV VAR AND NOT A PARAMETER (de's challenge, 2026-09-03). A `shape=None`
+    parameter on gate_arch_tests would need six call sites updated in step -- the GATES
+    dispatch at run(), four direct calls in this file's selftest, and two in
+    launch_tests.py -- and a caller that forgets it silently gets the 493.6M shape. That
+    is LAUNCH_SHAPE's present defect moved one level out, not fixed: the gate would still
+    answer about a model nobody is training, and nothing would say so.
+
+    This follows LAUNCH_MIX's route instead (de-10), which already solved the identical
+    problem for the DATA half: one module-level source that the launch side sets, read by
+    the gate and by the tests that write rows. test_e2e.py:48 reads E2E_MIX exactly this
+    way. Same shape of fix, one level over.
+
+    A malformed value RAISES rather than falling back. A silent fallback here would
+    produce the very thing this exists to prevent -- a gate confidently comparing against
+    a shape the operator did not ask for.
+    """
+    raw = os.environ.get("LAUNCH_SHAPE_JSON", "").strip()
+    default = {"d": 1024, "layers": 32, "heads": 8, "ffn_hidden": 3072}
+    if not raw:
+        return default
+    try:
+        got = json.loads(raw)
+    except ValueError as e:
+        raise SystemExit(f"LAUNCH_SHAPE_JSON is not JSON: {e}. A gate that fell back to "
+                         f"the default here would compare against a shape nobody asked "
+                         f"for, which is the defect this variable exists to fix.")
+    if not isinstance(got, dict):
+        raise SystemExit(f"LAUNCH_SHAPE_JSON must be a JSON object, got {type(got).__name__}")
+    missing = [k for k in default if k not in got]
+    if missing:
+        raise SystemExit(f"LAUNCH_SHAPE_JSON is missing {missing}: a shape that does not "
+                         f"state all four keys cannot be compared against a recorded row")
+    return {k: got[k] for k in default}
+
+
+LAUNCH_SHAPE = _launch_shape_from_env()
 # The mix being launched, beside the shape and for the same reason: launch_tests needs to
 # say whether a recorded arch-test pass touched the launch DATA, and it may not hold a
 # second copy of this path (_launch_shape's docstring: a second copy drifts invisibly in
@@ -835,7 +875,12 @@ def selftest():
         for rel in tracked:
             dst = os.path.join(d, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.copy(os.path.join(ROOT, rel), dst)
+            # copy2, not copy: copy() drops the mode, and pod_drift's gate compares mode
+            # as of b0-19 -- so a world built with copy() showed 15 files whose content
+            # matched and whose exec bit did not, and pod_attribution read that as "the
+            # pod drifted" in a world built to be clean. A fixture must carry the property
+            # the gate under test reads, or it tests the fixture's own defect.
+            shutil.copy2(os.path.join(ROOT, rel), dst)
         os.makedirs(os.path.join(d, "data", "corpus"), exist_ok=True)
         mutate(d)
         return d
@@ -949,8 +994,16 @@ def selftest():
     for label, record in (
         ("a key that is neither named test",
          {"ok": "pass", "shape": LAUNCH_SHAPE}),
+        # DERIVED from the launch shape, not the literal 12 it used to be (de's
+        # challenge, 2026-09-03). Once the shape is settable, `layers=12` is a CORRECT
+        # record for an L12 launch -- the gate must then say GO, this world's
+        # `assert st != GO` goes red, and the red means THE WORLD DIED rather than the
+        # gate stopped comparing. One signal for two opposite facts is the family this
+        # repo keeps paying for. layers+1 is wrong at every launch shape by construction.
         ("both tests passing at the WRONG shape",
-         {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE, layers=12), "real_kernel": True}
+         {n: {"result": "pass",
+              "shape": dict(LAUNCH_SHAPE, layers=LAUNCH_SHAPE["layers"] + 1),
+              "real_kernel": True}
           for n in ARCH_TESTS}),
         ("both tests passing against a STAND-IN kernel",
          {n: {"result": "pass", "shape": dict(LAUNCH_SHAPE), "real_kernel": False}
@@ -988,6 +1041,32 @@ def selftest():
     assert mix_rel in why, (f"the GO line does not name the mix it cleared: {why!r}. A gate "
                             f"that reads a field must say what it read, or a reader cannot "
                             f"tell this version from the one that ignored it")
+
+    # THE SHAPE IS ACTUALLY READ FROM LAUNCH_SHAPE -- positive evidence, not the absence
+    # of a failure (de's second criterion, 2026-09-03). ONE record, TWO launch shapes:
+    # it must clear the shape it names and be refused by the other. The negative world
+    # above cannot show this: it stays red whether the gate compares shapes or has
+    # stopped reading the field, so it certifies nothing about WHERE the expected shape
+    # comes from. Both calls run against the same tree and the same file, so the only
+    # thing that differs is LAUNCH_SHAPE.
+    _saved = dict(LAUNCH_SHAPE)
+    try:
+        other = dict(_saved, layers=_saved["layers"] + 1)
+        LAUNCH_SHAPE.clear(), LAUNCH_SHAPE.update(other)
+        st_other, why_other = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
+        assert st_other != GO, (
+            f"the record cleared a DIFFERENT launch shape too (recorded L{_saved['layers']}, "
+            f"launch L{other['layers']}): the gate is not reading LAUNCH_SHAPE at all, so a "
+            f"pass here says nothing about the model being trained. why={why_other!r}")
+        assert f"L{other['layers']}" in why_other or str(other["layers"]) in why_other, (
+            f"the refusal does not name the shape it wanted, so an operator cannot see "
+            f"which shape was compared: {why_other!r}")
+    finally:
+        LAUNCH_SHAPE.clear(), LAUNCH_SHAPE.update(_saved)
+    st_back, _ = gate_arch_tests(dg, os.path.join(dg, mix_rel), 7)
+    assert st_back == GO, (
+        "restoring LAUNCH_SHAPE did not restore the GO -- the two calls above were not "
+        "measuring the shape, and every assertion in this block is about something else")
 
     # THE MIX HALF (de-10), and the first world is the incident: e2e passed on the sample
     # mix while the launch mix died at step 0 on KeyError('content'), because the sample
@@ -1202,7 +1281,7 @@ def selftest():
     # the launch is cut from. Unregistered files are NOT refused -- 168 of them
     # are one-off scripts that only ever existed on the pod, and a one-off says
     # nothing about whether the training code is main's code.
-    from pod_drift import sha_disk
+    from pod_drift import mode_disk, sha_disk
 
     def attributable_world(mutate):
         # A world whose manifest names exactly what it holds, so check_pod's
@@ -1215,7 +1294,14 @@ def selftest():
                 continue  # manifest territory is code/config; the manifest lists none of data/ here
             for fn in filenames:
                 fp = os.path.join(dirpath, fn)
-                lines.append(f"{sha_disk(fp)}  {os.path.relpath(fp, d)}  code")
+                # The mode column too (b0-19). Written as three columns, every 755 file
+                # read back as 644 -- read_manifest's default for an old row -- and the
+                # gate reported 15 mode drifts in a world built to be CLEAN. The default
+                # is right for a manifest committed before the column existed and wrong
+                # for one generated now: a fixture that hand-writes the artifact must
+                # write every field the reader reads.
+                lines.append(f"{sha_disk(fp)}  {os.path.relpath(fp, d)}  code  "
+                             f"{mode_disk(fp)}")
         with open(mp, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         mutate(d)

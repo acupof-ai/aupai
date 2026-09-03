@@ -47,7 +47,27 @@ from launch_tests import record_launch_test  # noqa: E402
 
 # The ruled shape. seq and vocab are cut to keep a CPU run in seconds -- neither is
 # depth-dependent, and the point here is depth.
-D, H, L, F = 1024, 8, 32, 3072
+#
+# THE SHAPE COMES FROM THE LAUNCH SIDE, not from this line (b0, 2026-09-03). It was
+# `D, H, L, F = 1024, 8, 32, 3072`, which meant this file could only ever produce an L32
+# record -- so gate_arch_tests, which asks "did the tests pass at the shape being
+# launched", had a right-hand side it could read and a left-hand side nothing could
+# produce for any other shape. The 206M L12 leg then had two options and both were wrong:
+# record L12 honestly and be refused, or record L32 and hold a green that certifies a
+# model nobody is training.
+#
+# Read through launch_gate.LAUNCH_SHAPE (set by LAUNCH_SHAPE_JSON) rather than from a
+# second env var here, because a second copy is exactly the drift LAUNCH_MIX's docstring
+# warns about: the row's shape and the gate's expected shape must come from ONE place or
+# they can disagree silently. The file name still says L32; it is not renamed because
+# ARCH_TESTS, SELFTEST_FILES, the pod manifest and every recorded test_sha256 key on it,
+# and the connected surface is larger than the clarity gained.
+from launch_gate import LAUNCH_SHAPE  # noqa: E402
+
+D = LAUNCH_SHAPE["d"]
+H = LAUNCH_SHAPE["heads"]
+L = LAUNCH_SHAPE["layers"]
+F = LAUNCH_SHAPE["ffn_hidden"]
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden = D, H, L, F
 Cfg.vocab, Cfg.vocab_real, Cfg.seq = 256, 256, 16
 Cfg.attn_res, Cfg.attn_res_blocks, Cfg.grad_ckpt, Cfg.attn_res_dyn_q = True, 0, False, False
