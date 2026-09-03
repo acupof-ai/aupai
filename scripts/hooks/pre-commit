@@ -506,6 +506,7 @@ def main():
         "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/pod_verify_landed.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
