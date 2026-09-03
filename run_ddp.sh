@@ -88,8 +88,30 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
   CARD=$(python scripts/harness.py free-card --wait 1800)
   SCORING_RC=0
   if [ -n "$CARD" ]; then
-    CUDA_VISIBLE_DEVICES="$CARD" python eval/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl \
-      || SCORING_RC=$?
+    CUDA_VISIBLE_DEVICES="$CARD" python eval/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl &
+    SCORER_PID=$!
+    # SAY THAT A SCORE IS IN FLIGHT, in the run's own row, before it can be double-started.
+    # This chain runs after torchrun exits and used to write nothing, so nothing distinguished
+    # "being scored right now" from "never scored" -- b0 double-scored the params leg on that
+    # gap. Two events, not one: a line written only at the end cannot tell a reader whether a
+    # currently-running score is theirs.
+    #
+    # The CARD is the identity that crosses namespaces; SCORER_PID does not. Measured
+    # 2026-09-04: nvidia-smi INSIDE the container reports HOST pids (1079933, 1079934,
+    # 1187488 -- none resolve in the container's own ps), so no pid this shell can print
+    # ever appears in the compute-apps list. It is labelled container-pid because that is
+    # the only namespace it resolves in, and it is what `ps -p` and `kill` take there.
+    #
+    # --quiet-if-absent: a run launched without `harness launch` has no open row, and
+    # bookkeeping with nowhere to write must not turn a successful score into a failure.
+    # `|| true` for the same reason. But stderr is NOT redirected away: a mistyped flag here
+    # would otherwise be invisible forever, which is the same silence this annotation exists
+    # to remove. Loud in the log, harmless to the exit code.
+    python scripts/exp.py note --name "$NAME" --quiet-if-absent \
+      --text "score_matrix STARTED on card $CARD (container-pid $SCORER_PID)" >/dev/null || true
+    wait "$SCORER_PID" || SCORING_RC=$?
+    python scripts/exp.py note --name "$NAME" --quiet-if-absent \
+      --text "score_matrix FINISHED on card $CARD (container-pid $SCORER_PID) rc=$SCORING_RC" >/dev/null || true
   else
     echo "FATAL: no free lane card in 30min -- ckpt_${NAME}.pt unscored, training succeeded but this run produced NO metrics. Re-score: CUDA_VISIBLE_DEVICES=<lane> python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
     SCORING_RC=1
