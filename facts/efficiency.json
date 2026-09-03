@@ -2591,6 +2591,46 @@
    "uncertainty": "One run per arm, one seed, one depth, 500 steps. The 0.0000 is a fact about reachability plus that init zeroing, so it is not a statistical claim; the 1.0670x on the head's pad rows IS a one-sample comparison with no replicate. Arm 3's head is barely trained (2.40x init), so its tok figure of 19.8118 conflates the lr change with an untrained head. AND \"LOWER HEAD LR -> MORE TOK GROWTH\" IS NOT A TREND, NOR EVEN MONOTONE: there are exactly TWO untied points, and two points admit no monotonicity -- any two values are ordered. Calling it monotone (as an earlier draft did) borrows the word's implication of a direction that would persist. One of the two is also not at steady state. The honest statement is a single comparison: the arm with the lower head lr had the larger tok growth, and its head was undertrained, which is a candidate explanation for that ordering rather than evidence against it. A third head_lr would be needed before direction is a claim. THE THREE ab_ CHECKPOINTS ARE ABSENT FROM THE POD CANDIDATE LISTING (2026-09-02 13:58Z) BECAUSE THEY ARE NEWER THAN IT, NOT BECAUSE THEY WERE PRUNED -- verified by direct ls on the pod: ckpt_ab_shapelr_base.pt.ep1 written 09-02 18:19 (1,784,216,707 bytes), ckpt_ab_valueembed_valueembed.pt.ep1 09-02 19:40 (2,053,519,923), ckpt_ab_untiehead_untiehead.pt.ep1 09-02 22:29 (2,187,661,555) and ckpt_ab_untieheadlr_untieheadlr.pt.ep1 09-02 22:53 (2,187,664,147), all four present. The listing predates every one of them, so \"absent\" here is a snapshot artifact; a re-scan resolves it and none of these has been KEEP-claimed yet, which means they remain deletion-eligible once they DO enter a listing.",
    "boundary": "Excludes ONE mechanism for b0-10's uniform growth; does not explain it. Says nothing about why untying makes tok grow more, beyond ruling out that the head path was doing the growing. The cancellation story is a hypothesis needing gradient signs on the two paths, which is a different measurement from any A/B. The pad rows being nonzero in every arm's HEAD (6.6575 / 7.1036 / 0.7302) is eff.vocab_padding_softmax_defect and is NOT a confound between arms -- all three carry it at the same order, so it cannot produce a between-arm difference; it was checked for exactly that. The copy-init arm (untied head initialized from the embedding table) is the only arm that could separate tok's reverse growth from initialization cost, and it is DEFERRED, not dropped: it answers a mechanism question with no measured loss consequence and changes no recipe at this ladder point.",
    "status": "measured"
+  },
+  {
+   "id": "eff.mix_composition_explains_half_the_step_loss_swing",
+   "value": "Per-step train loss swings 0.495 nat over steps 500-800 of data_leg_206m_8b (2.000 / 2.188 / 2.486 / 1.991, LR locked at 1.00e-02 since warmup ended at 300). The deterministic domain schedule explains 0.237 of that -- 48%. FALSIFIED: \"no training anomaly is needed to explain this\", which is what I claimed from the upper bound alone.",
+   "measured": "2026-09-03",
+   "source": "data_leg_206m_8b's step lines, which live only on the pod (an untracked run log, so it is deliberately NOT cited as a path -- facts_well_formed refuses a source a reader cannot reach, and the four (step, loss) pairs are quoted in config below instead). The run is registered in runs/experiments.jsonl under name data_leg_206m_8b. Plan rebuilt from data/mix_200m_8b.json plus that log's per-domain row counts, via train.py:1651 (g = torch.Generator().manual_seed(Cfg.seed)) and train.py:1764 (torch.randperm(..., generator=g)). Needs no card and no corpora.",
+   "config": {
+    "rank": "0 of 4",
+    "plan_rows_rank0": 488280,
+    "rows_per_step": 32,
+    "predictor": "per-batch loss = each domain's own val loss weighted by that batch's domain counts; domain losses from ckpt_p200m_4b_0902",
+    "steps": {
+     "500": {
+      "obs": 2.0,
+      "pred": 1.492,
+      "top": "code_py_starcoder x15, cot x6, math_owm_stage2 x6"
+     },
+     "600": {
+      "obs": 2.188,
+      "pred": 1.729,
+      "top": "math_owm_stage2 x14, code_py_starcoder x10, en_c4_stage2 x6"
+     },
+     "700": {
+      "obs": 2.486,
+      "pred": 1.722,
+      "top": "math_owm_stage2 x12, code_py_starcoder x7, cot x5"
+     },
+     "800": {
+      "obs": 1.991,
+      "pred": 1.623,
+      "top": "code_py_starcoder x15, math_owm_stage2 x8, en_c4_stage2 x4"
+     }
+    },
+    "observed_range": 0.495,
+    "predicted_range": 0.237,
+    "fraction_explained": 0.48
+   },
+   "uncertainty": "RANK ORDER DISAGREES: observed minimum is step 800, predicted minimum step 500; observed maximum 700, predicted maximum 600. pearson r = 0.724 on FOUR points, not significant. The residual 0.258 nat is UNATTRIBUTED, three candidates untested: (1) within-domain document variance, which a domain-mean model cannot express; (2) step 500 is the checkpoint-write step and carries the largest residual (0.508); (3) THE PREDICTION USED ANOTHER MODEL'S per-domain losses (ckpt_p200m_4b_0902) to explain this leg's behaviour -- the most likely of the three, and the same error class as reusing a peak measured under a different dtype. Closing it needs this leg's own per-domain losses, which needs a card; not spent, because the residual enters no launch or quality criterion (6e's ruling).",
+   "boundary": "THE UPPER BOUND HELD; THE INFERENCE FROM IT DID NOT. 0.495 does not exceed what mix wobble can produce -- the nine domains span 2.959 nat (cot 0.9902 to zh_web 3.9489), so 0.495 is 16.7% of that range -- and that bound was and remains correct. What was wrong was reading a bound as an expectation: a bound says the observation is POSSIBLE under the benign explanation, never that the benign explanation PRODUCED it. Corollary for the method: rebuilding the plan is cheap and reusable for any future loss jump, but it yields an UPPER BOUND unless the domain losses come from the same checkpoint being explained.",
+   "status": "measured"
   }
  ]
 }
