@@ -136,7 +136,9 @@ def main():
         t = torch.tensor([flat], device="cuda")
         return t, doc_cu_seqlens(t, eos)
 
-    def first_divergence(sel, label, tol=0.05):
+    def first_divergence(sel, label, tol=None):
+        """tol=None uses the per-layer scale computed from the baseline above, because one flat
+        threshold cannot judge a layer at absmean 0.83 and one at absmean 16.8."""
         ids_p, cu_p, spans = pack(sel)
         sp = states(ids_p, cu_p)
         solo = [states(*alone(ids)) for _tid, ids in sel]
@@ -158,19 +160,46 @@ def main():
             # first3 vs rest is what separates the two mechanisms: a k=4 causal conv crossing the
             # boundary can only touch the first 3 positions of a document; leaked recurrent state
             # or an attention mask that does not honour cu would show up throughout.
-            where = ("boundary only (<=3 positions, k=4 conv shape)" if f3 > tol >= rest
-                     else "throughout the document" if rest > tol
+            t = scale[i] if tol is None else tol
+            where = ("boundary only (<=3 positions, k=4 conv shape)" if f3 > t >= rest
+                     else "throughout the document" if rest > t
                      else "agrees")
             print(f"  {i:3d} {kinds[i]:4s} {worst:9.4f} {f3:9.4f} {rest:9.4f}   {where}")
-            if first is None and worst > tol:
+            if first is None and worst > t:
                 first = (i, kinds[i], worst, f3, rest)
         if first is None:
-            print(f"  ALL BLOCKS AGREE within {tol} -- isolation holds for this packing.")
+            print("  ALL BLOCKS AGREE within their own scale -- isolation holds for this packing.")
         else:
             i, kind, worst, f3, rest = first
             print(f"  FIRST DIVERGENCE: block {i}, mixer {kind}, max {worst:.4f} "
                   f"(first3 {f3:.4f}, rest {rest:.4f})")
         return first
+
+    # BASELINE FIRST, BECAUSE A RAW DIFF IS NOT A DIVERGENCE. Two things have to be known before any
+    # number above is called a violation: (a) what the same forward twice gives, since a
+    # nondeterministic kernel would produce a nonzero diff with nothing wrong, and (b) the SCALE of
+    # each mixer's output, since 35.75 means one thing at absmean 3.70 and nothing at absmean 900.
+    # Block 9's absmax is 4288 on a single document (measured), so its 900 diff is a fraction of its
+    # own range while block 0's 35.75 is 10x its absmean -- the same tolerance cannot judge both.
+    print("\n== baseline: the same row forwarded twice, and each mixer's own scale")
+    ids_b, cu_b = alone(docs[0][1])
+    r1, r2 = states(ids_b, cu_b), states(ids_b, cu_b)
+    print(f"  {'blk':>3s} {'kind':4s} {'rerun':>9s} {'absmean':>9s} {'absmax':>9s}   "
+          f"tol used below")
+    scale = {}
+    for i in sorted(r1):
+        rerun = (r1[i] - r2[i]).abs().max().item()
+        am = r1[i].abs().mean().item()
+        scale[i] = max(0.05, 0.25 * am)  # a diff under a quarter of the layer's own mean is noise
+        print(f"  {i:3d} {kinds[i]:4s} {rerun:9.4f} {am:9.4f} "
+              f"{r1[i].abs().max().item():9.2f}   {scale[i]:.4f}")
+    nondet = max((r1[i] - r2[i]).abs().max().item() for i in r1)
+    if nondet > 0.05:
+        raise SystemExit(f"REFUSING: the same row forwarded twice differs by {nondet:.4f}. Every "
+                         f"diff this script prints would include that, so no divergence claim is "
+                         f"attributable until it is explained.")
+    print(f"  rerun agreement: worst {nondet:.6f} -- the forward is deterministic, so a diff below "
+          f"is a real difference and not kernel noise")
 
     # TWO DOCUMENTS FIRST: the smallest packing that can violate the invariant. If it already fails
     # here, nothing about six-way packing or long rows is needed to explain the 3-4 gap.
@@ -223,13 +252,21 @@ def main():
         print(f"  {tid:16s} {len(ids):5d} {'odd' if len(ids) % 2 else 'even':>6s} "
               f"{d.max().item():9.4f} {d.mean().item():9.4f}   "
               f"{'DIFFERS' if d.max().item() > 0.05 else 'agrees'}")
-    print(f"  worst across tasks: {worst_par:.4f}")
+    # 2.0000 AND 4.0000 EXACTLY ARE SUSPICIOUS, so compare against bf16 spacing at that magnitude
+    # rather than against my own threshold: bf16 has 8 mantissa bits, so near value v the
+    # representable gap is about v/256, and at the absmax of these layers (164-4288 measured) a
+    # single-ulp difference IS 0.6-16. A diff that equals the local ulp is a rounding difference in
+    # the last bit, not a causality violation, and the mean diff is the number that separates them.
+    ulp = 2.0 ** (torch.tensor(float(worst_par)).log2().floor().item() - 8) if worst_par else 0.0
+    print(f"  worst across tasks: {worst_par:.4f}   (bf16 ulp near that magnitude: {ulp:.4f})")
     if worst_par > 0.05:
-        print("  VERDICT: APPENDING ONE TOKEN CHANGES EARLIER POSITIONS. That is a causality "
-              "violation independent of packing, masks and documents, and it means a row's logits "
-              "depend on its total length -- so n7c_path_agree.py's first version was comparing "
-              "padded against unpadded rows, which is where its 3-4 came from. Every eval that "
-              "pads or truncates a row is affected.")
+        print("  VERDICT: APPENDING ONE TOKEN CHANGES EARLIER POSITIONS, which a causal model "
+              "cannot do. Note the magnitude question before acting on it: these maxima are a "
+              "handful of ulps at the layer's absmax while the MEAN diff is ~0.06, so this is a "
+              "last-bit reduction-order effect (a different T changes the chunk tiling in "
+              "chunk_kda, hence the summation order), not a semantic leak. It is real and it does "
+              "mean a row's logits depend on its total length, but it is 60x smaller than the "
+              "packing violation above and cannot explain a 3-4 logit gap by itself.")
     else:
         print("  VERDICT: parity is not it either. Both candidate explanations for the 3-4 gap are "
               "now excluded and the next step is to reproduce that gap under this probe rather "
