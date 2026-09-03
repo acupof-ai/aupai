@@ -7,6 +7,7 @@ heuristic -- this is a LOWER BOUND on the error rate (the missable classes are
 prose/contextual errors). Read-only. Python 3 only.
 """
 import json
+import random
 import re
 import sys
 
@@ -37,9 +38,11 @@ def eqs(t):
 
 def main():
     p = sys.argv[1]
+    ctx = None if len(sys.argv) < 3 else sys.argv[2]
     n = wrong = 0
     rows_seen = 0
     bad_examples = []
+    matched_ctx = []  # (q_before, eq_text, q_after) around each match
     with open(p, encoding="utf-8") as f:
         for line in f:
             if not line.strip():
@@ -57,6 +60,10 @@ def main():
                     wrong += 1
                     if len(bad_examples) < 15:
                         bad_examples.append((d.get("id"), f"{a}{op}{b}={c}", lhs, d.get("src")))
+                    if ctx == "wrongctx" and len(matched_ctx) < 3000:
+                        i = ans.find(f"{a}{op}{b}={c}")
+                        lo, hi = max(0, i - 40), i + len(f"{a}{op}{b}={c}") + 40
+                        matched_ctx.append((d.get("id"), ans[lo:hi].replace("\n", " ")))
     print(f"rows={rows_seen} eqs_found={n} eqs_wrong={wrong}",
           flush=True)
     if n:
@@ -64,7 +71,35 @@ def main():
               flush=True)
     for e in bad_examples:
         print("BAD", e, flush=True)
+    if ctx == "wrongctx":
+        rng = random.Random(7)
+        for _ in range(20):
+            if not matched_ctx:
+                break
+            did, snippet = rng.choice(matched_ctx)
+            print(f"WCTX id={did} :: {snippet}", flush=True)
+
+
+def negtest(fn):
+    with open(fn, encoding="utf-8") as f:
+        t = f.read()
+    wrong = matched = 0
+    for _a, _op, _b, c, lhs in eqs(t):
+        matched += 1
+        try:
+            cval = float(c)
+        except ValueError:
+            continue
+        if abs(lhs - cval) > 1e-6:
+            wrong += 1
+    fp = (wrong / matched) if matched else None
+    fp_s = f"{fp:.2%}" if fp is not None else "NA"
+    print(f"NEGTEST file={fn} matched={matched} wrongly_flagged={wrong} "
+          f"(false-positive signal vs known-good code={fp_s})", flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) >= 3 and sys.argv[2] == "negtest":
+        negtest(sys.argv[1])
+    else:
+        main()
