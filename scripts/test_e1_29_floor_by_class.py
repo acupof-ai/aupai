@@ -197,13 +197,62 @@ def main():
                 fails.append(f"pad_id is not derived via {want}, which is how eval_heldout's own "
                              f"main() gets it (lines 563-569)")
 
-    #    total it splits. Grepped rather than executed because the alternative needs two GPU
-    #    models; a refusal that exists only in intent is not a refusal.
-    if "the split is not a split of this number" not in src:
-        fails.append("nothing checks that the per-class split reconstructs the scored pass")
-    if "REFUSING" not in src or a_ctrl_guard(src) is False:
+    # 6c. THE RECONSTRUCTION TOLERANCE IS RELATIVE. An absolute one is a different test at every
+    #     magnitude, and this cost a completed scoring pass: at 1e-3 absolute the guard refused
+    #     4759488.235578 against 4759488.226891 -- off by 0.0087, which is 1.8e-9 RELATIVE. The
+    #     aggregate is one fused float32 reduction per batch; per-item is reduction="none", then
+    #     .sum(dim=1), then a Python sum over 10,421 floats. Same values, different summation
+    #     trees, so ~1e-9 drift is non-associativity, not a defect. 1e-3 was calibrated on a 2-row
+    #     fixture (~1e-4 relative there); at 4.76M it means 2e-10, i.e. bit-exactness. A guard
+    #     that tightens as the data grows fires first on the largest and most real run.
+    if src.count("max(1e-6 * abs(") < 2:
+        fails.append("a reconstruction tolerance is still absolute; at 4.76M nll an absolute 1e-3 "
+                     "demands bit-exactness between two different summation orders")
+    for drift, total, want_ok in ((0.0087, 4759488.226891, True),   # the real drift: must pass
+                                  (0.0087, 2.0, False),            # same drift, tiny total: fail
+                                  (60.0, 4759488.226891, False)):  # 1.3e-5 relative: a real defect
+        ok = drift <= max(1e-6 * abs(total), 1e-3)
+        if ok != want_ok:
+            fails.append(f"tolerance shape wrong: drift {drift} on total {total} -> "
+                         f"{'pass' if ok else 'fail'}, expected {'pass' if want_ok else 'fail'}")
+
+    # 6d. DISPERSION ACROSS CLASSES IS THE DISCRIMINANT, so it must be COMPUTED, not just
+    #     discussed. English carries 52.5% of the bytes, so en-only landing near the
+    #     whole-population gap is compositionally forced and settles nothing; what separates a real
+    #     language advantage from a small confound is whether zh-prose sits well above the en-*
+    #     classes or all four cluster near the mean.
+    if fn is not None and "[gap_dispersion]" not in assigns:
+        fails.append("gap_dispersion is never computed -- en-only alone cannot separate 'the "
+                     "confound is small' from 'English dominates the denominator'")
+
+    # 6e. THE PER-CLASS SPLIT MUST RECONSTRUCT THE SCORED PASS, and the control's model dir must be
+    #     the one behind the published number.
+    #
+    #     Checked structurally. The grep version looked for "the split is not a split of this
+    #     number" and went red while the guard was fully present -- rewrapping the f-string put
+    #     "the split is not a " and "split of this number" in adjacent literals, so the sentence
+    #     exists in the output and not in the source. Third time a substring check has been wrong
+    #     about this file (a print() mention, an improvement, now a line wrap): the source text is
+    #     not the behaviour, and only the syntax tree is.
+    if fn is not None:
+        exits = [n for n in ast.walk(fn)
+                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                 and n.func.attr == "exit"]
+        recon = [n for n in exits
+                 if any("per-item NLLs sum to" in c.value for c in ast.walk(n)
+                        if isinstance(c, ast.Constant) and isinstance(c.value, str))]
+        if not recon:
+            fails.append("nothing refuses when the per-item NLLs fail to reconstruct the scored "
+                         "pass -- the per-class table would then be a split of a different number")
+        if len(exits) < 4:
+            fails.append(f"only {len(exits)} sys.exit guards in main(); the ctrl-dir, empty-"
+                         f"intersection, reconstruction and per-class-population refusals are all "
+                         f"load-bearing")
+    if a_ctrl_guard(src) is False:
         fails.append("the control floor's model dir is not guarded -- eval_heldout's --model_dir "
                      "default is NOT the model behind the published 0.903758")
+
+
 
     # 7. main() MUST BE COMPILABLE-CLEAN, because nothing here executes it. Every check above
     #    calls classify() or greps the source, so a name that exists only inside main() is never
