@@ -59,9 +59,10 @@ f9aa0a08be4d9d46af85e40bcc1156b88da7a43d36328bd6ad9d203fefbfa7b1  datagen/classi
 9bf45036f0b889860ae3424485ac5070c300cd1f1281b610cc31735c8926f5f6  datagen/clean_corpus.py  corpus  644
 90009be53e85858b39110969cca35a62d9c847eb914789328df32dd5e9c9b3dc  datagen/clean_web.py  docs  644
 ce94da83c49eae1ea1ba085905bb799974e0024256532dc88fb5788ce35d1b32  datagen/code_dedup_build.py  docs  644
+db7dc9c6b71308edeffd39b7f48f15662e9b6e402ea60a0573019cf70424bf5d  datagen/code_dedup_handread.py  docs  644
 87b584eb0a8593399102445a02618d55e5677752012466d26e920b9c2a4364be  datagen/code_rp1t_fail_histogram.py  docs  644
 10a7d5432f33fb6481f6882b91d75b12e60ccf368cda216c91fdc7a37fe822d7  datagen/corpus_fingerprint.py  training  644
-1714f3af01dc693b04bcb0bc1925bcd085e19b6bef04456c34ce6379416595eb  datagen/cot_pilot.py  docs  644
+6dc9fd4ab41a2183a6a8fb8f831ec13fbf15b78b629c1f0b0e3611bb58c03872  datagen/cot_pilot.py  docs  644
 13e07d01c3e11845a02d0356ffc257a91ea0fc1db19fddc294a3efee2e3a9ea9  datagen/count_cleaned_code.py  corpus  644
 ad954a401a022744010743f6eded9cba1cb60807845929c697619522c50b407a  datagen/count_code_dirs.py  docs  644
 1580a98c0707164e16b38859b97635bcadf9156bbcaeed4a675954b64c4e226c  datagen/data_overview.py  docs  644
@@ -179,7 +180,7 @@ b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eva
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
 cc2844dbf684214a67c9e6fce8d2e75f3b576ec147489e13a0c5fde6abe6ceab  facts/corpus_supply.json  docs  644
-f0b85346c19cd577a48b673de1b7d9299f842930b2cfd9f69cf55737baa3a365  facts/data_quality.json  docs  644
+0d6d49ea937cdbdde945177a5cf7d7ce121fac2f45ada66fe15038d5390bf3cd  facts/data_quality.json  docs  644
 ae60ce856a06b7a85de108c792f5d5064de10c51be17f66a8ff71265a9750516  facts/data_scaling.json  docs  644
 c66f096e981d362ef1fbe2b42d7b975f7e1432e5d26e33ffc06fdbf652532280  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
@@ -254,7 +255,7 @@ be9942c749bb9bf5545bd41649f212f62fe2e13302798d1f232a53824b769004  runs/review.js
 99dd1f9d10c33f6b748d87fb1bcf1c39561e107e519867a3bbc2e5a28a5b089b  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-da7b0bee92d145c1ce2d577d175833f44592e7b01ff1152d26f58d2430b1fb22  runs/tasks.jsonl  docs  644
+7c1d05a2fe44435d9bf0dbc3cd809d3c6cc79875988d7a1f739a19a9dcb5f684  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
