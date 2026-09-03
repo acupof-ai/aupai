@@ -179,18 +179,30 @@ def main():
             aq, ak, av = (torch.randn(sum(LENS), H, HD, device=dev, dtype=dt) for _ in range(3))
             cu_a = torch.tensor([0, LENS[0], sum(LENS)], dtype=torch.int32, device=dev)
 
-            def attn(q_, k_, v_, cu_):
-                # model.py:191's exact call shape: [total, H, HD] with cu_seqlens on both sides.
+            def attn(q_, k_, v_, cu_, max_len):
+                """model.py:191-192's call, EVERY kwarg included.
+
+                The first version of this control omitted max_seqlen_q/max_seqlen_k and reported the
+                attention leaking by 4.33. That was my bug, not a finding: model.py passes both, and
+                on the .cute path the fourth POSITIONAL is qv rather than cu_seqlens_q
+                (model.py:43-44), so a call assembled from memory rather than copied from the site is
+                how a control ends up measuring something else. max_seqlen must also be the packed
+                row's own max, not a constant shared between the packed and solo calls, or the two
+                differ by their tiling instead of by their masking.
+                """
                 out = M.flash_attn_varlen_func(q_, k_, v_, cu_seqlens_q=cu_, cu_seqlens_k=cu_,
+                                               max_seqlen_q=max_len, max_seqlen_k=max_len,
                                                causal=True)
                 return (out[0] if isinstance(out, tuple) else out).float()
 
             with torch.no_grad():
-                packed_a = attn(aq, ak, av, cu_a)
+                # max_seqlen is the LONGEST DOCUMENT in each call, which is what model.py:192 means
+                # by T for a packed row: the per-segment maximum, not the row's total length.
+                packed_a = attn(aq, ak, av, cu_a, max(LENS))
                 solo_a = [attn(aq[:LENS[0]], ak[:LENS[0]], av[:LENS[0]],
-                               torch.tensor([0, LENS[0]], dtype=torch.int32, device=dev)),
+                               torch.tensor([0, LENS[0]], dtype=torch.int32, device=dev), LENS[0]),
                           attn(aq[LENS[0]:], ak[LENS[0]:], av[LENS[0]:],
-                               torch.tensor([0, LENS[1]], dtype=torch.int32, device=dev))]
+                               torch.tensor([0, LENS[1]], dtype=torch.int32, device=dev), LENS[1])]
             at2 = 0
             attn_leaks = False
             for i, n in enumerate(LENS):
@@ -199,7 +211,9 @@ def main():
                 print(f"  doc {i} ({n} tokens): max|diff| packed vs alone {d:.6f}   "
                       f"{'DIFFERS' if d > 0.05 else 'agrees'}")
             print("  " + ("THE ATTENTION ALSO LEAKS -- a second independent site, and the fix at "
-                          "model.py:109-113 would not cover it."
+                          "model.py:109-113 would not cover it. Before reporting that, check this "
+                          "call against model.py:191-192 kwarg by kwarg: omitting max_seqlen "
+                          "produced a false 4.33 here once."
                           if attn_leaks else
                           "THE ATTENTION ISOLATES. So block 7's uniform profile in b0's run is a "
                           "clean layer fed inputs block 0 already contaminated, not a second site: "
