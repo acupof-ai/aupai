@@ -523,6 +523,17 @@ def main():
         "scripts/card_claim.py",
         # retract: a read-only grep over a temp tree -- no data, no card.
         "scripts/retract.py",
+        # N7 Stage C's prefix-LM mask: no card, no cutlass, no pack -- the kernel callback cannot
+        # run off-pod, so the selftest checks the SAME predicate in pure python plus the two leak
+        # conditions as assertions. Three of its nine cases are the ones that matter and each
+        # rejects a different wrong mask: a prompt query seeing response keys (the formulation
+        # `(q < P) or (kv <= q)` passes the no-future-key test and fails this one), the
+        # bidirectional half being real (without it a prefix arm that is silently just causal
+        # passes every safety test and makes a null result meaningless), and a fully masked row
+        # becoming fully CAUSAL rather than fully bidirectional. It also pins the callback's
+        # signature at the kernel's six arguments, because flash_fwd.py:77 documents five and is
+        # stale -- following the docstring drops seqlen_info and breaks the call at mask.py:232.
+        "eval/prefix_mask.py",
         "scripts/test_exp_done_started.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
         # 2-layer 2-step toy model on CPU and READS IT BACK, because every source-level
