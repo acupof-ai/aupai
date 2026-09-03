@@ -12465,6 +12465,15 @@ def _allocation_cards(training, root=None):
             return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
     else:
         if ladder and set(ladder) != set(granted):
+            # SAY IT HERE, REFUSE AT THE LAUNCH. This function is not the place to exit from:
+            # `harness check` calls it twice (check_allocation_reads_the_grant, 8678-8679) and so
+            # does free-card (12535), so raising here took the WHOLE check run down -- measured
+            # 2026-09-04, `harness check` printed this message and zero of 58 checks. A guard that
+            # disables the instrument that would have caught it is worse than the warning it
+            # replaced.
+            #
+            # The refusal lives in cmd_launch, where the thing being refused is a launch and the
+            # blast radius is one job. The message is identical; only the exit moved.
             print(f"WARNING: card sources DISAGREE -- runs/card_assignment.json grants "
                   f"{_csv(granted)}, data/mix_scale_run_config.json says "
                   f"{_csv(ladder)}. Using the grant. The ladder config's `cards` "
@@ -12872,6 +12881,43 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
+
+    # 1b. TWO ALLOCATION SOURCES THAT DISAGREE REFUSE THE LAUNCH (6e's ruling 2026-09-04).
+    # _allocation_cards resolves the disagreement correctly -- the grant wins -- and says so on
+    # stderr, which is where this stopped being enough: the params leg launched with
+    # "card sources DISAGREE -- grants 0,1,2,3, says 0,1,2,3,4,5,6. Using the grant" in its own
+    # launch output, and nobody read it until afterwards. The resolution was right and the
+    # staleness stayed, so the next launcher faced the same ambiguity.
+    #
+    # REFUSED HERE, not inside _allocation_cards: that function is called by `harness check`
+    # itself (check_allocation_reads_the_grant) and by free-card, and raising there took the whole
+    # 58-check run down with it -- measured while writing this. The blast radius of a refusal
+    # belongs at the launch, where the thing refused is one job.
+    #
+    # NOT A CHECK AGAINST THE FROZEN `world`: the grant is 4 cards and the ladder's world is 7,
+    # and `world` is deliberately un-editable because the six points ran at 7 (the config's own
+    # _comment). The rank-vs-card check below is the one that can be made -- two live quantities.
+    if args.training and not args.no_gpu:
+        _gp = os.path.join(ROOT, "runs", "card_assignment.json")
+        _lp = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+        try:
+            with open(_gp, encoding="utf-8") as _fh:
+                _grant = json.load(_fh)
+            with open(_lp, encoding="utf-8") as _fh:
+                _ladder = _expand_cards(json.load(_fh).get("cards", ""))
+        except (OSError, ValueError):
+            _grant, _ladder = {}, []
+        _granted = _expand_cards(_grant.get("block_cards", "")) if _grant.get("launch_block_granted") else []
+        if _granted and _ladder and set(_granted) != set(_ladder):
+            print(f"REFUSING: {args.name} -- two allocation sources disagree, so which cards a "
+                  f"training job owns depends on which file the reader trusts.\n"
+                  f"  runs/card_assignment.json grants {_csv(_granted)}  <- the authority\n"
+                  f"  data/mix_scale_run_config.json says {_csv(_ladder)}  <- the ladder's record\n"
+                  f"The ladder config's `cards` records what the six mix_scale_* points ran on, "
+                  f"not today's allocation. If today's block is {_csv(_granted)}, narrow `cards` "
+                  f"there too; the launch then agrees with both files. No ledger row written.",
+                  file=sys.stderr)
+            return 2
 
     # 2a-0. World size follows the CARDS, and a command that states its own rank count
     # must agree with them (6e's ruling, 2026-09-03). NGPU below is derived from
