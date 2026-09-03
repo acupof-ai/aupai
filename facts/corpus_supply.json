@@ -9,13 +9,14 @@
    "config": {
     "note": "EXACT frozen-tokenizer count by datagen/count_code_dirs.py (not extrapolation); 8B-leg largest domain, weight 0.3297 needs 2.638B; margin 3.3x"
    },
-   "uncertainty": "exact for the current code_py_starcoder/ dir; does not cover future re-filtering",
+   "uncertainty": "exact for the current code_py_starcoder/ dir; does not cover future re-filtering (exact count_code_dirs)",
    "status": "measured",
    "boundary": "exact count of the landed dir; not a projection for a larger/smaller filter",
    "guard_phrases": [
     "starcoder supply confirmed",
     "starcoder supply settled"
-   ]
+   ],
+   "tokens_status": "measured"
   },
   {
    "id": "cs.code_rp1t_landed",
@@ -26,12 +27,13 @@
    "config": {
     "note": "existing code_rp1t/ dir; filters=light; tokens over first-3-shards byte-extrapolated (old stamp, predates 3b-10 instrument)"
    },
-   "uncertainty": "sample extrapolation not exact; needs rebuild+restamp for 30b primary (weight 0.2667); exact via datagen/count_code_dirs.py",
+   "uncertainty": "sample extrapolation not exact; needs rebuild+restamp for 30b primary (weight 0.2667); exact via datagen/count_code_dirs.py (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
    "status": "measured",
    "guard_phrases": [
     "code_rp1t is landed for 30b",
     "code_rp1t supply is settled"
-   ]
+   ],
+   "tokens_status": "extrapolated"
   },
   {
    "id": "cs.code_py_rp1t_landed",
@@ -42,10 +44,11 @@
    "config": {
     "note": "new ast-filtered build (filters=rp1t-python-ast); tokens over 3/15 shard byte-extrapolated"
    },
-   "uncertainty": "sample extrapolation; exact count pending count_code_dirs run (rp1t=0.421B exact, done)",
+   "uncertainty": "sample extrapolation; exact count pending count_code_dirs run (rp1t=0.421B exact, done) (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
    "status": "measured",
    "boundary": "ast-filtered subset, not the full rp1t raw",
-   "guard_phrases": []
+   "guard_phrases": [],
+   "tokens_status": "extrapolated"
   },
   {
    "id": "cs.math_owm_landed",
@@ -56,11 +59,12 @@
    "config": {
     "note": "math_owm_stage2/ dir; filters=light; tokens over 3/206 shard byte-extrapolated"
    },
-   "uncertainty": "sample extrapolation not exact; stage2 build for the 200m-era mix, may need a fresh 30b-linkable stamp",
+   "uncertainty": "sample extrapolation not exact; stage2 build for the 200m-era mix, may need a fresh 30b-linkable stamp (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
    "status": "measured",
    "guard_phrases": [
     "math_owm is unfetched"
-   ]
+   ],
+   "tokens_status": "extrapolated"
   },
   {
    "id": "cs.en_c4_landed",
@@ -71,12 +75,13 @@
    "config": {
     "note": "en_c4_stage2/ dir; filters=light; tokens over 3/83 shard byte-extrapolated"
    },
-   "uncertainty": "sample extrapolation; short vs 30b target 5.5B by ~3.1B",
+   "uncertainty": "sample extrapolation; short vs 30b target 5.5B by ~3.1B (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
    "status": "measured",
    "boundary": "shortfall means a supplement source or a cut to 2.4B",
    "guard_phrases": [
     "en_c4 is unfetched"
-   ]
+   ],
+   "tokens_status": "extrapolated"
   },
   {
    "id": "cs.cot_landed",
