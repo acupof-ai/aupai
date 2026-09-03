@@ -1,5 +1,44 @@
+corpus_fp: {'textbook': '3f237c5191cb8571', 'wiki': '44eb88458cfb3ed5', 'en': '9f37cb35219bb617', 'math': 'e1e86aa0b594c5ed', 'code': '5bb775eae9029669', 'chat': '080fdd63401b4ff9'}
+mix: textbook 35833 rows = 0.09 epochs
+mix: wiki 5467 rows = 0.10 epochs
+mix: en 3576 rows = 0.10 epochs
+mix: math 1816 rows = 0.10 epochs
+mix: code 1280 rows = 0.10 epochs
+mix: chat 848 rows = 0.10 epochs
+mix: 48820 rows = 0.20B tokens scheduled
+FP8 compute enabled
 params 206.1M | tokens 48820 | seqs 48820 | device cuda:0 | world 1 | fa True | fp8 True
 cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 5 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False
+dynamo cache_size_limit=64 (need 25)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/profiler/profiler.py:224: UserWarning: Warning: Profiler clears events at the end of each cycle.Only events from the current cycle will be reported.To keep events across cycles, set acc_events=True.
+  _warn_once(
 step 10/1525 1% [main] | loss 7.554 | lr 1.00e-02 | gnorm 4.00 | 0.00B tok | 27K tok/s/gpu | MFU 11% | ETA 2.0h
 step 20/1525 1% [main] | loss 7.024 | lr 1.00e-02 | gnorm 0.94 | 0.00B tok | 73K tok/s/gpu | MFU 30% | ETA 0.8h
 step 30/1525 2% [main] | loss 6.525 | lr 1.00e-02 | gnorm 1.34 | 0.00B tok | 75K tok/s/gpu | MFU 31% | ETA 0.7h
@@ -21,6 +60,14 @@ step 180/1525 12% [main] | loss 4.598 | lr 1.00e-02 | gnorm 2.56 | 0.02B tok | 8
 step 190/1525 12% [main] | loss 4.311 | lr 1.00e-02 | gnorm 2.53 | 0.02B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
 step 200/1525 13% [main] | loss 4.289 | lr 1.00e-02 | gnorm 2.30 | 0.03B tok | 79K tok/s/gpu | MFU 33% | ETA 0.6h
 step 210/1525 14% [main] | loss 3.970 | lr 1.00e-02 | gnorm 1.54 | 0.03B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64] torch._dynamo hit config.recompile_limit (64)
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64]    function: 'torch_dynamo_resume_in__flash_attn_fwd_at_406' (/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py:406)
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64]    last reason: 13/35: batch_size == 60                                         # total_mblocks = batch_size * num_head_kv * num_m_blocks  # flash_attn/cute/interface.py:541 in torch_dynamo_resume_in__flash_attn_fwd_at_406
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64] User stack trace:
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64]   File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 541, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64]     total_mblocks = batch_size * num_head_kv * num_m_blocks
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+W0831 16:11:25.931000 929665 torch/_dynamo/convert_frame.py:1743] [13/64] To diagnose recompilation issues, see https://docs.pytorch.org/docs/main/user_guide/torch_compiler/compile/programming_model.recompilation.html
 step 220/1525 14% [main] | loss 3.890 | lr 1.00e-02 | gnorm 1.77 | 0.03B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
 step 230/1525 15% [main] | loss 3.902 | lr 1.00e-02 | gnorm 2.39 | 0.03B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
 step 240/1525 16% [main] | loss 3.957 | lr 1.00e-02 | gnorm 2.50 | 0.03B tok | 81K tok/s/gpu | MFU 34% | ETA 0.6h
@@ -33,6 +80,3 @@ step 300/1525 20% [main] | loss 3.674 | lr 1.00e-02 | gnorm 2.41 | 0.04B tok | 8
 step 310/1525 20% [main] | loss 3.834 | lr 1.00e-02 | gnorm 1.62 | 0.04B tok | 80K tok/s/gpu | MFU 34% | ETA 0.5h
 step 310/1525 20% [main] | loss 3.834 | lr 1.00e-02 | gnorm 1.62 | 0.04B tok | 80K tok/s/gpu | MFU 34% | ETA 0.5h
 killed by tilerl at 16:14 pod time: profiler window (wait 1 + warmup 55 + active 20) completed at step 76 and wrote bench_eff/ddp_trace_rank0.json; --profile does not shorten the run so the rest was idle. Deliberate kill of 929665 to free lane GPU7 before the 8B milestone. NOT a crash.
-# END OF SNAPSHOT -- committed excerpt, 4,163B of the pod's 10,911B. NOT the whole log.
-# the job is OVER; 21 of the 22 figures those facts cite are computed from the trace, not printed in either copy.
-# Cited by eff.steady_state_composition, eff.two_x_not_reachable_by_architecture. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/t57_steady.log".
