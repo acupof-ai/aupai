@@ -9902,6 +9902,36 @@ def _demo():
     # hand-written despite sitting in a fixture: they are de's verbatim capture of a real
     # foreground trainer on the pod, which is what the reality rule actually asks for.
     synthetic_world = {"no_oversized_blob", "env_importable", "no_foreground_pod_training"}
+
+    # A check whose evidence lives on the POD cannot satisfy the repo-real rule either, and
+    # for a reason worth stating rather than exempting: data/pod_synced_head is written only
+    # on the pod and is not tracked here, so NO world built in this repository can hold a file
+    # at that path. That is the other face of the check's own docstring -- a clause the pod
+    # cannot answer is answered here, so its artifact is not a repo file.
+    #
+    # The exemption carries a SUBSTITUTE assertion rather than dropping the rule. The point of
+    # "mutate a real artifact" is that the world must be built from something outside the
+    # check's own assumptions; for this world that something is git itself. So the substitute
+    # asserts the world's stamp names a commit REAL git resolves and that main REALLY does not
+    # contain -- the two properties a hand-written hex string cannot have. A world that passes
+    # this could not have been invented.
+    def _stamp_world_is_real(world):
+        p = os.path.join(world, "data", "pod_synced_head")
+        if not os.path.exists(p):
+            return "the world holds no stamp at data/pod_synced_head"
+        sha = (open(p, encoding="utf-8").read().split() or [""])[0]
+        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+            return f"the stamp holds {sha!r}, not a full 40-char hex sha"
+        if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{sha}^{{commit}}"],
+                          capture_output=True).returncode:
+            return f"{sha[:12]} is no commit in the real repository -- invented, not taken"
+        if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "main"],
+                          capture_output=True).returncode == 0:
+            return (f"{sha[:12]} IS an ancestor of the real main, so the world does not hold "
+                    f"the condition the check exists to catch")
+        return None
+
+    world_reality = {"pod_stamp_is_main": _stamp_world_is_real}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
@@ -9918,7 +9948,12 @@ def _demo():
             print(f"  SKIP {name}: {e}")
             continue
         try:
-            if name not in synthetic_world and not any(
+            if name in world_reality:
+                why = world_reality[name](root)
+                if why:
+                    untested.append(f"{name}: broken world is not built from a real artifact -- {why}")
+                    continue
+            elif name not in synthetic_world and not any(
                 os.path.exists(os.path.join(ROOT, os.path.relpath(os.path.join(dp, f), root)))
                 for dp, _dn, fns in os.walk(root)
                 for f in fns
