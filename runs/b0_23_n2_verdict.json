@@ -1,0 +1,25 @@
+{
+ "statistic": "B-A per block with B=ckpt_params_leg_438m_3p76b.pt, A=ckpt_data_leg_206m_8b.pt",
+ "n_blocks": 576,
+ "row_weighted_mean": -0.010770335677079856,
+ "sd": 0.03971266341625312,
+ "se": 0.0016546943090105465,
+ "t": -6.508957949773918,
+ "token_weighted_mean": -0.010770335677079856,
+ "n_tokens": 2359296,
+ "positive": 227,
+ "negative": 349,
+ "ties": 0,
+ "sign_test_p_one_sided": 2.098833450472115e-07,
+ "domains": [
+  "chat_qa",
+  "chatml",
+  "code_py_rp1t",
+  "code_py_starcoder",
+  "cot",
+  "en_c4_stage2",
+  "math_owm_stage2",
+  "textbook_30b",
+  "zh_web"
+ ]
+}
