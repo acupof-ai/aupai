@@ -1,0 +1,48 @@
+# Pod disk deletion candidates, fb 2026-09-03. /work 2.0T, 174G free after tier 1.
+# Protocol (AGENTS.md): broadcast, KEEP-claim by name, delete after 24h unclaimed.
+# A token cache is DERIVED: deleting it costs a re-tokenize, never data, as long as
+# its data/corpus/<domain>/ survives. A raw source is NOT derived -- deleting it
+# removes the ability to rebuild that domain at all.
+
+DELETED 2026-09-03 (tier 1, zero references, 18.4 GB):
+  core                       4.89 GB  ELF core dump, sft_math.py crash Aug 30
+  data/pretrain_2b.jsonl     6.41 GB  strict subset of pretrain_full.jsonl (build_domains.sh:9)
+  data/pretrain_1b.jsonl     4.13 GB  same
+  data/pretrain_1b_tokens.pt 3.99 GB  train.py:93 names /data00/pretrain_1b_tokens.pt, which
+                                      does not exist; only os.path.dirname() of it is used
+
+CANDIDATES, claim by name before 2026-09-04:
+  /data00/tokens_code_rp1t.pt      30.28 GB  named only by a mix nobody is running
+  /data00/tokens_en_c4.pt          19.24 GB  stage1; the live mix uses en_c4_stage2
+  /data00/tokens_math_owm.pt       16.14 GB  stage1; the live mix uses math_owm_stage2
+  /data00/tokens_textbook.pt        6.44 GB  ladder mix (mix_scale_*)
+  /data00/tokens_web_hq.pt          5.74 GB  ladder mix
+  /data00/tokens_wiki_chat.pt       1.14 GB  ladder mix
+  /data00/tokens_wiki.pt            0.98 GB  ladder mix
+  /data00/tokens_en.pt              0.64 GB  ladder mix
+  /data00/tokens_math.pt            0.33 GB  ladder mix
+  /data00/tokens_math_seed.pt       0.33 GB  named by NO mix at all
+  /data00/tokens_code.pt            0.23 GB  ladder mix
+                                   ------- 81.5 GB, all rebuildable from data/corpus/
+  retired_pre0830v2/                5.8 GB   pre-reset checkpoints; the 0830v1 reset says no
+                                             checkpoint before it is a baseline. Named 7x in
+                                             EXPERIMENTS.md as history, not as an artifact anyone reads.
+  runs/dedup_ck/                    5.0 GB   MinHash sigs, a restart cache for a finished job
+                                             (datagen/code_dedup_build.py:2). 3b claims or it goes.
+  runs/control_lr_scan_v2/          1.6 GB   } scan outputs; the numbers are in facts/, the
+  runs/control_lr_scan/             0.6 GB   } .hf dirs are re-derivable
+  data/skypile_extra.jsonl          2.7 GB   } zh web sources. zh dropped 16B -> 3-4B and the
+  data/skypile_raw.jsonl            1.4 GB   } zh corpus now comes from data/raw/cci3_hq.
+  data/minimind_dataset/            1.6 GB   } Nothing in *.py/*.sh reads these three.
+
+NOT a candidate, stated so nobody proposes it again:
+  data/raw/  261 GB  This is the only thing standing between us and re-fetching. cci3_hq alone
+                     is cited by facts/data_quality.json, facts/multilingual.json,
+                     facts/contamination.json, docs/lessons/token_supply.md, data/PROVENANCE.md.
+                     30 of 49 domains already have no filters_fp, so raw is the ONLY rebuild path
+                     they have left. Deleting raw converts "detectable" into "gone".
+  data/corpus/ 232 GB  The corpus itself.
+  76 *.pt      44.2 GB  Checkpoints fall under ckpt_facts_sources_present: a fact whose source
+                     names a deleted checkpoint FAILs the harness. Needs the per-checkpoint list.
+  /work/Qwen3.8-27B-bf16  42 GB   The user's, in another container.
+  /work/tilelang_cache.bad 984 MB The user's.
