@@ -523,6 +523,12 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # gen_ckpt_listing: its selftest builds listings from hand-made scans and judges them
+        # with harness._parse_ckpt_listing, the real reader -- no pod, no card. It is gated
+        # because the file's whole job is protecting five sessions' KEEP claims through a
+        # regeneration, and its first live run against the pod cried wolf 17 times on a healthy
+        # listing (the per-name vs per-line distinction, now its own case).
+        "scripts/gen_ckpt_listing.py",
         # retract: a read-only grep over a temp tree -- no data, no card.
         "scripts/retract.py",
         # N7 Stage C's prefix-LM mask: no card, no cutlass, no pack -- the kernel callback cannot
