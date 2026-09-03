@@ -214,6 +214,32 @@ def render():
     return MD
 
 
+def pick_open_row(name, started, verb):
+    """The open row a command acts on, or None when the name has none.
+
+    Shared by `done` and `note` rather than copied. The ambiguity refusal below is the
+    p200m_4b_0902 incident -- three open rows in eight minutes, two OOMed launches and the
+    live run -- and a second copy of that reasoning drifts from this one at the next fix.
+    OPEN means "the last event for this (name, started) is running", which is what rows()
+    returns; filtering raw events reports every launch a name ever had as open.
+    """
+    open_rows = [r for r in rows() if r["name"] == name and r["status"] == "running"]
+    if started:
+        base = next((r for r in open_rows if r.get("started") == started), None)
+        if base is None:
+            seen = [r.get("started") for r in open_rows]
+            sys.exit(f"no open row for {name} started {started!r}. Open rows: {seen or 'none'}")
+        return base
+    if len(open_rows) > 1:
+        seen = [r.get("started") for r in open_rows]
+        sys.exit(
+            f"{name} has {len(open_rows)} open rows ({seen}); {verb} the newest by "
+            f"default would write this onto a run that may still be alive. "
+            f"Pass --started <value> to say which one."
+        )
+    return open_rows[-1] if open_rows else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", help="repo root to log into (tests only; default this checkout)")
@@ -234,6 +260,15 @@ def main():
     d.add_argument("--started", default=None,
                    help="close THIS row (its 'started' value), not the newest running one. "
                         "Required when a name has more than one open row")
+    n = sub.add_parser("note", help="append a line to a RUNNING row's notes; does not close it")
+    n.add_argument("--name", required=True)
+    n.add_argument("--text", required=True)
+    n.add_argument("--started", default=None,
+                   help="annotate THIS row (its 'started' value). Required when a name has "
+                        "more than one open row")
+    n.add_argument("--quiet-if-absent", action="store_true",
+                   help="exit 0 without writing when the name has no open row. For automation "
+                        "that annotates a row it did not create")
     m = sub.add_parser("merge", help="merge another experiments.jsonl into this one (pod sync)")
     m.add_argument("--from", dest="src", required=True)
     sub.add_parser("render")
@@ -296,21 +331,7 @@ def main():
         # (two OOMed launches and the live run), and a bare `done` would have closed the LIVE
         # run and written the OOM as its result. Fixing the count does not make picking one
         # of two live runs a decision this tool can make.
-        open_rows = [r for r in rows() if r["name"] == a.name and r["status"] == "running"]
-        if a.started:
-            base = next((r for r in open_rows if r.get("started") == a.started), None)
-            if base is None:
-                seen = [r.get("started") for r in open_rows]
-                sys.exit(f"no open row for {a.name} started {a.started!r}. Open rows: {seen or 'none'}")
-        elif len(open_rows) > 1:
-            seen = [r.get("started") for r in open_rows]
-            sys.exit(
-                f"{a.name} has {len(open_rows)} open rows ({seen}); closing the newest by "
-                f"default would write this result onto a run that may still be alive. "
-                f"Pass --started <value> to say which one."
-            )
-        else:
-            base = open_rows[-1] if open_rows else None
+        base = pick_open_row(a.name, a.started, "closing")
         ev = dict(
             base
             or {
@@ -321,6 +342,31 @@ def main():
         )
         append(ev)
         print(f"logged done: {a.name} -> {a.result}")
+    elif a.action == "note":
+        # STILL RUNNING. `note` appends an event that carries status="running" forward, so
+        # fold() keeps it as the row's latest state and a later `done` folds onto the same
+        # (name, started) -- the row is never rewritten, same discipline as `done`.
+        #
+        # It exists because the chained end-of-run score_matrix in run_ddp.sh:83-96 runs
+        # after torchrun exits, inside the training shell, and wrote NOTHING: b0 double-scored
+        # the params leg because no artifact said a score was already in flight. Two events --
+        # one when scoring starts, one when it ends -- are what distinguish "someone is
+        # scoring this now" from "this was scored"; a single line at the end cannot.
+        base = pick_open_row(a.name, a.started, "annotating")
+        if base is None:
+            # A run started outside harness launch has no row to annotate. That is a fact
+            # about the launch, not a failure of the thing being annotated, so automation
+            # passes --quiet-if-absent: a scoring run that SUCCEEDED must not exit nonzero
+            # because its bookkeeping had no row to write to.
+            msg = f"no open row for {a.name}; nothing annotated"
+            if a.quiet_if_absent:
+                print(msg)
+                return
+            sys.exit(msg)
+        stamped = f"[{now()}] {a.text}"
+        notes = base.get("notes") or ""
+        append(dict(base, notes=f"{notes} | {stamped}" if notes else stamped))
+        print(f"logged note: {a.name} ({base.get('started')}) -> {a.text}")
     elif a.action == "merge":
         incoming = [json.loads(l) for l in open(a.src, encoding="utf-8") if l.strip()]
         out, idx = [], {}
