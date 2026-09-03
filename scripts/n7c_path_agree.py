@@ -17,15 +17,43 @@ degenerate cu2, the P == L edge -- would be invisible there and would land entir
 number, which is exactly the observed pattern: training loss identical to the twin, eval 0.0228
 worse.
 
-THE TEST. Take real HumanEval prompt+solution pairs, run each through the eval path (one row) and
-through the training path (the same tokens packed as documents in a B>1 batch with doc_cu_seqlens),
-and require the per-position logits at the SOLUTION positions to agree. Both paths run the same
-prefix_two_call, so any difference is in how cu and aux are built at the two sites, which is the
-thing in question.
+THE FIRST VERSION OF THIS TEST WAS INVALID AND ITS ANSWER IS RETRACTED. It packed six tasks into
+one row and compared that against each task scored alone, then read max|dlogit| 4.6910 as "the
+eval path is broken". Measured on card 4, pod 2026-09-03 21:5xZ, the causal control disagrees
+almost as much -- 3.9619 with NO mask involved anywhere:
 
-WHAT AGREEMENT WOULD MEAN: the eval path is not the explanation, and P3's +0.0228 is a real
-property of applying this mask at inference to these weights. WHAT DISAGREEMENT WOULD MEAN: the
-eval number is measuring a wiring difference and the row must not be written from it.
+  task              prompt  sol    PREFIX    CAUSAL
+  HumanEval/0          117   52    0.3654    0.2802
+  HumanEval/1          131   99    4.6910    3.9619
+  HumanEval/2           83    8    3.5368    2.7987
+  HumanEval/3          118   27    3.9020    2.7733
+  HumanEval/4          123   33    3.4644    2.1841
+  HumanEval/5           92   48    3.3154    1.8609
+
+So packing changes the logits by ~3-4 on its own and the comparison could never isolate the mask.
+model.py:122-131 does pass cu_seqlens into chunk_kda, so the boundaries reach the kernel; that
+argument being passed is evidently not sufficient for a packed row to equal an unpacked one here.
+Whatever the mechanism, a packed-vs-unpacked comparison cannot answer a question about cu/aux
+CONSTRUCTION, because the packing itself moves the number more than the thing being tested.
+
+WHAT THE INVALID RUN DID SETTLE, and it kills the leading hypothesis: the training-side
+doc_prompt_lengths returned [117, 131, 83, 118, 123, 92] and the eval side's len(prompt) for the
+same six tasks is [117, 131, 83, 118, 123, 92]. Identical. The two sites derive the SAME prompt
+length, so "doc_prompt_lengths reads the first supervised position while eval uses len(p_ids), and
+they disagree" is refuted.
+
+THE TEST NOW. Hold the shape fixed and vary ONLY the wiring: one task, one row, one document,
+scored twice --
+  eval construction     cu = [0, T] built by hand, aux = [len(prompt)]      (humaneval_bpb.py)
+  training construction cu = doc_cu_seqlens(ids), aux = doc_prompt_lengths(labels, cu)  (sft_math.py)
+Same tokens, same batch shape, same single document. Nothing is packed, so there is no packing
+difference left to confound it, and any disagreement is in the construction -- which is the
+question. The causal control runs in both constructions too, so a difference that is not about the
+mask is still separable.
+
+WHAT AGREEMENT MEANS: the eval path is not the explanation, and P3's +0.0228 is a real property of
+applying this mask at inference to these weights. WHAT DISAGREEMENT MEANS: the eval number is
+measuring a wiring difference and the row must not be written from it.
 """
 import os
 import sys
@@ -123,65 +151,78 @@ def main():
         eval_logits[tid] = (logits_for(ids, cu, pl)[0], len(p), len(s))
         eval_causal[tid] = logits_for(ids, cu, pl, masked=False)[0]
 
-    # TRAINING PATH: the same token sequences packed into ONE row separated by <eos>, with cu from
-    # doc_cu_seqlens and aux from doc_prompt_lengths -- the sft_math.py construction. Labels mask the
-    # prompt to -100 and supervise the solution, which is what doc_prompt_lengths reads.
-    flat, labels = [], []
-    spans = []
-    for _tid, p, s in pairs:
-        spans.append((len(flat), len(p), len(s)))
-        flat += p + s + [eos]
-        labels += [-100] * len(p) + s + [-100]
-    # PAD TO AN EVEN LENGTH: an odd sequence misaligns chunk_kda (model.py:125), which is a real
-    # crash and not a warning -- hit earlier today on the 4097-column pack.
-    if len(flat) % 2:
-        flat.append(eos)
-        labels.append(-100)
-    ids_t = torch.tensor([flat], device="cuda")
-    lab_t = torch.tensor([labels], device="cuda")
-    cu_t = doc_cu_seqlens(ids_t, eos)
-    pl_t = doc_prompt_lengths(lab_t, cu_t).to("cuda")
-    print(f"training row: {len(flat)} tokens, {cu_t.numel() - 1} documents, "
-          f"per-document prompt lengths {pl_t.tolist()}")
-    train_logits = logits_for(ids_t, cu_t, pl_t)[0]
-    train_causal = logits_for(ids_t, cu_t, pl_t, masked=False)[0]
+    # TRAINING CONSTRUCTION, SAME SHAPE: still one task per row, one document, but cu and aux come
+    # from the training helpers instead of being built by hand. Labels mask the prompt to -100 and
+    # supervise the solution, which is what doc_prompt_lengths reads. The trailing <eos> is what
+    # makes it a document to doc_cu_seqlens, so the row is one token longer than the eval row and
+    # the comparison is taken over the solution positions the two rows share.
+    train_logits, train_causal, derived_plen = {}, {}, {}
+    for tid, p, s in pairs:
+        flat = p + s + [eos]
+        labels = [-100] * len(p) + s + [-100]
+        if len(flat) % 2:  # odd length misaligns chunk_kda (model.py:125): a crash, not a warning
+            flat.append(eos)
+            labels.append(-100)
+        ids_t = torch.tensor([flat], device="cuda")
+        lab_t = torch.tensor([labels], device="cuda")
+        cu_t = doc_cu_seqlens(ids_t, eos)
+        pl_t = doc_prompt_lengths(lab_t, cu_t).to("cuda")
+        derived_plen[tid] = pl_t.tolist()
+        train_logits[tid] = logits_for(ids_t, cu_t, pl_t)[0]
+        train_causal[tid] = logits_for(ids_t, cu_t, pl_t, masked=False)[0]
+
+    # THE AUX MUST MATCH FIRST, and it is checked rather than eyeballed: if doc_prompt_lengths
+    # returns a different prompt length than the eval site uses, the two paths are masking
+    # different spans and a logit difference would be that, not a wiring bug in the kernel call.
+    bad_aux = [(tid, derived_plen[tid], len(p)) for tid, p, _s in pairs
+               if derived_plen[tid] != [len(p)]]
+    print("\nderived aux vs eval aux: " + ("ALL MATCH" if not bad_aux else f"MISMATCH {bad_aux}"))
 
     M.flash_attn_varlen_func = orig
 
     # COMPARE AT THE SOLUTION POSITIONS ONLY, because those are the positions the BPB number is
     # computed from. A difference outside them cannot explain the eval delta.
-    print("\nper-task max |logit difference| at solution positions, eval path vs training path:")
-    print(f"  {'task':16s} {'prompt':>6s} {'sol':>4s} {'PREFIX':>9s} {'CAUSAL':>9s}   "
-          f"reading")
+    print("\nper-task max |logit difference| at solution positions, "
+          "eval construction vs training construction (same shape):")
+    print(f"  {'task':16s} {'prompt':>6s} {'sol':>4s} {'PREFIX':>9s} {'CAUSAL':>9s}   reading")
     worst = worst_c = 0.0
-    for (tid, _p, _s), (start, plen, slen) in zip(list(pairs), spans, strict=True):
+    for tid, p, s in pairs:
+        plen, slen = len(p), len(s)
         ev, _pl, _sl = eval_logits[tid]
         a = ev[plen - 1:plen - 1 + slen]
-        b = train_logits[start + plen - 1:start + plen - 1 + slen]
+        b = train_logits[tid][plen - 1:plen - 1 + slen]
         d = (a - b).abs().max().item()
         ac = eval_causal[tid][plen - 1:plen - 1 + slen]
-        bc = train_causal[start + plen - 1:start + plen - 1 + slen]
+        bc = train_causal[tid][plen - 1:plen - 1 + slen]
         dc = (ac - bc).abs().max().item()
         worst, worst_c = max(worst, d), max(worst_c, dc)
         print(f"  {tid:16s} {plen:6d} {slen:4d} {d:9.4f} {dc:9.4f}   "
-              f"{'packing, not the mask' if dc > 0.5 else 'mask-specific' if d > 0.5 else 'agree'}")
+              f"{'not the mask' if dc > 0.5 else 'MASK-SPECIFIC' if d > 0.5 else 'agree'}")
     # bf16 through 12 blocks accumulates; the question is whether the paths AGREE, and a
     # disagreement large enough to move BPB by 0.0228 would be far above numerical noise.
     print(f"\nworst across tasks: prefix {worst:.4f}  causal control {worst_c:.4f}")
-    if worst_c > 0.5:
-        print("VERDICT: THE CONTROL ALSO DISAGREES, so this test cannot attribute anything to the "
-              "prefix wiring. Packing several tasks into one row is not equivalent to scoring them "
-              "one at a time in THIS model regardless of mask -- the KDA layers are recurrent, so a "
-              "packed row carries state a single-row forward never has. The comparison is invalid "
-              "as designed and the eval-vs-training question needs a construction where the causal "
-              "control agrees first.")
+    if bad_aux:
+        print("VERDICT: THE TWO SITES MASK DIFFERENT SPANS -- doc_prompt_lengths and the eval "
+              f"site's len(prompt) disagree: {bad_aux}. Fix that before reading the logits, "
+              "because a different mask span explains any difference on its own.")
+    elif worst_c > 0.5:
+        print("VERDICT: THE CONTROL DISAGREES WITH THE SHAPE HELD FIXED, which the packing "
+              "explanation no longer covers -- the only remaining differences are the trailing "
+              "<eos> and cu being derived rather than hand-built. Attribute nothing to the prefix "
+              "wiring until that is explained; it is now the cheaper thing to chase.")
     elif worst > 0.5:
         print(f"VERDICT: PREFIX-SPECIFIC DISAGREEMENT of {worst:.4f} while the causal control "
-              f"agrees at {worst_c:.4f} -- the eval number is measuring a wiring difference between "
-              "the two call sites and the row must not be written from it.")
+              f"agrees at {worst_c:.4f} -- with shape and aux held equal this is the mask wiring "
+              "itself, so the eval number is measuring a bug and the P3 row must not be written "
+              "from it.")
     else:
-        print("VERDICT: BOTH PATHS AGREE -- the eval-side wiring is not the explanation for P3's "
-              "+0.0228, so that penalty is a real property of the mask at inference.")
+        print(f"VERDICT: BOTH CONSTRUCTIONS AGREE (prefix {worst:.4f}, causal {worst_c:.4f}) -- "
+              "with the shape held fixed the eval and training sites build the same mask, so the "
+              "eval-side wiring is NOT the explanation for P3's +0.0228 and that penalty is a real "
+              "property of applying this mask at inference to these weights. NOTE THE SCOPE: this "
+              "says the two call sites agree, not that the eval shape is the training shape -- "
+              "packing alone moves these logits by 3-4 (measured above), so a single-document eval "
+              "is a different regime from a packed training batch no matter which mask is used.")
     return 0
 
 
