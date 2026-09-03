@@ -96,7 +96,7 @@ def main():
                     cau[s_ + q_, s_ + k_] = True
     print(f"  dense causal mask:    {int(cau.sum())} allowed pairs")
 
-    _causal_mod, prefix_mod = build_mask_mods()
+    causal_mod, prefix_mod = build_mask_mods()
 
     def grads(path, mask="prefix"):
         """(loss, {name: grad}) for 'kernel' or 'sdpa'. Same weights, same batch, bf16, no fp8.
@@ -115,6 +115,15 @@ def main():
             if path == "kernel":
                 if mask == "causal":
                     return orig(q, k, v, **kw)  # causal=True as model.py passes it
+                if mask == "causal_mod":
+                    # THE DECISIVE TEST. causal_mod is bitwise-identical to causal=True in the
+                    # FORWARD -- that is gate A, and it passes. So if its GRADIENTS disagree with
+                    # the causal control, the defect is in the kernel's mask_mod backward itself and
+                    # no predicate of mine can fix it. If they agree, the kernel's backward is sound
+                    # and the defect is in the prefix predicate.
+                    kw.pop("causal", None)
+                    return orig(q, k, v, mask_mod=causal_mod,
+                                aux_tensors=[plens.to(torch.int32)], **kw)
                 kw.pop("causal", None)
                 return orig(q, k, v, mask_mod=prefix_mod,
                             aux_tensors=[plens.to(torch.int32)], **kw)
@@ -122,7 +131,8 @@ def main():
             # are reshaped to [1, h, B*T, hd] -- one sequence, the block-diagonal mask supplying
             # every boundary the varlen kernel would have got from cu.
             qq, kk, vv = (t.unsqueeze(0).transpose(1, 2) for t in (q, k, v))
-            m = (cau if mask == "causal" else ref).to(q.device).unsqueeze(0).unsqueeze(0)
+            dense = cau if mask in ("causal", "causal_mod") else ref
+            m = dense.to(q.device).unsqueeze(0).unsqueeze(0)
             y = torch.nn.functional.scaled_dot_product_attention(qq, kk, vv, attn_mask=m)
             return y.transpose(1, 2).squeeze(0)
 
@@ -178,16 +188,26 @@ def main():
             print(f"     {c:+.6f}  {n}  |kernel| {na:.4e} |sdpa| {nb:.4e}")
         return bad_, live
 
-    bad_c, live_c = compare("CONTROL causal (no prefix)", "causal")
+    bad_c, live_c = compare("CONTROL causal=True (no mask_mod)", "causal")
+    bad_m, live_m = compare("causal_mod (mask_mod that IS causal -- gate A passes bitwise)",
+                            "causal_mod")
     bad_p, live_p = compare("PREFIX arm p3", "prefix")
     print("\nVERDICT:")
     if bad_c:
         print(f"  THE REFERENCE IS NOT TRUSTWORTHY: {len(bad_c)} of {len(live_c)} tensors already "
               f"disagree with NO prefix mask, so the prefix comparison cannot attribute anything. "
               f"Fix the SDPA reference before reading the prefix row.")
+    elif bad_m:
+        print(f"  THE KERNEL'S mask_mod BACKWARD IS WRONG, not my predicate: causal_mod is "
+              f"bitwise-identical to causal=True in the FORWARD (gate A) and its GRADIENTS still "
+              f"disagree on {len(bad_m)} of {len(live_m)} tensors. Nothing in prefix_mod can fix "
+              f"this; training through mask_mod on this build is unsound. Note SM 12.0 asserts "
+              f"mask_mod backward is unsupported and SM 9.0 merely does not assert -- which is not "
+              f"the same as being correct.")
     elif bad_p:
-        print(f"  THE PREFIX BACKWARD IS WRONG: causal agrees on all {len(live_c)} tensors while "
-              f"prefix disagrees on {len(bad_p)}. The names above locate it.")
+        print(f"  THE PREFIX PREDICATE'S BACKWARD IS WRONG: causal=True and causal_mod both agree "
+              f"with the reference, so the kernel's mask_mod backward is sound and the defect is in "
+              f"prefix_mod. Disagrees on {len(bad_p)} tensors; the names above locate it.")
     else:
         print("  GRADIENTS AGREE in both rows -- the backward is not the defect, so the divergence "
               "is an optimisation effect.")
