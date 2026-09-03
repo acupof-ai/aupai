@@ -66,11 +66,21 @@ WHAT THE WEIGHTS SAY, now with an artifact behind every figure:
   ends for opposite reasons, which is why a z quoted without its window is unreadable rather than
   merely imprecise. Same interval-length dependence that retracted the 1.71x depth term.
 
-  ffn.w2 SITS AT ZERO IN BOTH WINDOWS, on both statistics (+0.2, -1.1, -0.1, -1.5). This is what
-  actually rules out "the whole block is changing and mixer.o is just the visible part": one
-  window could not, since a window is exactly what a confound would be free to pick. e1 pointed
-  this out during review, and it is worth more than a larger z -- it eliminates an alternative
-  explanation rather than strengthening the existing one.
+  ffn.w2 SITS AT ZERO IN BOTH WINDOWS, on both statistics, and THAT IS THE NEGATIVE CONTROL THIS
+  READING CARRIES. All eight z values, in one place:
+
+                          step832->3500 (n=2668)   step3000->3500 (n=500)
+      mixer.o growth              -21.93                  -177.43
+      mixer.o consistency          -7.88                   -19.33
+      ffn.w2  growth               +0.18                    -1.09
+      ffn.w2  consistency          -0.09                    -1.54
+
+  Four extreme, four indistinguishable from zero, split exactly along the tensor rather than along
+  the window. If layer 9 were simply an anomalous BLOCK, ffn.w2 would move too; it does not, in
+  either window. That is stronger evidence than any single large z, because it is an alternative
+  explanation eliminated rather than an existing one amplified -- and one window could not do it,
+  since a window is exactly what a confound would be free to pick. e1 raised both halves of this
+  during review (the both-windows requirement, then the ffn contrast as a control).
 
 So the open question is consequence, not mechanism, which is what b0-16 asks for.
 """
@@ -132,7 +142,9 @@ def mad_sigma(vals, med=None):
 
     THE 1.4826 IS PART OF THE STATISTIC'S NAME HERE, NOT AN IMPLEMENTATION DETAIL. "MAD sigma"
     without it is a different number by a factor of 1.48, and every z in this file and in
-    eff.l9_branch_split_p200m is divided by it. e1 recomputed all six figures independently and
+    eff.l9_branch_split_p200m is divided by it. Concretely, on the wide window's growth: raw MAD
+    0.016288, times 1.4826 gives sigma 0.024148 and z -21.93; WITHOUT the constant the same data
+    gives z -32.52, i.e. 48% larger. Two numbers that both print as "sigma", one 48% off. e1 recomputed all six figures independently and
     matched to the digit -- with the same constant, which it noted was luck rather than a
     convention we had agreed. Two people each implementing a named statistic and happening to
     pick the same convention is the first half of eff.vocab_padding_softmax_defect's sibling

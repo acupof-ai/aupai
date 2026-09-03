@@ -194,8 +194,16 @@ def append_rows(rel, rows, root=ROOT):
 
 
 def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod):
-    """[(rel, n_pod, n_local, missing, collisions, error)] for every ledger."""
+    """[(rel, n_pod, n_local, missing, collisions, error)] for every ledger.
+
+    Collisions a recorded ruling settles are dropped -- see scripts/ledger_resolutions.py.
+    A ruling holds only while both sides still carry the rows it was made about; when one
+    changes, the key comes back as a collision whose `why` says the ruling was about other
+    rows, so a settled key stays quiet and a NEW disagreement under it does not."""
+    from ledger_resolutions import index, settled
+
     keys = _keys()
+    idx = index()
     out = []
     for rel in LEDGERS:
         text, err = reader(rel, pod_root)
@@ -206,8 +214,17 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod):
         lpath = os.path.join(root, rel)
         local_rows, _ = parse(open(lpath, encoding="utf-8").read()) if os.path.exists(lpath) else ([], 0)
         missing, coll = diff_rows(pod_rows, local_rows, keys[rel])
+        kept = []
+        for k, why, lrow, prow in coll:
+            ok, stale = settled(rel, k, lrow, prow, idx)
+            if ok:
+                continue
+            kept.append((k, stale or why, lrow, prow))
         note = f"{bad} unparseable pod line(s)" if bad else None
-        out.append((rel, len(pod_rows), len(local_rows), missing, coll, note))
+        n_ruled = len(coll) - len(kept)
+        if n_ruled:
+            note = f"{note}; {n_ruled} settled by a ruling" if note else f"{n_ruled} settled by a ruling"
+        out.append((rel, len(pod_rows), len(local_rows), missing, kept, note))
     return out
 
 
