@@ -466,6 +466,12 @@ def main():
         # a `required=True` on --ckpt that made `--selftest` itself un-runnable, and a
         # comment claiming the hyphen was a word boundary while the set omitted it.
         "eval/lambada_en.py",
+        # e1-28's 13-gram containment counter: pure string logic, no corpus and no tokenizer, so it
+        # runs here. Its five cases include the one that matters most for a 161 GB scan -- zh text
+        # must not tokenize to nothing, because zh_web is 89.85 GB of the 160.97 and a word regex
+        # that missed CJK would scan it as empty and report zero contamination while never having
+        # looked at 56% of the corpus.
+        "scripts/e1_28_heldout_contamination.py",
         # humaneval gold BPB: its selftest needs no data and no model -- a uniform-distribution
         # stand-in has a known answer (log2(V) bits/byte exactly), which is what pins the bit
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
