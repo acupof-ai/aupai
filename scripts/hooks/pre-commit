@@ -482,6 +482,9 @@ def main():
         "scripts/retract.py",
         "scripts/test_exp_done_started.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
+        # ckpt_info: its selftest builds 64x8 fixtures in memory and round-trips them
+        # through BytesIO -- no checkpoint, no data, no card.
+        "scripts/ckpt_info.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
