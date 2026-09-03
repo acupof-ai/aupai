@@ -253,10 +253,11 @@ class AttnRes(nn.Module):
     Paper ablations: multihead / sigmoid / no-norm / sliding-window all worse — keep this exact form.
     The gain folds into the query ((v_hat * g) . q == v_hat . (g * q)); rms_scale has the rest."""
 
-    def __init__(self, d, dyn_q=False, rank=64):
+    def __init__(self, d, dyn_q=False, rank=64, fused=False):
         super().__init__()
         self.g = nn.Parameter(torch.ones(d))  # the RMSNorm gain, applied to the query side
         self.q = nn.Parameter(torch.zeros(d))
+        self.fused = fused  # one autograd node instead of the loop; same value, half the edges
         # Input-dependent query (paper Table 4: 1.731 vs 1.737 Full); B zero-init.
         self.dyn = (
             nn.Sequential(nn.Linear(d, rank, bias=False), nn.Linear(rank, d, bias=False)) if dyn_q else None
@@ -265,6 +266,11 @@ class AttnRes(nn.Module):
     def forward(self, srcs):
         q = self.q if self.dyn is None else self.q + self.dyn(srcs[-1].normed() * self.g)
         gq = self.g * q
+        if self.fused:
+            # scale stays LIVE: Source.scale is rms_scale(v), so v reaches the output by
+            # two routes and detaching drops one (dV lands 7.6% low, forward unchanged).
+            from algorithms.attnres_fused import fused_attn_res
+            return fused_attn_res([s.v for s in srcs], gq, [s.scale for s in srcs])
         # logits [n,B,T] only; never an [n,B,T,D] stack of the values (that copy dominates at L=24)
         logits = torch.stack([(s.v * gq).sum(-1) * s.scale.squeeze(-1) for s in srcs])
         a = logits.float().softmax(0).to(srcs[0].v.dtype)
@@ -283,8 +289,9 @@ class Block(nn.Module):
         self.ffn = SwiGLU(cfg)
         attn_res = getattr(cfg, "attn_res", False)
         dyn_q = getattr(cfg, "attn_res_dyn_q", False)
-        self.ar1 = AttnRes(cfg.d, dyn_q) if attn_res else None  # pre-mixer / pre-ffn depth attention
-        self.ar2 = AttnRes(cfg.d, dyn_q) if attn_res else None
+        _fused = getattr(cfg, "attn_res_fused", False)
+        self.ar1 = AttnRes(cfg.d, dyn_q, fused=_fused) if attn_res else None  # pre-mixer / pre-ffn depth attention
+        self.ar2 = AttnRes(cfg.d, dyn_q, fused=_fused) if attn_res else None
 
     def forward(self, x, cu=None):
         x = x + self.mixer(self.n1(x), cu)
@@ -379,7 +386,8 @@ class HybridLM(nn.Module):
         n_sub = 2 * cfg.layers
         n_blocks = min(n_sub, getattr(cfg, "attn_res_blocks", 0) or n_sub)  # 0 -> Full (every sublayer)
         self.ar_block_ends = {round((j + 1) * n_sub / n_blocks) for j in range(n_blocks)}
-        self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False)) if self.attn_res else None
+        self.final_ar = AttnRes(cfg.d, getattr(cfg, "attn_res_dyn_q", False),
+                                fused=getattr(cfg, "attn_res_fused", False)) if self.attn_res else None
         if self.attn_res:
             # Construction time, not forward: which blocks implement sublayers() is fixed once
             # the model is built and does not vary by step, so a missing one is decidable here.
