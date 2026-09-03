@@ -99,6 +99,7 @@ a662ac4320fc799314934b3df78e15056886d66837260432c0db3300b78b2633  datagen/scan_m
 8597056aef0ba761f2c51ce889f0b50cb317d74ab3456d99be076988625638bd  datagen/score_corpus.py  docs  644
 286504ee539c5c9875a5410816dd23ec5e3ef8cbb3f9a7484b870171c60fbde5  datagen/score_corpus.sh  docs  755
 946c88b4a566e833fc504ec205d8fd39fa2ec789c74b499c6bb5532dde09ee41  datagen/score_web_27b.py  docs  644
+None  datagen/sft_answer_machine_check.py  docs  644
 020460ae45a9286b057ea094bb16ce894f7efb671d819f7ee1077f2326357ba1  datagen/starcoder_shape.py  docs  644
 70bc879467c638db5e3787bfb57c062d69c087e8a9d92ab04a1267f775481e2c  datagen/t2s_corpus.py  docs  644
 49ef650cc56311e4f48b4ad4f278a5ee39574d117e6e07d9be073e58bb1fda1a  datagen/test_near_dedup_known.py  docs  644
@@ -140,6 +141,7 @@ e3393c71a524bcd2ff5b4da8decff41a666520e6cb1d3c8024f52c808fc56cb9  eval/domain_bp
 2447ebe89b2f9bf1b07278f2389a748c2020ffdee656df8d5d207f25acc41402  eval/gsm8k.py  training  644
 2b568e3302ef0d33467b9f682ec6c11d972eb1309e032cd5bd9572986364f860  eval/hellaswag.py  docs  644
 bf0ea21505e05a34bf6204d9adfe9735f0df597c1d8277bf05c68683b52c2f47  eval/humaneval_bpb.py  docs  644
+None  eval/l1_2x2_diagnose.py  docs  644
 e929d5db94f87f722e707d6d095b063d95aa9ac659e7acd947599cb08fe66366  eval/l1_fewshot.py  docs  644
 1854a2521d99e8e5ebc650f58bdeedf8df1d2f3147fcd72f412059a63df5d3d8  eval/lambada_en.py  docs  644
 26606a921da5e00142c99e5589f3dfae96469da54f8dd09efeb1b61e152af031  eval/lambada_zh.py  docs  644
@@ -217,6 +219,7 @@ bb8ae0603176edec9b45c0a941b5b566507bb45629e29afefdb846a2a0c5c021  mathbank/run_m
 820dda489bfa2c313c181d4c3dd92810dd2bdf16e5f6326c268f999598dc3e98  mathbank/split_bank.py  docs  644
 77428c2c82c230c5ff682385a212c2bbcbed6051a9efcf1216d1ced418f518af  mathbank/vet_programs.py  docs  644
 2567a382cb072021243f19fc7ff24326251b40d7ce3c7054f484d4648922f506  model.py  training  644
+None  probes/a2a_bandwidth.py  docs  644
 0c0f60bcc8a767a8f26b94cb5845c2e6624ab5f11d80c9fd7c175f11b6250c41  probes/chatml_in_corpus.py  docs  644
 3e687495055dd2d795abe5a7ed72c6ba53cfd23e22291de2eae366b92ab28417  probes/fone_digit_acc.py  docs  644
 1633b9d5f5cfe478cb86ba9aeced109e5b273002f2b0f35fa967d5451ba8dde4  probes/profile_step.py  docs  644
@@ -227,6 +230,10 @@ b804f5796818352eac0b8aab9ce203df6bb2585398f15e1faa730ea5da7057dd  runs/artifact_
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
 f65473430f5b4f4c0b5d8ec1bf9a0f2a7d65d8a9d3c7ec5cd85856d2fe5e5fda  runs/card_assignment.json  docs  644
 2e6a9bb452b48760ba22ba9b81aa85f4f13e29f5eef8a0121dc664a4a813cd3a  runs/experiments.jsonl  docs  644
+None  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
+None  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
+None  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.en.hf.jsonl  docs  644
+None  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.zh.hf.jsonl  docs  644
 8100a43b4a1ebe6b15805da7450c66e5aa17869af7490fcbcb09f5cdcf890f76  runs/ledger_resolutions.jsonl  docs  644
 6b5c788e92bcd3860fcbe937b3c53d657b48e5542ceea2062c81598010f09353  runs/milestones.jsonl  docs  644
 a64ed761a9464f00e88cbe3ded8dab405a1d51ad56f5c2e3a6585ad9cd3eecb0  runs/retro.jsonl  docs  644
