@@ -31,6 +31,7 @@ datagen/audit_source_score.py                              100  9176f859 2026-08
 datagen/build_chat_qa.py                                    61  02bc5c73 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/build_chatml.py                                     83  02bc5c73 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/build_code_py_rp1t.py                              100  a86301a3 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
+datagen/build_code_tests_v1.py                             444  d36b8abd 2026-09-03   none                                           KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)
 datagen/build_control_sft_text.py                          356  41b37160 2026-09-03   ENTRY                                          
 datagen/build_corpus.py                                   1708  02bc5c73 2026-09-01   ENTRY                                          
 datagen/build_domains.sh                                    78  c3a47e8f 2026-08-31   docs:docs/standards/0830v1_gates.md            
@@ -42,7 +43,7 @@ datagen/check_mix.py                                       100  c3a47e8f 2026-08
 datagen/classify_parse_failures.py                         101  fe32ceb6 2026-09-02   docs:docs/lessons/pod_only_python_inventory.md  
 datagen/clean_corpus.py                                    120  c3a47e8f 2026-08-31   ENTRY                                          
 datagen/clean_web.py                                       157  c3a47e8f 2026-08-31   ENTRY                                          
-datagen/code_dedup_build.py                                171  0ca4748a 2026-09-03   none                                           
+datagen/code_dedup_build.py                                171  0ca4748a 2026-09-03   none                                           KEEP (3b ruled 2026-09-03: the executing half of N4's MinHash 0.8 cross-source dedup; 3b-10's code_dedup08 is its output, near_dedup_scale.py is its report side)
 datagen/code_rp1t_fail_histogram.py                        137  72f3b829 2026-09-02   facts:facts/data_quality.json                  
 datagen/corpus_fingerprint.py                              156  c3a47e8f 2026-08-31   docs:docs/audits/harness_review_0901_tilerl.md  
 datagen/count_cleaned_code.py                               88  ea29c440 2026-08-31   ENTRY                                          KEEP (add to AGENTS.md entry-point table)
@@ -68,7 +69,7 @@ datagen/make_mixed.py                                       39  c3a47e8f 2026-08
 datagen/mine_code_with_tests.py                            183  d8effb98 2026-09-02   docs:EXPERIMENTS.md                            
 datagen/near_dedup_postpass.py                             156  2fc2bd9c 2026-09-02   import                                         
 datagen/near_dedup_scale.py                                242  9b14c05f 2026-09-03   docs:docs/audits/mix_200m_4b_hand_read.md      
-datagen/numma_to_jsonl.py                                   43  b24997dd 2026-08-31   docs:docs/lessons/scale_36b_plan.md            
+datagen/numma_to_jsonl.py                                   43  b24997dd 2026-08-31   none                                           KEEP (cited by data/PROVENANCE.md as the numina converter)
 datagen/pack_control_sft_ours.py                           203  79988356 2026-09-02   ENTRY                                          
 datagen/prep_math_data.py                                   57  3b07afdc 2026-09-02   docs:docs/lessons/pod_only_python_inventory.md  
 datagen/prepare_sft.py                                     395  ddf6b5a5 2026-09-02   ENTRY                                          
@@ -77,8 +78,8 @@ datagen/pretokenize.py                                      72  b5fab8a2 2026-09
 datagen/quality_clf.py                                     169  9176f859 2026-08-30   facts:facts/data_quality.json                  
 datagen/rebuild_corpus.sh                                   74  c3a47e8f 2026-08-31   docs:docs/audits/deletion_audit_2026-09-02.md  
 datagen/rescore_code.py                                    104  b186270d 2026-09-02   ENTRY                                          
-datagen/rl_task_exercism.py                                140  f7f6160c 2026-09-02   none                                           
-datagen/sandbox_exec.py                                    334  ea98c232 2026-09-02   ENTRY                                          
+datagen/rl_task_exercism.py                                140  f7f6160c 2026-09-02   none                                           KEEP (3b ruled 2026-09-03: the exercism RL task-set source, 3b-9; RL is scheduled after N5, which retires the schedule slot and not the task set)
+datagen/sandbox_exec.py                                    347  09fff460 2026-09-03   ENTRY                                          
 datagen/scan_contamination.py                               54  c3a47e8f 2026-08-31   docs:docs/lessons/kept_methods.md              
 datagen/scan_delivered_holdout.py                           31  c6da034d 2026-09-02   docs:docs/lessons/pod_only_python_inventory.md  
 datagen/scan_math_contamination.py                         583  f0242ce6 2026-09-01   docs:docs/audits/audit_math_corpus.md          
@@ -89,11 +90,11 @@ datagen/score_web_27b.py                                   280  9176f859 2026-08
 datagen/sft_answer_machine_check.py                        139  8c860877 2026-09-03   facts:facts/data_quality.json                  
 datagen/starcoder_shape.py                                  82  fe32ceb6 2026-09-02   docs:docs/lessons/pod_only_python_inventory.md  
 datagen/t2s_corpus.py                                      131  c3a47e8f 2026-08-31   docs:docs/audits/deletion_audit_2026-09-02.md  
-datagen/test_near_dedup_known.py                           134  eba4d189 2026-09-02   none                                           
+datagen/test_near_dedup_known.py                           134  eba4d189 2026-09-02   none                                           KEEP (green, PASS with known pos/neg; the only known-answer case for near-dedup)
 datagen/test_parallel_exact_identity.py                     86  6b312f71 2026-09-01   docs:docs/lessons/near_dedup_stage2_postpass.md  
 datagen/test_scan_math_contamination.py                    116  c3a47e8f 2026-08-31   docs:docs/audits/audit_math_corpus.md          
 datagen/train_quality_head.py                              161  9176f859 2026-08-30   ENTRY                                          
-eval/__init__.py                                            22  af1a34b7 2026-09-02   import:eval/nan_probe.py                       
+eval/__init__.py                                            22  af1a34b7 2026-09-02   import:eval/probe_band.sh                      
 eval/_devs.sh                                               31  46800292 2026-08-31   ENTRY                                          
 eval/arc.py                                                 82  5604d421 2026-08-29   registry:eval/run_eval.py                      
 eval/assemble_lambda_probe.py                               93  3d2acd91 2026-08-31   ENTRY                                          KEEP (3b's t05, deprioritised, live)
@@ -106,7 +107,7 @@ eval/code_fewshot.py                                       206  5a989647 2026-09
 eval/code_l0prime.py                                       281  27c8a7f5 2026-09-01   ENTRY                                          
 eval/code_zh.py                                            239  18f993b4 2026-09-02   ENTRY                                          
 eval/compare_fewshot_arms.py                               249  85b567a6 2026-09-01   ENTRY                                          
-eval/domain_bpb.py                                         303  e1ff9cf6 2026-09-03   ENTRY                                          
+eval/domain_bpb.py                                         318  2d37eede 2026-09-03   ENTRY                                          
 eval/domain_loss.py                                        664  c5b4d002 2026-09-03   ENTRY                                          
 eval/eval_all.sh                                            94  46800292 2026-08-31   ENTRY                                          
 eval/eval_code.sh                                           63  616205b9 2026-09-01   ENTRY                                          
@@ -116,14 +117,16 @@ eval/gate_math_short.sh                                     28  c3a47e8f 2026-08
 eval/gsm8k.py                                               78  18f993b4 2026-09-02   registry:eval/run_eval.py                      
 eval/hellaswag.py                                           64  9176f859 2026-08-30   registry:eval/run_eval.py                      
 eval/humaneval_bpb.py                                      313  8d632028 2026-09-03   ENTRY                                          
-eval/l1_2x2_diagnose.py                                    182  50e04b6b 2026-09-03   docs:docs/audits/control_pythia160m_vs_ours.md  
-eval/l1_fewshot.py                                         491  50e04b6b 2026-09-03   ENTRY                                          
+eval/l1_2x2_diagnose.py                                    301  82a3e20e 2026-09-03   docs:docs/audits/control_pythia160m_vs_ours.md  
+eval/l1_fewshot.py                                         514  936d2588 2026-09-03   ENTRY                                          
 eval/lambada_en.py                                         328  a166c7ef 2026-09-02   ENTRY                                          
 eval/lambada_zh.py                                         242  ef40a445 2026-08-30   ENTRY                                          
+eval/math_bpb.py                                           279  17516fd8 2026-09-03   ENTRY                                          
 eval/math_hard.py                                          209  18f993b4 2026-09-02   ENTRY                                          
 eval/math_v2_like.py                                       176  e33a97ea 2026-08-30   ENTRY                                          
 eval/math_zh.py                                            199  18f993b4 2026-09-02   ENTRY                                          
 eval/mmlu.py                                                67  5604d421 2026-08-29   registry:eval/run_eval.py                      
+eval/n3_report.py                                          388  7cc2e245 2026-09-03   ENTRY                                          
 eval/nan_probe.py                                          131  ef2a7305 2026-08-31   ENTRY                                          
 eval/openbookqa.py                                          13  af1a34b7 2026-09-02   registry:eval/run_eval.py                      
 eval/pairwise_judge.py                                     185  227c9dd2 2026-09-02   ENTRY                                          
@@ -134,8 +137,8 @@ eval/readout_30b.py                                       1086  0ec0a840 2026-09
 eval/run_eval.py                                           354  18f993b4 2026-09-02   ENTRY                                          
 eval/score_code_exec.py                                    410  01fdc087 2026-09-01   ENTRY                                          
 eval/score_math_formatfree.py                              335  eabc37ff 2026-09-01   ENTRY                                          
-eval/score_matrix.py                                      1346  459aee2e 2026-09-03   ENTRY                                          
-eval/test_l1_fewshot_2x2.py                                252  20efaf17 2026-09-03   none                                           
+eval/score_matrix.py                                      1357  57a1177c 2026-09-03   ENTRY                                          
+eval/test_l1_fewshot_2x2.py                                296  82a3e20e 2026-09-03   docs:docs/lessons/gate_failure_shapes.md       
 eval/validate_lambda_probe.py                               58  3d2acd91 2026-08-31   ENTRY                                          KEEP (3b's t05, deprioritised, live)
 eval/winogrande.py                                          69  9176f859 2026-08-30   registry:eval/run_eval.py                      
 filters/pass1_garbage.py                                   126  aa3a8b96 2026-08-26   ENTRY                                          
@@ -194,8 +197,8 @@ sampling.py                                                 17  7b212414 2026-08
 scripts/assert_vocab.sh                                     19  4c669ba8 2026-08-30   docs:scripts/test_eval_rescore.sh              
 scripts/attnres_bench.py                                   150  3ed56306 2026-09-03   none                                           
 scripts/attnres_fused_reference.py                         384  ccbc0891 2026-09-02   docs:docs/standards/attnres_logits_kernel.md   
-scripts/attnres_logits_reference.py                        188  02b44afe 2026-09-03   none                                           
-scripts/attnres_triton_bf16_gate.py                         65  3ed56306 2026-09-03   none                                           
+scripts/attnres_logits_reference.py                        188  02b44afe 2026-09-03   none                                           KEEP (green, rejects all three controls; cited by algorithms/attnres_fused.py:11)
+scripts/attnres_triton_bf16_gate.py                         65  3ed56306 2026-09-03   docs:docs/lessons/upper_bound_is_not_an_effect.md  
 scripts/attnres_triton_gate.py                              49  3ed56306 2026-09-03   none                                           
 scripts/audit_population_universals.py                     131  f588f2b5 2026-09-01   ENTRY                                          
 scripts/board.py                                           214  bafd719b 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
@@ -207,18 +210,20 @@ scripts/census_code_v2.py                                   73  932e0822 2026-08
 scripts/check_sft_ready.py                                 408  4c7b91bf 2026-09-03   ENTRY                                          
 scripts/check_split_page_lines.py                          214  36bd6caa 2026-09-02   docs:docs/standards/model_module_split.md      
 scripts/ckpt_health.py                                     268  601a2f74 2026-09-02   ENTRY                                          
-scripts/ckpt_info.py                                        66  9176f859 2026-08-30   ENTRY                                          KEEP (AGENTS.md row — ops tool)
+scripts/ckpt_info.py                                       186  1000f2d7 2026-09-03   ENTRY                                          KEEP (AGENTS.md row — ops tool)
+scripts/code_fp.py                                         161  45404e71 2026-09-03   ENTRY                                          
+scripts/corpus_snapshot.py                                 183  a38be5d9 2026-09-03   ENTRY                                          
 scripts/count_tokens.py                                     64  3f526a4d 2026-08-31   ENTRY                                          
 scripts/doc_numbers_check.py                               233  dddd82a0 2026-09-01   ENTRY                                          
-scripts/e1_27_read.py                                      128  90017b21 2026-09-03   none                                           
-scripts/e1_27_score.sh                                      77  9a2e6567 2026-09-03   none                                           
+scripts/e1_27_read.py                                      128  90017b21 2026-09-03   none                                           KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py:848 stores lr_scale in neither Cfg nor the checkpoint, so nothing else can recover it)
+scripts/e1_27_score.sh                                      77  9a2e6567 2026-09-03   none                                           KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)
 scripts/e1_27_sweep.sh                                      85  9a2e6567 2026-09-03   docs:docs/lessons/gate_failure_shapes.md       
 scripts/e1_27_table.py                                     166  77c6289e 2026-09-03   docs:docs/audits/control_pythia160m_vs_ours.md  
-scripts/e1_28_clean_score.sh                                88  c4acb6a2 2026-09-03   none                                           
+scripts/e1_28_clean_score.sh                                88  c4acb6a2 2026-09-03   none                                           KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)
 scripts/e1_28_leak_scan.py                                 323  73482ca5 2026-09-03   docs:docs/lessons/gate_failure_shapes.md       
-scripts/e1_28_matched.py                                   229  ba8d2b27 2026-09-03   none                                           
+scripts/e1_28_matched.py                                   229  ba8d2b27 2026-09-03   none                                           KEEP (e1-28 open; test_e1_28_matched.py is its test)
 scripts/e1_29_floor_by_class.py                            435  abd5d3aa 2026-09-03   docs:docs/audits/control_pythia160m_vs_ours.md  
-scripts/e1_30_case_table.py                                241  33b59463 2026-09-03   none                                           
+scripts/e1_30_case_table.py                                241  33b59463 2026-09-03   none                                           KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)
 scripts/embed_norm_sdr.py                                  380  9c8f30a2 2026-09-03   ENTRY                                          
 scripts/env_fp.py                                           54  6ef7e7a4 2026-08-30   import:algorithms/rlvr.py                      
 scripts/eqcheck.py                                          61  9176f859 2026-08-30   ENTRY                                          
@@ -228,7 +233,7 @@ scripts/eval_heldout_ours.py                               207  30b1c13f 2026-09
 scripts/eval_load_cost.py                                  381  12bcd51f 2026-09-03   ENTRY                                          
 scripts/exp.py                                             345  673c2e22 2026-09-03   ENTRY                                          
 scripts/fit_scaling.py                                     138  c669a4f0 2026-08-31   docs:docs/standards/0830v1_gates.md            
-scripts/harness.py                                       12659  b7ad7fd6 2026-09-03   ENTRY                                          
+scripts/harness.py                                       13227  21727bd1 2026-09-03   ENTRY                                          
 scripts/head_path_rows.py                                  265  de0adf25 2026-09-03   ENTRY                                          
 scripts/heldout_crossarm.sh                                112  93fdedd8 2026-09-03   docs:scripts/heldout_crossarm.sh               
 scripts/l9_branch_probe.py                                 676  6b096032 2026-09-03   ENTRY                                          
@@ -245,13 +250,14 @@ scripts/merge_score_row.py                                 155  59562097 2026-09
 scripts/plot_curves.py                                      97  9176f859 2026-08-30   docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/pod_drift.py                                       858  5c1b1efb 2026-09-03   ENTRY                                          
 scripts/pod_pull_ledgers.py                                643  3609f133 2026-09-03   ENTRY                                          
-scripts/pod_push.sh                                        250  505d7281 2026-09-03   ENTRY                                          
+scripts/pod_push.sh                                        261  73349578 2026-09-03   ENTRY                                          
 scripts/pod_sync_check.sh                                   26  8479815c 2026-09-01   ENTRY                                          
+scripts/pod_verify_landed.py                               174  73349578 2026-09-03   ENTRY                                          
 scripts/probe_gradckpt_sources.py                           94  f78f22bc 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/profile_step_cost.py                               678  41c5cd89 2026-09-02   ENTRY                                          
+scripts/profile_step_cost.py                               761  abe9419a 2026-09-03   ENTRY                                          
 scripts/progress_feed.py                                   319  6822c63d 2026-09-03   ENTRY                                          
 scripts/prove_resume.sh                                    135  2d2b3bc4 2026-09-02   docs:docs/lessons/gate_failure_shapes.md       
-scripts/reachability.py                                    388  32de5e34 2026-08-31   ENTRY                                          KEEP (add to AGENTS.md entry-point table)
+scripts/reachability.py                                    422  457cb443 2026-09-03   ENTRY                                          KEEP (add to AGENTS.md entry-point table)
 scripts/read_lr_probe.py                                   200  32de3cf2 2026-09-02   ENTRY                                          
 scripts/read_resume_proof.py                               366  9911bf1b 2026-09-02   ENTRY                                          
 scripts/rehearse_cursor.py                                 111  7089d84f 2026-09-02   ENTRY                                          
@@ -272,10 +278,10 @@ scripts/stale_claims.py                                    111  df80b6b6 2026-09
 scripts/stamp_cache_seeds.py                                63  1a439eed 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
 scripts/supervise_run.sh                                    99  52a4c758 2026-09-02   ENTRY                                          
 scripts/test_arch_L32.py                                   355  00d26f42 2026-09-03   docs:docs/audits/deletion_audit_2026-09-02.md  
-scripts/test_arch_compat.py                                765  4f4c60c1 2026-09-03   ENTRY                                          
+scripts/test_arch_compat.py                                775  df874719 2026-09-03   ENTRY                                          
 scripts/test_artifact_path_ckpt.py                         201  5a989647 2026-09-02   ENTRY                                          
 scripts/test_attest_cases.py                                72  990461bd 2026-09-01   ENTRY                                          
-scripts/test_attn_res_fp32_logits.py                        32  169da865 2026-09-03   none                                           
+scripts/test_attn_res_fp32_logits.py                        32  169da865 2026-09-03   none                                           KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
 scripts/test_cache_dir_knob.py                             156  52aec31a 2026-09-02   ENTRY                                          
 scripts/test_check_summary.py                               54  aded6c52 2026-09-01   ENTRY                                          
 scripts/test_cursor_save.py                                191  1c8f0c4e 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  
@@ -283,9 +289,9 @@ scripts/test_cursor_sum.py                                 261  c9011022 2026-09
 scripts/test_cvd_pattern.py                                145  93fdedd8 2026-09-03   ENTRY                                          
 scripts/test_domain_loss_val.py                            162  5a989647 2026-09-02   ENTRY                                          
 scripts/test_drop_zombies.py                                59  79dfda7e 2026-09-01   ENTRY                                          
-scripts/test_e1_28_leak_scan.py                            270  73482ca5 2026-09-03   none                                           
-scripts/test_e1_28_matched.py                              111  ba8d2b27 2026-09-03   none                                           
-scripts/test_e1_29_floor_by_class.py                       344  abd5d3aa 2026-09-03   none                                           
+scripts/test_e1_28_leak_scan.py                            270  73482ca5 2026-09-03   none                                           KEEP (green; e1-28 open; gram width + refuse-on-missing-field)
+scripts/test_e1_28_matched.py                              111  ba8d2b27 2026-09-03   none                                           KEEP (green; e1-28 open; universal-form exclusion, doubt=contamination)
+scripts/test_e1_29_floor_by_class.py                       344  abd5d3aa 2026-09-03   none                                           KEEP (green; e1-29 open, N3 row; cited by runs/review.jsonl:150)
 scripts/test_e2e.py                                        437  35b9a636 2026-09-03   ENTRY                                          
 scripts/test_eval_base_prompt_format.py                    211  3e7e3fbc 2026-09-02   ENTRY                                          
 scripts/test_eval_load_only.py                              17  af1a34b7 2026-09-02   ENTRY                                          
@@ -319,7 +325,7 @@ scripts/test_score_matrix_failpath.py                       96  ae2868ff 2026-09
 scripts/test_serve_history.py                               47  0f4337a9 2026-09-02   ENTRY                                          
 scripts/test_sft_lr_provenance.py                          300  ebc2d28c 2026-09-03   docs:docs/lessons/gate_failure_shapes.md       
 scripts/test_sft_pack.py                                   153  f28484f8 2026-09-02   ENTRY                                          
-scripts/test_shard_glob.py                                 178  cbaa12d5 2026-09-01   ENTRY                                          
+scripts/test_shard_glob.py                                 194  19e347ec 2026-09-03   ENTRY                                          
 scripts/test_spawned_fast.py                                87  8548ac89 2026-09-01   ENTRY                                          
 scripts/test_split_bitwise.py                              125  1bd5ec14 2026-09-02   docs:docs/lessons/gate_failure_shapes.md       
 scripts/test_stamp_guard.sh                                 53  505d7281 2026-09-03   docs:scripts/test_stamp_guard.sh               
@@ -342,7 +348,7 @@ sft_math.py                                                326  ebc2d28c 2026-09
 train.py                                                  2722  169da865 2026-09-03   ENTRY                                          
 
 ==================================================================================================================================
-Total: 335 files, 174 entry points, 311 BFS-reachable, 270 citation edges, 23 unreachable (0 DELETE, 0 KEEP)
+Total: 341 files, 179 entry points, 317 BFS-reachable, 274 citation edges, 23 unreachable (0 DELETE, 15 KEEP)
 
 Unreachable (deletion candidates):
   bench_eff/bench_eff.py                                  
@@ -350,21 +356,21 @@ Unreachable (deletion candidates):
   bench_eff/parse_ddp.py                                  
   bench_eff/parse_kernels.py                              
   bench_eff/parse_trace.py                                
-  datagen/code_dedup_build.py                             
-  datagen/rl_task_exercism.py                             
-  datagen/test_near_dedup_known.py                        
-  eval/test_l1_fewshot_2x2.py                             
+  datagen/build_code_tests_v1.py                          KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)
+  datagen/code_dedup_build.py                             KEEP (3b ruled 2026-09-03: the executing half of N4's MinHash 0.8 cross-source dedup; 3b-10's code_dedup08 is its output, near_dedup_scale.py is its report side)
+  datagen/numma_to_jsonl.py                               KEEP (cited by data/PROVENANCE.md as the numina converter)
+  datagen/rl_task_exercism.py                             KEEP (3b ruled 2026-09-03: the exercism RL task-set source, 3b-9; RL is scheduled after N5, which retires the schedule slot and not the task set)
+  datagen/test_near_dedup_known.py                        KEEP (green, PASS with known pos/neg; the only known-answer case for near-dedup)
   scripts/attnres_bench.py                                
-  scripts/attnres_logits_reference.py                     
-  scripts/attnres_triton_bf16_gate.py                     
+  scripts/attnres_logits_reference.py                     KEEP (green, rejects all three controls; cited by algorithms/attnres_fused.py:11)
   scripts/attnres_triton_gate.py                          
-  scripts/e1_27_read.py                                   
-  scripts/e1_27_score.sh                                  
-  scripts/e1_28_clean_score.sh                            
-  scripts/e1_28_matched.py                                
-  scripts/e1_30_case_table.py                             
+  scripts/e1_27_read.py                                   KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py:848 stores lr_scale in neither Cfg nor the checkpoint, so nothing else can recover it)
+  scripts/e1_27_score.sh                                  KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)
+  scripts/e1_28_clean_score.sh                            KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)
+  scripts/e1_28_matched.py                                KEEP (e1-28 open; test_e1_28_matched.py is its test)
+  scripts/e1_30_case_table.py                             KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)
   scripts/logit_dist.py                                   
-  scripts/test_attn_res_fp32_logits.py                    
-  scripts/test_e1_28_leak_scan.py                         
-  scripts/test_e1_28_matched.py                           
-  scripts/test_e1_29_floor_by_class.py                    
+  scripts/test_attn_res_fp32_logits.py                    KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
+  scripts/test_e1_28_leak_scan.py                         KEEP (green; e1-28 open; gram width + refuse-on-missing-field)
+  scripts/test_e1_28_matched.py                           KEEP (green; e1-28 open; universal-form exclusion, doubt=contamination)
+  scripts/test_e1_29_floor_by_class.py                    KEEP (green; e1-29 open, N3 row; cited by runs/review.jsonl:150)
