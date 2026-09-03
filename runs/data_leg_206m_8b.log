@@ -11,6 +11,7 @@
 486:step 4500/15258 val 2.126
 537:step 5000/15258 val 2.111
 588:step 5500/15258 val 2.093
+639:step 6000/15258 val 2.080
 --- tail
-step 5530/15258 36% [main] | loss 1.520 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.96 | 2.90B tok | 82K tok/s/gpu | MFU 34% | peak 49.51GiB | ETA 4.3h
-step 5530/15258 36% [main] | loss 1.520 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.96 | 2.90B tok | 82K tok/s/gpu | MFU 34% | peak 49.51GiB | ETA 4.3h
+step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
+step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
