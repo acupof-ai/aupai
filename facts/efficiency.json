@@ -2751,6 +2751,47 @@
     "the compile transient is 1.94x the steady state",
     "the params leg OOMs during compile"
    ]
+  },
+  {
+   "id": "eff.layer9_branch_scale_is_architectural",
+   "value": "flags in 4 of 4 runs; not an anomaly",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0-10 offline checkpoint health run over data_leg_206m_8b step6000->7000 and e1_27's three lr arms, b0 2026-09-03",
+   "config": {
+    "metric": "branch output-scale, mixer.o / ffn, per layer, compared against the median and MAD OF THE OTHER LAYERS",
+    "data_leg_206m": {
+     "layer": 9,
+     "ratio": 0.439016,
+     "z": -29.93,
+     "window": "step 6000->7000"
+    },
+    "e1_27_lr0.03": {
+     "layer": 9,
+     "ratio": 0.590112,
+     "z": -12.04,
+     "window": "step 800->1000"
+    },
+    "e1_27_lr1.0": {
+     "layer": 9,
+     "ratio": 0.59381,
+     "z": -11.9,
+     "window": "step 800->1000"
+    },
+    "e1_27_lr0.01": {
+     "layer": 9,
+     "ratio": 0.590075,
+     "z": -12.04,
+     "window": "step 800->1000"
+    },
+    "diagnosis": "The criterion compares a layer against the OTHER LAYERS, which assumes the layers are exchangeable. Under attn_every=4 they are not: a layer's position in the attention cycle fixes its mixer.o/ffn ratio, so layer 9 is low by construction. Same layer, same sign, four runs, two run families, four learning rates."
+   },
+   "uncertainty": "Four runs is enough to establish the flag is not run-specific; it does not establish WHICH architectural property fixes layer 9's ratio, and that was not investigated.",
+   "boundary": "A flag that fires on every run carries no information and readers learn to skip it -- the same failure as a permanent red. RULING (fb 2026-09-03): the metric stays, the COMPARISON changes -- group layers by their position in the attn_every cycle before taking median and MAD, or record a per-layer baseline. Also NOT answered: the data leg reads 0.439 against the other three at 0.590, 25% lower, but that comparison confounds training stage (6000->7000 vs 800->1000) with run family. Separating them needs this leg's own early checkpoints, and checkpoint rotation has deleted them -- the cleanest control, a run against its own earlier self, is permanently unavailable for this leg. The MLA layer-11 flag (z +17.46) is a separate artefact: MLA has n=3, where MAD is the distance from the middle value to its neighbours and any difference inflates z. Its ratio 1.0267 sits near KDA's 1.037; it deviates from its two smaller siblings, not from a healthy range. A z score on n=3 is not a criterion.",
+   "guard_phrases": [
+    "layer 9 shows a branch-scale anomaly",
+    "MLA layer 11 deviates"
+   ]
   }
  ]
 }
