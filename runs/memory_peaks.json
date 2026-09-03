@@ -128,9 +128,43 @@
   "what_this_does_NOT_answer": "the absolute peak of the params leg. This is world=1; the launch is world=4, whose NCCL buffers and DDP bucket are absent here and cannot be recovered from a ratio. A full-batch world=4 --peak-only remains the launch gate. Also unmeasured: the compile transient, which read 72,566 MiB on nvidia-smi during THIS arm's compile phase while the steady-state number above is 36.56 -- profile_step_cost.py:576 resets the counter at `st == a.warmup` by design, so nothing in this file says whether a shape will START.",
   "cost": "two single-card probes, ~4 minutes each, no block time",
   "unverified_transfers": {
-   "batch_linearity_at_d1536": "b8 -> b16 doubling uses linearity MEASURED AT d1024 (_model, from b16 and b32). Applying it at d1536 is a transfer, not a measurement. It would take a 33% error in linearity to overturn 'fits', and batch linearity is the hardest assumption in this stack (activations are per sequence; batch multiplies), but it is stated rather than verified.",
+   "batch_linearity_at_d1536": "SUPERSEDED BY MEASUREMENT, see _probe_b16_d1536_w1. This entry projected b8 -> b16 by doubling and predicted 70.39 GiB; the measured value is 72.12, so A(b16)/A(b8) = 2.0512, not 2.000. Batch is slightly super-linear and the 2.6% error was in the UNSAFE direction. The original note (kept below) said it would take a 33% error to overturn 'fits' -- true, and still true -- but it also called batch linearity the hardest assumption in the stack, and the sign of its error was not anticipated. ORIGINAL: b8 -> b16 doubling uses linearity MEASURED AT d1024 (_model, from b16 and b32); applying it at d1536 is a transfer, not a measurement.",
    "the_2710_residual": "see _probe_b8_d1024_w1.residual_explained_by: it is a residual, not a world=4 overhead, and it would take 24.8 GiB -- 9.2x its size -- to overturn the conclusion.",
    "why_stated_and_not_verified": "a conclusion with 19-22 GiB of headroom can leave its assumptions unverified; it cannot leave them unstated. Each one here is recorded with how far it is from flipping the answer."
   }
+ },
+ "_probe_b16_d1536_w1": {
+  "peak_GiB": 72.12,
+  "peak_allocated_GiB": 71.5,
+  "startup_GiB": 71.95,
+  "startup_allocated_GiB": 71.48,
+  "config": "b16 accum2 d1536 L12 h12 ffn4608 seq4096 NO grad_ckpt fp8=True world=1 -- the params leg's OWN batch and accum, every field matching the leg except world",
+  "params_M": 438.4,
+  "tok_per_s_per_gpu": 23300,
+  "card_usable_GiB": 95.22,
+  "measured": "2026-09-03",
+  "card": "6; read-and-launch were ONE command (nvidia-smi read 0 MiB at 08:51:30Z, then a `< 1000 MiB` test gated the launch in the same shell line). Card 5 had been taken by another process within seconds of a release earlier, so read-then-decide has no window.",
+  "log": "runs/peak_b16_d1536_w1.log (pod)",
+  "why_this_one_exists": "it is the world=1 counterpart of the launch gate's world=4 reading. Every field except world matches, so gate_reading - 72.12 isolates the world=4 overhead with no extra card time -- which is what _probe_b8_d1024_w1's 2.710 residual could not do, since it also carried a batch and accum difference.",
+  "supersedes_the_projection": "the earlier b8 -> b16 doubling predicted 70.39 GiB and MEASURED is 72.12: A(b16)/A(b8) = 69.388/33.828 = 2.0512, not 2.000. Batch is slightly SUPER-linear, and the 2.6% error was in the unsafe direction -- the projection under-predicted memory. It was recorded as needing a 33% error to overturn 'fits', which still holds, but the SIGN was not anticipated and the note called batch linearity the hardest assumption in the stack. It is the hardest and it is still not exact.",
+  "no_compile_spike_at_this_batch": "STARTUP 71.95 is 0.17 GiB BELOW the steady 72.12, so at b16 there is no compile transient above steady state. This REFUTES the prediction that this shape would OOM during compile, which came from reading the b8 arm's nvidia-smi 70.87 GiB as a compile transient: at b8 the nvidia-smi/torch-reserved gap was 34.31 GiB, at b16 it is 1.19 GiB. A transient scaling with the shape cannot shrink as the shape doubles. The gap was the caching allocator holding freed blocks (nvidia-smi counts the whole process, torch reserved counts its pool); at b16 nearly all of the pool is live, so the two converge. SCOPE: this says nothing about other shapes or batches -- only that this one has no startup spike.",
+  "params_leg_projection": "world=4 = 72.12 + the world overhead, still the one unmeasured term: 74.83 GiB if 2.710 is constant, 77.89 if it scales with params. Both fit in 95.22 with 17-20 GiB spare, now on a MEASURED b16 base rather than a doubled b8 one.",
+  "nvidia_smi_trace_MiB": [
+   20823,
+   28151,
+   39531,
+   54583,
+   60275,
+   65599,
+   72271,
+   72961,
+   72963,
+   72963,
+   72965,
+   73927,
+   74889,
+   75069
+  ],
+  "nvidia_smi_max_GiB": 73.31
  }
 }
