@@ -159,7 +159,7 @@ a939a2852fb9115c8f5a48baccc0db505045e953e1bf3e3481ef4dacdc9a0166  eval/probe_ban
 fed71110b2ae4afdc1e22f5a480d1a16ea383baa5f22a3c2170a442208601089  eval/run_eval.py  training  644
 a88d84b163211486f72753eff098a1acd49d8cb0a2be3e0d6f591bc0162c7c9a  eval/score_code_exec.py  docs  644
 ab1a45d1943601f12a7c5c062cb40a14db8a491747495ed464724f75d494f2ce  eval/score_math_formatfree.py  docs  644
-ab4ea92dd6158106cf54d5f17c9c8c80078db02a5e4ec1eebc06f6c8043253a5  eval/score_matrix.py  training  644
+85b9ffa6470eb25bcfab574a7c2ba3f4f3d7798f75d4f11b96abb4906ada4323  eval/score_matrix.py  training  644
 2f73d0bf0a593b00111a0c8b4529b13612f7598b6303d11711af3149993091ab  eval/test_l1_fewshot_2x2.py  docs  644
 ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_lambda_probe.py  docs  644
 9f5d471f5c9b1ae18c2273f20f61ac67faced7fc46b1416d2fef11e261a5819b  eval/winogrande.py  docs  644
@@ -169,7 +169,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 d30b31d878eb2866fb54e8d992a26f744d00447818eca0cbae4dcf7c4ad8aaab  facts/corpus_supply.json  docs  644
 d1bbda566c815bc293351303e3d6d2b11c28c68dd407ce588bf6392f37247872  facts/data_quality.json  docs  644
 13a9b59ef84ebc8fed2c53c3616564ee2a9a42970f9624625f9202bea38ed6a5  facts/data_scaling.json  docs  644
-542e5efa3faecf83c68f831e53b40c561d7527071998a889ce1622b383336843  facts/efficiency.json  docs  644
+dc9691361194bb22b6ed4257925953c786dba28fadf9127604f2e92c82c7b742  facts/efficiency.json  docs  644
 d7ca4654ea03a292220dff1d1a6541d302362c59d1639f559eae1da98877bf63  facts/multilingual.json  docs  644
 a4da37eaeb60078f4eaa90d09e4914364b30453cf4c50e96b9a9bb53097fdc74  facts/smelt_deeploop.json  docs  644
 f47daa8ea1decd3d5e0fba8da7eda05ecd5e08089042a2316a105f8c33124b45  facts/source_baseline.json  docs  644
