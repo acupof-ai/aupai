@@ -242,6 +242,23 @@
    "uncertainty": "one uniform 1000-row sample per domain. A FIRST version of this entry had the sign inverted -- it read high bytes/token as poor handling and called the chat domains 18-21% worse than Chinese web, when they are 11-14% better-compressed than cot and worse than zh_web. It also divided by FILE bytes, which mixes json framing into a fertility number; both were caught in review by 6e before publication",
    "status": "measured",
    "boundary": "a fertility comparison across four domains, not a rebuild argument. Unfreeze condition 2 asks whether the corpus distribution changed materially and four domains cannot answer that; this puts a number on one part of it"
+  },
+  {
+   "id": "cs.provenance_tiers_0903",
+   "value": "49 corpus domains, 3,760 shards. PROVENANCE IS TIERED BY BUILD DATE, not by domain: 14 carry filters_fp (the content hash of the filters/*.py that produced them) and are rebuildable; 30 carry only a content fingerprint, so a changed byte is detectable but WHICH filter code produced them is unrecoverable; 5 carry no build_corpus_stats.json at all (code_rp1t_rest, cot_seed, web_cci3_p0/p22/p23). SIZE HAS TWO ANSWERS AND THEY DIFFER BY 40%: disk usage is 248.93 GB, the sum of file sizes is 348.30 GB, and the gap is 2,010 files with link count > 1 -- hardlinked shards under two domain names. Consequences: deleting one of a hardlinked pair frees nothing, and a write through either name changes both.",
+   "measured": "2026-09-03",
+   "source": "python3 scripts/corpus_snapshot.py on the pod -> runs/corpus_snapshot.json; du -sb and find -type f -links +1 over /work/aupai/data/corpus",
+   "config": {
+    "tool": "scripts/corpus_snapshot.py",
+    "output": "runs/corpus_snapshot.json",
+    "tier_rule": "build_corpus_stats.json: filters_fp present -> reproducible; fingerprint only -> detectable; no stats file -> none",
+    "shard_line": "name:size:sha256(first 64KB):sha256(last 64KB) -- datagen/corpus_fingerprint._shard_line, so the snapshot cannot diverge from the guard that reads it",
+    "corpus_dir": "/work/aupai/data/corpus",
+    "taken_at": "2026-09-03 07:23Z"
+   },
+   "uncertainty": "The snapshot fixes the bytes as of 2026-09-03 07:23Z; it does not recover lost provenance and must not be read as making the 35 non-reproducible domains reproducible. Head+tail 64KB per shard catches truncation, replacement and same-size head/tail edits; a rewrite confined to a shard's interior is not covered.",
+   "status": "measured",
+   "boundary": "Says what each domain IS and whether it changes from now on. Says nothing about what produced it for 35 of the 49, and nothing about content quality for any of them."
   }
  ]
 }
