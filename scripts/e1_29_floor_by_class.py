@@ -31,6 +31,24 @@ THE CLASSES ARE MINE, NOT THE DATA'S, and that is stated in the output. The `src
 code_general; measured, 8.3% of answers contain code. A label that wrong cannot carry a
 stratification, so the split is on measured content: Chinese characters in the item, and code
 markers in the answer.
+
+MEASURED BEFORE SCORING, AND IT SHRINKS THE CONFOUND THIS SCRIPT WAS BUILT TO TEST. Running the
+classifier over the 10,421 scored items (pod, 2026-09-03):
+
+    en-code    704 items ( 6.8%)   3,157,032 answer bytes (30.2%)
+    en-prose   733 items ( 7.0%)   2,325,010 answer bytes (22.2%)
+    zh-code    185 items ( 1.8%)     226,134 answer bytes ( 2.2%)
+    zh-prose  8799 items (84.4%)   4,741,652 answer bytes (45.4%)
+    ENGLISH   1437 items (13.8%)   5,482,042 bytes (52.5%)
+
+"84.3% of the held-out items are Chinese" is true by ITEM COUNT and misleading for this question.
+nll_per_supervised_byte is byte-weighted, so the published 2.004x is already 52.5% English BY WEIGHT
+-- English items average 3,815 B against Chinese prose's 539 B, a 7.1x ratio, so they dominate the
+denominator despite being a seventh of the items. The confound is therefore much smaller than the
+item share implied, and the pre-registered readings must be read against 52.5%, not 15.7%: a large
+drop on the English subset is no longer the outcome the framing predicts, because English is most of
+what 2.004x already measures. An absolute item count and a byte share answer different questions,
+which is the same error as reading a CJK count where a CJK fraction was needed.
 """
 import argparse
 import json
