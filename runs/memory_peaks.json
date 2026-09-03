@@ -105,7 +105,7 @@
   "log": "runs/peak_b8_d1024.log (pod)",
   "role": "CONTROL. Its job was to be able to FAIL: it tests whether activations scale with the FORWARD batch (predict 25.43) or with the effective batch, i.e. accum counted too (predict 13.39). Measured 24.08 -- 1.36 from the first, 10.69 from the second, a factor of 7.9. So forward batch is the axis. A probe that could only confirm would have proved nothing.",
   "residual_vs_prediction_GiB": 1.36,
-  "residual_explained_by": "the leg is world=4 and this probe is world=1, so the leg's 49.53 carries NCCL buffers and the DDP gradient bucket that a single-GPU probe does not. Direction confirms it: 2 x A8 = 45.48 < A16 = 48.19 from the leg, a gap of 2.71 GiB. Miscounting accum would have given the opposite sign or an order of magnitude, not 5.3%.",
+  "residual_explained_by": "MISLABELLED IF CALLED 'the world=4 overhead'. 2.710 = the leg (world4 b16 accum2) minus 2 x this probe (world1 b8 accum1), so it is a RESIDUAL containing the world effect, the accum difference, and anything else unaccounted. It must NOT be scaled as a function of world size. The direction is still informative -- 2 x A8 = 45.48 < the leg's A16 = 48.19, and miscounting accum would have given the opposite sign or an order of magnitude, not 5.3% -- but the decomposition is not measured. Separating it needs the same shape at world=1 and world=4, which the full-batch launch gate will supply for free.",
   "why_the_ratio_and_not_the_absolute": "d-scaling is read from probe/probe (same world, launcher, dtype and accum, so those cancel). The ABSOLUTE peak for the params leg still needs a world=4 full-batch --peak-only: the world=4 overhead is present there and absent here, and no ratio recovers it. The two measurements are not substitutes.",
   "compile_transient_note": "nvidia-smi read 72,566 MiB on card 5 during the d1536 arm's compile phase. That is NOT in any peak_GiB here: profile_step_cost.py:576 resets the counter under `if st == a.warmup`, so every number in this file is the STEADY-STATE step. A compile transient OOMs just as hard, and it is unmeasured. Do not read a peak here as 'this shape will start'.",
   "why_the_leading_underscore": "gate_memory_measured (scripts/launch_gate.py:560) reports every key NOT starting with '_' as a world size we have a measured peak for. This is a b8 world=1 PROBE, not a peak for any launch: listing it bare would tell a reader 'world=1 is measured' and, worse, invite the same reuse-by-shape that put 61.01 in this file. The underscore keeps it out of that list while keeping the measurement auditable."
@@ -124,8 +124,47 @@
   "log": "runs/peak_b8_d1536.log (pod)",
   "d_scaling_exponent": 0.9795,
   "how_the_exponent_was_solved": "A = reserved - P, where P (params+grads+Muon momentum+AdamW fp32 states) is computed from the instantiated model, NOT fitted: 1.340 GiB at d1024, 2.732 at d1536. Then exponent = ln(A1536/A1024)/ln(1.5) = ln(33.828/22.740)/ln(1.5) = 0.9795. P MUST be subtracted first: it is an ADDITIVE term, not a common factor. Taking the raw ratio of the two readings gives 1.0299, biased +0.050, which reads as 'above 1' when the answer is below it.",
-  "projection_to_the_params_leg": "A(d1536,b16) = 33.828 x 2 = 67.66 (batch linearity is measured, see _model), so b16 world=4 lands at 73.10 GiB if the world=4 overhead (2.710, from 2xA8 vs the leg's A16) is constant, or 76.15 if it scales with params (x2.128). BOTH fit in 95.22 with 19-22 GiB spare, so that ambiguity does not need resolving at this exponent.",
+  "projection_to_the_params_leg": "A(d1536,b16) = 33.828 x 2 = 67.66, so b16 world=4 lands at 73.10 GiB if the leg-minus-probe residual (2.710) is constant, or 76.15 if it scales with params (x2.128). Both fit in 95.22 with 19-22 GiB spare, so that ambiguity needs no resolving at this exponent.",
   "what_this_does_NOT_answer": "the absolute peak of the params leg. This is world=1; the launch is world=4, whose NCCL buffers and DDP bucket are absent here and cannot be recovered from a ratio. A full-batch world=4 --peak-only remains the launch gate. Also unmeasured: the compile transient, which read 72,566 MiB on nvidia-smi during THIS arm's compile phase while the steady-state number above is 36.56 -- profile_step_cost.py:576 resets the counter at `st == a.warmup` by design, so nothing in this file says whether a shape will START.",
-  "cost": "two single-card probes, ~4 minutes each, no block time"
+  "cost": "two single-card probes, ~4 minutes each, no block time",
+  "unverified_transfers": {
+   "batch_linearity_at_d1536": "SUPERSEDED BY MEASUREMENT, see _probe_b16_d1536_w1. This entry projected b8 -> b16 by doubling and predicted 70.39 GiB; the measured value is 72.12, so A(b16)/A(b8) = 2.0512, not 2.000. Batch is slightly super-linear and the 2.6% error was in the UNSAFE direction. The original note (kept below) said it would take a 33% error to overturn 'fits' -- true, and still true -- but it also called batch linearity the hardest assumption in the stack, and the sign of its error was not anticipated. ORIGINAL: b8 -> b16 doubling uses linearity MEASURED AT d1024 (_model, from b16 and b32); applying it at d1536 is a transfer, not a measurement.",
+   "the_2710_residual": "see _probe_b8_d1024_w1.residual_explained_by: it is a residual, not a world=4 overhead, and it would take 24.8 GiB -- 9.2x its size -- to overturn the conclusion.",
+   "why_stated_and_not_verified": "a conclusion with 19-22 GiB of headroom can leave its assumptions unverified; it cannot leave them unstated. Each one here is recorded with how far it is from flipping the answer."
+  }
+ },
+ "_probe_b16_d1536_w1": {
+  "peak_GiB": 72.12,
+  "peak_allocated_GiB": 71.5,
+  "startup_GiB": 71.95,
+  "startup_allocated_GiB": 71.48,
+  "config": "b16 accum2 d1536 L12 h12 ffn4608 seq4096 NO grad_ckpt fp8=True world=1 -- the params leg's OWN batch and accum, every field matching the leg except world",
+  "params_M": 438.4,
+  "tok_per_s_per_gpu": 23300,
+  "card_usable_GiB": 95.22,
+  "measured": "2026-09-03",
+  "card": "6; read-and-launch were ONE command (nvidia-smi read 0 MiB at 08:51:30Z, then a `< 1000 MiB` test gated the launch in the same shell line). Card 5 had been taken by another process within seconds of a release earlier, so read-then-decide has no window.",
+  "log": "runs/peak_b16_d1536_w1.log (pod)",
+  "why_this_one_exists": "it is the world=1 counterpart of the launch gate's world=4 reading. Every field except world matches, so gate_reading - 72.12 isolates the world=4 overhead with no extra card time -- which is what _probe_b8_d1024_w1's 2.710 residual could not do, since it also carried a batch and accum difference.",
+  "supersedes_the_projection": "the earlier b8 -> b16 doubling predicted 70.39 GiB and MEASURED is 72.12: A(b16)/A(b8) = 69.388/33.828 = 2.0512, not 2.000. Batch is slightly SUPER-linear, and the 2.6% error was in the unsafe direction -- the projection under-predicted memory. It was recorded as needing a 33% error to overturn 'fits', which still holds, but the SIGN was not anticipated and the note called batch linearity the hardest assumption in the stack. It is the hardest and it is still not exact.",
+  "no_compile_spike_at_this_batch": "STARTUP 71.95 is 0.17 GiB BELOW the steady 72.12, so at b16 there is no compile transient above steady state. This REFUTES the prediction that this shape would OOM during compile, which came from reading the b8 arm's nvidia-smi 70.87 GiB as a compile transient: at b8 the nvidia-smi/torch-reserved gap was 34.31 GiB, at b16 it is 1.19 GiB. A transient scaling with the shape cannot shrink as the shape doubles. The gap was the caching allocator holding freed blocks (nvidia-smi counts the whole process, torch reserved counts its pool); at b16 nearly all of the pool is live, so the two converge. SCOPE: this says nothing about other shapes or batches -- only that this one has no startup spike.",
+  "params_leg_projection": "world=4 = 72.12 + the world overhead, still the one unmeasured term: 74.83 GiB if 2.710 is constant, 77.89 if it scales with params. Both fit in 95.22 with 17-20 GiB spare, now on a MEASURED b16 base rather than a doubled b8 one.",
+  "nvidia_smi_trace_MiB": [
+   20823,
+   28151,
+   39531,
+   54583,
+   60275,
+   65599,
+   72271,
+   72961,
+   72963,
+   72963,
+   72965,
+   73927,
+   74889,
+   75069
+  ],
+  "nvidia_smi_max_GiB": 73.31
  }
 }
