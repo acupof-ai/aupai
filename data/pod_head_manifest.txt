@@ -224,6 +224,7 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 b804f5796818352eac0b8aab9ce203df6bb2585398f15e1faa730ea5da7057dd  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
+f65473430f5b4f4c0b5d8ec1bf9a0f2a7d65d8a9d3c7ec5cd85856d2fe5e5fda  runs/card_assignment.json  docs  644
 2e6a9bb452b48760ba22ba9b81aa85f4f13e29f5eef8a0121dc664a4a813cd3a  runs/experiments.jsonl  docs  644
 8100a43b4a1ebe6b15805da7450c66e5aa17869af7490fcbcb09f5cdcf890f76  runs/ledger_resolutions.jsonl  docs  644
 6b5c788e92bcd3860fcbe937b3c53d657b48e5542ceea2062c81598010f09353  runs/milestones.jsonl  docs  644
@@ -271,7 +272,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-d66ef41439d8cda21a565bb98b79da18a86f5625a5bdcbb40716447514da9da8  scripts/harness.py  training  644
+f0816c9fabd23f74f88053ee375ecd81bc4682d61315381e9e41066794f20934  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -288,7 +289,7 @@ aac9375c7e478d15e19359c33e9419ba8b683324dccc7c3cee7ee8902ba084ca  scripts/logit_
 ca2773d596083d41dbc8292a4227e0539ba16130c5047f9009d17d75c6b3c1fb  scripts/lr_probe.sh  docs  644
 e2f7cb2f6158c4d78455d19b9fdccbc48b54a0f9d994eca21bcd95517a44c93d  scripts/measure_mix_startup.py  docs  644
 ed794304e4494801517489745451bd8d95e3f15c4bb74954cf3f762e235cb028  scripts/plot_curves.py  training  644
-a268f3169fc33885c4fa2585e3445e506fb16699c669f3cb2e73127b8fa45b63  scripts/pod_drift.py  training  644
+f667e33376fe019460381a447a5dc0a3e8dc7ade545935645e5ba4fdae739b82  scripts/pod_drift.py  training  644
 bd0995a27c6462c809b5700073e0d1a17c935047b9fb02990ca08e580e448af4  scripts/pod_pull_ledgers.py  training  644
 0cc2f4d7e2178903d1d47698d8a2a540bb2309e907d9a5205150ec1fc519ab0e  scripts/pod_push.sh  training  755
 80c9fa99e13f0d0d3c99738df4d24e19b1f8c14c4fb1a34df9d36492f1a54f18  scripts/probe_gradckpt_sources.py  docs  644
