@@ -12,7 +12,11 @@
   "headroom_GiB": 25.59,
   "nvidia_smi_GiB": 74.1,
   "steps": 30,
-  "stable_across_windows": [10, 20, 30],
+  "stable_across_windows": [
+   10,
+   20,
+   30
+  ],
   "cards": "1-7",
   "log": "runs/w7_b32a1.log",
   "measured": "2026-09-01"
@@ -25,7 +29,12 @@
   "card_usable_GiB": 95.22,
   "headroom_GiB": 25.59,
   "steps": 40,
-  "stable_across_windows": [10, 20, 30, 40],
+  "stable_across_windows": [
+   10,
+   20,
+   30,
+   40
+  ],
   "cards": "0-7",
   "log": "runs/proberesume_run1.log",
   "ops_exercised": "init + compile + fwd/bwd/step + save",
@@ -38,7 +47,11 @@
   "config": "b16 accum2 -- same 917,504 tok/step as b32 accum1, half the activation set",
   "headroom_GiB": 58.93,
   "steps": 30,
-  "stable_across_windows": [10, 20, 30],
+  "stable_across_windows": [
+   10,
+   20,
+   30
+  ],
   "cards": "1-7",
   "log": "runs/w7_b16a2.log",
   "role": "control, not fallback. Its purpose was to prove the peak field tracks configuration at all -- the prediction that it must read materially lower was recorded in eff.w7_peak_memory_b32_fits before this arm ran. It is also the reserve: where 33 GiB comes from if seq or mix complexity grows.",
@@ -51,5 +64,27 @@
   "predicted_from": "493.6M params x 2 bytes x 3 copies (weights + Muon momentum + grads); agreement to 0.19 GiB is what makes this a model rather than a two-point fit",
   "activations_GiB_per_batch16": 33.34,
   "note": "Peak is LINEAR in batch. A first reading that grad_ckpt made activations sub-linear was wrong. Extrapolations from this line assume activation memory scales with seq the way it scales with batch, which is UNTESTED -- attention's quadratic term and the KDA recurrent state need not move together. On that assumption seq 8192 puts b32 at ~136 GiB (does not fit) and b16a2 at ~70 GiB (fits), making b32 the ceiling for this card at seq 4096."
+ },
+ "4": {
+  "peak_GiB": 61.01,
+  "config": "b16 accum2 d1024 L12 h8 ffn3072 seq4096 NO grad_ckpt uncompiled fp8=False attn_res-Full/0 doc_mask",
+  "params_M": 206.1,
+  "tok_per_step": 524288,
+  "card_usable_GiB": 95.58,
+  "headroom_GiB": 34.57,
+  "steps": 500,
+  "stable_across_windows": [
+   10,
+   100,
+   250,
+   500
+  ],
+  "cards": "4 of them, world 4",
+  "log": "runs/ab_shapelr_base.log (pod)",
+  "measured": "2026-09-02",
+  "source": "NOT a new probe. This is the peak the A/B (2a) baseline arm REPORTED while running the data leg's exact configuration: params 206.1M, world 4, and a cfg line that matches the leg flag for flag (batch 16 accum 2 seq 4096 grad_ckpt False lr_scale 1.0 attn_every 4). Running w7_peak.sh again would have spent 30 steps on four cards to re-derive a number already on disk, and w7_peak.sh could not have produced it anyway: it hardcodes --layers 32 and refuses any world but 7.",
+  "range_over_50_windows": "60.95 - 61.01 GiB, spread 0.06 GiB (8/16/14/8/3/1 windows at 60.95/.96/.97/.98/.99/61.01). The MAX is recorded, not the mean or the modal value -- a fits/does-not-fit call is made against the worst window, and the mean would understate it by 0.05 GiB.",
+  "mix_difference_is_not_a_memory_difference": "The arm ran data/mix_200m_4b.json and the leg runs data/mix_200m_8b.json. Checked rather than waved past: same 9 domains, and all 9 weight deltas are exactly 0.0 -- the two files differ only in total_tokens (3,999,997,952 vs 8,000,000,000), which sets how many steps run, not what one step allocates. Peak is a per-step high-water mark.",
+  "_caveat_applies": "Rank 0 only, like every other row here, so this is a LOWER bound on the worst rank. The file's own rule is that ruling from it needs about 25 GiB of headroom; 34.57 GiB clears that. It clears it by less than the 493.6M/b16a2 arm's 58.93 GiB, because this leg runs WITHOUT grad_ckpt -- 206M unchecked costs more activation memory than 493.6M checkpointed."
  }
 }

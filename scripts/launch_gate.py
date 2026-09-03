@@ -439,6 +439,66 @@ def dead_citations(root, text, tracked):
     return dead
 
 
+def _recipe_for_shape(prov, shape=None):
+    """The recipe entries for the shape being launched. Returns (mapping, why-if-None).
+
+    runs/recipe_provenance.json used to be FLAT -- twelve flags at the top level, all
+    describing the 493.6M L32 run. gate_recipe_provenance then returned GO for a 206M L12
+    launch, and it was not wrong to: it asks whether each value HAS a source, not whether
+    that source is about the model being launched. Twelve entries arguing for another
+    shape read as twelve justified values, and scripts/test_e2e.py:59 had already written
+    the hazard down without the file being able to express the distinction.
+
+    So the file now carries prov["shapes"][<label>], and this picks the label whose
+    d/layers/heads/ffn_hidden equal the shape being launched. Matching on the SHAPE, not
+    on the label text: a label is a name someone typed and "206M-L12" would keep matching
+    after the entries under it changed. Each group states its own dim/layers/heads/
+    ffn_hidden as recipe values, so the group can be checked against LAUNCH_SHAPE using
+    the group's own content.
+
+    Flat files still work, unchanged -- one recipe, no shapes key, and the caller gets
+    exactly what it got before. That is not politeness to old data: the params leg comes
+    next and will add a third group, and a reader who has to migrate the file to answer a
+    gate will migrate it wrongly at 3am.
+
+    Returns None with a reason rather than falling back to the flat top level when a
+    shapes key exists but no group matches. A fallback there would answer the launch with
+    whatever recipe happened to be lying around at the top of the file -- the exact defect
+    the partition was made to remove, restored as an error path (b0, 2026-09-03).
+    """
+    shape = LAUNCH_SHAPE if shape is None else shape
+    groups = prov.get("shapes")
+    if not isinstance(groups, dict):
+        return prov, ""
+    matched = []
+    for label, entries in groups.items():
+        if not isinstance(entries, dict):
+            continue
+        got = {"d": entries.get("dim"), "layers": entries.get("layers"),
+               "heads": entries.get("heads"), "ffn_hidden": entries.get("ffn_hidden")}
+        # The values are PROSE ("12 -- the anchor depth, NOT a choice..."), so the shape
+        # is read as the leading integer of each entry. A group whose dim entry does not
+        # start with a number cannot be shape-matched and is skipped rather than guessed.
+        try:
+            nums = {k: int(re.match(r"\s*(\d+)", str(v)).group(1)) for k, v in got.items()}
+        except (AttributeError, TypeError):
+            continue
+        if all(nums[k] == shape[k] for k in ("d", "layers", "heads", "ffn_hidden")):
+            matched.append((label, entries))
+    if not matched:
+        have = ", ".join(groups) or "none"
+        return None, (f"runs/recipe_provenance.json has no recipe group for the shape being "
+                      f"launched (d{shape['d']} L{shape['layers']} h{shape['heads']} "
+                      f"ffn{shape['ffn_hidden']}); groups present: {have}. A recipe for "
+                      f"another shape is not a source for this one")
+    if len(matched) > 1:
+        return None, (f"{len(matched)} recipe groups claim the launched shape "
+                      f"({', '.join(lbl for lbl, _ in matched)}) -- which one argues for "
+                      f"this run is undecidable, and picking either would be a coin flip "
+                      f"dressed as provenance")
+    return matched[0][1], ""
+
+
 def gate_recipe_provenance(root, mix_path, world):
     """5. Every recipe value traces to an experiment row or a committed probe.
 
@@ -452,6 +512,9 @@ def gate_recipe_provenance(root, mix_path, world):
         prov = json.load(open(p, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"recipe_provenance.json unreadable: {e}"
+    prov, why = _recipe_for_shape(prov)
+    if prov is None:
+        return NOGO, why
     # A PLACEHOLDER IS NOT A SOURCE. My first version tested only that the string was
     # non-empty, and it returned GO on a schema file whose eight values were all the
     # literal "UNSOURCED" -- a file I had just written to keep this gate RED. The gate
@@ -649,9 +712,24 @@ def reconcile_command(cmd, prov, flags=RECIPE_FLAGS):
     both directions -- "a parameter was omitted" does not set severity, and "the
     effective value is correct" does not prove the parameter was passed.
     """
+    # `--no-X` and `--no_X` COUNT AS PRESENT (b0, 2026-09-03). train.py:1992 declares
+    # grad_ckpt, attn_res, attn_res_dyn_q and fone as BooleanOptionalAction, whose whole
+    # point is that absent and False are different values: absent leaves the Cfg default,
+    # `--no-grad_ckpt` writes False. The old pattern's `(?<![\w-])` lookbehind rejected
+    # the `--no-` form, so a command that turned a switch off EXPLICITLY was reported
+    # identically to one that never mentioned it -- "justified but NOT in the command,
+    # falls back to a Cfg default silently". It does not fall back; it was passed.
+    #
+    # Found by running the data leg's real command through this function before launch:
+    # the 206M leg runs uncheckpointed, so its command carries --no-grad_ckpt, and the
+    # gate called it missing. That is shape 140 exactly -- one signal for two worlds, and
+    # the harmless one (explicitly off) is the one that gets the alarm, so the alarm has
+    # to be waved past, which is how the real omission gets waved past with it.
+    optional_prefix = r"(?:no[-_])?"
     missing, unjustified = [], []
     for f in flags:
-        present = re.search(rf"(?<![\w-])--{re.escape(f)}(?![\w-])", cmd) is not None
+        present = re.search(rf"(?<![\w-])--{optional_prefix}{re.escape(f)}(?![\w-])",
+                            cmd) is not None
         justified = str(prov.get(f, "")).strip() != ""
         if justified and not present:
             missing.append(f)
@@ -683,6 +761,13 @@ def gate_launch_command(root, mix_path, world, cmd=None):
             prov = json.load(fh)
     except (OSError, ValueError) as e:
         return NOGO, f"recipe_provenance.json unreadable: {e}"
+    # The SAME group gate_recipe_provenance certified, for the same reason it exists: if
+    # this gate read the flat top level while that one read the launched shape's group, the
+    # two would reconcile the command against different recipes and each would look
+    # internally consistent (b0, 2026-09-03). One selection, one place.
+    prov, why = _recipe_for_shape(prov)
+    if prov is None:
+        return NOGO, why
     if cmd is None:
         cmd, src = _recorded_cmd(root)
         if cmd is None:
@@ -1241,6 +1326,73 @@ def selftest():
             for r in rows:
                 f.write(json.dumps(r) + "\n")
     reversible["launch_command"] = (dl, ml, _fixcmd)
+
+    # Shape-keyed recipe selection. The defect this replaced was a GO, not a red, so the
+    # decisive case is the NEGATIVE one: a file holding a recipe for ANOTHER shape only
+    # must refuse. Called directly -- _recipe_for_shape is pure, like reconcile_command.
+    _l12 = {"d": 1024, "layers": 12, "heads": 8, "ffn_hidden": 3072}
+
+    def _grp(d, L, h, F):
+        return {"dim": f"{d} -- w", "layers": f"{L} -- w",
+                "heads": f"{h} -- w", "ffn_hidden": f"{F} -- w"}
+
+    _other = {"shapes": {"493.6M-L32": _grp(1024, 32, 8, 3072)}}
+    if _recipe_for_shape(_other, _l12)[0] is not None:
+        bad.append("a recipe file holding ONLY a d1024-L32 group answered a d1024-L12 "
+                   "launch -- twelve values arguing for another shape read as twelve "
+                   "justified values, which is the GO this partition exists to remove")
+    # ...and the matching group must still be found, or the fix trades a false GO for a
+    # false NO-GO and every launch is blocked instead.
+    _both = {"shapes": {"493.6M-L32": _grp(1024, 32, 8, 3072), "206M-L12": _grp(1024, 12, 8, 3072)}}
+    if _recipe_for_shape(_both, _l12)[0] is None:
+        bad.append("_recipe_for_shape refused a file that DOES carry the launched shape's "
+                   "group: the partition blocks every launch instead of the wrong one")
+    # A flat file predates the partition and must keep working: the params leg adds a third
+    # group later, and a reader forced to migrate the file to answer a gate migrates it wrong.
+    if _recipe_for_shape({f: "runs/experiments.jsonl:r" for f in RECIPE_FLAGS}, _l12)[0] is None:
+        bad.append("a FLAT recipe_provenance.json (no shapes key) is now refused -- the "
+                   "partition broke the format every earlier run recorded its recipe in")
+    # Two groups claiming one shape is undecidable, not a coin flip.
+    _dup = {"shapes": {"a": _grp(1024, 12, 8, 3072), "b": _grp(1024, 12, 8, 3072)}}
+    if _recipe_for_shape(_dup, _l12)[0] is not None:
+        bad.append("two recipe groups both claiming the launched shape were resolved by "
+                   "picking one -- provenance decided by dict order")
+    # Depth alone must separate them: an L12 launch must not match the L32 group when every
+    # OTHER field agrees, which is the near-miss the params leg will actually produce.
+    if _recipe_for_shape({"shapes": {"x": _grp(1024, 32, 8, 3072)}}, _l12)[0] is not None:
+        bad.append("a group differing from the launch ONLY in layers was accepted")
+
+    # BooleanOptionalAction: `--no-X` is PRESENT, and a real omission is still caught.
+    # Called directly rather than through a world, for reconcile_command's own reason --
+    # it is pure, so a world would add a filesystem that has nothing to do with the
+    # property. Both directions asserted, because the fix is a widened regex and a regex
+    # widened too far reports every flag present and every gate green (b0, 2026-09-03).
+    _sw = "grad_ckpt"
+    if _sw in RECIPE_FLAGS:
+        _prov = {f: "runs/experiments.jsonl:some_run" for f in RECIPE_FLAGS}
+        _full = " ".join(f"--{f}" for f in RECIPE_FLAGS)
+        for _form in (f"--no-{_sw}", f"--no_{_sw}"):
+            _cmd = _full.replace(f"--{_sw}", _form)
+            _miss, _ = reconcile_command(_cmd, _prov)
+            if _sw in _miss:
+                bad.append(
+                    f"reconcile_command calls {_sw} missing from a command carrying "
+                    f"{_form} -- BooleanOptionalAction's explicit OFF reads as an "
+                    f"omission, so 'turned it off on purpose' and 'never passed it, "
+                    f"took the Cfg default' produce one signal (shape 140)")
+        # ...and the omission it exists to catch must still fire. A regex that matched
+        # anything containing the flag name would pass the two cases above by accident.
+        _miss_real, _ = reconcile_command(_full.replace(f"--{_sw}", ""), _prov)
+        if _sw not in _miss_real:
+            bad.append(f"reconcile_command does NOT report {_sw} missing when the "
+                       f"command omits it entirely -- the --no- widening swallowed the "
+                       f"omission this gate exists for")
+        # A flag whose NAME CONTAINS another flag's name must not answer for it: `--no_`
+        # plus a substring is the way a widened alternation starts matching neighbours.
+        _miss_sub, _ = reconcile_command(_full.replace(f"--{_sw}", f"--outer_{_sw}"), _prov)
+        if _sw not in _miss_sub:
+            bad.append(f"--outer_{_sw} satisfied the check for --{_sw}: the pattern "
+                       f"matches inside a longer flag name")
 
     # Citation forms, exercised on the REAL tree rather than in a temp world, because both
     # properties are about git and a world has no .git: `git cat-file -e` returns 128 there

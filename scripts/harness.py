@@ -7457,7 +7457,136 @@ def _broken_no_shared_stash():
     return d
 
 
+def check_allocation_reads_the_grant(root):
+    """The cards a training launch GETS are the cards the grant file GIVES.
+
+    The defect this exists for (b0, 2026-09-03): launch_gate.gate_cards read
+    runs/card_assignment.json to decide GO, and _allocation_cards read
+    data/mix_scale_run_config.json to decide which cards the job actually got. The grant
+    was narrowed to 0-3 because cards 4 and 7 hold the user's own work in other
+    containers; the gate went GO on 0-3 and the launcher would still have handed the run
+    cards 0-6. Correcting the authoritative file changed nothing, because the acting code
+    never read it. Same shape as recipe_provenance's, one file over: a record can be
+    right, current, and read by a gate, and still not reach the code that acts (§142).
+
+    READS `root`, and every sub-case is derived from what that tree holds rather than from
+    a fixture written here. The first version built its own temp dirs and so returned the
+    same answer for every tree it was handed -- `check --selftest` caught it immediately
+    ("reported PASS on its broken world"), which is the §71 shape: a check that cannot be
+    made to fail by damaging the thing it checks is not checking it.
+    """
+    gp = os.path.join(root, "runs", "card_assignment.json")
+    lp = os.path.join(root, "data", "mix_scale_run_config.json")
+    if not os.path.isfile(gp) or not os.path.isfile(lp):
+        return SKIP, "needs both runs/card_assignment.json and data/mix_scale_run_config.json"
+    try:
+        with open(gp, encoding="utf-8") as fh:
+            grant = json.load(fh)
+        with open(lp, encoding="utf-8") as fh:
+            ladder_cards = _expand_cards(json.load(fh).get("cards", ""))
+    except (OSError, ValueError) as e:
+        return FAIL, f"a card source is unreadable: {e}"
+    granted = _expand_cards(grant.get("block_cards", "")) if grant.get("launch_block_granted") else []
+
+    import io
+
+    err = io.StringIO()
+    _real, sys.stderr = sys.stderr, err
+    try:
+        block = [int(c) for c in _allocation_cards(True, root=root).split(",") if c.strip()]
+        lane_s = _allocation_cards(False, root=root)
+    finally:
+        sys.stderr = _real
+    msg = err.getvalue()
+
+    if granted:
+        # 1. The grant decides. This is the whole defect.
+        if set(block) != set(granted):
+            return FAIL, (f"the grant gives {_csv(granted)} and a training launch would get "
+                          f"{_csv(block)} -- the launcher does not read the file that says "
+                          f"who owns the cards")
+        # 2. A disagreement between the two sources must be announced, never resolved
+        #    silently: one file said 0-3, another 0-6, and nothing said they differed.
+        if set(ladder_cards) != set(granted) and "DISAGREE" not in msg:
+            return FAIL, (f"the two card sources disagree (grant {_csv(granted)} vs ladder "
+                          f"{_csv(ladder_cards)}) and nothing said so -- that silence is what "
+                          f"let a launch target cards outside the grant")
+        # 3. ...and agreement must NOT warn, or the warning is noise and gets waved past.
+        if set(ladder_cards) == set(granted) and "DISAGREE" in msg:
+            return FAIL, ("two AGREEING card sources reported a disagreement; a warning that "
+                          "fires on correct input gets ignored (§142)")
+        # 4. lane_card: null means NO lane, not "complement the block" -- with block 0-3
+        #    the complement is 4-7, the cards the narrowing existed to protect.
+        if "lane_card" in grant and grant["lane_card"] is None and lane_s:
+            return FAIL, (f"the grant states lane_card: null and the lane came back "
+                          f"{lane_s!r} -- complementing the block hands a non-training job "
+                          f"cards the grant does not give")
+        if lane_s:
+            lane_set = set(int(c) for c in lane_s.split(",") if c.strip())
+            outside = lane_set - set(_expand_cards(grant.get("lane_card", "")))
+            if grant.get("lane_card") is not None and outside:
+                return FAIL, (f"the lane {lane_s!r} includes card(s) {_csv(sorted(outside))} "
+                              f"the grant does not name as the lane")
+            # 5. The lane and the block must be DISJOINT. A lane card inside the block
+            #    hands a non-training job a card the training block is already using, and
+            #    DDP does not fail cleanly on that: on 2026-09-02 two probes shared cards
+            #    twice and OOM'd each other. Read from the grant's own two fields, so a
+            #    grant that contradicts itself is caught where it is written.
+            both = lane_set & set(block)
+            if both:
+                return FAIL, (f"the grant's lane card(s) {_csv(sorted(both))} are inside its "
+                              f"own block {_csv(block)} -- a non-training job would land on a "
+                              f"card the training block holds, which OOMs both")
+        return PASS, (f"grant {_csv(granted)} decides the block; "
+                      f"{'disagreement announced' if set(ladder_cards) != set(granted) else 'sources agree'}; "
+                      f"lane {lane_s or 'none (grant says null)'}")
+    # No grant: the fallback is the ladder config, and it must SAY so -- a silent fallback
+    # is indistinguishable from a grant that happens to agree.
+    if set(block) != set(ladder_cards):
+        return FAIL, (f"no block grant, so the ladder config's {_csv(ladder_cards)} should "
+                      f"decide, but the allocation is {_csv(block)}")
+    if "mix_scale_run_config" not in msg:
+        return FAIL, ("the fallback to data/mix_scale_run_config.json is SILENT -- nothing "
+                      "tells a reader which of the two files decided the cards")
+    return PASS, f"no grant; fell back to the ladder's {_csv(ladder_cards)} and said so"
+
+
+def _broken_allocation_reads_the_grant():
+    """A grant whose stated lane is a card the block already holds.
+
+    THE DEFECT THIS CHECK WAS WRITTEN FOR IS IN CODE, NOT DATA -- _allocation_cards
+    reading the wrong file -- and a broken TREE cannot express that: any tree fed to the
+    fixed function gets the right answer. So this world damages the artifact instead, in
+    the one way that is still a card error: it grants block 0-3 and names card 2 as the
+    lane, so a non-training job and the training block are handed the same card. That is
+    the collision the lane exists to prevent (2026-09-02: two probes shared cards twice and
+    OOM'd each other), and it is what case 4 reads.
+
+    Stated plainly because the distinction matters for reading this check's green: the
+    code-level defect is covered by running the OLD implementation against the real tree
+    (done at the terminal, 2026-09-03: grant 0-3, old code returns 0-6, red), not by this
+    world. A world that cannot fail the property is worse than no world, so this one fails
+    a property the check actually holds.
+    """
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+        json.dump({"launch_block_granted": True, "block_cards": "0-3", "lane_card": "2"}, f)
+    with open(os.path.join(d, "data", "mix_scale_run_config.json"), "w") as f:
+        json.dump({"cards": "0,1,2,3", "world": 4}, f)
+    return d
+
+
 CHECKS = [
+    (
+        "allocation_reads_the_grant",
+        "a training launch's cards come from runs/card_assignment.json, not the ladder config",
+        "the grant was narrowed to 0-3 because cards 4 and 7 hold the user's own work; the "
+        "gate read the grant and went GO while the launcher read mix_scale_run_config.json "
+        "and would have handed the run cards 0-6",
+        check_allocation_reads_the_grant,
+        _broken_allocation_reads_the_grant,
+    ),
     (
         "env_importable",
         "every third-party module the repo imports is installed",
@@ -7980,6 +8109,8 @@ EVIDENCE = {
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
     "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
+    # repo: the two card-source files are both tracked, so this answers the same anywhere
+    "allocation_reads_the_grant": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
@@ -10760,22 +10891,121 @@ def _expand_cards(spec):
     return sorted(out)
 
 
-def _allocation_cards(training):
+def _csv(cards):
+    """Card list -> the comma string CUDA_VISIBLE_DEVICES and NGPU are built from.
+    _expand_cards returns ints; every consumer here wants "0,1,2,3"."""
+    return ",".join(str(c) for c in cards)
+
+
+def _grant_cards(root=None):
+    """The controller's card grant from runs/card_assignment.json, or (None, why).
+
+    THE GRANT FILE IS THE AUTHORITY, and before 2026-09-03 nothing read it for this
+    (b0). launch_gate.gate_cards read card_assignment.json to decide GO/NO-GO, while
+    _allocation_cards below read mix_scale_run_config.json to decide which cards the job
+    actually gets -- so the gate's source and the actor's source were different files.
+    The grant was narrowed to 0-3 because cards 4 and 7 hold the USER'S OWN work in other
+    containers; the gate went GO on 0-3 and the launcher would still have handed the job
+    cards 0-6, card 4 included. Correcting the grant file had no effect on the launch
+    because the launch path never looked at it.
+
+    Same shape as recipe_provenance's, one file over: a record can be right, current, and
+    read by a gate, and still not reach the code that acts (gate_failure_shapes.md §142).
+    """
+    root = ROOT if root is None else root
+    p = os.path.join(root, "runs", "card_assignment.json")
+    if not os.path.isfile(p):
+        return None, "no runs/card_assignment.json"
+    try:
+        with open(p, encoding="utf-8") as fh:
+            a = json.load(fh)
+    except (OSError, ValueError) as e:
+        return None, f"card_assignment.json unreadable: {e}"
+    if not a.get("launch_block_granted"):
+        return None, "card_assignment.json does not grant the block"
+    cards = _expand_cards(a.get("block_cards", ""))
+    if not cards:
+        return None, "card_assignment.json grants the block but names no block_cards"
+    return cards, ""
+
+
+def _allocation_cards(training, root=None):
     """Card set from the controller's allocation file, never from the caller.
 
-    Training jobs get the block (all cards in mix_scale_run_config.json).
-    Non-training jobs get the lane (the card not in the block)."""
-    config_path = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+    Training jobs get the block: runs/card_assignment.json's block_cards when that file
+    grants one, else mix_scale_run_config.json's cards. Non-training jobs get the lane
+    (the cards not in the block).
+
+    TWO FILES, ONE OF THEM AUTHORITATIVE, AND A DISAGREEMENT IS REPORTED (b0
+    2026-09-03). mix_scale_run_config.json is the ladder's FROZEN RUN CONFIG -- its
+    `cards` and `world` record what the six mix_scale_* budget points ran on, and its own
+    _comment says a change to any value reopens the ladder. `cards` and `world` are in
+    neither _FROZEN_KEYS nor _CODE_FROZEN_KEYS, so `cards` is operationally editable and
+    has been edited before (1-7 -> 0-6, 2026-08-30). `world` is NOT: the six points ran at
+    world 7 and editing that field to describe a run that has not happened would falsify
+    the record of runs that did (6e's ruling). So the grant file carries today's
+    allocation and the ladder config keeps its history.
+
+    A CONFLICT PRINTS RATHER THAN RESOLVING. Silently preferring either file is how this
+    defect worked in the first place: one file said 0-3, another said 0-6, and nothing
+    said they disagreed. World size follows the cards -- cmd_launch derives NGPU from
+    len(cards) -- so a 4-card grant cannot produce a 7-rank launch through this path.
+    """
+    root = ROOT if root is None else root
+    config_path = os.path.join(root, "data", "mix_scale_run_config.json")
+    ladder = []
     if os.path.isfile(config_path):
-        config = json.load(open(config_path, encoding="utf-8"))
-        block = config.get("cards", "")
-        if training:
-            return block
-        block_set = {c.strip() for c in block.split(",") if c.strip()}
-        all_cards = {str(i) for i in range(8)}
-        lane = sorted(all_cards - block_set)
-        return ",".join(lane) if lane else block
-    return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+        try:
+            with open(config_path, encoding="utf-8") as fh:
+                ladder = _expand_cards(json.load(fh).get("cards", ""))
+        except (OSError, ValueError):
+            ladder = []
+    granted, why = _grant_cards(root)
+    if granted is None:
+        # Fall back to the old source, SAYING SO. A silent fallback here would look
+        # identical to a grant that happens to match, and the message is the only thing
+        # that tells a reader which file decided.
+        if ladder:
+            print(f"note   cards {_csv(ladder)} from data/mix_scale_run_config.json "
+                  f"({why}); the grant file is the authority when it has one",
+                  file=sys.stderr)
+            block = ladder
+        else:
+            return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    else:
+        if ladder and set(ladder) != set(granted):
+            print(f"WARNING: card sources DISAGREE -- runs/card_assignment.json grants "
+                  f"{_csv(granted)}, data/mix_scale_run_config.json says "
+                  f"{_csv(ladder)}. Using the grant. The ladder config's `cards` "
+                  f"records what the six mix_scale_* points ran on and is not today's "
+                  f"allocation; if today's block really changed, narrow it there too.",
+                  file=sys.stderr)
+        block = granted
+    if training:
+        return _csv(block)
+    # THE LANE IS NOT THE COMPLEMENT OF THE BLOCK when the grant says there is no lane
+    # (b0, 2026-09-03). With block_cards 0-3, "everything else" is 4,5,6,7 -- and cards 4
+    # and 7 hold the USER'S OWN work in other containers while 5 and 6 are other sessions'.
+    # Computing the lane by set subtraction invents a lane out of exactly the cards the
+    # grant was narrowed to protect. card_assignment.json states lane_card: null, which is
+    # a decision ("no lane under a 4-card block; small jobs queue on 5/6 by arrangement"),
+    # not a missing value -- so an explicit null returns no lane and the caller refuses,
+    # rather than being handed somebody else's card.
+    if granted is not None:
+        try:
+            with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as fh:
+                _a = json.load(fh)
+        except (OSError, ValueError):
+            _a = {}
+        if "lane_card" in _a and _a["lane_card"] is None:
+            print("note   the grant states lane_card: null -- no lane card under this "
+                  "block, so a non-training GPU job has nowhere to land here. Complementing "
+                  "the block would hand it cards outside the grant.", file=sys.stderr)
+            return ""
+        if _a.get("lane_card") is not None:
+            return _csv(_expand_cards(_a["lane_card"]))
+    lane = sorted(set(range(8)) - set(block))
+    return _csv(lane) if lane else _csv(block)
 
 
 def _lane_occupant(card):
@@ -11151,6 +11381,28 @@ def cmd_launch(rest):
         cards = ""
     else:
         cards = _allocation_cards(args.training)
+
+    # 2a-0. World size follows the CARDS, and a command that states its own rank count
+    # must agree with them (6e's ruling, 2026-09-03). NGPU below is derived from
+    # len(cards), so this path cannot produce a rank/card mismatch on its own -- but the
+    # COMMAND can carry one: run_ab_speedrun.sh computes NGPU from its own $CARDS, and a
+    # torchrun --nproc_per_node written into the command line is read by torchrun before
+    # anything here sees it. Refuse rather than let 7 ranks start on 4 cards, which does
+    # not fail cleanly: ranks 4-6 land on cards 0-2 a second time and OOM the ones that
+    # were healthy.
+    if args.training and cards:
+        _ncards = len([c for c in cards.split(",") if c.strip()])
+        _stated = None
+        for _part in cmd:
+            _m = re.match(r"--nproc_per_node=(\d+)$", _part) or re.match(r"NGPU=(\d+)$", _part)
+            if _m:
+                _stated = int(_m.group(1))
+        if _stated is not None and _stated != _ncards:
+            print(f"REFUSING: {args.name} -- the command states {_stated} ranks but the "
+                  f"allocation is {_ncards} card(s) ({cards}). Card COUNT is the recipe: "
+                  f"{_stated} ranks on {_ncards} cards double-books cards and OOMs the "
+                  f"ranks that were healthy. No ledger row written.", file=sys.stderr)
+            return 2
 
     # 2a. Lane-occupancy refusal: a non-training GPU job must not start while the
     # lane is occupied. Queue, never spill. Training jobs use the block, not the lane.
