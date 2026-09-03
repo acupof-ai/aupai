@@ -1,0 +1,976 @@
+W0903 20:15:52.909000 4088812 torch/distributed/run.py:851] 
+W0903 20:15:52.909000 4088812 torch/distributed/run.py:851] *****************************************
+W0903 20:15:52.909000 4088812 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0903 20:15:52.909000 4088812 torch/distributed/run.py:851] *****************************************
+corpus_fp: {'math_owm_stage2': '1e687e4b5ce37598', 'en_c4_stage2': '05e0fc6f14704056', 'cot': '388496b76ed9bf88', 'textbook_30b': '3f237c5191cb8571', 'chatml': '52a6b427818c90ff', 'chat_qa': '42a4bedde020ae66', 'zh_web': 'a0d44fc44a289d60', 'code_py_starcoder': 'e1a14839e11f3e6f', 'code_py_rp1t': '63c2b3ce0e7dd989'}
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W903 20:16:08.041603043 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: math_owm_stage2 516168 rows = 0.32 epochs
+mix: en_c4_stage2 317642 rows = 0.55 epochs
+mix: cot 157606 rows = 1.60 epochs
+mix: textbook_30b 198526 rows = 0.51 epochs
+mix: chatml 14468 rows = 1.60 epochs
+mix: chat_qa 14166 rows = 1.60 epochs
+mix: zh_web 59558 rows = 0.01 epochs
+mix: code_py_starcoder 643969 rows = 0.30 epochs
+mix: code_py_rp1t 31020 rows = 0.32 epochs
+mix: 1953123 rows = 8.00B tokens scheduled
+FP8 compute enabled
+params 122.3M | tokens 976561 | seqs 976561 | device cuda:0 | world 2 | fa True | fp8 True
+params 122.3M | tokens 976561 | seqs 976561 | device cuda:0 | world 2 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 300 epochs 1 lr_scale 1.0 mix data/mix_200m_8b.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.1 anneal_frac 0.0 val_every 500 attn_every 4
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 300 epochs 1 lr_scale 1.0 mix data/mix_200m_8b.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.1 anneal_frac 0.0 val_every 500 attn_every 4
+cfg non-default: accum=2, anneal_frac=0.0, batch=16, d=768, ffn_hidden=2304, heads=6, mix='data/mix_200m_8b.json', warmdown=0.1, warmup=300
+cfg non-default: accum=2, anneal_frac=0.0, batch=16, d=768, ffn_hidden=2304, heads=6, mix='data/mix_200m_8b.json', warmdown=0.1, warmup=300
+dynamo cache_size_limit=64 (need 25)
+[rank1]:W0903 20:19:18.727000 4088897 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0903 20:19:18.738000 4088896 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+step 10/3815 0% [main] | loss 7.722 | lr 3.33e-04 (muon 3.33e-04 embed 3.33e-03 scalar 5.00e-03 arq 3.33e-04) | gnorm 3.06 | 0.00B tok | 6K tok/s/gpu | MFU 2% | peak 37.03GiB | ETA 21.8h
+step 10/3815 0% [main] | loss 7.722 | lr 3.33e-04 (muon 3.33e-04 embed 3.33e-03 scalar 5.00e-03 arq 3.33e-04) | gnorm 3.06 | 0.00B tok | 6K tok/s/gpu | MFU 2% | peak 37.03GiB | ETA 21.8h
+step 20/3815 1% [main] | loss 5.679 | lr 6.67e-04 (muon 6.67e-04 embed 6.67e-03 scalar 1.00e-02 arq 6.67e-04) | gnorm 1.01 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 20/3815 1% [main] | loss 5.679 | lr 6.67e-04 (muon 6.67e-04 embed 6.67e-03 scalar 1.00e-02 arq 6.67e-04) | gnorm 1.01 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 30/3815 1% [main] | loss 5.957 | lr 1.00e-03 (muon 1.00e-03 embed 1.00e-02 scalar 1.50e-02 arq 1.00e-03) | gnorm 1.31 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 30/3815 1% [main] | loss 5.957 | lr 1.00e-03 (muon 1.00e-03 embed 1.00e-02 scalar 1.50e-02 arq 1.00e-03) | gnorm 1.31 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 40/3815 1% [main] | loss 5.698 | lr 1.33e-03 (muon 1.33e-03 embed 1.33e-02 scalar 2.00e-02 arq 1.33e-03) | gnorm 1.71 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.2h
+step 40/3815 1% [main] | loss 5.698 | lr 1.33e-03 (muon 1.33e-03 embed 1.33e-02 scalar 2.00e-02 arq 1.33e-03) | gnorm 1.71 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.2h
+step 50/3815 1% [main] | loss 5.536 | lr 1.67e-03 (muon 1.67e-03 embed 1.67e-02 scalar 2.50e-02 arq 1.67e-03) | gnorm 1.57 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 50/3815 1% [main] | loss 5.536 | lr 1.67e-03 (muon 1.67e-03 embed 1.67e-02 scalar 2.50e-02 arq 1.67e-03) | gnorm 1.57 | 0.01B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 60/3815 2% [main] | loss 5.469 | lr 2.00e-03 (muon 2.00e-03 embed 2.00e-02 scalar 3.00e-02 arq 2.00e-03) | gnorm 1.76 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.2h
+step 60/3815 2% [main] | loss 5.469 | lr 2.00e-03 (muon 2.00e-03 embed 2.00e-02 scalar 3.00e-02 arq 2.00e-03) | gnorm 1.76 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.2h
+step 70/3815 2% [main] | loss 4.864 | lr 2.33e-03 (muon 2.33e-03 embed 2.33e-02 scalar 3.50e-02 arq 2.33e-03) | gnorm 2.78 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.2h
+step 70/3815 2% [main] | loss 4.864 | lr 2.33e-03 (muon 2.33e-03 embed 2.33e-02 scalar 3.50e-02 arq 2.33e-03) | gnorm 2.78 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.2h
+step 80/3815 2% [main] | loss 4.786 | lr 2.67e-03 (muon 2.67e-03 embed 2.67e-02 scalar 4.00e-02 arq 2.67e-03) | gnorm 1.79 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 80/3815 2% [main] | loss 4.786 | lr 2.67e-03 (muon 2.67e-03 embed 2.67e-02 scalar 4.00e-02 arq 2.67e-03) | gnorm 1.79 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.2h
+step 90/3815 2% [main] | loss 5.213 | lr 3.00e-03 (muon 3.00e-03 embed 3.00e-02 scalar 4.50e-02 arq 3.00e-03) | gnorm 2.20 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 90/3815 2% [main] | loss 5.213 | lr 3.00e-03 (muon 3.00e-03 embed 3.00e-02 scalar 4.50e-02 arq 3.00e-03) | gnorm 2.20 | 0.02B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 100/3815 3% [main] | loss 4.990 | lr 3.33e-03 (muon 3.33e-03 embed 3.33e-02 scalar 5.00e-02 arq 3.33e-03) | gnorm 2.84 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 100/3815 3% [main] | loss 4.990 | lr 3.33e-03 (muon 3.33e-03 embed 3.33e-02 scalar 5.00e-02 arq 3.33e-03) | gnorm 2.84 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 110/3815 3% [main] | loss 4.765 | lr 3.67e-03 (muon 3.67e-03 embed 3.67e-02 scalar 5.50e-02 arq 3.67e-03) | gnorm 1.79 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 110/3815 3% [main] | loss 4.765 | lr 3.67e-03 (muon 3.67e-03 embed 3.67e-02 scalar 5.50e-02 arq 3.67e-03) | gnorm 1.79 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 120/3815 3% [main] | loss 4.701 | lr 4.00e-03 (muon 4.00e-03 embed 4.00e-02 scalar 6.00e-02 arq 4.00e-03) | gnorm 2.45 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 120/3815 3% [main] | loss 4.701 | lr 4.00e-03 (muon 4.00e-03 embed 4.00e-02 scalar 6.00e-02 arq 4.00e-03) | gnorm 2.45 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 130/3815 3% [main] | loss 4.255 | lr 4.33e-03 (muon 4.33e-03 embed 4.33e-02 scalar 6.50e-02 arq 4.33e-03) | gnorm 2.22 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 130/3815 3% [main] | loss 4.255 | lr 4.33e-03 (muon 4.33e-03 embed 4.33e-02 scalar 6.50e-02 arq 4.33e-03) | gnorm 2.22 | 0.03B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 140/3815 4% [main] | loss 4.255 | lr 4.67e-03 (muon 4.67e-03 embed 4.67e-02 scalar 7.00e-02 arq 4.67e-03) | gnorm 4.31 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 140/3815 4% [main] | loss 4.255 | lr 4.67e-03 (muon 4.67e-03 embed 4.67e-02 scalar 7.00e-02 arq 4.67e-03) | gnorm 4.31 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 150/3815 4% [main] | loss 4.378 | lr 5.00e-03 (muon 5.00e-03 embed 5.00e-02 scalar 7.50e-02 arq 5.00e-03) | gnorm 2.70 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 150/3815 4% [main] | loss 4.378 | lr 5.00e-03 (muon 5.00e-03 embed 5.00e-02 scalar 7.50e-02 arq 5.00e-03) | gnorm 2.70 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 160/3815 4% [main] | loss 4.270 | lr 5.33e-03 (muon 5.33e-03 embed 5.33e-02 scalar 8.00e-02 arq 5.33e-03) | gnorm 2.95 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 160/3815 4% [main] | loss 4.270 | lr 5.33e-03 (muon 5.33e-03 embed 5.33e-02 scalar 8.00e-02 arq 5.33e-03) | gnorm 2.95 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 170/3815 4% [main] | loss 3.559 | lr 5.67e-03 (muon 5.67e-03 embed 5.67e-02 scalar 8.50e-02 arq 5.67e-03) | gnorm 3.34 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 170/3815 4% [main] | loss 3.559 | lr 5.67e-03 (muon 5.67e-03 embed 5.67e-02 scalar 8.50e-02 arq 5.67e-03) | gnorm 3.34 | 0.04B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 180/3815 5% [main] | loss 3.512 | lr 6.00e-03 (muon 6.00e-03 embed 6.00e-02 scalar 9.00e-02 arq 6.00e-03) | gnorm 5.91 | 0.05B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 180/3815 5% [main] | loss 3.512 | lr 6.00e-03 (muon 6.00e-03 embed 6.00e-02 scalar 9.00e-02 arq 6.00e-03) | gnorm 5.91 | 0.05B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 190/3815 5% [main] | loss 3.950 | lr 6.33e-03 (muon 6.33e-03 embed 6.33e-02 scalar 9.50e-02 arq 6.33e-03) | gnorm 7.03 | 0.05B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 190/3815 5% [main] | loss 3.950 | lr 6.33e-03 (muon 6.33e-03 embed 6.33e-02 scalar 9.50e-02 arq 6.33e-03) | gnorm 7.03 | 0.05B tok | 118K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 200/3815 5% [main] | loss 3.210 | lr 6.67e-03 (muon 6.67e-03 embed 6.67e-02 scalar 1.00e-01 arq 6.67e-03) | gnorm 2.19 | 0.05B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 1.2h
+step 200/3815 5% [main] | loss 3.210 | lr 6.67e-03 (muon 6.67e-03 embed 6.67e-02 scalar 1.00e-01 arq 6.67e-03) | gnorm 2.19 | 0.05B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 1.2h
+step 210/3815 6% [main] | loss 3.398 | lr 7.00e-03 (muon 7.00e-03 embed 7.00e-02 scalar 1.05e-01 arq 7.00e-03) | gnorm 1.52 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 210/3815 6% [main] | loss 3.398 | lr 7.00e-03 (muon 7.00e-03 embed 7.00e-02 scalar 1.05e-01 arq 7.00e-03) | gnorm 1.52 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 220/3815 6% [main] | loss 2.982 | lr 7.33e-03 (muon 7.33e-03 embed 7.33e-02 scalar 1.10e-01 arq 7.33e-03) | gnorm 2.08 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 220/3815 6% [main] | loss 2.982 | lr 7.33e-03 (muon 7.33e-03 embed 7.33e-02 scalar 1.10e-01 arq 7.33e-03) | gnorm 2.08 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 230/3815 6% [main] | loss 3.449 | lr 7.67e-03 (muon 7.67e-03 embed 7.67e-02 scalar 1.15e-01 arq 7.67e-03) | gnorm 4.50 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 230/3815 6% [main] | loss 3.449 | lr 7.67e-03 (muon 7.67e-03 embed 7.67e-02 scalar 1.15e-01 arq 7.67e-03) | gnorm 4.50 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 240/3815 6% [main] | loss 2.825 | lr 8.00e-03 (muon 8.00e-03 embed 8.00e-02 scalar 1.20e-01 arq 8.00e-03) | gnorm 1.64 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 240/3815 6% [main] | loss 2.825 | lr 8.00e-03 (muon 8.00e-03 embed 8.00e-02 scalar 1.20e-01 arq 8.00e-03) | gnorm 1.64 | 0.06B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 250/3815 7% [main] | loss 3.514 | lr 8.33e-03 (muon 8.33e-03 embed 8.33e-02 scalar 1.25e-01 arq 8.33e-03) | gnorm 1.25 | 0.07B tok | 89K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 1.5h
+step 250/3815 7% [main] | loss 3.514 | lr 8.33e-03 (muon 8.33e-03 embed 8.33e-02 scalar 1.25e-01 arq 8.33e-03) | gnorm 1.25 | 0.07B tok | 89K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 1.5h
+step 260/3815 7% [main] | loss 2.874 | lr 8.67e-03 (muon 8.67e-03 embed 8.67e-02 scalar 1.30e-01 arq 8.67e-03) | gnorm 1.59 | 0.07B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 260/3815 7% [main] | loss 2.874 | lr 8.67e-03 (muon 8.67e-03 embed 8.67e-02 scalar 1.30e-01 arq 8.67e-03) | gnorm 1.59 | 0.07B tok | 118K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 270/3815 7% [main] | loss 3.531 | lr 9.00e-03 (muon 9.00e-03 embed 9.00e-02 scalar 1.35e-01 arq 9.00e-03) | gnorm 1.18 | 0.07B tok | 118K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 1.1h
+step 270/3815 7% [main] | loss 3.531 | lr 9.00e-03 (muon 9.00e-03 embed 9.00e-02 scalar 1.35e-01 arq 9.00e-03) | gnorm 1.18 | 0.07B tok | 118K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 1.1h
+step 280/3815 7% [main] | loss 3.028 | lr 9.33e-03 (muon 9.33e-03 embed 9.33e-02 scalar 1.40e-01 arq 9.33e-03) | gnorm 1.58 | 0.07B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 280/3815 7% [main] | loss 3.028 | lr 9.33e-03 (muon 9.33e-03 embed 9.33e-02 scalar 1.40e-01 arq 9.33e-03) | gnorm 1.58 | 0.07B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 290/3815 8% [main] | loss 2.940 | lr 9.67e-03 (muon 9.67e-03 embed 9.67e-02 scalar 1.45e-01 arq 9.67e-03) | gnorm 1.51 | 0.08B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 290/3815 8% [main] | loss 2.940 | lr 9.67e-03 (muon 9.67e-03 embed 9.67e-02 scalar 1.45e-01 arq 9.67e-03) | gnorm 1.51 | 0.08B tok | 118K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 300/3815 8% [main] | loss 2.356 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.43 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 300/3815 8% [main] | loss 2.356 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.43 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 310/3815 8% [main] | loss 3.504 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.25 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 310/3815 8% [main] | loss 3.504 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.25 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 320/3815 8% [main] | loss 2.842 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.39 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 320/3815 8% [main] | loss 2.842 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.39 | 0.08B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 330/3815 9% [main] | loss 2.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 330/3815 9% [main] | loss 2.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 340/3815 9% [main] | loss 3.414 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.12 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 340/3815 9% [main] | loss 3.414 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.12 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 350/3815 9% [main] | loss 2.832 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 350/3815 9% [main] | loss 2.832 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 360/3815 9% [main] | loss 2.927 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 360/3815 9% [main] | loss 2.927 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.09B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 370/3815 10% [main] | loss 2.225 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 370/3815 10% [main] | loss 2.225 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.1h
+step 380/3815 10% [main] | loss 2.494 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.1h
+step 380/3815 10% [main] | loss 2.494 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.1h
+step 390/3815 10% [main] | loss 2.625 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 390/3815 10% [main] | loss 2.625 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.10B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 400/3815 10% [main] | loss 3.019 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.10B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 1.1h
+step 400/3815 10% [main] | loss 3.019 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.10B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 1.1h
+step 410/3815 11% [main] | loss 3.040 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 410/3815 11% [main] | loss 3.040 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 420/3815 11% [main] | loss 2.641 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.15 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 420/3815 11% [main] | loss 2.641 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.15 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.1h
+step 430/3815 11% [main] | loss 2.933 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 430/3815 11% [main] | loss 2.933 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.11B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.1h
+step 440/3815 12% [main] | loss 2.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 440/3815 12% [main] | loss 2.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 450/3815 12% [main] | loss 2.628 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.78 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 450/3815 12% [main] | loss 2.628 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.78 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 460/3815 12% [main] | loss 2.546 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 460/3815 12% [main] | loss 2.546 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 470/3815 12% [main] | loss 3.027 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 470/3815 12% [main] | loss 3.027 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.12B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 480/3815 13% [main] | loss 2.510 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.13B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 480/3815 13% [main] | loss 2.510 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.13B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 490/3815 13% [main] | loss 2.251 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.13B tok | 110K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 1.1h
+step 490/3815 13% [main] | loss 2.251 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.13B tok | 110K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 1.1h
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py:7836: UserWarning: 
+Online softmax is disabled on the fly since Inductor decides to
+split the reduction. Cut an issue to PyTorch if this is an
+important use case and you want to speed it up with online
+softmax.
+
+  warnings.warn(
+step 500/3815 val 2.954
+step 500/3815 val 2.954
+step 500/3815 13% [main] | loss 2.485 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.74 | 0.13B tok | 23K tok/s/gpu | MFU 6% | peak 37.03GiB | ETA 5.2h
+step 500/3815 13% [main] | loss 2.485 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.74 | 0.13B tok | 23K tok/s/gpu | MFU 6% | peak 37.03GiB | ETA 5.2h
+step 510/3815 13% [main] | loss 2.399 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.13B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 510/3815 13% [main] | loss 2.399 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.13B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 520/3815 14% [main] | loss 2.744 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 520/3815 14% [main] | loss 2.744 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 530/3815 14% [main] | loss 2.843 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 530/3815 14% [main] | loss 2.843 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 540/3815 14% [main] | loss 2.624 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 540/3815 14% [main] | loss 2.624 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 550/3815 14% [main] | loss 2.393 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 550/3815 14% [main] | loss 2.393 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.14B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 560/3815 15% [main] | loss 2.761 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.46 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 560/3815 15% [main] | loss 2.761 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.46 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 570/3815 15% [main] | loss 2.820 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 570/3815 15% [main] | loss 2.820 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 580/3815 15% [main] | loss 2.451 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.13 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 580/3815 15% [main] | loss 2.451 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.13 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 590/3815 15% [main] | loss 2.505 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 590/3815 15% [main] | loss 2.505 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.15B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 600/3815 16% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.55 | 0.16B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 1.0h
+step 600/3815 16% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.55 | 0.16B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 1.0h
+step 610/3815 16% [main] | loss 2.847 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.16B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 610/3815 16% [main] | loss 2.847 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.16B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 1.0h
+step 620/3815 16% [main] | loss 2.852 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.16B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 620/3815 16% [main] | loss 2.852 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.16B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 630/3815 17% [main] | loss 2.169 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.45 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 630/3815 17% [main] | loss 2.169 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.45 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 640/3815 17% [main] | loss 1.966 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.40 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 640/3815 17% [main] | loss 1.966 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.40 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 650/3815 17% [main] | loss 2.571 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.61 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 650/3815 17% [main] | loss 2.571 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.61 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 660/3815 17% [main] | loss 2.939 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.50 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 1.0h
+step 660/3815 17% [main] | loss 2.939 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.50 | 0.17B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 1.0h
+step 670/3815 18% [main] | loss 2.239 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.33 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 670/3815 18% [main] | loss 2.239 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.33 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 680/3815 18% [main] | loss 2.693 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 680/3815 18% [main] | loss 2.693 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 690/3815 18% [main] | loss 2.359 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.27 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 690/3815 18% [main] | loss 2.359 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.27 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 700/3815 18% [main] | loss 2.441 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.56 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 700/3815 18% [main] | loss 2.441 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.56 | 0.18B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 1.0h
+step 710/3815 19% [main] | loss 2.636 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 710/3815 19% [main] | loss 2.636 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 1.0h
+step 720/3815 19% [main] | loss 2.621 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 720/3815 19% [main] | loss 2.621 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 730/3815 19% [main] | loss 2.482 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 730/3815 19% [main] | loss 2.482 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 740/3815 19% [main] | loss 2.604 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 740/3815 19% [main] | loss 2.604 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.19B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 1.0h
+step 750/3815 20% [main] | loss 2.271 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.20B tok | 89K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 1.3h
+step 750/3815 20% [main] | loss 2.271 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.20B tok | 89K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 1.3h
+step 760/3815 20% [main] | loss 2.129 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 760/3815 20% [main] | loss 2.129 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 770/3815 20% [main] | loss 2.260 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 770/3815 20% [main] | loss 2.260 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 780/3815 20% [main] | loss 2.144 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.9h
+step 780/3815 20% [main] | loss 2.144 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.20B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.9h
+step 790/3815 21% [main] | loss 1.933 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.53 | 0.21B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 790/3815 21% [main] | loss 1.933 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.53 | 0.21B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 800/3815 21% [main] | loss 2.325 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.21B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 1.0h
+step 800/3815 21% [main] | loss 2.325 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.21B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 1.0h
+step 810/3815 21% [main] | loss 2.539 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.21B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 1.0h
+step 810/3815 21% [main] | loss 2.539 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.21B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 1.0h
+step 820/3815 21% [main] | loss 2.251 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.21B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 820/3815 21% [main] | loss 2.251 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.21B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 830/3815 22% [main] | loss 2.138 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 830/3815 22% [main] | loss 2.138 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 840/3815 22% [main] | loss 2.219 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 840/3815 22% [main] | loss 2.219 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 850/3815 22% [main] | loss 2.365 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 850/3815 22% [main] | loss 2.365 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.22B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 860/3815 23% [main] | loss 2.516 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 860/3815 23% [main] | loss 2.516 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 870/3815 23% [main] | loss 2.444 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.9h
+step 870/3815 23% [main] | loss 2.444 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.9h
+step 880/3815 23% [main] | loss 2.193 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 880/3815 23% [main] | loss 2.193 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 890/3815 23% [main] | loss 2.100 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.48 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.9h
+step 890/3815 23% [main] | loss 2.100 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.48 | 0.23B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.9h
+step 900/3815 24% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 900/3815 24% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 910/3815 24% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 910/3815 24% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 920/3815 24% [main] | loss 2.373 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.99 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 920/3815 24% [main] | loss 2.373 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.99 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 930/3815 24% [main] | loss 2.380 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.50 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 930/3815 24% [main] | loss 2.380 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.50 | 0.24B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 940/3815 25% [main] | loss 2.736 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 940/3815 25% [main] | loss 2.736 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 950/3815 25% [main] | loss 2.644 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 950/3815 25% [main] | loss 2.644 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 960/3815 25% [main] | loss 2.396 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.43 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 960/3815 25% [main] | loss 2.396 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.43 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 970/3815 25% [main] | loss 2.478 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 970/3815 25% [main] | loss 2.478 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.25B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 980/3815 26% [main] | loss 2.275 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 980/3815 26% [main] | loss 2.275 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 990/3815 26% [main] | loss 2.681 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 990/3815 26% [main] | loss 2.681 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1000/3815 val 2.633
+step 1000/3815 val 2.633
+step 1000/3815 26% [main] | loss 1.984 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.26B tok | 71K tok/s/gpu | MFU 18% | peak 37.03GiB | ETA 1.4h
+step 1000/3815 26% [main] | loss 1.984 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.26B tok | 71K tok/s/gpu | MFU 18% | peak 37.03GiB | ETA 1.4h
+step 1010/3815 26% [main] | loss 2.332 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.22 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1010/3815 26% [main] | loss 2.332 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.22 | 0.26B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1020/3815 27% [main] | loss 2.446 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1020/3815 27% [main] | loss 2.446 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1030/3815 27% [main] | loss 2.269 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1030/3815 27% [main] | loss 2.269 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1040/3815 27% [main] | loss 2.413 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1040/3815 27% [main] | loss 2.413 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.39 | 0.27B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1050/3815 28% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.16 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1050/3815 28% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.16 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1060/3815 28% [main] | loss 2.452 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1060/3815 28% [main] | loss 2.452 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.9h
+step 1070/3815 28% [main] | loss 2.388 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1070/3815 28% [main] | loss 2.388 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1080/3815 28% [main] | loss 2.206 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1080/3815 28% [main] | loss 2.206 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.28B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.9h
+step 1090/3815 29% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.27 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.8h
+step 1090/3815 29% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.27 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.8h
+step 1100/3815 29% [main] | loss 2.672 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.32 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1100/3815 29% [main] | loss 2.672 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.32 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1110/3815 29% [main] | loss 2.475 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1110/3815 29% [main] | loss 2.475 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1120/3815 29% [main] | loss 2.563 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1120/3815 29% [main] | loss 2.563 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.29B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1130/3815 30% [main] | loss 2.603 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1130/3815 30% [main] | loss 2.603 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1140/3815 30% [main] | loss 1.914 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.18 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1140/3815 30% [main] | loss 1.914 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.18 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1150/3815 30% [main] | loss 2.215 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1150/3815 30% [main] | loss 2.215 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1160/3815 30% [main] | loss 2.343 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1160/3815 30% [main] | loss 2.343 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.30B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1170/3815 31% [main] | loss 2.691 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1170/3815 31% [main] | loss 2.691 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1180/3815 31% [main] | loss 2.105 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1180/3815 31% [main] | loss 2.105 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1190/3815 31% [main] | loss 2.560 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1190/3815 31% [main] | loss 2.560 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.31B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1200/3815 31% [main] | loss 2.180 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.69 | 0.31B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.8h
+step 1200/3815 31% [main] | loss 2.180 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.69 | 0.31B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.8h
+step 1210/3815 32% [main] | loss 2.019 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1210/3815 32% [main] | loss 2.019 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1220/3815 32% [main] | loss 2.289 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1220/3815 32% [main] | loss 2.289 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1230/3815 32% [main] | loss 2.753 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.55 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1230/3815 32% [main] | loss 2.753 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.55 | 0.32B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1240/3815 33% [main] | loss 2.082 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.33B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1240/3815 33% [main] | loss 2.082 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.33B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1250/3815 33% [main] | loss 2.260 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.56 | 0.33B tok | 94K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 1.0h
+step 1250/3815 33% [main] | loss 2.260 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.56 | 0.33B tok | 94K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 1.0h
+step 1260/3815 33% [main] | loss 2.097 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.33B tok | 109K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 0.9h
+step 1260/3815 33% [main] | loss 2.097 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.47 | 0.33B tok | 109K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 0.9h
+step 1270/3815 33% [main] | loss 2.482 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.33B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1270/3815 33% [main] | loss 2.482 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.33B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1280/3815 34% [main] | loss 2.112 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.16 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1280/3815 34% [main] | loss 2.112 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.16 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1290/3815 34% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1290/3815 34% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.8h
+step 1300/3815 34% [main] | loss 2.106 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1300/3815 34% [main] | loss 2.106 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1310/3815 34% [main] | loss 2.127 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1310/3815 34% [main] | loss 2.127 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.34B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1320/3815 35% [main] | loss 1.718 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1320/3815 35% [main] | loss 1.718 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1330/3815 35% [main] | loss 2.497 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1330/3815 35% [main] | loss 2.497 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1340/3815 35% [main] | loss 1.888 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.59 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1340/3815 35% [main] | loss 1.888 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.59 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1350/3815 35% [main] | loss 2.064 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.36 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1350/3815 35% [main] | loss 2.064 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.36 | 0.35B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1360/3815 36% [main] | loss 2.317 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1360/3815 36% [main] | loss 2.317 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.8h
+step 1370/3815 36% [main] | loss 2.687 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.36B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.8h
+step 1370/3815 36% [main] | loss 2.687 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.36B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.8h
+step 1380/3815 36% [main] | loss 1.892 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1380/3815 36% [main] | loss 1.892 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1390/3815 36% [main] | loss 1.813 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1390/3815 36% [main] | loss 1.813 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.36B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.8h
+step 1400/3815 37% [main] | loss 2.765 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.44 | 0.37B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.8h
+step 1400/3815 37% [main] | loss 2.765 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.44 | 0.37B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.8h
+step 1410/3815 37% [main] | loss 2.100 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.43 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.8h
+step 1410/3815 37% [main] | loss 2.100 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.43 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.8h
+step 1420/3815 37% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1420/3815 37% [main] | loss 2.322 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1430/3815 37% [main] | loss 2.412 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1430/3815 37% [main] | loss 2.412 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.37B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1440/3815 38% [main] | loss 2.040 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.44 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1440/3815 38% [main] | loss 2.040 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.44 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1450/3815 38% [main] | loss 2.373 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1450/3815 38% [main] | loss 2.373 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1460/3815 38% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.78 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1460/3815 38% [main] | loss 2.031 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.78 | 0.38B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1470/3815 39% [main] | loss 2.255 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.7h
+step 1470/3815 39% [main] | loss 2.255 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.7h
+step 1480/3815 39% [main] | loss 2.468 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1480/3815 39% [main] | loss 2.468 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1490/3815 39% [main] | loss 2.357 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1490/3815 39% [main] | loss 2.357 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.58 | 0.39B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1500/3815 val 2.508
+step 1500/3815 val 2.508
+step 1500/3815 39% [main] | loss 2.295 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.18 | 0.39B tok | 76K tok/s/gpu | MFU 19% | peak 37.02GiB | ETA 1.1h
+step 1500/3815 39% [main] | loss 2.295 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.18 | 0.39B tok | 76K tok/s/gpu | MFU 19% | peak 37.02GiB | ETA 1.1h
+step 1510/3815 40% [main] | loss 2.934 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.21 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1510/3815 40% [main] | loss 2.934 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.21 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1520/3815 40% [main] | loss 2.309 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1520/3815 40% [main] | loss 2.309 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1530/3815 40% [main] | loss 2.481 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1530/3815 40% [main] | loss 2.481 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1540/3815 40% [main] | loss 1.931 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1540/3815 40% [main] | loss 1.931 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.40B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1550/3815 41% [main] | loss 1.990 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1550/3815 41% [main] | loss 1.990 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.73 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1560/3815 41% [main] | loss 2.072 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1560/3815 41% [main] | loss 2.072 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1570/3815 41% [main] | loss 1.948 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1570/3815 41% [main] | loss 1.948 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1580/3815 41% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1580/3815 41% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.41B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1590/3815 42% [main] | loss 2.188 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1590/3815 42% [main] | loss 2.188 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1600/3815 42% [main] | loss 1.842 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.65 | 0.42B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.7h
+step 1600/3815 42% [main] | loss 1.842 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.65 | 0.42B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.7h
+step 1610/3815 42% [main] | loss 2.589 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1610/3815 42% [main] | loss 2.589 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1620/3815 42% [main] | loss 2.496 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1620/3815 42% [main] | loss 2.496 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.42B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1630/3815 43% [main] | loss 2.094 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1630/3815 43% [main] | loss 2.094 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1640/3815 43% [main] | loss 2.378 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.39 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1640/3815 43% [main] | loss 2.378 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.39 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1650/3815 43% [main] | loss 1.882 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1650/3815 43% [main] | loss 1.882 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.43B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1660/3815 44% [main] | loss 1.761 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.44B tok | 108K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.7h
+step 1660/3815 44% [main] | loss 1.761 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.44B tok | 108K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.7h
+step 1670/3815 44% [main] | loss 2.273 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1670/3815 44% [main] | loss 2.273 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1680/3815 44% [main] | loss 2.245 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1680/3815 44% [main] | loss 2.245 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1690/3815 44% [main] | loss 2.198 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1690/3815 44% [main] | loss 2.198 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.44B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1700/3815 45% [main] | loss 2.374 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.20 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1700/3815 45% [main] | loss 2.374 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.20 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.7h
+step 1710/3815 45% [main] | loss 2.433 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1710/3815 45% [main] | loss 2.433 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.7h
+step 1720/3815 45% [main] | loss 2.093 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1720/3815 45% [main] | loss 2.093 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.7h
+step 1730/3815 45% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1730/3815 45% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.45B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1740/3815 46% [main] | loss 1.982 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1740/3815 46% [main] | loss 1.982 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.54 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1750/3815 46% [main] | loss 2.024 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.46B tok | 94K tok/s/gpu | MFU 23% | peak 37.05GiB | ETA 0.8h
+step 1750/3815 46% [main] | loss 2.024 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.46B tok | 94K tok/s/gpu | MFU 23% | peak 37.05GiB | ETA 0.8h
+step 1760/3815 46% [main] | loss 1.800 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1760/3815 46% [main] | loss 1.800 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1770/3815 46% [main] | loss 2.472 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1770/3815 46% [main] | loss 2.472 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.51 | 0.46B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1780/3815 47% [main] | loss 2.203 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1780/3815 47% [main] | loss 2.203 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1790/3815 47% [main] | loss 2.446 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1790/3815 47% [main] | loss 2.446 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1800/3815 47% [main] | loss 2.051 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.47B tok | 114K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.6h
+step 1800/3815 47% [main] | loss 2.051 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.47B tok | 114K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.6h
+step 1810/3815 47% [main] | loss 2.402 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1810/3815 47% [main] | loss 2.402 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.47B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1820/3815 48% [main] | loss 2.121 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1820/3815 48% [main] | loss 2.121 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.46 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1830/3815 48% [main] | loss 2.060 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1830/3815 48% [main] | loss 2.060 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1840/3815 48% [main] | loss 1.835 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1840/3815 48% [main] | loss 1.835 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1850/3815 48% [main] | loss 2.198 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1850/3815 48% [main] | loss 2.198 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.48B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1860/3815 49% [main] | loss 2.546 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1860/3815 49% [main] | loss 2.546 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1870/3815 49% [main] | loss 2.231 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1870/3815 49% [main] | loss 2.231 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 1880/3815 49% [main] | loss 2.071 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1880/3815 49% [main] | loss 2.071 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.49B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1890/3815 50% [main] | loss 2.606 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.6h
+step 1890/3815 50% [main] | loss 2.606 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.6h
+step 1900/3815 50% [main] | loss 2.393 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.05 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1900/3815 50% [main] | loss 2.393 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.05 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1910/3815 50% [main] | loss 2.113 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.6h
+step 1910/3815 50% [main] | loss 2.113 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.6h
+step 1920/3815 50% [main] | loss 2.197 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1920/3815 50% [main] | loss 2.197 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.50B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1930/3815 51% [main] | loss 2.253 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.51B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 0.6h
+step 1930/3815 51% [main] | loss 2.253 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.51B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 0.6h
+step 1940/3815 51% [main] | loss 2.139 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.22 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1940/3815 51% [main] | loss 2.139 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.22 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1950/3815 51% [main] | loss 2.043 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1950/3815 51% [main] | loss 2.043 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1960/3815 51% [main] | loss 2.099 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1960/3815 51% [main] | loss 2.099 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.51B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1970/3815 52% [main] | loss 2.043 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.61 | 0.52B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1970/3815 52% [main] | loss 2.043 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.61 | 0.52B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.6h
+step 1980/3815 52% [main] | loss 1.791 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.52B tok | 108K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 0.6h
+step 1980/3815 52% [main] | loss 1.791 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.52B tok | 108K tok/s/gpu | MFU 27% | peak 37.04GiB | ETA 0.6h
+step 1990/3815 52% [main] | loss 2.269 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.52B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 1990/3815 52% [main] | loss 2.269 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.52B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2000/3815 val 2.439
+step 2000/3815 val 2.439
+step 2000/3815 52% [main] | loss 2.066 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.52B tok | 75K tok/s/gpu | MFU 18% | peak 37.02GiB | ETA 0.9h
+step 2000/3815 52% [main] | loss 2.066 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.52B tok | 75K tok/s/gpu | MFU 18% | peak 37.02GiB | ETA 0.9h
+step 2010/3815 53% [main] | loss 2.008 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2010/3815 53% [main] | loss 2.008 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.52 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2020/3815 53% [main] | loss 2.355 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 2020/3815 53% [main] | loss 2.355 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.6h
+step 2030/3815 53% [main] | loss 1.935 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2030/3815 53% [main] | loss 1.935 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2040/3815 53% [main] | loss 2.112 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2040/3815 53% [main] | loss 2.112 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.53B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.6h
+step 2050/3815 54% [main] | loss 1.800 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2050/3815 54% [main] | loss 1.800 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2060/3815 54% [main] | loss 2.407 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.07GiB | ETA 0.5h
+step 2060/3815 54% [main] | loss 2.407 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.07GiB | ETA 0.5h
+step 2070/3815 54% [main] | loss 2.027 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2070/3815 54% [main] | loss 2.027 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.54B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2080/3815 55% [main] | loss 2.130 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2080/3815 55% [main] | loss 2.130 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2090/3815 55% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2090/3815 55% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.49 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2100/3815 55% [main] | loss 2.013 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2100/3815 55% [main] | loss 2.013 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2110/3815 55% [main] | loss 2.285 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2110/3815 55% [main] | loss 2.285 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.55B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2120/3815 56% [main] | loss 2.123 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2120/3815 56% [main] | loss 2.123 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2130/3815 56% [main] | loss 2.346 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2130/3815 56% [main] | loss 2.346 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2140/3815 56% [main] | loss 2.424 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2140/3815 56% [main] | loss 2.424 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2150/3815 56% [main] | loss 2.134 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2150/3815 56% [main] | loss 2.134 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.63 | 0.56B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2160/3815 57% [main] | loss 2.056 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2160/3815 57% [main] | loss 2.056 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2170/3815 57% [main] | loss 2.369 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2170/3815 57% [main] | loss 2.369 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2180/3815 57% [main] | loss 1.868 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2180/3815 57% [main] | loss 1.868 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2190/3815 57% [main] | loss 2.109 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2190/3815 57% [main] | loss 2.109 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 0.57B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2200/3815 58% [main] | loss 2.179 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.58B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 0.5h
+step 2200/3815 58% [main] | loss 2.179 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.58B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 0.5h
+step 2210/3815 58% [main] | loss 1.691 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.53 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2210/3815 58% [main] | loss 1.691 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.53 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2220/3815 58% [main] | loss 2.060 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2220/3815 58% [main] | loss 2.060 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.57 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2230/3815 58% [main] | loss 1.808 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.13 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2230/3815 58% [main] | loss 1.808 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.13 | 0.58B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2240/3815 59% [main] | loss 2.098 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.59B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2240/3815 59% [main] | loss 2.098 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.59B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2250/3815 59% [main] | loss 1.693 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.59B tok | 87K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 0.7h
+step 2250/3815 59% [main] | loss 1.693 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.59B tok | 87K tok/s/gpu | MFU 22% | peak 37.02GiB | ETA 0.7h
+step 2260/3815 59% [main] | loss 2.555 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.59B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2260/3815 59% [main] | loss 2.555 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.59B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2270/3815 60% [main] | loss 1.658 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2270/3815 60% [main] | loss 1.658 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.62 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2280/3815 60% [main] | loss 1.719 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2280/3815 60% [main] | loss 1.719 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2290/3815 60% [main] | loss 1.810 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2290/3815 60% [main] | loss 1.810 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.75 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2300/3815 60% [main] | loss 2.357 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2300/3815 60% [main] | loss 2.357 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.60B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2310/3815 61% [main] | loss 2.018 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2310/3815 61% [main] | loss 2.018 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2320/3815 61% [main] | loss 2.102 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.88 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2320/3815 61% [main] | loss 2.102 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.88 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2330/3815 61% [main] | loss 2.113 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2330/3815 61% [main] | loss 2.113 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.00 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.5h
+step 2340/3815 61% [main] | loss 2.157 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2340/3815 61% [main] | loss 2.157 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.61B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.5h
+step 2350/3815 62% [main] | loss 1.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.5h
+step 2350/3815 62% [main] | loss 1.968 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.5h
+step 2360/3815 62% [main] | loss 1.810 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.5h
+step 2360/3815 62% [main] | loss 1.810 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.5h
+step 2370/3815 62% [main] | loss 2.153 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2370/3815 62% [main] | loss 2.153 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.09 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2380/3815 62% [main] | loss 1.786 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2380/3815 62% [main] | loss 1.786 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.62B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2390/3815 63% [main] | loss 2.481 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2390/3815 63% [main] | loss 2.481 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2400/3815 63% [main] | loss 1.804 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.63B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.5h
+step 2400/3815 63% [main] | loss 1.804 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.67 | 0.63B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.5h
+step 2410/3815 63% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2410/3815 63% [main] | loss 2.075 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2420/3815 63% [main] | loss 2.450 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.88 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2420/3815 63% [main] | loss 2.450 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.88 | 0.63B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2430/3815 64% [main] | loss 2.228 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2430/3815 64% [main] | loss 2.228 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2440/3815 64% [main] | loss 2.291 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2440/3815 64% [main] | loss 2.291 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2450/3815 64% [main] | loss 2.120 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2450/3815 64% [main] | loss 2.120 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2460/3815 64% [main] | loss 2.185 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2460/3815 64% [main] | loss 2.185 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.64B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2470/3815 65% [main] | loss 1.970 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.65B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2470/3815 65% [main] | loss 1.970 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.65B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2480/3815 65% [main] | loss 2.022 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.65B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.4h
+step 2480/3815 65% [main] | loss 2.022 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.65B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.4h
+step 2490/3815 65% [main] | loss 2.270 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.65B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2490/3815 65% [main] | loss 2.270 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.65B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2500/3815 val 2.386
+step 2500/3815 val 2.386
+step 2500/3815 66% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.05 | 0.66B tok | 71K tok/s/gpu | MFU 18% | peak 37.04GiB | ETA 0.7h
+step 2500/3815 66% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.05 | 0.66B tok | 71K tok/s/gpu | MFU 18% | peak 37.04GiB | ETA 0.7h
+step 2510/3815 66% [main] | loss 2.579 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2510/3815 66% [main] | loss 2.579 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2520/3815 66% [main] | loss 1.831 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2520/3815 66% [main] | loss 1.831 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2530/3815 66% [main] | loss 2.087 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2530/3815 66% [main] | loss 2.087 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.72 | 0.66B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2540/3815 67% [main] | loss 2.609 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2540/3815 67% [main] | loss 2.609 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2550/3815 67% [main] | loss 2.034 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2550/3815 67% [main] | loss 2.034 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2560/3815 67% [main] | loss 2.102 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2560/3815 67% [main] | loss 2.102 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2570/3815 67% [main] | loss 2.298 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.20 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2570/3815 67% [main] | loss 2.298 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.20 | 0.67B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2580/3815 68% [main] | loss 2.281 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2580/3815 68% [main] | loss 2.281 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.23 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2590/3815 68% [main] | loss 2.025 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2590/3815 68% [main] | loss 2.025 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2600/3815 68% [main] | loss 2.273 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.68B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.4h
+step 2600/3815 68% [main] | loss 2.273 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.68B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.4h
+step 2610/3815 68% [main] | loss 1.601 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2610/3815 68% [main] | loss 1.601 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.68 | 0.68B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2620/3815 69% [main] | loss 1.816 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2620/3815 69% [main] | loss 1.816 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2630/3815 69% [main] | loss 2.256 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.10 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2630/3815 69% [main] | loss 2.256 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.10 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2640/3815 69% [main] | loss 2.225 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.25 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2640/3815 69% [main] | loss 2.225 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.25 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2650/3815 69% [main] | loss 1.957 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.74 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2650/3815 69% [main] | loss 1.957 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.74 | 0.69B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.4h
+step 2660/3815 70% [main] | loss 2.042 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2660/3815 70% [main] | loss 2.042 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2670/3815 70% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2670/3815 70% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.4h
+step 2680/3815 70% [main] | loss 2.194 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2680/3815 70% [main] | loss 2.194 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.70B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.4h
+step 2690/3815 71% [main] | loss 1.823 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.4h
+step 2690/3815 71% [main] | loss 1.823 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.4h
+step 2700/3815 71% [main] | loss 2.033 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2700/3815 71% [main] | loss 2.033 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.76 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2710/3815 71% [main] | loss 2.132 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2710/3815 71% [main] | loss 2.132 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.82 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2720/3815 71% [main] | loss 1.982 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2720/3815 71% [main] | loss 1.982 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.80 | 0.71B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2730/3815 72% [main] | loss 2.115 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2730/3815 72% [main] | loss 2.115 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.60 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2740/3815 72% [main] | loss 2.216 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2740/3815 72% [main] | loss 2.216 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2750/3815 72% [main] | loss 1.799 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.72B tok | 87K tok/s/gpu | MFU 22% | peak 37.03GiB | ETA 0.4h
+step 2750/3815 72% [main] | loss 1.799 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.71 | 0.72B tok | 87K tok/s/gpu | MFU 22% | peak 37.03GiB | ETA 0.4h
+step 2760/3815 72% [main] | loss 2.103 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2760/3815 72% [main] | loss 2.103 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.72B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2770/3815 73% [main] | loss 1.754 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2770/3815 73% [main] | loss 1.754 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2780/3815 73% [main] | loss 1.979 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2780/3815 73% [main] | loss 1.979 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.64 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2790/3815 73% [main] | loss 2.010 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.3h
+step 2790/3815 73% [main] | loss 2.010 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.73B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.3h
+step 2800/3815 73% [main] | loss 2.015 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.73B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.3h
+step 2800/3815 73% [main] | loss 2.015 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.73B tok | 113K tok/s/gpu | MFU 28% | peak 37.03GiB | ETA 0.3h
+step 2810/3815 74% [main] | loss 1.934 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2810/3815 74% [main] | loss 1.934 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2820/3815 74% [main] | loss 2.055 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2820/3815 74% [main] | loss 2.055 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2830/3815 74% [main] | loss 2.207 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.3h
+step 2830/3815 74% [main] | loss 2.207 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.3h
+step 2840/3815 74% [main] | loss 2.153 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2840/3815 74% [main] | loss 2.153 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.74B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2850/3815 75% [main] | loss 2.011 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2850/3815 75% [main] | loss 2.011 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.85 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2860/3815 75% [main] | loss 1.954 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.15 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2860/3815 75% [main] | loss 1.954 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.15 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2870/3815 75% [main] | loss 2.050 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2870/3815 75% [main] | loss 2.050 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.66 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2880/3815 75% [main] | loss 1.995 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2880/3815 75% [main] | loss 1.995 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.75B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2890/3815 76% [main] | loss 1.908 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.10 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2890/3815 76% [main] | loss 1.908 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.10 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2900/3815 76% [main] | loss 2.167 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.3h
+step 2900/3815 76% [main] | loss 2.167 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.70 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.3h
+step 2910/3815 76% [main] | loss 1.993 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2910/3815 76% [main] | loss 1.993 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.76B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2920/3815 77% [main] | loss 2.516 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2920/3815 77% [main] | loss 2.516 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2930/3815 77% [main] | loss 1.823 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.3h
+step 2930/3815 77% [main] | loss 1.823 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.05GiB | ETA 0.3h
+step 2940/3815 77% [main] | loss 2.184 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2940/3815 77% [main] | loss 2.184 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2950/3815 77% [main] | loss 2.018 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.3h
+step 2950/3815 77% [main] | loss 2.018 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.77B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.3h
+step 2960/3815 78% [main] | loss 2.064 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2960/3815 78% [main] | loss 2.064 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2970/3815 78% [main] | loss 1.674 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.17 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2970/3815 78% [main] | loss 1.674 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.17 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2980/3815 78% [main] | loss 2.268 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2980/3815 78% [main] | loss 2.268 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.3h
+step 2990/3815 78% [main] | loss 1.652 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 2990/3815 78% [main] | loss 1.652 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.78B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.3h
+step 3000/3815 val 2.347
+step 3000/3815 val 2.347
+step 3000/3815 79% [main] | loss 1.851 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.79B tok | 74K tok/s/gpu | MFU 18% | peak 37.03GiB | ETA 0.4h
+step 3000/3815 79% [main] | loss 1.851 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.79B tok | 74K tok/s/gpu | MFU 18% | peak 37.03GiB | ETA 0.4h
+step 3010/3815 79% [main] | loss 2.286 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3010/3815 79% [main] | loss 2.286 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3020/3815 79% [main] | loss 2.006 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3020/3815 79% [main] | loss 2.006 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3030/3815 79% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3030/3815 79% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.79B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3040/3815 80% [main] | loss 2.463 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.80B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.3h
+step 3040/3815 80% [main] | loss 2.463 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.80B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.3h
+step 3050/3815 80% [main] | loss 2.211 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.80B tok | 108K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.3h
+step 3050/3815 80% [main] | loss 2.211 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.80B tok | 108K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.3h
+step 3060/3815 80% [main] | loss 2.218 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.80B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3060/3815 80% [main] | loss 2.218 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.80B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3070/3815 80% [main] | loss 1.818 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.96 | 0.80B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3070/3815 80% [main] | loss 1.818 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.96 | 0.80B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3080/3815 81% [main] | loss 1.755 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3080/3815 81% [main] | loss 1.755 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.03 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3090/3815 81% [main] | loss 2.163 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3090/3815 81% [main] | loss 2.163 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3100/3815 81% [main] | loss 1.738 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.17 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3100/3815 81% [main] | loss 1.738 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.17 | 0.81B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3110/3815 82% [main] | loss 1.838 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3110/3815 82% [main] | loss 1.838 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3120/3815 82% [main] | loss 1.824 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3120/3815 82% [main] | loss 1.824 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3130/3815 82% [main] | loss 2.333 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3130/3815 82% [main] | loss 2.333 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3140/3815 82% [main] | loss 2.081 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3140/3815 82% [main] | loss 2.081 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.82B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.2h
+step 3150/3815 83% [main] | loss 1.767 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3150/3815 83% [main] | loss 1.767 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.04 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3160/3815 83% [main] | loss 1.745 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3160/3815 83% [main] | loss 1.745 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.81 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3170/3815 83% [main] | loss 2.466 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3170/3815 83% [main] | loss 2.466 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.92 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3180/3815 83% [main] | loss 1.974 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3180/3815 83% [main] | loss 1.974 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.83B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3190/3815 84% [main] | loss 2.032 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3190/3815 84% [main] | loss 2.032 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.77 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3200/3815 84% [main] | loss 1.891 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.84B tok | 113K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.2h
+step 3200/3815 84% [main] | loss 1.891 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.91 | 0.84B tok | 113K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.2h
+step 3210/3815 84% [main] | loss 2.203 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3210/3815 84% [main] | loss 2.203 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.93 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3220/3815 84% [main] | loss 2.055 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.2h
+step 3220/3815 84% [main] | loss 2.055 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.84B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.2h
+step 3230/3815 85% [main] | loss 2.024 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3230/3815 85% [main] | loss 2.024 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.95 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3240/3815 85% [main] | loss 2.522 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3240/3815 85% [main] | loss 2.522 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.83 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3250/3815 85% [main] | loss 2.108 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.85B tok | 94K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 0.2h
+step 3250/3815 85% [main] | loss 2.108 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.30 | 0.85B tok | 94K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 0.2h
+step 3260/3815 85% [main] | loss 1.931 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3260/3815 85% [main] | loss 1.931 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.97 | 0.85B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3270/3815 86% [main] | loss 2.128 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3270/3815 86% [main] | loss 2.128 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.84 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3280/3815 86% [main] | loss 2.597 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.12 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3280/3815 86% [main] | loss 2.597 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.12 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3290/3815 86% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3290/3815 86% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.08 | 0.86B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3300/3815 87% [main] | loss 2.321 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.29 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3300/3815 87% [main] | loss 2.321 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.29 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.2h
+step 3310/3815 87% [main] | loss 1.917 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3310/3815 87% [main] | loss 1.917 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.01 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3320/3815 87% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3320/3815 87% [main] | loss 2.187 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.90 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3330/3815 87% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3330/3815 87% [main] | loss 1.971 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.87B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.2h
+step 3340/3815 88% [main] | loss 2.021 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3340/3815 88% [main] | loss 2.021 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.02 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3350/3815 88% [main] | loss 2.226 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.99 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3350/3815 88% [main] | loss 2.226 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.99 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3360/3815 88% [main] | loss 2.033 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3360/3815 88% [main] | loss 2.033 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.87 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3370/3815 88% [main] | loss 1.964 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.19 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3370/3815 88% [main] | loss 1.964 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.19 | 0.88B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3380/3815 89% [main] | loss 2.013 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3380/3815 89% [main] | loss 2.013 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.89 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3390/3815 89% [main] | loss 1.943 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3390/3815 89% [main] | loss 1.943 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.07 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3400/3815 89% [main] | loss 1.649 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.89B tok | 113K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.1h
+step 3400/3815 89% [main] | loss 1.649 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.98 | 0.89B tok | 113K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.1h
+step 3410/3815 89% [main] | loss 1.966 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3410/3815 89% [main] | loss 1.966 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.06 | 0.89B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3420/3815 90% [main] | loss 1.932 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.90B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 0.1h
+step 3420/3815 90% [main] | loss 1.932 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.79 | 0.90B tok | 109K tok/s/gpu | MFU 27% | peak 37.02GiB | ETA 0.1h
+step 3430/3815 90% [main] | loss 1.743 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3430/3815 90% [main] | loss 1.743 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.94 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3440/3815 90% [main] | loss 1.880 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3440/3815 90% [main] | loss 1.880 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 0.86 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3450/3815 90% [main] | loss 1.909 | lr 9.96e-03 (muon 9.96e-03 embed 9.96e-02 scalar 1.49e-01 arq 9.96e-03) | gnorm 0.96 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3450/3815 90% [main] | loss 1.909 | lr 9.96e-03 (muon 9.96e-03 embed 9.96e-02 scalar 1.49e-01 arq 9.96e-03) | gnorm 0.96 | 0.90B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3460/3815 91% [main] | loss 1.759 | lr 9.90e-03 (muon 9.90e-03 embed 9.90e-02 scalar 1.48e-01 arq 9.90e-03) | gnorm 0.95 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3460/3815 91% [main] | loss 1.759 | lr 9.90e-03 (muon 9.90e-03 embed 9.90e-02 scalar 1.48e-01 arq 9.90e-03) | gnorm 0.95 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3470/3815 91% [main] | loss 1.794 | lr 9.80e-03 (muon 9.80e-03 embed 9.80e-02 scalar 1.47e-01 arq 9.80e-03) | gnorm 1.05 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3470/3815 91% [main] | loss 1.794 | lr 9.80e-03 (muon 9.80e-03 embed 9.80e-02 scalar 1.47e-01 arq 9.80e-03) | gnorm 1.05 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3480/3815 91% [main] | loss 1.911 | lr 9.68e-03 (muon 9.68e-03 embed 9.68e-02 scalar 1.45e-01 arq 9.68e-03) | gnorm 0.98 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3480/3815 91% [main] | loss 1.911 | lr 9.68e-03 (muon 9.68e-03 embed 9.68e-02 scalar 1.45e-01 arq 9.68e-03) | gnorm 0.98 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3490/3815 91% [main] | loss 2.219 | lr 9.52e-03 (muon 9.52e-03 embed 9.52e-02 scalar 1.43e-01 arq 9.52e-03) | gnorm 0.76 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3490/3815 91% [main] | loss 2.219 | lr 9.52e-03 (muon 9.52e-03 embed 9.52e-02 scalar 1.43e-01 arq 9.52e-03) | gnorm 0.76 | 0.91B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3500/3815 val 2.328
+step 3500/3815 val 2.328
+step 3500/3815 92% [main] | loss 2.075 | lr 9.33e-03 (muon 9.33e-03 embed 9.33e-02 scalar 1.40e-01 arq 9.33e-03) | gnorm 1.09 | 0.92B tok | 76K tok/s/gpu | MFU 19% | peak 37.03GiB | ETA 0.2h
+step 3500/3815 92% [main] | loss 2.075 | lr 9.33e-03 (muon 9.33e-03 embed 9.33e-02 scalar 1.40e-01 arq 9.33e-03) | gnorm 1.09 | 0.92B tok | 76K tok/s/gpu | MFU 19% | peak 37.03GiB | ETA 0.2h
+step 3510/3815 92% [main] | loss 1.896 | lr 9.12e-03 (muon 9.12e-03 embed 9.12e-02 scalar 1.37e-01 arq 9.12e-03) | gnorm 1.06 | 0.92B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3510/3815 92% [main] | loss 1.896 | lr 9.12e-03 (muon 9.12e-03 embed 9.12e-02 scalar 1.37e-01 arq 9.12e-03) | gnorm 1.06 | 0.92B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3520/3815 92% [main] | loss 2.002 | lr 8.88e-03 (muon 8.88e-03 embed 8.88e-02 scalar 1.33e-01 arq 8.88e-03) | gnorm 0.98 | 0.92B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3520/3815 92% [main] | loss 2.002 | lr 8.88e-03 (muon 8.88e-03 embed 8.88e-02 scalar 1.33e-01 arq 8.88e-03) | gnorm 0.98 | 0.92B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3530/3815 93% [main] | loss 2.150 | lr 8.62e-03 (muon 8.62e-03 embed 8.62e-02 scalar 1.29e-01 arq 8.62e-03) | gnorm 0.83 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3530/3815 93% [main] | loss 2.150 | lr 8.62e-03 (muon 8.62e-03 embed 8.62e-02 scalar 1.29e-01 arq 8.62e-03) | gnorm 0.83 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3540/3815 93% [main] | loss 1.980 | lr 8.33e-03 (muon 8.33e-03 embed 8.33e-02 scalar 1.25e-01 arq 8.33e-03) | gnorm 0.74 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3540/3815 93% [main] | loss 1.980 | lr 8.33e-03 (muon 8.33e-03 embed 8.33e-02 scalar 1.25e-01 arq 8.33e-03) | gnorm 0.74 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3550/3815 93% [main] | loss 2.074 | lr 8.02e-03 (muon 8.02e-03 embed 8.02e-02 scalar 1.20e-01 arq 8.02e-03) | gnorm 0.90 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3550/3815 93% [main] | loss 2.074 | lr 8.02e-03 (muon 8.02e-03 embed 8.02e-02 scalar 1.20e-01 arq 8.02e-03) | gnorm 0.90 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.04GiB | ETA 0.1h
+step 3560/3815 93% [main] | loss 2.007 | lr 7.69e-03 (muon 7.69e-03 embed 7.69e-02 scalar 1.15e-01 arq 7.69e-03) | gnorm 0.65 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3560/3815 93% [main] | loss 2.007 | lr 7.69e-03 (muon 7.69e-03 embed 7.69e-02 scalar 1.15e-01 arq 7.69e-03) | gnorm 0.65 | 0.93B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.1h
+step 3570/3815 94% [main] | loss 1.885 | lr 7.35e-03 (muon 7.35e-03 embed 7.35e-02 scalar 1.10e-01 arq 7.35e-03) | gnorm 0.61 | 0.94B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3570/3815 94% [main] | loss 1.885 | lr 7.35e-03 (muon 7.35e-03 embed 7.35e-02 scalar 1.10e-01 arq 7.35e-03) | gnorm 0.61 | 0.94B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3580/3815 94% [main] | loss 2.232 | lr 6.99e-03 (muon 6.99e-03 embed 6.99e-02 scalar 1.05e-01 arq 6.99e-03) | gnorm 0.90 | 0.94B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3580/3815 94% [main] | loss 2.232 | lr 6.99e-03 (muon 6.99e-03 embed 6.99e-02 scalar 1.05e-01 arq 6.99e-03) | gnorm 0.90 | 0.94B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3590/3815 94% [main] | loss 1.937 | lr 6.62e-03 (muon 6.62e-03 embed 6.62e-02 scalar 9.93e-02 arq 6.62e-03) | gnorm 0.58 | 0.94B tok | 109K tok/s/gpu | MFU 27% | peak 37.01GiB | ETA 0.1h
+step 3590/3815 94% [main] | loss 1.937 | lr 6.62e-03 (muon 6.62e-03 embed 6.62e-02 scalar 9.93e-02 arq 6.62e-03) | gnorm 0.58 | 0.94B tok | 109K tok/s/gpu | MFU 27% | peak 37.01GiB | ETA 0.1h
+step 3600/3815 94% [main] | loss 2.087 | lr 6.24e-03 (muon 6.24e-03 embed 6.24e-02 scalar 9.36e-02 arq 6.24e-03) | gnorm 0.62 | 0.94B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 0.1h
+step 3600/3815 94% [main] | loss 2.087 | lr 6.24e-03 (muon 6.24e-03 embed 6.24e-02 scalar 9.36e-02 arq 6.24e-03) | gnorm 0.62 | 0.94B tok | 113K tok/s/gpu | MFU 28% | peak 37.04GiB | ETA 0.1h
+step 3610/3815 95% [main] | loss 2.145 | lr 5.86e-03 (muon 5.86e-03 embed 5.86e-02 scalar 8.78e-02 arq 5.86e-03) | gnorm 0.49 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3610/3815 95% [main] | loss 2.145 | lr 5.86e-03 (muon 5.86e-03 embed 5.86e-02 scalar 8.78e-02 arq 5.86e-03) | gnorm 0.49 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3620/3815 95% [main] | loss 2.121 | lr 5.47e-03 (muon 5.47e-03 embed 5.47e-02 scalar 8.20e-02 arq 5.47e-03) | gnorm 0.53 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3620/3815 95% [main] | loss 2.121 | lr 5.47e-03 (muon 5.47e-03 embed 5.47e-02 scalar 8.20e-02 arq 5.47e-03) | gnorm 0.53 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3630/3815 95% [main] | loss 1.936 | lr 5.07e-03 (muon 5.07e-03 embed 5.07e-02 scalar 7.61e-02 arq 5.07e-03) | gnorm 0.42 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3630/3815 95% [main] | loss 1.936 | lr 5.07e-03 (muon 5.07e-03 embed 5.07e-02 scalar 7.61e-02 arq 5.07e-03) | gnorm 0.42 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3640/3815 95% [main] | loss 2.239 | lr 4.68e-03 (muon 4.68e-03 embed 4.68e-02 scalar 7.03e-02 arq 4.68e-03) | gnorm 0.42 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3640/3815 95% [main] | loss 2.239 | lr 4.68e-03 (muon 4.68e-03 embed 4.68e-02 scalar 7.03e-02 arq 4.68e-03) | gnorm 0.42 | 0.95B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3650/3815 96% [main] | loss 2.209 | lr 4.30e-03 (muon 4.30e-03 embed 4.30e-02 scalar 6.45e-02 arq 4.30e-03) | gnorm 0.41 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3650/3815 96% [main] | loss 2.209 | lr 4.30e-03 (muon 4.30e-03 embed 4.30e-02 scalar 6.45e-02 arq 4.30e-03) | gnorm 0.41 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.1h
+step 3660/3815 96% [main] | loss 2.032 | lr 3.92e-03 (muon 3.92e-03 embed 3.92e-02 scalar 5.88e-02 arq 3.92e-03) | gnorm 0.44 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3660/3815 96% [main] | loss 2.032 | lr 3.92e-03 (muon 3.92e-03 embed 3.92e-02 scalar 5.88e-02 arq 3.92e-03) | gnorm 0.44 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3670/3815 96% [main] | loss 1.663 | lr 3.55e-03 (muon 3.55e-03 embed 3.55e-02 scalar 5.32e-02 arq 3.55e-03) | gnorm 0.43 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.0h
+step 3670/3815 96% [main] | loss 1.663 | lr 3.55e-03 (muon 3.55e-03 embed 3.55e-02 scalar 5.32e-02 arq 3.55e-03) | gnorm 0.43 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.01GiB | ETA 0.0h
+step 3680/3815 96% [main] | loss 2.005 | lr 3.19e-03 (muon 3.19e-03 embed 3.19e-02 scalar 4.78e-02 arq 3.19e-03) | gnorm 0.31 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.06GiB | ETA 0.0h
+step 3680/3815 96% [main] | loss 2.005 | lr 3.19e-03 (muon 3.19e-03 embed 3.19e-02 scalar 4.78e-02 arq 3.19e-03) | gnorm 0.31 | 0.96B tok | 117K tok/s/gpu | MFU 29% | peak 37.06GiB | ETA 0.0h
+step 3690/3815 97% [main] | loss 1.838 | lr 2.84e-03 (muon 2.84e-03 embed 2.84e-02 scalar 4.26e-02 arq 2.84e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3690/3815 97% [main] | loss 1.838 | lr 2.84e-03 (muon 2.84e-03 embed 2.84e-02 scalar 4.26e-02 arq 2.84e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3700/3815 97% [main] | loss 1.938 | lr 2.51e-03 (muon 2.51e-03 embed 2.51e-02 scalar 3.77e-02 arq 2.51e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3700/3815 97% [main] | loss 1.938 | lr 2.51e-03 (muon 2.51e-03 embed 2.51e-02 scalar 3.77e-02 arq 2.51e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3710/3815 97% [main] | loss 2.048 | lr 2.20e-03 (muon 2.20e-03 embed 2.20e-02 scalar 3.30e-02 arq 2.20e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3710/3815 97% [main] | loss 2.048 | lr 2.20e-03 (muon 2.20e-03 embed 2.20e-02 scalar 3.30e-02 arq 2.20e-03) | gnorm 0.31 | 0.97B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3720/3815 98% [main] | loss 1.775 | lr 1.91e-03 (muon 1.91e-03 embed 1.91e-02 scalar 2.87e-02 arq 1.91e-03) | gnorm 0.29 | 0.98B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3720/3815 98% [main] | loss 1.775 | lr 1.91e-03 (muon 1.91e-03 embed 1.91e-02 scalar 2.87e-02 arq 1.91e-03) | gnorm 0.29 | 0.98B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3730/3815 98% [main] | loss 2.072 | lr 1.65e-03 (muon 1.65e-03 embed 1.65e-02 scalar 2.47e-02 arq 1.65e-03) | gnorm 0.30 | 0.98B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.0h
+step 3730/3815 98% [main] | loss 2.072 | lr 1.65e-03 (muon 1.65e-03 embed 1.65e-02 scalar 2.47e-02 arq 1.65e-03) | gnorm 0.30 | 0.98B tok | 109K tok/s/gpu | MFU 27% | peak 37.03GiB | ETA 0.0h
+step 3740/3815 98% [main] | loss 1.942 | lr 1.40e-03 (muon 1.40e-03 embed 1.40e-02 scalar 2.10e-02 arq 1.40e-03) | gnorm 0.26 | 0.98B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3740/3815 98% [main] | loss 1.942 | lr 1.40e-03 (muon 1.40e-03 embed 1.40e-02 scalar 2.10e-02 arq 1.40e-03) | gnorm 0.26 | 0.98B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3750/3815 98% [main] | loss 1.778 | lr 1.19e-03 (muon 1.19e-03 embed 1.19e-02 scalar 1.78e-02 arq 1.19e-03) | gnorm 0.30 | 0.98B tok | 93K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 0.0h
+step 3750/3815 98% [main] | loss 1.778 | lr 1.19e-03 (muon 1.19e-03 embed 1.19e-02 scalar 1.78e-02 arq 1.19e-03) | gnorm 0.30 | 0.98B tok | 93K tok/s/gpu | MFU 23% | peak 37.02GiB | ETA 0.0h
+step 3760/3815 99% [main] | loss 2.032 | lr 9.97e-04 (muon 9.97e-04 embed 9.97e-03 scalar 1.50e-02 arq 9.97e-04) | gnorm 0.26 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3760/3815 99% [main] | loss 2.032 | lr 9.97e-04 (muon 9.97e-04 embed 9.97e-03 scalar 1.50e-02 arq 9.97e-04) | gnorm 0.26 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3770/3815 99% [main] | loss 1.900 | lr 8.38e-04 (muon 8.38e-04 embed 8.38e-03 scalar 1.26e-02 arq 8.38e-04) | gnorm 0.27 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3770/3815 99% [main] | loss 1.900 | lr 8.38e-04 (muon 8.38e-04 embed 8.38e-03 scalar 1.26e-02 arq 8.38e-04) | gnorm 0.27 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3780/3815 99% [main] | loss 1.698 | lr 7.08e-04 (muon 7.08e-04 embed 7.08e-03 scalar 1.06e-02 arq 7.08e-04) | gnorm 0.25 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3780/3815 99% [main] | loss 1.698 | lr 7.08e-04 (muon 7.08e-04 embed 7.08e-03 scalar 1.06e-02 arq 7.08e-04) | gnorm 0.25 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3790/3815 99% [main] | loss 2.252 | lr 6.09e-04 (muon 6.09e-04 embed 6.09e-03 scalar 9.13e-03 arq 6.09e-04) | gnorm 0.21 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3790/3815 99% [main] | loss 2.252 | lr 6.09e-04 (muon 6.09e-04 embed 6.09e-03 scalar 9.13e-03 arq 6.09e-04) | gnorm 0.21 | 0.99B tok | 117K tok/s/gpu | MFU 29% | peak 37.03GiB | ETA 0.0h
+step 3800/3815 100% [main] | loss 1.978 | lr 5.41e-04 (muon 5.41e-04 embed 5.41e-03 scalar 8.12e-03 arq 5.41e-04) | gnorm 0.23 | 1.00B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.0h
+step 3800/3815 100% [main] | loss 1.978 | lr 5.41e-04 (muon 5.41e-04 embed 5.41e-03 scalar 8.12e-03 arq 5.41e-04) | gnorm 0.23 | 1.00B tok | 114K tok/s/gpu | MFU 28% | peak 37.02GiB | ETA 0.0h
+step 3810/3815 100% [main] | loss 1.836 | lr 5.06e-04 (muon 5.06e-04 embed 5.06e-03 scalar 7.59e-03 arq 5.06e-04) | gnorm 0.23 | 1.00B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+step 3810/3815 100% [main] | loss 1.836 | lr 5.06e-04 (muon 5.06e-04 embed 5.06e-03 scalar 7.59e-03 arq 5.06e-04) | gnorm 0.23 | 1.00B tok | 117K tok/s/gpu | MFU 29% | peak 37.02GiB | ETA 0.0h
+ep 1/1 train 1.836 val 2.192 4613s
+ep 1/1 train 1.836 val 2.192 4613s
+saved /work/aupai/ckpt_b0_sd_unlooped.pt
+/work/aupai/runs/b0_sd_unlooped.log: no curves found

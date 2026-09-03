@@ -3010,6 +3010,38 @@
    "status": "recorded",
    "audit": "Two of my own readings were wrong before this and are retracted in the record: (1) the first packed-vs-alone probe wrapped Block.forward and printed 'ALL BLOCKS AGREE' -- vacuous, because attn_res=True routes through b.sublayers(cu) (model.py:502-511) and Block.forward is never called, so the capture dict was empty and the comparison loop ran zero times; (2) I called the short_conv REFUTED because contamination ran past position 9 while the conv can only touch 0-2. That inference was invalid: the conv feeds k/v/g, so a 3-position input error is written into the recurrent state and decayed forward, producing exactly the profile I read as evidence against it. The output profile cannot separate kernel from plumbing at all; only the random-input kernel control can. A third wrong reading, on the attention control itself: it first printed 'THE ATTENTION ALSO LEAKS' at 4.328125, which was a non-advancing span offset comparing document 1 against document 0's rows. Caught by adjudicating against an SDPA reference rather than by re-reading the code. That is three bugs of one family in these probes -- solo[d][:n] missing a block index, lengths indexed by an order list, and this offset -- each producing a plausible wrong number instead of a crash, which is why every span is now derived from cu with an assert.",
    "refuted_by": "a run of scripts/n8_kda_kernel_repro.py showing the short_conv tensors clean at positions 0-2, or chunk_kda failing its isolation control on this build"
+  },
+  {
+    "id": "eff.eval_path_cu_artifact_ce",
+    "claim": "the eval path never declared document boundaries at all, and that cost 0.082 nat/token -- 7.6x the effect size of the fact it was used to measure",
+    "value": "eval/domain_loss.py:229 was `logits = model(x[i:i+bs])` with no cu, and HybridLM.forward (model.py:199) defaults cu=None, so every packed val row was scored as ONE undivided sequence: attention ran causally across every document in the 4096-token row and KDA state carried across them with nothing declared. This is a SUPERSET of eff.kda_document_isolation_violated, which is that cu is not honoured where it IS passed; here it was never passed.\nMEASURED on ckpt_b0_sd_unlooped.pt (122M, L12 d768), the same val rows scored twice, cu=None against cu=doc_cu_seqlens, per-row CE, 32 rows per domain:\n  domain              eos/row   cu=None        cu       delta        SE   lower\n  math_owm_stage2           3    1.9589    1.9324   -0.026514  0.003646   32/32\n  en_c4_stage2              8    3.0819    3.0443   -0.037681  0.002349   32/32\n  cot                       9    1.1411    1.0496   -0.091498  0.002349   32/32\n  textbook_30b              3    2.2373    2.2097   -0.027556  0.001634   32/32\n  chatml                   18    2.9925    2.7116   -0.280971  0.012100   32/32\n  chat_qa                  18    2.9774    2.7733   -0.204104  0.008997   32/32\n  zh_web                    2    4.3019    4.2684   -0.033509  0.004280   28/32\n  code_py_starcoder         2    1.0798    1.0615   -0.018341  0.003784   29/32\n  code_py_rp1t              2    1.1116    1.0958   -0.015845  0.004204   26/32\nPOOLED over 288 rows: -0.081780 nat/token, sd 0.096096, SE 0.005663, 95% [-0.092878, -0.070681], 275/288 rows lower with cu. Against ds.n2_params_vs_data_matched_compute's own -0.010770: 7.59x.\nDOSE-RESPONSE IN DOCUMENTS PER ROW, which is what makes this a mechanism and not nine unrelated numbers: 2 eos/row gives -0.016 to -0.034, 3 gives -0.027, 8-9 gives -0.038 to -0.091, 18 gives -0.204 to -0.281. The ordering by eos/row is essentially the ordering by |delta|.\nTHE SIGN MATTERS: passing cu makes the loss BETTER, so every per-domain value published from this path is PESSIMISTIC by roughly this much. It is not noise added symmetrically.\nNO SINGLE CORRECTION FACTOR EXISTS: the per-domain range is 0.265, LARGER than the pooled mean, so a re-score cannot be a constant shift and no published number can be adjusted arithmetically.",
+    "measured": "2026-09-03",
+    "source": "scripts/b0_sd_pack_ce.py on card 5 (pod, 2026-09-03 22:1xZ), runs/b0_sd_pack_ce9.log; per-domain rerun baseline first and all nine deterministic to 0.000000 nat before any diff was called a difference",
+    "config": {
+      "ckpt": "ckpt_b0_sd_unlooped.pt (122.30M dedup, L12 d768 heads6 ffn2304, attn_res True, doc_mask True, seq 4096)",
+      "rows_per_domain": 32,
+      "rows_total": 288,
+      "statistic": "per-row CE / token, delta = cu minus cu=None, paired on identical rows",
+      "rerun_baseline": "cu=None forwarded twice per domain, worst |diff| 0.000000 nat in all nine",
+      "pooled": -0.08178,
+      "pooled_se": 0.005663,
+      "ratio_to_n2_delta": 7.59,
+      "per_domain_range": 0.265127,
+      "eos_per_row_median": {
+        "math_owm_stage2": 3,
+        "en_c4_stage2": 8,
+        "cot": 9,
+        "textbook_30b": 3,
+        "chatml": 18,
+        "chat_qa": 18,
+        "zh_web": 2,
+        "code_py_starcoder": 2,
+        "code_py_rp1t": 2
+      }
+    },
+    "uncertainty": "32 rows per domain, not the full val set, so the per-domain SEs are 0.0016-0.0121 and the pooled SE 0.0057; a domain's delta is resolved to about +-0.01 and the pooled figure to +-0.011. The one-domain version of this measurement read -0.018341 (code_py_starcoder) and was reported as 1.70x N2's delta before the other eight domains existed -- the pooled figure is 7.59x, so THE SINGLE-DOMAIN NUMBER UNDERSTATED IT BY 4.5x. Reporting one domain and calling it the artifact was wrong in the direction that made the problem look smaller.",
+    "boundary": "NO PUBLISHED DELTA MOVES BECAUSE OF THIS. Both legs of every comparison in this repository went through the identical cu=None path on identical rows, so the artifact is common-mode and cancels in a difference. That is why the numbers stand -- not because the artifact is small. It is 7.6x the effect size of ds.n2_params_vs_data_matched_compute, the fact it was used to measure, and 'the same for both legs' is exactly the reasoning that let the doc-mask defect survive, so the cancellation is stated as a mechanism rather than assumed.\nWHAT DOES NOT CANCEL is any comparison across paths, and any ABSOLUTE per-domain value: those are pessimistic by 0.016 to 0.281 depending on the domain's documents per row.\nDECLARING cu IS NOT ISOLATING THE DOCUMENTS. eff.kda_document_isolation_violated is that state crosses the boundary even with cu passed, so the cu column above is a LESS-contaminated path, not a clean one. A clean measurement needs conv_doc_isolated (28ae5917) and is not this fact.",
+    "status": "measured"
   }
  ]
 }

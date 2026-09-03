@@ -1,0 +1,35 @@
+ckpt_b0_sd_unlooped.pt: 12 blocks 0:KDA 1:KDA 2:KDA 3:MLA 4:KDA 5:KDA 6:KDA 7:MLA 8:KDA 9:KDA 10:KDA 11:MLA
+attn_res=True doc_mask=True seq=4096
+
+== the eval path (cu=None, domain_loss.py:229) against the same rows WITH cu declared
+  domain                rows  eos/row   cu=None        cu      delta        SE   lower
+  math_owm_stage2         32        3    1.9589    1.9324  -0.026514  0.003646   32/32
+  en_c4_stage2            32        8    3.0819    3.0443  -0.037681  0.002349   32/32
+  cot                     32        9    1.1411    1.0496  -0.091498  0.002349   32/32
+  textbook_30b            32        3    2.2373    2.2097  -0.027556  0.001634   32/32
+  chatml                  32       18    2.9925    2.7116  -0.280971  0.012100   32/32
+  chat_qa                 32       18    2.9774    2.7733  -0.204104  0.008997   32/32
+  zh_web                  32        2    4.3019    4.2684  -0.033509  0.004280   28/32
+  code_py_starcoder       32        2    1.0798    1.0615  -0.018341  0.003784   29/32
+  code_py_rp1t            32        2    1.1116    1.0958  -0.015845  0.004204   26/32
+
+  POOLED over 288 rows in 9 domains: -0.081780 nat/token, sd 0.096096, SE 0.005663, 95% [-0.092878, -0.070681], 275/288 rows lower with cu
+  PER-DOMAIN SPREAD: min -0.280971 (chatml), max -0.015845 (code_py_rp1t), range 0.265127 -- a range larger than the pooled mean means there is no single correction factor and a re-score cannot be a constant shift
+  AGAINST N2's OWN DELTA of -0.010770 nat: ratio 7.59x. Both legs of every published comparison took the cu=None path, so no delta moves; this is the size of a common-mode artifact, and it is what the boundary line must state.
+
+== e1-32's invariant on this checkpoint: a document packed vs the same document alone
+  doc0 546 tok, doc1 130 tok at row offset 547
+  blk kind   absmean     tol       max   first3     rest   last10  shape
+    0 KDA     0.8250   0.206    3.6504    3.650    0.381    0.031  decaying from the start
+    1 KDA     1.0172   0.254    3.8457    3.846    1.312    0.281  decaying from the start
+    2 KDA     0.5421   0.136    2.9688    2.969    2.016    0.188  decaying from the start
+    3 MLA     9.5399   2.385   43.5000   43.500   35.438    5.188  decaying from the start
+    4 KDA     0.6650   0.166    3.1250    3.125    3.125    0.750  decaying from the start
+    5 KDA     0.4513   0.113    2.0938    2.094    1.312    0.188  decaying from the start
+    6 KDA     0.3316   0.083    4.5000    4.500    1.750    0.188  decaying from the start
+    7 MLA     7.7476   1.937   49.0000   49.000   48.000   16.070  uniform
+    8 KDA     2.0107   0.503  118.0000  118.000   20.000    4.000  decaying from the start
+    9 KDA     0.1872   0.050    2.6250    2.625    2.125    0.281  decaying from the start
+   10 KDA     0.2788   0.070    9.3125    9.312    2.125    1.438  decaying from the start
+   11 MLA     3.5501   0.888   41.0000   41.000   11.188    5.089  decaying from the start
+  FIRST DIVERGENCE: block 0 (KDA), max 3.6504 against tol 0.206, decaying from the start -- REPRODUCES e1-32 on a second checkpoint and a second data source.
