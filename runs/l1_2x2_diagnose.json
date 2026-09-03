@@ -10,6 +10,9 @@
    "copy_rate": 0.9356136820925554,
    "copy_share_median": 0.39655172413793105,
    "loop_rate": 0.9879275653923542,
+   "loop_degree_median": 6,
+   "loop_degree_p90": 15,
+   "loop_degree_per_kchar_median": 7.74,
    "median_chars": 794,
    "p90_chars": 893,
    "max_chars": 1123,
@@ -25,6 +28,9 @@
    "copy_rate": 0.9074446680080482,
    "copy_share_median": 0.25483870967741934,
    "loop_rate": 0.9879275653923542,
+   "loop_degree_median": 8,
+   "loop_degree_p90": 21,
+   "loop_degree_per_kchar_median": 9.54,
    "median_chars": 851,
    "p90_chars": 959,
    "max_chars": 1202,
@@ -40,6 +46,9 @@
    "copy_rate": 0.9738430583501007,
    "copy_share_median": 0.21333333333333335,
    "loop_rate": 0.869215291750503,
+   "loop_degree_median": 3,
+   "loop_degree_p90": 3,
+   "loop_degree_per_kchar_median": 34.88,
    "median_chars": 86,
    "p90_chars": 86,
    "max_chars": 134,
@@ -55,6 +64,9 @@
    "copy_rate": 0.9175050301810865,
    "copy_share_median": 0.16326530612244897,
    "loop_rate": 0.7766599597585513,
+   "loop_degree_median": 3,
+   "loop_degree_p90": 4,
+   "loop_degree_per_kchar_median": 33.71,
    "median_chars": 84,
    "p90_chars": 112,
    "max_chars": 139,
@@ -65,5 +77,9 @@
    "marker_pos_max": 22,
    "preds": "preds_l1_d3_e1_untrained.hf.en.hf.jsonl"
   }
+ },
+ "resolution": {
+  "copy_rate": "usable",
+  "loop_rate": "usable"
  }
 }
