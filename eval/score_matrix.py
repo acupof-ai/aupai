@@ -78,7 +78,22 @@ SKIP_REASON = {
     "math_500": "generative; a base checkpoint reads zero",
     "code_500": "generative; a base checkpoint reads zero",
     "code_500_v2": "generative; a base checkpoint reads zero",
-    "pass_at_k": "needs a policy (SFT or RL); a base checkpoint has none",
+    "pass_at_k": (
+        "needs a policy (SFT or RL); a base checkpoint has none. AND NOT ADDED TO THE BASE "
+        "PANEL for HumanEval either, which b0-13 asked for (6e's ruling 2026-09-03): "
+        "generative code scoring reads 0.0 at every scale anyone here has measured. "
+        "be.gold_bpb_falls_while_generation_scores_zero has five points -- p324 3.24B, 8B, "
+        "15B, 16b_pin, 22b_step24000 -- and code_500 generative accuracy is 0.0 at ALL FIVE "
+        "while gold BPB falls 1.08724 -> 0.91778 across them. 0 == 0 is not a comparison, and "
+        "a resident matrix pays that cost at every checkpoint forever. humaneval_bpb is what "
+        "carries this axis instead. THE BOUND IS 'NOT READABLE THROUGH 22B TOKENS', not 'not "
+        "readable at 206M': the ceiling is what was measured, not what was assumed. WHEN it "
+        "becomes readable is UNMEASURED -- five points, five zeros, zero non-zero points, so "
+        "there is no slope to extrapolate and no threshold to name. That is a gap in what has "
+        "been measured, NOT a prediction that it stays zero. A one-off run to answer 'what "
+        "does the ruler the reader recognises say' is a different question from a resident "
+        "panel metric, and is fine to run on request."
+    ),
     "mc_full": "hellaswag/piqa unreachable from this machine (pod HF egress broken); not a signal judgement -- run --benchmarks hellaswag piqa on a box with egress. English MC also at chance on every 200M measured, ceval stays as tripwire",
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
