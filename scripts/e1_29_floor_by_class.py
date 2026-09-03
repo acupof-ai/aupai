@@ -17,9 +17,13 @@ A LARGE DROP AND A SMALL DROP BOTH MEAN SOMETHING, and both readings are fixed h
 be chosen after the fact. REVISED once the composition below was measured, and revised BEFORE any
 score existed -- the original version of these readings was written against a 15.7% English share
 and does not survive a 52.5% one:
-  - en-only NEAR the whole-population gap is an EMPTY result, not "the confound is excluded".
-    English already carries most of the bytes, so composition alone keeps the two close. This is
-    the most likely outcome and it settles nothing by itself;
+  - en-only NEAR the whole-population gap was called an "EMPTY result" in the version of this
+    docstring written before the scores existed. THAT READING WAS WRONG and is retracted here,
+    where the next reader will see it, not only in a commit message. Algebraically en-only ~ total
+    is not the absence of a finding: with English at 52.1% of the bytes, "the English gap equals
+    the overall gap" IS the no-confound conclusion. I had it exactly backwards. The correction is
+    later than the data, so this line is no longer a pre-registration -- it is a post-hoc fix to a
+    pre-registration, and it is labelled as one;
   - en-only well BELOW means Chinese was inflating our score, and the pretraining reading in
     section 4 is over-claimed;
   - en-only well ABOVE means we are stronger still on English and Chinese is HOLDING US BACK --
@@ -106,6 +110,11 @@ def main():
     ap.add_argument("--ours_ckpt", default="ckpt_p200m_4b_0902.pt")
     ap.add_argument("--ctrl_dir", default="/tmp/e1_untrained.hf")
     ap.add_argument("--out", default="runs/e1_29_floor_by_class.json")
+    ap.add_argument("--per_item_out", default="runs/e1_29_per_item.jsonl",
+                    help="per-item nll/tokens for both arms. The first run kept only class sums, "
+                         "so the dispersion range had no noise baseline and the case table could "
+                         "not be built without rescoring -- the rows were in memory and thrown "
+                         "away. An artifact that omits the inputs to its own recomputation.")
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--seq_ours", type=int, default=4096)
     ap.add_argument("--seq_ctrl", type=int, default=2048)
@@ -130,6 +139,7 @@ def main():
                  f"(runs/e1_control_model_fp.json records its weight hash)")
 
     import torch
+    peritem = {}
     out = {"classes_defined_by": "e1, from measured content -- NOT the data's own `src` field, "
            "which labels 99.8% code_general while 8.3% of answers contain code",
            "code_marks": list(CODE_MARKS), "zh_min_frac": ZH_MIN_FRAC,
@@ -248,6 +258,16 @@ def main():
         out["arms"][arm] = {"total_nll": tot, "tokens": ntok, "dropped": len(dropped),
                             "n_scored": len(kept), "bytes": tb,
                             "nll_per_byte": tot / tb if tb else None, "by_class": agg}
+        # PER-ITEM ROWS ARE PERSISTED, because the class table alone cannot answer whether its own
+        # spread is bigger than noise. The dispersion range (1.049 on the first run) has no
+        # baseline without them: the four classes differ ~21x in byte mass (zh-code 227,984 B
+        # against zh-prose 4,829,642 B), so an unweighted range is dominated by the noisiest class.
+        # With the rows on disk, the baseline is a permutation test at zero card cost -- reshuffle
+        # the same items into four same-sized groups and see how often a range of 1.049 appears.
+        # Keeping only aggregates forces a full rescore to ask a question the run already had the
+        # data for.
+        peritem[arm] = {int(r["id"]): {"nll": r["nll"], "tokens": r["tokens"]} for r in items}
+
         print(f"  {arm}: {len(kept):,} scored, {tot / tb:.6f} nll/byte on the shared population")
         del model
         torch.cuda.empty_cache()
@@ -296,12 +316,24 @@ def main():
                      f"was {ref:.3f} / {out['arms'][arm]['bytes']}")
 
 
-    # THE DISCRIMINANT IS THE SPREAD ACROSS CLASSES, NOT THE ENGLISH SUBSET. Since English already
-    # carries 52.5% of the bytes, en-only cannot move far from the whole-population gap for
-    # compositional reasons alone -- so en-only near 2.00x is an EMPTY result, not "the confound is
-    # excluded". What separates the two hypotheses is dispersion: if the language advantage is
-    # real, zh-prose's gap sits well above the English classes; if all four sit near 2, the
-    # confound is small whatever en-only reads. Range and byte-weighted mean, printed together.
+    # THE DISCRIMINANT IS THE SPREAD ACROSS CLASSES. If the language advantage is real, zh-prose's
+    # gap sits well above the English classes; if all four sit near the headline, the confound is
+    # small. Measured: en-* 1.46-1.58, zh-* 2.47-2.50, and 44's independent check puts the family
+    # separation at 12.2 sigma (main criterion min(zh)-2SE > max(en)+2SE, 1.956 > 1.749; still
+    # 6.1 sigma with CV forced to 2, worst pairing 3.3 sigma).
+    #
+    # THE "EMPTY RESULT" READING THAT USED TO BE WRITTEN HERE IS RETRACTED. It said en-only near
+    # 2.00x settles nothing because composition keeps them close. That is backwards: with English
+    # at 52.1% of bytes, "the English gap equals the overall gap" IS the no-confound conclusion,
+    # not the absence of one. The docstring carries the same retraction; a criterion that has been
+    # overturned must not keep living where the next reader meets it.
+    #
+    # Range and byte-weighted mean are both reported, and they are DIFFERENT STATISTICS: the
+    # byte-weighted mean of four per-class gaps is a mean of RATIOS and reconstructs no population.
+    # Every comparison against the headline uses gap_shared_population (ratio of sums, 2.0041), not
+    # this mean (1.9858) -- the same defect the test's section 5 exists to prevent for english_only,
+    # one order of magnitude smaller.
+
     if gaps:
         gv = {c: gaps[c]["gap"] for c in gaps}
         lo_c, hi_c = min(gv, key=gv.get), max(gv, key=gv.get)
@@ -331,9 +363,71 @@ def main():
               f"(published, all items: 2.004x)")
         print("The English subset is what the control was trained for. Read per the pre-registered "
               "readings in this file's docstring.")
+    # THE NOISE BASELINE FOR THE DISPERSION RANGE, at zero card cost from the rows just collected.
+    # 1.049 across four classes means nothing until it is compared against the range a MEANINGLESS
+    # four-way split of the same items produces. The classes differ ~21x in byte mass, so the
+    # unweighted range is structurally dominated by the smallest class -- exactly 44's objection.
+    #
+    # The permutation preserves the class SIZES (in bytes, since the statistic is byte-weighted)
+    # and destroys only the class LABELS. Preserving sizes is the whole point: a baseline built
+    # from four equal groups would understate the noise in a 227,984-byte class and flatter the
+    # observed range.
+    if peritem.get("ours") and peritem.get("control"):
+        import random
+        byid_b = {}
+        for rid, q, ans in rows:
+            r = int(rid)
+            if r in peritem["ours"]:
+                byid_b[r] = len(E.format_pair("ours", q, ans)[1].encode("utf-8"))
+        ids = sorted(byid_b)
+        sizes = [gaps[c]["n"] for c in sorted(gaps)] if gaps else []
+        rng = random.Random(20260903)
+        ranges = []
+        TRIALS = 2000
+        for _ in range(TRIALS):
+            rng.shuffle(ids)
+            at, gs = 0, []
+            for k in sizes:
+                grp = ids[at:at + k]
+                at += k
+                b = sum(byid_b[i] for i in grp)
+                if not b:
+                    continue
+                o = sum(peritem["ours"][i]["nll"] for i in grp) / b
+                kk = sum(peritem["control"][i]["nll"] for i in grp) / b
+                gs.append(kk / o)
+            if len(gs) > 1:
+                ranges.append(max(gs) - min(gs))
+        if ranges:
+            ranges.sort()
+            obs = out["gap_dispersion"]["range"]
+            above = sum(1 for r in ranges if r >= obs)
+            out["gap_dispersion"]["noise_baseline"] = {
+                "trials": TRIALS, "seed": 20260903,
+                "method": "class LABELS permuted, class SIZES preserved -- a baseline of four equal "
+                          "groups would understate the noise in the 227,984-byte class and flatter "
+                          "the observed range",
+                "median": ranges[len(ranges) // 2], "p95": ranges[int(0.95 * len(ranges))],
+                "max": ranges[-1], "observed": obs,
+                "n_at_or_above_observed": above, "p_value": above / len(ranges)}
+            print(f"\nNOISE BASELINE ({TRIALS} label permutations, sizes preserved): "
+                  f"median range {ranges[len(ranges) // 2]:.4f}  p95 {ranges[int(0.95 * len(ranges))]:.4f}  "
+                  f"max {ranges[-1]:.4f}")
+            print(f"  observed {obs:.4f}  ->  p = {above / len(ranges):.4f} "
+                  f"({above}/{len(ranges)} permutations reach it)")
+
     with open(os.path.join(ROOT, a.out), "w") as f:
         json.dump(out, f, indent=1, ensure_ascii=False)
     print(f"wrote {a.out}")
+    if a.per_item_out:
+        with open(os.path.join(ROOT, a.per_item_out), "w") as f:
+            for arm in ("ours", "control"):
+                for rid, r in sorted(peritem.get(arm, {}).items()):
+                    f.write(json.dumps({"arm": arm, "id": rid, "nll": r["nll"],
+                                        "tokens": r["tokens"], "cls": cls.get(rid)}) + "\n")
+        print(f"wrote {a.per_item_out} "
+              f"({sum(len(v) for v in peritem.values()):,} rows -- the case table and any later "
+              f"baseline read this instead of rescoring)")
     return 0
 
 
