@@ -18,7 +18,6 @@ import argparse
 import json
 import os
 import re
-import sys
 from collections import Counter
 
 import pyarrow.parquet as pq
@@ -45,7 +44,7 @@ def chain_of(schema, d):
         gens = d.get("generations") or []
         cmv = d.get("correctness_math_verify") or []
         if gens:
-            for g, ok in zip(gens, cmv):
+            for g, ok in zip(gens, cmv, strict=False):
                 if ok and g:
                     return g, (d.get("answer") or "")
             return max(gens, key=len, default=""), (d.get("answer") or "")
@@ -54,7 +53,6 @@ def chain_of(schema, d):
 
 
 def checks_pass(schema, d):
-    c = d.get("_token_ct")
     chain = d.get("_chain")
     ans = d.get("_ans")
     flags = {}
