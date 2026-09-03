@@ -47,6 +47,13 @@ PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 #: can meet is a check nobody has.
 TIMEOUT = "TIME"
 
+#: The string a committed excerpt of a live log must carry in its LAST lines, and how many
+#: lines count as "where tail looks". Both are read by check_snapshot_logs_say_so_at_the_tail
+#: and by the trailer in runs/data_leg_206m_8b.log; a change here without a change there
+#: turns the check red, which is the intended coupling.
+SNAPSHOT_MARK = "END OF SNAPSHOT"
+SNAPSHOT_TAIL = 5
+
 # Per-check deadline. A check that hangs blocks the pre-commit hook and trains
 # people to --no-verify; a timed-out check reports TIMEOUT and names itself.
 _CHECK_TIMEOUT = 5
@@ -447,6 +454,80 @@ def _broken_reported_path():
     with open(p, "w", encoding="utf-8") as f:
         f.write(src.replace(fixed, 'print(f"preds saved: {preds_path}")'))
     return d
+
+
+def check_snapshot_logs_say_so_at_the_tail(root):
+    """A tracked runs/*.log that is a TRUNCATED copy of a live pod log says so in its last
+    lines, not only its first.
+
+    A committed excerpt of a running job's log is a useful artifact -- it pins the numbers a
+    fact cites without carrying 3 MB. It is also indistinguishable from the live log to the
+    tool everyone reads it with. `tail -3` never shows line 1, so a header saying "excerpt,
+    pulled 08:0xZ" is invisible at exactly the moment someone reads the file for current
+    state. MEASURED COST (b0, 2026-09-03): tailed runs/data_leg_206m_8b.log and reported the
+    leg at step 6450/42% to the controller while the pod was at 9950/65%. The header was
+    already there and already correct. Both readings were well-formed.
+
+    So the marker has to be where the reading tool looks. This check is the marker's guard:
+    the file must carry SNAPSHOT_MARK inside its last few lines.
+
+    SCOPE -- why "smaller than the pod's copy" and not "any tracked log": a log whose job has
+    ENDED is a complete record, and its local copy matching the pod byte for byte is the
+    normal, correct state for 43 of the 50 tracked logs the pod also has. Only a local copy
+    materially SHORTER than the pod's is an excerpt, and only an excerpt can mislead about
+    current state. A check that demanded the marker everywhere would put a "not live" trailer
+    on 43 files where it is false.
+
+    Runs on the pod only, because the comparison needs both copies."""
+    pod = os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod) or pod_drift.is_pod(root):
+        return SKIP, "host-side check; needs ~/bin/pod to read the live copies"
+    tracked = subprocess.run(["git", "ls-files", "runs/"], capture_output=True, text=True,
+                             cwd=root).stdout.split()
+    logs = [t for t in tracked if t.endswith(".log")]
+    if not logs:
+        return SKIP, "no tracked runs/*.log"
+    script = ("cd /work/aupai && for f in %s; do if [ -f \"$f\" ]; then "
+              "echo \"$f $(stat -c%%s \"$f\")\"; fi; done" % " ".join(logs))
+    r = subprocess.run([pod, script], capture_output=True, text=True, timeout=240)
+    if r.returncode != 0:
+        return SKIP, f"cannot read the pod: {r.stderr.strip()[:80]}"
+    sizes = {}
+    for line in r.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            sizes[parts[0]] = int(parts[1])
+    bad, excerpts = [], 0
+    for rel in logs:
+        p = os.path.join(root, rel)
+        if rel not in sizes or not os.path.exists(p):
+            continue
+        local = os.path.getsize(p)
+        # 1.5x, not "any difference": a live log grows between the pull and this read, so a
+        # few hundred bytes is the pull's own latency and not an excerpt.
+        if sizes[rel] <= local * 1.5:
+            continue
+        excerpts += 1
+        tail = open(p, encoding="utf-8", errors="replace").read().splitlines()[-SNAPSHOT_TAIL:]
+        if not any(SNAPSHOT_MARK in ln for ln in tail):
+            bad.append(f"{rel} (local {local:,}B vs pod {sizes[rel]:,}B)")
+    if bad:
+        return FAIL, (
+            f"{len(bad)} truncated snapshot(s) of a live pod log carry no {SNAPSHOT_MARK!r} in "
+            f"their last {SNAPSHOT_TAIL} lines, so `tail` on them reads as current state: "
+            f"{'; '.join(bad[:4])}"
+            + (f" ... and {len(bad) - 4} more" if len(bad) > 4 else ""))
+    return PASS, (f"{excerpts} of {len(logs)} tracked log(s) are truncated excerpts, each "
+                  f"marked in its last {SNAPSHOT_TAIL} lines; the rest match the pod")
+
+
+def _broken_snapshot_logs_say_so_at_the_tail():
+    raise SelftestSkip(
+        "the broken world is a PAIR of filesystems -- a local excerpt beside a longer pod copy "
+        "-- and this check reads the live pod through ~/bin/pod with a hardcoded /work/aupai. "
+        "Staging it would mean truncating a real pod log. The FAIL path is exercised instead by "
+        "the mutation recorded in the commit: dropping the trailer from "
+        "runs/data_leg_206m_8b.log turns this check red while its header still says 'excerpt'.")
 
 
 def check_cited_artifacts_attested(root):
@@ -8244,6 +8325,13 @@ CHECKS = [
         _broken_reported_path,
     ),
     (
+        "snapshot_logs_say_so_at_the_tail",
+        "a committed excerpt of a live pod log says 'END OF SNAPSHOT' where tail looks",
+        "b0 tailed runs/data_leg_206m_8b.log and reported the leg at 42% while the pod was at 65%; the header already said 'excerpt' and tail never shows line 1",
+        check_snapshot_logs_say_so_at_the_tail,
+        _broken_snapshot_logs_say_so_at_the_tail,
+    ),
+    (
         "cited_artifacts_attested",
         "a fact citing a gitignored eval artifact carries a sha256 its writer attested",
         "preds_*.jsonl is gitignored so fact_refs_resolve skips it; an unlogged rerun overwrote preds_l1_d3.jsonl and five facts pointed at another run's rows for hours",
@@ -8450,6 +8538,7 @@ EVIDENCE = {
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
     "cache_readers_set_vocab_id": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
