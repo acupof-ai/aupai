@@ -244,7 +244,7 @@ a64ed761a9464f00e88cbe3ded8dab405a1d51ad56f5c2e3a6585ad9cd3eecb0  runs/retro.jso
 c3935e6bbaa49fbcfbf1d8e4db33a4ee4ac378d3176cd13147c7152e46ab215d  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-0966838992e79226f6499ae42de2f1c98bd59b7e727fbb596194f13624490647  runs/tasks.jsonl  docs  644
+0f8a6738c3abbb9f1df8e2ced976fdafa5c6943901f9614a3414431e43e1d9f9  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
