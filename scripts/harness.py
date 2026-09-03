@@ -2043,6 +2043,102 @@ def _noted_gone(entry, name):
     return False
 
 
+def check_pod_stamp_is_main(root):
+    """The pod's sync stamp names a commit that is main, or is reachable from it (de-14).
+
+    Launch condition 2' has three clauses and only two had code: run_ddp.sh:23 refuses a
+    dirty push and :34 refuses manifest drift, but "the stamp's sha is main's" was PRINTED
+    and never compared -- a human read two hex strings off the log. The clause cannot be
+    checked on the pod (no git, no route back), so it is checked here, where git is.
+
+    TWO FAILURE SHAPES, and the second is the one that motivated it:
+      not an ancestor   the stamp names a commit main does not contain -- pushed from an
+                        unmerged branch. pod_push.sh's stamp_sync used `rev-parse HEAD`,
+                        which in a per-session worktree is that BRANCH's tip: measured
+                        2026-09-03, this tree's HEAD was 1b85dd0c while main was 69c8bd87.
+                        Every pushed FILE is main's (push_one refuses any that differs), so
+                        such a stamp describes a tree existing on no branch.
+      behind main       main moved after the push. Expected and not a fault by itself, so it
+                        WARNs with the distance rather than failing: the pod legitimately
+                        runs an older commit until someone pushes again.
+
+    WARN throughout: whether the pod should be re-pushed is a launch decision, and a FAIL
+    here would go red on every tree the moment anyone merges to main.
+
+    THE STAMP LIVES ON THE POD, so this reads it there via ~/bin/pod and resolves it HERE,
+    where git is. A first version read data/pod_synced_head from the local tree and SKIPped
+    on every real repository, because that file is pod-local and is not tracked -- the check
+    would have shipped green and never once run on the value it exists to judge. Same
+    two-filesystem join as pod_ledger_rows_home, and the same reason it cannot be one-sided."""
+    fake = os.environ.get("HARNESS_POD_STAMP")
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "not a git checkout -- this clause is the one the pod cannot answer"
+    if fake:
+        text = open(fake, encoding="utf-8").read() if os.path.exists(fake) else ""
+    else:
+        local = os.path.join(root, "data", "pod_synced_head")
+        if os.path.exists(local):
+            text = open(local, encoding="utf-8").read()
+        elif os.path.exists(os.path.expanduser("~/bin/pod")):
+            r = subprocess.run([os.path.expanduser("~/bin/pod"),
+                                "cat /work/aupai/data/pod_synced_head"],
+                               capture_output=True, text=True)
+            if r.returncode or not r.stdout.strip():
+                return SKIP, "no stamp on the pod (a partial push clears it; nothing to compare)"
+            text = r.stdout
+        else:
+            return SKIP, "needs ~/bin/pod to read the pod's stamp"
+    parts = text.split()
+    if not parts:
+        return WARN, "the pod's stamp is empty"
+    sha = parts[0]
+    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        return WARN, (f"the stamp holds {sha!r}, not a full 40-char hex sha -- an abbreviated "
+                      f"sha is not an identity (de-38)")
+    def _git(*a):
+        return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
+    if _git("cat-file", "-e", f"{sha}^{{commit}}").returncode:
+        return WARN, f"the stamp names {sha[:12]}, which is no commit in this repository"
+    main = _git("rev-parse", "main").stdout.strip()
+    if not main:
+        return SKIP, "no main in this repository"
+    if sha == main:
+        return PASS, f"the pod's stamp is main ({sha[:12]})"
+    if _git("merge-base", "--is-ancestor", sha, main).returncode == 0:
+        n = _git("rev-list", "--count", f"{sha}..main").stdout.strip() or "?"
+        return WARN, (f"the pod is at {sha[:12]}, {n} commit(s) behind main ({main[:12]}) -- "
+                      f"expected after a merge; re-push before a launch that needs them")
+    return WARN, (f"the pod's stamp names {sha[:12]}, which main does NOT contain: it was "
+                  f"pushed from an unmerged branch, so the stamp describes a tree that exists "
+                  f"on no branch (the FILES are main's -- pod_push refuses any that differ)")
+
+
+def _broken_pod_stamp_is_main():
+    """A stamp naming a commit main does not contain: the real ledger of shas is git itself, so
+    the world takes a REAL commit that is not an ancestor of main.
+
+    Built from this repository's own refs rather than a made-up hex string, because a made-up
+    sha fails at `cat-file -e` and would exercise the wrong branch -- the check would report
+    "no such commit" and the ancestor comparison, which is the thing being tested, would never
+    run. If no such commit exists here, the world cannot be built and says so."""
+    d = _tmp_repo()
+    r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all", "--not", "main", "-n", "1"],
+                       capture_output=True, text=True)
+    sha = r.stdout.strip()
+    if not sha:
+        raise SelftestSkip("no commit outside main here; cannot build a non-ancestor stamp")
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    stamp = os.path.join(d, "data", "pod_synced_head")
+    with open(stamp, "w", encoding="utf-8") as fh:
+        fh.write(f"{sha} 0 2026-09-03T00:00:00Z\n")
+    # HARNESS_POD_STAMP so the world does not depend on the pod being reachable: a verdict
+    # that is right only when the tunnel is up proves nothing (same reason as
+    # HARNESS_POD_LEDGERS).
+    os.environ["HARNESS_POD_STAMP"] = stamp
+    os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
+    return d
+
+
 def check_pod_ledger_rows_home(root):
     """A ledger row written on the pod is invisible to every other check (de-36).
 
@@ -7405,6 +7501,13 @@ CHECKS = [
         _broken_run_commits_resolve,
     ),
     (
+        "pod_stamp_is_main",
+        "the pod's sync stamp names a commit main contains",
+        "launch condition 2' clause three had no code: run_ddp.sh printed the stamp's sha and never compared it, so a human read two hex strings off a 66-hour log; pod_push stamped `rev-parse HEAD`, which in a per-session worktree is that branch's tip (1b85dd0c while main was 69c8bd87)",
+        check_pod_stamp_is_main,
+        _broken_pod_stamp_is_main,
+    ),
+    (
         "pod_ledger_rows_home",
         "every row in the pod's runs/*.jsonl has its key present in the repository's copy",
         "five score_matrix rows behind the closed A/Bs existed only on the pod's emptyDir; pod_push only pushes and pod_drift only asserts listed files match, so a pod-only ledger row is invisible to every check",
@@ -7900,6 +8003,9 @@ EVIDENCE = {
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
     # local side to compare against.
     "pod_ledger_rows_home": "both",
+    # repo: resolving a sha against main needs the object database, which is the whole reason
+    # this clause cannot live in run_ddp.sh.
+    "pod_stamp_is_main": "repo",
     # repo: resolving a sha needs the object database, which the pod's tree does not have.
     "run_commits_resolve": "repo",
     "keep_claim_reasons_live": "repo",
@@ -9672,7 +9778,7 @@ def _demo():
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
-                 "run_commits_resolve"}
+                 "run_commits_resolve", "pod_stamp_is_main"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -9701,6 +9807,7 @@ def _demo():
             os.environ.pop("HARNESS_REQUIRE_EXTRA", None)  # _broken_env leaks this
             os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
             os.environ.pop("HARNESS_POD_LEDGERS", None)  # same: a temp dir of pod ledgers
+            os.environ.pop("HARNESS_POD_STAMP", None)  # same: a temp pod sync stamp
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
