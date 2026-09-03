@@ -238,6 +238,29 @@ def liveness_section():
     return "".join(out)
 
 
+# 98-5: one friction line under the per-member section (6e request, main fc4e7efe).
+# Reads runs/friction.jsonl directly: rows, distinct causes, top (kind, cause) pair.
+def friction_section():
+    fp = os.path.join(REPO, "runs", "friction.jsonl")
+    if not os.path.exists(fp):
+        return ""
+    rows = [json.loads(ln) for ln in open(fp, encoding="utf-8") if ln.strip()]
+    if not rows:
+        return ""
+    groups = {}
+    for r in rows:
+        key = (r.get("kind", "?"), r.get("cause", ""))
+        groups[key] = groups.get(key, 0) + 1
+    (kind, cause), n = max(groups.items(), key=lambda kv: kv[1])
+    kind_cn = {"merge": "合并冲突", "hook": "钩子", "check": "检查", "launch": "启动"}.get(kind, kind)
+    short = cause.split(",")[0][:60]
+    ncauses = len({r.get("cause", "") for r in rows})
+    return ("<h2>摩擦记录</h2>"
+            '<div class=head style="border-top-color:#d97706">'
+            f'<div class=su>{len(rows)} 条、{ncauses} 种原因；最多的是{kind_cn}（{n} 条）：{html.escape(short)}</div>'
+            "</div>")
+
+
 def queue_section():
     tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
     roster_p = os.path.join(REPO, "runs", "roster.json")
@@ -354,6 +377,7 @@ def render(rows):
     parts.append(control_section())
     parts.append(roadmap_section())
     parts.append(liveness_section())
+    parts.append(friction_section())
     parts.append(queue_section())
     rest = rows
     parts.append("<h2>时间线</h2><ol>")
