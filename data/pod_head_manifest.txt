@@ -48,6 +48,7 @@ add1f6e6254a3986e4393c1d66f46ff0057c3e0ca88642060ed674fd3d99ea8c  datagen/build_
 36caba4d4bccf9755607d25239efe69797869548d71b95a1080be5d95a7cc41c  datagen/build_code_tests_v1.py  docs  644
 ed5d0a0b9ac62c61c8b8bf5687ebd53354745cc1b47dde5a52f80df13c52eb48  datagen/build_control_sft_text.py  docs  644
 c69aacb28a0063f463e94dd8a41d2b7d3e45819ad9d5d6b79c919b98aae65f26  datagen/build_corpus.py  docs  644
+674d5f686993dd7f4c9deb46428893827fd8286c920f08c085b6da548b2c30bc  datagen/build_cot.py  docs  644
 683cbadd2b926f285f1dba849dc12b1a29344e99292f2ca1b913a62fc73af5e4  datagen/build_domains.sh  docs  755
 017a0fabb162fdadb509746432576991203adcb61d8e0ea782facf406bf1d211  datagen/build_math_expand.sh  docs  644
 626125bf866eb55c1e1636d8f293d444e251f793858d1ac61995c77c08bcec10  datagen/build_starcoder_py.py  docs  644
@@ -60,7 +61,7 @@ f9aa0a08be4d9d46af85e40bcc1156b88da7a43d36328bd6ad9d203fefbfa7b1  datagen/classi
 ce94da83c49eae1ea1ba085905bb799974e0024256532dc88fb5788ce35d1b32  datagen/code_dedup_build.py  docs  644
 87b584eb0a8593399102445a02618d55e5677752012466d26e920b9c2a4364be  datagen/code_rp1t_fail_histogram.py  docs  644
 10a7d5432f33fb6481f6882b91d75b12e60ccf368cda216c91fdc7a37fe822d7  datagen/corpus_fingerprint.py  training  644
-10a617d36112933e5af432cb7c879aa2bac4841994841285b1c6a0185fa5301a  datagen/cot_pilot.py  docs  644
+1714f3af01dc693b04bcb0bc1925bcd085e19b6bef04456c34ce6379416595eb  datagen/cot_pilot.py  docs  644
 13e07d01c3e11845a02d0356ffc257a91ea0fc1db19fddc294a3efee2e3a9ea9  datagen/count_cleaned_code.py  corpus  644
 ad954a401a022744010743f6eded9cba1cb60807845929c697619522c50b407a  datagen/count_code_dirs.py  docs  644
 1580a98c0707164e16b38859b97635bcadf9156bbcaeed4a675954b64c4e226c  datagen/data_overview.py  docs  644
@@ -71,7 +72,7 @@ a29fc63e6ec63e240430e5adfb4e03c60d81c5ff5b186f2053ae6388db80e764  datagen/distil
 49920079e9fdcae0e2fa2897f8f80e11afcd7e030e1bf69ce4d3a6c72dbaafaa  datagen/fable5/clean_fable5.py  docs  644
 3eb63727bb6707df9d4c5911cc237075d089bcb903fe2e4b46074d6b7c84cac0  datagen/fasttext_junk.py  docs  644
 e75716d5a59bf54d8014a95ead9db0d191d71eb83828e95178c871342998652c  datagen/fetch_chat_data.py  docs  644
-7a220d546ffd00499b08735d9295e9a7f5faf1ccd48e5959a2462ab39b80a682  datagen/fetch_corpus.py  training  644
+12fc7cc7ec8b7cf5cf36a5d81bc10057e4451d40ef951c22b8fe0a6c27189518  datagen/fetch_corpus.py  training  644
 d9286f3cdca823a6e633d02bcb8ea5381e47a68a859d20dd736dd5b13b0ffb52  datagen/fetch_math_data.py  docs  644
 a07dd636fc601fa1c9fb6c095008b356d1fd78430dce75f5fb3012b8b5fa8c35  datagen/fetch_sft_data.py  docs  644
 ecb21924856f77913549034d3f5f44b62837c027702825a4792d9aacda4a1ca0  datagen/gen_code.py  docs  644
