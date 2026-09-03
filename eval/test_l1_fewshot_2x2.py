@@ -236,6 +236,29 @@ def main():
                          f"{oz.get('marker_rows')!r}; the audit publishes 267/497, so the "
                          f"predicate lost its large side again")
 
+    # 11. THE PINNED READING OF answer-present, frozen 2026-09-03Z before the shared-decoder rerun
+    #     produced any number. Turning rep_stop off makes a looping generation run to max_new, so
+    #     the answer can sit BEFORE the loop. Reading (a) -- a marker ANYWHERE in the model's turn --
+    #     is pinned; reading (b) -- terminates normally AND ends with an answer -- is rejected,
+    #     because "answered but could not stop" is our arm's KNOWN behaviour and (b) would score it
+    #     as failure, writing the conclusion into the definition.
+    answered_then_looped = "答案是：7\n" + "再来一次 " * 40
+    if L.answer_marker(L.model_turn(answered_then_looped, "zh")) is None:
+        fails.append("a generation that answers and THEN loops counts as no answer -- that is "
+                     "reading (b), and it scores our arm's known behaviour (answers, cannot stop) "
+                     "as failure; reading (a) was pinned before the rerun")
+    if L.answer_marker("\\boxed{7} 后面还有很多字") is None:
+        fails.append("answer-present requires the marker at the END; the pinned reading is "
+                     "position-independent within the turn")
+    # AND "ANYWHERE" IS BOUNDED BY THE TURN. A marker only inside a problem the model fabricated
+    # for itself must NOT count -- that is the defect model_turn exists to fix (43.5% of 3-demo
+    # generations open a new 题目), and crediting it would answer a question nobody asked.
+    fabricated_only = "先想一想。\n\n题目：另一个问题\n解答：答案是：99"
+    if L.answer_marker(L.model_turn(fabricated_only, "zh")) is not None:
+        fails.append("a marker that appears ONLY inside the model's fabricated next problem counts "
+                     "as answer-present -- 'anywhere' must be bounded by model_turn, or the metric "
+                     "credits an answer to a question the model invented for itself")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:
