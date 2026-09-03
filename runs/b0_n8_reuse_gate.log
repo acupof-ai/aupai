@@ -1,0 +1,16 @@
+ckpt_b0_sd_unlooped.pt: cfg.conv_doc_isolated=False, per-KDA-mixer flags={'False'}
+
+== flag OFF, cu PASSED, against the stored pre-flag per-block ce_sum values
+  domain               blocks  exact       max|d|    max rel
+  math_owm_stage2          64     64 0.000000e+00   0.00e+00
+  en_c4_stage2             64     64 0.000000e+00   0.00e+00
+  cot                      64     64 0.000000e+00   0.00e+00
+  textbook_30b             64     64 0.000000e+00   0.00e+00
+  chatml                   64     64 0.000000e+00   0.00e+00
+  chat_qa                  64     64 0.000000e+00   0.00e+00
+  zh_web                   64     64 0.000000e+00   0.00e+00
+  code_py_starcoder        64     64 0.000000e+00   0.00e+00
+  code_py_rp1t             64     64 0.000000e+00   0.00e+00
+
+  576/576 blocks bit-identical; worst |diff| 0.000000e+00 (none), worst relative 0.00e+00
+  VERDICT: REUSE ckpt_b0_sd_unlooped.pt as the N8 current arm. Every block reproduces its pre-flag value exactly, so the flag-off path is the path that produced the record and the A/B's two arms differ only in the flag.
