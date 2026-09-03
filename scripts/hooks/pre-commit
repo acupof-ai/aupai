@@ -18,7 +18,6 @@ Regenerating a derived file on every commit made it the top friction cause, and
 in a merge commit the regen ran after git had built the tree, so it could only
 ever land in the index -- permanently dirty, aborting the next merge.
 """
-import atexit
 import fnmatch
 import hashlib
 import os
@@ -303,16 +302,50 @@ def main():
         sys.path.insert(0, os.path.join(repo_root(), "scripts"))
         import ledger_audit as _la
 
-        _staged_ledgers = [f for f in staged("M") if f in _la.PREDICATE]
         _why = os.environ.get("AUPAI_LEDGER_REWRITE", "").strip()
         _hits = []
         _dups = []
+        # ON A MERGE, THE OTHER PARENT IS ALSO A BASELINE. The comparison below is
+        # HEAD-vs-index, i.e. OURS against the result, and it cannot see a row that only
+        # THEIRS had -- exactly the shape 6e reported (e1's params_leg amendment). MERGE_HEAD
+        # is on disk for the whole of a conflicted merge and for `git commit` finishing any
+        # merge, so a merge commit gets both baselines and an ordinary commit gets one.
+        _merge_head = subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                                     capture_output=True, text=True).stdout.strip()
+        # AND THE FILE LIST CANNOT COME FROM `staged("M")` ON A MERGE. MEASURED 2026-09-03:
+        # a merge resolved by taking OURS whole leaves the ledger byte-identical to HEAD, so
+        # `git diff --cached` reports NOTHING staged -- the worst case is invisible to the
+        # step that exists to catch it, because the only evidence is in the other parent.
+        # On a merge, examine every ledger either parent touched.
+        _staged_ledgers = [f for f in staged("M") if f in _la.PREDICATE]
+        if _merge_head:
+            _other_touched = subprocess.run(
+                ["git", "diff", "--name-only", f"{_merge_head}...HEAD", "--"],
+                capture_output=True, text=True)
+            _both = subprocess.run(
+                ["git", "diff", "--name-only", _merge_head, "--"],
+                capture_output=True, text=True)
+            for _f in set(_other_touched.stdout.split()) | set(_both.stdout.split()):
+                if _f in _la.PREDICATE and _f not in _staged_ledgers:
+                    _staged_ledgers.append(_f)
         for f in _staged_ledgers:
             head = subprocess.run(["git", "show", f"HEAD:{f}"], capture_output=True, text=True)
             index = subprocess.run(["git", "show", f":{f}"], capture_output=True, text=True)
             if head.returncode or index.returncode:
                 continue
             bad = _la.regressions(f, head.stdout, index.stdout)
+            if _merge_head:
+                other = subprocess.run(["git", "show", f"{_merge_head}:{f}"],
+                                       capture_output=True, text=True)
+                if not other.returncode:
+                    # Same predicate, other baseline: one place to be wrong. A key missing
+                    # from both comparisons is reported once -- dedup on the key, since the
+                    # operator's fix is the same row either way.
+                    seen = {b[0] for b in bad}
+                    for b in _la.regressions(f, other.stdout, index.stdout):
+                        if b[0] not in seen:
+                            bad.append(b)
+                            seen.add(b[0])
             if bad:
                 _hits.append((f, bad))
             # A duplicate key, on the one ledger whose writer cannot produce one. Scoped by
@@ -384,8 +417,13 @@ def main():
             else:
                 _ledger_note += (f", {len(_dups)} pre-existing duplicate key(s) "
                                  f"(none added)")
-    except ImportError:
-        _ledger_note = ", ledger_audit absent (SKIP)"
+    except ImportError as _ie:
+        # NAME THE MODULE THAT FAILED. "ledger_audit absent" was misleading twice over: the
+        # module can be present and its own import of test_ledger_predicates the thing that
+        # failed, which is what happened in this file's world 7 while I was writing it -- the
+        # step silently did nothing and I read it as the hook failing to catch the defect.
+        # A SKIP that misattributes its cause costs more than a SKIP that says nothing.
+        _ledger_note = f", ledger audit SKIPPED: {_ie.__class__.__name__}: {_ie}"
     print(f"hook: ledger-append-only {time.time() - t0:.2f}s "
           f"({len(_staged_ledgers) if '_staged_ledgers' in dir() else 0} staged"
           f"{_ledger_note})", file=sys.stderr)
@@ -1219,9 +1257,92 @@ def _selftest():
     # measure. Deleting them rather than keeping them green on a code path that no longer
     # exists: a world that cannot fail certifies nothing, and four passing worlds guarding
     # deleted code would read as coverage.
+    # WORLD 7 (must REFUSE): a MERGE that drops a row only the OTHER parent had. The
+    # HEAD-vs-index comparison is blind to this by construction -- ours never had the row, so
+    # nothing is missing relative to ours -- and 6e reported exactly that shape on
+    # runs/experiments.jsonl. Both directions: the same merge keeping BOTH rows must pass, or
+    # the world proves only that the hook refuses merges.
+    d6 = tempfile.mkdtemp()
+    try:
+        def git6(*a, cwd=d6):
+            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
+                                  text=True, env=clean)
+        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
+                  ("config", "user.name", "t")):
+            git6(*a)
+        os.makedirs(os.path.join(d6, "runs"), exist_ok=True)
+        os.makedirs(os.path.join(d6, "scripts"), exist_ok=True)
+        # The REAL predicate, not a stub: copy ledger_audit.py so the world exercises the
+        # same code the hook imports. A hand-written stub would agree with whatever the hook
+        # does, which is the shape this file's own selftest notes warn about.
+        # `hook` is this file's realpath, so scripts/ledger_audit.py sits two levels up from
+        # scripts/hooks/pre-commit. Derived, not a constant: a hard-coded root would be the
+        # wrong tree in a linked worktree.
+        # BOTH FILES. ledger_audit imports test_ledger_predicates at module scope, and the
+        # hook's ledger step is wrapped in `except ImportError: SKIP` -- so copying only
+        # ledger_audit.py makes the step silently do nothing and the world reports the defect
+        # as un-caught when the hook would have caught it. Measured while writing this world.
+        _src_scripts = os.path.dirname(os.path.dirname(hook))
+        for _dep in ("ledger_audit.py", "test_ledger_predicates.py"):
+            shutil.copyfile(os.path.join(_src_scripts, _dep),
+                            os.path.join(d6, "scripts", _dep))
+        led = os.path.join(d6, "runs", "experiments.jsonl")
+        base_rows = ['{"name":"r1","started":"2026-09-01 00:00","status":"ok"}']
+        with open(led, "w") as fh:
+            fh.write("\n".join(base_rows) + "\n")
+        with open(os.path.join(d6, ".gitattributes"), "w") as fh:
+            fh.write("runs/experiments.jsonl merge=union\n")
+        git6("add", "-A")
+        git6("commit", "-q", "-m", "base")
+
+        ours_row = '{"name":"ours","started":"2026-09-02 00:00","status":"ok"}'
+        theirs_row = '{"name":"theirs","started":"2026-09-03 00:00","status":"ok"}'
+        git6("checkout", "-qb", "theirs")
+        with open(led, "a") as fh:
+            fh.write(theirs_row + "\n")
+        git6("commit", "-qam", "theirs")
+        git6("checkout", "-q", "main")
+        with open(led, "a") as fh:
+            fh.write(ours_row + "\n")
+        git6("commit", "-qam", "ours")
+
+        hooks6 = os.path.join(d6, ".git", "hooks")
+        os.makedirs(hooks6, exist_ok=True)
+        shutil.copyfile(hook, os.path.join(hooks6, "pre-commit"))
+        os.chmod(os.path.join(hooks6, "pre-commit"), 0o755)
+
+        # POSITIVE FIRST: the honest union merge keeps both rows and must PASS. Without this
+        # the negative below would pass on a hook that refuses every merge of a ledger.
+        git6("merge", "--no-edit", "--no-commit", "theirs")
+        r_ok = subprocess.run([os.path.join(hooks6, "pre-commit")], cwd=d6,
+                              capture_output=True, text=True, env=clean)
+        body = open(led).read()
+        if ours_row not in body or theirs_row not in body:
+            fails.append("world 7 precondition: the union merge did not keep both rows, so "
+                         "the positive case tests nothing")
+        elif r_ok.returncode != 0:
+            fails.append("world 7 positive: the hook refused a merge that kept BOTH rows "
+                         f"({(r_ok.stderr or '')[:120]})")
+
+        # NEGATIVE: drop the row only THEIRS had, exactly what a hand resolution does.
+        with open(led, "w") as fh:
+            fh.write("\n".join(base_rows + [ours_row]) + "\n")
+        git6("add", "runs/experiments.jsonl")
+        r_bad = subprocess.run([os.path.join(hooks6, "pre-commit")], cwd=d6,
+                               capture_output=True, text=True, env=clean)
+        out6 = r_bad.stdout + r_bad.stderr
+        if r_bad.returncode == 0:
+            fails.append("world 7: a merge dropping a row only the OTHER parent had was "
+                         "allowed -- the HEAD-vs-index comparison cannot see it and nothing "
+                         "else looked")
+        elif "theirs" not in out6:
+            fails.append(f"world 7: refused but did not NAME the dropped row: {out6[:160]}")
+    finally:
+        shutil.rmtree(d6, ignore_errors=True)
+
     for f in fails:
         print("SELFTEST FAIL: " + f, file=sys.stderr)
-    print("pre-commit selftest: %s (6 worlds)" % ("FAIL" if fails else "ok"),
+    print("pre-commit selftest: %s (7 worlds)" % ("FAIL" if fails else "ok"),
           file=sys.stderr)
     return 1 if fails else 0
 
