@@ -163,6 +163,40 @@ def control_section():
     return "".join(out)
 
 
+# 98-3: the seven nodes of docs/standards/roadmap_0903.md (fb ruling 2026-09-03).
+# Node text mirrors the doc; state is read live from runs/tasks.jsonl by row id.
+ROADMAP_NODES = [
+    ("fb-5",  "N1 参数腿启动闸", "fb", "exp 行记 PEAK/STARTUP/code_fp，都在 95.22 GiB 以下才放行", "09-03"),
+    ("fb-6",  "N2 参数 vs 数据判决", "fb", "两条腿 domain_loss 差值（nat）带配对 SE，定 30B 形状", "09-03"),
+    ("e1-29", "N3 基准 v2", "e1", "只留三个指标：humaneval_bpb、math_bpb、lambada_en，差值带配对 SE", "09-05"),
+    ("3b-11", "N4 30B 语料盖章", "3b", "8 个域全进 mix_30b.json，每域过审计、13-gram、去重", "09-06"),
+    ("e1-30", "N5 预训练后就绪", "e1", "post_pretrain_plan.md §5 零未决", "09-06"),
+    ("de-43", "N6 删除轮", "de", "每个 concern 只留唯一产物，reachability 和未关任务数进收尾行", "09-05"),
+    ("e1-31", "N7 中层循环", "e1", "只做推理 A/B（中间 4 层走两次），赢了才进 SFT 对照", "A 09-03 / B 09-04"),
+]
+
+
+def roadmap_section():
+    tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
+    if not os.path.exists(tasks_p):
+        return ""
+    state = {}
+    for ln in open(tasks_p, encoding="utf-8"):
+        if ln.strip():
+            t = json.loads(ln)
+            state[t["id"]] = t.get("state", "?")
+    out = ["<h2>路线图（09-03 裁定）</h2>",
+           '<div class=head style="border-top-color:#2563eb">']
+    for tid, node, owner, exit_no, date in ROADMAP_NODES:
+        st = state.get(tid, "无任务行")
+        mark = {"done": "完成", "open": "未完成", "blocked": "卡住"}.get(st, st)
+        colour = {"done": "#16a34a", "open": "#d97706", "blocked": "#dc2626"}.get(st, "#6b7280")
+        out.append(f'<div class=su>{html.escape(node)}（{html.escape(owner)}，{html.escape(date)}）'
+                   f' — <b style="color:{colour}">{mark}</b>：{html.escape(exit_no)}</div>')
+    out.append("</div>")
+    return "".join(out)
+
+
 def queue_section():
     tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
     roster_p = os.path.join(REPO, "runs", "roster.json")
@@ -277,6 +311,7 @@ def render(rows):
                 parts.append(f'<div class=su>{html.escape(c["sub"])}</div>{asof_html}</div>')
             parts.append('</div>')
     parts.append(control_section())
+    parts.append(roadmap_section())
     parts.append(queue_section())
     rest = rows
     parts.append("<h2>时间线</h2><ol>")
