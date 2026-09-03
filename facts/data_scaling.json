@@ -584,6 +584,40 @@
    "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
    "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
    "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names."
+  },
+  {
+   "id": "ds.beta_data_leg_206m_early",
+   "value": 0.647,
+   "unit": "dimensionless (exponent beta in L = E + B*D^-beta)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "runs/data_leg_206m_8b.log val points at steps 500/1500/4500 (2.718/2.321/2.126)",
+   "config": {
+    "run": "data_leg_206m_8b",
+    "model": "206.1M d1024 L12 h8 ffn3072",
+    "mix": "data/mix_200m_8b.json",
+    "world": 4,
+    "cards": "0-3",
+    "tokens_per_step": 524288,
+    "fp8": true,
+    "grad_ckpt": false,
+    "triple": "geometric k=3 on STEPS (500,1500,4500) = 0.262B/0.786B/2.359B tokens",
+    "estimator": "beta = -ln((L1500-L4500)/(L500-L1500))/ln(3), closed form on a geometric triple",
+    "nine_point_fit": {
+     "E": 1.9261,
+     "B": 147800.0,
+     "beta": 0.6262,
+     "max_abs_residual": 0.01078,
+     "residual_signs": "-++--++--",
+     "longest_same_sign_run": 2
+    }
+   },
+   "uncertainty": "+-0.007 from print precision alone (val prints 3 decimals, eps=0.0005, propagated through both differences with L1500 entering twice). VAL-TO-VAL NOISE IS UNMEASURED AND IS THE LARGER TERM -- this run has no repeat at a fixed step, so the true bound is wider by an unknown factor. Quote the 0.007 as a floor, never as the error bar.",
+   "boundary": "Measured over 0.262B-2.359B tokens of an 8.000B run, i.e. the first 29%. It describes the EARLY curve, still carrying warmup and the schedule's transient, and is not the asymptotic data exponent. It also does NOT enter the params-vs-data comparison: that comparison is two legs at equal FLOPs (9.8942e18) read off their final val, and needs no exponent at all.",
+   "guard_phrases": [
+    "the data exponent is 0.647",
+    "beta = 0.647 +- 0.007"
+   ]
   }
  ]
 }
