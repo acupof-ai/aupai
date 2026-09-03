@@ -64,7 +64,9 @@ def main():
         if not cond:
             fails.append(name)
 
-    mdl, _cfg, _vocab = load_checkpoint(CKPT)
+    # (model, cfg) -- two values. Read from scripts/loader.py:44 after I guessed three and the
+    # gate crashed on the unpack; cfg carries vocab_id rather than it being returned separately.
+    mdl, _cfg = load_checkpoint(CKPT)
     mdl = mdl.cuda().eval()
     pack = torch.load(PACK, map_location="cpu", weights_only=False)
     ids = pack["input_ids"][:ROWS].cuda()
