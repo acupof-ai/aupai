@@ -133,7 +133,12 @@ def main():
                 # forward returns (logits, hidden) -- model.py:571. Taking [0] rather than
                 # assuming a bare tensor; the tuple is why the first bf16 run failed on
                 # .float().
-                logits = mdl(ids, cu)[0]
+                # cu BY KEYWORD. forward's signature is (idx, targets=None, cu=None, ...) at
+                # model.py:533, so `mdl(ids, cu)` bound cu to TARGETS -- and with targets set the
+                # method returns (hidden, None), so [0] was the hidden state. cross_entropy then
+                # saw n_classes = 1024, the model dim, and CUDA asserted `t >= 0 && t < n_classes`
+                # on every label above 1023. The labels were never out of range; the classes were.
+                logits = mdl(ids, cu=cu)[0]
                 lv = torch.nn.functional.cross_entropy(
                     logits.float().view(-1, logits.shape[-1]), labels.view(-1),
                     ignore_index=-100)
