@@ -174,7 +174,7 @@ def main():
         solo = [states(*alone(ids)) for _tid, ids in sel]
         print(f"\n== {label}: {len(sel)} documents, {ids_p.shape[1]} tokens, "
               f"{cu_p.numel() - 1} segments")
-        print(f"  {'blk':>3s} {'kind':4s} {'maxdiff':>9s} {'first3':>9s} {'rest':>9s}   "
+        print(f"  {'blk':>3s} {'kind':4s} {'maxdiff':>9s} {'first3':>9s} {'rest':>9s} {'ulps':>8s}   "
               f"where it lives")
         first = None
         for i in sorted(sp):
@@ -194,7 +194,14 @@ def main():
             where = ("boundary only (<=3 positions, k=4 conv shape)" if f3 > t >= rest
                      else "throughout the document" if rest > t
                      else "agrees")
-            print(f"  {i:3d} {kinds[i]:4s} {worst:9.4f} {f3:9.4f} {rest:9.4f}   {where}")
+            # IN ULPS AT THE LAYER'S OWN SCALE, not just in absolute units. A flat number cannot
+            # judge blocks whose absmax differs 50x: block 9 runs at 4416 where one bf16 ulp is
+            # 17.25, so its 32.0 is under 2 ulps, while block 10 at absmax 84 has an ulp of 0.33 and
+            # the same 32.0 there would be 97 ulps. The gate ("<= the parity noise measured in the
+            # same run", which that section reports in ulps too) is only meaningful in these units.
+            ulp = amax[i] / 256.0  # bf16 keeps 8 mantissa bits
+            print(f"  {i:3d} {kinds[i]:4s} {worst:9.4f} {f3:9.4f} {rest:9.4f} "
+                  f"{worst / max(ulp, 1e-9):7.1f}u   {where}")
             if first is None and worst > t:
                 first = (i, kinds[i], worst, f3, rest)
         if first is None:
@@ -216,11 +223,12 @@ def main():
     r1, r2 = states(ids_b, cu_b), states(ids_b, cu_b)
     print(f"  {'blk':>3s} {'kind':4s} {'rerun':>9s} {'absmean':>9s} {'absmax':>9s}   "
           f"tol used below")
-    scale = {}
+    scale, amax = {}, {}
     for i in sorted(r1):
         rerun = (r1[i] - r2[i]).abs().max().item()
         am = r1[i].abs().mean().item()
         scale[i] = max(0.05, 0.25 * am)  # a diff under a quarter of the layer's own mean is noise
+        amax[i] = r1[i].abs().max().item()  # for the ulp column: bf16 spacing scales with magnitude
         print(f"  {i:3d} {kinds[i]:4s} {rerun:9.4f} {am:9.4f} "
               f"{r1[i].abs().max().item():9.2f}   {scale[i]:.4f}")
     nondet = max((r1[i] - r2[i]).abs().max().item() for i in r1)
