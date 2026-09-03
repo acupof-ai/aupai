@@ -485,6 +485,16 @@ def main():
         # control that is not --hf or scored other bytes), and that the compression anchors are
         # computed rather than quoted from the one prose row that held them.
         "eval/n3_report.py",
+        # N7 Stage A's middle-layer loop: no card, no model, no data -- the selftest runs the real
+        # looped_body against a stub whose ledger arithmetic is hand-derived, so option 3's value
+        # (168) is a number the fixture knows independently. It pins the ruling's three readings
+        # apart, and needs BOTH assertions to do it: the value separates option 3 from option 2
+        # (overwrite gives 146) while the source count separates it from option 1 (append gives
+        # final_ar 5 sources instead of 4) -- either alone passes one wrong implementation. Also
+        # pins that the looped BLOCK replays s0,s1,s0,s1 and not s0,s0,s1,s1, which a one-sublayer
+        # stub cannot see. Six broken worlds verified red, one per reading plus n-double-advance,
+        # a silent no-op loop, and the removed attn_res guard.
+        "eval/loop_wrapper.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.
