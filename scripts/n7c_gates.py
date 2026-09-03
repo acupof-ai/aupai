@@ -13,17 +13,21 @@ would tell me which.
   A2. a deliberately WRONG mask -- fully bidirectional -- must MOVE the loss. 6e's addition, and
      it is the gate A cannot be: bitwise equality is also what a mask that never reaches the
      kernel produces.
-  B. prefix with prompt_len = the FULL ROW must not read BELOW the causal loss. With P = T
-     every position is inside the prompt, so attention is bidirectional everywhere -- if the
-     mask leaks, this is where the loss collapses. A loss below causal here means the mask
-     leaks and Stage C stops.
+  B. prefix at the REAL per-document prompt lengths must not read BELOW the causal loss. The
+     prompt ends before the first supervised token by construction, so no supervised position may
+     become visible and the loss cannot fall. This is the configuration the arms train in, which
+     is the only configuration whose leak matters.
+  B2. P = T MUST collapse the loss, as a positive control. With every position inside the prompt
+     each supervised token attends to its own label, so the loss has to fall far below causal. If
+     it does not, the bidirectional half never reached the kernel and B would pass by being
+     causal everywhere -- which is how a no-op mask passes a leak test.
   C. prefix with prompt_len = 0 must reproduce the causal loss EXACTLY on response tokens.
      This separates mask CONSTRUCTION from mask APPLICATION: with no prompt the prefix
      predicate reduces to `kv <= q`, so any difference is in how the mask is wired in, not in
      what it says.
   D. a prompt length on ONE document alone must move the loss, by less than the all-document
-     case. B and C both hold for a mask that ignores aux_tensors entirely -- B by being
-     bidirectional, C by being causal -- so neither shows the per-document lookup is read.
+     case. B2 and C both use a uniform aux tensor -- B2 all bidirectional, C all causal -- so
+     neither shows the lookup varies with the document index.
 
 WHY THE LOSS AND NOT THE MASK. eval/prefix_mask.py's selftest already checks the predicate as
 pure python, off-pod, thirteen ways. What that cannot check is whether the kernel APPLIES what
@@ -32,17 +36,25 @@ arguments, or indexes aux_tensors in the wrong space, passes every predicate tes
 different model. So these gates read the LOSS through the real forward pass on the real
 checkpoint, which is the only observable that moves when the mask is actually in effect.
 
+A LOW LOSS IS NOT BY ITSELF A LEAK, and B has now been wrong twice for that reason.
+  First: B and C read 0.792 and 0.848 against a causal 1.614 and both said "THE MASK LEAKS" --
+  while the mask was correct and the AUX TENSOR was the wrong shape, row-sized (4) against 61
+  documents, so most lookups ran out of bounds and read large enough to put every position inside
+  the prompt.
+  Second: with the shape fixed, B at P = T read 0.087. Also not a leak -- P = T ASKS for
+  bidirectional attention everywhere. The false premise was in the comment beside it, "with P = T
+  the pack supervises nothing": the loss mask lives in `labels`, which P does not touch, so every
+  supervised position was still supervised and now saw its own label. The collapse was guaranteed
+  by construction and the gate could only ever fail.
+So B now runs at the real lengths and P = T is kept as B2, a positive control that REQUIRES the
+collapse. Gate D exists because the first failure looked exactly like the leak B was written to
+catch.
+
 GATE B'S DIRECTION IS THE SUBTLE ONE. A leaking mask makes the loss LOWER, not higher, because
 leakage is free information. So the failure condition is `prefix_loss < causal_loss`, and a
 prefix loss ABOVE causal is fine at this gate -- bidirectional prompt attention on a model
 trained causally should hurt. Testing for "close to causal" would reject the healthy case and
 accept nothing useful.
-
-AND A LOW LOSS IS NOT ONLY A LEAK. The first run of B and C read 0.792 and 0.848 against a
-causal 1.614 and both said "THE MASK LEAKS" -- while the mask was correct and the AUX TENSOR was
-the wrong shape: row-sized (4) against 61 documents, so most lookups were out of bounds and read
-large enough to put every position inside the prompt. Gate D exists because that failure looked
-exactly like the one B was written to catch.
 """
 import os
 import sys
@@ -236,21 +248,58 @@ def main():
     # 4 moved the loss by -7.65e-01, the same all-zero aux at length 61 reproduced causal
     # bitwise. A gate that reads "leak" for an out-of-bounds index is a gate that would have
     # blocked a correct mask, so the length is now derived from cu rather than from ids.shape[0].
+    # GATE B -- THE LEAK TEST, AT THE REAL PROMPT LENGTHS, and this is the second time B has had
+    # to be rewritten because its premise was wrong rather than its arithmetic.
+    #
+    # B WAS "P = T must not read below causal", and it read 0.0874 against a causal 1.6139. That
+    # is not a leak, it is the DEFINITION of what P = T asks for: every position of every document
+    # is inside the prompt, so attention is bidirectional everywhere, and prefix_mask's selftest
+    # case 4 asserts exactly that. What made the old gate wrong was the sentence I wrote next to
+    # it -- "with P = T the pack supervises nothing". The loss mask lives in `labels`, which P does
+    # not touch; every supervised position was still supervised, and now attended to its own label.
+    # A collapse to 0.087 was guaranteed by construction, so the gate could only ever fail.
+    #
+    # THE LEAK CONDITION THAT IS ACTUALLY LOAD-BEARING is at the REAL prompt lengths: the prompt
+    # ends before the first supervised token by construction (doc_prompt_lengths reads the boundary
+    # from the loss mask), so no supervised position may become visible to any query and the loss
+    # must not fall below causal. That is the configuration the arms train in, so it is also the
+    # only configuration whose leak matters.
+    real = doc_prompt_lengths(labels, cu).to(ids.device)
+    r, _ = loss_with(prefix_mod, real)
+    nz = int((real > 0).sum())
+    check("B: at the REAL prompt lengths the loss does not fall BELOW causal (no leak)",
+          r >= base,
+          f"prefix {r:.10f} < causal {base:.10f} by {base - r:.3e} -- a supervised position is "
+          "visible to some query, which is a leak in the configuration the arms train in")
+    print(f"       {ndoc} documents over {ids.shape[0]} rows, {nz} carry a prompt "
+          f"(lengths {real[real > 0].tolist()}); loss {r:.6f} ({r - base:+.6f} vs causal). A "
+          f"loss ABOVE causal is the expected cost of bidirectional prompt attention on a "
+          f"causally trained model. A delta of EXACTLY zero would not be good news -- it is the "
+          f"signature of a mask that is not applied.")
+
+    # B2 -- P = T IS STILL RUN, as a POSITIVE CONTROL rather than as a leak test. With every
+    # position inside the prompt each supervised token attends to its own label, so the loss MUST
+    # collapse far below causal. If it does not, the bidirectional half of the predicate is not
+    # reaching the kernel and B above would pass by being causal everywhere -- which is precisely
+    # how a no-op mask passes a leak test.
     full = torch.full((ndoc,), T, device=ids.device)
     b, _ = loss_with(prefix_mod, full)
-    check("B: full-row prompt does not read BELOW causal (no leak)", b >= base,
-          f"prefix {b:.10f} < causal {base:.10f} by {base - b:.3e} -- THE MASK LEAKS")
+    check("B2: P = T DOES collapse the loss (the bidirectional half is real)", b < base - 0.1,
+          f"P=T {b:.10f} vs causal {base:.10f}, diff {b - base:.3e} -- with every position "
+          "inside the prompt, every label is visible to its own query and the loss has to fall. "
+          "It did not, so the bidirectional half of the mask is not in effect")
 
     zero = torch.zeros((ndoc,), device=ids.device)
     c, _ = loss_with(prefix_mod, zero)
     check("C: zero prompt length reproduces causal exactly", c == base,
           f"prefix@P=0 {c:.10f} vs causal {base:.10f}, diff {c - base:.3e}")
 
-    # GATE D -- THE PROJECTION IS LIVE PER DOCUMENT. Gates B and C both hold for a mask that
-    # ignores aux_tensors entirely: B by being bidirectional, C by being causal. Neither shows
-    # that the per-document lookup is READ. Giving exactly one document a full prompt length and
-    # leaving every other at zero must move the loss, and by less than the all-bidirectional
-    # case -- that is a change only a live per-document read can produce.
+    # GATE D -- THE PROJECTION IS LIVE PER DOCUMENT. B2 and C both hold for a mask that ignores
+    # the per-document INDEX: B2 by making everything bidirectional, C by making everything
+    # causal, and both use a uniform aux tensor. Neither shows the lookup varies with b. Giving
+    # exactly one document a full prompt length and leaving every other at zero must move the
+    # loss, and by less than the all-bidirectional case -- that is a change only a live
+    # per-document read can produce.
     one = torch.zeros((ndoc,), device=ids.device)
     one[0] = T
     d, _ = loss_with(prefix_mod, one)
@@ -260,14 +309,6 @@ def main():
           f"{b - base:+.3e}. Equal to causal means aux_tensors is not read; equal to the "
           "all-documents case means the index is ignored and every document gets the same value")
 
-    real = doc_prompt_lengths(labels, cu).to(ids.device)
-    r, _ = loss_with(prefix_mod, real)
-    nz = int((real > 0).sum())
-    print(f"  informational: {ndoc} documents over {ids.shape[0]} rows, {nz} carry a prompt "
-          f"(lengths {real[real > 0].tolist()}) -> loss {r:.6f} ({r - base:+.6f} vs causal). "
-          f"NOT a gate: a higher loss here is the expected cost of bidirectional prompt "
-          f"attention on a causally trained model. A delta of EXACTLY zero is not good news -- "
-          f"it is the signature of a mask that is not applied.")
     # WHAT THE DOCUMENT COUNT MEANS FOR THE EXPERIMENT, printed because it bounds the result and
     # is not visible anywhere else: doc_cu_seqlens opens a document at every row start and after
     # every <eos> run, so a 4x4096 SFT batch holds 61 documents and only the FIRST document of
