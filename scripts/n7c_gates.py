@@ -35,6 +35,15 @@ would tell me which.
      effect on the loss was BITWISE ZERO -- so this is the gate that decides whether the two arms
      can differ at all. See "GATE F IS THE ONE THAT MATTERS" below.
 
+WHAT NONE OF THESE GATES CAN ESTABLISH, and it cost two 500-step arms to learn: they all read the
+loss of a FROZEN model on ONE batch. "The mask says and does what I think" and "the mask does not
+destabilise optimisation" are different claims, and no static check gets from the first to the
+second. Both arms passed all six gates and then DIVERGED in training -- loss rising monotonically
+from ~1.45 to 3.07 while the causal twin fell 1.581 -> 1.158 on the same seed, pack and
+checkpoint, with step 10 byte-identical. That is not a gate that was written wrong; it is the
+boundary of what this file can do. So the last gate before a 500-step launch is not in this file:
+run ~100 steps and read the curve against the twin's. Three minutes buys what six gates cannot.
+
 EVERY GATE RUNS PER ARM, on that arm's own layer set (eval/prefix_mask.py's PREFIX_ARMS). A gate
 certified on one layer set says nothing about another, which is not a hypothetical: layer 11 alone
 passed A through E while being a null by construction.
