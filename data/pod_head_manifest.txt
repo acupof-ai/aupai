@@ -1,4 +1,4 @@
-948b894af30f288d5c227ff5b2f72afa868377f9ead2de3213342404d1372cda  AGENTS.md  docs  644
+b6f60180f42480f5c54a8a9a4e19ab787f3bdfe8eeb8e418f2dac39d5c618c53  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 8ff35228786ec39043bb7c7ba80eaae2b64bf0066851f9f347c0c34982fd7754  algorithms/attnres_fused.py  training  644
 8a62cdebba747d0897025b0795547b8f2df5419f4f1660d59a4b0a73c77193bb  algorithms/attnres_triton.py  docs  644
@@ -280,7 +280,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-f5a99dd5cebac9e850dd9f03d661ed9288e57e69e9fdf4ec780c2a9caa438ba9  scripts/harness.py  training  644
+83de48f07ff7e8ee1653b27a36464d16aebd7214ad18d8a823f513783b39ec6c  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
