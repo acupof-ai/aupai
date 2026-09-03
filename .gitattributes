@@ -11,13 +11,20 @@ runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
 runs/friction.jsonl merge=union
 
-# Derived files: regenerate instead of conflicting. Both are produced from a source of
-# truth, so "pick a side" is never the right resolution -- these two blocked six merges on
-# 2026-09-03 (runs/friction.jsonl, top cause by count).
+# EXPERIMENTS.md is DERIVED (exp.py render from runs/experiments.jsonl), so "pick a side" is
+# never the right resolution: the driver regenerates it. MEASURED 2026-09-04 that it needs
+# one -- two branches each adding a row and rendering produce a real
+# `CONFLICT (content): Merge conflict in EXPERIMENTS.md`, because render inserts newest-first
+# and both sides write the same top lines. Its source merges by union and does not conflict.
 #
-# THE COMMAND IS NOT HERE. `git config merge.<name>.driver` holds it, per clone, untracked:
-# these two lines alone give a merge that cannot find the driver. `harness install-hooks`
-# writes the config; `python3 scripts/merge_drivers.py --check` says whether both halves
-# are present in THIS clone.
-data/pod_head_manifest.txt merge=aupai-manifest
+# THE COMMAND IS NOT HERE. `git config merge.aupai-experiments.driver` holds it, per clone
+# and untracked: this line alone gives a merge that cannot find its driver, the same shape as
+# a hook edited in a branch worktree. `harness install-hooks` writes the config;
+# `python3 scripts/merge_drivers.py --check` says whether both halves are present here.
+#
+# data/pod_head_manifest.txt had a driver and it is REMOVED: the file is untracked now, and
+# the driver never fired for it anyway. A merge driver only runs on a CONFLICT, and two
+# branches touching different manifest lines merge cleanly -- git spliced one side's line
+# with the other side's file content at 81f091af, so main asserted a hash for a file it did
+# not contain, with the driver configured and attributed the whole time.
 EXPERIMENTS.md merge=aupai-experiments
