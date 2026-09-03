@@ -14,8 +14,9 @@ and the LR schedule. The two step counts are therefore two independent runs and 
 below is labelled as such -- "still closing" is a statement about two runs, not about one curve.
 
 WHAT THIS SCRIPT DOES NOT DO: decide. It prints the four cells, the diagonal delta with its
-paired SE, both mismatch cells, and the 250-step values beside them. The reading rule was
-pre-registered in the exp row before either arm launched.
+paired SE, both mismatch cells, the per-item win count as a SEPARATE labelled measurement, and
+the 250-step values beside them. The reading rule was pre-registered in the exp row before either
+arm launched.
 """
 import json
 import os
@@ -96,9 +97,9 @@ def main():
         pb = os.path.join(OUT, f"n7c_2x2_{b}.preds.jsonl")
         r = paired_se(pa, pb)
         # r's OWN z and se, not recomputed here: it returns them, and a second division is a
-        # second chance to divide by the wrong SE. There is no per-item win count in the return,
-        # so none is printed -- the 103/164 figure from the 250-step run came from a separate
-        # count over the preds and is not manufactured here.
+        # second chance to divide by the wrong SE. The per-item win count is NOT taken from this
+        # return -- it has none -- and is printed in its own block below, labelled as a separate
+        # measurement so the two are never read as one.
         se = r.get("paired_se")
         zz = r.get("z")
         se_s = "unavailable" if se is None else f"{se:.4f}"
@@ -110,6 +111,35 @@ def main():
         if r.get("seed_sigma") is None:
             print("  seed sigma UNMEASURED: this SE says the items agree on a direction, "
                   "not that another seed would land here.")
+
+    # PER-ITEM WIN COUNT, as its own measurement and deliberately OUTSIDE the paired_se block.
+    # The user reads this number and the 250-step run reported it as 103/164, so it is printed the
+    # same way -- but paired_se does not return it, and putting it inside that block would make two
+    # different measurements read as one. Definition VERIFIED against the 250-step preds before
+    # being written here: strictly worse on the id INTERSECTION, rows with a non-null error
+    # excluded, ties reported separately rather than folded into either side. That recipe
+    # reproduces 103/164 exactly on runs/n7_2x2, which is how I know it is the same count and not
+    # a similar one.
+    print("\n== per-item win count (separate measurement, not from paired_se)")
+
+    def per_item(pa, pb):
+        def load(p):
+            with open(p, encoding="utf-8") as fh:
+                return {r["task_id"]: r["bpb"] for r in map(json.loads, fh)
+                        if r.get("error") is None}
+        x, y = load(pa), load(pb)
+        ids = sorted(set(x) & set(y))
+        return (sum(1 for i in ids if y[i] > x[i]),
+                sum(1 for i in ids if y[i] == x[i]), len(ids))
+
+    for label, a, b in (("diagonal", "UtSu", "LtSl"),
+                        ("mismatch-A (unlooped weights, looped scoring)", "UtSu", "UtSl"),
+                        ("mismatch-B (looped weights, unlooped scoring)", "UtSu", "LtSu")):
+        w, t, n = per_item(os.path.join(OUT, f"n7c_2x2_{a}.preds.jsonl"),
+                           os.path.join(OUT, f"n7c_2x2_{b}.preds.jsonl"))
+        print(f"  {label}: {w}/{n} items worse" + (f", {t} tied" if t else ""))
+    print("  250-step diagonal for comparison: 103/164 worse (a separate run, "
+          "reproduced from runs/n7_2x2 with this same recipe)")
 
 
 if __name__ == "__main__":
