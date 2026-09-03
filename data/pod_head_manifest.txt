@@ -217,7 +217,7 @@ f36c50e9805960cbc1eb3911daa44c7a0a145d0baabb7a8fcd8eeeec2113026a  model.py  trai
 1633b9d5f5cfe478cb86ba9aeced109e5b273002f2b0f35fa967d5451ba8dde4  probes/profile_step.py  docs  644
 c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_outlier.py  docs  644
 87a68d88da81013a100944968af1b297c168ccb0a07ce579c7ef8ec5a2f5c602  probes/t71_depth_lr_rule.py  docs  644
-3716478e16d2fc22ce239cb6c85608151c2135d689c9f5b1a79454417dcf42b2  run_ddp.sh  training  755
+738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 b804f5796818352eac0b8aab9ce203df6bb2585398f15e1faa730ea5da7057dd  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
 2e6a9bb452b48760ba22ba9b81aa85f4f13e29f5eef8a0121dc664a4a813cd3a  runs/experiments.jsonl  docs  644
@@ -263,7 +263,7 @@ d301e0d7cf75c56268416cc0f7f6035e0a590e719d76cca90ed2fcb440982e52  scripts/eqchec
 ce851caabbfc56e6ba957d83ac10e3d3effd5478983055402c7057bb373dc425  scripts/eval_load_cost.py  docs  644
 9ab02a3f6a0cc5386fa4a962135757a8e03466e5b31e436dc0b9e76194598364  scripts/exp.py  training  644
 e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_scaling.py  docs  644
-5692064a97e3902dec41ebee4cc8190d8fbc429c85c21ca5c7a56718306cba0b  scripts/harness.py  training  644
+be95ba0c3616ce3778b01251d7db94efcc3f33f5602a9e1f73d6be116d7fdfd5  scripts/harness.py  training  644
 674083577c6b22ac4ae00f91059e74b528ba52ca1d45a308db8178f536bfd82f  scripts/head_path_rows.py  docs  644
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
@@ -282,7 +282,7 @@ e2f7cb2f6158c4d78455d19b9fdccbc48b54a0f9d994eca21bcd95517a44c93d  scripts/measur
 ed794304e4494801517489745451bd8d95e3f15c4bb74954cf3f762e235cb028  scripts/plot_curves.py  training  644
 a268f3169fc33885c4fa2585e3445e506fb16699c669f3cb2e73127b8fa45b63  scripts/pod_drift.py  training  644
 bd0995a27c6462c809b5700073e0d1a17c935047b9fb02990ca08e580e448af4  scripts/pod_pull_ledgers.py  training  644
-596b9b623c91d211a6faad1b4427731197e9ec75fa579989fa957420e9fcce90  scripts/pod_push.sh  training  755
+0cc2f4d7e2178903d1d47698d8a2a540bb2309e907d9a5205150ec1fc519ab0e  scripts/pod_push.sh  training  755
 80c9fa99e13f0d0d3c99738df4d24e19b1f8c14c4fb1a34df9d36492f1a54f18  scripts/probe_gradckpt_sources.py  docs  644
 1ca5509970c175cc9609eb1b23ddb6d38950e8b5b2a65801713a48c9dbe9a3ca  scripts/profile_step_cost.py  docs  644
 795123ded74b4bd0e7a12e13c5c09f47f4780f28c063b1c4328c5f733638cc9e  scripts/progress_feed.py  docs  644
@@ -358,6 +358,7 @@ d915466a547e1c7c6267063e110a61db2e8bd0afb770f753f45fbdd679f024d4  scripts/test_s
 fa8c9b066f2db05535da14997a156bc319f324892fc0d0bdd1786cc48ca2f48c  scripts/test_shard_glob.py  docs  644
 f14a7931bd6866a8482da871857ac565fd6c1aa9d903cbe3f26289831743ee27  scripts/test_spawned_fast.py  docs  644
 f8a3c720de50cc4d03570bd98a051135f274a3df84ea0a93e4aa67810df20694  scripts/test_split_bitwise.py  docs  644
+3e6ee062afe4e25e3f0f09258762ecbed0ef51c785f9ea59b64e71e250d7ea85  scripts/test_stamp_guard.sh  docs  755
 aea213943774d588b0d3247dfc1641a30b26f70e8dc3bf9e5a18a436947e9728  scripts/test_step_line_parses.py  docs  644
 669b9b78b3c99259572c60a6a483e3dd022a04431f849a36a2faea7e6698dbe3  scripts/test_tokenizer_fp_name.py  docs  644
 5bdcecbb5c83afdeccd793be19e343689681bdb9425feae43c5c09a3fda9230f  scripts/test_untie_head.py  docs  644
