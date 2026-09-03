@@ -478,6 +478,13 @@ def main():
         # carrying the FILE row so a --keep_demos run names row 4 the same way. Four broken
         # worlds verified red, including "solution_bpb is not humaneval_bpb's function".
         "eval/math_bpb.py",
+        # N3's report format: no card, no model, no data -- it reads summary JSONs, and the
+        # selftest injects its own corpus so its synthetic byte totals are not compared against
+        # the real file. Pins bytes-saved arithmetic WITH ITS SIGN (a regression must not read as
+        # an improvement), the refusals (disagreeing byte totals, a wrong-metric summary, a
+        # control that is not --hf or scored other bytes), and that the compression anchors are
+        # computed rather than quoted from the one prose row that held them.
+        "eval/n3_report.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.
