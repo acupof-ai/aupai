@@ -15,3 +15,6 @@
 --- tail
 step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
 step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
+# END OF SNAPSHOT -- this file is a committed excerpt pulled 2026-09-03T08:0xZ, NOT the live log.
+# The live log is on the pod: ~/bin/pod "cd /work/aupai && tail -3 runs/data_leg_206m_8b.log".
+# The header says so too, but `tail` never shows line 1 -- b0 read 42% here while the pod was at 65% (2026-09-03).
