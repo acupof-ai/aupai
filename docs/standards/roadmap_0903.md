@@ -45,9 +45,12 @@ Supply against the 30B contracts (tokens, `facts/corpus_supply.json`):
 | N3 | benchmark v2 | e1 / b0 | three metrics only: humaneval_bpb, math_bpb (math_test_500 golds, build per eval_resolution_200m §ranked 2), lambada_en. Seed σ for each from two same-recipe seeds. Per-checkpoint report is one line: bits/byte, bytes saved vs the previous point, gzip and Pythia beside it | 09-05 |
 | N4 | 30B domains stamped | 3b / b0 | `mix_30b.json` `domains` non-empty for all 8; each domain has a data-auditor KEEP row, a 13-gram scan against eval golds (e1-28's scanner), and MinHash 0.8 cross-source dedup before its stamp | code_tests 09-05, all 09-06 |
 | N5 | post-pretrain ready | e1 / 44 | `post_pretrain_plan.md` §5 has zero open items: SFT pack path and row count, RL-gate script runs on a checkpoint, card-hour numbers from measured tok/s | 09-06 |
-| N6 | deletion pass | de / 44, each owner in their area | §3 targets met; `reachability.py` unreferenced count and open-task count printed in the closing row | 09-05 |
+| N6 | deletion pass | de / 44, each owner in their area | §3 targets met; `reachability.py` unreferenced count and open-task count printed in the closing row; harness check `roadmap_pyramid`: every N row has a task row and every open task names an N row | 09-05 |
+| N7 | middle-layer loop A/B (user proposition 2026-09-03; SMELT arXiv 2609.01343, DeepLoop 2607.13491, `facts/smelt_deeploop.json`) | b0 / tilerl | 200M@1B, three arms: baseline, middle 4 of 12 layers visited twice with KV and KDA state from the last visit, param-matched. The two baseline seeds are N3's seed-σ runs, one job serves both. Enters the 30B shape only if below baseline by 2σ on domain_loss and humaneval_bpb | after N2, est. 09-05 |
 
-Out of scope until N2 lands: structure experiments (b0-12), contrastive HumanEval (proposed
+Task rows: fb-5 fb-6 e1-29 3b-11 e1-30 de-43 b0-22, one per N row.
+
+Out of scope until N2 lands: structure experiments (b0-12) other than N7, contrastive HumanEval (proposed
 2026-09-03; BPB has resolution, so a second code instrument waits for BPB to saturate), RL
 (after N5).
 

@@ -114,7 +114,7 @@ f012667c4472acca03f3d61181bc80a1ae3a9f6fed9197b430b7104fd2f125d6  docs/standards
 4dbb129a8b094dcd44eea07f74e349ea69faeddcdb843fc29523940fc1ea0f91  docs/standards/launch_ready_guards.md  docs  644
 944fa9ab2354df9b7d9b62187b7f17d2032f8c7b1fb0e6546fbae97e93d6f384  docs/standards/model_module_split.md  docs  644
 5587ccb6baedaf232e2ecc7136818535c88b978c81d068887c9ca5f253654119  docs/standards/resume_row_cursor.md  docs  644
-3b91ee237d43a2bb617af8f794e94b9f4ccc9e7f74d285d0a9b66cd78cee07cd  docs/standards/roadmap_0903.md  docs  644
+7f6f1c399f36f27aa307b51a855d71ab7ad2d096ee652b470f12fd2627c23c9e  docs/standards/roadmap_0903.md  docs  644
 d651c7486cb99ba0dbdf5af990af8a4e1bb8a00d62141cc18bc132d4fa3bb62b  docs/standards/sop.md  docs  644
 99bd50b7c2affbf878b3761dad837bd6fe9a0662dd13934bf27f655493ba779e  docs/standards/structure_experiments.md  docs  644
 a8aafb577d77c4dfd3ecae231724bb562ac7d6f6f267f14ce084f3725a0ba88f  docs/standards/synthetic_data_standard.md  docs  644
@@ -244,7 +244,7 @@ a64ed761a9464f00e88cbe3ded8dab405a1d51ad56f5c2e3a6585ad9cd3eecb0  runs/retro.jso
 c3935e6bbaa49fbcfbf1d8e4db33a4ee4ac378d3176cd13147c7152e46ab215d  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-0966838992e79226f6499ae42de2f1c98bd59b7e727fbb596194f13624490647  runs/tasks.jsonl  docs  644
+147f5e4d1896375a12d144698f91cc96d38b56d7e04794bc644df0a788e52d4b  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
