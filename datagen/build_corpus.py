@@ -584,6 +584,23 @@ def _settle_dir(out, domain, settle_s):
 
 SETTLE_S = 60
 
+# The one build_corpus_stats.json schema (aupai-6e 2026-09-04): every writer path
+# (the built domain, the near-dedup postpass, the phase gap build) emits at least
+# this key set, so `tokens`/`tokens_status` are never absent and reads of the stamp
+# across domains see the same shape. The near-dedup postpass may ADD its metrics
+# (removed_fraction, recall_*); the gap build adds top_hosts. A route-to-authority
+# reader compares only the guarded core, not extras.
+CANONICAL_STATS_KEYS = (
+    "domain", "reasons", "kept", "kept_chars", "kept_tokens", "filters",
+    "workers", "n_shards", "filters_fp", "fingerprint", "near_dedup",
+    "near_dedup_note", "tokens", "tokens_status", "tokens_config",
+)
+
+
+def _assert_canonical_stats(stats, where):
+    missing = [k for k in CANONICAL_STATS_KEYS if k not in stats]
+    assert not missing, f"{where} stats missing canonical keys: {missing}"
+
 
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
@@ -651,6 +668,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
             stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
     else:
         stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+    _assert_canonical_stats(stats, "domain")
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
 
@@ -898,7 +916,7 @@ def _near_emit_slice(args):
     return emit
 
 
-def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg):
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg, workers):
     """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
     carry the near-dedup configuration and result: they are part of the artifact's
     meaning, and the removed-fraction fact reads them off the stamp."""
@@ -912,10 +930,11 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
         "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
-        "filters": "near-dedup-postpass", "n_shards": nshards,
+        "filters": "near-dedup-postpass", "workers": workers, "n_shards": nshards,
         "filters_fp": _fp_filters(),
         "fingerprint": _fp_dir(out),
         "near_dedup": True,
+        "near_dedup_note": "this stamp IS the calibrated near-dedup post-pass; removed_fraction/recall_* carry its result",
         "removed_fraction": (removed_n / total_docs) if total_docs else 0.0,
         "recall_bound": recall,
         "recall_epsilon": 1.0 - recall,
@@ -939,6 +958,7 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
             stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
     else:
         stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+    _assert_canonical_stats(stats, "near_dedup_postpass")
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
 
@@ -1093,6 +1113,7 @@ def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccar
     _near_write_stats(
         a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
         {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
+        a.workers,
     )
     return 0
 
@@ -1688,20 +1709,40 @@ def main():
         from corpus_fingerprint import fp_filters as _fp_filters  # noqa: E402
 
         with open(os.path.join(a.out, "build_corpus_stats.json"), "w") as f:
-            json.dump(
-                {
-                    "reasons": reasons,
-                    "top_hosts": hosts.most_common(50),
-                    "fingerprint": _fp_dir(a.out),
-                    # What produced this corpus, not just what it contains: the same Build
-                    # command before and after a filters/ edit yields different shards, and
-                    # PROVENANCE records only the command.
-                    "filters_fp": _fp_filters(),
-                },
-                f,
-                ensure_ascii=False,
-                indent=1,
-            )
+            nshards = len(glob.glob(os.path.join(a.out, f"{a.domain}_*.jsonl")))
+            stats = {
+                "domain": a.domain, "reasons": dict(reasons),
+                "kept": reasons["kept"], "kept_chars": kept_chars,
+                "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
+                "filters": a.filters, "workers": getattr(a, "workers", 1), "n_shards": nshards,
+                # What produced this corpus, not just what it contains: the same Build
+                # command before and after a filters/ edit yields different shards, and
+                # PROVENANCE records only the command. fp computation unchanged -- every
+                # frozen ladder directory is checked against these two (aupai-6e 2026-09-04).
+                "filters_fp": _fp_filters(),
+                "fingerprint": _fp_dir(a.out),
+                "near_dedup": False,
+                "near_dedup_note": "the phase gap build runs no global near-dedup pass; near_dup rejects are per-doc filter decisions recorded in reasons",
+                "top_hosts": hosts.most_common(50),
+            }
+            tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+            if os.path.exists(tok_path):
+                try:
+                    from tokenizers import Tokenizer  # noqa: I001
+                    from count_tokens import CONVENTION, count_shards
+                    shards = sorted(glob.glob(os.path.join(a.out, f"{a.domain}_*.jsonl")))
+                    if shards:
+                        n_sample = min(3, len(shards))
+                        tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
+                        stats["tokens"] = tokens
+                        stats["tokens_status"] = "measured"
+                        stats["tokens_config"] = f"data/tokenizer.json, {n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
+                except Exception as e:
+                    stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+            else:
+                stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+            _assert_canonical_stats(stats, "phase_gap")
+            json.dump(stats, f, ensure_ascii=False, indent=1)
 
 
 if __name__ == "__main__":

@@ -85,8 +85,13 @@ def load_golds(path):
     return name, recs
 
 
-def needles(texts_by_type, use_char=True):
-    """texts_by_type: {needle_type: [text...]} -> {needle_type: (ws_need, ch_need)}."""
+def needles(texts_by_type, use_char=False):
+    """texts_by_type: {needle_type: [text...]} -> {needle_type: (ws_need, ch_need)}.
+    use_char defaults FALSE: e1-28's design applies the char-13 window only to the
+    dense-chardomains (zh_web/chatml/chat_qa); on code/math/English it 'shreds
+    indentation and identifiers into matches that mean nothing' -- a measured
+    18,000%/doc false hit on the math corpus when left on. Whitespace 13-gram is
+    the containment unit for everything else."""
     out = {}
     for ty, texts in texts_by_type.items():
         ws, ch = {}, {}
@@ -98,6 +103,15 @@ def needles(texts_by_type, use_char=True):
                     ch[g] = t
         out[ty] = (ws, ch)
     return out
+
+
+def _count_docs(path):
+    n = 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                n += 1
+    return n
 
 
 _G_LOADED = []  # (name, gold_file, needles_by_type, n_records) set once for pool workers
@@ -221,12 +235,21 @@ def main():
         t0 = time.perf_counter()
         hits, n_shard = scan(shards, a.golds, pool_n=a.pool)
         wall = round(time.perf_counter() - t0)
-        print(f"  {dom}: {len(shards)} shards in {wall}s", flush=True)
+        docs = sum(_count_docs(os.path.join(base, s)) for s in shards)
+        print(f"  {dom}: {len(shards)} shards ({docs} docs) in {wall}s", flush=True)
         per_eval = {}
         for name, ghits in hits.items():
-            per_eval[name] = {ty: {"corpus_docs_hit": len(hh), "hit_rate": round(len(hh) / max(1, n_shard), 6)}
-                              for ty, hh in ghits.items() if hh}
-        result[dom] = {"shards": n_shard, "evals": per_eval, "hit_list": hits}
+            per_eval[name] = {}
+            for ty, hh in ghits.items():
+                if not hh:
+                    continue
+                # hits are per-doc (a doc hits an eval once), so hits > docs is
+                # impossible: it means the unit over-matches (char-13 shredding),
+                # e.g. the measured 18,000%/doc. Refuse rather than print it.
+                if len(hh) > docs:
+                    raise SystemExit(f"REFUSING: {dom} {name}[{ty}] hit {len(hh)} docs > {docs} scanned -- wrong unit (char-13 shredding); re-run whitespace-13")
+                per_eval[name][ty] = {"corpus_docs_hit": len(hh), "hit_rate": round(len(hh) / max(1, docs), 6)}
+        result[dom] = {"shards": n_shard, "docs": docs, "wall_s": wall, "evals": per_eval, "hit_list": hits}
         print(f"  {json.dumps(per_eval)}", flush=True)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=1)
