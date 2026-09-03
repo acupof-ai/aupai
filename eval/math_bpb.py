@@ -59,7 +59,14 @@ TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 N_PROBLEMS = 500        # the file's own length; a short file is a truncated copy, not a small run
 GOLD_BYTES = 381_669    # measured 2026-09-03; a different total means a different file
+SCORED_BYTES = 379_651  # the same file MINUS the three demo rows, which hold 2,018 bytes.
+#                         PINNED SEPARATELY because this, not GOLD_BYTES, is the divisor the
+#                         byte-weighted number actually uses. Asserting only the file total would
+#                         let the demo slice change while the check stayed green -- and the figure
+#                         would move for a reason no assertion names.
 N_DEMOS_EXCLUDED = 3    # rows 0..2 are l1_fewshot's demos -- see load_problems
+N_SCORED = N_PROBLEMS - N_DEMOS_EXCLUDED  # 497: the population 6e pinned, and the same population
+#                         be.l1_fewshot_p324 reports on, so the two facts stay comparable.
 
 
 def load_problems(path, limit=None, skip_demos=True):
@@ -148,6 +155,14 @@ def _selftest():
             f"gold bytes {total} != {GOLD_BYTES} recorded 2026-09-03. The metric's divisor "
             f"changed, so figures across this change are not comparable -- re-measure and "
             f"update the constant in the same commit that explains why the file moved.")
+        scored = sum(len(r["output"].encode("utf-8")) for r in raw[N_DEMOS_EXCLUDED:])
+        assert scored == SCORED_BYTES, (
+            f"scored gold bytes {scored} != {SCORED_BYTES}. This is the divisor of the "
+            f"byte-weighted figure -- the file total can be unchanged while the demo slice "
+            f"moves, so both totals are pinned and this is the one the number uses.")
+        assert len(load_problems(DEFAULT_DATA)) == N_SCORED, (
+            f"default population is not {N_SCORED}; 6e pinned n=497 so this metric shares "
+            f"be.l1_fewshot_p324's population and the two facts stay comparable")
         annotated = [k for k, r in enumerate(raw) if "<<" in r["output"]]
         assert not annotated, (
             f"rows {annotated[:5]} carry GSM8K-style `<<...>>` calculator annotations. Those "
@@ -156,8 +171,9 @@ def _selftest():
 
     print("math_bpb self-test OK: the arithmetic is humaneval_bpb's own function and its "
           "self-test passes here; demos 0-2 are excluded by default and ids carry the FILE row; "
-          "a row missing a field refuses; and the real file still has 500 rows, 381,669 gold "
-          "bytes and zero `<<...>>` annotations")
+          "a row missing a field refuses; the real file still has 500 rows, 381,669 gold bytes "
+          "and zero `<<...>>` annotations; and the SCORED population is 497 problems over "
+          "379,651 bytes -- the divisor the byte-weighted figure actually uses")
 
 
 def main():
