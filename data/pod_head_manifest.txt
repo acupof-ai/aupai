@@ -1,4 +1,4 @@
-a79adee41d77febf4e01e7090ee421bc8696d5818e2e8b12bfe26ee2df0761f5  AGENTS.md  docs  644
+fb060f0699747a132e8b3e7e6bd5667a0f0e764f205ca20817e3147cc7ce2561  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 2618743641a26a505480fb1b698beb16e164875283a82fbc5cff4cf94477f778  algorithms/code_reward.py  docs  644
 cd288db3529cda9b1ee9fa8472c9308dd72970140aed1bbc9d8b577a84d4dec5  algorithms/isolate.py  docs  644
@@ -160,6 +160,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 9bbc9567860ce22f686507a4fc2d020cacab59734542f7c09e66e24fbdfcf484  facts/base_eval.json  docs  644
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
+d311797017edf6a3a42d0fe3dc0a797cbb307e10e60a5e7c5c70c712f517d702  facts/corpus_supply.json  docs  644
 d1bbda566c815bc293351303e3d6d2b11c28c68dd407ce588bf6392f37247872  facts/data_quality.json  docs  644
 13a9b59ef84ebc8fed2c53c3616564ee2a9a42970f9624625f9202bea38ed6a5  facts/data_scaling.json  docs  644
 542e5efa3faecf83c68f831e53b40c561d7527071998a889ce1622b383336843  facts/efficiency.json  docs  644
@@ -271,7 +272,7 @@ d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_bra
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 2b1e35ec750b56ad1b8fbd4edc77ba17badb39f0f2b9d590fc28744c393380fd  scripts/launch_gate.py  docs  644
 81378df8cb3cc05b2404157c85553cdd9a667de0f2380dcec735a33e2550876c  scripts/launch_tests.py  docs  644
-2ee98c9b34494ba28bc1e80af907f076ff214bbe5afa8e18afacea9a229b2200  scripts/ledger_audit.py  training  644
+a65d0adddbdab3ef606d670d8cdedc5c69d46556952bb4b99dd34d18ab191442  scripts/ledger_audit.py  training  644
 4aab11a85ab98f4dd619232deeb5e1a3c75fe9147a648fef7619c7a8ebf880e7  scripts/ledger_resolutions.py  training  644
 47fcdb9d2a23bda8ace698d9741ee7569ede8e55527225e3b52602db08c4f293  scripts/loader.py  training  644
 aac9375c7e478d15e19359c33e9419ba8b683324dccc7c3cee7ee8902ba084ca  scripts/logit_dist.py  docs  644
