@@ -1,0 +1,1 @@
+{"correct": 0, "total": 497, "acc": 0.0, "binomial_delta": 0.06279858256227591, "answer_present_rate": 0.006036217303822937, "demos": 3, "temperature": 0.0, "demo_lang": "zh", "arm": "control", "ckpt": "e1_untrained.hf", "preds_path": "/work/aupai/data/eval/preds_l1_d3_e1_untrained.hf.zh.hf.jsonl"}
