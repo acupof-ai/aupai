@@ -219,6 +219,7 @@ bb8ae0603176edec9b45c0a941b5b566507bb45629e29afefdb846a2a0c5c021  mathbank/run_m
 820dda489bfa2c313c181d4c3dd92810dd2bdf16e5f6326c268f999598dc3e98  mathbank/split_bank.py  docs  644
 77428c2c82c230c5ff682385a212c2bbcbed6051a9efcf1216d1ced418f518af  mathbank/vet_programs.py  docs  644
 2567a382cb072021243f19fc7ff24326251b40d7ce3c7054f484d4648922f506  model.py  training  644
+56b79d1e330b780f6688689b2313f41afc887aea28912798a0c9c5d3c2b40c90  probes/a2a_bandwidth.py  docs  644
 0c0f60bcc8a767a8f26b94cb5845c2e6624ab5f11d80c9fd7c175f11b6250c41  probes/chatml_in_corpus.py  docs  644
 3e687495055dd2d795abe5a7ed72c6ba53cfd23e22291de2eae366b92ab28417  probes/fone_digit_acc.py  docs  644
 1633b9d5f5cfe478cb86ba9aeced109e5b273002f2b0f35fa967d5451ba8dde4  probes/profile_step.py  docs  644
@@ -284,7 +285,7 @@ e29b9719f0fc5425b0fb5a9d582dc4710c9396a68213707b772c1804c81b5cb7  scripts/fit_sc
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-906bc88d6cb7a262d8853fe993a50c46eaff6f9d9b461bc774f162e796c33830  scripts/hooks/pre-commit  docs  755
+c01f8b2dc67eb989a36d2153a35fdfa74e14491e8fa62d17cdbef0089cf8c6d0  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
