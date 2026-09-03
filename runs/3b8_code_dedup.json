@@ -367,5 +367,25 @@
   "mae": 0.0194,
   "diff_sd": 0.0257,
   "est_approx_exact": true
+ },
+ "token_exact_counts": {
+  "measure_date": "2026-09-03",
+  "method": "datagen/count_code_dirs.py exact frozen-tokenizer count (not extrapolation)",
+  "before_starcoder_tok": 8780736158,
+  "before_rp1t_tok": 420646182,
+  "before_total_tok": 9201382340,
+  "after_dedup08_tok": 8902244575,
+  "token_reduction": 299137765,
+  "token_reduction_frac": 0.0325,
+  "before_docs": 6389842,
+  "after_docs": 6239038,
+  "docs_deleted": 150804,
+  "doc_deletion_frac": 0.0236,
+  "predicted": {
+   "cluster_share_04_18": 0.0418,
+   "doc_deletion_est": 0.0241,
+   "source": "3b-8 near-dedup report + avg cluster 1.77"
+  },
+  "match": "token reduction 3.25% vs doc 2.36%; dedup removes marginally more token-share than doc-share (deleted clusters slightly token-heavier), same magnitude as the doc-deletion prediction"
  }
 }
