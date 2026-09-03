@@ -111,12 +111,49 @@ def main():
            "ours_ckpt": a.ours_ckpt, "ctrl_dir": a.ctrl_dir,
            "population_sha": E.ids_sha([int(r[0]) for r in rows]), "arms": {}}
 
-    for arm, ckpt, seq in (("ours", a.ours_ckpt, a.seq_ours), ("control", a.ctrl_dir, a.seq_ctrl)):
+    # BOTH ARMS ON ONE POPULATION, DECIDED BEFORE EITHER MODEL LOADS. Tokenization is CPU-only,
+    # so the two kept-sets are known up front and the comparison can be made real rather than
+    # merely reported.
+    #
+    # This is not hygiene, it is a defect in the published pair. floor_ours.json and
+    # floor_control.json both carry supervised_bytes 10554038 -- the SAME denominator -- while
+    # dropping 28 and 220 overlong items respectively. Each numerator sums only over what that
+    # arm scored, so the control's 0.903758 divides a 10201-item loss by a 10421-item byte count
+    # and is UNDERSTATED; the published 2.004x therefore understates our lead. That direction is
+    # favourable to us, which is exactly why it does not get inherited here.
+    #
+    # For a per-class split it would be worse than a small bias: the 220 dropped items are the
+    # LONGEST ones, and length correlates with code and with English -- the two axes being
+    # measured. The confound would land directly on the answer.
+    tok = {}
+    for arm, seq in (("ours", a.seq_ours), ("control", a.seq_ctrl)):
+        kw = {} if arm == "ours" else {"model_dir": a.ctrl_dir}
+        tok[arm] = E.tokenize_arm(arm, rows, seq, **kw)
+        print(f"  {arm}: tokenized {len(tok[arm][0]):,}, {len(tok[arm][1])} overlong at seq {seq}")
+    both = {int(r[0]) for r in tok["ours"][0]} & {int(r[0]) for r in tok["control"][0]}
+    if not both:
+        sys.exit("REFUSING: the two arms share no scorable item")
+    out["scored_population"] = {
+        "n": len(both), "sha": E.ids_sha(sorted(both)),
+        "dropped_by_ours_only": len(tok["ours"][0]) - len(both),
+        "dropped_by_control_only": len(tok["control"][0]) - len(both),
+        "why": "both arms scored EXACTLY these ids. The published floors did not: they share one "
+               "denominator (supervised_bytes 10554038) while dropping 28 and 220 overlong items, "
+               "so the control's 0.903758 is understated and the published 2.004x understates our "
+               "lead. Per class the bias would be worse than small, because the dropped items are "
+               "the longest and length tracks both code and English."}
+    print(f"  intersection: {len(both):,} items (sha {out['scored_population']['sha']}), "
+          f"ours-only {out['scored_population']['dropped_by_ours_only']}, "
+          f"control-only {out['scored_population']['dropped_by_control_only']}")
+
+    for arm, ckpt in (("ours", a.ours_ckpt), ("control", a.ctrl_dir)):
+        kept = [r for r in tok[arm][0] if int(r[0]) in both]
+        dropped = tok[arm][1]
+        if len(kept) != len(both):
+            sys.exit(f"REFUSING: {arm} kept {len(kept)} of the {len(both)} shared ids")
         if arm == "ours":
-            kept, dropped = E.tokenize_arm("ours", rows, seq)
             model, pad = E.load_ours(os.path.join(ROOT, ckpt), "cuda")
         else:
-            kept, dropped = E.tokenize_arm("control", rows, seq, model_dir=ckpt)
             model, pad = E.load_control(ckpt, "cuda")
         items = []
         tot, ntok = E.score(model, arm, kept, "cuda", a.batch, pad, per_item=items)
@@ -138,45 +175,70 @@ def main():
             d["bytes"] += len(E.format_pair(arm, _q, ans)[1].encode("utf-8"))
         for c, d in agg.items():
             d["nll_per_byte"] = d["nll"] / d["bytes"] if d["bytes"] else None
+        tb = sum(d["bytes"] for d in agg.values())
         out["arms"][arm] = {"total_nll": tot, "tokens": ntok, "dropped": len(dropped),
-                            "by_class": agg}
-        print(f"  {arm}: {len(kept):,} scored, {len(dropped)} dropped")
+                            "n_scored": len(kept), "bytes": tb,
+                            "nll_per_byte": tot / tb if tb else None, "by_class": agg}
+        print(f"  {arm}: {len(kept):,} scored, {tot / tb:.6f} nll/byte on the shared population")
         del model
         torch.cuda.empty_cache()
 
-    # THE GAP, PER CLASS. Only classes BOTH arms scored can be compared -- the control drops long
-    # rows at seq 2048 that we keep at 4096, so a class where the two arms scored different items
-    # is not a comparison. Reported with its own n per arm so a mismatch is visible.
-    print(f"\n{'class':<10} {'n(ours)':>8} {'n(ctrl)':>8} {'ours/byte':>11} {'ctrl/byte':>11} "
-          f"{'gap':>7}")
+    # THE WHOLE-POPULATION GAP ON ONE POPULATION, so the per-class numbers below have a headline
+    # to be a split OF. Printed next to the published 2.004x rather than replacing it: this is a
+    # different (and correct) population, not a re-run of that measurement.
+    ob = out["arms"]["ours"]["nll_per_byte"]
+    kb = out["arms"]["control"]["nll_per_byte"]
+    out["gap_shared_population"] = kb / ob
+    print(f"\nSHARED-POPULATION GAP: ours {ob:.6f}  ctrl {kb:.6f}  gap {kb / ob:.3f}x")
+    print("  (published 2.004x divides each arm's own numerator by a shared 10,554,038-byte "
+          "denominator despite dropping 28 vs 220 items -- understating the control's loss)")
+
+    # THE GAP, PER CLASS, on the shared population -- so a class's two arms hold the SAME items
+    # and the ratio is a comparison rather than two measurements side by side. An n mismatch is
+    # now impossible by construction, so it refuses instead of printing a caveat.
+    print(f"\n{'class':<10} {'n':>7} {'ours/byte':>11} {'ctrl/byte':>11} {'gap':>7} "
+          f"{'bytes':>12}")
     gaps = {}
     for c in sorted(set(out["arms"]["ours"]["by_class"]) | set(out["arms"]["control"]["by_class"])):
         o = out["arms"]["ours"]["by_class"].get(c)
         k = out["arms"]["control"]["by_class"].get(c)
-        if not o or not k:
-            print(f"{c:<10} {'-' if not o else o['n']:>8} {'-' if not k else k['n']:>8} "
-                  f"{'ONE ARM ONLY':>31}")
-            continue
+        if not o or not k or o["n"] != k["n"] or o["bytes"] != k["bytes"]:
+            sys.exit(f"REFUSING: class {c} is not the same items in both arms "
+                     f"(ours {o and o['n']}/{o and o['bytes']}B, "
+                     f"ctrl {k and k['n']}/{k and k['bytes']}B) -- the shared-population "
+                     f"restriction above should have made this unreachable")
         g = k["nll_per_byte"] / o["nll_per_byte"]
         gaps[c] = {"ours_nll_per_byte": o["nll_per_byte"], "ctrl_nll_per_byte": k["nll_per_byte"],
-                   "gap": g, "n_ours": o["n"], "n_ctrl": k["n"],
-                   "bytes_ours": o["bytes"], "bytes_ctrl": k["bytes"]}
-        print(f"{c:<10} {o['n']:>8,} {k['n']:>8,} {o['nll_per_byte']:>11.6f} "
-              f"{k['nll_per_byte']:>11.6f} {g:>6.3f}x")
+                   "gap": g, "n": o["n"], "bytes": o["bytes"],
+                   "ours_nll": o["nll"], "ctrl_nll": k["nll"]}
+        print(f"{c:<10} {o['n']:>7,} {o['nll_per_byte']:>11.6f} "
+              f"{k['nll_per_byte']:>11.6f} {g:>6.3f}x {o['bytes']:>12,}")
     out["gap_by_class"] = gaps
+
+    # THE SPLIT MUST RECONSTRUCT THE HEADLINE, not merely sit beside it: byte-weighting the four
+    # classes back together has to return the whole-population gap.
+    for arm in ("ours", "control"):
+        sb = sum(d["bytes"] for d in out["arms"][arm]["by_class"].values())
+        sn = sum(d["nll"] for d in out["arms"][arm]["by_class"].values())
+        if sb != out["arms"][arm]["bytes"] or abs(sn - out["arms"][arm]["total_nll"]) > 1e-3:
+            sys.exit(f"REFUSING: {arm}'s classes sum to {sn:.3f} nll / {sb} bytes but the pass "
+                     f"was {out['arms'][arm]['total_nll']:.3f} / {out['arms'][arm]['bytes']}")
 
     en = [c for c in gaps if c.startswith("en-")]
     if en:
-        no = sum(gaps[c]["ours_nll_per_byte"] * gaps[c]["bytes_ours"] for c in en)
-        bo = sum(gaps[c]["bytes_ours"] for c in en)
-        nk = sum(gaps[c]["ctrl_nll_per_byte"] * gaps[c]["bytes_ctrl"] for c in en)
-        bk = sum(gaps[c]["bytes_ctrl"] for c in en)
-        out["english_only"] = {"ours_nll_per_byte": no / bo, "ctrl_nll_per_byte": nk / bk,
-                               "gap": (nk / bk) / (no / bo)}
-        print(f"\nENGLISH ONLY: ours {no / bo:.6f}  ctrl {nk / bk:.6f}  "
-              f"gap {(nk / bk) / (no / bo):.3f}x   (published, all items: 2.004x)")
-        print("The English subset is the one the control was trained for. Read against 2.004x per "
-              "the pre-registered readings in this file's docstring.")
+        no = sum(gaps[c]["ours_nll"] for c in en)
+        bo = sum(gaps[c]["bytes"] for c in en)
+        nk = sum(gaps[c]["ctrl_nll"] for c in en)
+        out["english_only"] = {"ours_nll_per_byte": no / bo, "ctrl_nll_per_byte": nk / bo,
+                               "gap": nk / no, "n": sum(gaps[c]["n"] for c in en), "bytes": bo}
+        zh_share = 1.0 - bo / out["arms"]["ours"]["bytes"]
+        print(f"\nENGLISH ONLY ({sum(gaps[c]['n'] for c in en):,} items, {bo:,} bytes, "
+              f"{100 * (1 - zh_share):.1f}% of the population): "
+              f"ours {no / bo:.6f}  ctrl {nk / bo:.6f}  gap {nk / no:.3f}x")
+        print(f"  against the shared-population gap {out['gap_shared_population']:.3f}x "
+              f"(published, two-population: 2.004x)")
+        print("The English subset is what the control was trained for. Read per the pre-registered "
+              "readings in this file's docstring.")
     with open(os.path.join(ROOT, a.out), "w") as f:
         json.dump(out, f, indent=1, ensure_ascii=False)
     print(f"wrote {a.out}")
