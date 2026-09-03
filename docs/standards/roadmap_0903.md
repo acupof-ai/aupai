@@ -68,7 +68,7 @@ pass@k on a base checkpoint. Basis: eval_resolution_200m.md §admission (chance+
 |---|---|---|---|
 | plans | 44 | the domain-contract tables in scale_36b_plan.md §1 and readout_30b_prereg.md that repeat `mix_30b.json._blocked` | `data/mix_30b.json`; docs cite it |
 | tasks | every owner | every open task not on an N-row: state `dropped`, one line why | ≤ 15 open |
-| runs/ | b0 | score_matrix duplicate (ckpt, profile) keys (b0-15); killed-duplicate exp rows; committed log snapshots | one row per key; live logs stay on the pod |
+| runs/ | tilerl (tilerl-22, from b0) | measured 2026-09-04: 0 duplicate (ckpt, profile) keys (milestone and full are different metric sets); 0 exp rows deletable (later rows are corrections or attributed revisions, not supersets); 63 log snapshots KEPT since /work is an emptyDir and the commit is the only durable copy; 7 diverged snapshots refreshed | runs/tilerl_22_prune_list.md; nothing deleted |
 | corpus | 3b | the second name of each of the 2,010 hardlinked shards; the 5 domains with no build_corpus_stats.json get a stamp or a deletion-list entry | one path per shard; every domain stamped |
 | code | de | scripts/ (151) and eval/ (47) entries unreferenced by `reachability.py` AND absent from the AGENTS.md entry-point table, after the per-directory `glob`/`importlib` grep | entry-point table |
 | facts | de | retracted entries with no live citation (de-5) | cited facts only |
