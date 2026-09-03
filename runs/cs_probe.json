@@ -1,0 +1,11 @@
+{
+ "files": 9,
+ "rows": 435233,
+ "repos": 124998,
+ "bytes": 4503517406,
+ "pairs": 2842,
+ "pair_rate": 0.006529835743153667,
+ "pair_bytes": 76689095,
+ "distinct_content": 435233,
+ "overlap_vs_starcoder": 0.06411508318532831
+}
