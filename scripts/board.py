@@ -116,6 +116,111 @@ def cmd_open(a):
     print(f"opened {a.topic} (owner {a.owner})")
 
 
+def liveness(root=ROOT, now=None):
+    """{name: {commit_min, ledger_min, open_tasks, socket, branch}} for every roster member.
+
+    Minutes since a member last produced anything the repo can see: their newest branch tip
+    and their newest row in tasks/review/board. No new file -- git and the ledgers already
+    hold it.
+
+    EVERY BRANCH THEY OWN, not just the one named after them. b0's `b0` tip is 2026-09-02
+    22:10 while `b0-ve-rownorms` is 2026-09-03 21:02: a session that pushed three minutes
+    ago would read as 23 hours stale if only the eponymous branch counted, and it is the
+    exact member the acceptance criterion for this feature named as the expected warning.
+    So `b0` plus `b0-*`, which is the convention every member here follows.
+
+    THE TWO CLOCKS ARE DIFFERENT AND BOTH ARE HANDLED. Ledger rows are UTC (exp.py and
+    harness both write time.gmtime) and git's committerdate here is +08 local, so comparing
+    either against a naive `now` is off by eight hours in opposite directions -- an hour
+    count is the whole output of this function, so both are parsed to epoch seconds with
+    their own offset. review.jsonl carries BOTH `2026-09-03T03:10:00Z` and
+    `2026-09-03 11:37` in the same file, measured, so the parser takes both rather than
+    assuming the newer one."""
+    import calendar
+
+    now = now if now is not None else time.time()
+    p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(p):
+        return {}
+    with open(p, encoding="utf-8") as fh:
+        members = [m["name"] for m in json.load(fh)["members"]]
+
+    def _epoch_utc(s):
+        s = (s or "").strip()
+        for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return calendar.timegm(time.strptime(s, fmt))
+            except ValueError:
+                continue
+        return None
+
+    tips = {}
+    try:
+        r = subprocess.run(
+            ["git", "-C", root, "for-each-ref", "--format=%(refname:short)\t%(committerdate:unix)",
+             "refs/heads/"], capture_output=True, text=True, timeout=15)
+        for line in r.stdout.split("\n"):
+            if "\t" in line:
+                ref, unix = line.split("\t", 1)
+                if unix.strip().lstrip("-").isdigit():
+                    tips[ref] = int(unix)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    newest = dict.fromkeys(members)
+    open_tasks = dict.fromkeys(members, 0)
+    state = {}
+    for rel, idfields, tsfields in (
+        ("runs/tasks.jsonl", ("owner",), ("closed", "opened")),
+        ("runs/review.jsonl", ("reviewer",), ("ts",)),
+        ("runs/board.jsonl", ("who",), ("ts",)),
+    ):
+        fp = os.path.join(root, rel)
+        if not os.path.exists(fp):
+            continue
+        with open(fp, encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    row = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue
+                who = next((row.get(f) for f in idfields if row.get(f)), None)
+                if who not in newest:
+                    continue
+                for tf in tsfields:
+                    e = _epoch_utc(row.get(tf))
+                    if e is not None:
+                        newest[who] = e if newest[who] is None else max(newest[who], e)
+                        break
+                if rel.endswith("tasks.jsonl") and row.get("id"):
+                    # Last state wins: a row is appended per event, so an id's newest row is
+                    # its current state (the same fold exp.py and _read_tasks use).
+                    state[(who, row["id"])] = row.get("state")
+    for (who, _tid), st in state.items():
+        if st == "open" and who in open_tasks:
+            open_tasks[who] += 1
+
+    with open(p, encoding="utf-8") as fh:
+        sockets = {m["name"]: m.get("socket", "") for m in json.load(fh)["members"]}
+    out = {}
+    for name in members:
+        mine = [t for ref, t in tips.items() if ref == name or ref.startswith(name + "-")]
+        commit = max(mine) if mine else None
+        out[name] = {
+            "branch": max(
+                ((ref, t) for ref, t in tips.items() if ref == name or ref.startswith(name + "-")),
+                key=lambda kv: kv[1], default=("-", 0))[0],
+            "commit_min": None if commit is None else int((now - commit) / 60),
+            "ledger_min": None if newest[name] is None else int((now - newest[name]) / 60),
+            "open_tasks": open_tasks[name],
+            "socket": sockets.get(name, ""),
+        }
+    return out
+
+
 def cmd_who(a):
     p = os.path.join(ROOT, "runs", "roster.json")
     if not os.path.exists(p):
@@ -125,10 +230,17 @@ def cmd_who(a):
     for m in r["members"]:
         for t in m["topics"]:
             owner.setdefault(t, m["name"])
-    print(f"{'name':<8}{'role':<13}{'socket':<34}{'topics':<26}note")
+    live = liveness(ROOT)
+    print(f"{'name':<8}{'role':<13}{'commit':>8}{'ledger':>8}{'open':>6}  {'branch':<18}"
+          f"{'socket':<34}topics")
     for m in r["members"]:
-        print(f"{m['name']:<8}{m['role']:<13}{m['socket']:<34}"
-              f"{','.join(m['topics']) or '-':<26}{m['note']}")
+        d = live.get(m["name"], {})
+        cm = "-" if d.get("commit_min") is None else f"{d['commit_min']}m"
+        lm = "-" if d.get("ledger_min") is None else f"{d['ledger_min']}m"
+        print(f"{m['name']:<8}{m['role']:<13}{cm:>8}{lm:>8}{d.get('open_tasks', 0):>6}  "
+              f"{d.get('branch', '-'):<18}{m['socket']:<34}{','.join(m['topics']) or '-'}")
+    print("\ncommit = minutes since their newest branch tip (name or name-*); "
+          "ledger = minutes since their newest tasks/review/board row")
     print("\nnot on this team:")
     for m in r["not_on_this_team"]:
         print(f"  {m['name']:<22}{m['why']}")

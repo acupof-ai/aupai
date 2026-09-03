@@ -286,8 +286,19 @@ def _run_eval_json(script, ckpt_path, extra_args=None, timeout=3600):
             capture_output=True, text=True, cwd=ROOT, timeout=timeout,
         )
         if r.returncode != 0:
-            tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["no output"]
-            return None, f"{script} exited {r.returncode}: {tail[0][:200]}"
+            # The LAST line of a traceback is not reliably the exception. Python 3.12 ends a
+            # frame with a caret line, and a subprocess can write past the traceback, so the
+            # one-line version recorded domain_bpb's failure as the SOURCE LINE
+            # "ours_tok = load_tokenizer(a.tokenizer, None)" -- which names where, never what.
+            # All three of that eval's rows in runs/score_matrix.jsonl carry that string, and
+            # it is why nobody fixed it: the record never said what broke.
+            lines = [ln for ln in (r.stderr or r.stdout).strip().splitlines() if ln.strip()]
+            exc = [ln for ln in lines if re.match(r"^\w[\w.]*(Error|Exception|Exit|Interrupt)\b", ln)]
+            # With an exception line, one line IS the answer. Without one the traceback was
+            # truncated, and the last line alone is exactly what was useless before -- keep
+            # three so the record at least says which frames.
+            tail = exc[-1:] or lines[-3:] or ["no output"]
+            return None, f"{script} exited {r.returncode}: {' | '.join(t.strip() for t in tail)[:400]}"
         return json.load(open(out, encoding="utf-8")), None
     finally:
         os.unlink(out)

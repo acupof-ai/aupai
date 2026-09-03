@@ -69,3 +69,6 @@ step 640/16281 4% [main] | loss 2.639 | lr 1.00e-02 | gnorm 0.79 | 0.59B tok | 7
 step 650/16281 4% [main] | loss 2.328 | lr 1.00e-02 | gnorm 0.33 | 0.60B tok | 77K tok/s/gpu | MFU 32% | ETA 7.4h
 step 660/16281 4% [main] | loss 2.327 | lr 1.00e-02 | gnorm 0.88 | 0.61B tok | 77K tok/s/gpu | MFU 32% | ETA 7.4h
 step 670/16281 4% [main] | loss 2.342 | lr 1.00e-02 | gnorm 0.31 | 0.61B tok | 77K tok/s/gpu | MFU 32% | ETA 7.4h
+# END OF SNAPSHOT -- committed excerpt, 8,048B of the pod's 3,819,506B. NOT the whole log.
+# the run reached step 16281; this copy stops at 670, so its last line is NOT where the run ended.
+# Cited by eff.ab_throughput_statistic. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/ab_base_a_first.log".
