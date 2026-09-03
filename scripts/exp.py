@@ -117,10 +117,21 @@ def git_commit():
     A PARTIAL push deletes the stamp (pod_push.sh:40), so a run started after one
     records "unknown" -- which is correct: the pod is then one tree's sha plus another
     tree's file, and the honest answer is that no single sha describes it.
+
+    FULL 40-CHAR SHAS, both paths (de-38). This function used `rev-parse --short` on one
+    side and a hardcoded `parts[0][:7]` on the other, to "match the git branch". Those
+    stopped agreeing: --short is git's AUTO-SCALING abbreviation, and once the object
+    count crossed a threshold it began returning 8 characters while the stamp path still
+    truncated to 7. The same commit then wrote two different strings depending on which
+    branch ran -- 8cd68340 against 8cd6834, measured 2026-09-03 -- so p500m_20b_0902's
+    00:03 row disagreed with the pod's copy in the `commit` field alone and read as a
+    provenance conflict. Identical defect to de-35's `%h` in harness.merge_reverted_content:
+    an identity whose text depends on repository size is not an identity. Readers
+    abbreviate for display; the ledger stores what resolves.
     """
     try:
         return subprocess.check_output(
-            ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], text=True, stderr=subprocess.DEVNULL
+            ["git", "-C", ROOT, "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
         ).strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
@@ -130,14 +141,41 @@ def git_commit():
         if parts:
             # dirty>0 means the push carried uncommitted files: the sha is where the
             # tree was, not what it held. Say so rather than implying a clean match.
-            # Short-form to match the git branch: rev-parse --short gives 7 chars and
-            # pod_synced_head stores 40, so the same ledger column carried two widths
-            # and neither reader could sort or compare them.
-            sha = parts[0][:7]
+            sha = parts[0]
             return sha if len(parts) < 2 or parts[1] == "0" else f"{sha}+dirty{parts[1]}"
     except (OSError, ValueError):
         pass
     return "unknown"
+
+
+PLACEHOLDER = ("unknown", "pending")
+
+
+def commit_resolves(sha, root=None):
+    """(ok, why) -- does this ledger's `commit` value name an object in this repository?
+
+    A sha that resolves nowhere is worse than "unknown": it reads as provenance while
+    answering nothing, and no check looked. runs/experiments.jsonl carries `cec145b` on
+    p500m_20b_0902, which matches no object here and no prefix of one -- a sha from a tree
+    this repo does not contain (pod-side history, or a branch since rewritten). "unknown"
+    and a "+dirty" suffix are ACCEPTED: both are honest statements about what the sha can
+    say, and refusing them would push writers back to the blank this function was built to
+    eliminate."""
+    root = root or ROOT
+    if not sha:
+        return False, "empty -- git_commit never returns '', so this row was written by hand"
+    if sha in PLACEHOLDER:
+        # Honest non-answers, and refusing them would push writers back to the blank this
+        # function exists to eliminate. `pending` is what a row carries before its job takes
+        # a card (harness launch writes it), and it is replaced when the job starts.
+        return True, f"{sha}: an explicit non-answer, not a sha"
+    base = sha.split("+dirty", 1)[0]
+    r = subprocess.run(["git", "-C", root, "cat-file", "-e", f"{base}^{{commit}}"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return False, (f"{base} names no commit in this repository -- provenance that cannot "
+                       f"be resolved is not provenance")
+    return True, f"{base[:12]} resolves"
 
 
 def render():
