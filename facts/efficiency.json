@@ -2792,6 +2792,63 @@
     "layer 9 shows a branch-scale anomaly",
     "MLA layer 11 deviates"
    ]
+  },
+  {
+   "id": "eff.code_fingerprint_gate_unusable",
+   "value": "11 jumps in 57 commits over 3 days; gate abandoned, report-only kept",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0-20 feasibility measurement over train.py and model.py, b0 2026-09-03",
+   "config": {
+    "whole_file_content_hash": {
+     "distinct": 57,
+     "of_commits": 57
+    },
+    "whole_file_ast_hash": {
+     "distinct": 52,
+     "note": "ignoring comments and docstrings merged only 5; adjacent commits differing in raw but identical in AST: 2 pairs"
+    },
+    "function_level_ast_over_training_math": {
+     "distinct": 18,
+     "jumps": 21,
+     "false_alarms": "3 on the range b0-20 claimed manually verified (69d20bab..HEAD): an optimizer name label, a default-off flag pair, a startup refusal branch -- all change source, none change math"
+    },
+    "pure_computation_whitelist": {
+     "units": [
+      "train:Muon",
+      "train:set_schedule",
+      "train:MasterWeights",
+      "train:_fp8_mm",
+      "train:FP8LinearFunction",
+      "model:RMSNorm",
+      "model:rms_scale",
+      "model:DeltaRecurrence",
+      "model:GatedMLA",
+      "model:SwiGLU"
+     ],
+     "property": "pure functions of tensors and config -- no logging, no flag plumbing, no startup validation; the whitelist was derived from this property and THEN tested",
+     "jumps": 11,
+     "false_alarms_on_the_verified_range": 0,
+     "jump_composition": "6 of 11 touch _fp8_mm and 3 are one model.py split landing across three commits; only 2 are independent math changes. NOT used to argue the gate is viable: establishing that the 6 are benign needs 6 manual diff reads, which is the action the gate exists to replace"
+    },
+    "commit_cadence": {
+     "by_day": {
+      "08-31": 4,
+      "09-01": 33,
+      "09-02": 10,
+      "09-03": 10
+     },
+     "adjacent_gap_under_20min": "29 of 56 (52%)",
+     "median_gap_min": 19
+    },
+    "baseline_reuse_rate": "28 of 266 experiments.jsonl rows carry --resume/--init_from/run_sft (10.5%)"
+   },
+   "uncertainty": "The jump count is exact over the 57 commits examined. What decides usability is exemptions PER REUSE, not jumps per window, and that was not measured directly -- it is inferred: 3.7 math jumps per day against baselines that are typically days old means a reuse crosses roughly 3.7N jumps, so the exemption rate approaches 100%.",
+   "boundary": "The threshold (<=5 jumps do the gate, >5 report only) was written by fb and the measurement came back 11, so the ruling is report-only. IT WAS NOT A PRE-REGISTRATION: b0 had already measured 11 and sent it before fb's threshold message arrived; fb had not read it yet, which is not the same thing (shape 149). The threshold was also on the wrong quantity -- jumps per window rather than exemptions per reuse (shape 147, fb's third instance). Recomputing on the right quantity gives the same ruling and a stronger one. What is kept: the fingerprint is computed launcher-side and reported, never enforced; the excluded units AttnRes/Block/HybridLM carry real arithmetic, so a change to Block.forward's residual order would be reported and not refused -- a known and written-down miss, chosen over an alarm nobody reads.",
+   "guard_phrases": [
+    "we pre-registered the threshold",
+    "only 2 real math changes so the gate is viable"
+   ]
   }
  ]
 }
