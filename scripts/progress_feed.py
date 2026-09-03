@@ -197,6 +197,47 @@ def roadmap_section():
     return "".join(out)
 
 
+# 98-4: per-member liveness from board.liveness (de's cec7a077). One line per member,
+# stalled ones first; the stalled tag must agree with harness check_peer_stalled.
+PEER_STALL_MIN = 120
+
+
+def _age_cn(mins):
+    if mins is None:
+        return "—"
+    if mins < 60:
+        return f"{mins} 分钟前"
+    return f"{mins // 60} 小时前"
+
+
+def liveness_section():
+    sys.path.insert(0, os.path.join(REPO, "scripts"))
+    try:
+        from board import liveness
+    except Exception:
+        return ""
+    live = liveness(REPO)
+    if not live:
+        return ""
+
+    def ages_of(d):
+        return [x for x in (d["commit_min"], d["ledger_min"]) if x is not None]
+
+    def stalled(d):
+        ages = ages_of(d)
+        return bool(d["open_tasks"]) and bool(ages) and min(ages) >= PEER_STALL_MIN
+
+    rows = sorted(live.items(),
+                  key=lambda kv: (not stalled(kv[1]), -min(ages_of(kv[1])) if ages_of(kv[1]) else 1))
+    out = ["<h2>每人动静</h2>", '<div class=head style="border-top-color:#d97706">']
+    for name, d in rows:
+        tag = ' <b style="color:#dc2626">两小时没动静</b>' if stalled(d) else ""
+        out.append(f'<div class=su><b>{html.escape(name)}</b>：交代码 {_age_cn(d["commit_min"])}、'
+                   f'记账 {_age_cn(d["ledger_min"])}，手上 {d["open_tasks"]} 件事{tag}</div>')
+    out.append("</div>")
+    return "".join(out)
+
+
 def queue_section():
     tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
     roster_p = os.path.join(REPO, "runs", "roster.json")
@@ -312,6 +353,7 @@ def render(rows):
             parts.append('</div>')
     parts.append(control_section())
     parts.append(roadmap_section())
+    parts.append(liveness_section())
     parts.append(queue_section())
     rest = rows
     parts.append("<h2>时间线</h2><ol>")
