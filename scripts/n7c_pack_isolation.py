@@ -1,42 +1,57 @@
 #!/usr/bin/env python3
 """Where does a packed document stop matching the same document scored alone?
 
-THE INVARIANT UNDER TEST, 6e's and it is the right one: with cu_seqlens reaching both chunk_kda
-(model.py:131) and the varlen attention (model.py:191), a document's logits inside a packed row must
-equal that document scored alone, up to bf16 noise. Measured on card 4 (pod, 2026-09-03 21:5xZ) they
-do not: six HumanEval tasks packed into one row differ from the same six scored one-per-row by 3-4
-in max|logit| at solution positions, WITH NO MASK INVOLVED -- a plain causal control disagreed by
-3.9619. Every pretraining row in this repo is packed, so if isolation is not holding, it is not
-holding for the training runs either.
+ANSWERED, and this script is the citation for eff.kda_document_isolation_violated. The invariant is
+6e's: with cu_seqlens reaching chunk_kda (model.py:131) and the varlen attention (model.py:191), a
+document inside a packed row must produce the same activations as that document scored alone, up to
+bf16 noise. IT DOES NOT. Measured on card 4 (pod, 2026-09-04), the run this docstring reports:
 
-THIS SCRIPT ONLY NAMES THE FIRST LAYER THAT DIVERGES. It does not fix anything and does not touch
-model.py. A fix chosen before the mechanism is named is the cause-named-one-site-too-narrow error.
+  12 blocks: 0:KDA 1:KDA 2:KDA 3:MLA 4:KDA 5:KDA 6:KDA 7:MLA 8:KDA 9:KDA 10:KDA 11:MLA
+  first divergence: block 0 (KDA), max 48.88 against that layer's own tolerance 0.9253
+  two-document control: 35.75 -- long rows and many documents are not needed to break it
 
-A CANDIDATE FOUND BY READING, stated up front so the measurement can refute it rather than be
-steered by it -- model.py:102-114, DeltaRecurrence.forward:
+    doc  rowpos   pos0-2   pos3-9   pos10+   last10   shape
+      0       0    0.000    0.000    0.000    0.000   clean
+      1     170   35.750   27.500    5.000    1.500   decaying from the start
+      2     401   48.875    6.500    6.500    0.594   decaying from the start
+      3     493   35.250   27.000    7.500    1.500   decaying from the start
+      4     639   35.750   27.500    6.000    1.000   decaying from the start
+      5     796   35.750   27.500    8.000    1.000   decaying from the start
 
-    w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
-    h = F.pad(x.transpose(1, 2), (K - 1, 0))          # left-pad the WHOLE ROW, once
-    y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)
-    for i in range(1, K):
-        y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
+Largest at each document's start, decaying into it, and NOT ordered by position in the row (doc 5 at
+796 equals doc 1 at 170), so each document inherits its immediate predecessor rather than an
+accumulation. scripts/n8_kda_kernel_repro.py then located the site: the kernel is clean and the
+short_conv at model.py:109-113 is contaminated at exactly positions 0-2.
 
-The depthwise k=4 causal convolution runs over the whole [B, T, D] row and never sees `cu`. The
-first three tokens of document 2 therefore convolve with the LAST tokens of document 1, whereas the
-same document scored alone convolves with the zero pad. cu is passed to chunk_kda AFTER this, so it
-cannot undo it. That predicts a specific signature: divergence starting at the FIRST KDA layer, and
-concentrated in the first K-1 = 3 positions of each document rather than growing with distance from
-the row start. A recurrent-state leak predicts the opposite -- divergence that grows with distance.
-The two are distinguishable, which is why the per-position profile is printed and not just a max.
+TWO EARLIER READINGS OF THIS FILE WERE WRONG. Recorded because a stale line was a fact's citation
+for several hours (b0's review, 2026-09-04):
+  1. It first wrapped Block.forward and printed "ALL BLOCKS AGREE" for both packings. VACUOUS: this
+     checkpoint has attn_res=True, so _body iterates b.sublayers(cu) (model.py:502-511) and
+     Block.forward is never called. The capture dict stayed empty and the comparison loop ran zero
+     times. It now wraps each block's MIXER and REFUSES if the capture count is not the block count.
+  2. The decaying profile was read as refuting the short_conv, on the grounds that a k=4 conv can
+     only touch positions 0-2 while contamination ran past position 9. Invalid: the conv feeds
+     k/v/g, so chunk_kda writes a 3-position error into the recurrent state and decays it forward.
+     The output profile cannot separate kernel from plumbing at all -- only a random-input kernel
+     control can, which is why n8_kda_kernel_repro.py exists.
 
-WHAT IS ALSO CHECKED, because "the first layer differs" is not by itself the mechanism:
-  - a two-document control (the invariant on the smallest packing that can violate it)
-  - per-position profile within each document, first 3 positions called out separately
-  - the same probe with the short_conv fed document-by-document, which is a MEASUREMENT of the
-    candidate, not a fix: if that alone restores agreement at layer 0, the site is named.
+CONTROLS, in the order they matter:
+  the same row forwarded twice          0.000000 on all 12 mixers, so no diff here is kernel noise
+  document 0, nothing preceding it      exactly 0.0000 at every position; a broken probe fails this
+  per-layer tolerance                   max(0.05, 0.25 * that layer's measured absmean), because
+                                        block 9 runs at absmax 4416 and block 10 at 84
+  two documents as well as six          the smallest packing that can violate the invariant
+
+IT ALSO MEASURES LENGTH PARITY, a separate and much smaller effect: appending one token to a row
+changes earlier positions by 2-4 max, mean 0.06, which is ~6.7 bf16 ulps at the value it sits on.
+That is chunk_kda's tiling changing with T (reduction order), not a semantic leak -- and it is the
+number a fix's gate must use as its tolerance away from the boundary, since a document-isolating
+conv can be required to hit 0.0000 at positions 0-2 but not to beat bf16 elsewhere.
+
+NO FIX HERE. This script does not touch model.py.
 
 USAGE
-    CUDA_VISIBLE_DEVICES=4 python3 scripts/n7c_pack_isolation.py
+    CUDA_VISIBLE_DEVICES=4 python3 scripts/n7c_pack_isolation.py > runs/n8_pack_isolation.txt
 """
 import os
 import sys
@@ -259,13 +274,18 @@ def main():
               f"{sum(later) / len(later):.1f} -- a leak that GREW with row distance would order "
               f"these by row position, and they do not.")
 
-    # ISOLATION HOLDS, so the 3-4 gap reported by n7c_path_agree.py's first version was NOT a
-    # packing failure and something else differed between the two rows. The one remaining difference
-    # is LENGTH PARITY: this probe pads both sides to an even number of tokens, that test padded only
-    # the packed side and left each single row at its natural length. So the question becomes whether
-    # the same tokens give the same logits at odd versus even T, which is a property of the row and
-    # nothing to do with documents or masks. If they do not, every eval row of odd length is scored
-    # differently from the same content padded, and eval rows are arbitrary length.
+    # A SECOND, SMALLER QUESTION, and the comment that used to sit here said the opposite of the
+    # docstring: it read "ISOLATION HOLDS, so the 3-4 gap was NOT a packing failure", written when
+    # this probe wrapped Block.forward and captured nothing (attn_res=True routes through
+    # b.sublayers(cu), model.py:502-511). That all-clear was vacuous and isolation does NOT hold --
+    # see the table above and the docstring. Kept as a note because the stale line was the citation
+    # for a fact for several hours (b0's review, 2026-09-04).
+    # What this section actually asks is unrelated to documents: LENGTH PARITY. This probe pads both
+    # sides to an even number of tokens; n7c_path_agree.py's first version padded only the packed side
+    # and left each single row at its natural length. So do the same tokens give the same logits at T
+    # versus T+1? Under a correct causal implementation the appended token cannot touch any earlier
+    # position. The answer also fixes the tolerance the fix's gate needs: a document-isolating conv
+    # must reach 0.0000 at positions 0-2, but elsewhere it can only be asked to match this noise.
     print("\n== length parity: the same document scored at its natural T versus T+1 padding")
     print(f"  {'task':16s} {'T':>5s} {'parity':>6s} {'maxdiff':>9s} {'meandiff':>9s}   reading")
     worst_par, par_val = 0.0, 0.0
