@@ -562,6 +562,11 @@ def main():
                     help="which ckpt names from --paired_from to use, as A B [C]. C is a CONTROL "
                          "arm: with it the statistic becomes (B-A)-(C-A), because B-A alone does "
                          "not isolate B when any perturbation of trained weights hurts.")
+    ap.add_argument("--loop", nargs=2, type=int, metavar=("LO", "HI"),
+                    help="N7 Stage A: run blocks LO..HI twice at inference (eval/loop_wrapper.py, "
+                         "AttnRes option 3). The ckpt name in the output gets a #loopLO-HI suffix "
+                         "so a looped row cannot be mistaken for the unlooped one it is compared "
+                         "against -- the two differ in no other logged field.")
     a = ap.parse_args()
 
     if a.paired_selftest:
@@ -659,8 +664,20 @@ def main():
         # per checkpoint rather than once for the batch.
         tok = load_tokenizer(a.tokenizer, cfg)
         model.eval()
+        if a.loop:
+            # N7 Stage A. Patched AFTER .eval() and on this instance, so the looped arm is scored
+            # by this same function, the same val rows and the same head_fp as the unlooped arm --
+            # a second scorer that looped would report two implementations under one metric name.
+            from loop_wrapper import patch_body  # noqa: PLC0415
+            patch_body(model, tuple(a.loop))
         seq = getattr(cfg, "seq", 4096)  # cfg is a SimpleNamespace, not a dict
         row = {"ckpt": os.path.basename(ck_path), "domains": {}}
+        if a.loop:
+            # THE NAME CARRIES THE INTERVENTION. Every other logged field is identical between the
+            # arms, so an unsuffixed looped row is indistinguishable from the unlooped one in
+            # runs/*.jsonl -- and the whole point is comparing them.
+            row["ckpt"] += f"#loop{a.loop[0]}-{a.loop[1]}"
+            row["loop_blocks"] = list(a.loop)
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
         for name in cache:
             # val, not the shard head: the head stopped being val when train.py started
