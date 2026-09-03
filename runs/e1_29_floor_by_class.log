@@ -3,7 +3,7 @@
   control: tokenized 10,421, 0 overlong at seq 2048
   intersection: 10,421 items (sha cae4daf7ad59388c), ours-only 0, control-only 0
   ours: 10,421 scored, 0.450964 nll/byte on the shared population
-Loading weights:   0%|          | 0/148 [00:00<?, ?it/s]Loading weights: 100%|██████████| 148/148 [00:00<00:00, 8965.81it/s]
+Loading weights:   0%|          | 0/148 [00:00<?, ?it/s]Loading weights: 100%|██████████| 148/148 [00:00<00:00, 9308.79it/s]
   control: 10,421 scored, 0.903758 nll/byte on the shared population
 
 SHARED-POPULATION GAP: ours 0.450964  ctrl 0.903758  gap 2.004x
@@ -20,5 +20,9 @@ DISPERSION: 1.455x (en-code) .. 2.505x (zh-prose)  range 1.049  byte-weighted me
 ENGLISH ONLY (1,437 items, 5,496,412 bytes, 52.1% of the population): ours 0.435258  ctrl 0.657246  gap 1.510x
   against the shared-population gap 2.004x (published, all items: 2.004x)
 The English subset is what the control was trained for. Read per the pre-registered readings in this file's docstring.
+
+NOISE BASELINE (2000 label permutations, sizes preserved): median range 0.0927  p95 0.2018  max 0.4027
+  observed 1.0490  ->  p = 0.0000 (0/2000 permutations reach it)
 wrote runs/e1_29_floor_by_class.json
+wrote runs/e1_29_per_item.jsonl (20,842 rows -- the case table and any later baseline read this instead of rescoring)
 EXIT=0
