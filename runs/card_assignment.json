@@ -10,7 +10,7 @@
   "cuts both ways: a card's owner is not the nvidia-smi row, and it is not a superseded",
   "grant either."
  ],
- "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7)",
+ "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception)",
  "granted": "2026-09-03",
  "launch_block_granted": true,
  "block_cards": "0-3",
@@ -34,5 +34,6 @@
   "block_cards": "0-7",
   "note": "Granted for the 500M/20B run on ALL EIGHT cards, user ruling 2026-09-02. The lane is gone by that ruling and the cost was stated before it was taken: in-run milestone generation sweeps cannot run, because the scorer needs a whole 95 GiB card and not a gap -- observed, not derived, when the probe's scorer took card 7 alone after training exited. End-of-run scoring is unaffected: run_ddp.sh scores after torchrun exits, when all eight are free. Second cost: the 200M comparison axis loses its free pin at step 17,500 and needs 15,313 plus conversion. Both were on the table before the decision. Resume was PROVEN before this grant, per the user's order of 2026-09-02: six conditions, nine domains character-for-character, plus a reverse test that made the guard fire. --auto-resume is 1 and not more: the cursor is per-segment, so a second resume re-reads 10,240 rows and nothing has ever tested it.",
   "verified": "2026-09-02: memory_measured at world=8 is a real measurement, not an extrapolation -- 69.63 GiB stable across steps 10/20/30/40 in runs/proberesume_run1.log, the launch recipe on eight cards"
- }
+ },
+ "lane_two_card_exception": "GRANTED 2026-09-03, narrow, one job: de's dist.all_to_all_single microbench may hold BOTH lane cards at once. The 06:05Z widening was three jobs one card each and de read it correctly as not covering this. The exception is not 'big jobs may take two': it is that MEASURING A LINK REQUIRES TWO ENDPOINTS -- a two-rank all_to_all on one card is a device-to-device copy and measures nothing about NVLink, so there is no one-card version of this job to fall back to. Bounded by occupancy, not by importance: 110 MB x ~10 repeats is SECONDS. Any job that structurally needs two endpoints AND occupies seconds qualifies; a job that merely runs faster on two cards does not. ORDERING: card 6 is held IDLE until b0's score_matrix row on card 7 finishes, then de takes 6+7, then e1's pass@k starts on 6. Holding one card idle for the ~20 min of b0's row is the price of not queueing a seconds-long job behind an hours-long one -- a queue ordered by arrival makes the lane slower than no lane."
 }
