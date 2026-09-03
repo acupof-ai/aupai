@@ -558,6 +558,8 @@ def main():
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         "scripts/pod_verify_landed.py",
+        # Builds a real two-branch conflict in a throwaway repo: no data, no card, ~1s.
+        "scripts/merge_drivers.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have

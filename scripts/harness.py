@@ -6831,6 +6831,113 @@ def _broken_env():
 # --------------------------------------------------------------------------- tasks
 
 TASKS_PATH = os.path.join(ROOT, "runs", "tasks.jsonl")
+FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
+FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch")
+
+
+def _friction_rows(path=None):
+    """Every row, newest last. No fold: each row is one blocking event, not a state."""
+    p = path or FRICTION_PATH
+    out = []
+    if not os.path.exists(p):
+        return out
+    with open(p, encoding="utf-8") as fh:
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                out.append(json.loads(ln))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def cmd_friction(argv):
+    """The one ledger of things that blocked someone, and the counts by cause.
+
+    User order 14:2xZ 2026-09-03: every time a merge, a hook, a check or a pod push blocks
+    someone, the cause goes in one place, and the place is periodically summarised into
+    fixes. Without it each session pays the same toll privately and nobody can see which
+    toll is the expensive one -- six merges blocked on two derived files today, and that
+    only became visible when one person happened to hit all six.
+
+    `minutes_lost` IS A SELF-REPORT AND THE OUTPUT SAYS SO. It is the field a reader will
+    want to sum, and a sum of estimates printed beside measured counts reads as measured
+    (this repo's most common defect shape). So the summary prints the count as the number
+    and the minutes as `~N min (self-reported)`, and a row may omit minutes entirely
+    rather than inventing one.
+
+    Rows are events, never folded: two merges blocked by the same cause are two rows, which
+    is the whole point of counting by cause."""
+    ap = argparse.ArgumentParser(prog="harness friction")
+    sub = ap.add_subparsers(dest="op")
+    a = sub.add_parser("add")
+    a.add_argument("--kind", required=True, choices=FRICTION_KINDS)
+    a.add_argument("--cause", required=True,
+                   help="what actually blocked it, specific enough to fix: the file and the "
+                        "mechanism, not 'merge conflict'")
+    a.add_argument("--blocked", required=True, help="what could not proceed")
+    a.add_argument("--fix", default="", help="what unblocked it, or empty if nothing did yet")
+    a.add_argument("--minutes", type=int, default=None,
+                   help="SELF-REPORTED minutes lost; omit rather than guess")
+    a.add_argument("--who", default=None, help="defaults to the current branch")
+    args = ap.parse_args(argv)
+
+    if args.op != "add":
+        rows = _friction_rows()
+        if not rows:
+            print(f"no friction rows in {os.path.relpath(FRICTION_PATH, ROOT)}")
+            return 0
+        by_cause = {}
+        for r in rows:
+            c = (r.get("cause") or "?")
+            d = by_cause.setdefault(c, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
+                                        "fixed": 0, "last": ""})
+            d["n"] += 1
+            if isinstance(r.get("minutes_lost"), int):
+                d["min"] += r["minutes_lost"]
+                d["reported"] += 1
+            d["kinds"].add(r.get("kind") or "?")
+            if r.get("fix_applied"):
+                d["fixed"] += 1
+            d["last"] = max(d["last"], r.get("when") or "")
+        print(f"{len(rows)} row(s), {len(by_cause)} cause(s) -- most rows first\n")
+        for c, d in sorted(by_cause.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+            mins = (f"~{d['min']} min (self-reported, {d['reported']}/{d['n']} rows)"
+                    if d["reported"] else "minutes not reported")
+            print(f"{d['n']:>3}x  {','.join(sorted(d['kinds'])):<14} {mins}")
+            print(f"      {c}")
+            print(f"      {d['fixed']}/{d['n']} row(s) carry a fix; last {d['last']}")
+        return 0
+
+    row = {
+        "when": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
+        "who": args.who or _current_branch(),
+        "kind": args.kind,
+        "blocked_what": args.blocked,
+        "cause": args.cause,
+        "fix_applied": args.fix,
+        "minutes_lost": args.minutes,
+        "sha": _head_sha(),
+    }
+    _append_task(row, path=FRICTION_PATH)
+    print(f"friction <- {args.kind}: {args.cause[:70]}")
+    return 0
+
+
+def _current_branch():
+    r = subprocess.run(["git", "-C", ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or "unknown"
+
+
+def _head_sha():
+    r = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or ""
+
+
 
 
 def _read_tasks(path=None, raw=False):
@@ -13482,6 +13589,20 @@ def cmd_install_hooks(rest):
             os.remove(hook_dst)
         os.symlink(os.path.relpath(src, hooks_dir), hook_dst)
         print(f"installed: {hook_dst} -> {os.path.relpath(src, main_root)}")
+    # THE MERGE DRIVERS BELONG HERE, not in .gitattributes alone. The attribute names a
+    # driver; `git config merge.<name>.driver` defines it, per clone and untracked -- so a
+    # committed attribute with no config is a merge that cannot find its driver, which is
+    # the same shape as a hook edited in a branch worktree: installed-looking and never run.
+    # Installing hooks is the one step every session already runs in every tree.
+    sys.path.insert(0, os.path.join(main_root, "scripts"))
+    try:
+        import merge_drivers
+        merge_drivers.install(root=ROOT)
+        ok, msg = merge_drivers.check(root=ROOT)
+        print(f"merge drivers: {'OK' if ok else 'INCOMPLETE'} -- {msg}")
+    except Exception as e:
+        print(f"merge drivers NOT installed: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -13509,6 +13630,8 @@ def main():
         return run_dispatch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "task":
         return cmd_task(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "friction":
+        return cmd_friction(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
