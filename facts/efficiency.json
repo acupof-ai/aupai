@@ -2966,6 +2966,26 @@
     "layer 9 is frozen",
     "layer 9's mixer.o does not train"
    ]
+  },
+  {
+   "id": "eff.flash_attn_cute_mask_mod_backward_wrong_sm90",
+   "claim": "flash_attn.cute's mask_mod produces correct forwards and WRONG gradients on SM 9.0",
+   "value": "MEASURED: a mask_mod whose forward is bitwise-identical to causal=True (1.5946985483 to 10 decimals, both paths) produces gradients that disagree with the same-mask reference on 160 of 169 tensors, |kernel|/|sdpa| norm ratio median 21.65 and max 366.7, with cosines going NEGATIVE (worst -0.746, blocks.1.mixer.gb.weight). The same comparison with causal=True and no mask_mod agrees on 169 of 169, ratio median 1.000 (min 0.981 max 1.030), which is what makes the reference trustworthy. A prefix-LM mask_mod behaves the same way: forward agrees to 2.0e-04, gradients disagree on 160 of 169, ratio median 24.40.",
+   "measured": "2026-09-04",
+   "source": "scripts/n7c_grad_check.py on card 4; three rows (causal=True, causal_mod, prefix p3) against torch SDPA with the mask built explicitly from the reference_mask predicate in eval/prefix_mask.py",
+   "config": {
+    "flash_attn": "flash_attn_4-4.0.0b15 (beta)",
+    "cutlass": "4.4.2",
+    "torch": "2.11.0+cu129",
+    "gpu": "NVIDIA H20, compute capability 9.0",
+    "dtype": "bf16 under autocast, fp8 off",
+    "shape": "2x4096, 39 documents, MLA blocks 3/7/11 of the 206M model",
+    "reference": "torch.nn.functional.scaled_dot_product_attention with a dense boolean mask, block-diagonal by document"
+   },
+   "uncertainty": "one shape, one model, one build. Not bisected against another flash_attn version, and no upstream issue searched. The direction is unambiguous (a bitwise-equal forward cannot license a 21x gradient) but the magnitude is from a single batch.",
+   "boundary": "SM 9.0 with this beta build. interface.py:1286 ASSERTS mask_mod backward is unsupported on SM 12.0; SM 9.0 merely does not assert, which this measurement shows is not the same as being correct. The FORWARD is sound on SM 9.0 -- scripts/n7c_gates.py's A/A2/B/B2/C/D/E/F all pass -- so inference-time and eval-time mask_mod use is unaffected. Training through mask_mod is not.",
+   "status": "recorded",
+   "cost": "two 500-step SFT arms diverged before this was found: loss climbing ~1.45 -> 3.07 while the causal twin fell 1.581 -> 1.158 on the same seed, pack and checkpoint. Killed at steps 300 and 220. Every static gate passed, because all of them read a frozen model's forward loss and none of them reads a gradient."
   }
  ]
 }
