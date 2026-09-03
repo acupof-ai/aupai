@@ -280,6 +280,15 @@ def main():
              "magnitude under zh and en demos, language is not the driver; if it appears only "
              "under zh, it is. (6e's ruling -- and the second time tonight that inferring from "
              "a compositional relation instead of measuring it was the error.)")
+    ap.add_argument("--no_rep_stop", action="store_true",
+        help="disable the repetition stop for this run. THE POINT IS TO SEPARATE TWO THINGS the "
+             "2x2 leaves fused: the control's answer-present is 0.6-1.0%% and its generations stop "
+             "at 84-86 characters against our 794-851, both under the SAME stop rule. So 'the "
+             "control has no instruction-following behaviour' and 'the stop rule truncates the "
+             "control before an answer marker appears' predict the same 0.6%%. With the stop off: "
+             "if the control's length rises to our magnitude AND answer-present rises with it, "
+             "part of the 0.6%% was the stop rule; if length rises and answer-present stays down, "
+             "the gap is behavioural. One cell, one switch (6e's design).")
     ap.add_argument("--resume", action="store_true",
         help="append to an existing predictions file and skip the questions already in it. The "
              "marker at the top of this file promises an interrupt costs one batch; without this "
@@ -340,6 +349,7 @@ def main():
                             f"preds_l1_d{args.demos}_{os.path.basename(args.ckpt)}"
                             + f".{args.demo_lang}"
                             + (".hf" if args.hf else "")
+                            + (".norepstop" if args.no_rep_stop else "")
                             + (f".t{args.temperature}" if args.temperature else "")
                             + ".jsonl")
     if args.run:
@@ -382,11 +392,21 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
+                # THE TOKENIZER IS PASSED, WHICH IS WHAT TURNS rep_stop ON. train.generate_batch
+                # gates it on `tokenizer is not None` (train.py:944), and the original call here
+                # omitted the argument -- so OUR arm ran with NO repetition stop while the control
+                # arm, whose tokenizer I passed explicitly, ran with it. The 2x2's length gap
+                # (794-851 characters against 84-86) and our 98.8% loop rate are partly that:
+                # one arm running to max_new, the other truncated. A decoder difference read as a
+                # model difference, from an argument that defaults to a silent False.
                 if args.hf:
                     out = hf_generate_batch(model, prompts, args.max_new, args.device,
-                                            args.temperature, hf_tok, hf_pad)
+                                            args.temperature, hf_tok, hf_pad,
+                                            rep_stop=not args.no_rep_stop)
                 else:
-                    out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
+                    out = generate_batch(model, prompts, args.max_new, args.device,
+                                         args.temperature, pvals, tokenizer=tok,
+                                         rep_stop=not args.no_rep_stop)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 if args.hf:
@@ -439,6 +459,7 @@ def main():
                         "binomial_delta": delta, "answer_present_rate": n_box / total,
                         "demos": args.demos, "temperature": args.temperature,
                         "demo_lang": args.demo_lang, "arm": "control" if args.hf else "ours",
+                        "rep_stop": not args.no_rep_stop,
                         "ckpt": os.path.basename(args.ckpt.rstrip("/")),
                         "preds_path": out_path}, f, ensure_ascii=False)
 
