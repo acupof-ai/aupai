@@ -44,6 +44,7 @@ adda35f375ce8e1f83622fbb74bee0a556a017e92a6a2cb1743f4c1c7266f3fb  datagen/audit_
 2a4625b490a24082776ba447792f7fcdd96b31598fed0195c3d6e2a206a99747  datagen/build_chat_qa.py  docs  644
 eeb1a24c49a53ce534ac3acd448618f618b78d70bd44c73ef3bb54af0826a5fb  datagen/build_chatml.py  docs  644
 d094da35a4158936e5fccaa2b85109af0ce55bb94b547eea4507183eb1394f17  datagen/build_code_py_rp1t.py  docs  644
+add1f6e6254a3986e4393c1d66f46ff0057c3e0ca88642060ed674fd3d99ea8c  datagen/build_code_rp1t_x.py  docs  644
 36caba4d4bccf9755607d25239efe69797869548d71b95a1080be5d95a7cc41c  datagen/build_code_tests_v1.py  docs  644
 ed5d0a0b9ac62c61c8b8bf5687ebd53354745cc1b47dde5a52f80df13c52eb48  datagen/build_control_sft_text.py  docs  644
 c69aacb28a0063f463e94dd8a41d2b7d3e45819ad9d5d6b79c919b98aae65f26  datagen/build_corpus.py  docs  644
