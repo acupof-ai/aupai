@@ -29,7 +29,8 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 
 - **判据**(readout_30b_prereg.md:52,预登记):math-hard 上 pass@8−pass@1 **≥ 15pt** → RL 可开;< 15pt → RL 不开,读数「不是 RL 没用,是这个 checkpoint 上没有 RL 可放大的东西」。这是 continue-to-RL 决策,不是 stop。
 - **读法**:n≥1000;gap 是配对差(pass@8⊇pass@1 同题相关,SE ~1-2pt@1036),15pt 阈值远在可读性之上。三态:动了(≥15pt)/ 平了(可读但 <15pt)/ 地板(pass@8 本身在地板,不可判)。200M 上的读数是 3.5pt = 平了,不是地板。
-- **预算**:pass@8 = 8 次生成/题,n=1000 → 8000 次生成;lane 卡上跑,生成式评测与训练块互斥(06:50 规则:run 活着时 block 卡只跑似然类),所以门的测量窗口 = run 结束后或空卡期。
+- **预算**:pass@8 = 8 次生成/题,n=1036 → 8288 次生成;lane 卡上跑,生成式评测与训练块互斥(06:50 规则:run 活着时 block 卡只跑似然类),所以门的测量窗口 = run 结束后或空卡期。
+- **生成参数(2026-09-03 钉死,与 200M 读数同源)**:k=8、temperature 0.8、max_new=512——`eval/code_l0prime.py:199` freeze_hard 的默认值,200M 读数用的就是这组(`eval/score_math_formatfree.py:7` 记录 "t=0.8, k=8")。pass@1 与 pass@8 同一份题、同一次运行的两个统计量,不另跑。
 
 ## 3. RL 段:两条并行轨道
 
@@ -75,7 +76,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 
 ## 5. 开放项(落地前必须填)
 
-1. SFT pack 的确切路径与行数:v10 已测(16,090 对 / 5,766,589 token / 76.7% 工具循环),v11 终报 + 路径 pending(e1-24);任务库 134 个 Exercism admitted(3b-9),提交 pending。
-2. SFT 与 RL 的实测吞吐 → 预算的卡时数字:用 tilerl-17 的 11.87K tok/s/gpu 中位数换算(数学 RLVR 轨道);代码 agent 轨道阶段 5 按 27B GRPO pilot 实测填。
-3. pass@8 的生成温度与 max_new(预登记,进 panel 配置)。
-4. RL 门的题目版本(math-hard v2,与 200M 读数同一份)。
+1. SFT pack 的确切路径与行数:v10 已测(16,090 对 / 5,766,589 token / 76.7% 工具循环),v11 终报 + 路径 pending(e1-24,2026-09-03 仍 open,owner e1)。任务库 134 个 Exercism admitted(3b-9),提交 pending。
+2. SFT 与 RL 的实测吞吐 → 预算的卡时数字:数学 RLVR 轨道用 tilerl-17 的 11.87K tok/s/gpu 中位数换算,公式 `卡时 = 训练 token 数 / (11.87K × 8 × 3600) × 生成开销倍数`;`data/rl/rlvr_math.jsonl` 尚未入库(prepare_rlvr.py 已实现,数据未构建),token 数与生成开销倍数落地前填。代码 agent 轨道阶段 5 按 27B GRPO pilot 实测填。
+3. ~~pass@8 的生成温度与 max_new~~ **已钉(2026-09-03)**:k=8 / t=0.8 / max_new=512,与 200M 读数同源(见 §2)。
+4. ~~RL 门的题目版本~~ **已钉(2026-09-03)**:`data/synthetic/math_hard_eval_1k.jsonl`,1032 行,sha256 `3ce9b0ff7fc6253c0d23c41cd360f09242f8a9a67ed187f4f56f812957ac703b`。预注册登记的 n=1036 与磁盘 1032 行差 4 行——落地前以跑通的过滤后计数为准,门的判据不变(n≥1000)。
