@@ -165,6 +165,48 @@ def main():
               "reproduces the decaying profile that I WRONGLY read as evidence against the "
               "short_conv; and the gate path at model.py:119-121, which computes g and beta from x "
               "with no boundary handling either.")
+
+        # NAME THE LINE. The kernel is clean, so the contamination enters through one of the tensors
+        # model.py builds before the call. Run the REAL DeltaRecurrence on two packed documents and
+        # on each alone, and diff each intermediate at document 1's positions: whichever tensor first
+        # differs is the site. This is a measurement of model.py, not a change to it.
+        print("\n== which tensor model.py hands the kernel is already contaminated")
+        x_bank = [torch.randn(1, n, mixer.qkv.in_features, device=dev, dtype=dt) for n in LENS]
+        def intermediates(x):
+            """Recompute model.py:102-124 verbatim on x and return each named tensor."""
+            B, T, D = x.shape
+            w, K = mixer.short_conv.weight, mixer.short_conv.kernel_size[0]
+            h = torch.nn.functional.pad(x.transpose(1, 2), (K - 1, 0))
+            y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)
+            for j in range(1, K):
+                y = y + h[:, :, j : j + T] * w[:, 0, j].unsqueeze(-1)
+            conv = torch.nn.functional.silu(
+                (y + mixer.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
+            q_, k_, v_ = mixer.qkv(conv).chunk(3, dim=-1)
+            gb = mixer.gb(x)
+            return {"short_conv out": conv, "q": q_, "k": k_, "v": v_,
+                    "g (from gb, gate path)": gb[..., :D],
+                    "beta (from gb)": gb[..., D : D + mixer.h]}
+
+        with torch.no_grad():
+            packed_i = intermediates(torch.cat(x_bank, dim=1))
+            solo_i = [intermediates(xb) for xb in x_bank]
+        start = LENS[0]
+        print(f"  {'tensor':24s} {'maxdiff':>9s} {'pos0-2':>8s} {'pos3-9':>8s} {'pos10+':>8s}   "
+              f"reading")
+        for name in packed_i:
+            a = packed_i[name][0, start:start + LENS[1]].float()
+            b = solo_i[1][name][0].float()
+            d = (a - b).abs().amax(dim=-1)
+            print(f"  {name:24s} {d.max().item():9.4f} {d[:3].max().item():8.4f} "
+                  f"{d[3:10].max().item():8.4f} {d[10:].max().item():8.4f}   "
+                  f"{'CONTAMINATED' if d.max().item() > 1e-3 else 'clean'}")
+        print("  A tensor contaminated ONLY at positions 0-2 is the k=4 short_conv reading across\n"
+              "  the boundary (model.py:109-113). The kernel then writes those values into the\n"
+              "  recurrent state and decays them forward, which is how a 3-position input error\n"
+              "  becomes the 48.88 output difference over many positions that n7c_pack_isolation.py\n"
+              "  measured. gb is a per-position Linear on x, so g and beta must be clean -- if they\n"
+              "  are not, the mechanism is something else and this table says so.")
     return 0
 
 
